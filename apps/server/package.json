@@ -1,0 +1,22 @@
+{
+  "name": "@napoland/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The authoritative game server: one process that owns the world, over HTTP + WebSocket.",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/main.ts",
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --sourcemap",
+    "start": "node --enable-source-maps dist/server.cjs"
+  },
+  "dependencies": {
+    "@napoland/shared": "*",
+    "pg": "^8.23.0",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.2"
+  }
+}

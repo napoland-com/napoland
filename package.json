@@ -1,0 +1,30 @@
+{
+  "name": "napoland",
+  "private": true,
+  "version": "0.1.0",
+  "description": "napoland: a mobile-first online exploration game. Leave home, gather what glows, get back.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node tools/dev.mjs",
+    "build": "npm run build -w @napoland/client && npm run build -w @napoland/server",
+    "typecheck": "tsc -p packages/shared && tsc -p apps/server && tsc -p apps/client && tsc -p apps/client/test && tsc -p tools",
+    "test": "vitest run",
+    "gen:map": "tsx tools/gen-map.ts",
+    "validate": "tsx tools/validate-content.ts",
+    "bot": "tsx tools/bot.ts",
+    "check": "npm run typecheck && npm run validate && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}
