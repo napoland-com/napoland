@@ -42,6 +42,17 @@ Parameters:
     Type: Number
     Default: 20
     Description: GB for the database and certificates.
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Where budget alerts go. Empty means no budget.
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 30
+    Description: napoland normally costs about 20 USD a month before credits.
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
 
 Resources:
   # ---------- network: one public subnet, nothing else ----------
@@ -352,6 +363,36 @@ Resources:
       Threshold: 1
       ComparisonOperator: GreaterThanOrEqualToThreshold
       AlarmActions: [!Sub 'arn:aws:automate:${AWS::Region}:ec2:reboot']
+
+  # ---------- money ----------
+  # The account is a member of an AWS Organization, so it cannot filter costs by our project tag;
+  # these services in this region are napoland's alone (the account's other projects use Amplify,
+  # CloudWatch and global services here). Costs are counted before credits, so this is real usage.
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Condition: HasAlertEmail
+    Properties:
+      Budget:
+        BudgetName: napoland-prod-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: !Ref MonthlyBudgetUsd, Unit: USD }
+        CostFilters:
+          Region: [!Ref 'AWS::Region']
+          Service:
+            - Amazon Elastic Compute Cloud - Compute
+            - EC2 - Other
+            - Amazon Virtual Private Cloud
+            - Amazon Simple Storage Service
+            - Amazon EC2 Container Registry (ECR)
+        CostTypes:
+          IncludeCredit: false
+          IncludeRefund: false
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 80, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100, ThresholdType: PERCENTAGE }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
 
   # ---------- DNS ----------
   SiteRecord:
