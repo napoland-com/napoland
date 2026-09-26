@@ -1,9 +1,9 @@
 /**
- * Entry point: reads the configuration, opens storage, loads the map and runs the server until
+ * Entry point: reads the configuration, loads the maps, opens storage and runs the server until
  * SIGINT or SIGTERM, then saves everyone and exits.
  */
 import { loadConfig } from './config';
-import { loadMap } from './content';
+import { loadMaps } from './content';
 import { flushLogs, log, setLogLevel } from './log';
 import { startServer } from './server';
 import { MemoryStorage, PgStorage, type Storage } from './storage';
@@ -14,8 +14,13 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
 async function main(): Promise<void> {
   const cfg = loadConfig();
   setLogLevel(cfg.logLevel);
-  const { map, warnings } = loadMap(cfg.mapFile);
-  for (const warning of warnings) log.warn('map warning', { map: map.data.id, warning });
+  const { maps, warnings } = loadMaps(cfg.mapsDir, cfg.homeMap);
+  for (const { map, message } of warnings) log.warn('map warning', { map, warning: message });
+  log.info('maps loaded', {
+    dir: cfg.mapsDir,
+    home: cfg.homeMap,
+    maps: [...maps.values()].map(({ data: m }) => ({ id: m.id, version: m.version, kind: m.kind, depth: m.depth, size: `${m.width}x${m.height}` })),
+  });
 
   const storage: Storage = cfg.databaseUrl ? new PgStorage(cfg.databaseUrl, cfg.migrationsDir!) : new MemoryStorage();
   await storage.init();
@@ -23,7 +28,8 @@ async function main(): Promise<void> {
     host: cfg.host,
     port: cfg.port,
     storage,
-    map,
+    maps: maps.values(),
+    homeMap: cfg.homeMap,
     weather: cfg.weather,
     maxPlayers: cfg.maxPlayers,
     tickMs: cfg.tickMs,
@@ -39,8 +45,8 @@ async function main(): Promise<void> {
     port: server.port,
     host: cfg.host,
     storage: cfg.databaseUrl ? 'postgres' : 'memory',
-    map: map.data.id,
-    mapVersion: map.data.version,
+    homeMap: cfg.homeMap,
+    maps: maps.size,
     players: await storage.count(),
     maxPlayers: cfg.maxPlayers,
     weather: cfg.weather,

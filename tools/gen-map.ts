@@ -59,7 +59,7 @@ const STONE = { x: 15, y: 8 };
 place({ kind: 'stone', x: STONE.x, y: STONE.y });
 const signs = [
   { x: 13, y: 37, text: ['Stonebrook. Pop. 23', 'Most people left after the lights started showing up in the woods.'] },
-  { x: 28, y: 16, text: ['North: Wolf Meadow', 'If the wolves see you, keep moving. They hate the street lights.'] },
+  { x: 28, y: 16, text: ['North: the Near Woods', 'Out there your energy drains, faster the deeper you go. Town and the street lights fill it up again.'] },
   { x: 17, y: 10, text: ['The Old Stone', 'It hums at night, and shards break off it. Do not touch.'] },
 ];
 for (const s of signs) place({ kind: 'sign', ...s });
@@ -117,11 +117,33 @@ for (let tries = 0, n = 0; n < 8 && tries < 4000; tries++) {
 }
 function round(v: number) { return Math.round(v * 1000) / 1000; }
 
+// Grass walled in by the forest can be seen but never reached: plant trees there too. Last, and
+// with a position hash instead of rnd(), so everything placed before stays exactly where it was.
+{
+  const SPAWN = { x: 8, y: 21 };
+  const open = (x: number, y: number) => x >= 0 && y >= 0 && x < N && y < N && !blocked[y]![x] && tile[y]![x] !== 'w' && !level[y]![x];
+  const seen = new Set([`${SPAWN.x},${SPAWN.y}`]);
+  const queue: Array<[number, number]> = [[SPAWN.x, SPAWN.y]];
+  for (let h = 0; h < queue.length; h++) {
+    const [x, y] = queue[h]!;
+    for (const [nx, ny] of [[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]] as const) {
+      if (open(nx, ny) && !seen.has(`${nx},${ny}`)) { seen.add(`${nx},${ny}`); queue.push([nx, ny]); }
+    }
+  }
+  const hash = (x: number, y: number) => { const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453; return s - Math.floor(s); };
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    if (!open(x, y) || seen.has(`${x},${y}`) || shroomTile.has(`${x},${y}`)) continue;
+    place({ kind: 'tree', x, y, s: round(0.95 + hash(x, y) * 0.45), v: round(hash(y, x)) });
+  }
+}
+
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 1, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 2, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
+  // The north road leads into the Near Woods (its road enters at x 31-32 on the bottom row).
+  exits: [{ x: 29, y: 0, w: 2, h: 1, to: 'near-woods', tx: 31, ty: 78, dir: 'up' }],
   objects,
 };
 
@@ -129,10 +151,12 @@ const map: MapData = {
 const json = [
   '{',
   `  "id": ${JSON.stringify(map.id)},`, `  "name": ${JSON.stringify(map.name)},`, `  "version": ${map.version},`,
+  `  "kind": ${JSON.stringify(map.kind)},`, `  "depth": ${map.depth},`,
   `  "width": ${map.width},`, `  "height": ${map.height},`,
   '  "tiles": [', map.tiles.map(r => `    ${JSON.stringify(r)}`).join(',\n'), '  ],',
   '  "levels": [', map.levels.map(r => `    ${JSON.stringify(r)}`).join(',\n'), '  ],',
   `  "spawn": ${JSON.stringify(map.spawn)},`,
+  '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
   '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ]',
   '}',
   '',

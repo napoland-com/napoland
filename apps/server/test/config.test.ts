@@ -14,8 +14,14 @@ describe('loadConfig', () => {
       maxPlayers: 500, tickMs: 50, saveEveryMs: 15_000, logLevel: 'info',
       trustProxy: false, maxConnectionsPerIp: 20, newPlayersPerIpPerHour: 10, version: 'dev',
     });
-    expect(cfg.mapFile).toBe(join(REPO, 'content', 'maps', 'stonebrook.json'));
+    expect(cfg.mapsDir).toBe(join(REPO, 'content', 'maps'));
+    expect(cfg.homeMap).toBe('stonebrook');
     expect(cfg.migrationsDir).toBe(join(REPO, 'apps', 'server', 'migrations'));
+  });
+
+  it('reads the maps folder and the home map', () => {
+    const cfg = loadConfig({ MAPS_DIR: 'content/maps', HOME_MAP: ' riverside ' }, REPO);
+    expect(cfg).toMatchObject({ mapsDir: join(REPO, 'content', 'maps'), homeMap: 'riverside' });
   });
 
   it('reads the environment', () => {
@@ -59,9 +65,14 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ DATABASE_URL: 'mysql://root:hunter2@db/x' }, REPO)).not.toThrow(/hunter2/);
   });
 
-  it('fails when the map or an explicit folder cannot be found', () => {
-    expect(() => loadConfig({ MAP_FILE: 'nope.json' }, REPO)).toThrow(/MAP_FILE must point to an existing file/);
+  it('fails when the maps or an explicit folder cannot be found', () => {
+    expect(() => loadConfig({ MAPS_DIR: 'nope' }, REPO)).toThrow(/MAPS_DIR must point to an existing directory/);
+    expect(() => loadConfig({ MAPS_DIR: 'content/maps/stonebrook.json' }, REPO)).toThrow(/MAPS_DIR must point to an existing directory/);
     expect(() => loadConfig({ CLIENT_DIR: `nope${sep}dist` }, REPO)).toThrow(/CLIENT_DIR/);
-    expect(() => loadConfig({}, tmpdir())).toThrow(/MAP_FILE is not set/);
+    expect(() => loadConfig({}, tmpdir())).toThrow(/MAPS_DIR is not set/);
+  });
+
+  it('refuses the old MAP_FILE, which would quietly be ignored', () => {
+    expect(() => loadConfig({ MAP_FILE: 'content/maps/stonebrook.json' }, REPO)).toThrow(/MAP_FILE is no longer used: set MAPS_DIR/);
   });
 });

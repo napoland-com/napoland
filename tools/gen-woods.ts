@@ -1,0 +1,414 @@
+/**
+ * Generates content/maps/near-woods.json, the Near Woods: the first region of the wilds, north of
+ * Stonebrook. Built from a fixed seed like the town (gen-map.ts), so the woods never reshuffle and
+ * players can share routes. Re-running it overwrites hand edits to the JSON. Usage: npm run gen:woods
+ *
+ * South to north: the old road comes in from town past the last street light and gives out at a
+ * rusted car; a dirt track fords the creek to a lit crossroads, where the power line turns off to an
+ * abandoned cabin. West lies the pond, north the rocks. Past them there is one lonely lamp nobody
+ * wired, and beyond it the deepest spots: a ring of stones (west) and a cabin with a light on (east).
+ */
+import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { LAMP_RADIUS, TileMap, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+
+const W = 64, H = 80, SEED = 20260927;
+type P = readonly [number, number];
+/** The town's north road arrives on 31,78 and 32,78; the bottom row leads back to it. */
+const EXIT: MapExit = { x: 31, y: 79, w: 2, h: 1, to: 'stonebrook', tx: 29, ty: 1, dir: 'down', home: true };
+
+// Every random choice hashes the tile position (with the seed) instead of drawing from one running
+// sequence, so moving one clearing does not reshuffle the rest of the woods.
+function hash(x: number, y: number, salt: number): number {
+  let h = Math.imul(x, 0x27d4eb2d) ^ Math.imul(y, 0x165667b1) ^ Math.imul(salt + SEED, 0x61c88647);
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
+  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
+  return ((h ^ (h >>> 15)) >>> 0) / 4294967296;
+}
+/** Smooth value noise in [0, 1), changing over about `scale` tiles. */
+function noise(x: number, y: number, scale: number, salt: number): number {
+  const fx = x / scale, fy = y / scale, ix = Math.floor(fx), iy = Math.floor(fy);
+  const u = fx - ix, v = fy - iy, su = u * u * (3 - 2 * u), sv = v * v * (3 - 2 * v);
+  const a = hash(ix, iy, salt), b = hash(ix + 1, iy, salt), c = hash(ix, iy + 1, salt), d = hash(ix + 1, iy + 1, salt);
+  return a + (b - a) * su + (c - a) * sv + (a - b - c + d) * su * sv;
+}
+const round = (v: number) => Math.round(v * 1000) / 1000;
+const SIDES: readonly P[] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+
+const tile: string[][] = Array.from({ length: H }, () => Array<string>(W).fill('t'));
+const level: number[][] = Array.from({ length: H }, () => Array<number>(W).fill(0));
+const inner = (x: number, y: number) => x >= 1 && y >= 1 && x < W - 1 && y < H - 1;
+const at = (x: number, y: number) => (inner(x, y) ? tile[y]![x]! : 't');
+/** Cuts ground out of the forest. The map edge stays forest: the road home is the only way out. */
+function set(x: number, y: number, c: string) { if (inner(x, y)) tile[y]![x] = c; }
+/** Calls fn on the tiles of a rough ellipse; `rough` frays the edge so clearings do not look drawn. */
+function ellipse(cx: number, cy: number, rx: number, ry: number, rough: number, salt: number, fn: (x: number, y: number) => void) {
+  for (let y = Math.floor(cy - ry * 1.4); y <= Math.ceil(cy + ry * 1.4); y++) for (let x = Math.floor(cx - rx * 1.4); x <= Math.ceil(cx + rx * 1.4); x++) {
+    const e = ((x + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - cy) / ry) ** 2;
+    if (inner(x, y) && e <= 1 + (noise(x, y, 2.5, salt) - 0.5) * 2 * rough) fn(x, y);
+  }
+}
+const clearing = (cx: number, cy: number, rx: number, ry: number, salt: number) => ellipse(cx, cy, rx, ry, 0.35, salt, (x, y) => set(x, y, 'g'));
+/** Fern patches (where creatures will live) grow on open grass. */
+const ferns = (cx: number, cy: number, rx: number, ry: number, salt: number) => ellipse(cx, cy, rx, ry, 0.5, salt, (x, y) => { if (at(x, y) === 'g') set(x, y, 'f'); });
+
+/** Tiles from a to b in four-direction steps, hugging the straight line, so a trail never breaks. */
+function line4(a: P, b: P): P[] {
+  const out: P[] = [a];
+  const [bx, by] = b, lx = bx - a[0], ly = by - a[1], len = Math.hypot(lx, ly) || 1;
+  const off = (px: number, py: number) => Math.abs((px - a[0]) * ly - (py - a[1]) * lx) / len;
+  let [x, y] = a;
+  while (x !== bx || y !== by) {
+    const sx = Math.sign(bx - x), sy = Math.sign(by - y);
+    if (sy === 0 || (sx !== 0 && off(x + sx, y) <= off(x, y + sy))) x += sx; else y += sy;
+    out.push([x, y]);
+  }
+  return out;
+}
+const polyline = (pts: P[]) => pts.slice(1).flatMap((p, i) => line4(pts[i]!, p));
+/**
+ * Corners of a way from a to b in straight runs of about `run` tiles, turning like a staircase: a long
+ * diagonal zigzag is tiring with a four-way joystick, runs of a few tiles are not. Where each step
+ * falls varies a little, so the stairs do not look machine-made.
+ */
+function stairs(a: P, b: P, run: number, salt: number): P[] {
+  const [ax, ay] = a, dx = b[0] - ax, dy = b[1] - ay, alongX = Math.abs(dx) >= Math.abs(dy);
+  const n = Math.max(1, Math.round(Math.max(Math.abs(dx), Math.abs(dy)) / run));
+  const out: P[] = [];
+  let [x, y] = a;
+  for (let k = 1; k <= n; k++) {
+    const t = k === n ? 1 : (k + (hash(ax, ay, salt + k) - 0.5) * 0.6) / n;
+    const nx = Math.round(ax + dx * t), ny = Math.round(ay + dy * t);
+    out.push(alongX ? [nx, y] : [x, ny], [nx, ny]);
+    [x, y] = [nx, ny];
+  }
+  return out;
+}
+
+// The ways (road, track and trails): water never cuts them, so where the creek meets one there is a
+// ford, and poles stand beside them.
+const way = new Uint8Array(W * H);
+const BRUSH: Record<number, P[]> = {
+  1: [[0, 0]],
+  2: [[0, 0], [1, 0], [0, 1], [1, 1]],
+  3: [[0, 0], [1, 0], [0, 1], [1, 1], [-1, 0], [0, -1]],
+};
+/**
+ * A trail of mud with tufts of grass through the waypoints `pts`, in straight runs of about `run`
+ * tiles; `width` tiles wide and a tile wider here and there.
+ */
+function trail(pts: P[], width: 1 | 2, grass: number, salt: number, run = 3) {
+  const corners = [pts[0]!, ...pts.slice(1).flatMap((p, i) => stairs(pts[i]!, p, run, salt * 16 + i))];
+  for (const [x, y] of polyline(corners)) {
+    const w = noise(x, y, 3, salt) > 0.68 ? width + 1 : width;
+    for (const [dx, dy] of BRUSH[w]!) {
+      const tx = x + dx, ty = y + dy;
+      if (!inner(tx, ty)) continue;
+      if (at(tx, ty) !== 'r') set(tx, ty, noise(tx, ty, 2, salt + 1) < grass ? 'g' : 'm');
+      way[ty * W + tx] = 1;
+    }
+  }
+}
+function water(x: number, y: number) { if (inner(x, y) && !way[y * W + x]) tile[y]![x] = 'w'; }
+
+// ---- The ground ----
+
+// The old road from town: two lanes of asphalt between the firs, grass shoulders, and a gravel
+// turnout under the last street light.
+for (let y = 57; y <= 79; y++) for (const x of [31, 32]) { tile[y]![x] = 'r'; way[y * W + x] = 1; }
+for (let y = 64; y <= 77; y++) set(30, y, 'g');
+for (let y = 62; y <= 77; y++) set(33, y, 'g');
+ellipse(35.5, 70.5, 2.2, 2.6, 0.3, 11, (x, y) => { if (at(x, y) === 't') set(x, y, 'l'); });
+// Where the car was left, the road widens into a broken pull-off.
+ellipse(32, 60.5, 3.1, 2.3, 0.25, 12, (x, y) => { set(x, y, noise(x, y, 1.6, 13) < 0.5 ? 'r' : 'm'); way[y * W + x] = 1; });
+// North of the turnout the asphalt breaks up, and past the car it is gone.
+for (let y = 57; y <= 67; y++) for (const x of [31, 32]) {
+  if (hash(x, y, 14) < (67 - y) / 11) tile[y]![x] = noise(x, y, 2, 15) < 0.3 ? 'g' : 'm';
+}
+
+// A short trail west of the road to a glade, the first find close to the light, and on from it the
+// back way to the old campsite behind the pond (the south-west loop).
+trail([[29, 67], [26, 67], [24, 65]], 1, 0.5, 20);
+clearing(21.5, 64.5, 2.8, 2.3, 21);
+trail([[20, 63], [17, 62], [14, 59], [12, 57]], 1, 0.4, 22);
+
+// The dirt track: from the car, across the creek, to the crossroads, an open junction under a light.
+trail([[30, 57], [28, 53], [28, 49], [30, 46], [30, 43]], 2, 0.15, 30);
+ellipse(31, 41.5, 3.6, 2.9, 0.3, 31, (x, y) => { set(x, y, noise(x, y, 2, 32) < 0.55 ? 'm' : 'g'); way[y * W + x] = 1; });
+
+// Along the car's headlights (they come on at night), a trail east to a clearing by the creek.
+trail([[34, 60], [38, 60], [41, 59]], 1, 0.4, 40);
+clearing(45.5, 59.5, 4.6, 3.4, 41);
+ferns(48, 60.5, 2.4, 2.2, 42);
+
+// West: the pond, and past it an old campsite at the end of a thin trail.
+trail([[28, 43], [24, 43], [21, 41], [19, 41]], 1, 0.3, 50);
+clearing(14, 41, 7.5, 6.5, 51);
+ferns(8.5, 40, 2.2, 4.2, 52);
+trail([[9, 46], [8, 51], [10, 55]], 1, 0.4, 53);
+clearing(11.5, 57, 3, 2.4, 54);
+
+// East: the old cabin. From it a trail climbs north to the rocks (the east loop), and a thin one
+// wanders off east to the bog.
+trail([[32, 43], [37, 44], [41, 43], [44, 41]], 1, 0.3, 60);
+clearing(48, 40.5, 6, 5, 61);
+ferns(53, 42.5, 1.8, 2.6, 62);
+trail([[50, 36], [47, 31], [44, 28], [42, 26]], 1, 0.35, 63);
+trail([[52, 38], [56, 34], [58, 30], [57, 26]], 1, 0.4, 64);
+clearing(57, 26, 3.8, 3.4, 65);
+ferns(59.5, 24, 1.8, 2, 66);
+
+// North: the track snakes past a fern meadow to the rocks, then climbs to the lonely lamp.
+trail([[30, 39], [31, 35], [28, 31], [30, 27], [32, 24]], 2, 0.2, 70);
+clearing(26.5, 31, 2.2, 3, 71);
+ferns(26, 31, 2, 3, 72);
+clearing(37.5, 23.5, 5, 4.2, 73);
+trail([[33, 20], [34, 16], [31, 13], [29, 11]], 1, 0.3, 74);
+
+// The west trail: from the pond up through the fern hollow to the lonely lamp (the big west loop).
+trail([[12, 35], [11, 31], [13, 27], [16, 23], [19, 19], [22, 16], [26, 12]], 1, 0.35, 80);
+clearing(13, 26, 3.6, 3, 81);
+ferns(13, 26, 3.4, 2.8, 82);
+
+// Deep in: the lonely lamp's clearing, and the far trails out of it to the deepest spots.
+clearing(29, 10, 3.4, 2.8, 90);
+trail([[26, 9], [22, 7], [18, 8], [14, 6], [10, 5]], 1, 0.35, 91);
+clearing(6, 5, 4, 3.4, 92);
+trail([[32, 9], [36, 6], [40, 4], [44, 6], [48, 8], [51, 7]], 1, 0.35, 93);
+clearing(55, 6, 4, 3, 94);
+ferns(58.5, 7.5, 1.8, 1.6, 95);
+
+// Water: the pond; the creek that runs out of it, under the track (a ford) and away east; bog pools.
+ellipse(13.5, 41.5, 3.8, 2.6, 0.12, 100, water);
+for (const [x, y] of polyline([[16, 43], [22, 47], [26, 49], [29, 51], [33, 53], [38, 55], [43, 56], [49, 55], [55, 57], [62, 58]])) water(x, y);
+ellipse(55, 24.5, 1.5, 1, 0.3, 102, water);
+ellipse(59.5, 27.5, 1, 0.9, 0.3, 103, water);
+// Banks are mud: the tiles next to water, and a ragged band a little farther out.
+for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+  if (at(x, y) !== 'g' && at(x, y) !== 'f') continue;
+  let d = 9;
+  for (let yy = y - 2; yy <= y + 2; yy++) for (let xx = x - 2; xx <= x + 2; xx++) if (at(xx, yy) === 'w') d = Math.min(d, Math.max(Math.abs(xx - x), Math.abs(yy - y)));
+  if (d === 1 || (d === 2 && noise(x, y, 1.5, 101) < 0.45)) set(x, y, 'm');
+}
+
+// The rocks: a two-step outcrop of bare stone east of the track.
+ellipse(38.5, 23, 3, 2.4, 0.3, 110, (x, y) => { level[y]![x] = 1; set(x, y, 'l'); });
+ellipse(39, 22.5, 1.5, 1.2, 0.2, 111, (x, y) => { level[y]![x] = 2; });
+
+// ---- Things ----
+
+const objects: MapObject[] = [];
+const blocked = new Uint8Array(W * H);
+/** Adds an object. Things stand on cleared ground: a forest or water tile under one becomes grass. */
+function place(o: MapObject) {
+  for (const [x, y] of objectTiles(o)) {
+    if (!inner(x, y)) throw new Error(`${o.kind} at ${o.x},${o.y} is on the map edge`);
+    if (o.kind === 'shrooms') continue;
+    if (blocked[y * W + x]) throw new Error(`${o.kind} at ${o.x},${o.y} overlaps something on ${x},${y}`);
+    blocked[y * W + x] = 1;
+    if (at(x, y) === 't' || at(x, y) === 'w') set(x, y, 'g');
+  }
+  objects.push(o);
+}
+const walkable = (x: number, y: number) => inner(x, y) && !blocked[y * W + x] && level[y]![x] === 0 && at(x, y) !== 't' && at(x, y) !== 'w';
+
+/** Walking steps from the home exit to every tile (-1: no way there). */
+function stepsHome(): Int32Array {
+  const d = new Int32Array(W * H).fill(-1);
+  const queue: number[] = [];
+  for (let x = EXIT.x; x < EXIT.x + EXIT.w; x++) { d[EXIT.y * W + x] = 0; queue.push(EXIT.y * W + x); }
+  for (let h = 0; h < queue.length; h++) {
+    const i = queue[h]!, x = i % W, y = (i / W) | 0;
+    for (const [dx, dy] of SIDES) {
+      const nx = x + dx, ny = y + dy;
+      if (!walkable(nx, ny) || d[ny * W + nx]! >= 0) continue;
+      d[ny * W + nx] = d[i]! + 1;
+      queue.push(ny * W + nx);
+    }
+  }
+  return d;
+}
+const reached = (d: Int32Array) => d.reduce((n, v) => n + (v >= 0 ? 1 : 0), 0);
+/** Places a one-tile object unless it would cut somebody off: every other tile must stay reachable. */
+function tryPlace(o: MapObject): boolean {
+  const { x, y } = o;
+  if (!inner(x, y) || blocked[y * W + x]) return false;
+  const d = stepsHome();
+  if (d[y * W + x]! >= 0) {
+    const before = reached(d);
+    blocked[y * W + x] = 1;
+    const cut = reached(stepsHome()) !== before - 1;
+    blocked[y * W + x] = 0;
+    if (cut) return false;
+  }
+  place(o);
+  return true;
+}
+
+/** Places a hand-placed thing, or stops: it would cut somebody off, so the layout needs a look. */
+function must(o: MapObject) { if (!tryPlace(o)) throw new Error(`the ${o.kind} at ${o.x},${o.y} would block the way`); }
+
+// Street lights: the last one before the dark, the crossroads, and one deep in that nobody wired.
+const lamps: P[] = [[33, 70], [32, 41], [29, 9]];
+for (const [x, y] of lamps) must({ kind: 'lamp', x, y });
+
+// The power line follows the road to the crossroads, then turns east to the old cabin. The poles are
+// listed in order along the line (the renderer strings wires between consecutive poles); each one
+// goes on the free tile nearest its mark that stands beside a way, never on it.
+for (const [px, py] of [[33, 77], [33, 72], [33, 65], [34, 58], [31, 53], [31, 48], [34, 44], [38, 45], [42, 44], [45, 42]] as const) {
+  const spots: Array<[number, number, number]> = [];
+  for (let y = py - 2; y <= py + 2; y++) for (let x = px - 2; x <= px + 2; x++) {
+    if (!inner(x, y) || way[y * W + x] || blocked[y * W + x] || level[y]![x] || at(x, y) === 'w') continue;
+    if (SIDES.some(([dx, dy]) => way[(y + dy) * W + x + dx])) spots.push([Math.hypot(x - px, y - py), x, y]);
+  }
+  spots.sort((a, b) => a[0] - b[0] || b[1] - a[1] || a[2] - b[2]);
+  if (!spots.some(([, x, y]) => tryPlace({ kind: 'pole', x, y }))) throw new Error(`no room for a pole near ${px},${py}`);
+}
+
+place({ kind: 'car', x: 32, y: 60, w: 2 });
+const cabins = [{ x: 46, y: 37, roof: '#5a4a3f', lit: 0 }, { x: 54, y: 3, roof: '#4a5347', lit: 1 }] as const;
+for (const c of cabins) place({ kind: 'house', x: c.x, y: c.y, w: 3, h: 2, roof: c.roof, lit: c.lit });
+for (const [x, y] of [[50, 38], [50, 39], [44, 37], [13, 56]] as const) must({ kind: 'barrel', x, y });
+// What is left of a fence in front of the old cabin.
+for (let x = 44; x <= 52; x++) if (x !== 47 && x !== 48 && x !== 50) must({ kind: 'fence', x, y: 43, dir: 'h' });
+
+const signs: Array<{ x: number; y: number; text: string[] }> = [
+  { x: 30, y: 74, text: ['The Near Woods', 'Stay near the lights. The deeper you go, the faster you tire.'] },
+  { x: 28, y: 40, text: ['West: the pond. East: the old cabin.', 'North of here the lights stop. Mostly.'] },
+  { x: 27, y: 9, text: ['No wires run to this light.', 'It was on when we found it. Rest before you go on.'] },
+];
+for (const s of signs) place({ kind: 'sign', ...s });
+
+// Rocks on and around the outcrop.
+for (let y = 18; y <= 28; y++) for (let x = 33; x <= 45; x++) {
+  const raised = level[y]![x]! > 0;
+  const foot = !raised && walkable(x, y) && SIDES.some(([dx, dy]) => level[y + dy]![x + dx]! > 0);
+  if ((raised && hash(x, y, 120) < 0.3) || (foot && hash(x, y, 121) < 0.35)) tryPlace({ kind: 'rock', x, y, s: round(0.75 + hash(x, y, 122) * 0.5), v: round(hash(x, y, 123)) });
+}
+// The ring of stones in the far west glade, open on two sides, glowcaps in the middle.
+const RING = { x: 6.5, y: 5.5 };
+for (let k = 0; k < 10; k++) {
+  if (k === 2 || k === 7) continue;
+  const a = (k / 10) * Math.PI * 2, x = Math.floor(RING.x + Math.cos(a) * 2.6), y = Math.floor(RING.y + Math.sin(a) * 2.2);
+  if (walkable(x, y)) tryPlace({ kind: 'rock', x, y, s: round(1 + hash(x, y, 124) * 0.35), v: round(hash(x, y, 125)) });
+}
+
+// Glowcaps grow in damp spots away from the lights: pond, creek and bog banks, the camp, the ring,
+// shady corners. A patch takes some of the open ground around its center, two tiles or more where
+// there is room.
+const SHROOMS: Array<[number, number, number]> = [
+  [21, 63, 1.2], [12, 37, 1.6], [16, 45, 1.2], [44, 57, 1.6], [10, 57, 1.2], [44, 39, 1.2], [57, 23.5, 1.4],
+  [6, 5, 1], [11, 24, 1.2], [42, 20, 1.2], [58.5, 4.5, 1.2],
+];
+const shroomAt = new Set<number>();
+for (const [cx, cy, r] of SHROOMS) {
+  const spots: Array<[number, number, number]> = [];
+  for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++) for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
+    if (Math.hypot(x - cx, y - cy) <= r && walkable(x, y) && !way[y * W + x]) spots.push([hash(x, y, 130), x, y]);
+  }
+  if (!spots.length) throw new Error(`no open ground for glowcaps around ${cx},${cy}`);
+  spots.sort((a, b) => a[0] - b[0]);
+  const n = Math.max(2, spots.filter(s => s[0] < 0.6).length);
+  for (const [, x, y] of spots.slice(0, n)) { place({ kind: 'shrooms', x, y }); shroomAt.add(y * W + x); }
+}
+
+// Lone firs in the clearings and loose rocks along their edges, but never in a lamp's light, in front
+// of a sign or a door, or right next to another thing: the spots people gather at stay open.
+const keepOpen = new Set<number>();
+for (const [lx, ly] of lamps) for (let y = ly - 3; y <= ly + 3; y++) for (let x = lx - 3; x <= lx + 3; x++) if (Math.hypot(x - lx, y - ly) <= LAMP_RADIUS + 0.5) keepOpen.add(y * W + x);
+for (const s of signs) keepOpen.add((s.y + 1) * W + s.x);
+for (const c of cabins) keepOpen.add((c.y + 2) * W + c.x + 1);
+function open(x: number, y: number): boolean {
+  if (!walkable(x, y) || way[y * W + x] || keepOpen.has(y * W + x) || shroomAt.has(y * W + x)) return false;
+  for (let yy = y - 1; yy <= y + 1; yy++) for (let xx = x - 1; xx <= x + 1; xx++) if (blocked[yy * W + xx]) return false;
+  return true;
+}
+for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
+  if (!open(x, y)) continue;
+  const edge = SIDES.some(([dx, dy]) => at(x + dx, y + dy) === 't');
+  if (!edge && (at(x, y) === 'g' || at(x, y) === 'f') && hash(x, y, 140) < 0.07) tryPlace({ kind: 'tree', x, y, s: round(0.95 + hash(x, y, 141) * 0.5), v: round(hash(x, y, 142)) });
+  else if (edge && hash(x, y, 143) < 0.035) tryPlace({ kind: 'rock', x, y, s: round(0.55 + hash(x, y, 144) * 0.45), v: round(hash(x, y, 145)) });
+}
+
+// The places worth walking to. Each must be reachable, or the clean-up below would quietly turn it
+// back into forest.
+const PLACES: Array<[string, P]> = [
+  ['last light', lamps[0]!], ['first glade', [21, 64]], ['car', [32, 60]], ['headlight clearing', [45, 59]],
+  ['crossroads light', lamps[1]!], ['pond', [20, 41]], ['campsite', [11, 57]], ['old cabin door', [cabins[0].x + 1, cabins[0].y + 2]],
+  ['fern meadow', [26, 31]], ['rocks', [35, 23]], ['bog', [57, 26]], ['fern hollow', [13, 26]], ['lonely light', lamps[2]!],
+  ['ring of stones', [Math.floor(RING.x), Math.floor(RING.y)]], ['lit cabin door', [cabins[1].x + 1, cabins[1].y + 2]],
+];
+const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES].map(([dx, dy]) => d[(y + dy) * W + x + dx]!).filter(v => v >= 0));
+{
+  const d = stepsHome();
+  const lost = PLACES.filter(([, p]) => stepsTo(d, p) === Infinity).map(([name]) => name);
+  if (lost.length) throw new Error(`cut off from the way home: ${lost.join(', ')}`);
+}
+
+// Walkable ground nobody can reach from the road (a stray tile the noise opened) goes back to forest.
+{
+  const d = stepsHome();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (walkable(x, y) && d[y * W + x]! < 0) tile[y]![x] = 't';
+  for (let i = objects.length - 1; i >= 0; i--) { const o = objects[i]!; if (o.kind === 'shrooms' && at(o.x, o.y) === 't') objects.splice(i, 1); }
+}
+
+// ---- Output ----
+
+const map: MapData = {
+  id: 'near-woods', name: 'The Near Woods', version: 1, kind: 'wilds', depth: 1, width: W, height: H,
+  tiles: tile.map(r => r.join('')),
+  levels: level.map(r => r.join('')),
+  spawn: { x: 31, y: 76, dir: 'up' },
+  exits: [EXIT],
+  objects,
+};
+
+// One row or object per line, so map changes show up as small, readable diffs.
+const json = [
+  '{',
+  `  "id": ${JSON.stringify(map.id)},`, `  "name": ${JSON.stringify(map.name)},`, `  "version": ${map.version},`,
+  `  "kind": ${JSON.stringify(map.kind)},`, `  "depth": ${map.depth},`,
+  `  "width": ${map.width},`, `  "height": ${map.height},`,
+  '  "tiles": [', map.tiles.map(r => `    ${JSON.stringify(r)}`).join(',\n'), '  ],',
+  '  "levels": [', map.levels.map(r => `    ${JSON.stringify(r)}`).join(',\n'), '  ],',
+  `  "spawn": ${JSON.stringify(map.spawn)},`,
+  '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
+  '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ]',
+  '}',
+  '',
+].join('\n');
+const out = resolve(import.meta.dirname, '../content/maps/near-woods.json');
+writeFileSync(out, json);
+
+// A glance at the result, two map rows per line because a terminal character is about twice as tall
+// as it is wide. Of the two tiles in a character, the one listed first in ORDER wins.
+const ORDER = '*!HC@Svib-T^o~=",. ';
+const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
+const GLYPH: Record<MapObject['kind'], string> = { lamp: '*', sign: '!', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',' };
+const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '.' };
+const objGlyph = new Map<number, string>();
+for (const o of objects) for (const [x, y] of objectTiles(o)) objGlyph.set(y * W + x, pick(GLYPH[o.kind], objGlyph.get(y * W + x) ?? ' '));
+function glyph(x: number, y: number): string {
+  let g = level[y]![x]! > 0 ? '^' : TILE_GLYPH[tile[y]![x]!]!;
+  if (y === EXIT.y && x >= EXIT.x && x < EXIT.x + EXIT.w) g = 'v';
+  return pick(objGlyph.get(y * W + x) ?? ' ', g);
+}
+const frame = '+' + '-'.repeat(W) + '+';
+const rows = [frame];
+for (let y = 0; y < H; y += 2) rows.push('|' + Array.from({ length: W }, (_, x) => pick(glyph(x, y), glyph(x, y + 1))).join('') + '|');
+console.log([...rows, frame].join('\n'));
+console.log(' . ground  " ferns  = old road  ~ water  ^ rocks  * street light  ! sign  H cabin  C car  i pole  o rock  T fir  , shrooms  v way home');
+
+// How deep it goes, measured like the game does (TileMap.homeSteps drives the energy drain).
+const tm = new TileMap(map);
+const steps = new Int32Array(W * H).map((_, i) => tm.homeSteps(i % W, (i / W) | 0));
+const deepest = Math.max(...steps);
+const deepTiles: string[] = [];
+steps.forEach((v, i) => { if (v === deepest) deepTiles.push(`${i % W},${(i / W) | 0}`); });
+const count = (k: MapObject['kind']) => objects.filter(o => o.kind === k).length;
+console.log(`wrote ${out}: ${W}x${H} tiles, ${objects.length} objects (${count('rock')} rocks, ${count('tree')} firs, ${count('pole')} poles, ${count('shrooms')} shrooms)`);
+console.log(`steps from the way home: ${PLACES.map(([name, p]) => `${name} ${stepsTo(steps, p)}`).join(', ')}`);
+console.log(`deepest: ${deepest} steps, at ${deepTiles.join(' ')}`);
+const problems = validateMap(map);
+for (const p of problems) console.log(`${p.level}: ${p.message}`);
+if (problems.some(p => p.level === 'error')) process.exit(1);

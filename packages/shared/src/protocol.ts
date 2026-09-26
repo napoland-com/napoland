@@ -3,9 +3,10 @@
  * Everything the client sends is validated with these schemas; the server never trusts it.
  */
 import { z } from 'zod';
+import type { EnergyView } from './energy';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -38,6 +39,12 @@ export interface PlayerView {
   color: string;
 }
 
+/** A map by id and version; a client whose copy has another version reloads. */
+export interface MapRef {
+  id: string;
+  version: number;
+}
+
 export type ServerMsg =
   | {
       t: 'welcome';
@@ -46,13 +53,25 @@ export type ServerMsg =
       name: string;
       /** Keep this to log in again later (it is the only credential for now). */
       token: string;
+      /** The map you are on. */
+      map: MapRef;
+      /** Everyone on your map, you included. */
       players: PlayerView[];
       stepMs: number;
-      map: { id: string; version: number };
       weather: Weather;
+      energy: EnergyView;
       serverTime: number;
     }
+  /**
+   * You are on another map now, at x,y: you walked through an exit, or you collapsed and woke up at
+   * home. Forget the old map's players and pending steps; `players` is everyone on the new map, you included.
+   */
+  | { t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; reason: 'exit' | 'collapse' }
+  /** Your energy, sent when its rate changes and every few seconds (ENERGY_SYNC_MS). */
+  | { t: 'energy'; energy: EnergyView }
+  /** Someone arrived on your map (logged in, or walked in from another map). */
   | { t: 'join'; player: PlayerView }
+  /** Someone left your map (logged out, or walked to another map). */
   | { t: 'leave'; id: string }
   /** A player started walking to tile x,y. seq is only sent to the player who asked. */
   | { t: 'step'; id: string; x: number; y: number; dir: Dir; seq?: number }

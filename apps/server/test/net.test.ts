@@ -1,159 +1,41 @@
 /**
- * The real HTTP + WebSocket stack on a free port, with in-memory storage and the real map,
- * talked to by real WebSocket clients.
+ * The real HTTP + WebSocket stack on a free port, with in-memory storage and the fixture maps,
+ * talked to by real WebSocket clients. Maps, exits and energy: net-maps.test.ts.
  */
-import { fileURLToPath } from 'node:url';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import WebSocket from 'ws';
-import { PROTOCOL_VERSION, type ClientMsg, type ServerMsg, type TileMap } from '@napoland/shared';
-import { loadMap } from '../src/content';
+import { describe, expect, it } from 'vitest';
+import { ENERGY_MAX, PROTOCOL_VERSION, REFILL_PER_SECOND, TileMap } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
-import { startServer, type RunningServer, type ServerOptions } from '../src/server';
+import { startServer } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { colorFor } from '../src/world';
+import { townData } from './fixtures';
+import { Client, eventually, newName, serverDefaults, setup, waitFor } from './helpers';
 
-const MAP_FILE = fileURLToPath(new URL('../../../content/maps/stonebrook.json', import.meta.url));
-
-type Msg<T extends ServerMsg['t']> = Extract<ServerMsg, { t: T }>;
-
-/** A WebSocket client that keeps every message so tests can wait for the one they want. */
-class Client {
-  readonly inbox: ServerMsg[] = [];
-  readonly closed: Promise<{ code: number; reason: string }>;
-  private readonly waiters = new Set<() => void>();
-
-  private constructor(readonly ws: WebSocket) {
-    ws.on('message', data => {
-      this.inbox.push(JSON.parse(String(data)) as ServerMsg);
-      for (const w of [...this.waiters]) w();
-    });
-    this.closed = new Promise(resolve => ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() })));
-  }
-
-  /** Rejects with "Unexpected server response: <status>" if the server refuses the upgrade. */
-  static open(port: number, headers: Record<string, string> = {}): Promise<Client> {
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers });
-      const client = new Client(ws);
-      ws.once('open', () => {
-        ws.off('error', reject);
-        ws.on('error', () => {});
-        resolve(client);
-      });
-      ws.once('error', reject);
-    });
-  }
-
-  send(msg: ClientMsg | string): void {
-    this.ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
-  }
-
-  /** Takes the first message of type t (received or still to come) that matches. */
-  next<T extends ServerMsg['t']>(t: T, match: (m: Msg<T>) => boolean = () => true, timeoutMs = 3000): Promise<Msg<T>> {
-    return new Promise((resolve, reject) => {
-      const take = () => {
-        const i = this.inbox.findIndex(m => m.t === t && match(m as Msg<T>));
-        if (i < 0) return false;
-        resolve(this.inbox.splice(i, 1)[0] as Msg<T>);
-        return true;
-      };
-      if (take()) return;
-      const waiter = () => {
-        if (!take()) return;
-        clearTimeout(timer);
-        this.waiters.delete(waiter);
-      };
-      const timer = setTimeout(() => {
-        this.waiters.delete(waiter);
-        reject(new Error(`no '${t}' message within ${timeoutMs} ms; got ${JSON.stringify(this.inbox)}`));
-      }, timeoutMs);
-      this.waiters.add(waiter);
-    });
-  }
-}
-
-async function waitFor(cond: () => boolean, what: string, timeoutMs = 3000): Promise<void> {
-  const until = Date.now() + timeoutMs;
-  while (!cond()) {
-    if (Date.now() > until) throw new Error(`timed out waiting for ${what}`);
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
-}
-
-/** Retries until `attempt` succeeds: the server may notice a closed socket a moment after the client does. */
-async function eventually<T>(attempt: () => Promise<T>, what: string, timeoutMs = 3000): Promise<T> {
-  const until = Date.now() + timeoutMs;
-  for (;;) {
-    try {
-      return await attempt();
-    } catch (err) {
-      if (Date.now() > until) throw new Error(`timed out waiting for ${what}: ${String(err)}`);
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-  }
-}
-
-let names = 0;
-const newName = () => `Player ${++names}`;
-
-/** Starts a server for one describe block and cleans up its clients after every test. */
-function setup(options: Partial<ServerOptions> = {}) {
-  const ctx = { server: undefined as unknown as RunningServer, storage: new MemoryStorage(), map: undefined as unknown as TileMap };
-  const clients: Client[] = [];
-
-  beforeAll(async () => {
-    setLogLevel('silent');
-    ctx.map = loadMap(MAP_FILE).map;
-    ctx.server = await startServer({
-      host: '127.0.0.1', port: 0, storage: ctx.storage, map: ctx.map,
-      weather: 'rain', maxPlayers: 50, tickMs: 20, saveEveryMs: 60_000, helloTimeoutMs: 500,
-      ...options,
-    });
-  });
-  afterEach(async () => {
-    for (const c of clients.splice(0)) c.ws.terminate();
-    await waitFor(() => ctx.server.world.size === 0, 'everyone to leave');
-  });
-  afterAll(async () => {
-    await ctx.server?.stop();
-  });
-
-  const open = async (headers?: Record<string, string>) => {
-    const c = await Client.open(ctx.server.port, headers);
-    clients.push(c);
-    return c;
-  };
-  /** A new player, welcomed. */
-  const join = async (name = newName()) => {
-    const c = await open();
-    c.send({ t: 'hello', v: PROTOCOL_VERSION, name });
-    const welcome = await c.next('welcome');
-    return { c, welcome, id: welcome.you };
-  };
-  /** Opens a connection, sends `first` and expects an error with `code`, then the close. */
-  const refused = async (first: ClientMsg | string, code: string, closeCode: number) => {
-    const c = await open();
-    c.send(first);
-    expect(await c.next('error')).toMatchObject({ t: 'error', code, message: expect.any(String) });
-    expect((await c.closed).code).toBe(closeCode);
-    return c;
-  };
-  return { ctx, open, join, refused };
-}
+/** The home town of the tests: spawn at 1,2 facing down, a rock above it, grass below. */
+const town = new TileMap(townData());
 
 describe('connecting', () => {
   const { ctx, open, join, refused } = setup({ version: '1.2.3-test' });
 
-  it('welcomes a new player with a token, at the spawn', async () => {
-    const { welcome, id } = await join('Aldo');
-    expect(welcome).toMatchObject({ t: 'welcome', v: PROTOCOL_VERSION, name: 'Aldo', stepMs: 200, map: { id: 'stonebrook', version: 1 }, weather: 'rain' });
+  it('welcomes a new player with a token, at the home spawn with full energy', async () => {
+    const c = await open();
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, name: 'Aldo' });
+    await waitFor(() => c.inbox.length >= 2, 'the welcome and the energy');
+    expect(c.inbox.map(m => m.t)).toEqual(['welcome', 'energy']);
+    const welcome = await c.next('welcome');
+    const id = welcome.you;
+    expect(await c.next('energy')).toEqual({ t: 'energy', energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: REFILL_PER_SECOND } });
+    expect(welcome).toMatchObject({
+      t: 'welcome', v: PROTOCOL_VERSION, name: 'Aldo', stepMs: 200, map: { id: 'town', version: 1 }, weather: 'rain',
+      energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: REFILL_PER_SECOND },
+    });
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(welcome.token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 random bytes
-    expect(welcome.players).toEqual([{ id, name: 'Aldo', x: 8, y: 21, dir: 'down', color: colorFor(id) }]);
+    expect(welcome.players).toEqual([{ id, name: 'Aldo', x: 1, y: 2, dir: 'down', color: colorFor(id) }]);
     expect(Math.abs(welcome.serverTime - Date.now())).toBeLessThan(5000);
     // Only the token's hash is kept.
-    expect(ctx.storage.get(id)).toMatchObject({ name: 'Aldo', tokenHash: hashToken(welcome.token), x: 8, y: 21 });
+    expect(ctx.storage.get(id)).toMatchObject({ name: 'Aldo', tokenHash: hashToken(welcome.token), map: 'town', x: 1, y: 2, energy: ENERGY_MAX });
     expect(JSON.stringify(ctx.storage.get(id))).not.toContain(welcome.token);
   });
 
@@ -172,13 +54,13 @@ describe('connecting', () => {
     await a.c.next('step');
     a.c.ws.close();
     await waitFor(() => !ctx.server.world.has(a.id), 'the player to leave');
-    expect(ctx.storage.get(a.id)).toMatchObject({ x: 8, y: 22, dir: 'down' });
+    expect(ctx.storage.get(a.id)).toMatchObject({ map: 'town', x: 1, y: 3, dir: 'down' });
 
     const c = await open();
     c.send({ t: 'hello', v: PROTOCOL_VERSION, token: a.welcome.token });
     const again = await c.next('welcome');
-    expect(again).toMatchObject({ you: a.id, name: 'Rae', token: a.welcome.token });
-    expect(again.players.find(p => p.id === a.id)).toMatchObject({ x: 8, y: 22, dir: 'down' });
+    expect(again).toMatchObject({ you: a.id, name: 'Rae', token: a.welcome.token, map: { id: 'town' } });
+    expect(again.players.find(p => p.id === a.id)).toMatchObject({ x: 1, y: 3, dir: 'down' });
   });
 
   it('replaces the old connection when a player signs in again', async () => {
@@ -212,6 +94,7 @@ describe('connecting', () => {
 
   it('refuses other protocol versions, even when their hello looks different', async () => {
     await refused({ t: 'hello', v: PROTOCOL_VERSION + 1, name: 'Future' }, 'bad_version', 1008);
+    await refused({ t: 'hello', v: PROTOCOL_VERSION - 1, name: 'Past' }, 'bad_version', 1008);
     await refused(JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION + 1, token: { kind: 'jwt' } }), 'bad_version', 1008);
   });
 
@@ -252,33 +135,33 @@ describe('playing', () => {
   const { ctx, join } = setup();
 
   it('sends a step into an open tile to both players, the seq only to the mover', async () => {
-    expect(ctx.map.walkable(8, 22)).toBe(true);
+    expect(town.walkable(1, 3)).toBe(true);
     const a = await join();
     const b = await join();
     a.c.send({ t: 'step', dir: 'down', seq: 1 });
-    expect(await a.c.next('step')).toStrictEqual({ t: 'step', id: a.id, x: 8, y: 22, dir: 'down', seq: 1 });
-    expect(await b.c.next('step')).toStrictEqual({ t: 'step', id: a.id, x: 8, y: 22, dir: 'down' });
-    expect(ctx.server.world.get(a.id)).toMatchObject({ x: 8, y: 22 });
+    expect(await a.c.next('step')).toStrictEqual({ t: 'step', id: a.id, x: 1, y: 3, dir: 'down', seq: 1 });
+    expect(await b.c.next('step')).toStrictEqual({ t: 'step', id: a.id, x: 1, y: 3, dir: 'down' });
+    expect(ctx.server.world.get(a.id)).toMatchObject({ x: 1, y: 3 });
   });
 
   it('rejects a step into a wall with the real position, to the mover only', async () => {
-    expect(ctx.map.walkable(8, 20)).toBe(false);
+    expect(town.walkable(1, 1)).toBe(false);
     const a = await join();
     const b = await join();
     a.c.send({ t: 'step', dir: 'up', seq: 5 });
-    expect(await a.c.next('reject')).toEqual({ t: 'reject', seq: 5, x: 8, y: 21, dir: 'down' });
+    expect(await a.c.next('reject')).toEqual({ t: 'reject', seq: 5, x: 1, y: 2, dir: 'down' });
     b.c.send({ t: 'ping', at: 1 });
     await b.c.next('pong');
     expect(b.c.inbox.filter(m => m.t === 'reject' || m.t === 'step')).toEqual([]);
   });
 
   it('runs steps that arrive early on the server tick, one stepMs apart', async () => {
-    for (const y of [22, 23, 24]) expect(ctx.map.walkable(8, y)).toBe(true);
+    for (const y of [3, 4, 5]) expect(town.walkable(1, y)).toBe(true);
     const a = await join();
     const started = Date.now();
     for (const seq of [1, 2, 3]) a.c.send({ t: 'step', dir: 'down', seq });
     const steps = [await a.c.next('step'), await a.c.next('step'), await a.c.next('step')];
-    expect(steps.map(s => [s.seq, s.y])).toEqual([[1, 22], [2, 23], [3, 24]]);
+    expect(steps.map(s => [s.seq, s.y])).toEqual([[1, 3], [2, 4], [3, 5]]);
     expect(Date.now() - started).toBeGreaterThanOrEqual(2 * 200 - 2 * 40);
   });
 
@@ -415,10 +298,7 @@ describe('a limit of 2 new players per address', () => {
         return super.create(rec);
       }
     }
-    const server = await startServer({
-      host: '127.0.0.1', port: 0, storage: new SlowCreate(), map: loadMap(MAP_FILE).map,
-      weather: 'rain', maxPlayers: 50, tickMs: 20, saveEveryMs: 60_000, newPlayersPerIpPerHour: 2,
-    });
+    const server = await startServer({ ...serverDefaults(), storage: new SlowCreate(), helloTimeoutMs: 5000, newPlayersPerIpPerHour: 2 });
     try {
       const cs = await Promise.all(Array.from({ length: 5 }, () => Client.open(server.port)));
       for (const c of cs) c.send({ t: 'hello', v: PROTOCOL_VERSION, name: newName() });
@@ -445,23 +325,20 @@ describe('saving', () => {
   it('never lets an older save of a player overwrite a newer one', async () => {
     setLogLevel('silent');
     const storage = new SlowFirstSave();
-    const server = await startServer({
-      host: '127.0.0.1', port: 0, storage, map: loadMap(MAP_FILE).map,
-      weather: 'rain', maxPlayers: 10, tickMs: 20, saveEveryMs: 40,
-    });
+    const server = await startServer({ ...serverDefaults(), storage, maxPlayers: 10, saveEveryMs: 40 });
     try {
       const c = await Client.open(server.port);
       c.send({ t: 'hello', v: PROTOCOL_VERSION, name: newName() });
       const { you } = await c.next('welcome');
       c.send({ t: 'step', dir: 'down', seq: 1 });
       await c.next('step');
-      await new Promise(resolve => setTimeout(resolve, 200)); // periodic saves of 8,22 start
+      await new Promise(resolve => setTimeout(resolve, 200)); // periodic saves of 1,3 start
       c.send({ t: 'step', dir: 'down', seq: 2 });
-      expect(await c.next('step')).toMatchObject({ x: 8, y: 23 });
+      expect(await c.next('step')).toMatchObject({ x: 1, y: 4 });
       c.ws.close();
-      await waitFor(() => storage.get(you)?.y === 23, 'the save made when leaving', 5000);
+      await waitFor(() => storage.get(you)?.y === 4, 'the save made when leaving', 5000);
       await new Promise(resolve => setTimeout(resolve, 600)); // an older save still running would land now
-      expect(storage.get(you)).toMatchObject({ x: 8, y: 23 });
+      expect(storage.get(you)).toMatchObject({ x: 1, y: 4 });
     } finally {
       await server.stop();
     }
@@ -472,10 +349,7 @@ describe('stopping', () => {
   it('disconnects everyone with 1012 and saves them', async () => {
     setLogLevel('silent');
     const storage = new MemoryStorage();
-    const server = await startServer({
-      host: '127.0.0.1', port: 0, storage, map: loadMap(MAP_FILE).map,
-      weather: 'night', maxPlayers: 10, tickMs: 20, saveEveryMs: 60_000,
-    });
+    const server = await startServer({ ...serverDefaults(), storage, weather: 'night', maxPlayers: 10 });
     const c = await Client.open(server.port);
     c.send({ t: 'hello', v: PROTOCOL_VERSION, name: newName() });
     const { you } = await c.next('welcome');
@@ -483,7 +357,7 @@ describe('stopping', () => {
     await c.next('step');
     await server.stop();
     expect((await c.closed).code).toBe(1012);
-    expect(storage.get(you)).toMatchObject({ x: 8, y: 22 });
+    expect(storage.get(you)).toMatchObject({ map: 'town', x: 1, y: 3 });
     await expect(Client.open(server.port)).rejects.toThrow();
   });
 });

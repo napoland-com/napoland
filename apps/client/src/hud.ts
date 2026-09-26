@@ -1,18 +1,27 @@
 /**
- * The interface over the world: status, the menu, the joystick and A/B, name tags, the text box
- * and the bag. It only draws state and reports input; the rules live in game.ts.
+ * The interface over the world: status and energy, the menu, the joystick and A/B, name tags,
+ * the text box, the bag, and the fade and name banner when you arrive somewhere.
+ * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
-import type { Dir } from '@napoland/shared';
+import type { Dir, EnergyView } from '@napoland/shared';
 
 const svg = (inner: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 const ICON = {
   menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
   x: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
+  bolt: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.5 2 4 13.5h6.5L9 22l10-12h-6.6z"/></svg>`,
 };
 
 /** How far the stick must be pushed (fraction of its radius) before it counts as a direction. */
 const DEAD_ZONE = 0.35;
+/** Energy below this share turns the bar red; below CRITICAL it pulses. */
+const LOW = 0.25;
+const CRITICAL = 0.1;
+/** Below this share of energy the screen edges darken, more as it runs out. */
+const VIGNETTE_FROM = 0.2;
+/** How long the name of a place stays up after you arrive. */
+const BANNER_MS = 2500;
 
 export interface HudHandlers {
   pad(dir: Dir | null): void;
@@ -31,20 +40,29 @@ export class Hud {
   private el: Record<string, HTMLElement>;
   private tagEls = new Map<string, HTMLElement>();
   private floatEls = new Map<number, HTMLElement>();
+  /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
+  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1 };
+  private bannerTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(parent: HTMLElement, private h: HudHandlers) {
     this.root = document.createElement('div');
     this.root.className = 'hud';
+    // Order matters: later elements are drawn on top. Name tags, the vignette and the fade belong to
+    // the world; the panels and controls stay above them, so they never go dark or get covered.
     this.root.innerHTML = `
+      <div class="labels" data-el="labels"></div>
+      <div class="floats" data-el="floats"></div>
+      <div class="vignette" data-el="vignette"></div>
+      <div class="fade" data-el="fade"></div>
+      <div class="banner panel" data-el="banner" role="status" aria-live="polite"><b data-el="bannerTitle"></b><span data-el="bannerSub"></span></div>
       <div class="status panel"><div class="name"><span data-el="name">...</span><span data-el="online"></span></div>
+        <div class="energy" data-el="energy" hidden>${ICON.bolt}<div class="bar" data-el="energyBar" role="meter" aria-label="Energy" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="energyFill"></div></div></div>
         <div class="sub"><span class="conn" data-el="conn" data-state="connecting"><i></i><span data-el="connText">Connecting</span></span><span data-el="ping"></span></div></div>
       <button type="button" class="menu-btn" data-el="menuBtn" aria-label="Menu" aria-expanded="false">${ICON.menu}</button>
       <div class="menu-panel panel" data-el="menu" hidden>
         <button type="button" data-el="menuBag">Bag</button>
         <button type="button" data-el="menuLogout">Log out</button>
       </div>
-      <div class="labels" data-el="labels"></div>
-      <div class="floats" data-el="floats"></div>
       <div class="stick" data-el="stick" role="group" aria-label="Movement stick"><div class="knob" data-el="knob"></div></div>
       <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back">B</button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button></div>
       <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div data-el="text"></div><div class="more" data-el="more" aria-hidden="true">&#9660;</div></div>
@@ -111,7 +129,59 @@ export class Hud {
   }
 
   setName(name: string) { this.el.name!.textContent = name; }
-  setOnline(n: number) { this.el.online!.textContent = n > 1 ? `${n} online` : ''; }
+  /** Players on your map, you included (the server only tells us about the map you are on). */
+  setOnline(n: number) { this.el.online!.textContent = n > 1 ? `${n} here` : ''; }
+
+  /**
+   * The energy bar under your name, and the dark edges of the screen when it runs low. Called
+   * every frame, so it only writes to the page when what is shown changes.
+   */
+  setEnergy(e: EnergyView | null) {
+    const s = this.shown, bar = this.el.energy!, vignette = this.el.vignette!;
+    if (bar.hidden !== !e) bar.hidden = !e;
+    const f = e && e.max > 0 ? Math.min(1, Math.max(0, e.value / e.max)) : 1;
+    const fill = Math.round(f * 1000) / 1000;
+    if (fill !== s.fill) {
+      s.fill = fill;
+      // Sliding a full-width fill (not resizing it) keeps the work off the layout.
+      this.el.energyFill!.style.transform = `translateX(${((fill - 1) * 100).toFixed(1)}%)`;
+    }
+    const level = f < CRITICAL ? 'critical' : f < LOW ? 'low' : 'ok';
+    if (level !== s.level) bar.dataset.level = s.level = level;
+    const refill = !!e && e.rate > 0 && f < 1;
+    if (refill !== s.refill) bar.toggleAttribute('data-refill', (s.refill = refill));
+    const pct = Math.round(f * 100);
+    if (pct !== s.pct) this.el.energyBar!.setAttribute('aria-valuenow', String((s.pct = pct)));
+    const v = e ? Math.round(Math.min(1, Math.max(0, (VIGNETTE_FROM - f) / VIGNETTE_FROM)) * 200) / 200 : 0;
+    if (v !== s.vignette) {
+      s.vignette = v;
+      vignette.style.visibility = v > 0 ? 'visible' : 'hidden';
+      vignette.style.opacity = String(v);
+      // Scaled up, the dark edge sits off screen; as energy runs out it closes in.
+      vignette.style.transform = `scale(${(1.35 - 0.35 * v).toFixed(3)})`;
+    }
+  }
+
+  /** How dark the world is (0 to 1) while you move between maps. The HUD stays above it. */
+  setFade(dark: number) {
+    const d = Math.round(dark * 100) / 100;
+    if (d === this.shown.dark) return;
+    this.shown.dark = d;
+    const fade = this.el.fade!;
+    fade.style.visibility = d > 0 ? 'visible' : 'hidden';
+    fade.style.opacity = String(d);
+  }
+
+  /** The name of where you arrived (or what happened), for a couple of seconds. */
+  showBanner(title: string, sub = '') {
+    const banner = this.el.banner!;
+    this.el.bannerTitle!.textContent = title;
+    this.el.bannerSub!.textContent = sub;
+    this.el.bannerSub!.hidden = !sub;
+    banner.toggleAttribute('data-show', true);
+    clearTimeout(this.bannerTimer);
+    this.bannerTimer = setTimeout(() => banner.toggleAttribute('data-show', false), BANNER_MS);
+  }
   setConnection(state: 'connecting' | 'online' | 'offline', pingMs?: number) {
     this.el.conn!.dataset.state = state;
     this.el.connText!.textContent = state === 'online' ? 'Online' : state === 'connecting' ? 'Connecting' : 'Reconnecting';

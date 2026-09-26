@@ -1,7 +1,9 @@
 {
   "id": "stonebrook",
   "name": "Stonebrook",
-  "version": 1,
+  "version": 2,
+  "kind": "town",
+  "depth": 0,
   "width": 44,
   "height": 44,
   "tiles": [
@@ -97,6 +99,9 @@
     "00000000000000000000000000000000000000000000"
   ],
   "spawn": {"x":8,"y":21,"dir":"down"},
+  "exits": [
+    {"x":29,"y":0,"w":2,"h":1,"to":"near-woods","tx":31,"ty":78,"dir":"up"}
+  ],
   "objects": [
     {"kind":"house","x":7,"y":19,"w":3,"h":2,"roof":"#6b7075","lit":1},
     {"kind":"house","x":14,"y":19,"w":3,"h":2,"roof":"#7a4b33","lit":0},
@@ -108,7 +113,7 @@
     {"kind":"npc","id":"mira","name":"Mira","x":10,"y":24,"dir":"down","lines":["Heading out? The woods pay better the farther you go.","Watch your energy. If it runs out, you wake up at home and your backpack stays where you fell.","Street lights are safe spots. The wolves hate the light."]},
     {"kind":"stone","x":15,"y":8},
     {"kind":"sign","x":13,"y":37,"text":["Stonebrook. Pop. 23","Most people left after the lights started showing up in the woods."]},
-    {"kind":"sign","x":28,"y":16,"text":["North: Wolf Meadow","If the wolves see you, keep moving. They hate the street lights."]},
+    {"kind":"sign","x":28,"y":16,"text":["North: the Near Woods","Out there your energy drains, faster the deeper you go. Town and the street lights fill it up again."]},
     {"kind":"sign","x":17,"y":10,"text":["The Old Stone","It hums at night, and shards break off it. Do not touch."]},
     {"kind":"lamp","x":10,"y":22},
     {"kind":"lamp","x":16,"y":28},
@@ -758,6 +763,27 @@
     {"kind":"rock","x":19,"y":10,"s":0.937,"v":0.934},
     {"kind":"rock","x":25,"y":14,"s":0.868,"v":0.441},
     {"kind":"rock","x":32,"y":25,"s":0.674,"v":0.195},
-    {"kind":"rock","x":38,"y":4,"s":0.909,"v":0.943}
+    {"kind":"rock","x":38,"y":4,"s":0.909,"v":0.943},
+    {"kind":"tree","x":12,"y":2,"s":1.315,"v":0.533},
+    {"kind":"tree","x":14,"y":2,"s":1.287,"v":0.899},
+    {"kind":"tree","x":15,"y":2,"s":1.249,"v":0.268},
+    {"kind":"tree","x":19,"y":2,"s":1.176,"v":0.855},
+    {"kind":"tree","x":35,"y":2,"s":1.277,"v":0.019},
+    {"kind":"tree","x":41,"y":2,"s":1.139,"v":0.402},
+    {"kind":"tree","x":14,"y":3,"s":0.978,"v":0.737},
+    {"kind":"tree","x":41,"y":3,"s":1.251,"v":0.695},
+    {"kind":"tree","x":2,"y":9,"s":1.137,"v":0.568},
+    {"kind":"tree","x":2,"y":17,"s":1.328,"v":0.456},
+    {"kind":"tree","x":3,"y":17,"s":1.372,"v":0.441},
+    {"kind":"tree","x":3,"y":18,"s":1.078,"v":0.159},
+    {"kind":"tree","x":3,"y":22,"s":1.128,"v":0.789},
+    {"kind":"tree","x":2,"y":23,"s":1.29,"v":0.084},
+    {"kind":"tree","x":3,"y":29,"s":1.372,"v":0.387},
+    {"kind":"tree","x":3,"y":30,"s":1.031,"v":0.753},
+    {"kind":"tree","x":41,"y":30,"s":1.156,"v":0.384},
+    {"kind":"tree","x":2,"y":31,"s":1.252,"v":0.63},
+    {"kind":"tree","x":3,"y":35,"s":1.333,"v":0.693},
+    {"kind":"tree","x":41,"y":36,"s":1.131,"v":0.243},
+    {"kind":"tree","x":41,"y":39,"s":1.359,"v":0.562}
   ]
 }

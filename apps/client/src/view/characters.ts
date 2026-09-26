@@ -1,5 +1,7 @@
 /**
  * Chibi characters built from boxes: big head, short legs, outlines. Players differ by jacket color.
+ * Each model owns its geometries (freed with disposeTree when the player leaves or the map changes);
+ * its materials come from toon(), which every model shares and nothing frees.
  */
 import * as THREE from 'three';
 import { box, flat, part, pivot, toon } from './toon';

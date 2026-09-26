@@ -10,7 +10,7 @@ napoland is a mobile-first online exploration game (web client + authoritative N
 | Run for development | `npm run dev` (server :8080 in memory, client :5173 with hot reload; phones on the same Wi-Fi can open `http://<PC IP>:5173`) |
 | Everything a change must pass | `npm run check` (typecheck + content validation + tests) |
 | Tests only | `npm test` (Vitest) |
-| Rebuild the town map | `npm run gen:map`, then `npm run validate` |
+| Rebuild the maps | `npm run gen:map` (Stonebrook) or `npm run gen:woods` (the Near Woods), then `npm run validate` |
 | Test players against a running server | `npm run bot -- --count 3 --steps 30` |
 | Full stack in Docker (Postgres) | `docker compose up -d --build`, then http://localhost:8080 |
 | Release to production | push to `main` (CI tests, then deploys); by hand: `AWS_PROFILE=napoland node tools/deploy.mjs` |

@@ -17,7 +17,7 @@ The decisions so far, with the reason for each. Change this file when a decision
 ## The loop
 
 1. Wake up at home (your cabin). Equip gear. Equipment can be put on or taken off **only at home**, so choosing gear is part of planning a trip.
-2. Walk out through the town into the wilds. Energy drains outside town, faster the farther you are, at night and in the rain. Street lights and home refill it.
+2. Walk out through the town into the wilds. Energy drains outside town, faster the farther you are, at night and in the rain. Street lights and home refill it. Tuned so that standing at the edge of the Near Woods in the rain empties a full bar in about 11 minutes, and its deepest corner in under 4; trips of 5 to 15 minutes.
 3. Gather resources and power-ups. What you pick up goes in your bag (limited slots).
 4. Come home and stash what you carry. Stashing earns XP; levels and home upgrades let you go farther next time.
 5. **If your energy runs out** you wake up at home. Your whole bag drops where you fell, as a backpack anyone can take, you included if you go back for it. Equipment is kept.
@@ -32,6 +32,8 @@ The decisions so far, with the reason for each. Change this file when a decision
 | The wilds | Everyone | One fixed map split into regions. A region holds a few hundred players; only an overcrowded region gets extra copies. The game remembers which copy a dropped backpack is in. |
 
 Everything in the world is shared (the ground, dropped backpacks, weather, time of day); only inventory and personal items are private.
+
+Regions are separate maps joined at their edges, like FireRed's towns and routes: walking off the end of a road fades to the next map, which greets you with its name. So far: **Stonebrook** (the town) and, up its north road, **the Near Woods** (depth 1). Deeper regions will open beyond it.
 
 ## Movement and controls
 

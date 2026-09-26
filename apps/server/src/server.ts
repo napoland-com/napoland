@@ -15,7 +15,10 @@ export interface ServerOptions {
   /** 0 picks a free port. */
   port: number;
   storage: Storage;
-  map: TileMap;
+  /** Every map of the world; they must fit together (loadMaps checks that). */
+  maps: Iterable<TileMap>;
+  /** The id of the town where new players start and collapsed players wake up. */
+  homeMap: string;
   weather: Weather;
   maxPlayers: number;
   tickMs: number;
@@ -23,6 +26,8 @@ export interface ServerOptions {
   clientDir?: string;
   helloTimeoutMs?: number;
   heartbeatMs?: number;
+  /** Game time in ms (steps, energy, rate limits); it must never go backwards. Tests set their own. */
+  clock?: () => number;
   /** Reported on /health; default 'dev'. */
   version?: string;
   /** The client address is the last X-Forwarded-For entry. Only behind our own proxy. */
@@ -41,14 +46,17 @@ export interface RunningServer {
 }
 
 export async function startServer(o: ServerOptions): Promise<RunningServer> {
-  const world = new World(o.map);
+  const world = new World(o.maps, o.homeMap, o.weather, {
+    // Where players run out tells how hard each part of the world really is.
+    onCollapse: (id, where) => log.info('player collapsed', { id, ...where }),
+  });
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version });
   const net = attachNet({
     server: http,
     world,
     storage: o.storage,
-    weather: o.weather,
     maxPlayers: o.maxPlayers,
+    clock: o.clock,
     helloTimeoutMs: o.helloTimeoutMs,
     heartbeatMs: o.heartbeatMs,
     trustProxy: o.trustProxy,

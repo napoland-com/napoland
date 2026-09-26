@@ -1,13 +1,14 @@
 /**
  * The WebSocket side: one connection per player. Holds each address to its limits, checks the
- * hello, feeds client messages to the World and sends out what the World has to say. Nothing a
- * client sends is trusted.
+ * hello, feeds client messages to the World and sends out what the World has to say, each message
+ * to the players it is for: one player, or everyone on one map. Nothing a client sends is trusted.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
+  ENERGY_MAX,
   MAX_MESSAGE_BYTES,
   PROTOCOL_VERSION,
   PlayerName,
@@ -16,7 +17,6 @@ import {
   type ClientMsg,
   type ErrorCode,
   type ServerMsg,
-  type Weather,
 } from '@napoland/shared';
 import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
@@ -52,7 +52,6 @@ export interface NetOptions {
   server: Server;
   world: World;
   storage: Storage;
-  weather: Weather;
   maxPlayers: number;
   /** Game time in ms for the World and the rate limits. It must never go backwards. */
   clock?: () => number;
@@ -83,6 +82,8 @@ interface Session {
   state: 'hello' | 'auth' | 'play' | 'closed';
   /** The player's id, once in the world. */
   id: string;
+  /** The map whose news this player hears, once in the world. */
+  map: string;
   /** Rate limit: a token bucket. */
   tokens: number;
   refilledAt: number;
@@ -101,6 +102,8 @@ export function attachNet(o: NetOptions): Net {
   const conns = new Set<Session>();
   /** Sessions whose player is in the world, by player id. */
   const playing = new Map<string, Session>();
+  /** The same sessions by the map they hear, for messages to everyone on a map. */
+  const audiences = new Map<string, Set<Session>>();
   /** New players between the capacity check and world.join (creating them takes a database round trip). */
   let joining = 0;
   /** The last save started for each player, while it runs. */
@@ -140,6 +143,7 @@ export function attachNet(o: NetOptions): Net {
       ip,
       state: 'hello',
       id: '',
+      map: '',
       tokens: RATE_BURST,
       refilledAt: clock(),
       alive: true,
@@ -250,7 +254,7 @@ export function attachNet(o: NetOptions): Net {
     enter(s, rec, found.token);
   }
 
-  /** Creates a player with a new token at the spawn. Undefined if that failed the session. */
+  /** Creates a player with a new token at the home map's spawn. Undefined if that failed the session. */
   async function newPlayer(s: Session, name: string): Promise<{ rec: PlayerRecord; token: string } | undefined> {
     // parseClientMsg has already trimmed the name and checked it with PlayerName.
     const taken = await storage.nameTaken(name);
@@ -262,8 +266,11 @@ export function attachNet(o: NetOptions): Net {
     const token = randomBytes(32).toString('base64url');
     const id = randomUUID();
     const now = Date.now();
-    const { spawn } = world.map.data;
-    const rec: PlayerRecord = { id, name, tokenHash: hashToken(token), x: spawn.x, y: spawn.y, dir: spawn.dir, color: colorFor(id), createdAt: now, lastSeenAt: now };
+    const { id: map, spawn } = world.home.data;
+    const rec: PlayerRecord = {
+      id, name, tokenHash: hashToken(token), map, x: spawn.x, y: spawn.y, dir: spawn.dir, color: colorFor(id), energy: ENERGY_MAX,
+      createdAt: now, lastSeenAt: now,
+    };
     // create() also refuses the name if another player took it since nameTaken().
     if (!(await storage.create(rec))) {
       fail(s, 'bad_name', 'That name is taken');
@@ -274,25 +281,26 @@ export function attachNet(o: NetOptions): Net {
   }
 
   function enter(s: Session, rec: PlayerRecord, token: string): void {
-    world.join(rec);
+    const joined = world.join(rec, clock());
     s.state = 'play';
     s.id = rec.id;
     playing.set(rec.id, s);
-    const { id, version } = world.map.data;
+    hear(s, joined.map.id);
     send(s, {
       t: 'welcome',
       v: PROTOCOL_VERSION,
       you: rec.id,
       name: rec.name,
       token,
-      players: world.views(),
+      map: joined.map,
+      players: joined.players,
       stepMs: world.stepMs,
-      map: { id, version },
-      weather: o.weather,
+      weather: world.weather,
+      energy: joined.energy,
       serverTime: Date.now(),
     });
     flush();
-    log.info('player joined', { id: rec.id, name: rec.name, online: world.size });
+    log.info('player joined', { id: rec.id, name: rec.name, map: joined.map.id, online: world.size });
   }
 
   const isFull = () => world.size + joining >= o.maxPlayers;
@@ -315,7 +323,8 @@ export function attachNet(o: NetOptions): Net {
   function removeFromWorld(s: Session, save: boolean): PlayerRecord | undefined {
     if (!s.id || playing.get(s.id) !== s) return undefined;
     playing.delete(s.id);
-    const rec = world.leave(s.id);
+    hear(s, '');
+    const rec = world.leave(s.id, clock());
     flush();
     if (rec && save) void persist(rec);
     log.info('player left', { id: s.id, online: world.size });
@@ -345,17 +354,37 @@ export function attachNet(o: NetOptions): Net {
     return done;
   }
 
-  /** Sends everything the World has queued. Runs after every World call. */
+  /**
+   * Sends everything the World has queued, in order. Runs after every World call. A message for a
+   * map goes to the players on it at that point of the queue: a player who changes maps hears the
+   * new map from their `zone` message on, even when several players moved in the same tick.
+   */
   function flush(): void {
     for (const out of world.drain()) {
       const data = encode(out.msg);
-      if (out.to !== '*') {
-        const s = playing.get(out.to);
-        if (s) sendRaw(s, data);
-      } else {
-        for (const [id, s] of playing) if (id !== out.except) sendRaw(s, data);
+      if ('map' in out) {
+        for (const s of audiences.get(out.map) ?? []) if (s.id !== out.except) sendRaw(s, data);
+        continue;
       }
+      const s = playing.get(out.to);
+      if (!s) continue;
+      if (out.msg.t === 'zone') hear(s, out.msg.map.id);
+      sendRaw(s, data);
     }
+  }
+
+  /** Makes a session hear the news of another map ('' for none). */
+  function hear(s: Session, map: string): void {
+    if (s.map) {
+      const old = audiences.get(s.map);
+      old?.delete(s);
+      if (old?.size === 0) audiences.delete(s.map);
+    }
+    s.map = map;
+    if (!map) return;
+    const audience = audiences.get(map);
+    if (audience) audience.add(s);
+    else audiences.set(map, new Set([s]));
   }
 
   function send(s: Session, msg: ServerMsg): void {
@@ -395,10 +424,12 @@ export function attachNet(o: NetOptions): Net {
       closing = true;
       clearInterval(heartbeat);
       const recs: PlayerRecord[] = [];
+      const now = clock();
       for (const s of conns) {
         if (s.id && playing.get(s.id) === s) {
           playing.delete(s.id);
-          const rec = world.leave(s.id);
+          hear(s, '');
+          const rec = world.leave(s.id, now);
           if (rec) recs.push(rec);
         }
         s.state = 'closed';

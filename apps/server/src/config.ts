@@ -12,7 +12,10 @@ export interface Config {
   host: string;
   /** Unset means players live in memory and are lost on restart. */
   databaseUrl: string | undefined;
-  mapFile: string;
+  /** The folder with every map of the world (*.json). */
+  mapsDir: string;
+  /** The id of the town where new players start and collapsed players wake up. */
+  homeMap: string;
   /** Only needed with a database. */
   migrationsDir: string | undefined;
   /** The built client; unset means this server only speaks WebSocket and /health. */
@@ -81,8 +84,12 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   const databaseUrl = get('DATABASE_URL');
   // Never echo the URL: it usually contains the password.
   if (databaseUrl !== undefined && !isPostgresUrl(databaseUrl)) errors.push('DATABASE_URL must be a postgres:// or postgresql:// URL');
-  const mapFile = path('MAP_FILE', 'content/maps/stonebrook.json', 'file');
-  if (mapFile === undefined) errors.push(`MAP_FILE is not set and content/maps/stonebrook.json was not found in ${cwd} or its parents`);
+  // MAP_FILE named the one map there was. Left over, it would quietly run another world than the one asked for.
+  if (get('MAP_FILE') !== undefined) errors.push('MAP_FILE is no longer used: set MAPS_DIR (the folder with every map) and HOME_MAP (the home town\'s id) instead');
+  const mapsDir = path('MAPS_DIR', 'content/maps', 'dir');
+  if (mapsDir === undefined) errors.push(`MAPS_DIR is not set and content/maps was not found in ${cwd} or its parents`);
+  // Whether the map exists and is a town is checked with the maps (content.ts).
+  const homeMap = get('HOME_MAP') ?? 'stonebrook';
   const migrationsDir = path('MIGRATIONS_DIR', 'apps/server/migrations', 'dir');
   if (databaseUrl !== undefined && migrationsDir === undefined) errors.push(`MIGRATIONS_DIR is not set and apps/server/migrations was not found in ${cwd} or its parents`);
   const clientDir = path('CLIENT_DIR', 'apps/client/dist', 'dir');
@@ -99,7 +106,7 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
-    port, host, databaseUrl, mapFile: mapFile!, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs, logLevel,
+    port, host, databaseUrl, mapsDir: mapsDir!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs, logLevel,
     trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version,
   };
 }

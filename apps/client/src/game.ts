@@ -3,9 +3,15 @@
  * - your own steps are predicted (you move the instant you press) and confirmed or corrected by the server;
  * - other players are animated from the steps the server reports;
  * - D-pad: a quick tap on a new direction turns in place, holding walks (like FireRed);
- * - tapping the ground walks there; A talks to people and reads signs.
+ * - tapping the ground walks there; A talks to people and reads signs;
+ * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
+ * - energy is counted forward between the server's reports, so the bar moves smoothly.
  */
-import { STEP_MS, dirOf, dirToward, findPath, stepTarget, DIR_VEC, type ClientMsg, type Dir, type MapObject, type PlayerView, type ServerMsg, type TileMap } from '@napoland/shared';
+import {
+  STEP_MS, dirOf, dirToward, energyAfter, findPath, stepTarget, DIR_VEC,
+  type ClientMsg, type Dir, type EnergyView, type MapObject, type PlayerView, type ServerMsg, type TileMap,
+} from '@napoland/shared';
+import type { Maps } from './maps';
 import type { Avatar } from './view/world';
 
 interface Mover {
@@ -30,11 +36,27 @@ type Talker = { x: number; y: number; who: string; lines: string[] };
 const HOLD_TO_WALK_MS = 160;
 /** Never run more than this many steps ahead of the server's confirmations. */
 const MAX_UNCONFIRMED = 2;
+/**
+ * How long to stand on an exit waiting for the server to move us before walking is allowed again.
+ * The server normally answers within a round trip; this only keeps a lost or refused trip from
+ * leaving the player stuck on the exit.
+ */
+const EXIT_WAIT_MS = 3000;
+
+function talkersOf(map: TileMap): Talker[] {
+  return map.data.objects.flatMap((o: MapObject): Talker[] => {
+    if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines }];
+    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: 'Sign', lines: o.text }];
+    return [];
+  });
+}
 
 export class Game {
   meId: string | null = null;
   /** True between the server's welcome and the connection dropping; no steps are taken otherwise. */
   online = false;
+  /** Set while the screen fades out on the way to another map: nobody walks on a map that is going away. */
+  held = false;
   players = new Map<string, Mover>();
   stepMs = STEP_MS;
   marker: { x: number; y: number; t: number } | null = null;
@@ -47,31 +69,65 @@ export class Game {
   private talkTarget: Talker | null = null;
   private pad = { dir: null as Dir | null, changedAt: 0, facingAtPress: false };
   private justStepped = false;
+  /** When we started standing on an exit tile (null when not on one). */
+  private exitSince: number | null = null;
+  private current: TileMap;
   private talkers: Talker[];
+  /** The server's last energy report and when it arrived. */
+  private lastEnergy: { view: EnergyView; at: number } | null = null;
 
-  constructor(private map: TileMap, private send: (msg: ClientMsg) => void) {
-    this.talkers = map.data.objects.flatMap((o: MapObject): Talker[] => {
-      if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines }];
-      if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: 'Sign', lines: o.text }];
-      return [];
-    });
+  constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void) {
+    this.current = maps.home();
+    this.talkers = talkersOf(this.current);
+  }
+
+  /** The map we are on: the one the server's welcome or latest zone named. */
+  get map(): TileMap {
+    return this.current;
   }
 
   get me(): Mover | undefined {
     return this.meId ? this.players.get(this.meId) : undefined;
   }
 
+  /** Energy right now: the server's last report counted forward at its rate. Null until the first report. */
+  energy(now: number): EnergyView | null {
+    const e = this.lastEnergy;
+    if (!e) return null;
+    return { value: energyAfter(e.view, Math.max(0, now - e.at) / 1000), max: e.view.max, rate: e.view.rate };
+  }
+
   // ---------- messages from the server ----------
 
   handle(msg: ServerMsg, now: number) {
     switch (msg.t) {
-      case 'welcome':
+      case 'welcome': {
+        const map = this.maps.get(msg.map);
+        // A map we do not have: this client is out of date and about to reload, so it must not play.
+        if (!map) { this.disconnected(now); break; }
         this.meId = msg.you;
         this.online = true;
         this.stepMs = msg.stepMs;
-        this.players.clear();
-        for (const p of msg.players) this.players.set(p.id, this.mover(p));
-        this.pending = []; this.path = []; this.talkTarget = null; this.justStepped = false;
+        this.enter(map, msg.players);
+        this.lastEnergy = { view: msg.energy, at: now };
+        break;
+      }
+      case 'zone': {
+        const map = this.maps.get(msg.map);
+        if (!map) { this.disconnected(now); break; }
+        const old = this.me;
+        this.enter(map, msg.players);
+        this.dialog = null; this.marker = null; this.floats = [];
+        // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
+        const me = this.me ?? (old ? { ...old } : undefined);
+        if (me) {
+          me.tx = me.x = msg.x; me.ty = me.y = msg.y; me.dir = msg.dir; me.anim = null; me.turnT = 0;
+          this.players.set(me.id, me);
+        }
+        break;
+      }
+      case 'energy':
+        this.lastEnergy = { view: msg.energy, at: now };
         break;
       case 'join':
         this.players.set(msg.player.id, this.mover(msg.player));
@@ -109,9 +165,24 @@ export class Game {
   }
 
   /** The connection dropped: stop predicting until the next welcome puts us back in sync. */
-  disconnected() {
+  disconnected(now: number) {
     this.online = false;
     this.pending = []; this.path = []; this.talkTarget = null;
+    // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
+    const e = this.energy(now);
+    if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
+  }
+
+  /** Arrive on a map: its players replace the old ones, and plans made for the old map are dropped. */
+  private enter(map: TileMap, players: PlayerView[]) {
+    if (map !== this.current) {
+      this.current = map;
+      this.talkers = talkersOf(map);
+      this.dialog = null; this.marker = null; this.floats = [];
+    }
+    this.players.clear();
+    for (const p of players) this.players.set(p.id, this.mover(p));
+    this.pending = []; this.path = []; this.talkTarget = null; this.justStepped = false; this.exitSince = null;
   }
 
   private mover(p: PlayerView): Mover {
@@ -224,7 +295,13 @@ export class Game {
   /** Decide the local player's next step once they stand on a tile. */
   private driveMe(now: number) {
     const me = this.me;
-    if (!me || me.anim || this.dialog || !this.online) { this.justStepped = false; return; }
+    if (!me || me.anim || this.dialog || !this.online || this.held) { this.justStepped = false; return; }
+    // On an exit the server is about to move us to another map, and steps planned on this one would be refused.
+    if (this.map.exitAt(me.tx, me.ty)) {
+      this.exitSince ??= now;
+      this.path = []; this.talkTarget = null; this.justStepped = false;
+      if (now - this.exitSince < EXIT_WAIT_MS) return;
+    } else this.exitSince = null;
     const wasWalking = this.justStepped;
     this.justStepped = false;
     let dir: Dir | null = null;

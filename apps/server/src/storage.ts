@@ -14,10 +14,14 @@ export interface PlayerRecord {
   name: string;
   /** SHA-256 of the login token, hex. The token itself is never stored. */
   tokenHash: string;
+  /** The id of the map the player is on. */
+  map: string;
   x: number;
   y: number;
   dir: Dir;
   color: string;
+  /** 0 to ENERGY_MAX. It only changes while playing: offline, a player's energy waits for them. */
+  energy: number;
   /** Milliseconds since the epoch. */
   createdAt: number;
   lastSeenAt: number;
@@ -30,7 +34,7 @@ export interface Storage {
   nameTaken(name: string): Promise<boolean>;
   /** False if the name was taken in the meantime (two players racing for it). */
   create(rec: PlayerRecord): Promise<boolean>;
-  /** Stores what changes while playing: position, direction, color and lastSeenAt. */
+  /** Stores what changes while playing: map, position, direction, energy, color and lastSeenAt. */
   save(rec: PlayerRecord): Promise<void>;
   /** How many players exist. */
   count(): Promise<number>;
@@ -64,7 +68,7 @@ export class MemoryStorage implements Storage {
 
   async save(rec: PlayerRecord): Promise<void> {
     const cur = this.byId.get(rec.id);
-    if (cur) Object.assign(cur, { x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, lastSeenAt: rec.lastSeenAt });
+    if (cur) Object.assign(cur, { map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, lastSeenAt: rec.lastSeenAt });
   }
 
   async count(): Promise<number> {
@@ -84,10 +88,12 @@ interface PlayerRow {
   id: string;
   name: string;
   token_hash: string;
+  map: string;
   x: number;
   y: number;
   dir: Dir;
   color: string;
+  energy: number;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -96,10 +102,12 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   id: r.id,
   name: r.name,
   tokenHash: r.token_hash,
+  map: r.map,
   x: r.x,
   y: r.y,
   dir: r.dir,
   color: r.color,
+  energy: r.energy,
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -132,23 +140,19 @@ export class PgStorage implements Storage {
 
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
-      `INSERT INTO players (id, name, token_hash, x, y, dir, color, created_at, last_seen_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO players (id, name, token_hash, map, x, y, dir, color, energy, created_at, last_seen_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT DO NOTHING`,
-      [rec.id, rec.name, rec.tokenHash, rec.x, rec.y, rec.dir, rec.color, new Date(rec.createdAt), new Date(rec.lastSeenAt)],
+      [rec.id, rec.name, rec.tokenHash, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, new Date(rec.createdAt), new Date(rec.lastSeenAt)],
     );
     return r.rowCount === 1;
   }
 
   async save(rec: PlayerRecord): Promise<void> {
-    await this.pool.query('UPDATE players SET x = $2, y = $3, dir = $4, color = $5, last_seen_at = $6 WHERE id = $1', [
-      rec.id,
-      rec.x,
-      rec.y,
-      rec.dir,
-      rec.color,
-      new Date(rec.lastSeenAt),
-    ]);
+    await this.pool.query(
+      'UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, last_seen_at = $8 WHERE id = $1',
+      [rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, new Date(rec.lastSeenAt)],
+    );
   }
 
   async count(): Promise<number> {

@@ -32,8 +32,8 @@ describe.skipIf(!url)('PgStorage', () => {
   }
 
   const player = (name: string): PlayerRecord => ({
-    id: randomUUID(), name, tokenHash: randomBytes(32).toString('hex'),
-    x: 8, y: 21, dir: 'down', color: '#3a86ff', createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
+    id: randomUUID(), name, tokenHash: randomBytes(32).toString('hex'), map: 'stonebrook',
+    x: 8, y: 21, dir: 'down', color: '#3a86ff', energy: 100, createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   });
 
   let schema: string;
@@ -54,9 +54,9 @@ describe.skipIf(!url)('PgStorage', () => {
 
   it('applies each migration once', async () => {
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
-    expect(await names()).toEqual(['001_players.sql']);
+    expect(await names()).toEqual(['001_players.sql', '002_maps_energy.sql']);
     await storage.init();
-    expect(await names()).toEqual(['001_players.sql']);
+    expect(await names()).toEqual(['001_players.sql', '002_maps_energy.sql']);
   });
 
   it('rolls back a migration that fails, and does not record it', async () => {
@@ -85,6 +85,28 @@ describe.skipIf(!url)('PgStorage', () => {
     const moved = { ...rec, x: 9, y: 22, dir: 'right' as const, lastSeenAt: 1_800_000_000_789 };
     await storage.save(moved);
     expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(moved);
+  });
+
+  it('keeps the map and the energy', async () => {
+    const rec = { ...player('Pg Wanderer'), map: 'near-woods', x: 31, y: 70, energy: 42.5 };
+    expect(await storage.create(rec)).toBe(true);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(rec);
+    // Energy comes and goes in fractions; a real column keeps plenty of them.
+    const later = { ...rec, map: 'stonebrook', x: 8, y: 21, energy: 97.3, lastSeenAt: 1_800_000_000_001 };
+    await storage.save(later);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(later);
+    await storage.save({ ...later, energy: 12.345678 });
+    expect((await storage.findByTokenHash(rec.tokenHash))!.energy).toBeCloseTo(12.345678, 4);
+  });
+
+  it('still takes players from the previous release, which knows nothing of maps and energy', async () => {
+    // The insert of the release before this schema: after a rollback, it runs on the new columns.
+    const old = player('Pg Old');
+    await admin.query(
+      `INSERT INTO ${schema}.players (id, name, token_hash, x, y, dir, color, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [old.id, old.name, old.tokenHash, old.x, old.y, old.dir, old.color, new Date(old.createdAt), new Date(old.lastSeenAt)],
+    );
+    expect(await storage.findByTokenHash(old.tokenHash)).toEqual({ ...old, map: 'stonebrook', energy: 100 });
   });
 
   it('keeps names unique regardless of case', async () => {

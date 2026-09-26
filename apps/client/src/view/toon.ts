@@ -11,20 +11,42 @@ grad.needsUpdate = true;
 
 type ToonOpts = THREE.MeshToonMaterialParameters;
 const cache = new Map<string, THREE.MeshToonMaterial>();
+/** Materials that outlive any one map (every map uses them): disposing a map's view leaves these alone. */
+const shared = new WeakSet<THREE.Material>();
+const keep = <T extends THREE.Material>(m: T): T => (shared.add(m), m);
 
 /** A shared toon material (use for things that never change color). */
 export function toon(color: THREE.ColorRepresentation, opts?: ToonOpts): THREE.MeshToonMaterial {
   const key = String(color) + (opts ? JSON.stringify(opts) : '');
   let m = cache.get(key);
-  if (!m) cache.set(key, (m = new THREE.MeshToonMaterial({ color, gradientMap: grad, ...opts })));
+  if (!m) cache.set(key, (m = keep(new THREE.MeshToonMaterial({ color, gradientMap: grad, ...opts }))));
   return m;
 }
 
-/** A toon material of its own (for things whose color or glow changes at runtime). */
+/** A toon material of its own (for things whose color or glow changes at runtime). Freed with the view that made it. */
 export const ownToon = (color: THREE.ColorRepresentation, opts?: ToonOpts) => new THREE.MeshToonMaterial({ color, gradientMap: grad, ...opts });
 
-export const OUTLINE = new THREE.MeshBasicMaterial({ color: 0x0d1014, side: THREE.BackSide });
-export const OUTLINE_INSTANCED = new THREE.MeshBasicMaterial({ color: 0x0d1014, side: THREE.BackSide });
+export const OUTLINE = keep(new THREE.MeshBasicMaterial({ color: 0x0d1014, side: THREE.BackSide }));
+export const OUTLINE_INSTANCED = keep(new THREE.MeshBasicMaterial({ color: 0x0d1014, side: THREE.BackSide }));
+
+/**
+ * Frees the GPU memory held by everything under `root`: geometries, instance buffers, and the
+ * materials and textures made for it. The shared materials stay, because the next map uses them too.
+ */
+export function disposeTree(root: THREE.Object3D) {
+  root.traverse(o => {
+    if (o instanceof THREE.InstancedMesh) o.dispose();
+    // All sprites share one quad that three.js keeps for itself.
+    if (!(o instanceof THREE.Sprite) && 'geometry' in o && o.geometry instanceof THREE.BufferGeometry) o.geometry.dispose();
+    if (!('material' in o) || !o.material) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (!(m instanceof THREE.Material) || shared.has(m)) continue;
+      const map = (m as THREE.MeshBasicMaterial).map;
+      if (map && map !== grad) map.dispose();
+      m.dispose();
+    }
+  });
+}
 
 /** Faceted normals: every triangle gets its own, which gives the low-poly look. */
 export function flat<T extends THREE.BufferGeometry>(g: T): THREE.BufferGeometry {

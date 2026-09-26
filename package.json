@@ -17,6 +17,7 @@
     "typecheck": "tsc -p packages/shared && tsc -p apps/server && tsc -p apps/client && tsc -p apps/client/test && tsc -p tools",
     "test": "vitest run",
     "gen:map": "tsx tools/gen-map.ts",
+    "gen:woods": "tsx tools/gen-woods.ts",
     "validate": "tsx tools/validate-content.ts",
     "bot": "tsx tools/bot.ts",
     "check": "npm run typecheck && npm run validate && npm run test"

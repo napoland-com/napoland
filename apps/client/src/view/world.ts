@@ -1,11 +1,16 @@
 /**
- * Draws the world with three.js: tile terrain with ledges, forest, town props, weather and the
+ * Draws one map with three.js: tile terrain with ledges, forest, town props, weather and the
  * characters. Everything comes from the map data; this file only decides how it looks.
+ *
+ * The WebGL renderer lives for the whole visit (createRenderer); a WorldView is built for one map
+ * and disposed when you leave it, which frees what it put on the GPU. Big maps stay fast on
+ * phones: trees and ferns are drawn in blocks the camera skips when they are off screen, and only
+ * the few lamps nearest you carry a real light.
  */
 import * as THREE from 'three';
-import { DIR_VEC, type Dir, type MapObject, type TileMap, type Weather } from '@napoland/shared';
+import { DIR_VEC, type Dir, type MapObject, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { makeNpc, makePlayer, type Rig } from './characters';
-import { OUTLINE_INSTANCED, box, flat, hash2, mulberry32, ownToon, part, softTexture, toon } from './toon';
+import { OUTLINE_INSTANCED, box, disposeTree, flat, hash2, mulberry32, ownToon, part, softTexture, toon } from './toon';
 
 export interface Avatar {
   id: string;
@@ -24,9 +29,110 @@ export interface Avatar {
 /** three.js lights are physically based; the preview's values were tuned for the old units. */
 const L = Math.PI;
 const FACE: Record<Dir, number> = { down: 0, up: Math.PI, right: Math.PI / 2, left: -Math.PI / 2 };
+/**
+ * Trees and ferns are drawn in blocks of this many tiles a side. Each block is one mesh with its
+ * own bounds, so the camera skips the blocks it cannot see (the woods hold thousands of trees).
+ * Measured in the Near Woods: blocks of 16 draw up to 187K triangles in about 90 draw calls,
+ * blocks of 8 at most 111K in about 125; the blocks share their materials, so the calls are cheap.
+ */
+const CHUNK = 8;
+/**
+ * How many lamps carry a real light at once: the ones nearest you. Every light costs on every
+ * pixel, so the rest glow through their material alone. Keeping the number fixed also means
+ * switching maps never recompiles the shaders.
+ */
+const LAMP_LIGHTS = 4;
+/** Seconds a lamp's light takes to come on when it becomes one of the nearest. */
+const LAMP_FADE_S = 0.35;
+/** The forest goes on this many tiles outside the map, so its edge never shows. */
+const RING = 4;
+/** Poles farther apart than this belong to different lines: no wire between them. */
+const MAX_WIRE = 10;
+/** One patch of mist for about this many tiles. */
+const MIST_TILES = 190;
+
+/** The one WebGL context for the whole visit: phones allow few, and making one is slow. Views for each map share it. */
+export function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
+  return new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+}
+
+/** A tree's three cones: radius, height, height of the center, color. */
+const TREE_LAYERS = [
+  [0.52, 0.72, 0.6, '#22372a'],
+  [0.42, 0.64, 0.98, '#263d2e'],
+  [0.3, 0.56, 1.34, '#2b4533'],
+] as const;
+const TREE_TRUNK = '#3b2c22';
+/** Mean lightness of the cone colors; each tree is drawn lighter or darker around it. */
+const TREE_L = TREE_LAYERS.reduce((sum, l) => sum + new THREE.Color(l[3]).getHSL({ h: 0, s: 0, l: 0 }).l, 0) / TREE_LAYERS.length;
+/** A tree's color factor: its lightness moved by up to 0.025 either way, the spread trees always had. */
+const treeShade = (v: number) => Math.max(0, (TREE_L + (v - 0.5) * 0.05) / TREE_L);
+
+/**
+ * A whole tree as one geometry (trunk and three cones, colored per vertex), so each tree is one
+ * instance instead of four. Each cone is turned a little so the facets do not line up. With
+ * `outline` it is the dark shell instead: the cones a little bigger, drawn from behind.
+ * The body has no caps: from a camera that always looks down, a cone's bottom faces away and the
+ * trunk's ends hide in the ground and the lowest cone, and thousands of trees add up. The shell
+ * keeps its caps, which draw the dark line under each tier.
+ */
+function treeGeometry(outline: boolean): THREE.BufferGeometry {
+  const parts: Array<[THREE.BufferGeometry, THREE.Color | null]> = [];
+  if (!outline) {
+    const trunk = flat(new THREE.CylinderGeometry(0.06, 0.1, 0.6, 6, 1, true));
+    trunk.translate(0, 0.3, 0);
+    parts.push([trunk, new THREE.Color(TREE_TRUNK)]);
+  }
+  TREE_LAYERS.forEach(([r, h, y, color], k) => {
+    const g = flat(new THREE.ConeGeometry(r, h, 7, 1, !outline));
+    if (outline) g.scale(1.07, 1.07, 1.07);
+    g.rotateY(k);
+    g.translate(0, y, 0);
+    parts.push([g, outline ? null : new THREE.Color(color)]);
+  });
+  return merge(parts);
+}
+
+/** Joins non-indexed geometries into one, with one vertex color per part (or no colors). */
+function merge(parts: Array<[THREE.BufferGeometry, THREE.Color | null]>): THREE.BufferGeometry {
+  const pos: number[] = [], nor: number[] = [], col: number[] = [];
+  for (const [g, c] of parts) {
+    const p = g.getAttribute('position'), n = g.getAttribute('normal');
+    for (let i = 0; i < p.count; i++) {
+      pos.push(p.getX(i), p.getY(i), p.getZ(i));
+      nor.push(n.getX(i), n.getY(i), n.getZ(i));
+      if (c) col.push(c.r, c.g, c.b);
+    }
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  if (col.length) out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return out;
+}
+
+/** Groups things with a tile position into CHUNK x CHUNK blocks, keeping their order within a block. */
+function blocks<T extends { x: number; y: number }>(items: T[]): T[][] {
+  const out = new Map<string, T[]>();
+  for (const it of items) {
+    const key = `${Math.floor(it.x / CHUNK)},${Math.floor(it.y / CHUNK)}`;
+    let b = out.get(key);
+    if (!b) out.set(key, (b = []));
+    b.push(it);
+  }
+  return [...out.values()];
+}
+
+interface Lamp {
+  /** Where its light hangs (world units). */
+  x: number;
+  z: number;
+  flicker: boolean;
+  ph: number;
+}
 
 export class WorldView {
-  private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(30, 1, 0.1, 400);
   private terrain!: THREE.Mesh;
@@ -41,32 +147,42 @@ export class WorldView {
   private sun = new THREE.DirectionalLight(0xc9d4d8, 0.36 * L);
   private flash = new THREE.SpotLight(0xfff0d0, 0, 10, 0.5, 0.6, 1.3);
   private flashTarget = new THREE.Object3D();
-  private lampLights: THREE.PointLight[] = [];
+  private lamps: Lamp[] = [];
+  /** The real lamp lights, each on one of the nearest lamps (index into `lamps`, -1 for none). */
+  private lampSlots = Array.from({ length: LAMP_LIGHTS }, () => ({ light: new THREE.PointLight(0xff9a3c, 0, 7, 2), lamp: -1, on: 0 }));
+  /** The tile the lamp lights were last placed for. */
+  private lampTile = NaN;
   private lampMat = ownToon('#ffcf8a', { emissive: 0x000000 });
   private warm = ownToon('#3a2f25', { emissive: 0x8a5524 });
   private capMat = ownToon('#8ee8da', { emissive: 0x0e3b37 });
   private headMat = ownToon('#fff1c4', { emissive: 0x000000 });
   private tailMat = ownToon('#7a1c16', { emissive: 0x000000 });
   private headLight = new THREE.SpotLight(0xfff1c4, 0, 11, 0.5, 0.55, 1.4);
-  private stoneLight: THREE.PointLight | null = null;
+  private hasCar = false;
+  private stoneLight = new THREE.PointLight(0xa66cff, 0, 7, 2);
+  private hasStone = false;
   private rain!: THREE.LineSegments;
   private rainMat = new THREE.LineBasicMaterial({ color: 0xaebfcc, transparent: true, opacity: 0.38, depthWrite: false });
   private mistMat = new THREE.MeshBasicMaterial({ map: softTexture(0.5), color: 0xc9d6dc, transparent: true, opacity: 0.12, depthWrite: false });
+  private wispMat = new THREE.SpriteMaterial({ map: softTexture(0.25), color: 0x9ef6ff, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending });
   private wisps: Array<{ s: THREE.Sprite; core: THREE.Mesh; x: number; y: number; ph: number; r: number }> = [];
   private marker: THREE.Mesh;
   private shadowGeo = new THREE.CircleGeometry(1, 14).rotateX(-Math.PI / 2);
   private shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+  /** Tiles outside the map in front of an exit on its edge: no outer forest there, and the exit's ground goes on. */
+  private openings = new Map<string, { kind: TileKind; k: number }>();
   private ray = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
   private tmp = new THREE.Vector3();
 
-  constructor(canvas: HTMLCanvasElement, private map: TileMap) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  constructor(private readonly renderer: THREE.WebGLRenderer, readonly map: TileMap) {
     this.scene.background = new THREE.Color('#4c5961');
     this.scene.fog = new THREE.Fog('#4c5961', 30, 50);
     this.sun.position.set(-4, 10, 6);
-    this.scene.add(this.hemi, this.sun, this.flash, this.flashTarget);
+    this.scene.add(this.hemi, this.sun, this.flash, this.flashTarget, this.headLight, this.stoneLight);
+    for (const s of this.lampSlots) this.scene.add(s.light);
     this.flash.target = this.flashTarget;
+    this.findOpenings();
     this.buildTerrain();
     this.buildNature();
     this.buildTown();
@@ -75,6 +191,17 @@ export class WorldView {
     this.marker.visible = false;
     this.scene.add(this.marker);
     this.setWeather('rain');
+    // Compile the shaders now (behind the black screen), not on the first frame you see.
+    this.renderer.compile(this.scene, this.camera);
+  }
+
+  /** Frees everything this view put on the GPU. The renderer and the shared toon materials stay for the next map. */
+  dispose() {
+    disposeTree(this.scene);
+    this.scene.clear();
+    this.rigs.clear();
+    this.animate = [];
+    this.wisps = [];
   }
 
   /** Height of the ground a character stands on. */
@@ -85,21 +212,40 @@ export class WorldView {
     return Math.max(0, this.topY(Math.floor(x), Math.floor(y)));
   }
 
+  private findOpenings() {
+    const { map } = this, W = map.width, H = map.height;
+    for (const e of map.data.exits) for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) {
+      const kind = map.kind(x, y);
+      if (!kind) continue;
+      const out: Array<[number, number]> = [];
+      if (y === 0) out.push([0, -1]);
+      if (y === H - 1) out.push([0, 1]);
+      if (x === 0) out.push([-1, 0]);
+      if (x === W - 1) out.push([1, 0]);
+      for (const [dx, dy] of out) for (let k = 1; k <= RING; k++) this.openings.set(`${x + dx * k},${y + dy * k}`, { kind, k });
+    }
+  }
+
   private buildTerrain() {
     const { map } = this;
     const pos: number[] = [], col: number[] = [];
     const quad = (a: number[], b: number[], c: number[], d: number[], color: THREE.Color) => {
       for (const p of [a, b, c, a, c, d]) { pos.push(p[0]!, p[1]!, p[2]!); col.push(color.r, color.g, color.b); }
     };
-    const colors: Record<string, [string, string]> = {
+    const colors: Record<TileKind, [string, string]> = {
       grass: ['#3f5b3a', '#3a5637'], ferns: ['#2c4430', '#29402d'], road: ['#4b4e53', '#46494e'],
       lot: ['#5c5b57', '#565551'], mud: ['#554b3c', '#554b3c'], water: ['#152229', '#152229'],
+      // Dark ground under the trees: little light gets through.
+      forest: ['#1f2c21', '#1c291e'],
+    };
+    const ground = (kind: TileKind, tx: number, ty: number, raised: boolean) => {
+      const chk = (tx + ty) & 1;
+      const c = new THREE.Color(kind === 'grass' && raised ? (chk ? '#34503a' : '#314b36') : colors[kind][chk]);
+      return c.offsetHSL(0, 0, (hash2(tx * 5, ty * 3) - 0.5) * 0.025);
     };
     for (let ty = 0; ty < map.height; ty++) for (let tx = 0; tx < map.width; tx++) {
-      const kind = map.kind(tx, ty)!, y0 = this.topY(tx, ty), chk = (tx + ty) & 1, raised = map.level(tx, ty) > 0;
-      const c = new THREE.Color(kind === 'grass' && raised ? (chk ? '#34503a' : '#314b36') : colors[kind]![chk]);
-      c.offsetHSL(0, 0, (hash2(tx * 5, ty * 3) - 0.5) * 0.025);
-      quad([tx, y0, ty], [tx, y0, ty + 1], [tx + 1, y0, ty + 1], [tx + 1, y0, ty], c);
+      const kind = map.kind(tx, ty)!, y0 = this.topY(tx, ty), raised = map.level(tx, ty) > 0;
+      quad([tx, y0, ty], [tx, y0, ty + 1], [tx + 1, y0, ty + 1], [tx + 1, y0, ty], ground(kind, tx, ty, raised));
       for (const [ox, oy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
         const ny = map.inside(tx + ox, ty + oy) ? this.topY(tx + ox, ty + oy) : 0;
         if (ny >= y0 - 0.001) continue;
@@ -111,15 +257,22 @@ export class WorldView {
         quad([a[0], y0, a[1]], [a[0], ny, a[1]], [b[0], ny, b[1]], [b[0], y0, b[1]], w);
       }
     }
+    const W = map.width, H = map.height, outerColor = '#1b271d';
+    // Where an exit leaves the map, its road or trail goes on outside and fades into the dark, so you can see the way on.
+    const outer = new THREE.Color(outerColor);
+    for (const [key, o] of this.openings) {
+      const [x, y] = key.split(',').map(Number) as [number, number];
+      quad([x, 0, y], [x, 0, y + 1], [x + 1, 0, y + 1], [x + 1, 0, y], ground(o.kind, x, y, false).lerp(outer, o.k / (RING + 1)));
+    }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     g.computeVertexNormals();
     this.terrain = new THREE.Mesh(g, ownToon(0xffffff, { vertexColors: true, side: THREE.DoubleSide }));
     this.scene.add(this.terrain);
-    const W = map.width, H = map.height, outer = toon('#1b271d');
+    const outerMat = toon(outerColor);
     for (const [x, z, w, d] of [[W / 2, -60, W + 260, 120], [W / 2, H + 60, W + 260, 120], [-60, H / 2, 120, H], [W + 60, H / 2, 120, H]] as const) {
-      this.scene.add(part(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), outer, x, -0.01, z, false));
+      this.scene.add(part(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), outerMat, x, -0.01, z, false));
     }
     // Center lines on two-lane roads.
     const road = (x: number, y: number) => map.kind(x, y) === 'road';
@@ -143,7 +296,11 @@ export class WorldView {
     }
   }
 
-  private instanced<T>(geo: THREE.BufferGeometry, list: T[], fn: (it: T, o: THREE.Object3D, c: THREE.Color, i: number) => void, mat?: THREE.Material): THREE.InstancedMesh {
+  /**
+   * One mesh with a copy of geo for each item, placed (and colored) by fn. Colors are per copy
+   * unless a material is given without `colors`. An empty list adds nothing to the scene.
+   */
+  private instanced<T>(geo: THREE.BufferGeometry, list: T[], fn: (it: T, o: THREE.Object3D, c: THREE.Color, i: number) => void, mat?: THREE.Material, colors = !mat): THREE.InstancedMesh {
     const m = new THREE.InstancedMesh(geo, mat ?? ownToon(0xffffff), list.length);
     const o = new THREE.Object3D(), c = new THREE.Color();
     list.forEach((it, i) => {
@@ -151,11 +308,13 @@ export class WorldView {
       fn(it, o, c, i);
       o.updateMatrix();
       m.setMatrixAt(i, o.matrix);
-      if (!mat) m.setColorAt(i, c);
+      if (colors) m.setColorAt(i, c);
     });
     m.instanceMatrix.needsUpdate = true;
     if (m.instanceColor) m.instanceColor.needsUpdate = true;
-    this.scene.add(m);
+    // The bounds of all the copies: frustum culling uses them to skip a mesh that is off screen.
+    m.computeBoundingSphere();
+    if (list.length) this.scene.add(m);
     return m;
   }
 
@@ -164,24 +323,33 @@ export class WorldView {
   }
 
   private buildNature() {
-    const { map } = this;
-    type T = { x: number; y: number; z: number; s: number; v: number };
-    const trees: T[] = this.objects('tree').map(t => ({ x: t.x + 0.5 + (hash2(t.x, t.y) - 0.5) * 0.2, y: t.y + 0.5, z: this.groundAt(t.x, t.y), s: t.s, v: t.v }));
-    const rng = mulberry32(99);
-    for (let y = -4; y < map.height + 4; y++) for (let x = -4; x < map.width + 4; x++) {
-      if (map.inside(x, y)) continue;
-      if (rng() < 0.92) trees.push({ x: x + 0.5 + (rng() - 0.5) * 0.3, y: y + 0.5, z: 0, s: 1.1 + rng() * 0.5, v: rng() });
+    const { map } = this, W = map.width, H = map.height;
+    type Tree = { x: number; y: number; z: number; s: number; v: number };
+    const trees: Tree[] = this.objects('tree').map(t => ({ x: t.x + 0.5 + (hash2(t.x, t.y) - 0.5) * 0.2, y: t.y + 0.5, z: this.groundAt(t.x, t.y), s: t.s, v: t.v }));
+    // Forest tiles: one tree each, sized, turned and nudged by its position, so the woods look the same on every visit.
+    for (let ty = 0; ty < H; ty++) for (let tx = 0; tx < W; tx++) {
+      if (map.kind(tx, ty) !== 'forest') continue;
+      trees.push({
+        x: tx + 0.5 + (hash2(tx * 7 + 1, ty * 3) - 0.5) * 0.24,
+        y: ty + 0.5 + (hash2(tx * 3, ty * 7 + 1) - 0.5) * 0.24,
+        z: this.groundAt(tx, ty),
+        s: 1 + hash2(tx * 13, ty * 5 + 3) * 0.5,
+        v: hash2(tx * 5 + 11, ty * 11),
+      });
     }
-    const trunk = flat(new THREE.CylinderGeometry(0.06, 0.1, 0.6, 6));
-    trunk.translate(0, 0.3, 0);
-    this.instanced(trunk, trees, (t, o, c) => { o.position.set(t.x, t.z, t.y); o.scale.setScalar(t.s); c.set('#3b2c22'); });
-    ([[0.52, 0.72, 0.6], [0.42, 0.64, 0.98], [0.3, 0.56, 1.34]] as const).forEach(([r, h, y], k) => {
-      const g = flat(new THREE.ConeGeometry(r, h, 7));
-      const place = (t: T, o: THREE.Object3D) => { o.position.set(t.x, t.z + y * t.s, t.y); o.rotation.set(0, t.v * 6 + k, 0); o.scale.setScalar(t.s); };
-      this.instanced(g, trees, (t, o, c) => { place(t, o); c.set(['#22372a', '#263d2e', '#2b4533'][k]!); c.offsetHSL(0, 0, (t.v - 0.5) * 0.05); });
-      this.instanced(g, trees, (t, o) => { place(t, o); o.scale.multiplyScalar(1.07); }, OUTLINE_INSTANCED);
-    });
-    this.instanced(this.shadowGeo, trees, (t, o) => { o.position.set(t.x, t.z + 0.012, t.y); o.scale.setScalar(0.46 * t.s); }, this.shadowMat);
+    const rng = mulberry32(99);
+    for (let y = -RING; y < H + RING; y++) for (let x = -RING; x < W + RING; x++) {
+      if (map.inside(x, y) || rng() >= 0.92) continue;
+      const t = { x: x + 0.5 + (rng() - 0.5) * 0.3, y: y + 0.5, z: 0, s: 1.1 + rng() * 0.5, v: rng() };
+      if (!this.openings.has(`${x},${y}`)) trees.push(t);
+    }
+    const body = treeGeometry(false), shell = treeGeometry(true), bodyMat = ownToon(0xffffff, { vertexColors: true });
+    const place = (t: Tree, o: THREE.Object3D) => { o.position.set(t.x, t.z, t.y); o.rotation.y = t.v * 6; o.scale.setScalar(t.s); };
+    for (const block of blocks(trees)) {
+      this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); }, bodyMat, true);
+      this.instanced(shell, block, place, OUTLINE_INSTANCED);
+      this.instanced(this.shadowGeo, block, (t, o) => { o.position.set(t.x, t.z + 0.012, t.y); o.scale.setScalar(0.46 * t.s); }, this.shadowMat);
+    }
 
     const rocks = this.objects('rock');
     const rockGeo = new THREE.DodecahedronGeometry(0.3, 0);
@@ -192,33 +360,40 @@ export class WorldView {
     // Ferns: where the creatures will live. They rustle when something walks through.
     const frondGeo = flat(new THREE.ConeGeometry(0.15, 0.52, 3));
     frondGeo.translate(0, 0.26, 0);
-    const fronds: Array<{ x: number; y: number; r: number; tilt: number; k: number }> = [];
-    const frondAt = new Map<number, number>();
+    type Frond = { x: number; y: number; r: number; tilt: number; k: number };
     const PER = 6;
-    for (let ty = 0; ty < map.height; ty++) for (let tx = 0; tx < map.width; tx++) {
+    const fernTiles: Array<{ x: number; y: number; fronds: Frond[] }> = [];
+    for (let ty = 0; ty < H; ty++) for (let tx = 0; tx < W; tx++) {
       if (map.kind(tx, ty) !== 'ferns') continue;
-      frondAt.set(ty * map.width + tx, fronds.length);
+      const fronds: Frond[] = [];
       for (let k = 0; k < PER; k++) {
         const cx = k < 3 ? 0.3 : 0.7, cy = k < 3 ? 0.35 : 0.72;
         fronds.push({ x: tx + cx + (hash2(tx * 3 + k, ty) - 0.5) * 0.12, y: ty + cy + (hash2(tx, ty * 3 + k) - 0.5) * 0.12, r: (k % 3) * 2.09 + hash2(tx + k, ty) * 0.8, tilt: 0.55 + hash2(tx * 7, ty + k) * 0.3, k });
       }
+      fernTiles.push({ x: tx, y: ty, fronds });
     }
-    const frondMesh = this.instanced(frondGeo, fronds, (b, o, c) => { o.rotation.order = 'YXZ'; o.position.set(b.x, 0, b.y); o.rotation.set(b.tilt, b.r, 0); c.set(['#2f4f33', '#39603d', '#2a4a30'][b.k % 3]!); });
+    const placeFrond = (b: Frond, o: THREE.Object3D, wob = 0) => { o.rotation.order = 'YXZ'; o.position.set(b.x, 0, b.y); o.rotation.set(b.tilt + wob, b.r, 0); o.scale.set(1, 1 - Math.abs(wob) * 0.4, 1); };
+    const frondMat = ownToon(0xffffff);
+    /** For each fern tile: its block's mesh and where its fronds start in it. */
+    const frondAt = new Map<number, { mesh: THREE.InstancedMesh; start: number; fronds: Frond[] }>();
+    for (const block of blocks(fernTiles)) {
+      const mesh = this.instanced(frondGeo, block.flatMap(t => t.fronds), (b, o, c) => { placeFrond(b, o); c.set(['#2f4f33', '#39603d', '#2a4a30'][b.k % 3]!); }, frondMat, true);
+      block.forEach((t, i) => frondAt.set(t.y * W + t.x, { mesh, start: i * PER, fronds: t.fronds }));
+    }
     const rustle = new Map<number, number>(), bo = new THREE.Object3D();
-    bo.rotation.order = 'YXZ';
-    this.rustleAt = (x: number, y: number) => { const k = Math.floor(y) * map.width + Math.floor(x); if (frondAt.has(k)) rustle.set(k, 0.4); };
+    this.rustleAt = (x: number, y: number) => { const k = Math.floor(y) * W + Math.floor(x); if (frondAt.has(k)) rustle.set(k, 0.4); };
     this.animate.push((t, dt) => {
-      if (!rustle.size) return;
       for (const [k, left] of rustle) {
-        const start = frondAt.get(k)!, nl = left - dt;
+        const f = frondAt.get(k)!, nl = left - dt;
         for (let j = 0; j < PER; j++) {
-          const b = fronds[start + j]!, wob = nl > 0 ? Math.sin(t * 24 + j * 1.7) * 0.3 * (nl / 0.4) : 0;
-          bo.position.set(b.x, 0, b.y); bo.rotation.set(b.tilt + wob, b.r, 0); bo.scale.set(1, 1 - Math.abs(wob) * 0.4, 1); bo.updateMatrix();
-          frondMesh.setMatrixAt(start + j, bo.matrix);
+          const wob = nl > 0 ? Math.sin(t * 24 + j * 1.7) * 0.3 * (nl / 0.4) : 0;
+          placeFrond(f.fronds[j]!, bo, wob);
+          bo.updateMatrix();
+          f.mesh.setMatrixAt(f.start + j, bo.matrix);
         }
+        f.mesh.instanceMatrix.needsUpdate = true;
         if (nl > 0) rustle.set(k, nl); else rustle.delete(k);
       }
-      frondMesh.instanceMatrix.needsUpdate = true;
     });
 
     const shrooms: Array<{ x: number; y: number; s: number }> = [];
@@ -249,10 +424,12 @@ export class WorldView {
       g.add(part(prism(3.3, 1.0, 2.3), toon(h.roof, { side: THREE.DoubleSide }), 0, 1.23, 0, 0.03));
       g.add(box(0.5, 0.78, 0.06, '#2e241c', 0, 0.39, 0.86));
       g.add(box(0.72, 0.08, 0.32, '#4f4a44', 0, 0.04, 1.02, false));
-      g.add(part(new THREE.BoxGeometry(0.14, 0.1, 0.08), this.warm, 0, 0.95, 0.88, false));
+      // Someone lives in a lit house: a lamp over the door and one warm window. An unlit one is
+      // abandoned: dark, windows boarded up.
+      if (h.lit) g.add(part(new THREE.BoxGeometry(0.14, 0.1, 0.08), this.warm, 0, 0.95, 0.88, false));
       [-0.85, 0.85].forEach((wx, k) => {
         g.add(box(0.58, 0.5, 0.04, '#2a221b', wx, 0.72, 0.855, false));
-        const lit = (k === 0) === !!h.lit;
+        const lit = !!h.lit && k === 0;
         g.add(part(new THREE.BoxGeometry(0.46, 0.38, 0.05), lit ? this.warm : toon('#1c1f24'), wx, 0.72, 0.87, false));
         if (!lit) {
           const p1 = box(0.56, 0.07, 0.03, '#6b5a44', wx, 0.76, 0.9, false); p1.rotation.z = 0.35; g.add(p1);
@@ -284,11 +461,13 @@ export class WorldView {
         car.add(w);
       }
       for (const x of [-0.28, 0.28]) car.add(part(new THREE.BoxGeometry(0.14, 0.08, 0.03), this.headMat, x, 0.4, 0.955, false), part(new THREE.BoxGeometry(0.12, 0.08, 0.03), this.tailMat, x, 0.42, -0.955, false));
+      // One headlight (the last car's): it is already in the scene, and moving it here keeps the light count fixed.
       const target = new THREE.Object3D();
       target.position.set(0, 0, 6);
       this.headLight.position.set(0, 0.45, 1);
       this.headLight.target = target;
       car.add(this.headLight, target);
+      this.hasCar = true;
       this.scene.add(car);
     }
 
@@ -299,21 +478,20 @@ export class WorldView {
       g.add(box(0.4, 0.04, 0.01, '#2e241c', 0, 0.54, 0.04, false), box(0.3, 0.04, 0.01, '#2e241c', 0, 0.46, 0.04, false));
       this.scene.add(g);
     }
-    for (const l of this.objects('lamp')) {
+    this.objects('lamp').forEach((l, i) => {
       const g = new THREE.Group();
       g.position.set(l.x + 0.5, 0, l.y + 0.5);
       g.add(part(flat(new THREE.CylinderGeometry(0.045, 0.06, 1.3, 6)), '#2f343c', 0, 0.65, 0, 0.02));
       g.add(box(0.42, 0.05, 0.08, '#2f343c', 0.18, 1.3, 0), part(new THREE.BoxGeometry(0.2, 0.1, 0.16), this.lampMat, 0.34, 1.24, 0, 0.02));
-      const light = new THREE.PointLight(0xff9a3c, 0, 7, 2);
-      light.position.set(0.34, 1.1, 0);
-      g.add(light);
-      this.lampLights.push(light);
       this.scene.add(g);
-    }
+      // Every third lamp flickers, like the one by the lot in town always has.
+      this.lamps.push({ x: l.x + 0.84, z: l.y + 0.5, flicker: i % 3 === 1, ph: hash2(l.x, l.y) * 6 });
+    });
     // Utility poles with sagging wires, in the order the map lists them.
     const poles = this.objects('pole');
+    const within = (p: (typeof poles)[number], q?: (typeof poles)[number]) => (q && Math.hypot(q.x - p.x, q.y - p.y) <= MAX_WIRE ? q : undefined);
     const tops = poles.map((p, i) => {
-      const next = poles[i + 1] ?? poles[i - 1];
+      const next = within(p, poles[i + 1]) ?? within(p, poles[i - 1]);
       const g = new THREE.Group();
       g.position.set(p.x + 0.5, 0, p.y + 0.5);
       if (next) g.rotation.y = Math.atan2(next.x - p.x, next.y - p.y) + Math.PI / 2;
@@ -324,11 +502,14 @@ export class WorldView {
       return g;
     });
     const wire: THREE.Vector3[] = [];
-    for (let i = 0; i < tops.length - 1; i++) for (const o of [-0.38, 0.38]) {
-      const a = new THREE.Vector3(o, 2.2, 0).applyMatrix4(tops[i]!.matrixWorld), b = new THREE.Vector3(o, 2.2, 0).applyMatrix4(tops[i + 1]!.matrixWorld);
-      const mid = a.clone().lerp(b, 0.5);
-      mid.y -= 0.35;
-      wire.push(a, mid, mid, b);
+    for (let i = 0; i < tops.length - 1; i++) {
+      if (!within(poles[i]!, poles[i + 1])) continue;
+      for (const o of [-0.38, 0.38]) {
+        const a = new THREE.Vector3(o, 2.2, 0).applyMatrix4(tops[i]!.matrixWorld), b = new THREE.Vector3(o, 2.2, 0).applyMatrix4(tops[i + 1]!.matrixWorld);
+        const mid = a.clone().lerp(b, 0.5);
+        mid.y -= 0.35;
+        wire.push(a, mid, mid, b);
+      }
     }
     if (wire.length) this.scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(wire), new THREE.LineBasicMaterial({ color: 0x0e1115 })));
 
@@ -338,10 +519,8 @@ export class WorldView {
       const crystal = part(new THREE.OctahedronGeometry(0.42, 0), ownToon('#8b5bd9', { emissive: 0x4a1a9c }), cx, 1.2, cz, 0.03);
       crystal.scale.set(0.8, 2, 0.8);
       this.scene.add(crystal);
-      const light = new THREE.PointLight(0xa66cff, 1.2 * L, 7, 2);
-      light.position.set(cx, 1.4, cz);
-      this.scene.add(light);
-      this.stoneLight = light;
+      this.stoneLight.position.set(cx, 1.4, cz);
+      this.hasStone = true;
       const debris = new THREE.Group();
       debris.position.set(cx, 0, cz);
       const r = mulberry32(77);
@@ -369,20 +548,21 @@ export class WorldView {
   }
 
   private buildEffects() {
-    const glow = softTexture(0.25);
+    const { map } = this;
     const rng = mulberry32(4242);
     const spots: Array<[number, number]> = [];
     for (const st of this.objects('stone')) spots.push([st.x - 1.3, st.y + 1.7], [st.x + 2.4, st.y - 0.1]);
-    const spawn = this.map.data.spawn;
+    const spawn = map.data.spawn;
     for (let tries = 0; spots.length < 10 && tries < 2000; tries++) {
-      const x = Math.floor(rng() * this.map.width), y = Math.floor(rng() * this.map.height);
-      if (!this.map.walkable(x, y) || Math.hypot(x - spawn.x, y - spawn.y) < 12) continue;
+      const x = Math.floor(rng() * map.width), y = Math.floor(rng() * map.height);
+      if (!map.walkable(x, y) || Math.hypot(x - spawn.x, y - spawn.y) < 12) continue;
       spots.push([x + 0.5, y + 0.5]);
     }
+    const coreGeo = new THREE.IcosahedronGeometry(0.06, 0), coreMat = new THREE.MeshBasicMaterial({ color: 0xe8feff });
     for (const [x, y] of spots) {
-      const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0x9ef6ff, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending }));
+      const s = new THREE.Sprite(this.wispMat);
       s.scale.set(0.9, 0.9, 1);
-      const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.06, 0), new THREE.MeshBasicMaterial({ color: 0xe8feff }));
+      const core = new THREE.Mesh(coreGeo, coreMat);
       this.scene.add(s, core);
       this.wisps.push({ s, core, x, y, ph: rng() * 6, r: 0.4 + rng() * 0.6 });
     }
@@ -393,12 +573,13 @@ export class WorldView {
         w.core.position.set(x, y, z);
       }
     });
-    const mists: THREE.Mesh[] = [];
-    for (let i = 0; i < 10; i++) {
-      const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), this.mistMat);
+    const mists: THREE.Mesh[] = [], mistGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    const mistCount = Math.max(4, Math.round((map.width * map.height) / MIST_TILES));
+    for (let i = 0; i < mistCount; i++) {
+      const m = new THREE.Mesh(mistGeo, this.mistMat);
       const sc = 4 + rng() * 4;
       m.scale.set(sc, 1, sc);
-      m.position.set(rng() * this.map.width, 0.35 + rng() * 0.5, rng() * this.map.height);
+      m.position.set(rng() * map.width, 0.35 + rng() * 0.5, rng() * map.height);
       m.userData.v = (rng() - 0.5) * 0.3;
       this.scene.add(m);
       mists.push(m);
@@ -406,8 +587,8 @@ export class WorldView {
     this.animate.push((_t, dt) => {
       for (const m of mists) {
         m.position.x += m.userData.v * dt;
-        if (m.position.x > this.map.width + 6) m.position.x = -6;
-        if (m.position.x < -6) m.position.x = this.map.width + 6;
+        if (m.position.x > map.width + 6) m.position.x = -6;
+        if (m.position.x < -6) m.position.x = map.width + 6;
       }
     });
     const RAIN = 700, rainPos = new Float32Array(RAIN * 6);
@@ -453,7 +634,7 @@ export class WorldView {
     this.lampMat.emissive.set(night ? '#ffb266' : wet ? '#b3702e' : '#7a4f24');
     this.warm.emissive.set(night ? '#ffb45a' : '#8a5524');
     this.flash.intensity = night ? 1.6 * L : 0;
-    this.headLight.intensity = night ? 1.3 * L : 0;
+    this.headLight.intensity = night && this.hasCar ? 1.3 * L : 0;
     this.headMat.emissive.set(night ? '#fff1c4' : '#000000');
     this.tailMat.emissive.set(night ? '#c8281c' : '#000000');
     this.capMat.emissive.set(night ? '#2fb8a8' : '#0e3b37');
@@ -462,7 +643,7 @@ export class WorldView {
     this.rainMat.opacity = night ? 0.3 : 0.38;
     this.mistMat.color.set(night ? '#4b5a66' : '#c9d6dc');
     this.mistMat.opacity = night ? 0.1 : 0.13;
-    for (const wisp of this.wisps) (wisp.s.material as THREE.SpriteMaterial).opacity = night ? 0.95 : 0.55;
+    this.wispMat.opacity = night ? 0.95 : 0.55;
     this.updateFog();
   }
 
@@ -507,9 +688,8 @@ export class WorldView {
     for (const a of this.animate) a(t, dt);
     this.animateRain({ x: fx, y: fz }, dt);
     this.syncAvatars(avatars, meId);
-    const lampBase = this.weather === 'night' ? 1.8 : this.weather === 'rain' ? 0.9 : 0.5;
-    this.lampLights.forEach((l, i) => { l.intensity = lampBase * L * (i === 1 && (Math.sin(t * 13) > 0.92 || Math.sin(t * 2.3) > 0.97) ? 0.15 : 1); });
-    if (this.stoneLight) this.stoneLight.intensity = (this.weather === 'night' ? 2.4 : 1.2) * L * (0.85 + 0.15 * Math.sin(t * 3.1));
+    this.lightLamps(fx, fz, t, dt);
+    this.stoneLight.intensity = this.hasStone ? (this.weather === 'night' ? 2.4 : 1.2) * L * (0.85 + 0.15 * Math.sin(t * 3.1)) : 0;
     this.marker.visible = !!marker;
     if (marker) {
       this.marker.position.set(marker.x + 0.5, this.groundAt(marker.x + 0.5, marker.y + 0.5) + 0.02, marker.y + 0.5);
@@ -518,13 +698,41 @@ export class WorldView {
     this.renderer.render(this.scene, this.camera);
   }
 
+  /** Puts the real lamp lights on the lamps nearest the player (again whenever the player reaches a new tile). */
+  private lightLamps(fx: number, fz: number, t: number, dt: number) {
+    const tile = Math.floor(fz) * 65536 + Math.floor(fx);
+    if (tile !== this.lampTile) {
+      this.lampTile = tile;
+      const d2 = (i: number) => (this.lamps[i]!.x - fx) ** 2 + (this.lamps[i]!.z - fz) ** 2;
+      const near = this.lamps.map((_, i) => i).sort((a, b) => d2(a) - d2(b)).slice(0, LAMP_LIGHTS);
+      // A light already on a lamp that is still near stays where it is, so it does not blink.
+      const free = this.lampSlots.filter(s => !near.includes(s.lamp));
+      for (const i of near) {
+        if (this.lampSlots.some(s => s.lamp === i)) continue;
+        const s = free.pop()!;
+        s.lamp = i;
+        s.on = 0;
+        s.light.position.set(this.lamps[i]!.x, 1.1, this.lamps[i]!.z);
+      }
+      for (const s of free) s.lamp = -1;
+    }
+    const base = (this.weather === 'night' ? 1.8 : this.weather === 'rain' ? 0.9 : 0.5) * L;
+    for (const s of this.lampSlots) {
+      const lamp = this.lamps[s.lamp];
+      if (!lamp) { s.light.intensity = 0; continue; }
+      s.on = Math.min(1, s.on + dt / LAMP_FADE_S);
+      const flicker = lamp.flicker && (Math.sin(t * 13 + lamp.ph) > 0.92 || Math.sin(t * 2.3 + lamp.ph) > 0.97) ? 0.15 : 1;
+      s.light.intensity = base * flicker * s.on;
+    }
+  }
+
   private syncAvatars(avatars: Avatar[], meId: string | null) {
     const seen = new Set<string>();
     for (const a of avatars) {
       seen.add(a.id);
       let e = this.rigs.get(a.id);
       if (!e || e.color !== a.color) {
-        if (e) this.scene.remove(e.rig.root, e.shadow);
+        if (e) this.dropRig(e);
         e = { rig: makePlayer(a.color), color: a.color, shadow: this.blob(0.3, 0, 0) };
         this.scene.add(e.rig.root, e.shadow);
         this.rigs.set(a.id, e);
@@ -544,7 +752,13 @@ export class WorldView {
         this.flashTarget.updateMatrixWorld();
       }
     }
-    for (const [id, e] of this.rigs) if (!seen.has(id)) { this.scene.remove(e.rig.root, e.shadow); this.rigs.delete(id); }
+    for (const [id, e] of this.rigs) if (!seen.has(id)) { this.dropRig(e); this.rigs.delete(id); }
+  }
+
+  /** A player left: free their model. The blob shadow's geometry and material are shared by every blob, so they stay. */
+  private dropRig(e: { rig: Rig; shadow: THREE.Mesh }) {
+    this.scene.remove(e.rig.root, e.shadow);
+    disposeTree(e.rig.root);
   }
 }
 

@@ -23,7 +23,7 @@ ENV APP_VERSION=$APP_VERSION \
     NODE_ENV=production \
     PORT=8080 \
     CLIENT_DIR=/app/client \
-    MAP_FILE=/app/content/maps/stonebrook.json \
+    MAPS_DIR=/app/content/maps \
     MIGRATIONS_DIR=/app/migrations
 WORKDIR /app
 COPY --from=build /src/apps/server/dist ./server
