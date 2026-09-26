@@ -1,0 +1,62 @@
+# Every push and pull request: typecheck, content validation and all tests (Postgres tests included).
+# Pushes to main that pass are released to https://www.napoland.com by tools/deploy.mjs.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: napoland
+          POSTGRES_PASSWORD: napoland
+          POSTGRES_DB: napoland_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U napoland -d napoland_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL_TEST: postgres://napoland:napoland@localhost:5432/napoland_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  deploy:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # One release at a time, and a release in progress is never cancelled halfway.
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # the AWS role trusts GitHub's token for this repository's main branch only
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::211125543110:role/napoland-prod-github-deploy
+          aws-region: us-east-1
+      - uses: docker/setup-buildx-action@v4
+      - run: node tools/deploy.mjs

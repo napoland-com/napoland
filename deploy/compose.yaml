@@ -1,0 +1,65 @@
+# napoland in production: Caddy (HTTPS) in front of the game, and PostgreSQL.
+# Runs on the server from /data/napoland/release; use the napoland-compose wrapper there, e.g.
+#   napoland-compose ps        napoland-compose logs --tail 50 game        napoland-compose restart game
+# Secrets and the current image come from /data/napoland/.env and /data/napoland/image.env.
+name: napoland
+
+x-logging: &logging
+  # Logs go to CloudWatch, one stream per container (napoland-game-1, ...), readable without a shell:
+  #   aws logs tail /napoland/prod --log-stream-names napoland-game-1 --follow
+  driver: awslogs
+  options:
+    awslogs-region: ${AWS_REGION:-us-east-1}
+    awslogs-group: /napoland/prod
+    tag: "{{.Name}}"
+    # A CloudWatch hiccup must never block the game; at worst a few log lines are lost.
+    mode: non-blocking
+    max-buffer-size: 4m
+
+services:
+  caddy:
+    image: caddy:2.11.4-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      # The folder, not the file: releases replace the file, and a file mount would keep the old one.
+      - ./caddy:/etc/caddy:ro
+      # Certificates survive new releases and new servers (Let's Encrypt limits how often we may ask).
+      - /data/napoland/caddy:/data
+    depends_on:
+      - game
+    restart: unless-stopped
+    logging: *logging
+
+  game:
+    image: ${GAME_IMAGE:?GAME_IMAGE is set by release.sh}
+    environment:
+      DATABASE_URL: postgres://napoland:${POSTGRES_PASSWORD:?}@db:5432/napoland
+      # Caddy is the only way in, so X-Forwarded-For carries the real player address.
+      TRUST_PROXY: "1"
+      WEATHER: rain
+    depends_on:
+      db:
+        condition: service_healthy
+    stop_grace_period: 20s
+    restart: unless-stopped
+    logging: *logging
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: napoland
+      POSTGRES_USER: napoland
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+    volumes:
+      - /data/napoland/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U napoland -d napoland"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *logging

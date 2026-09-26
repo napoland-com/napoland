@@ -1,0 +1,13 @@
+#!/bin/bash
+# docker compose for napoland on this server, with its settings. Use it like docker compose:
+#   napoland-compose ps | logs --tail 100 game | restart game | exec db psql -U napoland
+set -euo pipefail
+export HOME="${HOME:-/root}"
+set -a
+# shellcheck source=/dev/null  # written by the server's first boot (infra/napoland.yaml)
+source /etc/napoland.env
+set +a
+args=(--project-directory /data/napoland/release -f /data/napoland/release/compose.yaml --env-file /data/napoland/.env)
+# The first release writes image.env; before that there is no game image to name.
+if [ -f /data/napoland/image.env ]; then args+=(--env-file /data/napoland/image.env); fi
+exec docker compose "${args[@]}" "$@"

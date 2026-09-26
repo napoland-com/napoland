@@ -1,0 +1,20 @@
+# napoland on the internet. Caddy gets and renews the HTTPS certificates by itself.
+# This folder is mounted (not the file), so a new release's Caddyfile is seen by `caddy reload`.
+
+www.napoland.com {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	# The game serves the web client, /health and the WebSocket (/ws). Caddy sets X-Forwarded-For
+	# to the address it sees, ignoring whatever the player sent, so the game can trust it.
+	reverse_proxy game:8080
+}
+
+# One address for everyone: logins are saved per address, so the bare domain only redirects.
+napoland.com {
+	redir https://www.napoland.com{uri} permanent
+}

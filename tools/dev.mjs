@@ -2,11 +2,15 @@
 // (:5173, reachable from phones on the same Wi-Fi) together. Ctrl+C stops both. Usage: npm run dev
 import { spawn } from 'node:child_process';
 
+// Every local tab, phone (through Vite's /ws proxy) and test bot reaches the server from this PC's
+// address, so the per-address limits are raised here (your own environment still wins).
+const serverEnv = { MAX_CONNECTIONS_PER_IP: '1000', NEW_PLAYERS_PER_IP_PER_HOUR: '1000' };
+
 const procs = [
-  ['server', '\x1b[36m', ['run', 'dev', '-w', '@napoland/server']],
-  ['client', '\x1b[35m', ['run', 'dev', '-w', '@napoland/client']],
-].map(([name, color, args]) => {
-  const p = spawn('npm', args, { shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  ['server', '\x1b[36m', ['run', 'dev', '-w', '@napoland/server'], serverEnv],
+  ['client', '\x1b[35m', ['run', 'dev', '-w', '@napoland/client'], {}],
+].map(([name, color, args, env]) => {
+  const p = spawn('npm', args, { shell: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...env, ...process.env } });
   const tag = `${color}[${name}]\x1b[0m `;
   for (const stream of [p.stdout, p.stderr]) {
     let buf = '';

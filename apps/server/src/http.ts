@@ -39,12 +39,15 @@ export interface HttpOptions {
   clientDir?: string;
   /** Players online, for /health. */
   players: () => number;
+  /** The running version, for /health, so a deploy can be checked from outside. Default 'dev'. */
+  version?: string;
 }
 
 export function createHttpServer(opts: HttpOptions): Server {
   const root = opts.clientDir === undefined ? undefined : resolve(opts.clientDir);
   const index = root && join(root, 'index.html');
   const startedAt = Date.now();
+  const version = opts.version ?? 'dev';
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
@@ -55,7 +58,7 @@ export function createHttpServer(opts: HttpOptions): Server {
       return reply(res, 400, 'Bad request');
     }
     if (pathname === '/health') {
-      const body = JSON.stringify({ ok: true, players: opts.players(), uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) });
+      const body = JSON.stringify({ ok: true, players: opts.players(), uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), version });
       return reply(res, 200, body, { 'Content-Type': 'application/json; charset=utf-8' });
     }
     if (pathname === '/ws') return reply(res, 426, 'This is the WebSocket endpoint', { Upgrade: 'websocket' });

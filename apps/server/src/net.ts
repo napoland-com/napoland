@@ -1,9 +1,11 @@
 /**
- * The WebSocket side: one connection per player. Checks the hello, feeds client messages to the
- * World and sends out what the World has to say. Nothing a client sends is trusted.
+ * The WebSocket side: one connection per player. Holds each address to its limits, checks the
+ * hello, feeds client messages to the World and sends out what the World has to say. Nothing a
+ * client sends is trusted.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import type { Server } from 'node:http';
+import { STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
   MAX_MESSAGE_BYTES,
@@ -16,6 +18,7 @@ import {
   type ServerMsg,
   type Weather,
 } from '@napoland/shared';
+import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
 import type { PlayerRecord, Storage } from './storage';
 import { colorFor, type World } from './world';
@@ -27,6 +30,9 @@ const RATE_PER_SECOND = 30;
 const RATE_BURST = 60;
 /** A client this far behind on reading will not catch up; drop it before it eats our memory. */
 const MAX_BUFFERED_BYTES = 1 << 20;
+const HOUR_MS = 3_600_000;
+/** Warnings that clients can cause at will are logged at most this often. */
+const WARN_EVERY_MS = 60_000;
 
 /** WebSocket close codes: 1008 for broken rules, 1013 for "try again later". */
 const CLOSE_CODES: Record<ErrorCode, number> = {
@@ -40,6 +46,7 @@ const CLOSE_CODES: Record<ErrorCode, number> = {
 };
 const VERSION_TEXT = `This server speaks protocol version ${PROTOCOL_VERSION}; reload to update`;
 const NAME_TEXT = 'Names are 2 to 16 letters, digits, spaces, - or _';
+const TOO_MANY_NEW_TEXT = 'Too many new players from your network. Try again later.';
 
 export interface NetOptions {
   server: Server;
@@ -51,6 +58,12 @@ export interface NetOptions {
   clock?: () => number;
   helloTimeoutMs?: number;
   heartbeatMs?: number;
+  /** The client address is the last X-Forwarded-For entry. Only behind our own proxy. */
+  trustProxy?: boolean;
+  /** Open connections one address may have; more get HTTP 429. Unset means no limit. */
+  maxConnectionsPerIp?: number;
+  /** New players one address may create in any hour. Unset means no limit. */
+  newPlayersPerIpPerHour?: number;
 }
 
 export interface Net {
@@ -64,6 +77,8 @@ export interface Net {
 
 interface Session {
   ws: WebSocket;
+  /** The client's address, for the limits per address. Never logged. */
+  ip: string;
   /** hello: waiting for it; auth: checking it; play: in the world; closed: deaf to everything. */
   state: 'hello' | 'auth' | 'play' | 'closed';
   /** The player's id, once in the world. */
@@ -81,7 +96,8 @@ export const hashToken = (token: string): string => createHash('sha256').update(
 export function attachNet(o: NetOptions): Net {
   const { world, storage } = o;
   const clock = o.clock ?? (() => performance.now());
-  const wss = new WebSocketServer({ server: o.server, path: '/ws', maxPayload: MAX_MESSAGE_BYTES });
+  // noServer: upgrade requests come through onUpgrade first, which can refuse them.
+  const wss = new WebSocketServer({ noServer: true, path: '/ws', maxPayload: MAX_MESSAGE_BYTES });
   const conns = new Set<Session>();
   /** Sessions whose player is in the world, by player id. */
   const playing = new Map<string, Session>();
@@ -91,12 +107,37 @@ export function attachNet(o: NetOptions): Net {
   const pendingSaves = new Map<string, Promise<void>>();
   let saving = false;
   let closing = false;
+  /** Open sockets per client address. */
+  const openPerIp = new Map<string, number>();
+  const maxPerIp = o.maxConnectionsPerIp ?? Infinity;
+  const newPlayers = new RollingLimit(o.newPlayersPerIpPerHour ?? Infinity, HOUR_MS, clock);
+  const warnConnections = throttledWarn('too many connections from one address', clock);
+  const warnNewPlayers = throttledWarn('too many new players from one address', clock);
 
-  // Errors of the HTTP server (like a busy port) are handled where it listens; ws repeats them here.
-  wss.on('error', () => {});
-  wss.on('connection', ws => {
+  o.server.on('upgrade', onUpgrade);
+
+  /** Refused here, before the handshake, a client over its limit costs no WebSocket at all. */
+  function onUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+    const ip = clientIp(req, o.trustProxy ?? false);
+    const open = openPerIp.get(ip) ?? 0;
+    if (open >= maxPerIp) {
+      warnConnections();
+      return refuseUpgrade(socket, 429, 'Too many connections from your network');
+    }
+    openPerIp.set(ip, open + 1);
+    // The place is freed however the socket ends: a failed handshake, a bad hello, a player leaving.
+    socket.once('close', () => {
+      const left = openPerIp.get(ip)! - 1;
+      if (left > 0) openPerIp.set(ip, left);
+      else openPerIp.delete(ip);
+    });
+    wss.handleUpgrade(req, socket, head, ws => onConnection(ws, ip));
+  }
+
+  function onConnection(ws: WebSocket, ip: string): void {
     const s: Session = {
       ws,
+      ip,
       state: 'hello',
       id: '',
       tokens: RATE_BURST,
@@ -115,7 +156,7 @@ export function attachNet(o: NetOptions): Net {
     ws.on('message', (data, isBinary) => onMessage(s, data, isBinary));
     ws.on('close', () => onClose(s));
     if (closing) disconnect(s, 1012, 'server restarting');
-  });
+  }
 
   const heartbeat = setInterval(() => {
     for (const s of conns) {
@@ -181,11 +222,18 @@ export function attachNet(o: NetOptions): Net {
       found = { rec, token: msg.token };
     } else if (msg.name !== undefined) {
       if (isFull()) return fail(s, 'server_full', 'The server is full, try again soon');
+      // Every new player is a database row: one address must not make them without end.
+      if (!newPlayers.start(s.ip)) {
+        warnNewPlayers();
+        return fail(s, 'bad_name', TOO_MANY_NEW_TEXT);
+      }
       joining++;
       try {
         found = await newPlayer(s, msg.name);
       } finally {
         joining--;
+        // Only a player that was really created counts; a taken name or an error does not.
+        newPlayers.finish(s.ip, found !== undefined);
       }
     } else {
       return fail(s, 'bad_name', 'Choose a name');
@@ -365,6 +413,7 @@ export function attachNet(o: NetOptions): Net {
       const force = setTimeout(() => {
         for (const ws of wss.clients) ws.terminate();
       }, 1000);
+      o.server.off('upgrade', onUpgrade);
       await new Promise<void>(resolve => wss.close(() => resolve()));
       clearTimeout(force);
     },
@@ -374,6 +423,35 @@ export function attachNet(o: NetOptions): Net {
 function text(data: RawData): string {
   if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
   return Buffer.isBuffer(data) ? data.toString('utf8') : Buffer.from(data).toString('utf8');
+}
+
+/** Answers an upgrade request with an HTTP error instead of a WebSocket, and closes the socket. */
+function refuseUpgrade(socket: Duplex, status: number, message: string): void {
+  // Nobody else listens for errors on this socket, and an unhandled one would stop the process.
+  socket.on('error', () => socket.destroy());
+  // The HTTP server would keep the socket half open after end(); once the answer is out, it goes.
+  socket.once('finish', () => socket.destroy());
+  socket.end(
+    `HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\n` +
+      `Content-Length: ${Buffer.byteLength(message)}\r\nCache-Control: no-store\r\n\r\n${message}`,
+  );
+}
+
+/**
+ * A warning about something clients can repeat at will: logged at most once a minute, with how many
+ * times it happened since the last line, so a flood cannot fill the disk with log lines.
+ */
+function throttledWarn(msg: string, clock: () => number): () => void {
+  let loggedAt = -Infinity;
+  let times = 0;
+  return () => {
+    times++;
+    const now = clock();
+    if (now - loggedAt < WARN_EVERY_MS) return;
+    log.warn(msg, { times });
+    loggedAt = now;
+    times = 0;
+  };
 }
 
 /**

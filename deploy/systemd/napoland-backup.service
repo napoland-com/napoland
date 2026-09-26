@@ -1,0 +1,9 @@
+[Unit]
+Description=napoland database backup to S3
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/data/napoland/release/backup.sh

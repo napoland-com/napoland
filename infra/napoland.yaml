@@ -1,0 +1,428 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  napoland production: one server running the game, PostgreSQL and Caddy (HTTPS) with Docker Compose,
+  its data on a separate disk with daily snapshots, a fixed IP with DNS for the site, an image registry,
+  a bucket for releases and backups, and a role GitHub Actions uses to deploy. See docs/OPERATIONS.md.
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: napoland.com
+    Description: The site is www.<DomainName>; the bare domain redirects there.
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Description: The existing Route 53 zone of DomainName.
+  GitHubRepo:
+    Type: String
+    Default: angelolamonaca/napoland
+    Description: Only pushes to main of this repository may deploy.
+  GitHubOidcProviderArn:
+    Type: String
+    Description: The account's existing token.actions.githubusercontent.com provider (there can be only one).
+  AvailabilityZone:
+    Type: AWS::EC2::AvailabilityZone::Name
+    Default: us-east-1a
+    Description: The server and its data disk must share a zone.
+  InstanceType:
+    Type: String
+    Default: t4g.small
+    Description: ARM (Graviton); the image is built for linux/arm64.
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Description: >-
+      Amazon Linux 2023 arm64, pinned on purpose. Changing it replaces the server, which needs the
+      procedure in docs/OPERATIONS.md because the data disk must move to the new one.
+  DataVolumeSize:
+    Type: Number
+    Default: 20
+    Description: GB for the database and certificates.
+
+Resources:
+  # ---------- network: one public subnet, nothing else ----------
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: napoland }]
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: napoland }]
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Ref AvailabilityZone
+      CidrBlock: 10.42.0.0/24
+      # The fixed IP is attached after launch; until then first boot still needs the internet.
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: napoland-public }]
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: napoland }]
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+  SubnetRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Subnet
+      RouteTableId: !Ref RouteTable
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: napoland web (HTTP for certificates and redirects, HTTPS incl. HTTP/3). No SSH; use SSM.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80, ToPort: 80, CidrIp: 0.0.0.0/0 }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0 }
+        - { IpProtocol: udp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0 }
+      Tags: [{ Key: Name, Value: napoland-web }]
+
+  # ---------- storage ----------
+  # Kept if the stack is deleted (backups), but removed when a first creation fails and rolls back,
+  # so a retry does not trip over its own leftovers.
+  Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: RetainExceptOnCreate
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub napoland-prod-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      LifecycleConfiguration:
+        Rules:
+          - { Id: backups-30-days, Prefix: backups/, Status: Enabled, ExpirationInDays: 30 }
+          - { Id: releases-180-days, Prefix: releases/, Status: Enabled, ExpirationInDays: 180 }
+  BucketTlsOnly:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: TlsOnly
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: [!GetAtt Bucket.Arn, !Sub '${Bucket.Arn}/*']
+            Condition: { Bool: { 'aws:SecureTransport': 'false' } }
+
+  Repository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: RetainExceptOnCreate
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: napoland/game
+      # Tags are commit ids; a tag never changes meaning, so rollbacks are exact.
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration: { ScanOnPush: true }
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {"rules":[{"rulePriority":1,"description":"keep the last 30 releases",
+            "selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":30},
+            "action":{"type":"expire"}}]}
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /napoland/prod
+      RetentionInDays: 30
+
+  # Players, the database and HTTPS certificates live here, not on the system disk.
+  DataVolume:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone
+      Size: !Ref DataVolumeSize
+      VolumeType: gp3
+      Encrypted: true
+      Tags:
+        - { Key: Name, Value: napoland-data }
+        - { Key: napoland-snapshots, Value: daily }
+
+  SnapshotRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-snapshots
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - { Effect: Allow, Principal: { Service: dlm.amazonaws.com }, Action: 'sts:AssumeRole' }
+      ManagedPolicyArns: ['arn:aws:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole']
+  DailySnapshots:
+    Type: AWS::DLM::LifecyclePolicy
+    Properties:
+      # DLM allows only letters, digits, spaces, - and _ here.
+      Description: napoland data disk daily snapshots kept 7 days
+      State: ENABLED
+      ExecutionRoleArn: !GetAtt SnapshotRole.Arn
+      PolicyDetails:
+        ResourceTypes: [VOLUME]
+        TargetTags: [{ Key: napoland-snapshots, Value: daily }]
+        Schedules:
+          - Name: daily
+            CopyTags: true
+            CreateRule: { Interval: 24, IntervalUnit: HOURS, Times: ['04:00'] }
+            RetainRule: { Count: 7 }
+
+  # ---------- the server ----------
+  ServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-server
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - { Effect: Allow, Principal: { Service: ec2.amazonaws.com }, Action: 'sts:AssumeRole' }
+      # SSM gives Claude and CI a shell and remote commands without an open SSH port.
+      ManagedPolicyArns: ['arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore']
+      Policies:
+        - PolicyName: napoland-server
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - { Effect: Allow, Action: 'ecr:GetAuthorizationToken', Resource: '*' }
+              - Effect: Allow
+                Action: ['ecr:BatchGetImage', 'ecr:GetDownloadUrlForLayer', 'ecr:BatchCheckLayerAvailability']
+                Resource: !GetAtt Repository.Arn
+              - Effect: Allow
+                Action: 's3:ListBucket'
+                Resource: !GetAtt Bucket.Arn
+                Condition: { StringLike: { 's3:prefix': ['releases/*', 'backups/*'] } }
+              - { Effect: Allow, Action: 's3:GetObject', Resource: [!Sub '${Bucket.Arn}/releases/*', !Sub '${Bucket.Arn}/backups/*'] }
+              - { Effect: Allow, Action: 's3:PutObject', Resource: !Sub '${Bucket.Arn}/backups/*' }
+              - Effect: Allow
+                Action: ['logs:CreateLogStream', 'logs:PutLogEvents', 'logs:DescribeLogStreams']
+                Resource: !GetAtt LogGroup.Arn
+              - { Effect: Allow, Action: 'cloudformation:SignalResource', Resource: !Ref 'AWS::StackId' }
+  ServerProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref ServerRole]
+
+  Server:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal: { Count: 1, Timeout: PT20M }
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref ImageId
+      AvailabilityZone: !Ref AvailabilityZone
+      SubnetId: !Ref Subnet
+      SecurityGroupIds: [!Ref WebSecurityGroup]
+      IamInstanceProfile: !Ref ServerProfile
+      MetadataOptions: { HttpTokens: required, HttpEndpoint: enabled, HttpPutResponseHopLimit: 1 }
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs: { VolumeSize: 16, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+      # Attached while the server is created (a separate attachment would only start after the
+      # server signals, and the server waits for this disk before it signals).
+      Volumes: [{ Device: /dev/sdf, VolumeId: !Ref DataVolume }]
+      Tags: [{ Key: Name, Value: napoland-prod }]
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # First boot of the napoland server. Everything after this comes with releases (deploy/ in the repo).
+          # No "set -x": the database password is created below and must not reach the logs.
+          set -euo pipefail
+          exec > >(tee -a /var/log/napoland-bootstrap.log) 2>&1
+          TOKEN=$(curl -sfX PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 600')
+          INSTANCE_ID=$(curl -sfH "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+          signal() {
+            aws cloudformation signal-resource --region ${AWS::Region} --stack-name ${AWS::StackName} \
+              --logical-resource-id Server --unique-id "$INSTANCE_ID" --status "$1" || true
+          }
+          trap 'echo "bootstrap failed"; signal FAILURE' ERR
+
+          cat > /etc/napoland.env <<EOF
+          AWS_REGION=${AWS::Region}
+          AWS_DEFAULT_REGION=${AWS::Region}
+          BUCKET=${Bucket}
+          LOG_GROUP=${LogGroup}
+          EOF
+
+          echo "swap: 1 GB, so a busy moment cannot get the database killed"
+          if [ ! -f /swapfile ]; then
+            fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile
+            echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            swapon /swapfile
+          fi
+
+          echo "docker and compose"
+          dnf install -y --setopt=retries=10 docker
+          curl -fsSL --retry 10 -o /tmp/docker-compose \
+            https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-aarch64
+          echo "732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7  /tmp/docker-compose" | sha256sum -c -
+          install -D -m 755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+
+          echo "data disk"
+          VOL=${DataVolume}
+          DEV=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${!VOL//-/}
+          for i in $(seq 1 90); do [ -e "$DEV" ] && break; sleep 5; done
+          [ -e "$DEV" ]
+          blkid "$DEV" || mkfs.xfs -L napoland "$DEV"
+          mkdir -p /data
+          grep -q 'LABEL=napoland ' /etc/fstab || echo 'LABEL=napoland /data xfs defaults,nofail 0 2' >> /etc/fstab
+          systemctl daemon-reload
+          mount -a
+          mountpoint -q /data
+          mkdir -p /data/napoland/release /data/napoland/postgres /data/napoland/caddy
+          if [ ! -f /data/napoland/.env ]; then
+            (umask 077; echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > /data/napoland/.env)
+          fi
+
+          # Docker must never start the database before the data disk is mounted.
+          mkdir -p /etc/systemd/system/docker.service.d
+          printf '[Unit]\nRequiresMountsFor=/data\n' > /etc/systemd/system/docker.service.d/napoland.conf
+          systemctl daemon-reload
+          systemctl enable --now docker
+
+          # A server that replaces an old one starts the last release found on the data disk.
+          if [ -x /data/napoland/release/release.sh ] && [ -f /data/napoland/image.env ]; then
+            /data/napoland/release/release.sh "$(sed -n 's/^GAME_IMAGE=//p' /data/napoland/image.env)"
+          fi
+          echo "bootstrap done"
+          signal SUCCESS
+  Address:
+    Type: AWS::EC2::EIP
+    DependsOn: GatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags: [{ Key: Name, Value: napoland }]
+  AddressAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt Address.AllocationId
+      InstanceId: !Ref Server
+
+  # AWS repairs or reboots the server by itself when its health checks fail.
+  RecoverAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: napoland server hardware problem; AWS moves it to healthy hardware
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_System
+      Dimensions: [{ Name: InstanceId, Value: !Ref Server }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions: [!Sub 'arn:aws:automate:${AWS::Region}:ec2:recover']
+  RebootAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: napoland server not responding; reboot it
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed_Instance
+      Dimensions: [{ Name: InstanceId, Value: !Ref Server }]
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 3
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions: [!Sub 'arn:aws:automate:${AWS::Region}:ec2:reboot']
+
+  # ---------- DNS ----------
+  SiteRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub www.${DomainName}
+      Type: A
+      TTL: '300'
+      ResourceRecords: [!Ref Address]
+  ApexRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      TTL: '300'
+      ResourceRecords: [!Ref Address]
+
+  # ---------- deploys from GitHub Actions (OIDC, no stored keys) ----------
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-github-deploy
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Federated: !Ref GitHubOidcProviderArn }
+            Action: 'sts:AssumeRoleWithWebIdentity'
+            Condition:
+              StringEquals:
+                'token.actions.githubusercontent.com:aud': sts.amazonaws.com
+                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubRepo}:ref:refs/heads/main'
+      Policies:
+        - PolicyName: napoland-deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - { Effect: Allow, Action: 'cloudformation:DescribeStacks', Resource: !Ref 'AWS::StackId' }
+              - { Effect: Allow, Action: 'ecr:GetAuthorizationToken', Resource: '*' }
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:CompleteLayerUpload
+                  - ecr:DescribeImages
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource: !GetAtt Repository.Arn
+              - Effect: Allow
+                Action: 's3:ListBucket'
+                Resource: !GetAtt Bucket.Arn
+                Condition: { StringLike: { 's3:prefix': 'releases/*' } }
+              - { Effect: Allow, Action: ['s3:PutObject', 's3:GetObject'], Resource: !Sub '${Bucket.Arn}/releases/*' }
+              - Effect: Allow
+                Action: 'ssm:SendCommand'
+                Resource:
+                  - !Sub 'arn:aws:ec2:${AWS::Region}:${AWS::AccountId}:instance/${Server}'
+                  - !Sub 'arn:aws:ssm:${AWS::Region}::document/AWS-RunShellScript'
+              - { Effect: Allow, Action: ['ssm:GetCommandInvocation', 'ssm:ListCommandInvocations'], Resource: '*' }
+
+Outputs:
+  SiteUrl:
+    Value: !Sub https://www.${DomainName}
+  InstanceId:
+    Value: !Ref Server
+  PublicIp:
+    Value: !Ref Address
+  RepositoryUri:
+    Value: !GetAtt Repository.RepositoryUri
+  BucketName:
+    Value: !Ref Bucket
+  LogGroupName:
+    Value: !Ref LogGroup
+  DeployRoleArn:
+    Value: !GetAtt DeployRole.Arn

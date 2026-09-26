@@ -22,6 +22,14 @@ export interface Config {
   tickMs: number;
   saveEveryMs: number;
   logLevel: LogLevel;
+  /** Behind our own proxy: the client address is the last X-Forwarded-For entry. */
+  trustProxy: boolean;
+  /** Open connections one address may have; more are refused with HTTP 429. */
+  maxConnectionsPerIp: number;
+  /** New players one address may create in any hour. */
+  newPlayersPerIpPerHour: number;
+  /** Reported on /health, so a deploy can be checked from outside. */
+  version: string;
 }
 
 type Env = Record<string, string | undefined>;
@@ -49,6 +57,16 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
     errors.push(`${name} must be one of ${options.join(', ')}, got "${raw}"`);
     return def;
   };
+  /** Anything but these stops the server: a misspelt "on" must not quietly mean off. */
+  const bool = (name: string, def: boolean) => {
+    const raw = get(name);
+    if (raw === undefined) return def;
+    const v = raw.toLowerCase();
+    if (v === '1' || v === 'true') return true;
+    if (v === '0' || v === 'false') return false;
+    errors.push(`${name} must be 1, true, 0 or false, got "${raw}"`);
+    return def;
+  };
   /** An explicit path must exist; otherwise look for the default one in cwd and its parents. */
   const path = (name: string, fallback: string, kind: 'file' | 'dir') => {
     const raw = get(name);
@@ -73,9 +91,17 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   const tickMs = int('TICK_MS', 50, 1, 1000);
   const saveEveryMs = int('SAVE_EVERY_MS', 15_000, 1000, 3_600_000);
   const logLevel = oneOf('LOG_LEVEL', LOG_LEVELS, 'info');
+  // Only behind a proxy that sets X-Forwarded-For: without one, clients could claim any address.
+  const trustProxy = bool('TRUST_PROXY', false);
+  const maxConnectionsPerIp = int('MAX_CONNECTIONS_PER_IP', 20, 1, 100_000);
+  const newPlayersPerIpPerHour = int('NEW_PLAYERS_PER_IP_PER_HOUR', 10, 1, 100_000);
+  const version = get('APP_VERSION') ?? 'dev';
 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
-  return { port, host, databaseUrl, mapFile: mapFile!, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs, logLevel };
+  return {
+    port, host, databaseUrl, mapFile: mapFile!, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs, logLevel,
+    trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version,
+  };
 }
 
 /** The first `rel` that exists in `from` or one of its parents. */

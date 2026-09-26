@@ -1,7 +1,9 @@
 # napoland game server + web client in one small image.
 #   build stage:   installs everything, builds the client (Vite) and bundles the server (esbuild)
 #   runtime stage: Node + the bundle + static client files + map content + SQL migrations
-FROM node:24-alpine AS build
+# The build stage runs on the builder's own CPU and makes only JavaScript, and the runtime stage has
+# no RUN steps, so an arm64 image for the server builds fast on an x86 PC or CI without emulation.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
@@ -15,7 +17,10 @@ COPY content content
 RUN npm run build -w @napoland/client && npm run build -w @napoland/server
 
 FROM node:24-alpine AS runtime
-ENV NODE_ENV=production \
+# The commit this image was built from; /health reports it so a deploy can be checked from outside.
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION \
+    NODE_ENV=production \
     PORT=8080 \
     CLIENT_DIR=/app/client \
     MAP_FILE=/app/content/maps/stonebrook.json \

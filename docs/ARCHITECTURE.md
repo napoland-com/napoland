@@ -35,6 +35,14 @@ How the game is built, and why it is built that way. The main constraint: Claude
 3. Errors are explicit: `bad_version` makes the client reload, `unknown_token` shows the name screen, `bad_name` explains the problem, `replaced` means the same player connected from another screen.
 4. Phones drop connections often; the client reconnects with backoff and logs back in with its token.
 
+## Limits
+
+No single client can wear the server down (`net.ts`, `limits.ts`):
+
+- Each connection: messages of at most 1 KiB, 30 a second (bursts of 60), `hello` within 5 s, an answer to the heartbeat ping every 30 s. At most `MAX_PLAYERS` (500) online.
+- Each address: `MAX_CONNECTIONS_PER_IP` (20) open connections; one more gets HTTP 429 before a WebSocket exists. `NEW_PLAYERS_PER_IP_PER_HOUR` (10) new players in any hour, counted in memory; one more gets `bad_name` ("Too many new players from your network"). Signing in with a token is never limited.
+- The address is the socket's. Behind our own proxy (Caddy), `TRUST_PROXY=1` makes it the last `X-Forwarded-For` entry, the one the proxy added; the game port must then only be reachable through the proxy, or clients could claim any address. Addresses are never logged.
+
 ## Saving
 
 Players live in memory while online and are written to PostgreSQL every 15 s, when they leave and on shutdown. Schema changes are SQL files in `apps/server/migrations`, applied in order at start-up and recorded in `schema_migrations`.
@@ -67,9 +75,10 @@ The world is data in `content/maps/*.json`: rows of tile letters, rows of height
 
 - **Development:** `npm run dev` (server in memory on :8080, Vite on :5173 with hot reload, reachable from phones on the same Wi-Fi).
 - **Docker:** `docker compose up -d --build` builds one small image (Node + bundled server + built client + content + migrations) next to PostgreSQL 17. Settings in `.env`.
+- **Checking a server:** `/health` answers `ok`, the players online, the uptime and `version` (from `APP_VERSION`, default `dev`), so a deploy can be checked from outside.
 
 ## Growing later
 
 The design's layers (your cabin, your street, the town square, the wilds) map onto the same server code: a zone is a map plus the players in it. When one process is not enough, zones move to separate processes (cabins and streets start on demand, the town square and busy regions get copies), with a small message bus between them for chat, parties and cross-zone presence. Nothing in the protocol or the client has to change for that.
 
-Still to set up when there are accounts to run it on: a cloud server with HTTPS (Caddy), CI on every change (GitHub Actions running `npm run check` and bot tests), automatic deploys with a smoke test and rollback, nightly database backups, and a scheduled bot that logs in and files issues when something breaks.
+Production (one AWS server with Caddy, CI on every push, automatic releases with rollback, nightly backups) is described in [OPERATIONS.md](OPERATIONS.md). Still to come: a scheduled bot that signs in with a saved token, plays a little and reports when something breaks.

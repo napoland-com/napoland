@@ -31,9 +31,10 @@ class Client {
     this.closed = new Promise(resolve => ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() })));
   }
 
-  static open(port: number): Promise<Client> {
+  /** Rejects with "Unexpected server response: <status>" if the server refuses the upgrade. */
+  static open(port: number, headers: Record<string, string> = {}): Promise<Client> {
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers });
       const client = new Client(ws);
       ws.once('open', () => {
         ws.off('error', reject);
@@ -80,6 +81,19 @@ async function waitFor(cond: () => boolean, what: string, timeoutMs = 3000): Pro
   }
 }
 
+/** Retries until `attempt` succeeds: the server may notice a closed socket a moment after the client does. */
+async function eventually<T>(attempt: () => Promise<T>, what: string, timeoutMs = 3000): Promise<T> {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      return await attempt();
+    } catch (err) {
+      if (Date.now() > until) throw new Error(`timed out waiting for ${what}: ${String(err)}`);
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+}
+
 let names = 0;
 const newName = () => `Player ${++names}`;
 
@@ -105,8 +119,8 @@ function setup(options: Partial<ServerOptions> = {}) {
     await ctx.server?.stop();
   });
 
-  const open = async () => {
-    const c = await Client.open(ctx.server.port);
+  const open = async (headers?: Record<string, string>) => {
+    const c = await Client.open(ctx.server.port, headers);
     clients.push(c);
     return c;
   };
@@ -129,7 +143,7 @@ function setup(options: Partial<ServerOptions> = {}) {
 }
 
 describe('connecting', () => {
-  const { ctx, open, join, refused } = setup();
+  const { ctx, open, join, refused } = setup({ version: '1.2.3-test' });
 
   it('welcomes a new player with a token, at the spawn', async () => {
     const { welcome, id } = await join('Aldo');
@@ -224,13 +238,13 @@ describe('connecting', () => {
     await waitFor(() => !ctx.server.world.has(a.id), 'the player to leave');
   });
 
-  it('reports the players online on /health', async () => {
+  it('reports the players online and the version on /health', async () => {
     await join();
     const res = await fetch(`http://127.0.0.1:${ctx.server.port}/health`);
     expect(res.status).toBe(200);
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
-    expect(await res.json()).toEqual({ ok: true, players: 1, uptimeSeconds: expect.any(Number) });
+    expect(await res.json()).toEqual({ ok: true, players: 1, uptimeSeconds: expect.any(Number), version: '1.2.3-test' });
   });
 });
 
@@ -311,6 +325,110 @@ describe('a full server', () => {
     c.send({ t: 'hello', v: PROTOCOL_VERSION, token: a.welcome.token });
     expect((await c.next('welcome')).you).toBe(a.id);
     expect(await a.c.next('error')).toMatchObject({ code: 'replaced' });
+  });
+});
+
+const TOO_MANY_CONNECTIONS = 'Unexpected server response: 429';
+const TOO_MANY_NEW_PLAYERS = 'Too many new players from your network. Try again later.';
+const forwardedFor = (value: string) => ({ 'X-Forwarded-For': value });
+
+describe('a limit of 2 connections per address', () => {
+  // Sockets that do not say hello are closed after 500 ms, so every check follows its open closely.
+  const { ctx, open, join } = setup({ maxConnectionsPerIp: 2, helloTimeoutMs: 500 });
+
+  it('answers the next upgrade with HTTP 429, and has room again when a socket closes, even during hello', async () => {
+    const tooMany = () => expect(Client.open(ctx.server.port)).rejects.toThrow(TOO_MANY_CONNECTIONS);
+    await join();
+    const leaving = await join();
+    await tooMany();
+
+    leaving.c.ws.close();
+    const badHello = await eventually(open, 'the closed socket to give its place back');
+    await tooMany();
+
+    badHello.send('this is not json');
+    expect((await badHello.closed).code).toBe(1008);
+    const silent = await eventually(open, 'the socket refused during hello to give its place back');
+    await tooMany();
+
+    expect((await silent.closed).code).toBe(1008); // said nothing in time
+    await eventually(open, 'the socket that never said hello to give its place back');
+    await tooMany();
+  });
+});
+
+describe('behind our proxy (trustProxy)', () => {
+  const { ctx, open } = setup({ trustProxy: true, maxConnectionsPerIp: 1, helloTimeoutMs: 5000 });
+
+  it('counts connections by the last X-Forwarded-For entry, the one the proxy added', async () => {
+    const tooMany = (headers?: Record<string, string>) => expect(Client.open(ctx.server.port, headers)).rejects.toThrow(TOO_MANY_CONNECTIONS);
+    await open(forwardedFor('203.0.113.7'));
+    // The same address behind an entry the client made up, or written as an IPv4-mapped IPv6 address.
+    await tooMany(forwardedFor('198.51.100.1, 203.0.113.7'));
+    await tooMany(forwardedFor('::ffff:203.0.113.7'));
+    // Only the last entry counts, whatever the client put in front of it.
+    await open(forwardedFor('203.0.113.7, 198.51.100.2'));
+    await tooMany(forwardedFor('203.0.113.8, 198.51.100.2'));
+    // Without the header, the socket's own address counts.
+    await open();
+    await tooMany();
+  });
+});
+
+describe('without trustProxy', () => {
+  const { ctx, open } = setup({ maxConnectionsPerIp: 1, helloTimeoutMs: 5000 });
+
+  it('never reads X-Forwarded-For: every connection counts for the socket address', async () => {
+    await open(forwardedFor('203.0.113.7'));
+    await expect(Client.open(ctx.server.port, forwardedFor('198.51.100.1'))).rejects.toThrow(TOO_MANY_CONNECTIONS);
+  });
+});
+
+describe('a limit of 2 new players per address', () => {
+  const { open, join, refused } = setup({ trustProxy: true, newPlayersPerIpPerHour: 2 });
+
+  it('refuses the third with bad_name, but never a sign-in with a token', async () => {
+    const a = await join();
+    // A taken name creates nobody, so it does not count.
+    await refused({ t: 'hello', v: PROTOCOL_VERSION, name: a.welcome.name }, 'bad_name', 1000);
+    await join();
+    const c = await open();
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, name: newName() });
+    expect(await c.next('error')).toEqual({ t: 'error', code: 'bad_name', message: TOO_MANY_NEW_PLAYERS });
+    expect((await c.closed).code).toBe(1000);
+
+    const again = await open();
+    again.send({ t: 'hello', v: PROTOCOL_VERSION, token: a.welcome.token });
+    expect((await again.next('welcome')).you).toBe(a.id);
+
+    // Another address has places of its own.
+    const other = await open(forwardedFor('203.0.113.9'));
+    other.send({ t: 'hello', v: PROTOCOL_VERSION, name: newName() });
+    await other.next('welcome');
+  });
+
+  it('lets a burst of hellos sent together get no further than the limit', async () => {
+    /** Creating a player takes a while here, so all the hellos are in flight at the same time. */
+    class SlowCreate extends MemoryStorage {
+      override async create(rec: PlayerRecord): Promise<boolean> {
+        await new Promise(resolve => setTimeout(resolve, 100));
+        return super.create(rec);
+      }
+    }
+    const server = await startServer({
+      host: '127.0.0.1', port: 0, storage: new SlowCreate(), map: loadMap(MAP_FILE).map,
+      weather: 'rain', maxPlayers: 50, tickMs: 20, saveEveryMs: 60_000, newPlayersPerIpPerHour: 2,
+    });
+    try {
+      const cs = await Promise.all(Array.from({ length: 5 }, () => Client.open(server.port)));
+      for (const c of cs) c.send({ t: 'hello', v: PROTOCOL_VERSION, name: newName() });
+      await waitFor(() => cs.every(c => c.inbox.length > 0), 'an answer to every hello');
+      const answers = cs.map(c => c.inbox[0]!).map(m => (m.t === 'error' ? m.message : m.t));
+      expect(answers.sort()).toEqual([TOO_MANY_NEW_PLAYERS, TOO_MANY_NEW_PLAYERS, TOO_MANY_NEW_PLAYERS, 'welcome', 'welcome']);
+      for (const c of cs) c.ws.terminate();
+    } finally {
+      await server.stop();
+    }
   });
 });
 

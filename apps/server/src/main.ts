@@ -29,8 +29,13 @@ async function main(): Promise<void> {
     tickMs: cfg.tickMs,
     saveEveryMs: cfg.saveEveryMs,
     clientDir: cfg.clientDir,
+    version: cfg.version,
+    trustProxy: cfg.trustProxy,
+    maxConnectionsPerIp: cfg.maxConnectionsPerIp,
+    newPlayersPerIpPerHour: cfg.newPlayersPerIpPerHour,
   });
   log.info('server started', {
+    version: cfg.version,
     port: server.port,
     host: cfg.host,
     storage: cfg.databaseUrl ? 'postgres' : 'memory',
@@ -40,6 +45,10 @@ async function main(): Promise<void> {
     maxPlayers: cfg.maxPlayers,
     weather: cfg.weather,
     client: cfg.clientDir ?? 'not served',
+    // Off behind a proxy, every player seems to come from the proxy and they share one set of limits.
+    trustProxy: cfg.trustProxy,
+    maxConnectionsPerIp: cfg.maxConnectionsPerIp,
+    newPlayersPerIpPerHour: cfg.newPlayersPerIpPerHour,
   });
 
   let stopping = false;

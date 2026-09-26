@@ -53,7 +53,7 @@ describe('static files', () => {
     };
     for (const [name, body] of Object.entries(files)) writeFileSync(join(root, name), body);
     writeFileSync(join(base, 'secret.txt'), 'SECRET=outside');
-    server = createHttpServer({ clientDir: root, players: () => 2 });
+    server = createHttpServer({ clientDir: root, players: () => 2, version: '0.4.1-abc1234' });
     port = await listen(server);
   });
   afterAll(async () => {
@@ -148,6 +148,13 @@ describe('static files', () => {
     expect(res.status).toBe(426);
     expect(res.headers.upgrade).toBe('websocket');
   });
+
+  it('reports the running version on /health, so a deploy can be checked from outside', async () => {
+    const res = await get(port, '/health');
+    expect(res.status).toBe(200);
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(JSON.parse(res.body)).toEqual({ ok: true, players: 2, uptimeSeconds: expect.any(Number), version: '0.4.1-abc1234' });
+  });
 });
 
 describe('without a client folder', () => {
@@ -164,7 +171,7 @@ describe('without a client folder', () => {
     expect(health.status).toBe(200);
     expect(health.headers['content-type']).toBe('application/json; charset=utf-8');
     expect(health.headers['x-content-type-options']).toBe('nosniff');
-    expect(JSON.parse(health.body)).toEqual({ ok: true, players: 3, uptimeSeconds: expect.any(Number) });
+    expect(JSON.parse(health.body)).toEqual({ ok: true, players: 3, uptimeSeconds: expect.any(Number), version: 'dev' });
     for (const path of ['/', '/index.html', '/play']) expect((await get(port, path)).status).toBe(404);
   });
 });

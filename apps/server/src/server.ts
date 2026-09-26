@@ -5,6 +5,7 @@
 import type { AddressInfo } from 'node:net';
 import type { TileMap, Weather } from '@napoland/shared';
 import { createHttpServer } from './http';
+import { log } from './log';
 import { attachNet } from './net';
 import type { Storage } from './storage';
 import { World } from './world';
@@ -22,6 +23,14 @@ export interface ServerOptions {
   clientDir?: string;
   helloTimeoutMs?: number;
   heartbeatMs?: number;
+  /** Reported on /health; default 'dev'. */
+  version?: string;
+  /** The client address is the last X-Forwarded-For entry. Only behind our own proxy. */
+  trustProxy?: boolean;
+  /** Open connections one address may have; unset means no limit. */
+  maxConnectionsPerIp?: number;
+  /** New players one address may create in any hour; unset means no limit. */
+  newPlayersPerIpPerHour?: number;
 }
 
 export interface RunningServer {
@@ -33,7 +42,7 @@ export interface RunningServer {
 
 export async function startServer(o: ServerOptions): Promise<RunningServer> {
   const world = new World(o.map);
-  const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size });
+  const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version });
   const net = attachNet({
     server: http,
     world,
@@ -42,6 +51,9 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     maxPlayers: o.maxPlayers,
     helloTimeoutMs: o.helloTimeoutMs,
     heartbeatMs: o.heartbeatMs,
+    trustProxy: o.trustProxy,
+    maxConnectionsPerIp: o.maxConnectionsPerIp,
+    newPlayersPerIpPerHour: o.newPlayersPerIpPerHour,
   });
   try {
     await new Promise<void>((resolve, reject) => {
@@ -55,6 +67,8 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     await net.close();
     throw err;
   }
+  // Once listening, a connection that cannot be accepted (say, out of file handles) must not stop the game.
+  http.on('error', err => log.error('http server error', { err: err.message }));
 
   const tick = setInterval(() => net.tick(), o.tickMs);
   const save = setInterval(() => void net.saveAll(), o.saveEveryMs);
