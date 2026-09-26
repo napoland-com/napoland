@@ -4,7 +4,10 @@ html, body { height: 100%; margin: 0; background: #0b1014; color: #f1ece0; overf
 body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
 #app { position: fixed; inset: 0; }
 
-.screen { position: absolute; inset: 0; container-type: size; container-name: scr; overflow: hidden; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; }
+/* Clipped, not hidden: the vignette and name tags reach past the edges, and a hidden box can still
+   be scrolled (by a script, focus or find in page), which slides the whole game aside. Browsers
+   without clip (iOS before 16) keep hidden. */
+.screen { position: absolute; inset: 0; container-type: size; container-name: scr; overflow: hidden; overflow: clip; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; }
 .screen canvas.world { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
 /* ---------- HUD (sized from the screen's short side, so every aspect ratio works) ---------- */

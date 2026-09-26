@@ -14,12 +14,17 @@ const cache = new Map<string, THREE.MeshToonMaterial>();
 /** Materials that outlive any one map (every map uses them): disposing a map's view leaves these alone. */
 const shared = new WeakSet<THREE.Material>();
 const keep = <T extends THREE.Material>(m: T): T => (shared.add(m), m);
+/** Shared materials that are only a color: bake() turns them into vertex colors of one material. */
+const plain = new WeakSet<THREE.Material>();
 
 /** A shared toon material (use for things that never change color). */
 export function toon(color: THREE.ColorRepresentation, opts?: ToonOpts): THREE.MeshToonMaterial {
   const key = String(color) + (opts ? JSON.stringify(opts) : '');
   let m = cache.get(key);
-  if (!m) cache.set(key, (m = keep(new THREE.MeshToonMaterial({ color, gradientMap: grad, ...opts }))));
+  if (!m) {
+    cache.set(key, (m = keep(new THREE.MeshToonMaterial({ color, gradientMap: grad, ...opts }))));
+    if (!opts) plain.add(m);
+  }
   return m;
 }
 
@@ -80,6 +85,53 @@ export function part(geo: THREE.BufferGeometry, mat: THREE.Material | string, x 
 
 export const box = (w: number, h: number, d: number, mat: THREE.Material | string, x = 0, y = 0, z = 0, ol: boolean | number = true) =>
   part(new THREE.BoxGeometry(w, h, d), mat, x, y, z, ol);
+
+/** Joins non-indexed geometries into one, with one vertex color per part (or no colors). */
+export function merge(parts: Array<[THREE.BufferGeometry, THREE.Color | null]>): THREE.BufferGeometry {
+  const pos: number[] = [], nor: number[] = [], col: number[] = [];
+  for (const [g, c] of parts) {
+    const p = g.getAttribute('position'), n = g.getAttribute('normal');
+    for (let i = 0; i < p.count; i++) {
+      pos.push(p.getX(i), p.getY(i), p.getZ(i));
+      nor.push(n.getX(i), n.getY(i), n.getZ(i));
+      if (c) col.push(c.r, c.g, c.b);
+    }
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  if (col.length) out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return out;
+}
+
+/**
+ * Joins the meshes under `roots` (things that never move, built with part() and box()) into one
+ * mesh per material, returned for the caller to add to the scene. Every plain toon() color goes
+ * into one mesh as vertex colors and every outline into another, so a town of boxes costs a few
+ * draw calls instead of hundreds. Other materials (a lit window, a lamp head: their glow changes
+ * with the weather) keep a mesh of their own. The meshes leave their parents; anything else (a
+ * light and its target) stays where it is.
+ */
+export function bake(roots: THREE.Object3D[]): THREE.Mesh[] {
+  const colored = toon(0xffffff, { vertexColors: true });
+  const byMaterial = new Map<THREE.Material, Array<[THREE.BufferGeometry, THREE.Color | null]>>();
+  for (const root of roots) {
+    root.updateMatrixWorld(true);
+    const meshes: THREE.Mesh[] = [];
+    root.traverse(o => { if (o instanceof THREE.Mesh) meshes.push(o); });
+    for (const m of meshes) {
+      const mat = m.material as THREE.Material;
+      const g = (m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone()).applyMatrix4(m.matrixWorld);
+      const key = plain.has(mat) ? colored : mat;
+      let list = byMaterial.get(key);
+      if (!list) byMaterial.set(key, (list = []));
+      list.push([g, plain.has(mat) ? (mat as THREE.MeshToonMaterial).color : null]);
+      m.removeFromParent();
+    }
+  }
+  return [...byMaterial].map(([mat, parts]) => new THREE.Mesh(merge(parts), mat));
+}
 
 export function pivot(x: number, y: number, z: number): THREE.Group {
   const g = new THREE.Group();

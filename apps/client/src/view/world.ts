@@ -4,13 +4,14 @@
  *
  * The WebGL renderer lives for the whole visit (createRenderer); a WorldView is built for one map
  * and disposed when you leave it, which frees what it put on the GPU. Big maps stay fast on
- * phones: trees and ferns are drawn in blocks the camera skips when they are off screen, and only
- * the few lamps nearest you carry a real light.
+ * phones: trees and ferns are drawn in blocks the camera skips when they are off screen, the
+ * props that never move (houses, cars, signs, lamps, poles, barrels, fences) are joined into a few
+ * meshes, and only the few lamps nearest you carry a real light.
  */
 import * as THREE from 'three';
 import { DIR_VEC, type Dir, type MapObject, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { makeNpc, makePlayer, type Rig } from './characters';
-import { OUTLINE_INSTANCED, box, disposeTree, flat, hash2, mulberry32, ownToon, part, softTexture, toon } from './toon';
+import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, hash2, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
 
 export interface Avatar {
   id: string;
@@ -93,25 +94,6 @@ function treeGeometry(outline: boolean): THREE.BufferGeometry {
   return merge(parts);
 }
 
-/** Joins non-indexed geometries into one, with one vertex color per part (or no colors). */
-function merge(parts: Array<[THREE.BufferGeometry, THREE.Color | null]>): THREE.BufferGeometry {
-  const pos: number[] = [], nor: number[] = [], col: number[] = [];
-  for (const [g, c] of parts) {
-    const p = g.getAttribute('position'), n = g.getAttribute('normal');
-    for (let i = 0; i < p.count; i++) {
-      pos.push(p.getX(i), p.getY(i), p.getZ(i));
-      nor.push(n.getX(i), n.getY(i), n.getZ(i));
-      if (c) col.push(c.r, c.g, c.b);
-    }
-    g.dispose();
-  }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-  if (col.length) out.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  return out;
-}
-
 /** Groups things with a tile position into CHUNK x CHUNK blocks, keeping their order within a block. */
 function blocks<T extends { x: number; y: number }>(items: T[]): T[][] {
   const out = new Map<string, T[]>();
@@ -183,9 +165,12 @@ export class WorldView {
     for (const s of this.lampSlots) this.scene.add(s.light);
     this.flash.target = this.flashTarget;
     this.findOpenings();
-    this.buildTerrain();
+    // What never moves or changes is built from hundreds of little boxes; it is drawn as a few meshes (see bake).
+    const still: THREE.Object3D[] = [];
+    this.buildTerrain(still);
     this.buildNature();
-    this.buildTown();
+    this.buildTown(still);
+    for (const m of bake(still)) this.scene.add(m);
     this.buildEffects();
     this.marker = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.66, 4, 1, Math.PI / 4).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xe9e6de, transparent: true, opacity: 0.9, depthWrite: false }));
     this.marker.visible = false;
@@ -226,7 +211,7 @@ export class WorldView {
     }
   }
 
-  private buildTerrain() {
+  private buildTerrain(still: THREE.Object3D[]) {
     const { map } = this;
     const pos: number[] = [], col: number[] = [];
     const quad = (a: number[], b: number[], c: number[], d: number[], color: THREE.Color) => {
@@ -272,9 +257,11 @@ export class WorldView {
     this.scene.add(this.terrain);
     const outerMat = toon(outerColor);
     for (const [x, z, w, d] of [[W / 2, -60, W + 260, 120], [W / 2, H + 60, W + 260, 120], [-60, H / 2, 120, H], [W + 60, H / 2, 120, H]] as const) {
-      this.scene.add(part(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), outerMat, x, -0.01, z, false));
+      still.push(part(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), outerMat, x, -0.01, z, false));
     }
-    // Center lines on two-lane roads.
+    // Center lines on two-lane roads. Not baked: they lie a hair above the road, and their own
+    // material (made after the terrain's) keeps them drawn after it, so they win where the depth
+    // buffer cannot tell the two apart.
     const road = (x: number, y: number) => map.kind(x, y) === 'road';
     const dashes: Array<[number, number, boolean]> = [];
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -405,14 +392,24 @@ export class WorldView {
   /** Set by buildNature: makes the ferns on a tile rustle. */
   private rustleAt: (x: number, y: number) => void = () => {};
 
-  private buildTown() {
-    const posts: Array<[number, number, number]> = [], rails: Array<[number, number, boolean, number]> = [];
+  /** Props that never move go into `still` (to be baked); what moves (the Old Stone's crystal and debris, people) goes straight into the scene. */
+  private buildTown(still: THREE.Object3D[]) {
+    const postGeo = new THREE.BoxGeometry(0.09, 0.4, 0.09), railGeo = new THREE.BoxGeometry(1, 0.06, 0.05);
+    const post = (x: number, z: number, v: number) => {
+      const m = part(postGeo, '#4a3a2c', x, 0.2, z, false);
+      m.rotation.z = (v - 0.5) * 0.12;
+      still.push(m);
+    };
     for (const f of this.objects('fence')) {
-      if (f.dir === 'h') { posts.push([f.x + 0.2, f.y + 0.5, hash2(f.x, f.y)], [f.x + 0.8, f.y + 0.5, hash2(f.y, f.x)]); rails.push([f.x + 0.5, f.y + 0.5, false, 0.14], [f.x + 0.5, f.y + 0.5, false, 0.3]); }
-      else { posts.push([f.x + 0.5, f.y + 0.2, hash2(f.x, f.y)], [f.x + 0.5, f.y + 0.8, hash2(f.y, f.x)]); rails.push([f.x + 0.5, f.y + 0.5, true, 0.14], [f.x + 0.5, f.y + 0.5, true, 0.3]); }
+      const h = f.dir === 'h';
+      if (h) { post(f.x + 0.2, f.y + 0.5, hash2(f.x, f.y)); post(f.x + 0.8, f.y + 0.5, hash2(f.y, f.x)); }
+      else { post(f.x + 0.5, f.y + 0.2, hash2(f.x, f.y)); post(f.x + 0.5, f.y + 0.8, hash2(f.y, f.x)); }
+      for (const y of [0.14, 0.3]) {
+        const rail = part(railGeo, '#5a4634', f.x + 0.5, y, f.y + 0.5, false);
+        rail.rotation.y = h ? 0 : Math.PI / 2;
+        still.push(rail);
+      }
     }
-    this.instanced(new THREE.BoxGeometry(0.09, 0.4, 0.09), posts, (p, o, c) => { o.position.set(p[0], 0.2, p[1]); o.rotation.z = (p[2] - 0.5) * 0.12; c.set('#4a3a2c'); });
-    this.instanced(new THREE.BoxGeometry(1, 0.06, 0.05), rails, (r, o, c) => { o.position.set(r[0], r[3], r[1]); o.rotation.y = r[2] ? Math.PI / 2 : 0; c.set('#5a4634'); });
 
     for (const h of this.objects('house')) {
       const g = new THREE.Group();
@@ -421,7 +418,8 @@ export class WorldView {
       for (const y of [0.33, 0.6, 0.87]) g.add(box(2.82, 0.03, 1.72, '#46372b', 0, y, 0, false));
       for (const [px, pz] of [[-1.38, -0.83], [1.38, -0.83], [-1.38, 0.83], [1.38, 0.83]] as const) g.add(box(0.12, 1.2, 0.12, '#34281f', px, 0.6, pz, false));
       g.add(box(3.34, 0.09, 2.36, new THREE.Color(h.roof).offsetHSL(0, 0, -0.1).getStyle(), 0, 1.19, 0));
-      g.add(part(prism(3.3, 1.0, 2.3), toon(h.roof, { side: THREE.DoubleSide }), 0, 1.23, 0, 0.03));
+      // One side is enough: the roof's open bottom rests on the slab, so its inside never shows.
+      g.add(part(prism(3.3, 1.0, 2.3), h.roof, 0, 1.23, 0, 0.03));
       g.add(box(0.5, 0.78, 0.06, '#2e241c', 0, 0.39, 0.86));
       g.add(box(0.72, 0.08, 0.32, '#4f4a44', 0, 0.04, 1.02, false));
       // Someone lives in a lit house: a lamp over the door and one warm window. An unlit one is
@@ -437,14 +435,14 @@ export class WorldView {
         }
       });
       g.add(box(0.28, 0.55, 0.28, '#58554f', 0.9, 1.95, -0.35));
-      this.scene.add(g);
+      still.push(g);
     }
 
     const barrelGeo = flat(new THREE.CylinderGeometry(0.2, 0.2, 0.5, 8));
     for (const b of this.objects('barrel')) {
       const m = part(barrelGeo, '#6e3a26', b.x + 0.5, 0.25, b.y + 0.5, 0.025);
       m.rotation.y = hash2(b.x, b.y) * 3;
-      this.scene.add(m, box(0.42, 0.03, 0.42, '#4b2819', b.x + 0.5, 0.38, b.y + 0.5, false));
+      still.push(m, box(0.42, 0.03, 0.42, '#4b2819', b.x + 0.5, 0.38, b.y + 0.5, false));
     }
 
     for (const c of this.objects('car')) {
@@ -468,7 +466,9 @@ export class WorldView {
       this.headLight.target = target;
       car.add(this.headLight, target);
       this.hasCar = true;
+      // Baking takes the car's meshes; the group stays for the headlight.
       this.scene.add(car);
+      still.push(car);
     }
 
     for (const s of this.objects('sign')) {
@@ -476,14 +476,15 @@ export class WorldView {
       g.position.set(s.x + 0.5, 0, s.y + 0.5);
       g.add(box(0.08, 0.46, 0.08, '#4a3a2c', 0, 0.23, 0), box(0.56, 0.32, 0.07, '#6b5334', 0, 0.5, 0));
       g.add(box(0.4, 0.04, 0.01, '#2e241c', 0, 0.54, 0.04, false), box(0.3, 0.04, 0.01, '#2e241c', 0, 0.46, 0.04, false));
-      this.scene.add(g);
+      still.push(g);
     }
     this.objects('lamp').forEach((l, i) => {
       const g = new THREE.Group();
       g.position.set(l.x + 0.5, 0, l.y + 0.5);
       g.add(part(flat(new THREE.CylinderGeometry(0.045, 0.06, 1.3, 6)), '#2f343c', 0, 0.65, 0, 0.02));
+      // The head keeps its own glowing material: all the lamp heads become one mesh of their own.
       g.add(box(0.42, 0.05, 0.08, '#2f343c', 0.18, 1.3, 0), part(new THREE.BoxGeometry(0.2, 0.1, 0.16), this.lampMat, 0.34, 1.24, 0, 0.02));
-      this.scene.add(g);
+      still.push(g);
       // Every third lamp flickers, like the one by the lot in town always has.
       this.lamps.push({ x: l.x + 0.84, z: l.y + 0.5, flicker: i % 3 === 1, ph: hash2(l.x, l.y) * 6 });
     });
@@ -497,7 +498,7 @@ export class WorldView {
       if (next) g.rotation.y = Math.atan2(next.x - p.x, next.y - p.y) + Math.PI / 2;
       g.add(part(flat(new THREE.CylinderGeometry(0.06, 0.08, 2.3, 6)), '#4a3a2c', 0, 1.15, 0, 0.02), box(0.9, 0.06, 0.06, '#4a3a2c', 0, 2.1, 0));
       for (const o of [-0.38, 0.38]) g.add(box(0.05, 0.08, 0.05, '#8fa3a8', o, 2.17, 0, false));
-      this.scene.add(g);
+      still.push(g);
       g.updateMatrixWorld();
       return g;
     });
@@ -515,7 +516,7 @@ export class WorldView {
 
     for (const st of this.objects('stone')) {
       const cx = st.x + 0.5, cz = st.y + 0.5;
-      this.scene.add(part(flat(new THREE.CylinderGeometry(0.62, 0.7, 0.2, 8)), '#5e5a54', cx, 0.1, cz, 0.03));
+      still.push(part(flat(new THREE.CylinderGeometry(0.62, 0.7, 0.2, 8)), '#5e5a54', cx, 0.1, cz, 0.03));
       const crystal = part(new THREE.OctahedronGeometry(0.42, 0), ownToon('#8b5bd9', { emissive: 0x4a1a9c }), cx, 1.2, cz, 0.03);
       crystal.scale.set(0.8, 2, 0.8);
       this.scene.add(crystal);
