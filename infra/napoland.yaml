@@ -16,6 +16,12 @@ Parameters:
     Type: String
     Default: angelolamonaca/napoland
     Description: Only pushes to main of this repository may deploy.
+  GitHubRepoWithIds:
+    Type: String
+    Default: angelolamonaca@69331077/napoland@1389470317
+    Description: >-
+      The same repository as GitHub now names it in deploy tokens: owner and repository with their
+      numeric ids, which never change (a deleted and re-created repository gets a new id).
   GitHubOidcProviderArn:
     Type: String
     Description: The account's existing token.actions.githubusercontent.com provider (there can be only one).
@@ -380,7 +386,10 @@ Resources:
             Condition:
               StringEquals:
                 'token.actions.githubusercontent.com:aud': sts.amazonaws.com
-                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubRepo}:ref:refs/heads/main'
+                # GitHub's current subject names the repository with ids; the plain form is the older one.
+                'token.actions.githubusercontent.com:sub':
+                  - !Sub 'repo:${GitHubRepoWithIds}:ref:refs/heads/main'
+                  - !Sub 'repo:${GitHubRepo}:ref:refs/heads/main'
       Policies:
         - PolicyName: napoland-deploy
           PolicyDocument:
