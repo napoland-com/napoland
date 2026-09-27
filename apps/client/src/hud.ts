@@ -9,12 +9,15 @@ import { BAG_SLOTS, SLOTS, type BodyView, type Dir, type EnergyView, type Slot, 
 import { aboutBody, versionView } from './about';
 import type { FriendsView } from './friends';
 import type { SlotView } from './items';
+import type { SoundSetting } from './sound';
 
 const svg = (inner: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 const ICON = {
   menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
   x: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
   back: svg('<path d="M15 5l-7 7 7 7"/>'),
+  // The waves show while the sound is on, the cross while it is off (style.css).
+  speaker: svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path class="on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="off" d="M17 9.5l5 5M22 9.5l-5 5"/>'),
   bolt: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.5 2 4 13.5h6.5L9 22l10-12h-6.6z"/></svg>`,
   drop: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5C9 7 5.5 10.6 5.5 14.6a6.5 6.5 0 0 0 13 0c0-4-3.5-7.6-6.5-12.1z"/></svg>`,
   cling: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3c-4.4 0-7 3.3-7 7.6V21l2.3-1.8L9.6 21l2.4-1.8 2.4 1.8 2.3-1.8L19 21V10.6C19 6.3 16.4 3 12 3zm-3 8.2a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8zm6 0a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8z"/></svg>`,
@@ -48,6 +51,8 @@ export interface HudHandlers {
   social?(a: SocialAction): void;
   /** A tool in the bag's header was tapped (a paper map: open it). */
   tool?(item: string): void;
+  /** The sound was muted or unmuted, or its volume moved. */
+  sound?(s: SoundSetting): void;
   a(): void;
   b(): void;
   dialogTap(): void;
@@ -58,6 +63,27 @@ export interface HudHandlers {
   discard(slot: number): void;
   /** The version the server runs, for the About panel (null: none shown). Asked once, when the panel first opens. */
   version(): Promise<string | null>;
+}
+
+/**
+ * The menu's sound row: the button mutes and unmutes, the slider sets the volume (and unmutes); both
+ * tell `on`. Returns what shows a setting on it.
+ */
+export function soundRow(
+  row: { mute: EventTarget & { setAttribute(name: string, value: string): void }; label: { textContent: string | null }; volume: EventTarget & { value: string } },
+  on?: (s: SoundSetting) => void,
+): (s: SoundSetting) => void {
+  let now: SoundSetting = { volume: 0.7, muted: false };
+  const show = (s: SoundSetting) => {
+    now = s;
+    row.mute.setAttribute('aria-pressed', String(!s.muted));
+    row.label.textContent = s.muted ? 'Sound off' : 'Sound on';
+    row.volume.value = String(Math.round(s.volume * 100));
+  };
+  const change = (s: SoundSetting) => { show(s); on?.(s); };
+  row.mute.addEventListener('click', () => change({ ...now, muted: !now.muted }));
+  row.volume.addEventListener('input', () => change({ volume: Number(row.volume.value) / 100, muted: false }));
+  return show;
 }
 
 /** What the bag asks before throwing a slot away. */
@@ -166,6 +192,7 @@ export class Hud {
   private picked: { slot: number; item: string } | null = null;
   private asking = false;
   private versionAsked = false;
+  private showSound: (s: SoundSetting) => void = () => {};
 
   constructor(parent: HTMLElement, private h: HudHandlers) {
     this.root = document.createElement('div');
@@ -191,6 +218,7 @@ export class Hud {
         <button type="button" data-el="menuStatus">Status</button>
         <button type="button" data-el="menuFriends">Friends</button>
         <button type="button" data-el="menuAbout">About</button>
+        <div class="sound-row"><button type="button" data-el="soundMute" aria-pressed="true">${ICON.speaker}<span data-el="soundLabel">Sound on</span></button><input type="range" min="0" max="100" value="70" data-el="soundVolume" aria-label="Volume" /></div>
         <button type="button" data-el="menuLogout">Log out</button>
       </div>
       <div class="stick" data-el="stick" role="group" aria-label="Movement stick"><div class="knob" data-el="knob"></div></div>
@@ -372,6 +400,7 @@ export class Hud {
     this.el.menuAbout!.addEventListener('click', () => { this.toggleMenu(false); this.toggleAbout(true); });
     this.el.aboutClose!.addEventListener('click', () => this.toggleAbout(false));
     this.el.menuLogout!.addEventListener('click', () => { this.toggleMenu(false); this.h.logout(); });
+    this.showSound = soundRow({ mute: this.el.soundMute!, label: this.el.soundLabel!, volume: this.el.soundVolume as HTMLInputElement }, s => this.h.sound?.(s));
     this.el.grid!.addEventListener('click', e => {
       const slot = (e.target as Element).closest<HTMLElement>('[data-slot]');
       if (!slot) return;
@@ -687,6 +716,8 @@ export class Hud {
   }
 
   setName(name: string) { this.el.name!.textContent = name; }
+  /** The sound setting this browser keeps, on the menu's sound row. */
+  setSound(s: SoundSetting) { this.showSound(s); }
   /** "Sign out" with sign-in; "Log out" without, where it forgets the character's token. */
   setLogoutLabel(label: string) { this.el.menuLogout!.textContent = label; }
   /** Players on your map, you included (the server only tells us about the map you are on). */
