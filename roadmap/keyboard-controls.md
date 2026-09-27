@@ -1,8 +1,8 @@
 ---
 id: keyboard-controls
 title: Keyboard controls
-status: next
-order: 20
+status: done
+order: 90
 area: controls
 ---
 
