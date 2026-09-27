@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { STEP_MS, type ClientMsg, type DropView, type FindView, type PlayerView } from '@napoland/shared';
 import { Game } from '../src/game';
+import { Items, liveState, slotViews } from '../src/items';
 import { Maps } from '../src/maps';
-import { FULL, ITEMS, tinyTown, tinyWoods, welcome, zone } from './fixtures';
+import { newsBanner } from '../src/status';
+import { FULL, ITEMS, itemsData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
 
 // The 7x5 test town: open grass with a road up the middle, a sign at 1,1, the way to the woods at 3,0.
 const town = tinyTown(), woods = tinyWoods();
@@ -319,5 +321,46 @@ describe('the items version', () => {
     expect(sent.filter(m => m.t === 'step')).toEqual([]);
     g.handle(welcome(town, [me(3, 3)], FULL, { items: ITEMS.version }), now);
     expect(g.online).toBe(true);
+  });
+});
+
+describe('live finds', () => {
+  const data = itemsData();
+  const items = new Items({
+    ...data,
+    items: [
+      ...data.items.map(i => (i.id === 'shard' ? { ...i, xp: 12 } : i)),
+      { id: 'live-shard', name: 'Live shard', kind: 'resource', stack: 1, xp: 12, text: 'Burning.', live: { xp: 40, fresh: 240, fade: 5, into: 'shard' } },
+    ],
+  });
+  const countdown = (age: number) => liveState(slotViews([{ item: 'live-shard', count: 1, age: 0 }], items)[0]!.live!, age).text;
+
+  it('count down from their age: worth the most while fresh, then fading', () => {
+    expect(slotViews([{ item: 'live-shard', count: 1, age: 48 }], items)[0]!.live?.age).toBe(48);
+    expect(slotViews([{ item: 'shard', count: 1 }], items)[0]!.live).toBeUndefined();
+    expect(countdown(48)).toBe('Worth 40 XP for 3:12 more');
+    expect(countdown(239.5)).toBe('Worth 40 XP for 0:01 more');
+    expect(countdown(360)).toBe('Fading: 30 XP now');
+    expect(countdown(900)).toBe('Fading: 12 XP now');
+  });
+
+  it('light up whoever carries one when the map hears it, and anyone who comes along carrying one', () => {
+    start(3, 3);
+    expect(g.avatars().find(a => a.id === 'me')?.live).toBe(false);
+    g.handle({ t: 'glow', id: 'me', on: true }, now);
+    expect(g.avatars().find(a => a.id === 'me')?.live).toBe(true);
+    g.handle({ t: 'join', player: { id: 'bea', name: 'Bea', x: 1, y: 1, dir: 'up', color: '#fff', gear: {}, quirks: [], live: true } }, now);
+    expect(g.live.has('bea')).toBe(true);
+    g.handle({ t: 'glow', id: 'me', on: false }, now);
+    g.handle({ t: 'leave', id: 'bea' }, now);
+    expect(g.live.size).toBe(0);
+  });
+
+  it('say so when you pick one up', () => {
+    g = new Game(maps, m => sent.push(m), items);
+    g.handle(welcome(town, [me(3, 3)], FULL, { items: items.version }), now);
+    g.handle({ t: 'got', items: [{ item: 'live-shard', count: 1 }], from: 'find' }, now);
+    const news = g.news.find(n => n.kind === 'live')!;
+    expect(newsBanner(news, 'The Near Woods')).toEqual({ title: 'It is still live', sub: 'Stash it within 4 minutes for the most XP.' });
   });
 });

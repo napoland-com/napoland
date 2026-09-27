@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { ClientMsg, MapData, PlayerView } from '@napoland/shared';
+import type { ClientMsg, ConditionsData, MapData, PlayerView, StoryData } from '@napoland/shared';
 import { Game } from '../src/game';
+import { Items } from '../src/items';
 import { journalView } from '../src/journal';
 import { Maps } from '../src/maps';
 import { newsBanner } from '../src/status';
-import { ITEMS, storyData, tinyTown, tinyWoods, welcome } from './fixtures';
+import { ITEMS, itemsData, storyData, tinyTown, tinyWoods, welcome } from './fixtures';
 
 /** The test woods, with the station's log on a desk at 1,2: from 2,2, Rook (at 2,1) is up and the desk is left. */
 const woods = (): MapData => ({ ...tinyWoods(), objects: [...tinyWoods().objects, { kind: 'console', x: 1, y: 2, id: 'log', name: 'Station log', text: ['Week 1.'] }] });
@@ -29,6 +30,24 @@ describe('the story in what people say', () => {
 
   it('has the person the next chapter waits for say what they always say, then point the way', () => {
     expect(talk(inWoods('what-glows'))).toEqual(['Lost?', 'Go and read the log.']);
+  });
+
+  it('has Mira say what she heard of the woods after the chapter\'s hint, and before what she always says', () => {
+    const conditions: ConditionsData = { seed: 1, second: 0, daily: [{ id: 'fog', name: 'Thick fog', text: 'You will not see far.', weight: 1, map: 'woods', fog: 5 }], weekly: [] };
+    const story: StoryData = { version: 1, chapters: [
+      { id: 'home', title: 'Home', text: 'Home.', hints: { mira: 'Try the woods.' } },
+      { id: 'woods', title: 'The woods', text: 'The woods.', when: { reach: 'woods' } },
+      { id: 'mira', title: 'Mira', text: 'Mira.', when: { talk: 'mira' }, hints: { mira: 'Now the south road.' } },
+    ] };
+    const town = (): MapData => ({ ...tinyTown(), objects: [{ kind: 'npc', x: 1, y: 1, id: 'mira', name: 'Mira', dir: 'down', lines: ['Heading out?'] }] });
+    const at = (chapter: string) => {
+      const g = new Game(new Maps([town(), woods()]), () => {}, new Items({ ...itemsData(), conditions }), story);
+      g.handle(welcome(town(), [me(1, 2, 'up')], undefined, { story: { version: 1, chapter }, conditions: { today: ['fog'], week: null, next: null } }), 1000);
+      return talk(g);
+    };
+    expect(at('home')).toEqual(['Try the woods.', 'Word from the woods today: thick fog.', 'Heading out?']);
+    // Talking to her moves the story on: her hint for the chapter it reaches comes last.
+    expect(at('woods')).toEqual(['Word from the woods today: thick fog.', 'Heading out?', 'Now the south road.']);
   });
 
   it('tells the server who you talked to and which desk you read, and never what a sign says', () => {

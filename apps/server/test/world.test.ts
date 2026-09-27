@@ -251,6 +251,8 @@ describe('World: turning, joining and leaving', () => {
       fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null,
       body: { wet: 0, wetRate: Math.round((1 / WET_SECONDS) * 1e5) / 1e5, load: 0, hitched: false, worn: {} },
       stone: { charge: 0, need: 20, awake: false, left: 0 },
+      // No conditions in this world: every day is like the one before.
+      conditions: { today: [], week: null, next: null },
       stats: {},
       // Nothing stashed yet: level 1, and the next level at 30 XP.
       progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: ENERGY_MAX },

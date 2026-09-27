@@ -1,7 +1,7 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 6,
+  "version": 7,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
@@ -281,6 +281,7 @@
   "storm": {"every":2400,"warn":60,"length":180,"offset":1200},
   "flashes": {"every":75,"steps":[30,999]},
   "watchers": {"count":3,"steps":[55,999]},
+  "skulkers": {"count":3,"steps":[50,999],"when":["night","storm"]},
   "places": [
     {"name":"pond","x":20,"y":41},
     {"name":"the crossroads","x":32,"y":41},

@@ -48,6 +48,8 @@ export interface ServerOptions {
   newPlayersPerIpPerHour?: number;
   /** How players sign in (auth.ts); unset means without sign-in (legacy). */
   auth?: Auth;
+  /** Development only (CLOCK_SHIFT_MS): the sky, the surges and the conditions run this many ms ahead of the wall clock. */
+  clockShiftMs?: number;
 }
 
 export interface RunningServer {
@@ -67,7 +69,8 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   if (marks.length) log.info('marks loaded', { marks: marks.length });
   const stone = await o.storage.loadStone();
   const cycle = o.weather === 'cycle';
-  const world = new World(o.maps, o.homeMap, cycle ? weatherAt(Date.now()).weather : (o.weather as Weather), {
+  const shift = o.clockShiftMs ?? 0;
+  const world = new World(o.maps, o.homeMap, cycle ? weatherAt(Date.now() + shift).weather : (o.weather as Weather), {
     cycle,
     marks,
     stone,
@@ -79,7 +82,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     rng: o.rng,
     drops,
     // Game time never goes backwards; piles keep wall clock time, which is this far ahead of it.
-    epochOffset: Date.now() - clock(),
+    epochOffset: Date.now() + shift - clock(),
   });
   const auth = o.auth ?? legacyAuth();
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version, auth: auth.config });

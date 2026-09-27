@@ -485,6 +485,7 @@ export function attachNet(o: NetOptions): Net {
       storm: joined.storm,
       body: joined.body,
       stone: joined.stone,
+      conditions: joined.conditions,
       stats: joined.stats,
       progress: joined.progress,
       tools: joined.tools,

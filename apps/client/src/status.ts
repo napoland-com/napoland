@@ -87,8 +87,10 @@ export function statusView(s: StatusInput): StatusView {
 
 /** The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a feat, a level, a chapter of the story. Null: nothing to say. */
 export function newsBanner(n: News, place: string): { title: string; sub: string } | null {
+  if (n.kind === 'conditions') return n.names.length ? { title: 'A new day', sub: n.names.join('\n') } : null;
   if (n.kind === 'level') return { title: `Level ${n.progress.level}`, sub: `Your energy bar grows to ${n.progress.maxEnergy}.\nYou can go a little farther now.` };
   if (n.kind === 'chapter') return { title: `Journal: ${n.chapter.title}`, sub: 'A new chapter of the story.\nRead it in your journal, in the menu.' };
+  if (n.kind === 'live') return { title: 'It is still live', sub: `Stash it within ${minutes(n.fresh)} for the most XP.` };
   if (n.kind === 'feat') {
     const f = FEATS.find(x => x.id === n.id);
     return f ? { title: `Feat: ${f.name}`, sub: f.text } : null;
