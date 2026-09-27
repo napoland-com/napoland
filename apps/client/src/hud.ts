@@ -40,7 +40,7 @@ export interface HudHandlers {
   take?(item: string): void;
   stashClosed?(): void;
   /** At the chest: put on gear from the stash, take off what a slot wears. At the workbench: make a recipe, or close it. */
-  equip?(item: string): void;
+  equip?(item: string, n?: number): void;
   unequip?(slot: Slot): void;
   craft?(recipe: string): void;
   benchClosed?(): void;
@@ -48,6 +48,8 @@ export interface HudHandlers {
   social?(a: SocialAction): void;
   /** The chat panel: opened, another tab picked, or something said. */
   chat?(a: { a: 'opened' } | { a: 'tab'; to: 'world' | 'local' } | { a: 'say'; to: 'world' | 'local'; text: string }): void;
+  /** A tool in the bag's header was tapped (a paper map: open it). */
+  tool?(item: string): void;
   a(): void;
   b(): void;
   dialogTap(): void;
@@ -94,9 +96,9 @@ export function roomText(slots: number, load: number, capacity: number = BAG_SLO
 export const MAX_BAG = 16;
 
 /** A slot of what you wear, as the stash sheet shows it: the piece's name and drawing, or bare. */
-export interface WornView { slot: Slot; name: string; icon: string }
-/** A recipe as the workbench shows it: what it makes, what it needs against what your stash holds. */
-export interface RecipeView { id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean }
+export interface WornView { slot: Slot; name: string; icon: string; /** How worn down (1 new, 0 worn out), for gear that wears. */ cond?: number; /** Its quirk's name. */ quirk?: string }
+/** A recipe as the workbench shows it: what it makes, what it needs against what your stash holds. `act`: its button ("Make" when left out). */
+export interface RecipeView { id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean; act?: string }
 
 /** One row of the status panel: a label, what it says, and a bar (0 to 1) when it has one. */
 export interface StatusRow { label: string; text: string; bar?: number; tone?: 'good' | 'bad' | 'plain' }
@@ -201,7 +203,7 @@ export class Hud {
       <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back">B</button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button></div>
       <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div data-el="text"></div><div class="more" data-el="more" aria-hidden="true">&#9660;</div></div>
       <div class="sheet panel" data-el="sheet" data-open="false" role="dialog" aria-label="Bag">
-        <div class="sheet-head"><b>Bag</b><span class="room" data-el="room"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
+        <div class="sheet-head"><b>Bag</b><span class="room" data-el="room"></span><span class="tools" data-el="tools"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
         <div class="grid" data-el="grid">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-slot="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
         <div class="detail" data-el="detail" aria-live="polite">
           <p class="hint" data-el="hint">${EMPTY_BAG}</p>
@@ -211,6 +213,7 @@ export class Hud {
           <div class="acts" data-el="ask" hidden><span class="ask" data-el="askText"></span><button type="button" class="act toss sure" data-el="tossYes">Throw away</button><button type="button" class="act" data-el="tossNo">Keep</button></div>
         </div>
       </div>
+      <div class="paper-view" data-el="paper" hidden role="dialog" aria-label="Map"><button type="button" class="close" data-el="paperClose" aria-label="Put the map away">${ICON.x}</button></div>
       <div class="sheet panel stash-sheet" data-el="stashSheet" data-open="false" role="dialog" aria-label="Stash">
         <div class="sheet-head"><b>Stash</b><span class="room" data-el="stashXp"></span><button type="button" class="close" data-el="stashClose" aria-label="Close the stash">${ICON.x}</button></div>
         <p class="hint">Tap something in your bag to put it away. What you bring home earns XP.</p>
@@ -262,7 +265,8 @@ export class Hud {
     parent.appendChild(this.root);
     this.el = {};
     for (const node of this.root.querySelectorAll<HTMLElement>('[data-el]')) this.el[node.dataset.el!] = node;
-    this.slotEls = [...this.root.querySelectorAll<HTMLButtonElement>('.slot')];
+    // The bag's own slots only: the stash sheet has slots too (its bag row, what you wear), drawn apart.
+    this.slotEls = [...this.el.grid!.querySelectorAll<HTMLButtonElement>('.slot')];
     this.bindInput();
   }
 
@@ -368,7 +372,7 @@ export class Hud {
     this.el.stashGrid!.addEventListener('click', e => {
       const it = (e.target as Element).closest<HTMLElement>('[data-item]');
       // Gear goes on; anything else comes out into the bag.
-      if (it?.dataset.gear) this.h.equip?.(it.dataset.item!);
+      if (it?.dataset.gear) this.h.equip?.(it.dataset.item!, Number(it.dataset.n ?? 0));
       else if (it) this.h.take?.(it.dataset.item!);
     });
     this.el.wearGrid!.addEventListener('click', e => {
@@ -376,6 +380,18 @@ export class Hud {
       if (it && it.dataset.empty !== 'true') this.h.unequip?.(it.dataset.wear as Slot);
     });
     this.el.benchClose!.addEventListener('click', () => this.toggleBench(false));
+    this.el.tools!.addEventListener('click', e => {
+      const it = (e.target as Element).closest<HTMLElement>('[data-tool]');
+      if (it) this.h.tool?.(it.dataset.tool!);
+    });
+    this.el.paperClose!.addEventListener('click', () => this.showPaper(null));
+    // On a phone the whole map is small: a tap shows it at full size, to pan around with a finger.
+    this.el.paper!.addEventListener('click', e => {
+      if (!(e.target instanceof HTMLCanvasElement)) return;
+      const p = this.el.paper!;
+      p.toggleAttribute('data-zoom');
+      e.target.scrollIntoView({ block: 'center', inline: 'center' });
+    });
     this.el.benchList!.addEventListener('click', e => {
       const it = (e.target as Element).closest<HTMLButtonElement>('[data-make]');
       if (it && !it.disabled) this.h.craft?.(it.dataset.make!);
@@ -541,7 +557,7 @@ export class Hud {
   setBench(recipes: RecipeView[]) {
     const html = recipes.map(r => `<div class="recipe"${r.can ? '' : ' data-short'}><div class="big">${r.icon}</div><div class="words"><b>${esc(r.name)}</b><span class="rfacts">${esc(r.facts)}</span>
       <span class="needs">${r.needs.map(n => `<span class="need"${n.have >= n.need ? '' : ' data-short'} title="${esc(n.name)}">${n.icon}<i>${Math.min(n.have, n.need)}/${n.need}</i></span>`).join('')}</span></div>
-      <button type="button" class="act go" data-make="${esc(r.id)}"${r.can ? '' : ' disabled'}>Make</button></div>`).join('');
+      <button type="button" class="act go" data-make="${esc(r.id)}"${r.can ? '' : ' disabled'}>${esc(r.act ?? 'Make')}</button></div>`).join('');
     if (html !== this.shown.bench) { this.shown.bench = html; this.el.benchList!.innerHTML = html; }
   }
 
@@ -549,16 +565,16 @@ export class Hud {
   setWearing(worn: Array<WornView | null>) {
     SLOTS.forEach((sl, i) => {
       const el = this.root.querySelector<HTMLButtonElement>(`[data-wear="${sl}"]`)!, w = worn[i];
-      const html = w ? `${w.icon}<span class="lbl">${sl}</span>` : `<span class="lbl">${sl}</span>`;
+      const html = w ? `${w.icon}<span class="lbl">${sl}</span>${condBar(w.cond)}${w.quirk ? '<i class="quirk" aria-hidden="true">✦</i>' : ''}` : `<span class="lbl">${sl}</span>`;
       if (el.innerHTML !== html) el.innerHTML = html;
       el.dataset.empty = String(!w);
-      el.setAttribute('aria-label', w ? `Take off ${w.name}` : `${sl}: nothing`);
+      el.setAttribute('aria-label', w ? `Take off ${w.name}${w.cond === undefined ? '' : `, ${Math.round(w.cond * 100)}% left`}${w.quirk ? `, ${w.quirk}` : ''}` : `${sl}: nothing`);
     });
   }
 
   /** What the open stash holds, and your XP for its header. Only written to the page when it changed. */
   setStash(stash: SlotView[], xp: string) {
-    const html = stash.map(s => `<button type="button" class="slot" data-item="${esc(s.item)}"${s.slot ? ' data-gear="1"' : ''} aria-label="${esc(`${s.slot ? 'Put on' : 'Take out'} ${s.name}, ${s.count}`)}">${s.icon}<span class="n">${s.count}</span></button>`).join('');
+    const html = stash.map(s => `<button type="button" class="slot" data-item="${esc(s.item)}"${s.slot ? ` data-gear="1" data-n="${s.n ?? 0}"` : ''} aria-label="${esc(`${s.slot ? 'Put on' : 'Take out'} ${s.name}${s.cond === undefined ? `, ${s.count}` : `, ${Math.round(s.cond * 100)}% left`}`)}">${s.icon}${s.cond === undefined ? `<span class="n">${s.count}</span>` : condBar(s.cond)}</button>`).join('');
     if (html !== this.shown.stash) { this.shown.stash = html; this.el.stashGrid!.innerHTML = html; }
     this.el.stashEmpty!.hidden = stash.length > 0;
     if (this.el.stashXp!.textContent !== xp) this.el.stashXp!.textContent = xp;
@@ -620,6 +636,24 @@ export class Hud {
       line.textContent = text;
     }
     line.hidden = false;
+  }
+
+  /** Your tools, as buttons in the bag's header. */
+  setTools(tools: Array<{ item: string; name: string; icon: string }>) {
+    const html = tools.map(t => `<button type="button" class="slot" data-tool="${esc(t.item)}" aria-label="${esc(`Open the ${t.name.toLowerCase()}`)}">${t.icon}</button>`).join('');
+    if (this.el.tools!.innerHTML !== html) this.el.tools!.innerHTML = html;
+  }
+
+  get paperOpen(): boolean {
+    return !this.el.paper!.hidden;
+  }
+  /** A paper map over everything (null puts it away). The drawing is made elsewhere; this only shows it. */
+  showPaper(drawing: HTMLCanvasElement | null) {
+    const el = this.el.paper!;
+    el.querySelector('canvas')?.remove();
+    if (drawing) el.prepend(drawing);
+    el.hidden = !drawing;
+    el.removeAttribute('data-zoom');
   }
 
   /** B in the bag: out of the question, then out of the details. False when there is nothing to back out of (B closes the bag). */
@@ -857,6 +891,12 @@ export class Hud {
     }
     for (const [id, el] of this.floatEls) if (!seen.has(id)) { el.remove(); this.floatEls.delete(id); }
   }
+}
+
+/** A thin bar along a slot's bottom: how much of a piece is left. Nothing for gear that never wears. */
+function condBar(cond: number | undefined): string {
+  if (cond === undefined) return '';
+  return `<span class="cond" data-low="${cond < 0.25}"><i style="transform:scaleX(${Math.min(1, Math.max(0, cond)).toFixed(3)})"></i></span>`;
 }
 
 function esc(t: string): string {

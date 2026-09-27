@@ -266,7 +266,10 @@ export function attachNet(o: NetOptions): Net {
         world.store(s.id, msg.x, msg.y, msg.slot, now);
         return flush();
       case 'equip':
-        world.equip(s.id, msg.x, msg.y, msg.item, now);
+        world.equip(s.id, msg.x, msg.y, msg.item, now, msg.n);
+        return flush();
+      case 'mend':
+        world.mend(s.id, msg.x, msg.y, msg.slot, now);
         return flush();
       case 'unequip':
         world.unequip(s.id, msg.x, msg.y, msg.slot, now);
@@ -481,6 +484,7 @@ export function attachNet(o: NetOptions): Net {
       stone: joined.stone,
       stats: joined.stats,
       progress: joined.progress,
+      tools: joined.tools,
       items: world.itemsVersion,
       serverTime: Date.now(),
     });

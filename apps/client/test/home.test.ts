@@ -20,7 +20,7 @@ function room(): MapData {
 
 const items = new Items({ ...itemsData(), items: itemsData().items.map(i => (i.id === 'shard' ? { ...i, xp: 12 } : i)) });
 const maps = new Maps([tinyTown(), room()]);
-const me = (x: number, y: number): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir: 'up', color: '#f29e4c', gear: {} });
+const me = (x: number, y: number): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir: 'up', color: '#f29e4c', gear: {}, quirks: [] });
 
 let sent: ClientMsg[];
 let g: Game;

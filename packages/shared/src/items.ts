@@ -9,11 +9,15 @@
  * else gets a random half (the rest is lost), and it fades an hour after the collapse.
  */
 import type { Mods } from './feats';
-import type { Element, Recipe, Slot, Tier } from './gear';
+import type { Element, Piece, Quirk, Recipe, Slot, Tier } from './gear';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 
-/** A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn (gear.ts). */
-export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear';
+/**
+ * A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn
+ * (gear.ts). A tool is yours for good: never used up, never in a pile, weighing nothing, and it takes
+ * no bag slot (players carry their tools apart from the bag, like what they wear).
+ */
+export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool';
 
 /** What using an item does. A mark costs the item; so does everything else here. */
 export interface ItemUse {
@@ -59,6 +63,8 @@ export interface ItemDef {
   bag?: number;
   /** Gear: its color on your character. */
   color?: string;
+  /** A paper map (a tool): the id of the map it is a drawing of. */
+  chart?: string;
 }
 
 /** Where one kind of find grows, and how many are out there at once. */
@@ -91,13 +97,23 @@ export interface ItemsData {
   finds: FindRule[];
   /** What the workbench in town makes (gear.ts). None: it makes nothing. */
   recipes?: Recipe[];
+  /** Seconds out in the wilds that wear gear of each tier out (gear.ts); a tier left out never wears. */
+  wear?: Partial<Record<Tier, number>>;
+  /** What mending a piece of each tier costs at the workbench, from the stash. */
+  mend?: Partial<Record<Tier, BagSlot[]>>;
+  /** Names and words for the quirks of anomalous gear (gear.ts, QUIRKS). */
+  quirks?: Array<{ id: Quirk; name: string; text: string }>;
 }
 
-/** One bag slot: an item and how many of it (at most its stack). */
+/** One bag slot: an item and how many of it (at most its stack). In a stash's list, a piece of gear comes with its condition and quirk. */
 export interface BagSlot {
   item: string;
   count: number;
+  piece?: Piece;
 }
+
+/** The tools everyone carries: the old paper map of the Near Woods. */
+export const STARTER_TOOLS: readonly string[] = ['near-woods-map'];
 
 /** Slots in the bag until the bag becomes equipment (a tote 6, a backpack 8, a hiking pack 12...). */
 export const BAG_SLOTS = 8;

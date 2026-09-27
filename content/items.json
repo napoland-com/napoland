@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 7,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -14,6 +14,7 @@
     {"id":"warm-pebble","name":"Warm pebble","kind":"charm","stack":1,"xp":25,"weight":0.1,"charm":{"wetting":0.6},"text":"A smooth black pebble that never cools. While it is in your bag, rain soaks you much slower."},
     {"id":"hollow-feather","name":"Hollow feather","kind":"charm","stack":1,"xp":25,"weight":0.05,"charm":{"load":0.75},"text":"A long grey feather, light as nothing. While it is in your bag, what you carry feels lighter."},
     {"id":"humming-bead","name":"Humming bead","kind":"charm","stack":1,"xp":25,"weight":0.05,"charm":{"hitch":0.4},"text":"A glass bead that hums when something is near. While it is in your bag, what wants to cling to you in the dark thinks twice."},
+    {"id":"near-woods-map","name":"Map of the Near Woods","kind":"tool","stack":1,"chart":"near-woods","text":"An old paper map, drawn by hand by someone who walked the woods. It never tells you where you are: find the road, the pond, the poles and the cabins around you, and work it out."},
     {"id":"worn-cap","name":"Worn cap","kind":"gear","stack":1,"slot":"cap","tier":"worn","color":"#d63b33","weight":0.1,"text":"A faded red cap. It keeps the hair out of your eyes and nothing else out."},
     {"id":"worn-shirt","name":"Worn shirt","kind":"gear","stack":1,"slot":"shirt","tier":"worn","color":"#2f3440","weight":0.3,"text":"A thin flannel shirt under your jacket. Fine in town."},
     {"id":"worn-gloves","name":"Fingerless gloves","kind":"gear","stack":1,"slot":"gloves","tier":"worn","color":"#7a6048","weight":0.1,"text":"Knitted gloves with the fingertips cut off. Your fingers still go numb in the cold."},
@@ -69,5 +70,17 @@
     {"id":"insulated-gloves","make":"insulated-gloves","needs":[{"item":"wire","count":4},{"item":"resin","count":6},{"item":"cloth","count":4}]},
     {"id":"expedition-pack","make":"expedition-pack","needs":[{"item":"cloth","count":16},{"item":"scrap","count":8},{"item":"wire","count":6},{"item":"shard","count":3}]},
     {"id":"expedition-boots","make":"expedition-boots","needs":[{"item":"scrap","count":6},{"item":"resin","count":10},{"item":"cloth","count":6},{"item":"shard","count":2}]}
+  ],
+  "wear": {"sturdy": 5400, "rugged": 7200, "expedition": 9000, "anomalous": 10800},
+  "mend": {
+    "sturdy": [{"item":"cloth","count":2},{"item":"scrap","count":1}],
+    "rugged": [{"item":"cloth","count":3},{"item":"scrap","count":2}],
+    "expedition": [{"item":"cloth","count":4},{"item":"scrap","count":3}],
+    "anomalous": [{"item":"scrap","count":2},{"item":"shard","count":1}]
+  },
+  "quirks": [
+    {"id":"footprints","name":"Glowing steps","text":"Out there, your steps glow where you walk for a while. Everyone can follow them."},
+    {"id":"flicker","name":"Restless light","text":"Street lights flicker as you pass under them. Everyone sees it."},
+    {"id":"hum","name":"Humming","text":"It hums a minute before the region you are in grows restless, before anyone is told."}
   ]
 }

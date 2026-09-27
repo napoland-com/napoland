@@ -2,8 +2,8 @@
  * Content checks for maps. Run on every change (npm run validate) so a broken map never ships.
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
-import { ELEMENTS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
-import { findTiles, type ItemsData } from './items';
+import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
+import { STARTER_TOOLS, findTiles, type ItemsData } from './items';
 import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
 import { Dir } from './protocol';
@@ -213,7 +213,12 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     ids.add(i.id);
     if (!i.name?.trim()) err(`${name} has no name`);
     if (!i.text?.trim()) err(`${name} has no text`);
-    if (!['resource', 'consumable', 'charm', 'gear'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm or gear`);
+    if (!['resource', 'consumable', 'charm', 'gear', 'tool'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear or tool`);
+    if (i.kind === 'tool') {
+      if (i.stack !== 1) err(`${name}: a tool stacks one to a slot`);
+      if (i.use || i.weight || i.xp || i.fuel || i.charge) err(`${name}: a tool is never used up, weighs nothing and earns no XP`);
+      if (i.chart !== undefined && !maps.some(m => m.id === i.chart)) err(`${name}: charts ${i.chart}, which is not a map`);
+    } else if (i.chart !== undefined) err(`${name}: only a tool charts a map`);
     if (i.kind === 'gear') {
       if (!SLOTS.includes(i.slot!)) err(`${name}: gear needs a slot (${SLOTS.join(', ')})`);
       if (i.tier !== undefined && !TIERS.includes(i.tier)) err(`${name}: tier is one of ${TIERS.join(', ')}`);
@@ -247,6 +252,27 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!def) err(`the starter gear ${g} is not an item`);
     else if (def.kind !== 'gear') err(`the starter gear ${g} is not gear`);
   }
+  for (const t of STARTER_TOOLS) {
+    const def = data.items.find(i => i.id === t);
+    if (def && def.kind !== 'tool') err(`the starter tool ${t} is not a tool`);
+  }
+  for (const [tier, s] of Object.entries(data.wear ?? {})) {
+    if (!TIERS.includes(tier as never)) err(`wear: ${tier} is not a tier`);
+    else if (!(typeof s === 'number' && s > 0)) err(`wear: ${tier} wears out after some seconds above 0`);
+  }
+  for (const [tier, cost] of Object.entries(data.mend ?? {})) {
+    if (!TIERS.includes(tier as never)) err(`mend: ${tier} is not a tier`);
+    if (!cost?.length) err(`mend: mending ${tier} gear costs nothing`);
+    for (const n of cost ?? []) {
+      if (!ids.has(n.item)) err(`mend: ${tier} needs ${n.item}, which is not an item`);
+      if (!(Number.isInteger(n.count) && n.count >= 1)) err(`mend: each need is a whole number from 1`);
+    }
+  }
+  for (const q of data.quirks ?? []) {
+    if (!QUIRKS.includes(q.id)) err(`quirk ${q.id}: the game knows ${QUIRKS.join(', ')}`);
+    if (!q.name?.trim() || !q.text?.trim()) err(`quirk ${q.id} needs a name and a text`);
+  }
+  if (data.items.some(i => i.tier === 'anomalous')) for (const q of QUIRKS) if (!data.quirks?.some(d => d.id === q)) err(`quirk ${q} has no name and text`);
   const recipeIds = new Set<string>();
   for (const r of data.recipes ?? []) {
     const name = `recipe ${JSON.stringify(r.id)}`;
