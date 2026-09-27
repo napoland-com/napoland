@@ -11,8 +11,8 @@
  * the NAPO Research Station in its fenced yard west of the road (the laboratory, where Vera is, the
  * dormitory and the stores); the NAPO Tower in its fence east of it, with its shed and a ridge behind;
  * a bog west (the sinks) and NAPO's field site east; and at the end the checkpoint on the quarantine
- * line, where a barrier and a truck close the road. It never surges and nothing watches from its
- * trees: the danger is how far it goes.
+ * line, where a barrier and a truck close the road. No surges, storms or flashes (no surge, storm or
+ * flashes rule), and nothing watches from its trees: the danger is how far it goes.
  *
  * Energy only comes back by a fire: the bunker's (tended), the camp's, the laboratory's, the
  * dormitory's and the checkpoint's (these burn down unless someone feeds them). The rooms are in

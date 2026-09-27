@@ -5,13 +5,13 @@
 import { z } from 'zod';
 import type { EnergyView } from './energy';
 import type { Stats } from './feats';
-import type { Gear } from './gear';
+import type { Gear, Quirk, Worn } from './gear';
 import type { BagSlot } from './items';
 import type { ProgressView } from './progress';
-import type { SurgeView } from './sky';
+import type { FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 9;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -79,14 +79,16 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('chest'), x: z.number().int(), y: z.number().int() }),
   /** Put bag slot `slot` into the chest on tile x,y, or everything you carry when `slot` is left out. */
   z.object({ t: z.literal('store'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63).optional() }),
-  /** Put on a piece of gear from your stash, at the chest on tile x,y; what you wore in its slot goes into the stash. */
-  z.object({ t: z.literal('equip'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40) }),
+  /** Put on a piece of gear from your stash (the `n`th of that item, first when left out), at the chest on tile x,y; what you wore in its slot goes into the stash. */
+  z.object({ t: z.literal('equip'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), n: z.number().int().nonnegative().max(999).optional() }),
   /** Take off what you wear in `slot`, at the chest on tile x,y: it goes into the stash. The bag cannot be taken off. */
   z.object({ t: z.literal('unequip'), x: z.number().int(), y: z.number().int(), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
   /** Open the workbench on tile x,y, next to you: the server answers with what your stash holds. */
   z.object({ t: z.literal('bench'), x: z.number().int(), y: z.number().int() }),
   /** Make recipe `recipe` at the workbench on tile x,y, from your stash, into your stash. */
   z.object({ t: z.literal('craft'), x: z.number().int(), y: z.number().int(), recipe: z.string().min(1).max(40) }),
+  /** Mend the piece you wear in `slot` at the workbench on tile x,y, paying from your stash (`mend` in content/items.json). */
+  z.object({ t: z.literal('mend'), x: z.number().int(), y: z.number().int(), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
   /** Take up to `count` of an item out of the chest on tile x,y, as much as fits in your bag. */
   z.object({ t: z.literal('take'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), count: z.number().int().positive().max(9999) }),
 ]);
@@ -164,6 +166,8 @@ export interface BodyView {
   wetRate: number;
   load: number;
   hitched: boolean;
+  /** What you wear, piece by piece: its condition (it wears down out in the wilds) and quirk. */
+  worn: Worn;
 }
 
 /** Why the server did not do what was asked. */
@@ -188,7 +192,11 @@ export type Refusal =
   /** You always carry a bag: it can be changed, not taken off. */
   | 'keep_bag'
   /** The stash lacks what the recipe needs. */
-  | 'missing';
+  | 'missing'
+  /** Gear stays in the chest: it is put on from there. */
+  | 'gear_stays'
+  /** That is as good as new already, or cannot be mended. */
+  | 'whole';
 
 /** What every client knows about a player it can see. x and y are tile coordinates. */
 export interface PlayerView {
@@ -198,8 +206,9 @@ export interface PlayerView {
   y: number;
   dir: Dir;
   color: string;
-  /** What they wear, so everyone sees it (gear.ts). */
+  /** What they wear, so everyone sees it (gear.ts), and the quirks of what they wear (some show in the world). */
   gear: Gear;
+  quirks: Quirk[];
 }
 
 /** A map by id and version; a client whose copy has another version reloads. */
@@ -229,12 +238,14 @@ export type ServerMsg =
       weather: Weather;
       energy: EnergyView;
       bag: BagSlot[];
-      /** Your map's fires, marks, creatures, flares and surge clock (null: a map that never surges). */
+      /** Your map's fires, marks, creatures, flares, flashes, and surge and storm clocks (null: a map that never surges, or never storms). */
       fires: FireView[];
       marks: MarkView[];
       creatures: CreatureView[];
       flares: FlareView[];
+      flashes: FlashView[];
       surge: SurgeView | null;
+      storm: StormView | null;
       body: BodyView;
       stone: StoneView;
       /** What you did so far that counts toward feats, and the feats earned (feats.ts). */
@@ -251,7 +262,7 @@ export type ServerMsg =
    */
   | {
       t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; finds: FindView[]; drops: DropView[]; reason: 'exit' | 'collapse';
-      fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; surge: SurgeView | null; stats: Stats;
+      fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
     }
   /** Your energy and body, sent when a rate changes and every few seconds (ENERGY_SYNC_MS). */
   | { t: 'energy'; energy: EnergyView; body: BodyView }
@@ -260,7 +271,7 @@ export type ServerMsg =
   /** You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message. */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify' }
   /** A pick, use, discard or feed that did not happen, and why. */
-  | { t: 'refused'; action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft'; reason: Refusal }
+  | { t: 'refused'; action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend'; reason: Refusal }
   /** On your map: a fire was fed (or lit again). */
   | { t: 'fire'; fire: FireView }
   /** On your map: a mark was painted, or faded. */
@@ -277,6 +288,10 @@ export type ServerMsg =
   | { t: 'flare'; flare: FlareView }
   /** Your map's surge clock moved to another phase. */
   | { t: 'surge'; surge: SurgeView }
+  /** Your map's storm clock moved to another phase. */
+  | { t: 'storm'; storm: StormView }
+  /** On your map: a patch of ground started to glow. */
+  | { t: 'flash'; flash: FlashView }
   /** The Old Stone changed (everyone hears it). */
   | { t: 'stone'; stone: StoneView }
   /** The notice board, read: one line per thing worth knowing. */
@@ -288,7 +303,9 @@ export type ServerMsg =
   /** Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did). */
   | { t: 'progress'; progress: ProgressView; gained: number }
   /** On your map: what someone wears now (you too, after you changed it). */
-  | { t: 'gear'; id: string; gear: Gear }
+  | { t: 'gear'; id: string; gear: Gear; quirks: Quirk[] }
+  /** You mended the piece you wear in `slot` at the workbench: it is whole again. */
+  | { t: 'mended'; item: string }
   /** The workbench you opened: what your stash holds, whole, after opening it or making something. */
   | { t: 'bench'; stash: BagSlot[] }
   /** You made this at the workbench; it lies in your stash. */

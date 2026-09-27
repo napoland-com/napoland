@@ -245,7 +245,10 @@ export function attachNet(o: NetOptions): Net {
         world.store(s.id, msg.x, msg.y, msg.slot, now);
         return flush();
       case 'equip':
-        world.equip(s.id, msg.x, msg.y, msg.item, now);
+        world.equip(s.id, msg.x, msg.y, msg.item, now, msg.n);
+        return flush();
+      case 'mend':
+        world.mend(s.id, msg.x, msg.y, msg.slot, now);
         return flush();
       case 'unequip':
         world.unequip(s.id, msg.x, msg.y, msg.slot, now);
@@ -431,7 +434,9 @@ export function attachNet(o: NetOptions): Net {
       marks: joined.marks,
       creatures: joined.creatures,
       flares: joined.flares,
+      flashes: joined.flashes,
       surge: joined.surge,
+      storm: joined.storm,
       body: joined.body,
       stone: joined.stone,
       stats: joined.stats,

@@ -10,13 +10,19 @@
  * numbers are in shared/energy.ts). At zero a player collapses and wakes up at home.
  *
  * Out there more wears you down (energy.ts): a heavy bag, rain soaking you, a surge sweeping the
- * region (its clock is the wall clock's, sky.ts), a hitchhiker clinging to you at night. Fires in the
+ * region (its clock is the wall clock's, sky.ts), a storm blowing over it (a clock like a surge's), a
+ * flash discharging where you stand (started near someone out there, glowing first so they can step
+ * out of it), a hitchhiker clinging to you at night. Fires in the
  * wilds burn down unless fed (fires.ts). Watchers roam some regions: they come closer only while
  * nobody on the map looks their way, and one that reaches you takes energy and something you carry.
  * A flare keeps them off and shakes off a hitchhiker. Anyone can paint arrows on the ground with a
  * glowcap; they last a day. The Old Stone in town wakes when enough shards are fed to it, and while
  * awake it calms every surge. Strange objects found deep in turn into something when looked at in
  * town. Feats, earned by what you do out there, make it a little easier for good (feats.ts).
+ *
+ * Gear is kept piece by piece (gear.ts): what a player wears wears down while they are out in the
+ * wilds, protects less and less when nearly worn out, and is mended at the workbench; anomalous
+ * pieces have a quirk, which everyone on the map knows (some show in the world).
  *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
  * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts).
@@ -29,6 +35,7 @@
  * collapse. The rules for items and bags are in shared/items.ts.
  */
 import {
+  QUIRKS,
   SLOTS,
   STARTER_GEAR,
   DROP_LIFETIME_MS,
@@ -38,6 +45,8 @@ import {
   STATS,
   STEP_MS,
   SURGE_DRAIN,
+  FLASH_BURST_S,
+  FLASH_GLOW_S,
   addAllToBag,
   addToBag,
   bagLoad,
@@ -46,6 +55,11 @@ import {
   charmsIn,
   energyRate,
   featsOf,
+  fitPieces,
+  mendCost,
+  newPiece,
+  wearSeconds,
+  flashHits,
   findTiles,
   gearEnergy,
   halfOf,
@@ -63,6 +77,7 @@ import {
   usedUp,
   reveal,
   stepTarget,
+  stormAt,
   surgeAt,
   surgeFront,
   takeFromBag,
@@ -80,9 +95,14 @@ import {
   type FindWhen,
   type FireView,
   type FlareView,
+  type FlashKind,
+  type FlashView,
   type Gear,
   type ItemDef,
   type ItemsData,
+  type Piece,
+  type Quirk,
+  type Worn,
   type MapRef,
   type MarkView,
   type Mods,
@@ -94,6 +114,8 @@ import {
   type ServerMsg,
   type Stats,
   type StoneView,
+  type StormPhase,
+  type StormView,
   type SurgePhase,
   type SurgeView,
   type Slot,
@@ -178,7 +200,9 @@ export interface Scene {
   marks: MarkView[];
   creatures: CreatureView[];
   flares: FlareView[];
+  flashes: FlashView[];
   surge: SurgeView | null;
+  storm: StormView | null;
 }
 
 /** What a player who joins is told in the welcome: where they are, who and what is there, their energy, body and bag. */
@@ -303,6 +327,15 @@ interface Watcher {
   lairs: number[];
 }
 
+interface Flash {
+  map: string;
+  x: number;
+  y: number;
+  kind: FlashKind;
+  /** Game time when it is over; it discharges in its last FLASH_BURST_S. */
+  until: number;
+}
+
 interface Flare {
   map: string;
   x: number;
@@ -311,12 +344,15 @@ interface Flare {
   until: number;
 }
 
-const view = (r: PlayerRecord): PlayerView => ({ id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear } });
+const quirksOf = (w: Worn | undefined): Quirk[] => SLOTS.flatMap(s => (w?.[s]?.quirk ? [w[s]!.quirk!] : []));
+const view = (r: PlayerRecord): PlayerView => ({ id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn) });
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+const flashView = (f: Flash, now: number): FlashView => ({ x: f.x, y: f.y, kind: f.kind, left: round((f.until - now) / 1000, 1) });
 const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), max: p.max, rate: round(p.rate, 3) });
-const bodyView = (p: Online): BodyView => ({ wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched });
+const copyWorn = (w: Worn | undefined): Worn => Object.fromEntries(Object.entries(w ?? {}).map(([s, p]) => [s, { ...p, cond: round(p.cond, 3) }]));
+const bodyView = (p: Online): BodyView => ({ wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched, worn: copyWorn(p.rec.worn) });
 /**
  * Draining and not empty yet, or refilling and not full yet. Holding (rate 0) changes nothing.
  * Wetness is left out: it moves at a steady rate the client counts on, and is told when that turns.
@@ -329,10 +365,18 @@ const dropView = (d: DropRecord): DropView => ({
 const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, name: m.name, until: m.placedAt + MARK_LIFETIME_MS });
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: 'watcher', x: w.x, y: w.y, dir: w.dir });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count }));
-const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out } });
+const copyStash = (s: Stash): Stash => ({
+  items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: Object.fromEntries(Object.entries(s.pieces).map(([id, l]) => [id, l.map(p => ({ ...p }))])) } : {}),
+});
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
+  ...(r.worn ? { worn: copyWorn(r.worn) } : {}),
 });
+/** A saved piece as the server writes them: a condition from 0 to 1, and a quirk the game knows (or none). */
+const isPiece = (p: unknown): p is Piece => {
+  const { cond, quirk } = (typeof p === 'object' && p !== null ? p : {}) as Partial<Piece>;
+  return typeof cond === 'number' && cond >= 0 && cond <= 1 && (quirk === undefined || QUIRKS.includes(quirk));
+};
 /** A bag slot as the server writes them; saved data is checked with this before it is trusted. */
 const isSlot = (s: unknown): s is BagSlot => {
   const { item, count } = (typeof s === 'object' && s !== null ? s : {}) as Partial<BagSlot>;
@@ -353,6 +397,8 @@ const cleanStash = (s: unknown, items: Map<string, ItemDef>): Stash => {
     const part = (typeof raw[k] === 'object' && raw[k] !== null ? raw[k] : {}) as Record<string, unknown>;
     for (const [id, n] of Object.entries(part)) if (items.has(id) && Number.isInteger(n) && (n as number) > 0) out[k][id] = n as number;
   }
+  const pieces = (typeof raw.pieces === 'object' && raw.pieces !== null ? raw.pieces : {}) as Record<string, unknown>;
+  for (const [id, list] of Object.entries(pieces)) if (Array.isArray(list)) (out.pieces ??= {})[id] = list.filter(isPiece).map(p => ({ ...p }));
   return out;
 };
 const manhattan = (ax: number, ay: number, bx: number, by: number) => Math.abs(ax - bx) + Math.abs(ay - by);
@@ -380,6 +426,9 @@ export class World {
   private readonly itemOrder: ItemDef[];
   /** What the workbench makes, by recipe id. */
   private readonly recipes: Map<string, Recipe>;
+  /** How gear wears out, and what mending it costs (content/items.json). */
+  private readonly wear: ItemsData['wear'];
+  private readonly mendCosts: ItemsData['mend'];
   private readonly rng: () => number;
   private readonly epochOffset: number;
   private readonly rules: Rule[] = [];
@@ -407,6 +456,13 @@ export class World {
   private markFadeAt = Infinity;
   /** Each surging map's phase as its players last heard it. */
   private readonly surgePhase = new Map<string, SurgePhase>();
+  /** The map each inside's door opens onto: its storm is the one heard drumming on the roof. */
+  private readonly around = new Map<string, TileMap>();
+  /** Each storming map's phase (an inside's: the one around it) as its players last heard it. */
+  private readonly stormPhase = new Map<string, StormPhase>();
+  private flashes: Flash[] = [];
+  /** When each map with flashes starts its next one (game time). */
+  private readonly nextFlash = new Map<string, number>();
   private readonly watchers = new Map<string, Watcher[]>();
   private nextCreatureId = 1;
   private flares: Flare[] = [];
@@ -435,7 +491,7 @@ export class World {
     }
     for (const m of this.maps.values()) {
       if (m.data.kind === 'inside') continue;
-      for (const e of m.data.exits) if (this.maps.get(e.to)!.data.kind === 'inside') this.outside.set(e.to, m.data.kind);
+      for (const e of m.data.exits) if (this.maps.get(e.to)!.data.kind === 'inside') { this.outside.set(e.to, m.data.kind); this.around.set(e.to, m); }
     }
     const home = this.maps.get(homeId);
     if (!home) throw new Error(`the home map ${homeId} does not exist`);
@@ -452,6 +508,8 @@ export class World {
     this.items = itemIndex(items);
     this.itemOrder = items.items;
     this.recipes = new Map((items.recipes ?? []).map(rc => [rc.id, rc]));
+    this.wear = items.wear;
+    this.mendCosts = items.mend;
     this.itemsVersion = items.version;
     for (const f of items.finds) {
       // loadItems checks this and more (validateItems).
@@ -539,7 +597,9 @@ export class World {
       marks: [...(this.markTiles.get(mapId)?.values() ?? [])].map(markView),
       creatures: (this.watchers.get(mapId) ?? []).filter(w => w.awake).map(creatureView),
       flares: this.flares.filter(f => f.map === mapId && f.until > now).map(f => ({ x: f.x, y: f.y, left: round((f.until - now) / 1000, 1) })),
+      flashes: this.flashes.filter(f => f.map === mapId && f.until > now).map(f => flashView(f, now)),
       surge: map ? this.surgeOf(map, now) : null,
+      storm: map ? this.stormOf(map, now) : null,
     };
   }
 
@@ -554,7 +614,9 @@ export class World {
     if (this.players.has(rec.id)) throw new Error(`player ${rec.id} is already online`);
     const gear = this.cleanGear(rec.gear);
     const r: PlayerRecord = {
-      ...rec, gear, bag: this.fitBag(rec.bag, bagSlotsOf(gear, this.items)), stats: cleanStats(rec.stats), stash: cleanStash(rec.stash, this.items),
+      ...rec, gear, worn: this.cleanWorn(rec.worn, gear), bag: this.fitBag(rec.bag, bagSlotsOf(gear, this.items)), stats: cleanStats(rec.stats),
+      // Gear counted in the stash gets its pieces (all of it, for a stash saved before pieces existed).
+      stash: fitPieces(cleanStash(rec.stash, this.items), this.items, this.rng),
       xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
     };
     // Maps change between visits: a map may be gone (start over at home), or the saved tile may be
@@ -781,7 +843,8 @@ export class World {
     const going = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
     if (!going.length) return this.refuse(p, 'store', 'empty_slot');
     const r = store(p.rec.stash ?? emptyStash(), merge(going), this.items);
-    p.rec.stash = r.stash;
+    // Gear brought home (an identified strange object) gets its piece, and its quirk if anomalous.
+    p.rec.stash = fitPieces(r.stash, this.items, this.rng);
     p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
     const before = levelOf(p.rec.xp ?? 0);
     p.rec.xp = (p.rec.xp ?? 0) + r.xp;
@@ -799,7 +862,7 @@ export class World {
    * wore in its slot goes into the stash. A smaller bag has to hold what they carry. Everyone on the
    * map sees the change; the player hears their new bar (gear can add energy) and rates.
    */
-  equip(id: string, x: number, y: number, item: string, now: number): void {
+  equip(id: string, x: number, y: number, item: string, now: number, n = 0): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
@@ -809,10 +872,14 @@ export class World {
     if (!def || !(stash.items[item] ?? 0)) return this.refuse(p, 'equip', 'not_stashed');
     if (def.kind !== 'gear' || !def.slot) return this.refuse(p, 'equip', 'not_gear');
     if (def.slot === 'bag' && p.rec.bag.length > (def.bag ?? 0)) return this.refuse(p, 'equip', 'bag_too_full');
-    const gear = { ...p.rec.gear }, old = gear[def.slot];
+    const gear = { ...p.rec.gear }, old = gear[def.slot], worn = { ...p.rec.worn };
+    const pieces = { ...stash.pieces, [item]: [...(stash.pieces?.[item] ?? [])] };
+    const [piece] = pieces[item]!.splice(Math.min(n, Math.max(0, pieces[item]!.length - 1)), 1);
+    if (old) pieces[old] = [...(pieces[old] ?? []), worn[def.slot] ?? { cond: 1 }];
     gear[def.slot] = item;
-    p.rec.stash = moveStash(stash, item, -1, old);
-    this.wear(p, gear, now);
+    worn[def.slot] = piece ?? newPiece(def, this.rng);
+    p.rec.stash = fitPieces({ ...moveStash(stash, item, -1, old), pieces }, this.items, this.rng);
+    this.wearGear(p, gear, worn, now);
   }
 
   /** Takes off what the player wears in `slot`, at the chest on tile x,y next to them: it goes into the stash. Not the bag. */
@@ -823,11 +890,13 @@ export class World {
     this.advance(p, now);
     if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'unequip', 'too_far');
     if (slot === 'bag') return this.refuse(p, 'unequip', 'keep_bag');
-    const gear = { ...p.rec.gear }, old = gear[slot];
+    const gear = { ...p.rec.gear }, old = gear[slot], worn = { ...p.rec.worn }, stash = p.rec.stash ?? emptyStash();
     if (!old) return this.refuse(p, 'unequip', 'empty_slot');
+    const pieces = { ...stash.pieces, [old]: [...(stash.pieces?.[old] ?? []), worn[slot] ?? { cond: 1 }] };
     delete gear[slot];
-    p.rec.stash = moveStash(p.rec.stash ?? emptyStash(), undefined, 0, old);
-    this.wear(p, gear, now);
+    delete worn[slot];
+    p.rec.stash = fitPieces({ ...moveStash(stash, undefined, 0, old), pieces }, this.items, this.rng);
+    this.wearGear(p, gear, worn, now);
   }
 
   /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. */
@@ -853,9 +922,36 @@ export class World {
       if (!items[n.item]) delete items[n.item];
     }
     items[recipe.make] = (items[recipe.make] ?? 0) + count;
-    p.rec.stash = { items, out: { ...stash.out } };
+    // Gear made comes new, piece by piece.
+    p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
     this.saveNow.set(id, p.rec);
     this.outbox.push({ to: id, msg: { t: 'crafted', item: recipe.make, count } });
+    this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
+  }
+
+  /** Mends the piece the player wears in `slot`, at the workbench on tile x,y next to them, paying from their stash: it is whole again. */
+  mend(id: string, x: number, y: number, slot: Slot, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    this.advance(p, now);
+    if (!this.benchNextTo(p, x, y)) return this.refuse(p, 'mend', 'too_far');
+    const item = p.rec.gear?.[slot], piece = p.rec.worn?.[slot], cost = mendCost(item ? this.items.get(item) : undefined, this.mendCosts);
+    if (!item || !cost || !piece || piece.cond >= 1) return this.refuse(p, 'mend', 'whole');
+    const stash = p.rec.stash ?? emptyStash();
+    if (!canMake({ id: 'mend', make: item, needs: cost }, stash.items)) return this.refuse(p, 'mend', 'missing');
+    const items = { ...stash.items };
+    for (const n of cost) {
+      items[n.item] = items[n.item]! - n.count;
+      if (!items[n.item]) delete items[n.item];
+    }
+    p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
+    p.rec.worn = { ...p.rec.worn, [slot]: { ...piece, cond: 1 } };
+    this.saveNow.set(id, p.rec);
+    this.outbox.push({ to: id, msg: { t: 'mended', item } });
+    // Its condition (in the body) before the bench, so the bench's mend row is gone when it redraws.
+    this.refresh(p, now);
+    this.tell(p, now);
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
   }
 
@@ -867,6 +963,8 @@ export class World {
     if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'take', 'too_far');
     const stash = p.rec.stash ?? emptyStash(), have = stash.items[item] ?? 0, def = this.items.get(item);
     if (!def || !have) return this.refuse(p, 'take', 'not_stashed');
+    // A piece in the bag would forget how worn it is: gear is put on from the chest instead.
+    if (def.kind === 'gear') return this.refuse(p, 'take', 'gear_stays');
     const want = Math.min(have, count);
     const r = addToBag(p.rec.bag, def, want, p.slots);
     const taken = want - r.left;
@@ -898,6 +996,8 @@ export class World {
     const wall = now + this.epochOffset;
     if (this.cycle) this.setWeather(weatherAt(wall).weather, now);
     this.moveSurges(now);
+    this.moveStorms(now);
+    this.startFlashes(now);
     const wasAwake = this.stoneAwake;
     this.burnStone(now);
     if (wasAwake && !this.stoneAwake) this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
@@ -914,6 +1014,7 @@ export class World {
     }
     this.walkWatchers(now);
     if (this.flares.length) this.flares = this.flares.filter(f => f.until > now);
+    if (this.flashes.length) this.flashes = this.flashes.filter(f => f.until > now);
     for (const [id, readyAt] of this.resting) if (readyAt <= now) this.resting.delete(id);
     this.fadePiles(now);
     this.fadeMarks(now);
@@ -1090,8 +1191,9 @@ export class World {
     p.load = bagLoad(p.rec.bag, this.items, p.mods.load);
     p.max = this.maxOf(p.rec);
     p.slots = bagSlotsOf(p.rec.gear ?? {}, this.items);
-    const resist = resistOf(p.rec.gear ?? {}, this.items);
+    const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn);
     const warmth = p.map.warm(x, y) ? this.fires.warmth(p.map, x, y, now) : 0;
+    const storm = this.stormOf(p.map, now)?.phase === 'storm';
     p.rate = energyRate(p.map, x, y, this.sky, {
       warmth: warmth * p.mods.warmth,
       wet: p.rec.wet,
@@ -1100,10 +1202,12 @@ export class World {
       // An awake Old Stone takes half the edge off every surge.
       surgeDrain: this.stoneAwake ? 1 + (SURGE_DRAIN - 1) / 2 : SURGE_DRAIN,
       hitched: p.hitched,
+      storm,
+      flash: this.flashes.find(f => f.map === p.map.data.id && flashHits(flashView(f, now), x, y))?.kind,
       resist,
     });
     // Wind resistance (a raincoat) keeps the rain out.
-    p.wetRate = wetRate(p.map.data.kind, this.sky, warmth > 0, p.mods.wetting * (1 - resist.wind));
+    p.wetRate = wetRate(p.map.data.kind, this.sky, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
   }
 
   /**
@@ -1125,9 +1229,20 @@ export class World {
       const dt = (now - p.energyAt) / 1000;
       p.rec.energy = Math.min(p.max, Math.max(0, p.rec.energy + p.rate * dt));
       p.rec.wet = clamp01((p.rec.wet ?? 0) + p.wetRate * dt);
+      if (p.map.data.kind === 'wilds') this.wearDown(p, dt);
       p.energyAt = now;
     }
     return p.rec.energy;
+  }
+
+  /** Out in the wilds, what the player wears wears down: `dt` seconds of it. The rates follow on the next refresh. */
+  private wearDown(p: Online, dt: number): void {
+    const worn = p.rec.worn;
+    if (!worn) return;
+    for (const slot of SLOTS) {
+      const piece = worn[slot], s = wearSeconds(p.rec.gear?.[slot] ? this.items.get(p.rec.gear[slot]!) : undefined, this.wear);
+      if (piece && s && piece.cond > 0) piece.cond = Math.max(0, piece.cond - dt / s);
+    }
   }
 
   /** Sends the player their energy and body; call advance() first so the values are current. */
@@ -1182,6 +1297,59 @@ export class World {
     }
     // The first tick also opens aurora finds if the world starts on an aurora night.
     for (const rule of this.rules) if (rule.when === 'aurora' && rule.open !== (this.sky === 'aurora')) this.openRule(rule, this.sky === 'aurora', now);
+  }
+
+  /** A region's storm clock now (for an inside, the region around it), or null for a map that never storms. */
+  private stormOf(map: TileMap, now: number): StormView | null {
+    const out = map.data.kind === 'inside' ? this.around.get(map.data.id) : map;
+    const rule = out?.data.kind === 'wilds' ? out.data.storm : undefined;
+    if (!rule) return null;
+    const s = stormAt(rule, now + this.epochOffset);
+    return { phase: s.phase, left: round(s.left, 1) };
+  }
+
+  /** Tells each storming map when its phase changes, and grows (or clears away) the finds a storm leaves. */
+  private moveStorms(now: number): void {
+    for (const map of this.maps.values()) {
+      const s = this.stormOf(map, now);
+      if (!s || this.stormPhase.get(map.data.id) === s.phase) continue;
+      const first = !this.stormPhase.has(map.data.id);
+      this.stormPhase.set(map.data.id, s.phase);
+      if (!first) this.toMap(map.data.id, { t: 'storm', storm: s });
+      for (const rule of this.rules) if (rule.when === 'storm' && rule.map === map) this.openRule(rule, s.phase === 'storm', now);
+    }
+  }
+
+  /**
+   * Every so often on each map with flashes, a patch of ground starts to glow near someone out in the
+   * open at the rule's distance from home, often right under them: they have FLASH_GLOW_S to step out.
+   */
+  private startFlashes(now: number): void {
+    for (const map of this.maps.values()) {
+      const rule = map.data.kind === 'wilds' ? map.data.flashes : undefined;
+      if (!rule) continue;
+      const id = map.data.id, at = this.nextFlash.get(id);
+      if (at === undefined || now < at) {
+        if (at === undefined) this.nextFlash.set(id, now + rule.every * 1000);
+        continue;
+      }
+      this.nextFlash.set(id, now + rule.every * 1000);
+      const out = [...this.onMap.get(id)!].filter(p => {
+        const steps = p.map.homeSteps(p.rec.x, p.rec.y);
+        return steps >= rule.steps[0] && steps <= rule.steps[1] && this.exposed(p, now);
+      });
+      const who = out[Math.floor(this.rng() * out.length)];
+      if (!who) continue;
+      const near: Array<[number, number]> = [];
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const x = who.rec.x + dx, y = who.rec.y + dy;
+        if (map.walkable(x, y) && !map.lit(x, y) && !map.warm(x, y) && map.homeSteps(x, y) >= 0) near.push([x, y]);
+      }
+      const [x, y] = near[Math.floor(this.rng() * near.length)] ?? [who.rec.x, who.rec.y];
+      const flash: Flash = { map: id, x, y, kind: this.rng() < 0.5 ? 'spark' : 'fire', until: now + (FLASH_GLOW_S + FLASH_BURST_S) * 1000 };
+      this.flashes.push(flash);
+      this.toMap(id, { t: 'flash', flash: flashView(flash, now) });
+    }
   }
 
   /** Awake, the Old Stone burns one shard every STONE_SHARD_S; at none left it sleeps. */
@@ -1412,6 +1580,13 @@ export class World {
       else if (s.phase === 'unstable') lines.push(`${map.data.name}: restless. A surge comes ${about(s.left)}.`);
       else lines.push(`${map.data.name}: calm. The next surge comes ${about(untilSurge(rule, s))}.`);
     }
+    for (const map of this.maps.values()) {
+      const s = this.stormOf(map, now), rule = map.data.storm;
+      if (!s || !rule) continue;
+      if (s.phase === 'storm') lines.push(`${map.data.name}: a storm is on, ${about(s.left, true)} more. Get under a roof.`);
+      else if (s.phase === 'coming') lines.push(`${map.data.name}: a storm is coming ${about(s.left)}.`);
+      else lines.push(`${map.data.name}: clear. The next storm comes ${about(s.left + rule.warn)}.`);
+    }
     const low: string[] = [], out: string[] = [];
     for (const f of this.fires.all()) {
       if (f.tended) continue;
@@ -1619,11 +1794,12 @@ export class World {
     this.sendBag(p);
   }
 
-  /** The player wears `gear` now: saved, everyone on the map sees it, and the player hears their bar and stash. */
-  private wear(p: Online, gear: Gear, now: number): void {
+  /** The player wears `gear` (piece by piece: `worn`) now: saved, everyone on the map sees it, and the player hears their bar and stash. */
+  private wearGear(p: Online, gear: Gear, worn: Worn, now: number): void {
     p.rec.gear = gear;
+    p.rec.worn = worn;
     this.saveNow.set(p.rec.id, p.rec);
-    this.toMap(p.map.data.id, { t: 'gear', id: p.rec.id, gear: { ...gear } });
+    this.toMap(p.map.data.id, { t: 'gear', id: p.rec.id, gear: { ...gear }, quirks: quirksOf(worn) });
     this.sendStash(p);
     this.refresh(p, now);
     // A bar that shrank (a piece with extra energy came off) cannot hold more than it can.
@@ -1633,7 +1809,7 @@ export class World {
 
   /** A full bar: the level's, plus what the gear worn gives. */
   private maxOf(r: PlayerRecord): number {
-    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items);
+    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items, r.worn);
   }
 
   /**
@@ -1650,6 +1826,19 @@ export class World {
     }
     const bag = STARTER_GEAR.bag!;
     if (!out.bag && this.items.get(bag)?.kind === 'gear') out.bag = bag;
+    return out;
+  }
+
+  /** Saved pieces for what the player wears: each kept if it is a piece, else a new one (an anomalous one with its quirk). */
+  private cleanWorn(saved: unknown, gear: Gear): Worn {
+    const raw = (typeof saved === 'object' && saved !== null && !Array.isArray(saved) ? saved : {}) as Record<string, unknown>;
+    const out: Worn = {};
+    for (const slot of SLOTS) {
+      const def = gear[slot] ? this.items.get(gear[slot]!) : undefined;
+      if (!def) continue;
+      const had = raw[slot];
+      out[slot] = isPiece(had) && (had.quirk !== undefined || def.tier !== 'anomalous') ? { ...had } : newPiece(def, this.rng);
+    }
     return out;
   }
 
@@ -1671,7 +1860,7 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'bag', bag: copyBag(p.rec.bag) } });
   }
 
-  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft', reason: Refusal): void {
+  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
   }
 

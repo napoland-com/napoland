@@ -28,7 +28,7 @@ const data: ItemsData = {
 };
 const items = new Items(data);
 const maps = new Maps([tinyTown(), room()]);
-const me = (x: number, y: number, gear = {}): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir: 'up', color: '#f29e4c', gear });
+const me = (x: number, y: number, gear = {}): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir: 'up', color: '#f29e4c', gear, quirks: [] });
 
 let sent: ClientMsg[];
 let g: Game;
@@ -40,9 +40,9 @@ beforeEach(() => {
 
 describe('gear in the game', () => {
   it('knows what everyone wears, and follows the changes', () => {
-    g.handle(welcome(room(), [me(2, 2, { shirt: 'coat' }), { id: 'o', name: 'Bea', x: 2, y: 1, dir: 'up', color: '#fff', gear: {} }]), now);
+    g.handle(welcome(room(), [me(2, 2, { shirt: 'coat' }), { id: 'o', name: 'Bea', x: 2, y: 1, dir: 'up', color: '#fff', gear: {}, quirks: [] }]), now);
     expect(g.myGear).toEqual({ shirt: 'coat' });
-    g.handle({ t: 'gear', id: 'o', gear: { bag: 'pack' } }, now);
+    g.handle({ t: 'gear', id: 'o', gear: { bag: 'pack' }, quirks: [] }, now);
     expect(g.gear.get('o')).toEqual({ bag: 'pack' });
     // Your character is drawn in it.
     expect(g.avatars().find(a => a.id === 'me')!.look).toEqual({ cap: null, shirt: '#e8c547' });

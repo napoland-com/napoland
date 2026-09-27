@@ -375,7 +375,7 @@ const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 4, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 5, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
@@ -383,6 +383,10 @@ const map: MapData = {
   objects,
   // Every 40 minutes: 6 restless, then a surge of 2.5 minutes whose front takes 1.5 to sweep home.
   surge: { every: 2400, unstable: 360, surge: 150, sweep: 90 },
+  // Every 40 minutes too, halfway between two surges: a minute's warning, then 3 minutes of storm.
+  storm: { every: 2400, warn: 60, length: 180, offset: 1200 },
+  // Every minute and a quarter, a flash near someone 30 steps or more out.
+  flashes: { every: 75, steps: [30, 999] },
   // Three watchers in the deeper half, past the old cabin.
   watchers: { count: 3, steps: [55, 999] },
 };
@@ -399,6 +403,8 @@ const json = [
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
   '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
   `  "surge": ${JSON.stringify(map.surge)},`,
+  `  "storm": ${JSON.stringify(map.storm)},`,
+  `  "flashes": ${JSON.stringify(map.flashes)},`,
   `  "watchers": ${JSON.stringify(map.watchers)}`,
   '}',
   '',

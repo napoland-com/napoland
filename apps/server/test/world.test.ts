@@ -53,9 +53,9 @@ const edge = energyRate(woods, 3, 6, 'overcast');
 const inTown = (id: string, x: number, y: number, dir: Dir = 'down', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'town', ...more });
 const inWoods = (id: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'woods', ...more });
 const inHouse = (id: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'house', ...more });
-const viewOf = (id: string, x: number, y: number, dir: Dir) => ({ id, name: id.toUpperCase(), x, y, dir, color: colorFor(id), gear: {} });
+const viewOf = (id: string, x: number, y: number, dir: Dir) => ({ id, name: id.toUpperCase(), x, y, dir, color: colorFor(id), gear: {}, quirks: [] });
 /** What a zone lists besides players, finds and piles, in the fixture world: fires burn down at random levels, and nothing else is there. */
-const SCENE = { fires: expect.any(Array), marks: [], creatures: [], flares: [], surge: null, stats: expect.any(Object) };
+const SCENE = { fires: expect.any(Array), marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, stats: expect.any(Object) };
 /** The energy a player is told: value to 1 decimal, rate to 3. */
 const told = (value: number, rate: number): EnergyView => ({ value: Math.round(value * 10) / 10, max: ENERGY_MAX, rate: Math.round(rate * 1000) / 1000 });
 
@@ -238,7 +238,7 @@ describe('World: turning, joining and leaving', () => {
     const w = new World([testMap()], 'test', 'rain');
     const joined = w.join(rec('a', 3, 3), 0);
     expect(joined).toEqual({
-      player: { id: 'a', name: 'A', x: 3, y: 3, dir: 'down', color: colorFor('a'), gear: {} },
+      player: { id: 'a', name: 'A', x: 3, y: 3, dir: 'down', color: colorFor('a'), gear: {}, quirks: [] },
       map: { id: 'test', version: 1 },
       players: [joined.player],
       // A town without a fireplace: energy holds.
@@ -248,8 +248,8 @@ describe('World: turning, joining and leaving', () => {
       drops: [],
       bag: [],
       // No fires, marks, creatures or flares here, and a town never surges. Rain soaks you in town too.
-      fires: [], marks: [], creatures: [], flares: [], surge: null,
-      body: { wet: 0, wetRate: Math.round((1 / WET_SECONDS) * 1e5) / 1e5, load: 0, hitched: false },
+      fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null,
+      body: { wet: 0, wetRate: Math.round((1 / WET_SECONDS) * 1e5) / 1e5, load: 0, hitched: false, worn: {} },
       stone: { charge: 0, need: 20, awake: false, left: 0 },
       stats: {},
       // Nothing stashed yet: level 1, and the next level at 30 XP.

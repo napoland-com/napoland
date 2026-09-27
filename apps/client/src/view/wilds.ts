@@ -1,11 +1,11 @@
 /**
- * What the world does to you out there, drawn: arrows people painted on the ground, watchers, flares,
+ * What the world does to you out there, drawn: arrows people painted on the ground, watchers, flares, flashes,
  * the echoes of people who collapsed walking their last steps again, the thing that clings to you at
  * night, and the notice board in town. Each is a small class or model that world.ts owns and
  * feeds from the game's lists; nothing here decides anything.
  */
 import * as THREE from 'three';
-import type { Dir, DropView, MarkView } from '@napoland/shared';
+import { FLASH_BURST_S, FLASH_GLOW_S, FLASH_RADIUS, type Dir, type DropView, type FlashView, type MarkView } from '@napoland/shared';
 import { makePlayer } from './characters';
 import { Puffs } from './fire';
 import { OUTLINE, box, disposeTree, flat, ownToon, part, pivot, softTexture } from './toon';
@@ -222,6 +222,113 @@ export class Flares {
     this.sparks.dispose();
     this.glowMat.map?.dispose();
     this.glowMat.dispose();
+  }
+}
+
+/** Flashes drawn at once, at most: they start near players, so a few are all anyone sees. */
+const FLASHES = 3;
+const FLASH_COLOR = { spark: new THREE.Color('#8fd8ff'), fire: new THREE.Color('#ff8a3a') };
+
+/**
+ * Flashes: a patch of ground that glows, pulsing faster as it comes, then discharges in a bright
+ * flicker (blue for a spark, orange for a fire flash). The glow is the warning, so it must read even
+ * in daylight rain.
+ */
+export class Flashes {
+  readonly root = new THREE.Group();
+  private readonly geo = new THREE.PlaneGeometry(FLASH_RADIUS * 2 + 1, FLASH_RADIUS * 2 + 1).rotateX(-Math.PI / 2);
+  private readonly tex = softTexture(0.55);
+  private readonly patches: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>[] = [];
+  private readonly bursts: THREE.Sprite[] = [];
+  private list: Array<FlashView & { g: number }> = [];
+
+  constructor() {
+    for (let i = 0; i < FLASHES; i++) {
+      const patch = new THREE.Mesh(this.geo, new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+      const burst = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.tex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+      patch.visible = burst.visible = false;
+      this.patches.push(patch);
+      this.bursts.push(burst);
+      this.root.add(patch, burst);
+    }
+  }
+
+  /** The flashes now, nearest first (the caller sorts), and the ground under them. */
+  set(list: FlashView[], ground: (x: number, y: number) => number) {
+    this.list = list.slice(0, FLASHES).map(f => ({ ...f, g: ground(f.x + 0.5, f.y + 0.5) }));
+  }
+
+  update(t: number) {
+    for (let i = 0; i < FLASHES; i++) {
+      const f = this.list[i], patch = this.patches[i]!, burst = this.bursts[i]!;
+      patch.visible = burst.visible = false;
+      if (!f || f.left <= 0) continue;
+      const bursting = f.left <= FLASH_BURST_S;
+      // Glowing: brighter and faster as the discharge comes. Discharging: a hard flicker.
+      const come = bursting ? 1 : 1 - (f.left - FLASH_BURST_S) / FLASH_GLOW_S;
+      const k = bursting ? 0.75 + 0.25 * Math.sign(Math.sin(t * 31 + i)) : (0.25 + 0.45 * come) * (0.65 + 0.35 * Math.sin(t * (3 + 9 * come)));
+      patch.visible = true;
+      patch.position.set(f.x + 0.5, f.g + 0.03, f.y + 0.5);
+      patch.material.color.copy(FLASH_COLOR[f.kind]).multiplyScalar(k);
+      if (!bursting) continue;
+      burst.visible = true;
+      burst.position.set(f.x + 0.5, f.g + 0.8, f.y + 0.5);
+      burst.scale.set(2.2, 2.8, 1).multiplyScalar(0.8 + 0.4 * Math.abs(Math.sin(t * 23 + i)));
+      burst.material.color.copy(FLASH_COLOR[f.kind]).lerp(new THREE.Color('#ffffff'), 0.4);
+    }
+  }
+
+  dispose() {
+    this.geo.dispose();
+    this.tex.dispose();
+    for (const m of [...this.patches, ...this.bursts]) m.material.dispose();
+  }
+}
+
+/** Glowing footprints drawn at once, at most, and how long one glows (seconds). */
+const PRINTS = 80;
+export const PRINT_S = 30;
+const TURN_OF: Record<Dir, number> = { up: 0, down: Math.PI, left: Math.PI / 2, right: -Math.PI / 2 };
+
+/**
+ * Glowing footprints: where someone wearing a piece with that quirk walked out there. Each glows pale
+ * blue and fades over PRINT_S; the newest are kept when there are too many.
+ */
+export class Prints {
+  readonly root = new THREE.Group();
+  private readonly geo = new THREE.CircleGeometry(0.1, 10).scale(0.8, 1.4, 1).rotateX(-Math.PI / 2);
+  private readonly mats: THREE.MeshBasicMaterial[] = [];
+  private readonly feet: THREE.Mesh[] = [];
+
+  constructor() {
+    for (let i = 0; i < PRINTS; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0x9ef6ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+      const m = new THREE.Mesh(this.geo, mat);
+      m.visible = false;
+      this.mats.push(mat);
+      this.feet.push(m);
+      this.root.add(m);
+    }
+  }
+
+  /** The prints, newest last, each with its age in seconds; `ground` says how high the tile is. */
+  set(list: ReadonlyArray<{ x: number; y: number; dir: Dir; age: number }>, ground: (x: number, y: number) => number) {
+    const shown = list.slice(-PRINTS);
+    this.feet.forEach((m, i) => {
+      const p = shown[i];
+      m.visible = !!p && p.age < PRINT_S;
+      if (!p || !m.visible) return;
+      // Left and right foot by turns, side by side across the way they walked.
+      const side = i % 2 ? 0.12 : -0.12, a = TURN_OF[p.dir];
+      m.position.set(p.x + 0.5 + Math.cos(a) * side, ground(p.x + 0.5, p.y + 0.5) + 0.03, p.y + 0.5 - Math.sin(a) * side);
+      m.rotation.y = a;
+      this.mats[i]!.opacity = 0.75 * (1 - p.age / PRINT_S);
+    });
+  }
+
+  dispose() {
+    this.geo.dispose();
+    for (const m of this.mats) m.dispose();
   }
 }
 

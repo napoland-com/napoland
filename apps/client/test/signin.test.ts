@@ -66,7 +66,7 @@ type Welcome = Extract<ServerMsg, { t: 'welcome' }>;
 const welcome = (more: Partial<Welcome> = {}): Welcome => ({
   t: 'welcome', v: PROTOCOL_VERSION, you: 'p1', name: 'Aldo', map: { id: 'stonebrook', version: 1 }, players: [], finds: [], drops: [], stepMs: 200,
   weather: 'rain', energy: { value: 100, max: 100, rate: 0 }, bag: [], items: 1, serverTime: 0,
-  fires: [], marks: [], creatures: [], flares: [], surge: null, body: DRY, stone: ASLEEP, stats: {}, progress: START, ...more,
+  fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, body: DRY, stone: ASLEEP, stats: {}, progress: START, ...more,
 });
 
 const SUPABASE: AuthConfig = { mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_x' };

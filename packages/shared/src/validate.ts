@@ -2,11 +2,12 @@
  * Content checks for maps. Run on every change (npm run validate) so a broken map never ships.
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
-import { ELEMENTS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
+import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
 import { findTiles, type ItemsData } from './items';
 import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
 import { Dir } from './protocol';
+import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
 
 export interface Problem {
   level: 'error' | 'warning';
@@ -116,6 +117,20 @@ export function validateMap(data: MapData): Problem[] {
     else if (r.unstable + r.surge >= r.every) err('surge: unstable and surge must leave calm time in every round');
     else if (r.sweep > r.surge) err('surge: the front must reach home (sweep) before the surge is over');
     if (r.offset !== undefined && !Number.isFinite(r.offset)) err('surge: offset is a number of seconds');
+  }
+  if (data.storm) {
+    const r = data.storm;
+    if (data.kind !== 'wilds') err('only the wilds storm');
+    const whole = (v: unknown) => Number.isInteger(v) && (v as number) > 0;
+    if (![r.every, r.warn, r.length].every(whole)) err('storm: every, warn and length are whole seconds above 0');
+    else if (r.warn + r.length >= r.every) err('storm: warn and length must leave clear time in every round');
+    if (r.offset !== undefined && !Number.isFinite(r.offset)) err('storm: offset is a number of seconds');
+  }
+  if (data.flashes) {
+    const f = data.flashes;
+    if (data.kind !== 'wilds') err('flashes happen only in the wilds');
+    if (!(Number.isFinite(f.every) && f.every > FLASH_GLOW_S + FLASH_BURST_S)) err('flashes: every must be longer than one flash');
+    if (!(f.steps?.length === 2 && f.steps[0] >= 0 && f.steps[0] <= f.steps[1])) err('flashes: steps is [nearest, farthest], from 0');
   }
   if (data.watchers) {
     const w = data.watchers;
@@ -250,6 +265,23 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!def) err(`the starter gear ${g} is not an item`);
     else if (def.kind !== 'gear') err(`the starter gear ${g} is not gear`);
   }
+  for (const [tier, s] of Object.entries(data.wear ?? {})) {
+    if (!TIERS.includes(tier as never)) err(`wear: ${tier} is not a tier`);
+    else if (!(typeof s === 'number' && s > 0)) err(`wear: ${tier} wears out after some seconds above 0`);
+  }
+  for (const [tier, cost] of Object.entries(data.mend ?? {})) {
+    if (!TIERS.includes(tier as never)) err(`mend: ${tier} is not a tier`);
+    if (!cost?.length) err(`mend: mending ${tier} gear costs nothing`);
+    for (const n of cost ?? []) {
+      if (!ids.has(n.item)) err(`mend: ${tier} needs ${n.item}, which is not an item`);
+      if (!(Number.isInteger(n.count) && n.count >= 1)) err(`mend: each need is a whole number from 1`);
+    }
+  }
+  for (const q of data.quirks ?? []) {
+    if (!QUIRKS.includes(q.id)) err(`quirk ${q.id}: the game knows ${QUIRKS.join(', ')}`);
+    if (!q.name?.trim() || !q.text?.trim()) err(`quirk ${q.id} needs a name and a text`);
+  }
+  if (data.items.some(i => i.tier === 'anomalous')) for (const q of QUIRKS) if (!data.quirks?.some(d => d.id === q)) err(`quirk ${q} has no name and text`);
   const recipeIds = new Set<string>();
   for (const r of data.recipes ?? []) {
     const name = `recipe ${JSON.stringify(r.id)}`;
@@ -281,8 +313,9 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (f.steps && !(f.steps.length === 2 && f.steps[0] >= 0 && f.steps[0] <= f.steps[1])) err(`${name}: steps is [nearest, farthest], from 0`);
     for (const k of f.on ?? []) if (!tileKinds.has(k)) err(`${name}: unknown tile kind ${k as TileKind}`);
     if (f.near && !(f.near.radius > 0 && f.near.kinds.length)) err(`${name}: near needs kinds and a radius above 0`);
-    if (f.when !== undefined && f.when !== 'unstable' && f.when !== 'aurora') err(`${name}: when is unstable or aurora`);
+    if (f.when !== undefined && f.when !== 'unstable' && f.when !== 'aurora' && f.when !== 'storm') err(`${name}: when is unstable, aurora or storm`);
     if (f.when === 'unstable' && !mapData.surge) err(`${name}: grows while the map is restless, but ${f.map} never surges`);
+    if (f.when === 'storm' && !mapData.storm) err(`${name}: grows during a storm, but ${f.map} never storms`);
     if (out.some(p => p.level === 'error' && p.message.startsWith(name))) return undefined;
     const room = findTiles(new TileMap(mapData), f).length;
     if (room < f.count) err(`${name}: only ${room} tiles fit the rule, fewer than count ${f.count}`);

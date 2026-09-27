@@ -8,7 +8,7 @@
  * to a small map of its own. Energy only comes back near a fireplace. See energy.ts.
  */
 import type { Dir } from './protocol';
-import type { SurgeRule } from './sky';
+import type { FlashRule, StormRule, SurgeRule } from './sky';
 
 /** One character per tile in MapData.tiles. */
 export const TILE_CHARS = {
@@ -125,6 +125,10 @@ export interface MapData {
   objects: MapObject[];
   /** The wilds only: how this region surges (sky.ts). None: it never does. */
   surge?: SurgeRule;
+  /** The wilds only: how often a storm rolls over this region (sky.ts). None: it never storms. */
+  storm?: StormRule;
+  /** The wilds only: how often a flash starts near someone out here (sky.ts). None: no flashes. */
+  flashes?: FlashRule;
   /** The wilds only: watchers, creatures that come closer while nobody looks at them. */
   watchers?: WatcherRule;
   /** Insides only: the inside of one of NAPO's buildings (concrete, not logs). Its door is a NAPO building's. */

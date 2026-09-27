@@ -14,9 +14,10 @@
  *   everything moves smoothly.
  */
 import {
-  STEP_MS, dirOf, dirToward, energyAfter, findPath, inSurge, stepTarget, surgeFront, DIR_VEC,
+  STEP_MS, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, stepTarget, surgeFront, DIR_VEC,
   type BagSlot, type BodyView, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
-  type Gear, type MarkView, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type SurgeView, type TileMap,
+  type Gear, type MarkView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type SurgeView, type TileMap,
+  type FlashKind, type FlashView, type StormView,
 } from '@napoland/shared';
 import { countOf, lookOf, refusalText, useText, type Items } from './items';
 import type { Maps } from './maps';
@@ -108,6 +109,10 @@ export function minutes(seconds: number): string {
   return `${m} minute${m === 1 ? '' : 's'}`;
 }
 
+/** News from the world for the interface to announce (status.ts, newsBanner). */
+export type News =
+  | { kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView };
+
 export class Game {
   meId: string | null = null;
   /** True between the server's welcome and the connection dropping; no steps are taken otherwise. */
@@ -139,8 +144,12 @@ export class Game {
   flares: Array<{ x: number; y: number; until: number }> = [];
   /** This map's surge clock as told, and when (null: it never surges). */
   surge: { view: SurgeView; at: number } | null = null;
+  /** This map's storm clock as told, and when (null: it never storms). */
+  storm: { view: StormView; at: number } | null = null;
+  /** Flashes on this map, until when they are over (our clock). */
+  flashes: Array<{ x: number; y: number; kind: FlashKind; until: number }> = [];
   /** How wet you are, your load and whether something clings to you, as told and when. */
-  body: { view: BodyView; at: number } = { view: { wet: 0, wetRate: 0, load: 0, hitched: false }, at: 0 };
+  body: { view: BodyView; at: number } = { view: { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} }, at: 0 };
   /** The Old Stone in town, and your counts toward feats. */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
@@ -150,10 +159,12 @@ export class Game {
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
   bench: { x: number; y: number; stash: BagSlot[] } | null = null;
+  /** The quirks of what everyone on this map wears, by player id: some show in the world. */
+  quirks = new Map<string, Quirk[]>();
   /** What everyone on this map wears, by player id (you too). */
   gear = new Map<string, Gear>();
   /** Feats just earned, for the interface to announce (it empties the list). */
-  news: Array<{ kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView }> = [];
+  news: News[] = [];
   private fid = 0;
   private seq = 0;
   private pending: Array<{ seq: number; x: number; y: number }> = [];
@@ -230,6 +241,23 @@ export class Game {
     const me = this.me, rule = this.current.data.surge, s = this.surgeNow(now);
     if (!me || !rule || !s) return false;
     return inSurge(this.current, me.tx, me.ty, surgeFront(rule, this.current.deepest, s));
+  }
+
+  /** The storm clock right now, counted on from the last report. */
+  stormNow(now: number): StormView | null {
+    const s = this.storm;
+    return s && { phase: s.view.phase, left: Math.max(0, s.view.left - Math.max(0, now - s.at) / 1000) };
+  }
+
+  /** Flashes not over yet. */
+  flashesNow(now: number): FlashView[] {
+    return this.flashes.filter(f => f.until > now).map(f => ({ x: f.x, y: f.y, kind: f.kind, left: (f.until - now) / 1000 }));
+  }
+
+  /** The kind of flash discharging on the tile you stand on, or null. */
+  flashed(now: number): FlashKind | null {
+    const me = this.me;
+    return (me && this.flashesNow(now).find(f => flashHits(f, me.tx, me.ty))?.kind) ?? null;
   }
 
   /** Flares still burning. */
@@ -326,6 +354,13 @@ export class Game {
         this.surge = { view: msg.surge, at: now };
         this.news.push({ kind: 'surge', view: msg.surge });
         break;
+      case 'storm':
+        this.storm = { view: msg.storm, at: now };
+        this.news.push({ kind: 'storm', view: msg.storm });
+        break;
+      case 'flash':
+        this.flashes.push({ x: msg.flash.x, y: msg.flash.y, kind: msg.flash.kind, until: now + msg.flash.left * 1000 });
+        break;
       case 'stone':
         if (msg.stone.awake !== this.stone.awake) this.news.push({ kind: 'stone', view: msg.stone });
         this.stone = msg.stone;
@@ -346,6 +381,10 @@ export class Game {
       }
       case 'gear':
         this.gear.set(msg.id, msg.gear);
+        this.quirks.set(msg.id, msg.quirks);
+        break;
+      case 'mended':
+        this.floatOverMe(`Mended: ${this.items.get(msg.item).name}`, GAIN);
         break;
       case 'bench': {
         const b = this.benching;
@@ -364,6 +403,7 @@ export class Game {
       case 'join':
         this.players.set(msg.player.id, this.mover(msg.player));
         this.gear.set(msg.player.id, msg.player.gear ?? {});
+        this.quirks.set(msg.player.id, msg.player.quirks ?? []);
         break;
       case 'leave':
         this.players.delete(msg.id);
@@ -465,6 +505,7 @@ export class Game {
     this.players.clear();
     for (const p of players) this.players.set(p.id, this.mover(p));
     this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
+    this.quirks = new Map(players.map(p => [p.id, p.quirks ?? []]));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
     this.lootChanges++;
@@ -484,14 +525,19 @@ export class Game {
     m.tx = m.x = c.x; m.ty = m.y = c.y; m.dir = c.dir; m.anim = null;
   }
 
-  /** The fires, marks, creatures, flares and surge clock of the map a welcome or zone put us on. */
-  private scene(msg: { fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: Array<{ x: number; y: number; left: number }>; surge: SurgeView | null }, now: number) {
+  /** The fires, marks, creatures, flares, flashes, and surge and storm clocks of the map a welcome or zone put us on. */
+  private scene(
+    msg: { fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: Array<{ x: number; y: number; left: number }>; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null },
+    now: number,
+  ) {
     this.fires = new Map(msg.fires.map(f => [`${f.x},${f.y}`, { left: f.left, at: now }]));
     this.marks = new Map(msg.marks.map(m => [m.id, m]));
     this.markChanges++;
     this.creatures = new Map(msg.creatures.map(c => [c.id, this.creatureMover(c)]));
     this.flares = msg.flares.map(f => ({ x: f.x, y: f.y, until: now + f.left * 1000 }));
     this.surge = msg.surge && { view: msg.surge, at: now };
+    this.storm = msg.storm && { view: msg.storm, at: now };
+    this.flashes = msg.flashes.map(f => ({ x: f.x, y: f.y, kind: f.kind, until: now + f.left * 1000 }));
   }
 
   private walk(p: Mover, x: number, y: number, dir: Dir, now: number) {
@@ -568,9 +614,16 @@ export class Game {
   }
 
   /** At the open chest: put on a piece of gear from the stash, or take off what a slot wears. */
-  equip(item: string) {
+  /** Puts on the `n`th piece of `item` in the stash (their order in the chest). */
+  equip(item: string, n = 0) {
     const c = this.chest;
-    if (c && this.online) this.send({ t: 'equip', x: c.x, y: c.y, item });
+    if (c && this.online) this.send({ t: 'equip', x: c.x, y: c.y, item, ...(n ? { n } : {}) });
+  }
+
+  /** Mends what you wear in `slot`, at the open workbench. */
+  mend(slot: Slot) {
+    const b = this.bench;
+    if (b && this.online) this.send({ t: 'mend', x: b.x, y: b.y, slot });
   }
 
   unequip(slot: Slot) {
@@ -591,6 +644,11 @@ export class Game {
   /** What you wear. */
   get myGear(): Gear {
     return (this.meId && this.gear.get(this.meId)) || {};
+  }
+
+  /** What you wear, piece by piece (condition and quirk), as the server last told it. */
+  get myWorn(): Worn {
+    return this.body.view.worn ?? {};
   }
 
   /**

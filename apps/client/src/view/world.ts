@@ -13,10 +13,10 @@
  * black: see interior.ts for the room, fire.ts for the fire and lighting.ts for the light.
  */
 import * as THREE from 'three';
-import { DIR_VEC, type Dir, type DropView, type FindView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
+import { DIR_VEC, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, flicker, hearthModel, type Puffs } from './fire';
-import { Echoes, Flares, Marks, Watchers, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
+import { Echoes, Flares, Flashes, Marks, Prints, Watchers, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
@@ -83,6 +83,8 @@ const FLARE_LIGHT = 3.2;
 /** Where a surge washes the sky and the light. */
 const SURGE_SKY = new THREE.Color('#2b1152');
 const SURGE_HEMI = new THREE.Color('#9a6ae0');
+/** A storm darkens the sky, and its lightning lights everything for a blink now and then. */
+const STORM_SKY = new THREE.Color('#1b2126');
 /** The forest goes on this many tiles outside the map, so its edge never shows. */
 const RING = 4;
 /** Poles farther apart than this belong to different lines: no wire between them. */
@@ -209,6 +211,10 @@ export class WorldView {
   private marks = new Marks();
   private watchers: Watchers;
   private flares = new Flares();
+  private prints = new Prints();
+  /** Where someone walks whose gear makes street lights flicker (tiles). */
+  private flickerAt: Array<{ x: number; y: number }> = [];
+  private flashes = new Flashes();
   private echoes = new Echoes();
   private creatureList: CreatureAvatar[] = [];
   private flareLight = new THREE.PointLight(FLARE_COLOR, 0, 9, 2);
@@ -223,6 +229,8 @@ export class WorldView {
   private stoneAwake = false;
   /** How much a surge washes this map now, 0 to 1. */
   private surgeK = 0;
+  /** A storm blows over this map (outdoors). */
+  private storm = false;
   private marker: THREE.Mesh;
   private shadowGeo = new THREE.CircleGeometry(1, 14).rotateX(-Math.PI / 2);
   private shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -257,10 +265,10 @@ export class WorldView {
     this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
-    this.scene.add(this.loot.root, this.marks.root, this.watchers.root, this.flares.root, this.echoes.root);
+    this.scene.add(this.loot.root, this.marks.root, this.watchers.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
     this.puffs.push(this.flares.sparks);
     this.animate.push(t => this.loot.update(t));
-    this.animate.push(t => { this.marks.update(t); this.flares.update(t); });
+    this.animate.push(t => { this.marks.update(t); this.flares.update(t); this.flashes.update(t); });
     // Before the fires draw: how big each burns now.
     this.animate.unshift(() => { this.fireTiles.forEach(([x, y], i) => { this.fireLevels[i] = this.fireLevel(x, y); }); });
     this.sources = lightSources(map);
@@ -279,6 +287,8 @@ export class WorldView {
     this.marks.dispose();
     this.watchers.dispose();
     this.flares.dispose();
+    this.prints.dispose();
+    this.flashes.dispose();
     this.echoes.dispose();
     disposeTree(this.scene);
     this.scene.clear();
@@ -841,7 +851,7 @@ export class WorldView {
     this.headMat.emissive.set(a.carLights ? '#fff1c4' : '#000000');
     this.tailMat.emissive.set(a.carLights ? '#c8281c' : '#000000');
     this.capMat.emissive.set(a.capGlow);
-    if (this.rain) this.rain.visible = !!a.rain;
+    if (this.rain) this.rain.visible = !!a.rain || this.storm;
     if (a.rain) { this.rainMat.color.set(a.rain.color); this.rainMat.opacity = a.rain.opacity; }
     if (a.mist) { this.mistMat.color.set(a.mist.color); this.mistMat.opacity = a.mist.opacity; }
     this.wispMat.opacity = a.wisps;
@@ -871,9 +881,31 @@ export class WorldView {
   }
 
   /** The flares burning on this map, every frame; the nearest to `focus` gets the real light. */
+  /** Glowing footprints (a quirk), newest last, with their age in seconds: every frame. */
+  setPrints(list: ReadonlyArray<{ x: number; y: number; dir: Dir; age: number }>) {
+    this.prints.set(list, (x, y) => this.groundAt(x, y));
+  }
+
+  /** Where players walk whose gear makes street lights flicker as they pass (a quirk): every frame. */
+  setFlickerAt(list: Array<{ x: number; y: number }>) {
+    this.flickerAt = list;
+  }
+
   setFlares(list: Array<{ x: number; y: number; left: number }>, focus: { x: number; y: number }) {
     const near = [...list].sort((a, b) => Math.hypot(a.x - focus.x, a.y - focus.y) - Math.hypot(b.x - focus.x, b.y - focus.y));
     this.flares.set(near, (x, y) => this.groundAt(x, y));
+  }
+
+  /** The flashes on this map, every frame; the nearest to the player are drawn. */
+  setFlashes(list: FlashView[]) {
+    this.flashes.set(list, (x, y) => this.groundAt(x, y));
+  }
+
+  /** A storm over this map: a dark sky, closer fog, heavy rain and lightning (outdoors only). */
+  setStorm(on: boolean) {
+    if (on === this.storm) return;
+    this.storm = on;
+    if (this.outdoors) this.setWeather(this.weather);
   }
 
   /** The piles on this map, for the echoes that walk to them: call it when they change or you move to another tile. */
@@ -898,7 +930,7 @@ export class WorldView {
   private applySurge() {
     if (!this.outdoors) return;
     const a = this.amb, k = this.surgeK;
-    const sky = new THREE.Color(a.sky).lerp(SURGE_SKY, k * 0.7);
+    const sky = new THREE.Color(a.sky).lerp(STORM_SKY, this.storm ? 0.6 : 0).lerp(SURGE_SKY, k * 0.7);
     (this.scene.background as THREE.Color).copy(sky);
     (this.scene.fog as THREE.Fog).color.copy(sky);
     this.hemi.color.set(a.hemi.sky).lerp(SURGE_HEMI, k * 0.55);
@@ -917,8 +949,10 @@ export class WorldView {
   private updateFog() {
     const fog = this.scene.fog as THREE.Fog, f = this.amb.fog, d = this.dist;
     if (!f) { fog.near = 1e4; fog.far = 2e4; return; }
+    // A storm leaves less to see.
+    const storm = this.storm && this.outdoors ? 0.6 : 1;
     fog.near = Math.max(1, d - 1.5);
-    fog.far = d + Math.max(f.min, d * f.share);
+    fog.far = d + Math.max(f.min, d * f.share) * storm;
   }
 
   /** Size in CSS pixels. The camera keeps the same circle of world around the player on every screen shape. */
@@ -964,6 +998,8 @@ export class WorldView {
     this.echoes.update(t, (x, z) => this.groundAt(x, z));
     this.light(fx, fz, t, dt);
     const dark = this.weather === 'night' || this.weather === 'aurora';
+    // Lightning: a blink of cold light every several seconds, never on a fixed beat.
+    if (this.storm && this.outdoors) this.hemi.intensity = this.amb.hemi.intensity * L * (Math.sin(t * 0.71) * Math.sin(t * 1.93) > 0.93 ? 2.6 : 0.8);
     this.stoneLight.intensity = this.hasStone ? (dark ? 2.4 : 1.2) * (this.stoneAwake ? 2 : 1) * L * (0.85 + 0.15 * Math.sin(t * 3.1)) : 0;
     const flare = this.flares.nearest();
     this.flareLight.intensity = flare ? FLARE_LIGHT * L * flare.k * (0.8 + 0.2 * Math.sin(t * 19)) : 0;
@@ -1001,7 +1037,9 @@ export class WorldView {
       if (!src) { s.light.intensity = 0; continue; }
       s.on = Math.min(1, s.on + dt / LIGHT_FADE_S);
       if (src.kind === 'fire') { s.light.intensity = FIRE_LIGHT * L * flicker(t, src.ph) * s.on * Math.min(1, this.fireLevel(src.tx, src.ty)); continue; }
-      const off = src.flicker && (Math.sin(t * 13 + src.ph) > 0.92 || Math.sin(t * 2.3 + src.ph) > 0.97) ? 0.15 : 1;
+      // Some lamps flicker now and then; any lamp flickers hard while someone with a flickering quirk passes under it.
+      const restless = this.flickerAt.some(p => (p.x + 0.5 - src.x) ** 2 + (p.y + 0.5 - src.z) ** 2 < 9);
+      const off = (src.flicker && (Math.sin(t * 13 + src.ph) > 0.92 || Math.sin(t * 2.3 + src.ph) > 0.97)) || (restless && Math.sin(t * 29 + src.ph) * Math.sin(t * 7.3) > 0.1) ? 0.15 : 1;
       s.light.intensity = lamp * off * s.on;
     }
   }

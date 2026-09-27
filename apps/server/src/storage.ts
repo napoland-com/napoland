@@ -6,7 +6,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
-import type { BagSlot, Dir, Gear, Stash, Stats } from '@napoland/shared';
+import type { BagSlot, Dir, Gear, Piece, Stash, Stats, Worn } from '@napoland/shared';
 import { log } from './log';
 
 export interface PlayerRecord {
@@ -43,6 +43,8 @@ export interface PlayerRecord {
   stash?: Stash;
   /** What the player wears, by slot. None: they never chose, and wear the starter gear. */
   gear?: Gear;
+  /** The condition and quirk of each piece worn, by slot. None: as good as new. */
+  worn?: Worn;
   /** Milliseconds since the epoch. */
   createdAt: number;
   lastSeenAt: number;
@@ -120,10 +122,12 @@ export interface Storage {
 }
 
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count }));
-const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out } });
+const copyPieces = (p: Record<string, Piece[]>): Record<string, Piece[]> => Object.fromEntries(Object.entries(p).map(([id, list]) => [id, list.map(x => ({ ...x }))]));
+const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: copyPieces(s.pieces) } : {}) });
+const copyWorn = (w: Worn): Worn => Object.fromEntries(Object.entries(w).map(([slot, p]) => [slot, { ...p }]));
 const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...rec, bag: copyBag(rec.bag), ...(rec.stats ? { stats: { ...rec.stats } } : {}), ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
-  ...(rec.gear ? { gear: { ...rec.gear } } : {}),
+  ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}),
 });
 
 export class MemoryStorage implements Storage {
@@ -177,7 +181,7 @@ export class MemoryStorage implements Storage {
       Object.assign(cur, {
         map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(rec.bag), wet: rec.wet ?? 0, stats: { ...rec.stats },
         xp: rec.xp ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
-        lastSeenAt: rec.lastSeenAt,
+        ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), lastSeenAt: rec.lastSeenAt,
       });
     }
   }
@@ -268,6 +272,8 @@ interface PlayerRow {
   stash: unknown;
   /** Null for a player who never chose their gear. */
   gear: unknown;
+  /** Null for a player whose pieces were never worn down. */
+  worn: unknown;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -306,7 +312,7 @@ const stats = (json: unknown): Stats => (typeof json === 'object' && json !== nu
 const stash = (json: unknown): Stash => {
   const o = (typeof json === 'object' && json !== null && !Array.isArray(json) ? json : {}) as Partial<Stash>;
   const rec = (v: unknown) => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, number>) : {});
-  return { items: rec(o.items), out: rec(o.out) };
+  return { items: rec(o.items), out: rec(o.out), ...(o.pieces && typeof o.pieces === 'object' ? { pieces: o.pieces as Record<string, Piece[]> } : {}) };
 };
 
 const fromRow = (r: PlayerRow): PlayerRecord => ({
@@ -326,6 +332,8 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   xp: r.xp,
   stash: stash(r.stash),
   ...(r.gear && typeof r.gear === 'object' && !Array.isArray(r.gear) ? { gear: r.gear as Gear } : {}),
+  // What the World checks again when the player joins.
+  ...(r.worn && typeof r.worn === 'object' && !Array.isArray(r.worn) ? { worn: r.worn as Worn } : {}),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -391,10 +399,10 @@ export class PgStorage implements Storage {
   async save(rec: PlayerRecord): Promise<void> {
     await this.pool.query(
       `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
-       gear = $14::jsonb, last_seen_at = $13 WHERE id = $1`,
+       gear = $14::jsonb, worn = $15::jsonb, last_seen_at = $13 WHERE id = $1`,
       [
         rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}), rec.xp ?? 0,
-        JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null,
+        JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
       ],
     );
   }

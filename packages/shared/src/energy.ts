@@ -9,7 +9,9 @@
  * - a heavy bag (load: what it weighs against what you carry easily),
  * - being wet (rain soaks you through; a fire or a roof dries you),
  * - a surge sweeping the region (surge.ts), unless you stand in a street light,
- * - something clinging to your back at night (a hitchhiker), until you reach light or a roof.
+ * - something clinging to your back at night (a hitchhiker), until you reach light or a roof,
+ * - a storm (sky.ts): wind and lightning, and being wet in its wind chills you more,
+ * - a flash discharging where you stand: a spark (electricity) or a fire flash (heat).
  *
  * The server owns the numbers; the client only shows them (and counts between updates using `rate`).
  * Tuning targets: standing at the woods' edge in the rain, dry and light, empties a full bar in about
@@ -18,6 +20,7 @@
 import type { Resist } from './gear';
 import type { MapKind, TileMap } from './map';
 import type { Weather } from './protocol';
+import type { FlashKind } from './sky';
 
 /** A full bar, before levels raise it. */
 export const ENERGY_MAX = 100;
@@ -39,6 +42,12 @@ export const WET_DRAIN = 0.5;
 export const SURGE_DRAIN = 3;
 /** A hitchhiker on your back drains this many times faster. */
 export const HITCH_DRAIN = 1.5;
+/** Out in a storm drains this many times faster; wind and electricity each cut half of the extra. */
+export const STORM_DRAIN = 1.5;
+/** In a storm's wind, being wet drains this many times more (cold resists it). */
+export const STORM_CHILL = 1.5;
+/** A flash discharging where you stand drains this many times faster; heat (fire) or electricity (spark) cuts the extra. */
+export const FLASH_DRAIN = 6;
 
 /** The most a fire out there holds: this many seconds of burning. */
 export const FIRE_MAX_S = 30 * 60;
@@ -81,7 +90,11 @@ export interface Conditions {
   surgeDrain?: number;
   /** Something clings to your back. */
   hitched?: boolean;
-  /** What your gear resists (gear.ts): cold softens the weather's and wetness's extra drain, electricity and radiation a surge's. */
+  /** A storm blows over you (out in the wilds, not under a roof). */
+  storm?: boolean;
+  /** A flash discharges where you stand. */
+  flash?: FlashKind;
+  /** What your gear resists (gear.ts): cold softens the weather's and wetness's extra drain, electricity and radiation a surge's, wind and electricity a storm's, heat and electricity a flash's. */
   resist?: Partial<Resist>;
 }
 
@@ -95,13 +108,17 @@ export function energyRate(map: TileMap, x: number, y: number, weather: Weather,
   // A tile with no way home (it should not exist; the validator warns) counts as far away.
   const steps = map.homeSteps(x, y);
   const far = steps < 0 ? 3 * DRAIN_GROWTH_STEPS : steps;
-  const cold = clamp01(c.resist?.cold ?? 0);
+  const r = (e: keyof Resist) => clamp01(c.resist?.[e] ?? 0);
+  const cold = r('cold');
   const weatherK = 1 + (WEATHER_DRAIN[weather] - 1) * (1 - cold);
-  let k = weatherK * (1 + LOAD_DRAIN * clamp01(c.load ?? 0)) * (1 + WET_DRAIN * clamp01(c.wet ?? 0) * (1 - cold));
+  const chill = c.storm ? STORM_CHILL : 1;
+  let k = weatherK * (1 + LOAD_DRAIN * clamp01(c.load ?? 0)) * (1 + WET_DRAIN * chill * clamp01(c.wet ?? 0) * (1 - cold));
   if (c.hitched) k *= HITCH_DRAIN;
+  if (c.storm) k *= 1 + (STORM_DRAIN - 1) * (1 - (r('wind') + r('electricity')) / 2);
+  if (c.flash) k *= 1 + (FLASH_DRAIN - 1) * (1 - r(c.flash === 'fire' ? 'heat' : 'electricity'));
   if (inSurge(map, x, y, c.surgeFront)) {
     // A surge is electric and radiant: each resistance cuts half of its extra drain.
-    const shield = (clamp01(c.resist?.electricity ?? 0) + clamp01(c.resist?.radiation ?? 0)) / 2;
+    const shield = (r('electricity') + r('radiation')) / 2;
     k *= 1 + ((c.surgeDrain ?? SURGE_DRAIN) - 1) * (1 - shield);
   }
   return -DRAIN_PER_SECOND * Math.max(1, map.data.depth) * (1 + far / DRAIN_GROWTH_STEPS) * k;
@@ -115,14 +132,14 @@ export function inSurge(map: TileMap, x: number, y: number, front: number | unde
 }
 
 /**
- * How fast you get wet (positive) or dry off (negative), per second, as a share of soaked. Rain soaks
- * you anywhere outdoors, `wetting` times as fast (feats and charms can slow it). A burning fire dries
- * you fastest, a roof slowly, and dry air slowest.
+ * How fast you get wet (positive) or dry off (negative), per second, as a share of soaked. Rain (and a
+ * storm) soaks you anywhere outdoors, `wetting` times as fast (feats and charms can slow it). A burning
+ * fire dries you fastest, a roof slowly, and dry air slowest.
  */
-export function wetRate(kind: MapKind, weather: Weather, byFire: boolean, wetting = 1): number {
+export function wetRate(kind: MapKind, weather: Weather, byFire: boolean, wetting = 1, storm = false): number {
   if (byFire) return -1 / DRY_FIRE_SECONDS;
   if (kind === 'inside') return -1 / DRY_ROOF_SECONDS;
-  if (weather === 'rain') return wetting / WET_SECONDS;
+  if (weather === 'rain' || storm) return wetting / WET_SECONDS;
   return -1 / DRY_AIR_SECONDS;
 }
 
