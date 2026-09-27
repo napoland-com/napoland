@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -69,5 +69,17 @@
     {"id":"insulated-gloves","make":"insulated-gloves","needs":[{"item":"wire","count":4},{"item":"resin","count":6},{"item":"cloth","count":4}]},
     {"id":"expedition-pack","make":"expedition-pack","needs":[{"item":"cloth","count":16},{"item":"scrap","count":8},{"item":"wire","count":6},{"item":"shard","count":3}]},
     {"id":"expedition-boots","make":"expedition-boots","needs":[{"item":"scrap","count":6},{"item":"resin","count":10},{"item":"cloth","count":6},{"item":"shard","count":2}]}
+  ],
+  "wear": {"sturdy": 5400, "rugged": 7200, "expedition": 9000, "anomalous": 10800},
+  "mend": {
+    "sturdy": [{"item":"cloth","count":2},{"item":"scrap","count":1}],
+    "rugged": [{"item":"cloth","count":3},{"item":"scrap","count":2}],
+    "expedition": [{"item":"cloth","count":4},{"item":"scrap","count":3}],
+    "anomalous": [{"item":"scrap","count":2},{"item":"shard","count":1}]
+  },
+  "quirks": [
+    {"id":"footprints","name":"Glowing steps","text":"Out there, your steps glow where you walk for a while. Everyone can follow them."},
+    {"id":"flicker","name":"Restless light","text":"Street lights flicker as you pass under them. Everyone sees it."},
+    {"id":"hum","name":"Humming","text":"It hums a minute before the region you are in grows restless, before anyone is told."}
   ]
 }

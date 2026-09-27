@@ -36,7 +36,7 @@ const items = new Items({
   ],
 });
 const maps = new Maps([tinyTown(), camp()]);
-const me = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir, color: '#f29e4c', gear: {} });
+const me = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir, color: '#f29e4c', gear: {}, quirks: [] });
 
 let sent: ClientMsg[];
 let g: Game;
@@ -210,10 +210,10 @@ describe('what the interface says', () => {
 
   it('fills the status panel with how you are, the Old Stone and the feats', () => {
     const v = statusView({
-      energy: { value: 40, max: 100, rate: -0.5 }, body: { wet: 0.5, wetRate: 0.01, load: 0.8, hitched: true },
+      energy: { value: 40, max: 100, rate: -0.5 }, body: { wet: 0.5, wetRate: 0.01, load: 0.8, hitched: true, worn: {} },
       surge: { phase: 'surge', left: 30, into: 0 }, caught: true, stone: { charge: 3, need: 20, awake: false, left: 0 },
       stats: { rainSteps: 1500, fed: 5 }, bag: [{ item: 'pebble', count: 1 }], items, progress: { xp: 40, level: 2, from: 30, to: 120, maxEnergy: 105 },
-      resists: 'Cold 25%', storm: null, flash: null, weather: 'rain', wilds: false,
+      resists: 'Cold 25%', wear: null, quirks: [], storm: null, flash: null, weather: 'rain', wilds: false,
     });
     expect(v.rows[0]).toEqual({ label: 'Level', text: 'Level 2 · 40 XP, 80 to go', bar: 10 / 90, tone: 'good' });
     expect(v.rows.slice(1).map(r => [r.label, r.text])).toEqual([
@@ -237,7 +237,7 @@ describe('what the interface says', () => {
     );
     const v = statusView({
       energy: { value: 40, max: 100, rate: -0.5 }, body: DRY, surge: null, caught: false, stone: ASLEEP, stats: {}, bag: [], items,
-      progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: 100 }, resists: null, storm: { phase: 'storm', left: 90 }, flash: 'spark', weather: 'rain', wilds: true,
+      progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: 100 }, resists: null, wear: null, quirks: [], storm: { phase: 'storm', left: 90 }, flash: 'spark', weather: 'rain', wilds: true,
     });
     expect(v.rows.filter(r => ['Draining', 'Storm', 'Flash'].includes(r.label)).map(r => [r.label, r.text])).toEqual([
       ['Draining', 'Cold: rain · Wind: the storm · Electricity: the storm, a flash'],

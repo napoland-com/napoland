@@ -9,6 +9,7 @@
  * new finds. The rules are pure functions shared by the server (which owns every stash) and tests.
  */
 import { ENERGY_MAX } from './energy';
+import { newPiece, type Piece } from './gear';
 import type { BagSlot, ItemDef } from './items';
 
 /** The highest level, and what each level adds to the energy bar. */
@@ -48,17 +49,42 @@ export function progressOf(xp: number): ProgressView {
   return { xp, level, from: xpFor(level), to: level >= LEVEL_MAX ? null : xpFor(level + 1), maxEnergy: maxEnergy(level) };
 }
 
-/** A player's stash: how many of each item lie in it, and how many they took out and have not brought back. */
+/**
+ * A player's stash: how many of each item lie in it, and how many they took out and have not brought
+ * back. Gear lies in it piece by piece (`pieces`, gear.ts): as many as `items` counts, which stays the
+ * truth, so a stash saved before pieces existed (or by an older release) still reads right (fitPieces).
+ */
 export interface Stash {
   items: Record<string, number>;
   out: Record<string, number>;
+  pieces?: Record<string, Piece[]>;
 }
 
 export const emptyStash = (): Stash => ({ items: {}, out: {} });
 
-/** The stash as a list, in item order (the order of content/items.json), for the client. */
+/** The stash as a list, in item order (the order of content/items.json), for the client; gear piece by piece. */
 export function stashList(s: Stash, order: readonly ItemDef[]): BagSlot[] {
-  return order.filter(d => (s.items[d.id] ?? 0) > 0).map(d => ({ item: d.id, count: s.items[d.id]! }));
+  return order.filter(d => (s.items[d.id] ?? 0) > 0).flatMap(d => {
+    const pieces = s.pieces?.[d.id];
+    return pieces?.length ? pieces.map(piece => ({ item: d.id, count: 1, piece: { ...piece } })) : [{ item: d.id, count: s.items[d.id]! }];
+  });
+}
+
+/**
+ * The stash with one piece for every unit of gear it counts: pieces it had are kept (as many as it
+ * counts, in order), missing ones come new (anomalous ones with a quirk), and pieces of anything
+ * that is not gear, or no longer lies there, are dropped.
+ */
+export function fitPieces(s: Stash, items: Map<string, ItemDef>, rng: () => number): Stash {
+  const pieces: Record<string, Piece[]> = {};
+  for (const [id, n] of Object.entries(s.items)) {
+    const def = items.get(id);
+    if (def?.kind !== 'gear') continue;
+    const had = (s.pieces?.[id] ?? []).slice(0, n).map(p => ({ ...p }));
+    while (had.length < n) had.push(newPiece(def, rng));
+    pieces[id] = had;
+  }
+  return Object.keys(pieces).length ? { items: s.items, out: s.out, pieces } : { items: s.items, out: s.out };
 }
 
 /**

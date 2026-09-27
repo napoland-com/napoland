@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import { DIR_VEC, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, flicker, hearthModel, type Puffs } from './fire';
-import { Echoes, Flares, Flashes, Marks, Watchers, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
+import { Echoes, Flares, Flashes, Marks, Prints, Watchers, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
@@ -207,6 +207,9 @@ export class WorldView {
   private marks = new Marks();
   private watchers: Watchers;
   private flares = new Flares();
+  private prints = new Prints();
+  /** Where someone walks whose gear makes street lights flicker (tiles). */
+  private flickerAt: Array<{ x: number; y: number }> = [];
   private flashes = new Flashes();
   private echoes = new Echoes();
   private creatureList: CreatureAvatar[] = [];
@@ -258,7 +261,7 @@ export class WorldView {
     this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
-    this.scene.add(this.loot.root, this.marks.root, this.watchers.root, this.flares.root, this.flashes.root, this.echoes.root);
+    this.scene.add(this.loot.root, this.marks.root, this.watchers.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
     this.puffs.push(this.flares.sparks);
     this.animate.push(t => this.loot.update(t));
     this.animate.push(t => { this.marks.update(t); this.flares.update(t); this.flashes.update(t); });
@@ -280,6 +283,7 @@ export class WorldView {
     this.marks.dispose();
     this.watchers.dispose();
     this.flares.dispose();
+    this.prints.dispose();
     this.flashes.dispose();
     this.echoes.dispose();
     disposeTree(this.scene);
@@ -859,6 +863,16 @@ export class WorldView {
   }
 
   /** The flares burning on this map, every frame; the nearest to `focus` gets the real light. */
+  /** Glowing footprints (a quirk), newest last, with their age in seconds: every frame. */
+  setPrints(list: ReadonlyArray<{ x: number; y: number; dir: Dir; age: number }>) {
+    this.prints.set(list, (x, y) => this.groundAt(x, y));
+  }
+
+  /** Where players walk whose gear makes street lights flicker as they pass (a quirk): every frame. */
+  setFlickerAt(list: Array<{ x: number; y: number }>) {
+    this.flickerAt = list;
+  }
+
   setFlares(list: Array<{ x: number; y: number; left: number }>, focus: { x: number; y: number }) {
     const near = [...list].sort((a, b) => Math.hypot(a.x - focus.x, a.y - focus.y) - Math.hypot(b.x - focus.x, b.y - focus.y));
     this.flares.set(near, (x, y) => this.groundAt(x, y));
@@ -1005,7 +1019,9 @@ export class WorldView {
       if (!src) { s.light.intensity = 0; continue; }
       s.on = Math.min(1, s.on + dt / LIGHT_FADE_S);
       if (src.kind === 'fire') { s.light.intensity = FIRE_LIGHT * L * flicker(t, src.ph) * s.on * Math.min(1, this.fireLevel(src.tx, src.ty)); continue; }
-      const off = src.flicker && (Math.sin(t * 13 + src.ph) > 0.92 || Math.sin(t * 2.3 + src.ph) > 0.97) ? 0.15 : 1;
+      // Some lamps flicker now and then; any lamp flickers hard while someone with a flickering quirk passes under it.
+      const restless = this.flickerAt.some(p => (p.x + 0.5 - src.x) ** 2 + (p.y + 0.5 - src.z) ** 2 < 9);
+      const off = (src.flicker && (Math.sin(t * 13 + src.ph) > 0.92 || Math.sin(t * 2.3 + src.ph) > 0.97)) || (restless && Math.sin(t * 29 + src.ph) * Math.sin(t * 7.3) > 0.1) ? 0.15 : 1;
       s.light.intensity = lamp * off * s.on;
     }
   }

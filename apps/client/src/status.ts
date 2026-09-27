@@ -28,6 +28,10 @@ export interface StatusInput {
   progress: ProgressView;
   /** What your gear resists, in words (items.ts, resistText); null for nothing. */
   resists: string | null;
+  /** What you wear that is wearing down (items.ts, wearText); null when all of it is fine. */
+  wear: string | null;
+  /** The quirks of what you wear, by name. */
+  quirks: string[];
 }
 
 /** "Level 3 · 150 XP, 120 to go": where you stand, for the status panel and the stash's header. */
@@ -58,6 +62,8 @@ export function statusView(s: StatusInput): StatusView {
   const wet = s.body.wet, how = s.body.wetRate > 0 ? 'getting wetter' : wet > 0 ? 'drying' : 'dry';
   rows.push({ label: 'Wet', text: wet > 0.005 ? `${Math.round(wet * 100)}%, ${how}` : 'Dry', bar: wet, tone: s.body.wetRate > 0 ? 'bad' : 'plain' });
   rows.push({ label: 'Load', text: s.body.load >= 1 ? 'Heavy: it tires you out' : `${Math.round(s.body.load * 100)}% of what you carry easily`, bar: Math.min(1, s.body.load), tone: s.body.load >= 0.75 ? 'bad' : 'plain' });
+  if (s.wear) rows.push({ label: 'Wear', text: `${s.wear}. Mend it at the workbench.`, tone: s.wear.includes('worn out') ? 'bad' : 'plain' });
+  if (s.quirks.length) rows.push({ label: 'Quirks', text: s.quirks.join(', '), tone: 'good' });
   rows.push({ label: 'Resists', text: s.resists ?? 'Nothing yet. Make gear at the workbench in the lodge.', tone: s.resists ? 'good' : 'plain' });
   if (s.wilds) rows.push({ label: 'Draining', text: drainText({ ...s, wet: s.body.wet, storm: s.storm?.phase === 'storm' }) ?? 'Just being out here', tone: 'bad' });
   if (s.body.hitched) rows.push({ label: 'On you', text: 'Something clings to your back. Find a light, a fire or a roof.', tone: 'bad' });

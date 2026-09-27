@@ -9,7 +9,7 @@
  * else gets a random half (the rest is lost), and it fades an hour after the collapse.
  */
 import type { Mods } from './feats';
-import type { Element, Recipe, Slot, Tier } from './gear';
+import type { Element, Piece, Quirk, Recipe, Slot, Tier } from './gear';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 
 /** A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn (gear.ts). */
@@ -91,12 +91,19 @@ export interface ItemsData {
   finds: FindRule[];
   /** What the workbench in town makes (gear.ts). None: it makes nothing. */
   recipes?: Recipe[];
+  /** Seconds out in the wilds that wear gear of each tier out (gear.ts); a tier left out never wears. */
+  wear?: Partial<Record<Tier, number>>;
+  /** What mending a piece of each tier costs at the workbench, from the stash. */
+  mend?: Partial<Record<Tier, BagSlot[]>>;
+  /** Names and words for the quirks of anomalous gear (gear.ts, QUIRKS). */
+  quirks?: Array<{ id: Quirk; name: string; text: string }>;
 }
 
-/** One bag slot: an item and how many of it (at most its stack). */
+/** One bag slot: an item and how many of it (at most its stack). In a stash's list, a piece of gear comes with its condition and quirk. */
 export interface BagSlot {
   item: string;
   count: number;
+  piece?: Piece;
 }
 
 /** Slots in the bag until the bag becomes equipment (a tote 6, a backpack 8, a hiking pack 12...). */
