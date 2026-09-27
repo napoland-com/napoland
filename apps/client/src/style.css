@@ -208,6 +208,21 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .dot, .hud [data-news]::after { display: inline-block; width: .55em; height: .55em; margin-right: .4em; border-radius: 50%; background: #ff6b4a; box-shadow: 0 0 0 2px #0e1117; vertical-align: .1em; }
 .menu-panel [data-news] { position: relative; }
 .hud [data-news]::after { content: ""; position: absolute; top: .35em; right: .35em; margin: 0; }
+/* Chat: two tabs, the log, and the line you type (16px at least, so iPhone Safari never zooms in). */
+.chat-sheet .note { margin: 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); color: #ffb4a0; }
+.chat-sheet [hidden] { display: none; }
+.chat-sheet .tabs { display: flex; gap: calc(var(--u) * .5); flex: none; }
+.hud .chat-sheet .tabs button { flex: 1; padding: .4em .8em; border-radius: 9px; border: 1px solid #3a4356; background: #131820; box-shadow: none; font-size: calc(var(--u) * 1.15); font-weight: 600; color: #b9b2a2; }
+.hud .chat-sheet .tabs button[aria-selected="true"] { background: #262d3a; border-color: #ffcf5a; color: #ffcf5a; }
+.chat-sheet .log { flex: 1; min-height: calc(var(--u) * 8); overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: calc(var(--u) * .3); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); }
+.chat-sheet .cline { margin: 0; overflow-wrap: anywhere; color: #e6dfcf; }
+.chat-sheet .cline b, .hud .chat-sheet .who { font: inherit; font-family: var(--font-ui); font-weight: 600; color: #ffcf5a; }
+.hud .chat-sheet .who { display: inline; width: auto; padding: 0; border: 0; background: none; box-shadow: none; cursor: pointer; text-decoration: underline dotted; }
+.chat-sheet .cline[data-mine] b { color: #f2a65a; }
+.chat-sheet .say { display: flex; gap: calc(var(--u) * .5); flex: none; }
+.chat-sheet .say input { flex: 1; min-width: 0; font: 600 max(16px, calc(var(--u) * 1.2)) var(--font-text); padding: .45em .7em; border-radius: 9px; border: 1px solid #4a5468; background: #131820; color: #f1ece0; }
+/* A speech bubble over the head of whoever said something near you. */
+.bubble { position: absolute; left: 0; top: 0; max-width: calc(var(--u) * 16); padding: .35em .7em; border-radius: 10px; background: #f4efe2; color: #1c1a16; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1); line-height: 1.25; overflow-wrap: anywhere; box-shadow: 0 2px 0 #1c1a16, 0 0 0 2px #1c1a16; will-change: transform; }
 /* A player's name tag is a button: their card. */
 .tag[data-player] { pointer-events: auto; cursor: pointer; }
 .status-body { display: grid; gap: calc(var(--u) * .55); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); }

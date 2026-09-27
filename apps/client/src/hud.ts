@@ -46,6 +46,8 @@ export interface HudHandlers {
   benchClosed?(): void;
   /** Something done in the friends panel, or a player's name tag tapped. */
   social?(a: SocialAction): void;
+  /** The chat panel: opened, another tab picked, or something said. */
+  chat?(a: { a: 'opened' } | { a: 'tab'; to: 'world' | 'local' } | { a: 'say'; to: 'world' | 'local'; text: string }): void;
   a(): void;
   b(): void;
   dialogTap(): void;
@@ -152,7 +154,7 @@ export class Hud {
   private tagEls = new Map<string, HTMLElement>();
   private floatEls = new Map<number, HTMLElement>();
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
-  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', friends: '', personActs: '', talk: '' };
+  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', friends: '', personActs: '', talk: '', chat: '' };
   private load = 0;
   private capacity = BAG_SLOTS;
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
@@ -161,6 +163,9 @@ export class Hud {
   private bag: SlotView[] = [];
   /** Whose card the friends panel shows, if anyone's. */
   private person: string | null = null;
+  /** The chat tab shown, and the speech bubbles over heads by who said it. */
+  private chatTab: 'world' | 'local' = 'local';
+  private bubbleEls = new Map<string, HTMLElement>();
   private picked: { slot: number; item: string } | null = null;
   private asking = false;
   private versionAsked = false;
@@ -187,6 +192,7 @@ export class Hud {
       <div class="menu-panel panel" data-el="menu" hidden>
         <button type="button" data-el="menuBag">Bag</button>
         <button type="button" data-el="menuStatus">Status</button>
+        <button type="button" data-el="menuChat">Chat</button>
         <button type="button" data-el="menuFriends">Friends</button>
         <button type="button" data-el="menuAbout">About</button>
         <button type="button" data-el="menuLogout">Log out</button>
@@ -225,6 +231,13 @@ export class Hud {
       <div class="sheet panel status-sheet" data-el="statusSheet" data-open="false" role="dialog" aria-label="Status">
         <div class="sheet-head"><b>Status</b><button type="button" class="close" data-el="statusClose" aria-label="Close the status">${ICON.x}</button></div>
         <div class="status-body" data-el="statusBody"></div>
+      </div>
+      <div class="sheet panel chat-sheet" data-el="chatSheet" data-open="false" role="dialog" aria-label="Chat">
+        <div class="sheet-head"><b>Chat</b><button type="button" class="close" data-el="chatClose" aria-label="Close chat">${ICON.x}</button></div>
+        <div class="tabs" role="tablist"><button type="button" role="tab" data-tab="local">Near you</button><button type="button" role="tab" data-tab="world">Everyone</button></div>
+        <div class="log" data-el="chatLog" aria-live="polite"></div>
+        <p class="note" data-el="chatNote" role="status" hidden></p>
+        <form class="say" data-el="chatForm"><input data-el="chatText" maxlength="120" placeholder="Say something" autocomplete="off" enterkeyhint="send" aria-label="Say something"><button type="submit" class="act go">Say</button></form>
       </div>
       <div class="sheet panel friends-sheet" data-el="friendsSheet" data-open="false" role="dialog" aria-label="Friends">
         <div class="sheet-head"><button type="button" class="close" data-el="friendsBack" aria-label="Back to your friends" hidden>${ICON.back}</button><b data-el="friendsTitle">Friends</b><button type="button" class="close" data-el="friendsClose" aria-label="Close friends">${ICON.x}</button></div>
@@ -292,6 +305,20 @@ export class Hud {
     this.el.menuBag!.addEventListener('click', () => { this.toggleMenu(false); this.toggleBag(true); });
     this.el.menuStatus!.addEventListener('click', () => { this.toggleMenu(false); this.toggleStatus(true); });
     this.el.menuFriends!.addEventListener('click', () => { this.toggleMenu(false); this.toggleFriends(true); });
+    this.el.menuChat!.addEventListener('click', () => { this.toggleMenu(false); this.toggleChat(true); });
+    this.el.chatClose!.addEventListener('click', () => this.toggleChat(false));
+    this.el.chatForm!.addEventListener('submit', e => {
+      e.preventDefault();
+      const input = this.el.chatText as HTMLInputElement, text = input.value.trim();
+      if (text) { this.h.chat?.({ a: 'say', to: this.chatTab, text }); input.value = ''; }
+    });
+    this.el.chatSheet!.addEventListener('click', e => {
+      const t = (e.target as Element).closest<HTMLElement>('[data-tab], [data-who]');
+      // The tab counts at once: what is said right after goes where it now shows.
+      if (t?.dataset.tab) { this.chatTab = t.dataset.tab as 'world' | 'local'; this.h.chat?.({ a: 'tab', to: this.chatTab }); }
+      // A name in the log: that player's card (friends, block, report).
+      else if (t?.dataset.who) this.h.social?.({ a: 'person', id: t.dataset.who, name: t.textContent ?? '' });
+    });
     this.el.friendsClose!.addEventListener('click', () => this.toggleFriends(false));
     this.el.friendsBack!.addEventListener('click', () => this.h.social?.({ a: 'back' }));
     this.el.askForm!.addEventListener('submit', e => {
@@ -383,14 +410,54 @@ export class Hud {
   toggleStatus(open = !this.statusOpen) {
     this.el.statusSheet!.dataset.open = String(open);
     // The bag, the stash, the status and the About panel open in the same place: one at a time.
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.h.status?.(); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.h.status?.(); }
+  }
+
+  get chatOpen(): boolean {
+    return this.el.chatSheet!.dataset.open === 'true';
+  }
+  toggleChat(open = !this.chatOpen) {
+    if (open) { this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleFriends(false); this.el.statusSheet!.dataset.open = 'false'; }
+    const was = this.chatOpen;
+    this.el.chatSheet!.dataset.open = String(open);
+    if (open && !was) this.h.chat?.({ a: 'opened' });
+  }
+
+  /** The chat panel: the tab shown, its lines (oldest first), and why the last message did not go out. */
+  setChat(tab: 'world' | 'local', lines: ReadonlyArray<{ id: string; name: string; text: string; mine: boolean }>, note: string | null) {
+    this.chatTab = tab;
+    for (const b of this.root.querySelectorAll<HTMLElement>('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+    const html = lines.map(l => `<p class="cline"${l.mine ? ' data-mine' : ''}>${l.mine ? `<b>${esc(l.name)}</b>` : `<button type="button" class="who" data-who="${esc(l.id)}">${esc(l.name)}</button>`} ${esc(l.text)}</p>`).join('')
+      || `<p class="hint">${tab === 'local' ? 'Only players near you hear what you say here, and see it over your head.' : 'Everyone online hears what you say here.'}</p>`;
+    if (html !== this.shown.chat) {
+      this.shown.chat = html;
+      const log = this.el.chatLog!;
+      log.innerHTML = html;
+      log.scrollTop = log.scrollHeight;
+    }
+    const n = this.el.chatNote!;
+    n.hidden = !note;
+    if (note && n.textContent !== note) n.textContent = note;
+  }
+
+  /** Speech bubbles over the heads of whoever said something near you, in screen pixels. */
+  setBubbles(list: ReadonlyArray<{ id: string; text: string; x: number; y: number }>) {
+    const seen = new Set<string>();
+    for (const b of list) {
+      seen.add(b.id);
+      let el = this.bubbleEls.get(b.id);
+      if (!el) { el = document.createElement('div'); el.className = 'bubble'; this.el.labels!.appendChild(el); this.bubbleEls.set(b.id, el); }
+      if (el.textContent !== b.text) el.textContent = b.text;
+      el.style.transform = `translate(${b.x.toFixed(1)}px, ${b.y.toFixed(1)}px) translate(-50%, -100%)`;
+    }
+    for (const [id, el] of this.bubbleEls) if (!seen.has(id)) { el.remove(); this.bubbleEls.delete(id); }
   }
 
   get friendsOpen(): boolean {
     return this.el.friendsSheet!.dataset.open === 'true';
   }
   toggleFriends(open = !this.friendsOpen) {
-    if (open) { this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleChat(false); this.el.statusSheet!.dataset.open = 'false'; }
     const was = this.friendsOpen;
     this.el.friendsSheet!.dataset.open = String(open);
     if (open && !was) this.h.social?.({ a: 'opened' });
@@ -441,10 +508,11 @@ export class Hud {
     this.el.sayForm!.hidden = p.standing !== 'friend';
   }
 
-  /** A dot on the menu button and on Friends: a request or an unread message. */
-  setSocialNews(on: boolean) {
-    this.el.menuBtn!.toggleAttribute('data-news', on);
-    this.el.menuFriends!.toggleAttribute('data-news', on);
+  /** Dots for something new: on Friends (a request or an unread message), on Chat (something said), and on the menu button for either. */
+  setNews(friends: boolean, chat: boolean) {
+    this.el.menuBtn!.toggleAttribute('data-news', friends || chat);
+    this.el.menuFriends!.toggleAttribute('data-news', friends);
+    this.el.menuChat!.toggleAttribute('data-news', chat);
   }
 
   get stashOpen(): boolean {
@@ -453,7 +521,7 @@ export class Hud {
   /** Opens or closes the stash sheet (the chest at home). Closing it tells the game. */
   toggleStash(open = !this.stashOpen) {
     const was = this.stashOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
     this.el.stashSheet!.dataset.open = String(open);
     if (was && !open) this.h.stashClosed?.();
   }
@@ -464,7 +532,7 @@ export class Hud {
   /** Opens or closes the workbench sheet. Closing it tells the game. */
   toggleBench(open = !this.benchOpen) {
     const was = this.benchOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.el.statusSheet!.dataset.open = 'false'; }
     this.el.benchSheet!.dataset.open = String(open);
     if (was && !open) this.h.benchClosed?.();
   }
@@ -516,7 +584,7 @@ export class Hud {
   }
   toggleBag(open = !this.bagOpen) {
     // The bag, the status and the About panel open in the same place: one at a time.
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false'; this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); }
     this.el.sheet!.dataset.open = String(open);
     if (open) this.el.statusSheet!.dataset.open = 'false';
     // It opens on the whole bag, never on the details left from last time.
@@ -528,7 +596,7 @@ export class Hud {
   }
   toggleAbout(open = !this.aboutOpen) {
     if (open && this.bagOpen) this.toggleBag(false);
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.toggleStash(false); this.toggleBench(false); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.toggleStash(false); this.toggleBench(false); }
     this.el.aboutSheet!.dataset.open = String(open);
     if (open && !this.versionAsked) {
       this.versionAsked = true;
@@ -556,6 +624,7 @@ export class Hud {
 
   /** B in the bag: out of the question, then out of the details. False when there is nothing to back out of (B closes the bag). */
   back(): boolean {
+    if (this.chatOpen) { this.toggleChat(false); return true; }
     if (this.friendsOpen) {
       if (this.person) this.h.social?.({ a: 'back' });
       else this.toggleFriends(false);

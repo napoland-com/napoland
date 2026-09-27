@@ -52,4 +52,16 @@ else {
     errors++;
   }
 }
+// The words chat masks: a list of lowercase words, each once.
+try {
+  const words = (JSON.parse(readFileSync(resolve(import.meta.dirname, '../content/words.json'), 'utf8')) as { words?: unknown }).words;
+  const bad = Array.isArray(words) ? words.filter((w, i) => typeof w !== 'string' || !/^\p{Ll}+$/u.test(w) || words.indexOf(w) !== i) : ['(not a list)'];
+  if (bad.length) {
+    errors++;
+    console.log(`words.json: error: not lowercase words, or twice: ${bad.join(', ')}`);
+  } else console.log(`words.json: ok (${(words as string[]).length} words)`);
+} catch (err) {
+  errors++;
+  console.log(`words.json: error: cannot be read: ${err instanceof Error ? err.message : String(err)}`);
+}
 process.exit(errors ? 1 : 0);

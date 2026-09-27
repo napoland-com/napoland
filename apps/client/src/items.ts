@@ -88,6 +88,7 @@ export function refusalText(reason: Refusal): string {
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
     case 'slow_down': return 'Slow down a little';
+    case 'sign_in_first': return 'Sign in to talk';
   }
 }
 

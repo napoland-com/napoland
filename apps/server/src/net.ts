@@ -25,6 +25,7 @@ import {
 import { legacyAuth, type Auth } from './auth';
 import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
+import { Chat } from './chat';
 import { Social, type SocialMsg } from './social';
 import type { DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord } from './storage';
 import { colorFor, type World } from './world';
@@ -74,6 +75,8 @@ export interface NetOptions {
   newPlayersPerIpPerHour?: number;
   /** How players sign in. Unset means without sign-in (legacy). */
   auth?: Auth;
+  /** Words chat masks. None if unset. */
+  words?: readonly string[];
 }
 
 export interface Net {
@@ -149,6 +152,14 @@ export function attachNet(o: NetOptions): Net {
     storage,
     clock,
     where: id => playing.get(id)?.map || undefined,
+    send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
+  });
+  const chat = new Chat({
+    world,
+    clock,
+    words: o.words ?? [],
+    online: () => playing.keys(),
+    blocks: id => social.blocks(id),
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
   });
   /** Each player's social actions, one after another: each reads what the one before wrote. */
@@ -279,6 +290,8 @@ export function attachNet(o: NetOptions): Net {
       case 'requests':
       case 'friends':
         return befriends(s.id, () => social.handle(s.id, msg as SocialMsg));
+      case 'say':
+        return chat.say(s.id, msg.to, msg.text);
       case 'hello':
         return fail(s, 'bad_message', 'Already said hello');
     }
@@ -496,6 +509,7 @@ export function attachNet(o: NetOptions): Net {
   function removeFromWorld(s: Session, save: boolean): PlayerRecord | undefined {
     if (!s.id || playing.get(s.id) !== s) return undefined;
     playing.delete(s.id);
+    social.left(s.id);
     hear(s, '');
     const rec = world.leave(s.id, clock());
     flush();
