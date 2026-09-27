@@ -198,7 +198,7 @@ const ROOMS: readonly Room[] = [
   {
     // The NAPO Bunker, the first building down the South Road and its nearest shelter to town: bunks,
     // NAPO's rules for staff on the wall, and Ruth, who keeps the fire going, so it never goes out.
-    id: 'south-road-bunker', name: 'NAPO Bunker', version: 2, outside: 'south-road', door: [42, 15], style: 'napo',
+    id: 'south-road-bunker', name: 'The NAPO Bunker', version: 2, outside: 'south-road', door: [42, 15], style: 'napo',
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -240,7 +240,7 @@ const ROOMS: readonly Room[] = [
     // The NAPO Laboratory, in the research station's main building: benches, the station's log and a
     // radio still on, a stove against the back wall (it burns down unless someone feeds it), and Vera,
     // the last of NAPO's researchers, who never left.
-    id: 'south-road-laboratory', name: 'NAPO Laboratory', version: 2, outside: 'south-road', door: [23, 42], style: 'napo',
+    id: 'south-road-laboratory', name: 'The NAPO Laboratory', version: 2, outside: 'south-road', door: [23, 42], style: 'napo',
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',

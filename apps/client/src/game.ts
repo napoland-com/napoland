@@ -16,10 +16,10 @@
  *   everything moves smoothly.
  */
 import {
-  STEP_MS, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, journal, stepTarget, storyLines, surgeFront, DIR_VEC,
+  BUBBLE_S, STEP_MS, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, journal, stepTarget, storyLines, surgeFront, DIR_VEC,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
   type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type FlashKind, type FlashView, type StormView,
+  type ChatTo, type FlashKind, type FlashView, type StormView,
 } from '@napoland/shared';
 import type { FriendsMsg, TalkLine } from './friends';
 import { countOf, lookOf, refusalText, useText, type Items } from './items';
@@ -124,6 +124,9 @@ export type News =
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
 
+/** Lines of chat a session keeps to scroll back through. */
+export const CHAT_LOG = 100;
+
 export class Game {
   meId: string | null = null;
   /** True between the server's welcome and the connection dropping; no steps are taken otherwise. */
@@ -188,6 +191,15 @@ export class Game {
   socialNote: string | null = null;
   /** Counts every change to all of the above, so the panel is rebuilt only when something changed. */
   socialChanges = 0;
+  /** What you heard said this session, oldest first, at most CHAT_LOG lines; replaced whole on every change. Nothing said is kept anywhere. */
+  chat: Array<{ to: ChatTo; id: string; name: string; text: string; mine: boolean }> = [];
+  /** Something was said since the chat panel was last looked at (the interface clears it). */
+  chatNews = false;
+  /** Why the last thing you tried to say did not go out, in words. */
+  chatNote: string | null = null;
+  chatChanges = 0;
+  /** Speech bubbles over heads (local chat), by who said it, until when (our clock). */
+  bubbles = new Map<string, { text: string; until: number }>();
   /** The quirks of what everyone on this map wears, by player id: some show in the world. */
   quirks = new Map<string, Quirk[]>();
   /** What everyone on this map wears, by player id (you too). */
@@ -512,6 +524,14 @@ export class Game {
         this.friends = msg;
         this.socialChanges++;
         break;
+      case 'said': {
+        const mine = msg.id === this.meId;
+        this.chat = [...this.chat, { to: msg.to, id: msg.id, name: msg.name, text: msg.text, mine }].slice(-CHAT_LOG);
+        if (msg.to === 'local') this.bubbles.set(msg.id, { text: msg.text, until: now + BUBBLE_S * 1000 });
+        if (!mine) this.chatNews = true;
+        this.chatChanges++;
+        break;
+      }
       case 'tells':
         for (const t of msg.tells) {
           this.talks.set(t.from, [...(this.talks.get(t.from) ?? []), { mine: false, text: t.text }]);
@@ -523,6 +543,7 @@ export class Game {
         break;
       case 'refused':
         if (msg.action === 'befriend' || msg.action === 'tell') { this.socialNote = refusalText(msg.reason); this.socialChanges++; break; }
+        if (msg.action === 'say') { this.chatNote = refusalText(msg.reason); this.chatChanges++; break; }
         if (msg.action === 'pick') this.picking = null;
         if (msg.action === 'use') this.using = null;
         if (msg.action === 'feed') this.feeding = null;
@@ -673,6 +694,23 @@ export class Game {
   }
 
   /** At the open chest: put on a piece of gear from the stash, or take off what a slot wears. */
+  // ---------- chat ----------
+
+  /** Says something to everyone online, or to whoever is near. What you said comes back like anyone's. */
+  say(to: ChatTo, text: string) {
+    const t = text.trim();
+    if (!t || !this.online) return;
+    this.chatNote = null;
+    this.chatChanges++;
+    this.send({ t: 'say', to, text: t });
+  }
+
+  /** Speech bubbles still up, by who said it. */
+  bubblesNow(now: number): Array<{ id: string; text: string }> {
+    for (const [id, b] of this.bubbles) if (b.until <= now) this.bubbles.delete(id);
+    return [...this.bubbles].map(([id, b]) => ({ id, text: b.text }));
+  }
+
   // ---------- friends ----------
 
   /** Opens someone's card (null: back to the list). Opening it reads what they sent. */
@@ -899,6 +937,11 @@ export class Game {
 
   private float(text: string, color: string, x: number, y: number, row = 0) {
     this.floats.push({ id: ++this.fid, text, color, x, y, t: 0, row });
+  }
+
+  /** Says something short over your head, in the grey of "Nothing here". */
+  murmur(text: string) {
+    this.floatOverMe(text, GREY);
   }
 
   private floatOverMe(text: string, color: string, row = 0) {

@@ -113,8 +113,8 @@ const GEAR: Record<Slot, (c: string) => string> = {
   bag: c => icon(`<path d="M8 11c0-3.6 3.6-6.5 8-6.5s8 2.9 8 6.5v15.5c0 .8-.7 1.5-1.5 1.5h-13c-.8 0-1.5-.7-1.5-1.5z" fill="${c}"/><path d="M8 13h16v4H8zM11.5 20h9v5h-9z" /><path d="M13 4.8c.8-1.3 2-2 3-2s2.2.7 3 2" />`),
 };
 
-/** A paper map, folded in three, with a road and a pond on it: every map a tool charts. */
-const PAPER_MAP = icon(`<path d="M4 8l8-2.5 8 2.5 8-2.5v19L20 27l-8-2.5L4 27z" fill="#d8c9a3"/>
+/** A paper map, folded in three, with a road and a pond on it: every map a tool charts, and the map button in the bag. */
+export const MAP_ICON = icon(`<path d="M4 8l8-2.5 8 2.5 8-2.5v19L20 27l-8-2.5L4 27z" fill="#d8c9a3"/>
   <path d="M12 5.5v19M20 8v19" stroke="#8a7650"/>
   <path d="M6.5 22c3-1 3.5-5 7-6s5 2 8.5-3" stroke="#6b4a31" stroke-dasharray="2 1.6"/>
   <ellipse cx="22.5" cy="20.5" rx="2.6" ry="1.6" fill="#6f98b0" stroke="#3f5f72"/>`);
@@ -122,7 +122,7 @@ const PAPER_MAP = icon(`<path d="M4 8l8-2.5 8 2.5 8-2.5v19L20 27l-8-2.5L4 27z" f
 /** The drawing for an item: its own, or its slot's in its color for gear, a paper map for a tool that charts one, or a sack. */
 export function iconFor(def: ItemDef): string {
   if (ICONS[def.id]) return ICONS[def.id]!;
-  if (def.kind === 'tool' && def.chart) return PAPER_MAP;
+  if (def.kind === 'tool' && def.chart) return MAP_ICON;
   if (def.kind === 'gear' && def.slot) return GEAR[def.slot](def.color ?? '#a58a5f');
   return SACK;
 }

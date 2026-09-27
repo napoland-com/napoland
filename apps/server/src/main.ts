@@ -2,9 +2,10 @@
  * Entry point: reads the configuration, loads the maps and the items, opens storage and runs the
  * server until SIGINT or SIGTERM, then saves everyone and exits.
  */
+import { dirname, join } from 'node:path';
 import { createAuth } from './auth';
 import { loadConfig } from './config';
-import { loadItems, loadMaps, loadStory } from './content';
+import { loadItems, loadMaps, loadStory, loadWords } from './content';
 import { flushLogs, log, setLogLevel } from './log';
 import { startServer } from './server';
 import { MemoryStorage, PgStorage, type Storage } from './storage';
@@ -33,6 +34,10 @@ async function main(): Promise<void> {
   const story = loadStory(cfg.storyFile, maps.values(), items);
   log.info('story loaded', { file: cfg.storyFile, version: story.version, chapters: story.chapters.length });
 
+  // The words chat masks lie next to the items.
+  const words = loadWords(join(dirname(cfg.itemsFile), 'words.json'));
+  log.info('chat words loaded', { count: words.length });
+
   const storage: Storage = cfg.databaseUrl ? new PgStorage(cfg.databaseUrl, cfg.migrationsDir!) : new MemoryStorage();
   await storage.init();
   const auth = createAuth(cfg.auth);
@@ -44,6 +49,7 @@ async function main(): Promise<void> {
     maps: maps.values(),
     items,
     story,
+    words,
     homeMap: cfg.homeMap,
     weather: cfg.weather,
     maxPlayers: cfg.maxPlayers,

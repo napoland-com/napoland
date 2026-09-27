@@ -21,7 +21,7 @@ napoland is a mobile-first online exploration game in the browser: leave home, g
 ## How it is built
 
 - `packages/shared`: the contract both sides run. Maps (`TileMap`), movement (`STEP_MS`, `findPath`), energy and what wears you down (`energy.ts`), the day, surges, storms and flashes (`sky.ts`), feats (`feats.ts`), the stash, XP and levels (`progress.ts`), equipment (`gear.ts`), the story's chapters (`story.ts`), items, the protocol (zod schemas for every client message), content validation.
-- `apps/server`: `world.ts` (the rules, no I/O), `fires.ts` (fires burning down), `net.ts` (WebSocket sessions, the hello, limits), `auth.ts` (who is signing in: legacy, dev or Supabase), `http.ts` (health, `/auth-config`, the static client), `social.ts` (friends, requests, blocks, private messages and reports), `storage.ts` (memory or PostgreSQL), `migrations/`.
+- `apps/server`: `world.ts` (the rules, no I/O), `fires.ts` (fires burning down), `net.ts` (WebSocket sessions, the hello, limits), `auth.ts` (who is signing in: legacy, dev or Supabase), `http.ts` (health, `/auth-config`, the static client), `social.ts` (friends, requests, blocks, private messages and reports), `chat.ts` (world and local chat), `storage.ts` (memory or PostgreSQL), `migrations/`.
 - `apps/client`: `game.ts` (state and prediction), `hud.ts` (interface), `status.ts` (the status panel and banners), `friends.ts` (the friends panel), `journal.ts` (the journal panel), `view/` (three.js world; `wilds.ts` for marks, watchers, flares, flashes, echoes; `napo.ts` for NAPO's buildings, signs and masts), `net.ts`, `signin.ts` (the sign-in cards), `supabase.ts` (Supabase Auth, loaded only in that mode), `about.ts` (the About panel and the sign-in small print), `papermap.ts` (the hand-drawn paper map).
 - `content/`: maps, items and the story's chapters as JSON. `tools/`: generators, validators, test bots. `roadmap/`: one file per roadmap item.
 - Before changing behavior, read [docs/DESIGN.md](docs/DESIGN.md) (what the game is and why; its pillars) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works).
@@ -41,7 +41,7 @@ napoland is a mobile-first online exploration game in the browser: leave home, g
 
 ## Play-testing
 
-- Run `npm run dev` and open http://localhost:5173 at phone size (for example 390x844) and in landscape. Walk with the joystick, by tapping and with the keyboard (WASD or arrows, Enter for A, Backspace for B), talk to Mira, read signs, pick things up. A second tab is a second player.
+- Run `npm run dev` and open http://localhost:5173 at phone size (for example 390x844) and in landscape. Walk with the joystick, by tapping and with the keyboard (WASD or arrows, Enter for A, Backspace for B, M for the map), talk to Mira, read signs, pick things up. A second tab is a second player.
 - Automation tools may send key events without a `code` (the game reads `code`): to hold a key, dispatch one from the page, for example `dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyD' }))`, then the matching `keyup`.
 - Dev builds expose the game as `window.napoland`: `game`, `maps`, `items`, `hud`, `view`, `signin`, and `receive(msg)` to play a server message by hand.
 - Headless browsers and hidden tabs often do not run `requestAnimationFrame`, so the game stands still. Pump it from the page: `const pump = setInterval(() => napoland.game.update(0.05, performance.now()), 50)`, and `clearInterval(pump)` when done (seconds, then milliseconds). The picture only redraws when a real frame runs.

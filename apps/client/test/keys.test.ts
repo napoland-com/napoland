@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Dir } from '@napoland/shared';
 import { Keys, keyTarget } from '../src/keys';
 
-let heard: Array<Dir | null | 'A' | 'B'>;
+let heard: Array<Dir | null | 'A' | 'B' | 'map'>;
 let keys: Keys;
 
 beforeEach(() => {
   heard = [];
-  keys = new Keys({ pad: d => heard.push(d), a: () => heard.push('A'), b: () => heard.push('B') });
+  keys = new Keys({ pad: d => heard.push(d), a: () => heard.push('A'), b: () => heard.push('B'), openMap: () => heard.push('map') });
 });
 
 describe('the keyboard', () => {
@@ -47,6 +47,13 @@ describe('the keyboard', () => {
     expect(keys.down('Backspace', 'page')).toBe(true);
     keys.down('Backspace', 'page', true);
     expect(heard).toEqual(['A', 'A', 'B']);
+  });
+
+  it('opens the map with M, once per press', () => {
+    expect(keys.down('KeyM', 'page')).toBe(true);
+    keys.down('KeyM', 'page', true);
+    expect(keys.down('KeyM', 'text')).toBe(false);
+    expect(heard).toEqual(['map']);
   });
 
   it('leaves the browser its shortcuts, fields their typing, and buttons their Enter', () => {

@@ -2,7 +2,7 @@
 id: story-chapters
 title: "The story in chapters, and the journal"
 status: done
-order: 170
+order: 180
 area: gameplay
 depends: [south-road]
 ---

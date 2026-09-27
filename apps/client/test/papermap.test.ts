@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TileMap, type MapData } from '@napoland/shared';
-import { sketchOf } from '../src/papermap';
+import { areaOf, mapFor, sketchOf } from '../src/papermap';
 
 /** Forest around a road going north from the way home, a pond, a cabin with its door, and two poles. */
 function woods(): MapData {
@@ -74,5 +74,31 @@ describe('the paper map', () => {
   it('is the same drawing every time, and knows nothing of who looks at it', () => {
     expect(sketchOf(new TileMap(woods()), id => names[id])).toEqual(s);
     expect(sketchOf.length).toBe(2);
+  });
+});
+
+describe('which map the map button opens', () => {
+  // A town with a room, woods with a hut, and a region nobody has a map of yet.
+  const at = (id: string, kind: MapData['kind'], to: string[]) => ({ id, kind, exits: to.map(t => ({ x: 0, y: 0, w: 1, h: 1, to: t, tx: 0, ty: 0, dir: 'up' as const })) }) as unknown as MapData;
+  const all = [at('town', 'town', ['home', 'woods']), at('home', 'inside', ['town']), at('woods', 'wilds', ['town', 'hut', 'far']), at('hut', 'inside', ['woods']), at('far', 'wilds', ['woods'])];
+  const find = (id: string) => all.find(m => m.id === id);
+  const charts: Record<string, string> = { 'town-map': 'town', 'woods-map': 'woods', radio: '' };
+  const chartOf = (t: string) => charts[t] || undefined;
+  const tools = ['radio', 'town-map', 'woods-map'];
+
+  it('takes a room for the place its door opens onto, and anywhere else for itself', () => {
+    expect(areaOf('hut', find)).toBe('woods');
+    expect(areaOf('home', find)).toBe('town');
+    expect(areaOf('woods', find)).toBe('woods');
+    expect(areaOf('nowhere', find)).toBe('nowhere');
+  });
+
+  it('opens the map of the area you are in, indoors the one outside, and none where you have no map', () => {
+    expect(mapFor('town', tools, chartOf, find)).toBe('town-map');
+    expect(mapFor('woods', tools, chartOf, find)).toBe('woods-map');
+    expect(mapFor('hut', tools, chartOf, find)).toBe('woods-map');
+    expect(mapFor('home', tools, chartOf, find)).toBe('town-map');
+    expect(mapFor('far', tools, chartOf, find)).toBeUndefined();
+    expect(mapFor('woods', ['town-map'], chartOf, find)).toBeUndefined();
   });
 });
