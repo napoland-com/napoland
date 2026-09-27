@@ -2,7 +2,7 @@
 
 > **Maintainers only.** Contributors and their AI agents do not need this and must not act on it.
 
-A proposal for the maintainers: the GitHub settings that make pull requests safe to merge when every merge to `main` goes to production, and how to review. **Nothing here has been applied yet.** Apply it once the repository is public: on GitHub's free plan, branch protection exists only for public repositories (a private one gets a 403, "Upgrade ... or make this repository public"), and so do several of the security settings.
+The GitHub settings that make pull requests safe to merge when every merge to `main` goes to production, and how to review. **Applied on 2026-09-27, when the repository went public**, except the merge methods of section 2 (merge commits and rebasing are still allowed; only `allow_update_branch` is on). The commands below re-apply them if they ever drift. On GitHub's free plan, branch protection exists only for public repositories, and so do several of the security settings.
 
 The commands use the GitHub CLI (`gh`), signed in as the owner, in bash (Git Bash on Windows). In PowerShell, pipe the JSON in from a here-string instead: `@' {...} '@ | gh api --method PUT <path> --input -`.
 
@@ -40,7 +40,7 @@ JSON
 ```
 
 - `check` is the job's name in [.github/workflows/ci.yml](../.github/workflows/ci.yml), and `15368` is the GitHub Actions app, so only a real CI run can satisfy it. If the job is ever renamed, change it here too.
-- `enforce_admins: false` because napoland has one maintainer. GitHub does not let anyone approve their own pull request, so the owner has to be able to merge their own, and it keeps today's way of releasing (pushing straight to `main`) working until everything goes through pull requests. GitHub reports every bypass in the push output and on the pull request. Force pushes and deleting `main` stay blocked even for admins, and a release still needs CI to pass, because the deploy job waits for the `check` job. With a second maintainer, set it to `true`: then the rules hold for everyone, and the two approve each other's pull requests.
+- `enforce_admins: false`: napoland's maintainers (the owner and justpolidor, both admins) may merge their own pull requests, which is the owner's decision, and GitHub does not let anyone approve their own. It also keeps pushing straight to `main` working for them. GitHub reports every bypass in the push output and on the pull request. Force pushes and deleting `main` stay blocked even for admins, and a release still needs CI to pass, because the deploy job waits for the `check` job. Set it to `true` if the maintainers ever want to approve each other's pull requests instead: then the rules hold for everyone.
 - `require_last_push_approval` stays off for the same reason: with it, a maintainer who updates a contributor's branch would need a second maintainer's approval.
 
 Check the result with `gh api repos/napoland-com/napoland/branches/main/protection`.
