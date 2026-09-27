@@ -290,6 +290,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   .hud.talking .stick { visibility: hidden; }
   .sheet { left: 0; top: 0; bottom: 0; width: min(calc(100% - var(--pad) * 2.6 - var(--ab) * 2.25 - var(--safe-r)), 440px); border-radius: 0 18px 18px 0; padding-left: calc(var(--u) * 1.2 + var(--safe-l)); }
   .sheet[data-open="false"] { transform: translateX(-105%); }
+  /* A screen on its side is short: the menu takes two columns so it clears A and B, and a row that is not a button spans both. */
+  .menu-panel { grid-template-columns: repeat(2, 1fr); }
+  .menu-panel > :not(button) { grid-column: 1 / -1; }
 }
 @media (prefers-reduced-motion: reduce) { .sheet, .sheet[data-open="false"] { transition: none; } }
 
