@@ -471,6 +471,7 @@ export function attachNet(o: NetOptions): Net {
       stone: joined.stone,
       stats: joined.stats,
       progress: joined.progress,
+      tools: joined.tools,
       items: world.itemsVersion,
       serverTime: Date.now(),
     });

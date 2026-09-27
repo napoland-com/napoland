@@ -153,6 +153,8 @@ export class Game {
   /** The Old Stone in town, and your counts toward feats. */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
+  /** Your tools (item ids), as the welcome said: a paper map, for now. */
+  tools: string[] = [];
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
@@ -298,6 +300,7 @@ export class Game {
         this.stone = msg.stone;
         this.stats = msg.stats;
         this.progress = msg.progress;
+        this.tools = msg.tools;
         break;
       }
       case 'zone': {

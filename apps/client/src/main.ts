@@ -12,9 +12,11 @@ import { Arrival } from './arrival';
 import { Game } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
+import { iconFor } from './icons';
 import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, wearText, wornViews } from './items';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
+import { paperMap } from './papermap';
 import { Connection, serverUrl } from './net';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { levelText, newsBanner, statusView } from './status';
@@ -66,7 +68,8 @@ let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items);
 /** Close the bag, the status and About panels and the menu; true when one was open. */
 const closePanels = () => {
-  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.menuOpen || hud.friendsOpen;
+  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.menuOpen || hud.friendsOpen || hud.paperOpen;
+  hud.showPaper(null);
   hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false);
   return open;
 };
@@ -83,9 +86,9 @@ const showStatus = () => {
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
 const controls = {
   pad: (dir: Dir | null) => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
-  a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the About panel and the text box, then out of the status or the bag's details, before the bag itself opens or closes.
-  b: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
+  b: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
 };
 const hud = new Hud(screen, {
   ...controls,
@@ -123,6 +126,14 @@ const hud = new Hud(screen, {
         return;
       }
     }
+  },
+  // A paper map: drawn from our copy of the map it charts, and never with you on it.
+  tool: item => {
+    const chart = items.get(item).chart, data = chart ? maps.find(chart) : undefined;
+    const map = data && maps.get(data);
+    if (!map) return;
+    hud.toggleBag(false);
+    hud.showPaper(paperMap(map, id => maps.find(id)?.name));
   },
   version: () => loadVersion(),
 });
@@ -450,6 +461,7 @@ let prints: Array<{ map: string; x: number; y: number; dir: Dir; at: number }> =
 /** When the last hum said the region grows restless: one hum for each time it does. */
 let humFor = -Infinity;
 let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: null };
+let toolsShown: string[] | null = null;
 let progressShown: typeof game.progress | null = null;
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
@@ -532,6 +544,7 @@ function frame(now: number) {
     gearShown = { gear: game.myGear, worn: game.myWorn };
     hud.setWearing(wornViews(game.myGear, items, game.myWorn));
   }
+  if (game.tools !== toolsShown) hud.setTools((toolsShown = game.tools).map(item => ({ item, name: items.get(item).name, icon: iconFor(items.get(item)) })));
   if (game.chest !== chestShown || game.progress !== progressShown) {
     if (game.chest && !chestShown) hud.toggleStash(true);
     if (!game.chest && chestShown) hud.toggleStash(false);
