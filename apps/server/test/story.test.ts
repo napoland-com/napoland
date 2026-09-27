@@ -1,10 +1,12 @@
 /**
  * The story (story.ts): chapters reached one after another by what the game already asks, heard by
  * the player who reached them and saved at once. World rules, then the talk message and the welcome
- * over real WebSockets (net.ts).
+ * over real WebSockets (net.ts), then the story as written (content/story.json).
  */
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TileMap, type Dir, type ItemsData, type MapData, type ServerMsg, type StoryData } from '@napoland/shared';
+import { loadMaps, loadStory } from '../src/content';
 import type { PlayerRecord } from '../src/storage';
 import { World, colorFor, type Outgoing, type WorldOptions } from '../src/world';
 import { houseData, townData, woodsData } from './fixtures';
@@ -197,5 +199,23 @@ describe('the story over WebSockets', () => {
   it('welcomes a new player in the first chapter', async () => {
     const b = await enter({ map: 'town', x: 1, y: 2 });
     expect(b.welcome.story).toEqual({ version: 3, chapter: 'home' });
+  });
+});
+
+describe('the story as written', () => {
+  it('never has a person say one sentence twice: a hint adds to what they always say', () => {
+    const content = resolve(import.meta.dirname, '../../../content');
+    const { maps } = loadMaps(resolve(content, 'maps'), 'stonebrook');
+    const story = loadStory(resolve(content, 'story.json'), maps.values());
+    const always = new Map<string, string[]>();
+    for (const m of maps.values()) for (const o of m.data.objects) if (o.kind === 'npc') always.set(o.id, o.lines);
+    const sentences = (s: string) => s.split(/(?<=[.!?])\s+/).map(t => t.toLowerCase().replace(/[^a-z]+/g, ' ').trim()).filter(Boolean);
+    let hints = 0;
+    for (const c of story.chapters) for (const [npc, hint] of Object.entries(c.hints ?? {})) {
+      const said = new Set((always.get(npc) ?? []).flatMap(sentences));
+      for (const s of sentences(hint)) expect(said.has(s), `${c.id}: ${npc} always says "${s}"`).toBe(false);
+      hints++;
+    }
+    expect(hints).toBeGreaterThan(0);
   });
 });
