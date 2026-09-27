@@ -1,6 +1,6 @@
 import {
   PROTOCOL_VERSION, STEP_MS, type BagSlot, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type FlashView, type StormView, type ItemsData,
-  type MapData, type MarkView, type PlayerView, type ProgressView, type ServerMsg, type StoneView, type SurgeView,
+  type MapData, type MarkView, type PlayerView, type ProgressView, type ServerMsg, type StoneView, type SurgeView, type ConditionsView,
 } from '@napoland/shared';
 import { Items } from '../src/items';
 
@@ -112,7 +112,7 @@ export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 export interface Extras {
   finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; items?: number;
   fires?: FireView[]; marks?: MarkView[]; creatures?: CreatureView[]; flares?: FlareView[]; flashes?: FlashView[]; surge?: SurgeView | null; storm?: StormView | null; body?: BodyView; stone?: StoneView;
-  progress?: ProgressView; tools?: string[];
+  progress?: ProgressView; tools?: string[]; conditions?: ConditionsView;
 }
 /** Dry, light and alone. */
 export const DRY: BodyView = { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} };
@@ -126,6 +126,7 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
     finds: extras.finds ?? [], drops: extras.drops ?? [], bag: extras.bag ?? [], items: extras.items ?? ITEMS.version,
     fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], flashes: extras.flashes ?? [], surge: extras.surge ?? null, storm: extras.storm ?? null,
     body: extras.body ?? DRY, stone: extras.stone ?? ASLEEP, stats: {}, progress: extras.progress ?? START, tools: extras.tools ?? [],
+    conditions: extras.conditions ?? { today: [], week: null, next: null },
   };
 }
 

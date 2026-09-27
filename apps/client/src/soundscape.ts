@@ -17,7 +17,7 @@ const FLASH_HEARD = 6;
 
 export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water';
 export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'skulker';
-export type Shot = { kind: 'step'; surface: Surface } | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'cry' };
+export type Shot = { kind: 'step'; surface: Surface } | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'cry' | 'dawn' };
 
 export interface Mix {
   /** How loud each loop should play, 0 to 1. */
@@ -98,6 +98,7 @@ export function soundscape(s: Scene, was?: Scene): Mix {
   for (const n of s.news) {
     if (n.kind === 'surge' && n.view.phase === 'unstable') shots.push({ kind: 'bell' });
     if (n.kind === 'storm' && n.view.phase === 'coming') shots.push({ kind: 'rise' });
+    if (n.kind === 'conditions' && n.names.length) shots.push({ kind: 'dawn' });
   }
   return { loops, shots };
 }

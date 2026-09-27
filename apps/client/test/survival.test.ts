@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { FEATS, FIRE_LOW_S, FIRE_MAX_S, type ClientMsg, type MapData, type PlayerView } from '@napoland/shared';
+import { FEATS, FIRE_LOW_S, FIRE_MAX_S, type ClientMsg, type ConditionsData, type MapData, type PlayerView } from '@napoland/shared';
 import { Game, minutes } from '../src/game';
 import { clock, roomText, surgeLook } from '../src/hud';
 import { Items, factsOf, refusalText, slotViews, useLabel } from '../src/items';
 import { Maps } from '../src/maps';
 import { drainText, newsBanner, statusView } from '../src/status';
 import { fireLevel } from '../src/view/fire';
-import { ASLEEP, DRY, FULL, itemsData, tinyTown, welcome, zone } from './fixtures';
+import { ASLEEP, DRY, FULL, itemsData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
 
 /**
  * A 7x7 patch of wilds that surges: a campfire at 3,1, the Old Stone at 5,3, a notice board at 1,3,
@@ -263,5 +263,54 @@ describe('what the interface says', () => {
     expect(newsBanner({ kind: 'stone', view: { ...ASLEEP, awake: true } }, '')?.title).toBe('The Old Stone woke up');
     expect(newsBanner({ kind: 'feat', id: 'night-owl' }, '')?.title).toBe('Feat: Night owl');
     expect(newsBanner({ kind: 'feat', id: 'nope' }, '')).toBeNull();
+  });
+});
+
+describe('what the woods are like today', () => {
+  const conditions: ConditionsData = {
+    seed: 1, second: 0.5,
+    daily: [
+      { id: 'fog', name: 'Thick fog', text: 'You will not see far.', weight: 1, map: 'woods', fog: 5 },
+      { id: 'drop', name: 'A supply drop', text: 'Crates by the pond.', weight: 1, map: 'woods' },
+    ],
+    weekly: [{ id: 'copper', name: 'Copper week', text: 'Wire by every pole.', map: 'woods' }],
+  };
+  const miraTown = (): MapData => ({ ...tinyTown(), objects: [{ kind: 'npc', x: 1, y: 1, id: 'mira', name: 'Mira', dir: 'down', lines: ['Heading out?'] }] });
+  const today = { today: ['fog', 'drop'], week: 'copper', next: 'copper' };
+  const game = () => new Game(new Maps([miraTown(), tinyWoods()]), () => {}, new Items({ ...itemsData(), conditions }));
+
+  it('Mira\'s first line names today\'s conditions and this week\'s', () => {
+    const g = game();
+    g.handle(welcome(miraTown(), [me(1, 2)], FULL, { conditions: today }), 0);
+    g.pressA();
+    expect(g.dialog).toMatchObject({ who: 'Mira', lines: ['Word from the woods today: thick fog, and a supply drop. This week: copper week.', 'Heading out?'] });
+    // Nothing going on: she just talks.
+    const quiet = game();
+    quiet.handle(welcome(miraTown(), [me(1, 2)], FULL), 0);
+    quiet.pressA();
+    expect(quiet.dialog?.lines).toEqual(['Heading out?']);
+  });
+
+  it('a new day shows a banner, once', () => {
+    const g = game();
+    g.handle(welcome(miraTown(), [me(1, 2)], FULL, { conditions: today }), 0);
+    g.handle({ t: 'conditions', conditions: { ...today, today: ['drop'] } }, 0);
+    expect(g.news).toEqual([{ kind: 'conditions', names: ['A supply drop'] }]);
+    expect(newsBanner(g.news[0]!, 'Testbrook')).toEqual({ title: 'A new day', sub: 'A supply drop' });
+    g.news.length = 0;
+    // The same day told again (the week turned): no banner.
+    g.handle({ t: 'conditions', conditions: { ...today, today: ['drop'], week: null } }, 0);
+    expect(g.news).toEqual([]);
+    expect(g.conditions.week).toBeNull();
+  });
+
+  it('fog closes in on the woods, not on the town', () => {
+    const g = game();
+    g.handle(welcome(miraTown(), [me(1, 2)], FULL, { conditions: today }), 0);
+    expect(g.fogCap()).toBeUndefined();
+    g.handle(zone(tinyWoods(), 2, 4, [me(2, 4)]), 0);
+    expect(g.fogCap()).toBe(5);
+    g.handle({ t: 'conditions', conditions: { ...today, today: ['drop'] } }, 0);
+    expect(g.fogCap()).toBeUndefined();
   });
 });

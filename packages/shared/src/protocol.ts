@@ -9,10 +9,10 @@ import type { Stats } from './feats';
 import type { Gear, Quirk, Worn } from './gear';
 import type { BagSlot } from './items';
 import type { ProgressView } from './progress';
-import type { FlashView, StormView, SurgeView } from './sky';
+import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 13;
+export const PROTOCOL_VERSION = 14;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -312,6 +312,8 @@ export type ServerMsg =
       storm: StormView | null;
       body: BodyView;
       stone: StoneView;
+      /** What the woods are like today, this week and next week (sky.ts, conditionsAt). */
+      conditions: ConditionsView;
       /** What you did so far that counts toward feats, and the feats earned (feats.ts). */
       stats: Stats;
       /** Your XP and level (progress.ts). */
@@ -369,6 +371,8 @@ export type ServerMsg =
   | { t: 'flash'; flash: FlashView }
   /** The Old Stone changed (everyone hears it). */
   | { t: 'stone'; stone: StoneView }
+  /** A new day's conditions (everyone hears them at dawn, and when the week turns). */
+  | { t: 'conditions'; conditions: ConditionsView }
   /** The notice board, read: one line per thing worth knowing. */
   | { t: 'board'; lines: string[] }
   /** You earned a feat (feats.ts); `stats` is where your counts stand now. */

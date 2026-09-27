@@ -538,6 +538,7 @@ function frame(now: number) {
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
   hud.setSurge(surge, caught);
   view.setStorm(game.stormNow(now)?.phase === 'storm');
+  view.setFogCap(game.fogCap());
   view.setFlashes(game.flashesNow(now));
   const body = game.online ? game.bodyNow(now) : null;
   hud.setBody(body);
