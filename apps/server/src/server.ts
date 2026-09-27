@@ -20,6 +20,8 @@ export interface ServerOptions {
   maps: Iterable<TileMap>;
   /** Items and where finds grow; they must fit the maps (loadItems checks that). No items if unset. */
   items?: ItemsData;
+  /** Words chat masks (content/words.json). None if unset. */
+  words?: string[];
   /** Where finds grow and which half of a pile others get: Math.random unless a test sets its own. */
   rng?: () => number;
   /** The id of the town where new players start and collapsed players wake up. */
@@ -90,6 +92,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     trustProxy: o.trustProxy,
     maxConnectionsPerIp: o.maxConnectionsPerIp,
     newPlayersPerIpPerHour: o.newPlayersPerIpPerHour,
+    words: o.words,
   });
   try {
     await new Promise<void>((resolve, reject) => {
