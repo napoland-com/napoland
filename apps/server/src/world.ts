@@ -1970,6 +1970,7 @@ function listOf(names: string[]): string {
 
 /** A shelter's fire is called after its shelter; a campfire after its region. */
 function fireName(f: Fire): string {
+  if (f.name) return f.name;
   const name = f.map.data.name;
   // Names read "The old cabin"; in the middle of a sentence it is "the old cabin".
   return f.map.data.kind === 'inside' ? name.replace(/^The /, 'the ') : `the campfire in ${name.replace(/^The /, 'the ')}`;

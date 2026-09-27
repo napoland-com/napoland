@@ -88,8 +88,9 @@ const ROOMS: readonly Room[] = [
   },
   {
     // Where the town gathers: the biggest room, long tables, and the fire in the middle of the back wall.
-    // The workbench against the east wall makes gear from what you keep in your stash. Tom sits by the
-    // fire: he was NAPO's lineman, and remembers how it all went wrong.
+    // The workbench against the east wall makes gear from what you keep in your stash. Walt Pruitt sits
+    // by the fire: he kept the north line for the power company and then NAPO's, and remembers how it
+    // all went wrong.
     id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 3, outside: 'stonebrook', door: [8, 31],
     rows: [
       'xxxxxxxxxxx',
@@ -116,15 +117,15 @@ const ROOMS: readonly Room[] = [
       { kind: 'barrel', x: 9, y: 6 },
       { kind: 'workbench', x: 9, y: 3 },
       {
-        kind: 'npc', id: 'tom', name: 'Tom', x: 3, y: 2, dir: 'down',
+        kind: 'npc', id: 'walt', name: 'Walt', x: 3, y: 2, dir: 'down',
         look: { coat: '#5a4a3a', scarf: '#c98a2b', hair: '#9a958d', skin: '#c68b62', hat: '#d9a82b' },
         lines: [
-          'Pull up a chair. I was NAPO\'s lineman, back when. I strung the wire from the station to the Tower.',
+          'Pull up a chair. Pruitt. Walt. I kept the north line for the power company, and then NAPO\'s. I strung its wire from the station to the Tower.',
           'Before NAPO came, the Old Stone only hummed on cold nights. Nobody minded it.',
           'Then the hum got into the radios, and every compass in town pointed at the woods. That\'s when the Observatory came.',
           'The night they switched the Tower on, the woods lit up like a town and the Old Stone cracked. You can still see the crack.',
           'Every forty minutes since, the woods surge. Regular as a clock. You\'d think something out there was keeping time.',
-          'NAPO said two weeks. Most folks believed them.',
+          'NAPO said two weeks, and I went with the rest. Came back for my truck, up where the north road gives out. It never started again, so I stayed.',
         ],
       },
     ],

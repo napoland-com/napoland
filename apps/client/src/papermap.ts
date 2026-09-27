@@ -14,6 +14,9 @@ const MAX_WIRE = 10;
 const DRIFT = 0.35;
 /** A pond is at least this many water tiles; smaller puddles get no name. */
 const POND_TILES = 6;
+/** How much room a word takes on the paper, in tiles: a letter's width, and a line's height. */
+const LETTER = 0.95;
+const LINE = 1.9;
 
 type Pt = [number, number];
 
@@ -31,9 +34,14 @@ export interface Sketch {
   water: Pt[];
   /** Road tiles, drawn as one band. */
   roads: Pt[];
-  houses: Array<{ x: number; y: number; w: number; h: number }>;
+  /** Cabins, and NAPO's concrete buildings (`flat`: a flat roof, no gable). */
+  houses: Array<{ x: number; y: number; w: number; h: number; flat: boolean }>;
   poles: Pt[];
   wires: Array<[Pt, Pt]>;
+  /** Radio masts, like the NAPO Tower: tall enough to steer by. */
+  masts: Pt[];
+  /** Fences, along the middle of their tiles: a yard, a barrier across a road. */
+  fences: Array<[Pt, Pt]>;
   cars: Pt[];
   signs: Pt[];
   labels: Array<{ x: number; y: number; text: string }>;
@@ -52,7 +60,9 @@ const drift = (x: number, y: number, k = 0): Pt => [x + 0.5 + (hash(x, y, k) - 0
 /** What to draw for a map; `nameOf` names the maps its exits lead to (the cabins, the way home). */
 export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefined): Sketch {
   const { width: W, height: H } = map;
-  const s: Sketch = { title: map.data.name, width: W, height: H, forest: [], trees: [], ground: [], water: [], roads: [], houses: [], poles: [], wires: [], cars: [], signs: [], labels: [] };
+  const s: Sketch = {
+    title: map.data.name, width: W, height: H, forest: [], trees: [], ground: [], water: [], roads: [], houses: [], poles: [], wires: [], masts: [], fences: [], cars: [], signs: [], labels: [],
+  };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const kind = map.kind(x, y), r = hash(x, y, 1);
     if (kind === 'forest') {
@@ -63,8 +73,11 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
     else if (map.walkable(x, y) && r < 0.12) s.ground.push(drift(x, y, 4));
   }
   for (const o of map.data.objects) {
-    if (o.kind === 'house') s.houses.push({ x: o.x + (hash(o.x, o.y, 5) - 0.5) * 0.6, y: o.y + (hash(o.x, o.y, 6) - 0.5) * 0.6, w: o.w, h: o.h });
+    if (o.kind === 'house') s.houses.push({ x: o.x + (hash(o.x, o.y, 5) - 0.5) * 0.6, y: o.y + (hash(o.x, o.y, 6) - 0.5) * 0.6, w: o.w, h: o.h, flat: o.style === 'napo' });
     else if (o.kind === 'pole') s.poles.push(drift(o.x, o.y, 8));
+    else if (o.kind === 'antenna') s.masts.push(drift(o.x, o.y, 14));
+    // Along the middle of its tile, like the fence in the world; drawn with a steady hand, so a yard stays closed.
+    else if (o.kind === 'fence') s.fences.push(o.dir === 'h' ? [[o.x, o.y + 0.5], [o.x + 1, o.y + 0.5]] : [[o.x + 0.5, o.y], [o.x + 0.5, o.y + 1]]);
     else if (o.kind === 'car') s.cars.push(drift(o.x, o.y, 9));
     else if (o.kind === 'sign') s.signs.push(drift(o.x, o.y, 10));
   }
@@ -74,9 +87,28 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
     // Beside the way home (not on the road), above a cabin's roof.
     if (name) s.labels.push(e.home ? { x: e.x + e.w + 4, y: e.y - 1, text: `to ${name}` } : { x: e.x + 0.5, y: e.y - 3.4, text: name });
   }
+  // The places people call by name. A map that names none still gets its pond.
+  for (const p of map.data.places ?? []) s.labels.push({ x: p.x + 0.5, y: p.y + 0.5, text: p.name });
   const pond = biggest(map, 'water');
-  if (pond.length >= POND_TILES) s.labels.push({ x: pond.reduce((n, [x]) => n + x, 0) / pond.length + 0.5, y: pond.reduce((n, [, y]) => n + y, 0) / pond.length + 0.5, text: 'pond' });
+  if (!map.data.places && pond.length >= POND_TILES) s.labels.push({ x: pond.reduce((n, [x]) => n + x, 0) / pond.length + 0.5, y: pond.reduce((n, [, y]) => n + y, 0) / pond.length + 0.5, text: 'pond' });
+  s.labels = apart(s.labels, W);
   return s;
+}
+
+/**
+ * Labels where they are drawn (kept off the paper's edge), each moved up a line, or down near the top,
+ * until it covers none written before it: two doors side by side get one name above the other.
+ */
+function apart(labels: Sketch['labels'], width: number): Sketch['labels'] {
+  const done: Sketch['labels'] = [];
+  const clash = (a: Sketch['labels'][number], b: Sketch['labels'][number]) =>
+    Math.abs(a.x - b.x) < ((a.text.length + b.text.length) * LETTER) / 2 && Math.abs(a.y - b.y) < LINE;
+  for (const l of labels) {
+    const at = { ...l, x: Math.min(width - 3, Math.max(3, l.x)), y: Math.max(0.5, l.y) };
+    for (let tries = 0; tries < 8 && done.some(d => clash(at, d)); tries++) at.y = at.y - LINE < 0.5 ? at.y + LINE * (tries + 1) : at.y - LINE;
+    done.push(at);
+  }
+  return done;
 }
 
 /** The biggest patch of joined tiles of one kind. */
@@ -192,11 +224,30 @@ function draw(s: Sketch): HTMLCanvasElement {
   g.beginPath();
   for (const [x, y] of s.poles) { g.moveTo(X(x), Y(y) - 5); g.lineTo(X(x), Y(y) + 5); g.moveTo(X(x) - 4, Y(y) - 3); g.lineTo(X(x) + 4, Y(y) - 3); }
   g.stroke();
-  // Cabins: a box with a roof. Cars: a small box. Signs: a post with a board.
+  // Fences: a line, with a post where each piece of it starts.
+  g.lineWidth = 1;
+  g.beginPath();
+  for (const [a, b] of s.fences) { g.moveTo(X(a[0]), Y(a[1])); g.lineTo(X(b[0]), Y(b[1])); }
+  g.stroke();
+  g.fillStyle = INK;
+  for (const [a] of s.fences) g.fillRect(X(a[0]) - 1, Y(a[1]) - 1, 2, 2);
+  g.lineWidth = 1.6;
+  // Cabins: a box with a roof. NAPO's buildings: a flat roof, drawn heavier. Cars: a small box. Signs: a post with a board.
   g.fillStyle = '#c9b48a';
   for (const h of s.houses) {
     g.beginPath(); g.rect(X(h.x), Y(h.y + 0.4), h.w * PX, (h.h - 0.4) * PX); g.fill(); g.stroke();
-    g.beginPath(); g.moveTo(X(h.x - 0.2), Y(h.y + 0.4)); g.lineTo(X(h.x + h.w / 2), Y(h.y - 0.6)); g.lineTo(X(h.x + h.w + 0.2), Y(h.y + 0.4)); g.stroke();
+    if (h.flat) { g.lineWidth = 3; g.beginPath(); g.moveTo(X(h.x - 0.1), Y(h.y + 0.4)); g.lineTo(X(h.x + h.w + 0.1), Y(h.y + 0.4)); g.stroke(); g.lineWidth = 1.6; }
+    else { g.beginPath(); g.moveTo(X(h.x - 0.2), Y(h.y + 0.4)); g.lineTo(X(h.x + h.w / 2), Y(h.y - 0.6)); g.lineTo(X(h.x + h.w + 0.2), Y(h.y + 0.4)); g.stroke(); }
+  }
+  // Masts: a tall narrow A with its cross braces, and a dot at the top for the light.
+  g.fillStyle = INK;
+  for (const [x, y] of s.masts) {
+    const top = Y(y) - PX * 2.2, foot = Y(y) + PX * 0.5, half = PX * 0.45;
+    g.beginPath();
+    g.moveTo(X(x) - half, foot); g.lineTo(X(x), top); g.lineTo(X(x) + half, foot);
+    for (const f of [0.3, 0.6]) { const yy = foot + (top - foot) * f, w = half * (1 - f); g.moveTo(X(x) - w, yy); g.lineTo(X(x) + w, yy); }
+    g.stroke();
+    g.beginPath(); g.arc(X(x), top, 2, 0, Math.PI * 2); g.fill();
   }
   for (const [x, y] of s.cars) g.strokeRect(X(x) - 7, Y(y) - 4, 14, 8);
   g.beginPath();
@@ -212,7 +263,7 @@ function draw(s: Sketch): HTMLCanvasElement {
   g.font = `italic ${PX * 1.8}px ${HAND}`;
   s.labels.forEach((l, i) => {
     g.save();
-    g.translate(X(Math.min(s.width - 3, Math.max(3, l.x))), Y(Math.max(0.5, l.y)));
+    g.translate(X(l.x), Y(l.y));
     g.rotate((hash(i, 0, 13) - 0.5) * 0.15);
     g.fillText(l.text, 0, 0);
     g.restore();

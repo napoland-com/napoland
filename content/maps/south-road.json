@@ -303,7 +303,7 @@
     {"kind":"lamp","x":30,"y":43},
     {"kind":"lamp","x":26,"y":48},
     {"kind":"lamp","x":38,"y":86},
-    {"kind":"fireplace","x":22,"y":22},
+    {"kind":"fireplace","x":22,"y":22,"name":"the leavers' camp"},
     {"kind":"car","x":30,"y":28,"w":2},
     {"kind":"car","x":39,"y":31,"w":2},
     {"kind":"car","x":30,"y":34,"w":2},
@@ -395,5 +395,12 @@
     {"kind":"rock","x":37,"y":63,"s":0.855,"v":0.354},
     {"kind":"rock","x":34,"y":78,"s":0.995,"v":0.507},
     {"kind":"rock","x":34,"y":80,"s":0.663,"v":0.708}
+  ],
+  "places": [
+    {"name":"the leavers' camp","x":22,"y":22},
+    {"name":"the Tower","x":51,"y":47},
+    {"name":"the sinks","x":15,"y":64},
+    {"name":"field site","x":51,"y":71},
+    {"name":"quarantine line","x":35,"y":88}
   ]
 }

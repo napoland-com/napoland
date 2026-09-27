@@ -112,8 +112,8 @@ export interface BagSlot {
   piece?: Piece;
 }
 
-/** The tools everyone carries: the old paper map of the Near Woods. */
-export const STARTER_TOOLS: readonly string[] = ['near-woods-map'];
+/** The tools everyone carries: the paper maps of the two regions next to town, the Near Woods and the South Road. */
+export const STARTER_TOOLS: readonly string[] = ['near-woods-map', 'south-road-map'];
 
 /** Slots in the bag until the bag becomes equipment (a tote 6, a backpack 8, a hiking pack 12...). */
 export const BAG_SLOTS = 8;
