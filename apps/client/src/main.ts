@@ -157,11 +157,22 @@ hud.setSound(soundSetting);
 watchFires(view);
 
 // ---------- the keyboard, on a computer ----------
-const keys = new Keys(controls);
+const keys = new Keys({
+  ...controls,
+  // Enter, as in Metin2: the chat opens with its line ready to type in (open already, the line takes the keys again).
+  openChat: () => { if (!hud.chatOpen) closePanels(); hud.toggleChat(true, true); },
+});
 window.addEventListener('keydown', e => {
   // Behind the sign-in cards the keys are the page's (typing a name, pressing Enter to go on).
   if (!overlay.hidden) return;
   if (keys.down(e.code, keyTarget(e.target), e.repeat, e.ctrlKey || e.altKey || e.metaKey)) e.preventDefault();
+});
+// A button a tap or a click pressed lets go of the focus at once, so the keys stay the game's (Enter
+// opens the chat instead of pressing that button again). One reached with Tab keeps it: its clicks
+// come from the keyboard (detail 0).
+document.addEventListener('click', e => {
+  const b = e.target instanceof Element ? e.target.closest('button, a') : null;
+  if (e.detail > 0 && b instanceof HTMLElement && b === document.activeElement) b.blur();
 });
 window.addEventListener('keyup', e => keys.up(e.code));
 window.addEventListener('blur', () => keys.clear());

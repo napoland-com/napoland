@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { REFILL_PER_SECOND } from '@napoland/shared';
-import { energyLook, soundRow } from '../src/hud';
+import { chatKey, energyLook, soundRow } from '../src/hud';
 import type { SoundSetting } from '../src/sound';
 
 describe('the energy bar', () => {
@@ -26,6 +26,21 @@ describe('the energy bar', () => {
 
   it('shows a full, quiet bar before the first report', () => {
     expect(energyLook(null)).toEqual({ fill: 1, level: 'ok', refill: false, vignette: 0 });
+  });
+});
+
+describe("the chat's line", () => {
+  it('works as in Metin2: Enter with words sends them, Enter on an empty line closes the chat, and so does Escape', () => {
+    expect(chatKey('Enter', 'hello')).toBe('send');
+    expect(chatKey('Enter', '')).toBe('close');
+    expect(chatKey('Enter', '   ')).toBe('close');
+    expect(chatKey('Escape', 'half a thought')).toBe('close');
+    expect(chatKey('a', '')).toBeNull();
+  });
+
+  it('leaves the keys alone while an input method is still picking a word', () => {
+    expect(chatKey('Enter', '', true)).toBeNull();
+    expect(chatKey('Escape', 'こん', true)).toBeNull();
   });
 });
 
