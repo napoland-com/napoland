@@ -3,7 +3,7 @@ id: far-woods
 title: "The Far Woods: a second region one player can reach"
 status: planned
 order: 85
-depends: [regional-weather]
+depends: [regional-weather, owned-tools]
 area: world
 ---
 

@@ -3,7 +3,7 @@ id: inked-maps
 title: Maps of farther regions, found in pieces
 status: idea
 order: 90
-depends: [paper-map, deeper-regions]
+depends: [paper-map, far-woods, owned-tools]
 area: world
 ---
 

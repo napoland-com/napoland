@@ -3,7 +3,7 @@ id: locked-places
 title: Places you can see but not reach yet
 status: idea
 order: 40
-depends: [equipment-resistances]
+depends: [equipment-resistances, owned-tools]
 area: world
 ---
 

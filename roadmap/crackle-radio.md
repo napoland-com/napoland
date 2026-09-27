@@ -3,7 +3,7 @@ id: crackle-radio
 title: A radio that crackles near the strange
 status: idea
 order: 50
-depends: [paper-map]
+depends: [paper-map, owned-tools]
 area: gameplay
 ---
 

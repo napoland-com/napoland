@@ -3,7 +3,7 @@ id: old-echoes
 title: Echoes of the people who left
 status: idea
 order: 80
-depends: [survival-dynamics]
+depends: [survival-dynamics, notes-left-behind]
 area: world
 ---
 
