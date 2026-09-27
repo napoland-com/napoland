@@ -539,6 +539,7 @@ function frame(now: number) {
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
   hud.setSurge(surge, caught);
   view.setStorm(game.stormNow(now)?.phase === 'storm');
+  view.setFogCap(game.fogCap());
   view.setFlashes(game.flashesNow(now));
   const body = game.online ? game.bodyNow(now) : null;
   hud.setBody(body);
@@ -590,12 +591,12 @@ function frame(now: number) {
   const map = game.map, rule = map.data.surge;
   const scene: Scene = {
     map: map.data.id, kind: map.data.kind, weather, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
-    me: me ? { x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty) } : null,
+    me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty) } : null,
     fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),
     poles: map.data.objects.filter(o => o.kind === 'pole'),
     // How far the front still has to come to reach your tile, as a share of its sweep.
     surge: surge && { phase: surge.phase, gap: rule && me && map.deepest ? ((surgeFront(rule, map.deepest, surge) ?? map.deepest) - map.homeSteps(me.tx, me.ty)) / map.deepest : 1 },
-    caught, watchers: game.creatureViews(), flashes: game.flashesNow(now), live: !!game.meId && game.live.has(game.meId), news: worldNews,
+    caught, creatures: game.creatureViews(), flashes: game.flashesNow(now), live: !!game.meId && game.live.has(game.meId), news: worldNews,
   };
   sound.update(soundscape(scene, heard));
   heard = scene;

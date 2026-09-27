@@ -3,7 +3,7 @@
  * talked to by real WebSocket clients. Maps, exits and energy: net-maps.test.ts.
  */
 import { describe, expect, it } from 'vitest';
-import { ENERGY_MAX, PROTOCOL_VERSION, TileMap } from '@napoland/shared';
+import { DAY_S, ENERGY_MAX, PROTOCOL_VERSION, TileMap, dayIndex, type ConditionsData } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer } from '../src/server';
@@ -370,6 +370,39 @@ describe('saving', () => {
       await waitFor(() => storage.get(you)?.y === 4, 'the save made when leaving', 5000);
       await new Promise(resolve => setTimeout(resolve, 600)); // an older save still running would land now
       expect(storage.get(you)).toMatchObject({ x: 1, y: 4 });
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe('what the woods are like today', () => {
+  it('the welcome carries the conditions, and everyone online hears the new ones at dawn', async () => {
+    setLogLevel('silent');
+    const conditions: ConditionsData = {
+      seed: 1, second: 0,
+      daily: [{ id: 'fog', name: 'Thick fog', text: 'Fog.', weight: 1, map: 'woods', fog: 5 }],
+      weekly: [{ id: 'copper', name: 'Copper week', text: 'Wire.', map: 'woods' }],
+    };
+    // The world's clock two seconds before the next dawn, and game time that the test moves on.
+    let now = 1_000_000;
+    const dawn = (dayIndex(Date.now()) + 1) * DAY_S * 1000;
+    const server = await startServer({ ...serverDefaults(), storage: new MemoryStorage(), items: { ...itemsData(), conditions }, clock: () => now, clockShiftMs: dawn - 2000 - Date.now() });
+    try {
+      const hello = async () => {
+        const c = await Client.open(server.port);
+        c.send({ t: 'hello', v: PROTOCOL_VERSION, name: newName() });
+        return { c, welcome: await c.next('welcome') };
+      };
+      const a = await hello(), b = await hello();
+      const view = { today: ['fog'], week: 'copper', next: 'copper' };
+      expect(a.welcome.conditions).toEqual(view);
+      expect(b.welcome.conditions).toEqual(view);
+      // Let the world tick once before dawn (the first tick after start-up tells nobody), then it is dawn.
+      await new Promise(resolve => setTimeout(resolve, 100));
+      now += 5000;
+      for (const x of [a, b]) expect(await x.c.next('conditions')).toEqual({ t: 'conditions', conditions: view });
+      for (const x of [a, b]) x.c.ws.terminate();
     } finally {
       await server.stop();
     }

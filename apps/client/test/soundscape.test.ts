@@ -6,9 +6,11 @@ import { lightningAt } from '../src/view/world';
 /** A dry day in the woods, you on 5,5 and nothing else around. */
 const scene = (s: Partial<Scene> = {}): Scene => ({
   map: 'woods', kind: 'wilds', weather: 'overcast', storm: false, lightning: false,
-  me: { x: 5, y: 5, tx: 5, ty: 5, ground: 'grass' },
-  fires: [], poles: [], surge: null, caught: false, watchers: [], flashes: [], live: false, news: [], ...s,
+  me: { id: 'me', x: 5, y: 5, tx: 5, ty: 5, ground: 'grass' },
+  fires: [], poles: [], surge: null, caught: false, creatures: [], flashes: [], live: false, news: [], ...s,
 });
+/** A creature on 8,5 (3 tiles from you), unless `c` says otherwise. */
+const creature = (c: Partial<Scene['creatures'][number]> = {}): Scene['creatures'][number] => ({ id: '1', kind: 'watcher', x: 8, y: 5, moving: false, chasing: undefined, ...c });
 const loops = (s: Partial<Scene>) => soundscape(scene(s)).loops;
 
 describe('soundscape', () => {
@@ -53,14 +55,31 @@ describe('soundscape', () => {
   });
 
   it('hears a watcher only while it moves', () => {
-    expect(loops({ watchers: [{ x: 8, y: 5, moving: true }] }).watcher).toBeGreaterThan(0);
-    expect(loops({ watchers: [{ x: 8, y: 5, moving: false }] }).watcher).toBe(0);
-    expect(loops({ watchers: [{ x: 20, y: 5, moving: true }] }).watcher).toBe(0);
+    expect(loops({ creatures: [creature({ moving: true })] }).watcher).toBeGreaterThan(0);
+    expect(loops({ creatures: [creature({ moving: false })] }).watcher).toBe(0);
+    expect(loops({ creatures: [creature({ x: 20, moving: true })] }).watcher).toBe(0);
+    expect(loops({ creatures: [creature({ kind: 'skulker', moving: true })] }).watcher).toBe(0);
+  });
+
+  it('hears a skulker only on a chase, louder the nearer it is, and not 8 tiles off', () => {
+    const skulker = (x: number, chasing: string | null = 'someone') => loops({ creatures: [creature({ kind: 'skulker', x, moving: true, chasing: chasing ?? undefined })] }).skulker;
+    expect(skulker(8, null)).toBe(0);
+    expect(skulker(8)).toBeGreaterThan(skulker(11));
+    expect(skulker(11)).toBeGreaterThan(0);
+    expect(skulker(13)).toBe(0);
+  });
+
+  it('cries out once, the moment a skulker goes after you', () => {
+    const lying = scene({ creatures: [creature({ kind: 'skulker' })] });
+    const after = (who: string) => scene({ creatures: [creature({ kind: 'skulker', moving: true, chasing: who })] });
+    expect(soundscape(after('me'), lying).shots).toEqual([{ kind: 'cry' }]);
+    expect(soundscape(after('me'), after('me')).shots).toEqual([]);
+    expect(soundscape(after('someone'), lying).shots).toEqual([]);
   });
 
   it('makes one footstep for a new step, on the ground stepped onto, and none on arrival', () => {
     const was = scene();
-    const step = scene({ me: { x: 5, y: 5, tx: 6, ty: 5, ground: 'road' } });
+    const step = scene({ me: { id: 'me', x: 5, y: 5, tx: 6, ty: 5, ground: 'road' } });
     expect(soundscape(step, was).shots).toEqual([{ kind: 'step', surface: 'road' }]);
     expect(soundscape(step, step).shots).toEqual([]);
     expect(soundscape({ ...step, map: 'cabin' }, was).shots).toEqual([]);
@@ -83,6 +102,11 @@ describe('soundscape', () => {
   it('rings for a restless region and rises for a coming storm', () => {
     const shots = soundscape(scene({ news: [{ kind: 'surge', view: { phase: 'unstable', left: 60, into: 0 } }, { kind: 'storm', view: { phase: 'coming', left: 60 } }] })).shots;
     expect(shots).toEqual([{ kind: 'bell' }, { kind: 'rise' }]);
+  });
+
+  it('chimes softly when a new day brings its conditions', () => {
+    expect(soundscape(scene({ news: [{ kind: 'conditions', names: ['Thick fog'] }] })).shots).toEqual([{ kind: 'dawn' }]);
+    expect(soundscape(scene({ news: [{ kind: 'conditions', names: [] }] })).shots).toEqual([]);
   });
 });
 

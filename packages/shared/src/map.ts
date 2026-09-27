@@ -113,12 +113,24 @@ export interface MapData {
   flashes?: FlashRule;
   /** The wilds only: watchers, creatures that come closer while nobody looks at them. */
   watchers?: WatcherRule;
+  /** The wilds only: skulkers, creatures that lie in the ferns and chase whoever they hear or see. */
+  skulkers?: SkulkerRule;
 }
 
 /** How many watchers roam a region at once, and how far from home (in steps) they wake up. */
 export interface WatcherRule {
   count: number;
   steps: [number, number];
+}
+
+/**
+ * How many skulkers lie in a region's ferns, how far from home (in steps) they wake and may go, and
+ * when they are out: 'night' (night and aurora nights) and 'storm' (while a storm blows over the region).
+ */
+export interface SkulkerRule {
+  count: number;
+  steps: [number, number];
+  when: Array<'night' | 'storm'>;
 }
 
 /** Where an exit tile leads: the map, the tile you arrive on and your facing. */
@@ -274,6 +286,16 @@ export class TileMap {
 
   level(x: number, y: number): number {
     return this.inside(x, y) ? this.levels[y * this.width + x]! : 0;
+  }
+
+  /** Where a watcher may wake, as y * width + x: open ground out of the light, away from fires and exits, `steps` from home. */
+  lairs(steps: readonly [number, number]): number[] {
+    const out: number[] = [];
+    for (let y = 0; y < this.height; y++) for (let x = 0; x < this.width; x++) {
+      const s = this.homeSteps(x, y);
+      if (this.walkable(x, y) && !this.exitAt(x, y) && !this.lit(x, y) && !this.warm(x, y) && s >= steps[0] && s <= steps[1]) out.push(y * this.width + x);
+    }
+    return out;
   }
 
   /** Can a character stand on this tile? */

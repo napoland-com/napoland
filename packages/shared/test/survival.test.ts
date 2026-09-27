@@ -136,6 +136,18 @@ describe('validation of the new content', () => {
     expect(msgs(strip({ objects: [{ kind: 'board', x: 1, y: 4 }] }))).toEqual(['board at 1,4: the tile in front (below) is not walkable, so nobody can talk to it']);
   });
 
+  it('checks skulkers: their numbers, when they are out, and ferns to lie in', () => {
+    // One fern tile, at 2,3: 2 steps from home, out of the lamp's light and away from the fire.
+    const ferns = { tiles: ['ggggg', 'ggggg', 'ggggg', 'ggfgg', 'ggggg', 'ttgtt'] };
+    const storm = { every: 100, warn: 10, length: 20 };
+    const msgs = (d: MapData) => validateMap(d).filter(p => p.level === 'error').map(p => p.message);
+    expect(validateMap(strip({ ...ferns, storm, skulkers: { count: 2, steps: [2, 9], when: ['night', 'storm'] } }))).toEqual([]);
+    expect(msgs(strip({ ...ferns, skulkers: { count: 1, steps: [3, 9], when: ['night'] } }))).toEqual(['skulkers: no ferns to lie in that far from home, out of the light and away from fires']);
+    expect(msgs(strip({ ...ferns, skulkers: { count: 0, steps: [2, 9], when: [] } }))).toEqual(['skulkers: count must be a whole number from 1', 'skulkers: when lists night, storm or both']);
+    expect(msgs(strip({ ...ferns, skulkers: { count: 1, steps: [9, 2], when: ['night'] } }))).toEqual(['skulkers: steps is [nearest, farthest], from 0']);
+    expect(validateMap(strip({ ...ferns, skulkers: { count: 1, steps: [2, 9], when: ['storm'] } }))).toEqual([{ level: 'warning', message: 'skulkers: out in a storm, but this region never storms' }]);
+  });
+
   it('checks what items do: charms, uses, fuel and what strange objects reveal', () => {
     const maps = [strip()];
     const problems = (items: ItemsData['items'], finds: ItemsData['finds'] = []) => validateItems({ version: 1, items, finds }, maps).filter(p => p.level === 'error').map(p => p.message);

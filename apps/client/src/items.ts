@@ -22,6 +22,8 @@ export class Items {
   /** How gear wears out and what mending it costs, and the quirks' names and words. */
   readonly wear: ItemsData['wear'];
   readonly mend: ItemsData['mend'];
+  /** What the woods may be like on a day or in a week (sky.ts). */
+  readonly conditions: ItemsData['conditions'];
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
 
   constructor(data: ItemsData | undefined) {
@@ -30,6 +32,7 @@ export class Items {
     this.recipes = data?.recipes ?? [];
     this.wear = data?.wear;
     this.mend = data?.mend;
+    this.conditions = data?.conditions;
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
 

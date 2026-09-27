@@ -50,6 +50,8 @@ export interface Config {
   newPlayersPerIpPerHour: number;
   /** Reported on /health, so a deploy can be checked from outside. */
   version: string;
+  /** Development only: the world's clock runs this many ms ahead (or behind), to play-test a dawn or a surge without waiting for it. */
+  clockShiftMs: number;
   auth: AuthSettings;
 }
 
@@ -125,6 +127,14 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   const maxConnectionsPerIp = int('MAX_CONNECTIONS_PER_IP', 20, 1, 100_000);
   const newPlayersPerIpPerHour = int('NEW_PLAYERS_PER_IP_PER_HOUR', 10, 1, 100_000);
   const version = get('APP_VERSION') ?? 'dev';
+  let clockShiftMs = 0;
+  const shift = get('CLOCK_SHIFT_MS');
+  if (shift !== undefined) {
+    if (!/^-?\d+$/.test(shift) || !Number.isSafeInteger(Number(shift))) errors.push(`CLOCK_SHIFT_MS must be a whole number of milliseconds, got "${shift}"`);
+    // Everyone shares one sky: a live server must never run another day than the wall clock's.
+    else if (get('NODE_ENV') === 'production' && Number(shift) !== 0) errors.push('CLOCK_SHIFT_MS moves the whole world\'s clock, so it is refused when NODE_ENV=production');
+    else clockShiftMs = Number(shift);
+  }
 
   let auth: AuthSettings = { mode: 'legacy' };
   const authMode = oneOf('AUTH_MODE', AUTH_MODES, 'legacy');
@@ -161,7 +171,7 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
     port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
-    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, auth,
+    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, auth,
   };
 }
 

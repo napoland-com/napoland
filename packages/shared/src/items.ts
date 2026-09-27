@@ -10,6 +10,7 @@
  */
 import type { Mods } from './feats';
 import type { Element, Piece, Quirk, Recipe, Slot, Tier } from './gear';
+import type { ConditionsData } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 
 /**
@@ -92,6 +93,10 @@ export interface FindRule {
    * during it), during an aurora night, or while a storm blows over the region. Left out: always.
    */
   when?: FindWhen;
+  /** Only while this daily or weekly condition is on (sky.ts, conditionsAt), and gone when it is over. Never with `when`. */
+  condition?: string;
+  /** Only within `r` tiles (center to center) of tile x,y: crates by the pond. */
+  around?: { x: number; y: number; r: number };
 }
 
 export type FindWhen = 'unstable' | 'aurora' | 'storm';
@@ -109,6 +114,8 @@ export interface ItemsData {
   mend?: Partial<Record<Tier, BagSlot[]>>;
   /** Names and words for the quirks of anomalous gear (gear.ts, QUIRKS). */
   quirks?: Array<{ id: Quirk; name: string; text: string }>;
+  /** What the woods are like today and this week (sky.ts). None: nothing changes from day to day. */
+  conditions?: ConditionsData;
 }
 
 /** One bag slot: an item and how many of it (at most its stack). In a stash's list, a piece of gear comes with its condition and quirk. */
@@ -254,7 +261,7 @@ export function halfOf(items: readonly BagSlot[], rng: () => number): BagSlot[] 
   return merge(units.slice(0, keep).map(item => ({ item, count: 1 })));
 }
 
-/** Every tile a find may grow on: walkable, not an exit, and fitting the rule's tiles, steps and nearness. */
+/** Every tile a find may grow on: walkable, not an exit, and fitting the rule's tiles, steps, nearness and place. */
 export function findTiles(map: TileMap, rule: FindRule): Array<{ x: number; y: number }> {
   const out: Array<{ x: number; y: number }> = [];
   // Measured from every tile an object covers, so a cabin or a car is near from all sides alike.
@@ -266,6 +273,7 @@ export function findTiles(map: TileMap, rule: FindRule): Array<{ x: number; y: n
       const s = map.homeSteps(x, y);
       if (s < rule.steps[0] || s > rule.steps[1]) continue;
     }
+    if (rule.around && Math.hypot(rule.around.x - x, rule.around.y - y) > rule.around.r) continue;
     if (rule.near && !near.some(([ox, oy]) => Math.hypot(ox - x, oy - y) <= rule.near!.radius)) continue;
     out.push({ x, y });
   }
