@@ -92,6 +92,15 @@ describe('where finds grow', () => {
 });
 
 describe('validateItems', () => {
+  it('checks tools: one to a slot, never used up, weightless, charting a real map', () => {
+    const errors = (tool: ItemDef) => validateItems({ version: 1, items: [tool], finds: [] }, [woods()]).filter(p => p.level === 'error').map(p => p.message);
+    const map: ItemDef = { id: 'near-woods-map', name: 'Map', kind: 'tool', stack: 1, chart: 'woods', text: 'Old.' };
+    expect(errors(map)).toEqual([]);
+    expect(errors({ ...map, chart: 'nowhere' })).toEqual(['item "near-woods-map": charts nowhere, which is not a map']);
+    expect(errors({ ...map, weight: 0.1 })).toEqual(['item "near-woods-map": a tool is never used up, weighs nothing and earns no XP']);
+    expect(errors({ ...map, kind: 'resource' })).toEqual(['item "near-woods-map": only a tool charts a map', 'the starter tool near-woods-map is not a tool']);
+  });
+
   const good: ItemsData = {
     version: 1,
     items: [glowcap, shard, thermos],

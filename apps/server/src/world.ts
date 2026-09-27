@@ -33,6 +33,7 @@
 import {
   SLOTS,
   STARTER_GEAR,
+  STARTER_TOOLS,
   DROP_LIFETIME_MS,
   ENERGY_SYNC_MS,
   FEATS,
@@ -205,6 +206,8 @@ export interface Joined extends Scene {
   stone: StoneView;
   stats: Stats;
   progress: ProgressView;
+  /** Every tool the player carries (for now, the starter tools that exist). */
+  tools: string[];
 }
 
 /** What storage must hear: piles and marks to write (or remove: undefined), players to save now, and the Old Stone if it changed. */
@@ -618,6 +621,7 @@ export class World {
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: copyBag(r.bag),
       stone: this.stoneView(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
+      tools: STARTER_TOOLS.filter(t => this.items.get(t)?.kind === 'tool'),
     };
   }
 
