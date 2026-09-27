@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { Dir } from '@napoland/shared';
 import { Keys, keyTarget } from '../src/keys';
 
-let heard: Array<Dir | null | 'A' | 'B' | 'map'>;
+let heard: Array<Dir | null | 'A' | 'B' | 'chat' | 'map'>;
 let keys: Keys;
 
 beforeEach(() => {
   heard = [];
-  keys = new Keys({ pad: d => heard.push(d), a: () => heard.push('A'), b: () => heard.push('B'), openMap: () => heard.push('map') });
+  keys = new Keys({ pad: d => heard.push(d), a: () => heard.push('A'), b: () => heard.push('B'), openChat: () => heard.push('chat'), openMap: () => heard.push('map') });
 });
 
 describe('the keyboard', () => {
@@ -40,13 +40,21 @@ describe('the keyboard', () => {
     expect(heard).toEqual(['up', null]);
   });
 
-  it('presses A with Enter and B with Backspace, once per press', () => {
+  it('presses A with E or Space and B with Q or Escape, once per press', () => {
+    expect(keys.down('KeyE', 'page')).toBe(true);
+    keys.down('KeyE', 'page', true);
+    keys.down('Space', 'page');
+    expect(keys.down('KeyQ', 'page')).toBe(true);
+    keys.down('KeyQ', 'page', true);
+    keys.down('Escape', 'page');
+    expect(heard).toEqual(['A', 'A', 'B', 'B']);
+  });
+
+  it('opens the chat with Enter, as in Metin2, once per press', () => {
     expect(keys.down('Enter', 'page')).toBe(true);
     keys.down('Enter', 'page', true);
     keys.down('NumpadEnter', 'page');
-    expect(keys.down('Backspace', 'page')).toBe(true);
-    keys.down('Backspace', 'page', true);
-    expect(heard).toEqual(['A', 'A', 'B']);
+    expect(heard).toEqual(['chat', 'chat']);
   });
 
   it('opens the map with M, once per press', () => {
@@ -56,13 +64,20 @@ describe('the keyboard', () => {
     expect(heard).toEqual(['map']);
   });
 
-  it('leaves the browser its shortcuts, fields their typing, and buttons their Enter', () => {
+  it('leaves the browser its shortcuts, fields their typing, and buttons their Enter and Space', () => {
     expect(keys.down('KeyW', 'page', false, true)).toBe(false);
     expect(keys.down('KeyW', 'text')).toBe(false);
-    expect(keys.down('Backspace', 'text')).toBe(false);
+    expect(keys.down('KeyE', 'text')).toBe(false);
+    expect(keys.down('Enter', 'text')).toBe(false);
     expect(keys.down('Enter', 'control')).toBe(false);
-    expect(keys.down('KeyQ', 'page')).toBe(false);
+    expect(keys.down('Space', 'control')).toBe(false);
+    expect(keys.down('Backspace', 'page')).toBe(false);
+    expect(keys.down('KeyZ', 'page')).toBe(false);
     expect(heard).toEqual([]);
+    // On a focused button, E and Q are still the game's: the button has nothing to do with them.
+    keys.down('KeyE', 'control');
+    keys.down('Escape', 'control');
+    expect(heard).toEqual(['A', 'B']);
   });
 
   it('lets everything go when the window loses focus', () => {

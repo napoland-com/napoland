@@ -1,8 +1,9 @@
 /**
- * The keyboard, on a computer: WASD and the arrow keys are the joystick, Enter is A and Backspace is
- * B, and M opens the map of where you are. Keys are read by where they sit (`KeyboardEvent.code`),
- * so WASD is the same four keys on any layout (ZQSD on a French one). Nothing ever needs the
- * keyboard: the game stays mobile-first.
+ * The keyboard, on a computer: WASD and the arrow keys are the joystick, E or Space is A, Q or Escape
+ * is B, Enter opens the chat, as in Metin2 (in the chat's line Enter sends, and on an empty line closes
+ * the chat again: hud.ts), and M opens the map of where you are. Keys are read by where they sit
+ * (`KeyboardEvent.code`), so WASD and the Q and E beside it are the same keys on any layout (ZQSD, A
+ * and E on a French one). Nothing ever needs the keyboard: the game stays mobile-first.
  *
  * The keys feed the same handlers as the stick and the buttons, so a direction keeps the stick's rules
  * (a quick tap on a new direction turns in place, holding walks). With several direction keys held,
@@ -17,14 +18,19 @@ const DIRS: Readonly<Record<string, Dir>> = {
   KeyA: 'left', ArrowLeft: 'left',
   KeyD: 'right', ArrowRight: 'right',
 };
-const A_KEYS = new Set(['Enter', 'NumpadEnter']);
-const B_KEYS = new Set(['Backspace']);
+const A_KEYS = new Set(['KeyE', 'Space']);
+const B_KEYS = new Set(['KeyQ', 'Escape']);
+const CHAT_KEYS = new Set(['Enter', 'NumpadEnter']);
 const MAP_KEYS = new Set(['KeyM']);
+/** The keys a focused button answers on its own: it presses itself. */
+const PRESS_KEYS = new Set(['Enter', 'NumpadEnter', 'Space']);
 
 export interface KeyHandlers {
   pad(dir: Dir | null): void;
   a(): void;
   b(): void;
+  /** Enter: the chat, with its line ready to type in. */
+  openChat(): void;
   /** M: the paper map of the area you are in. */
   openMap(): void;
 }
@@ -41,8 +47,8 @@ export class Keys {
 
   /**
    * A key went down. Returns true when the game used it (the caller then stops the page from
-   * scrolling, or from going back on Backspace). Ignored with Ctrl, Alt or Cmd held (the browser's
-   * own shortcuts), and while typing in a field.
+   * scrolling on Space). Ignored with Ctrl, Alt or Cmd held (the browser's own shortcuts), and while
+   * typing in a field.
    */
   down(code: string, target: KeyTarget, repeat = false, modified = false): boolean {
     if (modified || target === 'text') return false;
@@ -52,21 +58,12 @@ export class Keys {
       this.update();
       return true;
     }
-    // A focused button answers Enter on its own; a held key repeating is not a new press.
-    if (A_KEYS.has(code)) {
-      if (target === 'control') return false;
-      if (!repeat) this.h.a();
-      return true;
-    }
-    if (B_KEYS.has(code)) {
-      if (!repeat) this.h.b();
-      return true;
-    }
-    if (MAP_KEYS.has(code)) {
-      if (!repeat) this.h.openMap();
-      return true;
-    }
-    return false;
+    // A focused button answers Enter and Space on its own; a held key repeating is not a new press.
+    if (target === 'control' && PRESS_KEYS.has(code)) return false;
+    const press = A_KEYS.has(code) ? this.h.a : B_KEYS.has(code) ? this.h.b : CHAT_KEYS.has(code) ? this.h.openChat : MAP_KEYS.has(code) ? this.h.openMap : undefined;
+    if (!press) return false;
+    if (!repeat) press.call(this.h);
+    return true;
   }
 
   up(code: string) {

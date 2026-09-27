@@ -90,6 +90,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
    start on them, and a thumb on the stick plus one on A is a pinch to iPhone Safari (zoom.ts). */
 .hud .menu-btn, .hud .ab button { touch-action: none; }
 .hud .menu-btn { position: absolute; right: calc(var(--pad) + var(--safe-r)); top: calc(var(--pad) + var(--safe-t)); width: var(--btn); height: var(--btn); border-radius: 12px; }
+/* The chat, one tap away beside the menu (Enter on a keyboard). */
+.hud .chat-btn { right: calc(var(--pad) * 1.6 + var(--btn) + var(--safe-r)); }
 .menu-panel { position: absolute; right: calc(var(--pad) + var(--safe-r)); top: calc(var(--pad) * 1.6 + var(--btn) + var(--safe-t)); display: grid; gap: calc(var(--u) * .45); padding: calc(var(--u) * .7); min-width: calc(var(--u) * 13); pointer-events: auto; }
 .menu-panel[hidden] { display: none; }
 .hud .menu-panel button { display: block; width: 100%; text-align: left; padding: .5em .9em; border-radius: 8px; border: 1px solid #3e4658; background: #1c222c; box-shadow: none; font-size: calc(var(--u) * 1.15); font-weight: 600; }
