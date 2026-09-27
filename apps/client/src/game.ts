@@ -16,7 +16,7 @@
 import {
   STEP_MS, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, stepTarget, surgeFront, DIR_VEC,
   type BagSlot, type BodyView, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
-  type Gear, type MarkView, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type SurgeView, type TileMap,
+  type Gear, type MarkView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type SurgeView, type TileMap,
   type FlashKind, type FlashView, type StormView,
 } from '@napoland/shared';
 import { countOf, lookOf, refusalText, useText, type Items } from './items';
@@ -148,7 +148,7 @@ export class Game {
   /** Flashes on this map, until when they are over (our clock). */
   flashes: Array<{ x: number; y: number; kind: FlashKind; until: number }> = [];
   /** How wet you are, your load and whether something clings to you, as told and when. */
-  body: { view: BodyView; at: number } = { view: { wet: 0, wetRate: 0, load: 0, hitched: false }, at: 0 };
+  body: { view: BodyView; at: number } = { view: { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} }, at: 0 };
   /** The Old Stone in town, and your counts toward feats. */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
@@ -158,6 +158,8 @@ export class Game {
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
   bench: { x: number; y: number; stash: BagSlot[] } | null = null;
+  /** The quirks of what everyone on this map wears, by player id: some show in the world. */
+  quirks = new Map<string, Quirk[]>();
   /** What everyone on this map wears, by player id (you too). */
   gear = new Map<string, Gear>();
   /** Feats just earned, for the interface to announce (it empties the list). */
@@ -378,6 +380,10 @@ export class Game {
       }
       case 'gear':
         this.gear.set(msg.id, msg.gear);
+        this.quirks.set(msg.id, msg.quirks);
+        break;
+      case 'mended':
+        this.floatOverMe(`Mended: ${this.items.get(msg.item).name}`, GAIN);
         break;
       case 'bench': {
         const b = this.benching;
@@ -396,6 +402,7 @@ export class Game {
       case 'join':
         this.players.set(msg.player.id, this.mover(msg.player));
         this.gear.set(msg.player.id, msg.player.gear ?? {});
+        this.quirks.set(msg.player.id, msg.player.quirks ?? []);
         break;
       case 'leave':
         this.players.delete(msg.id);
@@ -497,6 +504,7 @@ export class Game {
     this.players.clear();
     for (const p of players) this.players.set(p.id, this.mover(p));
     this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
+    this.quirks = new Map(players.map(p => [p.id, p.quirks ?? []]));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
     this.lootChanges++;
@@ -605,9 +613,16 @@ export class Game {
   }
 
   /** At the open chest: put on a piece of gear from the stash, or take off what a slot wears. */
-  equip(item: string) {
+  /** Puts on the `n`th piece of `item` in the stash (their order in the chest). */
+  equip(item: string, n = 0) {
     const c = this.chest;
-    if (c && this.online) this.send({ t: 'equip', x: c.x, y: c.y, item });
+    if (c && this.online) this.send({ t: 'equip', x: c.x, y: c.y, item, ...(n ? { n } : {}) });
+  }
+
+  /** Mends what you wear in `slot`, at the open workbench. */
+  mend(slot: Slot) {
+    const b = this.bench;
+    if (b && this.online) this.send({ t: 'mend', x: b.x, y: b.y, slot });
   }
 
   unequip(slot: Slot) {
@@ -628,6 +643,11 @@ export class Game {
   /** What you wear. */
   get myGear(): Gear {
     return (this.meId && this.gear.get(this.meId)) || {};
+  }
+
+  /** What you wear, piece by piece (condition and quirk), as the server last told it. */
+  get myWorn(): Worn {
+    return this.body.view.worn ?? {};
   }
 
   /**

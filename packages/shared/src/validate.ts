@@ -2,7 +2,7 @@
  * Content checks for maps. Run on every change (npm run validate) so a broken map never ships.
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
-import { ELEMENTS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
+import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
 import { findTiles, type ItemsData } from './items';
 import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
@@ -247,6 +247,23 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!def) err(`the starter gear ${g} is not an item`);
     else if (def.kind !== 'gear') err(`the starter gear ${g} is not gear`);
   }
+  for (const [tier, s] of Object.entries(data.wear ?? {})) {
+    if (!TIERS.includes(tier as never)) err(`wear: ${tier} is not a tier`);
+    else if (!(typeof s === 'number' && s > 0)) err(`wear: ${tier} wears out after some seconds above 0`);
+  }
+  for (const [tier, cost] of Object.entries(data.mend ?? {})) {
+    if (!TIERS.includes(tier as never)) err(`mend: ${tier} is not a tier`);
+    if (!cost?.length) err(`mend: mending ${tier} gear costs nothing`);
+    for (const n of cost ?? []) {
+      if (!ids.has(n.item)) err(`mend: ${tier} needs ${n.item}, which is not an item`);
+      if (!(Number.isInteger(n.count) && n.count >= 1)) err(`mend: each need is a whole number from 1`);
+    }
+  }
+  for (const q of data.quirks ?? []) {
+    if (!QUIRKS.includes(q.id)) err(`quirk ${q.id}: the game knows ${QUIRKS.join(', ')}`);
+    if (!q.name?.trim() || !q.text?.trim()) err(`quirk ${q.id} needs a name and a text`);
+  }
+  if (data.items.some(i => i.tier === 'anomalous')) for (const q of QUIRKS) if (!data.quirks?.some(d => d.id === q)) err(`quirk ${q} has no name and text`);
   const recipeIds = new Set<string>();
   for (const r of data.recipes ?? []) {
     const name = `recipe ${JSON.stringify(r.id)}`;

@@ -55,7 +55,7 @@ describe.skipIf(!url)('PgStorage', () => {
   });
 
   it('applies each migration once', async () => {
-    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql'];
+    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '009_worn.sql'];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
     await storage.init();
@@ -194,6 +194,17 @@ describe.skipIf(!url)('PgStorage', () => {
     const dressed = { ...plain, gear: { shirt: 'raincoat', bag: 'hiking-pack' } };
     await storage.save(dressed);
     expect(await storage.findByTokenHash(plain.tokenHash!)).toEqual(dressed);
+  });
+
+  it('keeps each piece: how worn what they wear is, its quirk, and the pieces in the stash', async () => {
+    const rec = player('Pg Worn');
+    expect(await storage.create(rec)).toBe(true);
+    const worn = {
+      ...rec, gear: { shirt: 'raincoat', cap: 'shard-cap' }, worn: { shirt: { cond: 0.35 }, cap: { cond: 1, quirk: 'hum' as const } },
+      stash: { items: { raincoat: 2 }, out: {}, pieces: { raincoat: [{ cond: 1 }, { cond: 0.2 }] } },
+    };
+    await storage.save(worn);
+    expect(await storage.findByTokenHash(rec.tokenHash!)).toEqual(worn);
   });
 
   it('keeps XP and the stash, with what was taken out of it', async () => {

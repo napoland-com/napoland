@@ -137,6 +137,13 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .slot svg { width: 72%; height: 72%; }
 .hud .slot[data-empty="true"] { background: #131820; box-shadow: inset 0 0 0 2px #232a36; cursor: default; }
 .hud .slot[data-picked] { background: #262d3a; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
+/* How much of a piece is left, along the bottom of its slot; red when it hardly protects any more. A quirk shows as a star. */
+.slot .cond { position: absolute; left: 12%; right: 12%; bottom: 7%; height: 4px; border-radius: 2px; background: rgba(0, 0, 0, .55); overflow: hidden; }
+.slot .cond i { position: absolute; inset: 0; background: #8fd98a; transform-origin: left; }
+.slot .cond[data-low="true"] i { background: #ff6b4a; }
+/* In the Wearing row the slot's name is along the bottom: the bar goes along the top, clear of a quirk's star. */
+.grid.wear .slot .cond { top: 7%; bottom: auto; right: 32%; }
+.slot .quirk { position: absolute; right: 8%; top: 5%; font-style: normal; font-size: calc(var(--u) * 1.05); color: #c79bff; text-shadow: 0 0 6px rgba(199, 155, 255, .8); }
 .slot .n { position: absolute; right: 8%; bottom: 5%; font-size: calc(var(--u) * 1.1); font-weight: 700; line-height: 1; color: #f1ece0; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; font-variant-numeric: tabular-nums; }
 /* Under the slots: what the chosen one holds and what can be done with it, or a hint. */
 .sheet .detail { flex: none; min-height: var(--detail-h); display: flex; flex-direction: column; gap: calc(var(--u) * .7); }
