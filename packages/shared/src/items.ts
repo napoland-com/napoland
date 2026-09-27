@@ -77,12 +77,12 @@ export interface FindRule {
   respawn: [number, number];
   /**
    * Only then, and gone as soon as it is over: while the region is restless before a surge (and
-   * during it), or during an aurora night. Left out: always.
+   * during it), during an aurora night, or while a storm blows over the region. Left out: always.
    */
   when?: FindWhen;
 }
 
-export type FindWhen = 'unstable' | 'aurora';
+export type FindWhen = 'unstable' | 'aurora' | 'storm';
 
 export interface ItemsData {
   /** Bump when items or finds change; a client with another version reloads. */

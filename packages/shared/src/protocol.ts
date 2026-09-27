@@ -8,10 +8,10 @@ import type { Stats } from './feats';
 import type { Gear } from './gear';
 import type { BagSlot } from './items';
 import type { ProgressView } from './progress';
-import type { SurgeView } from './sky';
+import type { FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -229,12 +229,14 @@ export type ServerMsg =
       weather: Weather;
       energy: EnergyView;
       bag: BagSlot[];
-      /** Your map's fires, marks, creatures, flares and surge clock (null: a map that never surges). */
+      /** Your map's fires, marks, creatures, flares, flashes, and surge and storm clocks (null: a map that never surges, or never storms). */
       fires: FireView[];
       marks: MarkView[];
       creatures: CreatureView[];
       flares: FlareView[];
+      flashes: FlashView[];
       surge: SurgeView | null;
+      storm: StormView | null;
       body: BodyView;
       stone: StoneView;
       /** What you did so far that counts toward feats, and the feats earned (feats.ts). */
@@ -251,7 +253,7 @@ export type ServerMsg =
    */
   | {
       t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; finds: FindView[]; drops: DropView[]; reason: 'exit' | 'collapse';
-      fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; surge: SurgeView | null; stats: Stats;
+      fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
     }
   /** Your energy and body, sent when a rate changes and every few seconds (ENERGY_SYNC_MS). */
   | { t: 'energy'; energy: EnergyView; body: BodyView }
@@ -277,6 +279,10 @@ export type ServerMsg =
   | { t: 'flare'; flare: FlareView }
   /** Your map's surge clock moved to another phase. */
   | { t: 'surge'; surge: SurgeView }
+  /** Your map's storm clock moved to another phase. */
+  | { t: 'storm'; storm: StormView }
+  /** On your map: a patch of ground started to glow. */
+  | { t: 'flash'; flash: FlashView }
   /** The Old Stone changed (everyone hears it). */
   | { t: 'stone'; stone: StoneView }
   /** The notice board, read: one line per thing worth knowing. */

@@ -74,6 +74,7 @@ const showStatus = () => {
   hud.setStatus(statusView({
     energy: game.energy(now), body: game.bodyNow(now), surge: game.surgeNow(now), caught: game.caught(now), stone: game.stone, stats: game.stats, bag: game.bag, items,
     progress: game.progress, resists: resistText(game.myGear, items),
+    storm: game.stormNow(now), flash: game.flashed(now), weather, wilds: game.map.data.kind === 'wilds',
   }));
 };
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
@@ -446,6 +447,8 @@ function frame(now: number) {
   const surge = game.surgeNow(now), caught = game.caught(now);
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
   hud.setSurge(surge, caught);
+  view.setStorm(game.stormNow(now)?.phase === 'storm');
+  view.setFlashes(game.flashesNow(now));
   const body = game.online ? game.bodyNow(now) : null;
   hud.setBody(body);
   if (body) hud.setLoad(body.load);

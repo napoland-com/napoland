@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -26,6 +26,7 @@
     {"id":"lined-pants","name":"Lined pants","kind":"gear","stack":1,"slot":"pants","tier":"sturdy","color":"#4a5a3a","weight":0.6,"resist":{"cold":0.15,"wind":0.1},"text":"Canvas pants lined with blanket. Cold bites 15% less, rain soaks you 10% slower."},
     {"id":"rubber-boots","name":"Rubber boots","kind":"gear","stack":1,"slot":"shoes","tier":"sturdy","color":"#2f4f3a","weight":0.9,"resist":{"electricity":0.2,"wind":0.05},"text":"Tall rubber boots. They keep your feet dry and take a fifth of the sting out of electricity."},
     {"id":"hiking-pack","name":"Hiking pack","kind":"gear","stack":1,"slot":"bag","tier":"sturdy","color":"#7a4a2a","weight":1.0,"bag":12,"text":"A hiking pack with side pockets. Twelve things fit in it."},
+    {"id":"welding-gloves","name":"Welding gloves","kind":"gear","stack":1,"slot":"gloves","tier":"sturdy","color":"#b5793e","weight":0.4,"resist":{"heat":0.35},"text":"Thick leather gloves, scorched at the fingertips. A fire flash burns a third less."},
     {"id":"lead-cap","name":"Lead-lined cap","kind":"gear","stack":1,"slot":"cap","tier":"rugged","color":"#7f878c","weight":0.8,"resist":{"radiation":0.35,"cold":0.05},"text":"A cap with lead sewn into its lining. Heavy, but it takes a third of the glow out of the anomalies."},
     {"id":"storm-coat","name":"Storm coat","kind":"gear","stack":1,"slot":"shirt","tier":"rugged","color":"#2e5a8a","weight":1.2,"resist":{"wind":0.45,"cold":0.25,"electricity":0.1},"bonus":5,"text":"A long waxed coat with copper stitched through the seams. It keeps out rain, cold and a little lightning, and gives you 5 more energy."},
     {"id":"insulated-gloves","name":"Insulated gloves","kind":"gear","stack":1,"slot":"gloves","tier":"rugged","color":"#3a3a3a","weight":0.3,"resist":{"electricity":0.35,"cold":0.1},"text":"Lineman’s gloves wrapped in copper-threaded cloth. Electricity stings a third less."},
@@ -46,6 +47,7 @@
     {"item":"cloth","map":"near-woods-end-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]},
     {"item":"shard","map":"near-woods","steps":[95,999],"count":2,"respawn":[1800,3600]},
     {"item":"shard","map":"near-woods","steps":[70,999],"count":3,"respawn":[60,120],"when":"unstable"},
+    {"item":"shard","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"steps":[30,999],"count":2,"respawn":[60,120],"when":"storm"},
     {"item":"strange","map":"near-woods","steps":[80,999],"count":1,"respawn":[1800,3600]},
     {"item":"strange","map":"near-woods","steps":[60,999],"count":2,"respawn":[120,240],"when":"unstable"},
     {"item":"thermos","map":"near-woods-old-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
@@ -61,6 +63,7 @@
     {"id":"lined-pants","make":"lined-pants","needs":[{"item":"cloth","count":8},{"item":"scrap","count":1}]},
     {"id":"rubber-boots","make":"rubber-boots","needs":[{"item":"resin","count":8},{"item":"scrap","count":2}]},
     {"id":"hiking-pack","make":"hiking-pack","needs":[{"item":"cloth","count":10},{"item":"scrap","count":4},{"item":"wire","count":3}]},
+    {"id":"welding-gloves","make":"welding-gloves","needs":[{"item":"cloth","count":4},{"item":"scrap","count":2},{"item":"resin","count":2}]},
     {"id":"lead-cap","make":"lead-cap","needs":[{"item":"scrap","count":8},{"item":"shard","count":2}]},
     {"id":"storm-coat","make":"storm-coat","needs":[{"item":"cloth","count":12},{"item":"wire","count":4},{"item":"resin","count":4},{"item":"shard","count":1}]},
     {"id":"insulated-gloves","make":"insulated-gloves","needs":[{"item":"wire","count":4},{"item":"resin","count":6},{"item":"cloth","count":4}]},

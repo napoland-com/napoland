@@ -10,7 +10,9 @@
  * numbers are in shared/energy.ts). At zero a player collapses and wakes up at home.
  *
  * Out there more wears you down (energy.ts): a heavy bag, rain soaking you, a surge sweeping the
- * region (its clock is the wall clock's, sky.ts), a hitchhiker clinging to you at night. Fires in the
+ * region (its clock is the wall clock's, sky.ts), a storm blowing over it (a clock like a surge's), a
+ * flash discharging where you stand (started near someone out there, glowing first so they can step
+ * out of it), a hitchhiker clinging to you at night. Fires in the
  * wilds burn down unless fed (fires.ts). Watchers roam some regions: they come closer only while
  * nobody on the map looks their way, and one that reaches you takes energy and something you carry.
  * A flare keeps them off and shakes off a hitchhiker. Anyone can paint arrows on the ground with a
@@ -38,6 +40,8 @@ import {
   STATS,
   STEP_MS,
   SURGE_DRAIN,
+  FLASH_BURST_S,
+  FLASH_GLOW_S,
   addAllToBag,
   addToBag,
   bagLoad,
@@ -46,6 +50,7 @@ import {
   charmsIn,
   energyRate,
   featsOf,
+  flashHits,
   findTiles,
   gearEnergy,
   halfOf,
@@ -63,6 +68,7 @@ import {
   usedUp,
   reveal,
   stepTarget,
+  stormAt,
   surgeAt,
   surgeFront,
   takeFromBag,
@@ -80,6 +86,8 @@ import {
   type FindWhen,
   type FireView,
   type FlareView,
+  type FlashKind,
+  type FlashView,
   type Gear,
   type ItemDef,
   type ItemsData,
@@ -94,6 +102,8 @@ import {
   type ServerMsg,
   type Stats,
   type StoneView,
+  type StormPhase,
+  type StormView,
   type SurgePhase,
   type SurgeView,
   type Slot,
@@ -178,7 +188,9 @@ export interface Scene {
   marks: MarkView[];
   creatures: CreatureView[];
   flares: FlareView[];
+  flashes: FlashView[];
   surge: SurgeView | null;
+  storm: StormView | null;
 }
 
 /** What a player who joins is told in the welcome: where they are, who and what is there, their energy, body and bag. */
@@ -303,6 +315,15 @@ interface Watcher {
   lairs: number[];
 }
 
+interface Flash {
+  map: string;
+  x: number;
+  y: number;
+  kind: FlashKind;
+  /** Game time when it is over; it discharges in its last FLASH_BURST_S. */
+  until: number;
+}
+
 interface Flare {
   map: string;
   x: number;
@@ -315,6 +336,7 @@ const view = (r: PlayerRecord): PlayerView => ({ id: r.id, name: r.name, x: r.x,
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+const flashView = (f: Flash, now: number): FlashView => ({ x: f.x, y: f.y, kind: f.kind, left: round((f.until - now) / 1000, 1) });
 const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), max: p.max, rate: round(p.rate, 3) });
 const bodyView = (p: Online): BodyView => ({ wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched });
 /**
@@ -407,6 +429,13 @@ export class World {
   private markFadeAt = Infinity;
   /** Each surging map's phase as its players last heard it. */
   private readonly surgePhase = new Map<string, SurgePhase>();
+  /** The map each inside's door opens onto: its storm is the one heard drumming on the roof. */
+  private readonly around = new Map<string, TileMap>();
+  /** Each storming map's phase (an inside's: the one around it) as its players last heard it. */
+  private readonly stormPhase = new Map<string, StormPhase>();
+  private flashes: Flash[] = [];
+  /** When each map with flashes starts its next one (game time). */
+  private readonly nextFlash = new Map<string, number>();
   private readonly watchers = new Map<string, Watcher[]>();
   private nextCreatureId = 1;
   private flares: Flare[] = [];
@@ -435,7 +464,7 @@ export class World {
     }
     for (const m of this.maps.values()) {
       if (m.data.kind === 'inside') continue;
-      for (const e of m.data.exits) if (this.maps.get(e.to)!.data.kind === 'inside') this.outside.set(e.to, m.data.kind);
+      for (const e of m.data.exits) if (this.maps.get(e.to)!.data.kind === 'inside') { this.outside.set(e.to, m.data.kind); this.around.set(e.to, m); }
     }
     const home = this.maps.get(homeId);
     if (!home) throw new Error(`the home map ${homeId} does not exist`);
@@ -539,7 +568,9 @@ export class World {
       marks: [...(this.markTiles.get(mapId)?.values() ?? [])].map(markView),
       creatures: (this.watchers.get(mapId) ?? []).filter(w => w.awake).map(creatureView),
       flares: this.flares.filter(f => f.map === mapId && f.until > now).map(f => ({ x: f.x, y: f.y, left: round((f.until - now) / 1000, 1) })),
+      flashes: this.flashes.filter(f => f.map === mapId && f.until > now).map(f => flashView(f, now)),
       surge: map ? this.surgeOf(map, now) : null,
+      storm: map ? this.stormOf(map, now) : null,
     };
   }
 
@@ -898,6 +929,8 @@ export class World {
     const wall = now + this.epochOffset;
     if (this.cycle) this.setWeather(weatherAt(wall).weather, now);
     this.moveSurges(now);
+    this.moveStorms(now);
+    this.startFlashes(now);
     const wasAwake = this.stoneAwake;
     this.burnStone(now);
     if (wasAwake && !this.stoneAwake) this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
@@ -914,6 +947,7 @@ export class World {
     }
     this.walkWatchers(now);
     if (this.flares.length) this.flares = this.flares.filter(f => f.until > now);
+    if (this.flashes.length) this.flashes = this.flashes.filter(f => f.until > now);
     for (const [id, readyAt] of this.resting) if (readyAt <= now) this.resting.delete(id);
     this.fadePiles(now);
     this.fadeMarks(now);
@@ -1092,6 +1126,7 @@ export class World {
     p.slots = bagSlotsOf(p.rec.gear ?? {}, this.items);
     const resist = resistOf(p.rec.gear ?? {}, this.items);
     const warmth = p.map.warm(x, y) ? this.fires.warmth(p.map, x, y, now) : 0;
+    const storm = this.stormOf(p.map, now)?.phase === 'storm';
     p.rate = energyRate(p.map, x, y, this.sky, {
       warmth: warmth * p.mods.warmth,
       wet: p.rec.wet,
@@ -1100,10 +1135,12 @@ export class World {
       // An awake Old Stone takes half the edge off every surge.
       surgeDrain: this.stoneAwake ? 1 + (SURGE_DRAIN - 1) / 2 : SURGE_DRAIN,
       hitched: p.hitched,
+      storm,
+      flash: this.flashes.find(f => f.map === p.map.data.id && flashHits(flashView(f, now), x, y))?.kind,
       resist,
     });
     // Wind resistance (a raincoat) keeps the rain out.
-    p.wetRate = wetRate(p.map.data.kind, this.sky, warmth > 0, p.mods.wetting * (1 - resist.wind));
+    p.wetRate = wetRate(p.map.data.kind, this.sky, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
   }
 
   /**
@@ -1182,6 +1219,59 @@ export class World {
     }
     // The first tick also opens aurora finds if the world starts on an aurora night.
     for (const rule of this.rules) if (rule.when === 'aurora' && rule.open !== (this.sky === 'aurora')) this.openRule(rule, this.sky === 'aurora', now);
+  }
+
+  /** A region's storm clock now (for an inside, the region around it), or null for a map that never storms. */
+  private stormOf(map: TileMap, now: number): StormView | null {
+    const out = map.data.kind === 'inside' ? this.around.get(map.data.id) : map;
+    const rule = out?.data.kind === 'wilds' ? out.data.storm : undefined;
+    if (!rule) return null;
+    const s = stormAt(rule, now + this.epochOffset);
+    return { phase: s.phase, left: round(s.left, 1) };
+  }
+
+  /** Tells each storming map when its phase changes, and grows (or clears away) the finds a storm leaves. */
+  private moveStorms(now: number): void {
+    for (const map of this.maps.values()) {
+      const s = this.stormOf(map, now);
+      if (!s || this.stormPhase.get(map.data.id) === s.phase) continue;
+      const first = !this.stormPhase.has(map.data.id);
+      this.stormPhase.set(map.data.id, s.phase);
+      if (!first) this.toMap(map.data.id, { t: 'storm', storm: s });
+      for (const rule of this.rules) if (rule.when === 'storm' && rule.map === map) this.openRule(rule, s.phase === 'storm', now);
+    }
+  }
+
+  /**
+   * Every so often on each map with flashes, a patch of ground starts to glow near someone out in the
+   * open at the rule's distance from home, often right under them: they have FLASH_GLOW_S to step out.
+   */
+  private startFlashes(now: number): void {
+    for (const map of this.maps.values()) {
+      const rule = map.data.kind === 'wilds' ? map.data.flashes : undefined;
+      if (!rule) continue;
+      const id = map.data.id, at = this.nextFlash.get(id);
+      if (at === undefined || now < at) {
+        if (at === undefined) this.nextFlash.set(id, now + rule.every * 1000);
+        continue;
+      }
+      this.nextFlash.set(id, now + rule.every * 1000);
+      const out = [...this.onMap.get(id)!].filter(p => {
+        const steps = p.map.homeSteps(p.rec.x, p.rec.y);
+        return steps >= rule.steps[0] && steps <= rule.steps[1] && this.exposed(p, now);
+      });
+      const who = out[Math.floor(this.rng() * out.length)];
+      if (!who) continue;
+      const near: Array<[number, number]> = [];
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const x = who.rec.x + dx, y = who.rec.y + dy;
+        if (map.walkable(x, y) && !map.lit(x, y) && !map.warm(x, y) && map.homeSteps(x, y) >= 0) near.push([x, y]);
+      }
+      const [x, y] = near[Math.floor(this.rng() * near.length)] ?? [who.rec.x, who.rec.y];
+      const flash: Flash = { map: id, x, y, kind: this.rng() < 0.5 ? 'spark' : 'fire', until: now + (FLASH_GLOW_S + FLASH_BURST_S) * 1000 };
+      this.flashes.push(flash);
+      this.toMap(id, { t: 'flash', flash: flashView(flash, now) });
+    }
   }
 
   /** Awake, the Old Stone burns one shard every STONE_SHARD_S; at none left it sleeps. */
@@ -1411,6 +1501,13 @@ export class World {
       if (s.phase === 'surge') lines.push(`${map.data.name}: a surge is on, ${about(s.left)} more. Get to a light.`);
       else if (s.phase === 'unstable') lines.push(`${map.data.name}: restless. A surge comes ${about(s.left)}.`);
       else lines.push(`${map.data.name}: calm. The next surge comes ${about(untilSurge(rule, s))}.`);
+    }
+    for (const map of this.maps.values()) {
+      const s = this.stormOf(map, now), rule = map.data.storm;
+      if (!s || !rule) continue;
+      if (s.phase === 'storm') lines.push(`${map.data.name}: a storm is on, ${about(s.left, true)} more. Get under a roof.`);
+      else if (s.phase === 'coming') lines.push(`${map.data.name}: a storm is coming ${about(s.left)}.`);
+      else lines.push(`${map.data.name}: clear. The next storm comes ${about(s.left + rule.warn)}.`);
     }
     const low: string[] = [], out: string[] = [];
     for (const f of this.fires.all()) {

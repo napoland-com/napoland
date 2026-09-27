@@ -7,6 +7,7 @@ import { findTiles, type ItemsData } from './items';
 import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
 import { Dir } from './protocol';
+import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
 
 export interface Problem {
   level: 'error' | 'warning';
@@ -102,6 +103,20 @@ export function validateMap(data: MapData): Problem[] {
     else if (r.unstable + r.surge >= r.every) err('surge: unstable and surge must leave calm time in every round');
     else if (r.sweep > r.surge) err('surge: the front must reach home (sweep) before the surge is over');
     if (r.offset !== undefined && !Number.isFinite(r.offset)) err('surge: offset is a number of seconds');
+  }
+  if (data.storm) {
+    const r = data.storm;
+    if (data.kind !== 'wilds') err('only the wilds storm');
+    const whole = (v: unknown) => Number.isInteger(v) && (v as number) > 0;
+    if (![r.every, r.warn, r.length].every(whole)) err('storm: every, warn and length are whole seconds above 0');
+    else if (r.warn + r.length >= r.every) err('storm: warn and length must leave clear time in every round');
+    if (r.offset !== undefined && !Number.isFinite(r.offset)) err('storm: offset is a number of seconds');
+  }
+  if (data.flashes) {
+    const f = data.flashes;
+    if (data.kind !== 'wilds') err('flashes happen only in the wilds');
+    if (!(Number.isFinite(f.every) && f.every > FLASH_GLOW_S + FLASH_BURST_S)) err('flashes: every must be longer than one flash');
+    if (!(f.steps?.length === 2 && f.steps[0] >= 0 && f.steps[0] <= f.steps[1])) err('flashes: steps is [nearest, farthest], from 0');
   }
   if (data.watchers) {
     const w = data.watchers;
@@ -263,8 +278,9 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (f.steps && !(f.steps.length === 2 && f.steps[0] >= 0 && f.steps[0] <= f.steps[1])) err(`${name}: steps is [nearest, farthest], from 0`);
     for (const k of f.on ?? []) if (!tileKinds.has(k)) err(`${name}: unknown tile kind ${k as TileKind}`);
     if (f.near && !(f.near.radius > 0 && f.near.kinds.length)) err(`${name}: near needs kinds and a radius above 0`);
-    if (f.when !== undefined && f.when !== 'unstable' && f.when !== 'aurora') err(`${name}: when is unstable or aurora`);
+    if (f.when !== undefined && f.when !== 'unstable' && f.when !== 'aurora' && f.when !== 'storm') err(`${name}: when is unstable, aurora or storm`);
     if (f.when === 'unstable' && !mapData.surge) err(`${name}: grows while the map is restless, but ${f.map} never surges`);
+    if (f.when === 'storm' && !mapData.storm) err(`${name}: grows during a storm, but ${f.map} never storms`);
     if (out.some(p => p.level === 'error' && p.message.startsWith(name))) return undefined;
     const room = findTiles(new TileMap(mapData), f).length;
     if (room < f.count) err(`${name}: only ${room} tiles fit the rule, fewer than count ${f.count}`);
