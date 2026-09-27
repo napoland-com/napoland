@@ -18,7 +18,7 @@ export type StoryEvent =
   | { store: true }
   /** Walked onto this map (through an exit or a door). */
   | { reach: string }
-  /** Fed a fire out in the wilds, or a shard to the Old Stone. */
+  /** Fed a fire out in the wilds (never one in town), or a shard to the Old Stone. */
   | { feed: 'fire' | 'stone' }
   /** Picked up a find of this item. */
   | { pick: string }

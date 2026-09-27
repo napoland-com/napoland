@@ -81,7 +81,7 @@ place({ kind: 'stone', x: STONE.x, y: STONE.y });
 const signs = [
   { x: 13, y: 37, text: ['Stonebrook. Pop. 23', 'Most people left after the lights started showing up in the woods.'] },
   { x: 28, y: 16, text: ['North: the Near Woods', 'Out there your energy drains, faster the deeper you go.', 'Only a fire brings it back. The old cabin\'s never goes out; feed the others.'] },
-  { x: 17, y: 10, text: ['The Old Stone', 'It hums at night, and shards break off it.', 'Bring the shards back to it. When it has enough, it wakes, and the surges out there grow gentler.'] },
+  { x: 17, y: 10, text: ['The Old Stone', 'It hums at night, and shards break off it. The stones deep in the woods pull them in.', 'Bring the shards back to it. When it has enough, it wakes, and the surges out there grow gentler.'] },
 ];
 for (const s of signs) place({ kind: 'sign', ...s });
 // The notice board, next to Mira: how things stand out there (the server writes it).
@@ -168,6 +168,19 @@ function round(v: number) { return Math.round(v * 1000) / 1000; }
     if (blocked[y]![x] || tile[y]![x] !== 'g') throw new Error(`the South Road's signpost needs open grass at ${x},${y}`);
   }
   place({ kind: 'sign', ...SOUTH, text: ['South: the South Road', 'NAPO\'s old grounds. Your energy drains out there too, faster the farther you go.', 'The bunker\'s fire never goes out; feed the others.'] });
+}
+
+// NAPO's evacuation notice, across the south road from the signpost: the way everyone left. Placed
+// last too, on grass with room in front to read it.
+{
+  const NOTICE = { x: 15, y: 38 };
+  for (const [x, y] of [[NOTICE.x, NOTICE.y], [NOTICE.x, NOTICE.y + 1]] as const) {
+    if (blocked[y]![x] || tile[y]![x] !== 'g') throw new Error(`NAPO's notice needs open grass at ${x},${y}`);
+  }
+  place({
+    kind: 'sign', ...NOTICE, style: 'napo',
+    text: ['NAPO NOTICE', 'By order of the Observatory, Stonebrook lies inside the Napoland Zone. All residents leave by the south road.', 'Take only what you can carry. Back in two weeks.'],
+  });
 }
 
 const map: MapData = {

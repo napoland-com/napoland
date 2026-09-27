@@ -494,6 +494,12 @@ describe('echoes and the notice board', () => {
     w.board('a', 0, 0, 0);
     expect(w.drain()).toEqual([]);
   });
+
+  it('the board calls a fire in the open by the name people give it', () => {
+    const w = world(fieldData(12, { objects: [{ kind: 'fireplace', x: 4, y: 4, name: 'the leavers\' camp' }] }), 'rain', {}, rec('a', 'town', 0, 5));
+    w.board('a', 0, 4, (FIRE_MAX_S / 2 + 1) * 1000);
+    expect(of(to(w.drain(), 'a'), 'board')[0]!.lines).toContain('Gone out: the leavers\' camp. Bring something that burns.');
+  });
 });
 
 describe('the day', () => {

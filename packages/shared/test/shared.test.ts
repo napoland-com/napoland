@@ -289,6 +289,20 @@ describe('what NAPO left behind', () => {
     expect(errorsWith({ kind: 'console', x: 3, y: 4, id: 'radio', name: 'Radio', text: ['A hum.'] })).toMatch(/console at 3,4: the tile in front/);
   });
 
+  it('wants each named place on the map, with a name of its own', () => {
+    const m = tinyMap();
+    m.places = [{ name: 'the ring', x: 1, y: 1 }, { name: 'the ring', x: 2, y: 2 }, { name: ' ', x: 0, y: 0 }, { name: 'far off', x: 99, y: 0 }];
+    const msgs = validateMap(m).filter(p => p.level === 'error').map(p => p.message).join('\n');
+    expect(msgs).toMatch(/two places are called the ring/);
+    expect(msgs).toMatch(/the place at 0,0 needs a name/);
+    expect(msgs).toMatch(/the place far off at 99,0 is not on the map/);
+  });
+
+  it('lets a fire in the open go by a name, if it says something', () => {
+    expect(errorsWith({ kind: 'fireplace', x: 0, y: 1, name: 'the leavers\' camp' })).toBe('');
+    expect(errorsWith({ kind: 'fireplace', x: 0, y: 1, name: ' ' })).toMatch(/fireplace at 0,1: a name says something, or is left out/);
+  });
+
   it('builds cabins 3 by 2, and only NAPO builds bigger', () => {
     // 4 wide from 0,0: the door is still at 2,1, the tiny house's way in.
     const wide = { ...cabin(), x: 0, w: 4 };

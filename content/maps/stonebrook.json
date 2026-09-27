@@ -118,7 +118,7 @@
     {"kind":"stone","x":15,"y":8},
     {"kind":"sign","x":13,"y":37,"text":["Stonebrook. Pop. 23","Most people left after the lights started showing up in the woods."]},
     {"kind":"sign","x":28,"y":16,"text":["North: the Near Woods","Out there your energy drains, faster the deeper you go.","Only a fire brings it back. The old cabin's never goes out; feed the others."]},
-    {"kind":"sign","x":17,"y":10,"text":["The Old Stone","It hums at night, and shards break off it.","Bring the shards back to it. When it has enough, it wakes, and the surges out there grow gentler."]},
+    {"kind":"sign","x":17,"y":10,"text":["The Old Stone","It hums at night, and shards break off it. The stones deep in the woods pull them in.","Bring the shards back to it. When it has enough, it wakes, and the surges out there grow gentler."]},
     {"kind":"board","x":12,"y":23},
     {"kind":"lamp","x":10,"y":22},
     {"kind":"lamp","x":16,"y":28},
@@ -790,6 +790,7 @@
     {"kind":"tree","x":3,"y":35,"s":1.333,"v":0.693},
     {"kind":"tree","x":41,"y":36,"s":1.131,"v":0.243},
     {"kind":"tree","x":41,"y":39,"s":1.359,"v":0.562},
-    {"kind":"sign","x":10,"y":38,"text":["South: the South Road","NAPO's old grounds. Your energy drains out there too, faster the farther you go.","The bunker's fire never goes out; feed the others."]}
+    {"kind":"sign","x":10,"y":38,"text":["South: the South Road","NAPO's old grounds. Your energy drains out there too, faster the farther you go.","The bunker's fire never goes out; feed the others."]},
+    {"kind":"sign","x":15,"y":38,"style":"napo","text":["NAPO NOTICE","By order of the Observatory, Stonebrook lies inside the Napoland Zone. All residents leave by the south road.","Take only what you can carry. Back in two weeks."]}
   ]
 }

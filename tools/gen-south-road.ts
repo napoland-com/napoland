@@ -285,7 +285,7 @@ for (const [x, y] of lamps) must({ kind: 'lamp', x, y });
 
 // The camp's fire, out in the open: it burns down unless someone feeds it.
 const CAMP: P = [22, 22];
-must({ kind: 'fireplace', x: CAMP[0], y: CAMP[1] });
+must({ kind: 'fireplace', x: CAMP[0], y: CAMP[1], name: 'the leavers\' camp' });
 
 // What people left: the cars on the shoulders, NAPO's van in the yard, its trucks at the checkpoint,
 // the one parked across the road behind the barrier; barrels and crates of NAPO equipment.
@@ -397,6 +397,11 @@ const map: MapData = {
   spawn: { x: 35, y: 2, dir: 'down' },
   exits: [EXIT, ...doors],
   objects,
+  // What the paper map names, besides NAPO's buildings and the way home.
+  places: [
+    { name: 'the leavers\' camp', x: CAMP[0], y: CAMP[1] }, { name: 'the Tower', x: 51, y: 47 }, { name: 'the sinks', x: 15, y: 64 },
+    { name: 'field site', x: 51, y: 71 }, { name: 'quarantine line', x: 35, y: 88 },
+  ],
 };
 
 // One row or object per line, so map changes show up as small, readable diffs.
@@ -409,7 +414,8 @@ const json = [
   '  "levels": [', map.levels.map(r => `    ${JSON.stringify(r)}`).join(',\n'), '  ],',
   `  "spawn": ${JSON.stringify(map.spawn)},`,
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
-  '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ]',
+  '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
+  '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ]',
   '}',
   '',
 ].join('\n');

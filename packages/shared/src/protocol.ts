@@ -11,7 +11,7 @@ import type { ProgressView } from './progress';
 import type { FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 13;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;

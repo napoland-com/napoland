@@ -20,6 +20,8 @@ export interface Fire {
   tended: boolean;
   /** Game time when it goes out (wild fires only). */
   outAt: number;
+  /** What people call a fire in the open (map.ts); none: it goes by its room or its region. */
+  name?: string;
 }
 
 export class Fires {
@@ -39,7 +41,7 @@ export class Fires {
       for (const o of map.data.objects) {
         if (o.kind !== 'fireplace') continue;
         const tended = o.tended === true || !wild(map);
-        const fire: Fire = { map, x: o.x, y: o.y, tended, outAt: tended ? Infinity : now + (0.5 + rng() * 0.5) * FIRE_MAX_S * 1000 };
+        const fire: Fire = { map, x: o.x, y: o.y, tended, outAt: tended ? Infinity : now + (0.5 + rng() * 0.5) * FIRE_MAX_S * 1000, ...(o.name ? { name: o.name } : {}) };
         list.push(fire);
         for (let y = o.y - r; y <= o.y + r; y++) for (let x = o.x - r; x <= o.x + r; x++) {
           if (!map.inside(x, y) || Math.hypot(x - o.x, y - o.y) > FIRE_RADIUS) continue;

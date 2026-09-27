@@ -836,7 +836,8 @@ export class World {
     this.sendBag(p);
     this.toMap(p.map.data.id, { t: 'fire', fire: this.fires.view(fire, now) });
     this.count(p, 'fed', now);
-    this.moveStory(p, { feed: 'fire' });
+    // The story waits for a fire out in the wilds ("Whoever comes next"), never one in town.
+    if (this.wild(p.map)) this.moveStory(p, { feed: 'fire' });
     // A dead fire lit again warms whoever stands by it.
     for (const q of this.onMap.get(p.map.data.id)!) this.rerate(q, now);
   }
@@ -2014,6 +2015,7 @@ function listOf(names: string[]): string {
 
 /** A shelter's fire is called after its shelter; a campfire after its region. */
 function fireName(f: Fire): string {
+  if (f.name) return f.name;
   const name = f.map.data.name;
   // Names read "The old cabin"; in the middle of a sentence it is "the old cabin".
   return f.map.data.kind === 'inside' ? name.replace(/^The /, 'the ') : `the campfire in ${name.replace(/^The /, 'the ')}`;
