@@ -67,6 +67,22 @@ describe('the walls of a room', () => {
   });
 });
 
+describe('NAPO\'s rooms', () => {
+  /** How many quads a builder adds to the terrain. */
+  const quads = (build: (quad: QuadFn) => void) => { let n = 0; build(() => { n++; }); return n; };
+
+  it('are concrete: one slab a floor tile, and flat courses of block on the walls instead of logs', () => {
+    const wood = roomTone(true), concrete = roomTone(true, true);
+    expect(concrete.concrete).toBe(true);
+    expect(wood.concrete).toBeFalsy();
+    // A slab and its grout on two sides; a wooden tile is three boards, and a joint or two between them.
+    expect(quads(q => floorTile(q, 3, 3, concrete))).toBe(3);
+    expect(quads(q => floorTile(q, 3, 3, wood))).toBeGreaterThanOrEqual(3);
+    const backWall = (tone: typeof wood) => quads(q => wallTile(q, room, shapes, 4, 0, tone));
+    expect(backWall(concrete)).toBeLessThan(backWall(wood));
+  });
+});
+
 describe('windows, doorways and the fire', () => {
   it('puts windows in the back wall, not over the fireplace or a shelf', () => {
     const spots = windowSpots(room, shapes);
@@ -124,6 +140,18 @@ describe('furniture', () => {
       expect(b.max.z, o.kind).toBeLessThanOrEqual(o.y + h + 0.01);
     }
     expect(furnitureModel({ kind: 'lamp', x: 1, y: 1 }, room)).toBeNull();
+  });
+
+  it('builds NAPO\'s desk on its tile, its back to the wall and its screen still glowing', () => {
+    const desk = furnitureModel({ kind: 'console', x: 4, y: 1, name: 'Radio', text: ['A hum.'] }, room)!;
+    const b = new THREE.Box3().setFromObject(desk);
+    expect(b.min.x).toBeGreaterThanOrEqual(3.99);
+    expect(b.max.x).toBeLessThanOrEqual(5.01);
+    expect(b.min.z).toBeGreaterThanOrEqual(0.99);
+    expect(b.max.z).toBeLessThanOrEqual(2.01);
+    let glows = false;
+    desk.traverse(o => { if (o instanceof THREE.Mesh && (o.material as THREE.MeshToonMaterial).emissive?.getHex()) glows = true; });
+    expect(glows).toBe(true);
   });
 
   it('keeps rugs flat, under shadows and pools of light', () => {

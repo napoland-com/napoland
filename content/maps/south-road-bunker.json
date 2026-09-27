@@ -1,0 +1,40 @@
+{
+  "id": "south-road-bunker",
+  "name": "The NAPO Bunker",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 9,
+  "height": 6,
+  "tiles": [
+    "xxxxxxxxx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xxxxpxxxx"
+  ],
+  "levels": [
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000"
+  ],
+  "spawn": {"x":4,"y":4,"dir":"up"},
+  "exits": [
+    {"x":4,"y":5,"w":1,"h":1,"to":"south-road","tx":42,"ty":16,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"fireplace","x":4,"y":1,"tended":true},
+    {"kind":"bed","x":1,"y":1},
+    {"kind":"shelf","x":2,"y":1},
+    {"kind":"bed","x":7,"y":1},
+    {"kind":"console","x":6,"y":1,"name":"Staff notice","text":["NAPO · What to do during an event.","In a surge, get under a light and stay there until it passes.","If a figure stands in the trees, keep facing it. It moves only while nobody looks.","Keep a fire going. Keep a flare in your bag. Do not go out alone after dark."]},
+    {"kind":"table","x":2,"y":3},
+    {"kind":"crate","x":7,"y":4},
+    {"kind":"npc","id":"ruth","name":"Ruth","x":3,"y":3,"dir":"down","look":{"coat":"#7d8f86","scarf":"#b33a3a","hair":"#2b2421","skin":"#8d5a3c"},"lines":["Come in out of the wet. I keep this fire going. The ones farther down the road, you'll have to feed yourself.","I was NAPO's nurse. When they pulled out, somebody had to stay with the ones who wouldn't go.","The station is down the road, past the cars. Vera is still in the laboratory. She says she's listening.","Read the notice on the wall. NAPO got a lot of things wrong, but not those.","The road ends at the checkpoint. Nobody has kept it in years. Don't go looking past the barrier."]}
+  ],
+  "style": "napo"
+}

@@ -2,7 +2,7 @@
 id: live-finds
 title: Finds that fade on the way home
 status: done
-order: 63
+order: 190
 depends: [creatures]
 area: gameplay
 ---

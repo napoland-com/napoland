@@ -62,7 +62,7 @@ The rules people trip over most:
 
 The world is data, and changing data is better than changing code.
 
-- **Maps** are `content/maps/<id>.json`, one file per map and per room. Stonebrook, the Near Woods and every room inside a building are written by generators: `tools/gen-map.ts`, `tools/gen-woods.ts` and `tools/gen-interiors.ts`. To change one, change its generator, run `npm run gen` (all three, in the right order), then `npm run validate`, and commit the generator together with the JSON it wrote. Never edit generated JSON by hand: CI runs the generators again and fails if anything in `content/` changes.
+- **Maps** are `content/maps/<id>.json`, one file per map and per room. Stonebrook, the Near Woods, the South Road and every room inside a building are written by generators: `tools/gen-map.ts`, `tools/gen-woods.ts`, `tools/gen-south-road.ts` and `tools/gen-interiors.ts`. To change one, change its generator, run `npm run gen` (all four, in the right order), then `npm run validate`, and commit the generator together with the JSON it wrote. Never edit generated JSON by hand: CI runs the generators again and fails if anything in `content/` changes.
 - **Versions**: when a map changes, bump its `version` (in its generator) so that players' games reload it. The same goes for `version` in `content/items.json`.
 - **Items** are `content/items.json`: what each item is, its stack size, what using it does, and where it grows. It is written by hand; `npm run validate` checks it against the maps.
 - A new map needs exits both ways and a way home; `npm run validate` says what is missing.

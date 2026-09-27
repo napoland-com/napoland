@@ -10,7 +10,7 @@
  */
 import * as THREE from 'three';
 import { doorOf, type Dir, type MapData, type MapObject, type TileMap } from '@napoland/shared';
-import { box, flat, hash2, part, pivot } from './toon';
+import { box, flat, hash2, part, pivot, toon } from './toon';
 
 /** Height of a wall that stands (the back and side walls), and of one cut down to a baseboard (the front). */
 export const WALL_TALL = 2.4;
@@ -120,10 +120,18 @@ export interface RoomTone {
   top: THREE.Color;
   /** Where a wall is cut (its end over a baseboard, the baseboard's outer face). */
   cut: THREE.Color;
+  /** One of NAPO's rooms: slabs instead of boards, courses of block instead of logs. */
+  concrete?: boolean;
 }
 
-export function roomTone(warm: boolean): RoomTone {
+/** A room's colors; `napo`: the inside of one of NAPO's buildings, concrete, warm grey by a fire. */
+export function roomTone(warm: boolean, napo = false): RoomTone {
   const c = (s: string) => new THREE.Color(s);
+  if (napo) {
+    return warm
+      ? { plank: c('#77716a'), gap: c('#34302c'), log: c('#7d786f'), seam: c('#3b3733'), rim: c('#55514b'), top: c('#1f1d1b'), cut: c('#1f1d1b'), concrete: true }
+      : { plank: c('#5d6163'), gap: c('#232627'), log: c('#666a6d'), seam: c('#2a2d2f'), rim: c('#43474a'), top: c('#17191a'), cut: c('#17191a'), concrete: true };
+  }
   return warm
     ? { plank: c('#7c5638'), gap: c('#2c1d13'), log: c('#735036'), seam: c('#2e2018'), rim: c('#4d3727'), top: c('#1e1510'), cut: c('#1e1510') }
     : { plank: c('#5f5043'), gap: c('#1f1915'), log: c('#584a3f'), seam: c('#221c17'), rim: c('#3d342c'), top: c('#18140f'), cut: c('#18140f') };
@@ -134,8 +142,21 @@ const BOARDS = 3;
 /** A board is this many tiles long; each row's joints are shifted, as boards are laid. */
 const BOARD_LEN = 2;
 
-/** One tile of wooden floor: boards with a darker edge to the south (so their seams show), joints and slight color changes. */
+/** How wide the grout between two of NAPO's floor slabs is. */
+const GROUT = 0.03;
+
+/**
+ * One tile of wooden floor: boards with a darker edge to the south (so their seams show), joints and
+ * slight color changes. In a concrete room, one slab a tile, grout along its south and east edges.
+ */
 export function floorTile(quad: QuadFn, x: number, y: number, tone: RoomTone, h = 0) {
+  if (tone.concrete) {
+    const c = tone.plank.clone().offsetHSL(0, 0, (hash2(x * 5 + 3, y * 7 + 1) - 0.5) * 0.05), x1 = x + 1 - GROUT, z1 = y + 1 - GROUT;
+    quad([x, h, y], [x, h, z1], [x1, h, z1], [x1, h, y], c.clone().multiplyScalar(1.04), c.clone().multiplyScalar(0.92), c.clone().multiplyScalar(0.92), c);
+    quad([x, h, z1], [x, h, y + 1], [x + 1, h, y + 1], [x + 1, h, z1], tone.gap);
+    quad([x1, h, y], [x1, h, z1], [x + 1, h, z1], [x + 1, h, y], tone.gap);
+    return;
+  }
   for (let k = 0; k < BOARDS; k++) {
     const row = y * BOARDS + k, z0 = y + k / BOARDS, z1 = y + (k + 1) / BOARDS;
     const shift = hash2(row, 71) * BOARD_LEN;
@@ -157,9 +178,19 @@ export function floorTile(quad: QuadFn, x: number, y: number, tone: RoomTone, h 
 
 /**
  * The bands of a standing wall's face, bottom to top: a sill, round logs (lighter in the middle, dark
- * where they meet) and a crown. Each band is [bottom, top, color at the bottom, color at the top].
+ * where they meet) and a crown; in a concrete room, flat courses of block with a thin seam under each.
+ * Each band is [bottom, top, color at the bottom, color at the top].
  */
 function logBands(h: number, tone: RoomTone): Array<[number, number, THREE.Color, THREE.Color]> {
+  if (tone.concrete) {
+    const n = Math.max(1, Math.round(h / 0.4)), ch = h / n, seam = 0.025;
+    const out: Array<[number, number, THREE.Color, THREE.Color]> = [];
+    for (let i = 0; i < n; i++) {
+      const y0 = i * ch, block = tone.log.clone().offsetHSL(0, 0, (hash2(i, 5) - 0.5) * 0.03);
+      out.push([y0, y0 + seam, tone.seam, tone.seam], [y0 + seam, y0 + ch, block, block.clone().multiplyScalar(1.05)]);
+    }
+    return out;
+  }
   const sill = 0.1, crown = 0.08, n = Math.max(1, Math.round((h - sill - crown) / 0.25)), lh = (h - sill - crown) / n;
   const out: Array<[number, number, THREE.Color, THREE.Color]> = [[0, sill, tone.seam, tone.seam]];
   for (let i = 0; i < n; i++) {
@@ -243,6 +274,8 @@ export function doorwayModel(x: number, y: number, dir: Dir): THREE.Group {
 const BLANKETS = ['#7a3b35', '#3f5f6e', '#5d6b3a', '#6b4a6e'];
 const RUGS: Array<[string, string, string]> = [['#6b2f2a', '#b08a58', '#3d4e5c'], ['#35505c', '#c2a36a', '#7a3b35'], ['#4e5a34', '#a8894f', '#6b2f2a']];
 const BOOKS = ['#7b2f2a', '#35505c', '#5d6b3a', '#a0763a', '#4b3a5c', '#8a8070'];
+/** A NAPO screen, still on: it glows the same in any light, so it keeps a material of its own when baked. */
+const SCREEN = toon('#16301f', { emissive: 0x2f9a5a });
 
 /** Which way a shelf's back goes: against a wall north, west or east of it (north if none). */
 function againstWall(map: TileMap, x: number, y: number): number {
@@ -254,8 +287,9 @@ function againstWall(map: TileMap, x: number, y: number): number {
 
 /**
  * Low-poly furniture with toon outlines, placed on its tiles: a bed (head north), a table with a mug
- * and a book, a shelf of books and jars (its back to the nearest wall), a crate (sometimes two) and a
- * rug. Colors vary by position, the same on every visit. Null for anything else.
+ * and a book, a shelf of books and jars (its back to the nearest wall), a crate (sometimes two), a
+ * rug and one of NAPO's desks (its back to the wall too). Colors vary by position, the same on every
+ * visit. Null for anything else.
  */
 export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | null {
   const v = hash2(o.x * 3 + 1, o.y * 5 + 2);
@@ -337,6 +371,21 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
       if (v > 0.55) crate(0.42, 0.558, (v - 0.75) * 1.4);
       return g;
     }
+    case 'console': {
+      // One of NAPO's desks, its back to the wall: steel, a screen that still glows green, a radio
+      // with its dials, and papers nobody filed.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = againstWall(map, o.x, o.y);
+      g.add(box(0.9, 0.06, 0.5, '#5d6466', 0, 0.62, -0.16));
+      g.add(box(0.34, 0.56, 0.44, '#4a5052', 0.24, 0.3, -0.16));
+      for (const lz of [-0.36, 0.04]) g.add(box(0.05, 0.6, 0.05, '#3d4244', -0.4, 0.3, lz, false));
+      g.add(box(0.34, 0.28, 0.28, '#3a3f41', -0.16, 0.8, -0.24));
+      g.add(part(new THREE.BoxGeometry(0.26, 0.18, 0.01), SCREEN, -0.16, 0.81, -0.095, false));
+      g.add(box(0.26, 0.13, 0.17, '#4a4f3f', 0.22, 0.715, -0.26, 0.012));
+      for (const dx of [0.15, 0.25]) g.add(box(0.04, 0.04, 0.02, '#c9a24a', dx, 0.72, -0.17, false));
+      g.add(box(0.2, 0.01, 0.26, '#e6dfcc', 0.12, 0.655, -0.02, false).rotateY(0.25 - v * 0.5));
+      return g;
+    }
     case 'rug': {
       const [field, border, motif] = RUGS[Math.floor(v * RUGS.length)]!;
       const g = pivot(o.x + o.w / 2, 0, o.y + o.h / 2);
@@ -361,6 +410,7 @@ export function furnitureShadows(map: TileMap): Array<[number, number, number, n
     else if (o.kind === 'crate') out.push([o.x + 0.5, o.y + 0.5, 0.42, 0.42]);
     else if (o.kind === 'chest') out.push([o.x + 0.5, o.y + 0.46, 0.46, 0.32]);
     else if (o.kind === 'workbench') out.push([o.x + 0.5, o.y + 0.42, 0.52, 0.36]);
+    else if (o.kind === 'console' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.36, 0.52, 0.32]);
     else if (o.kind === 'shelf' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.28, 0.52, 0.26]);
   }
   return out;

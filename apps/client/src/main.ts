@@ -12,11 +12,11 @@ import { Arrival } from './arrival';
 import { Game } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
-import { iconFor } from './icons';
+import { MAP_ICON, iconFor } from './icons';
 import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, wearText, wornViews } from './items';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
-import { paperMap } from './papermap';
+import { mapFor, paperMap } from './papermap';
 import { Connection, serverUrl } from './net';
 import { Sound, type SoundSetting } from './sound';
 import { soundscape, type Scene } from './soundscape';
@@ -142,14 +142,7 @@ const hud = new Hud(screen, {
       }
     }
   },
-  // A paper map: drawn from our copy of the map it charts, and never with you on it.
-  tool: item => {
-    const chart = items.get(item).chart, data = chart ? maps.find(chart) : undefined;
-    const map = data && maps.get(data);
-    if (!map) return;
-    hud.toggleBag(false);
-    hud.showPaper(paperMap(map, id => maps.find(id)?.name));
-  },
+  map: () => openMap(),
   version: () => loadVersion(),
   sound: s => { sound.set(s); store.set(SOUND_KEY, JSON.stringify(s)); },
 });
@@ -157,8 +150,20 @@ hud.setSound(soundSetting);
 watchFires(view);
 
 // ---------- the keyboard, on a computer ----------
+/** The paper map of the area you are in (indoors, the place outside), if you carry one: drawn from our copy of that map, never with you on it. */
+function openMap() {
+  const item = mapFor(game.map.data.id, game.tools, t => items.get(t).chart, id => maps.find(id));
+  const data = item ? maps.find(items.get(item).chart!) : undefined;
+  const map = data && maps.get(data);
+  if (!map) return game.murmur('No map of this place');
+  hud.toggleBag(false);
+  hud.showPaper(paperMap(map, id => maps.find(id)?.name));
+}
+
 const keys = new Keys({
   ...controls,
+  // M: the map of where you are, and M again puts it away.
+  openMap: () => { if (hud.paperOpen) hud.showPaper(null); else { closePanels(); openMap(); } },
   // Enter, as in Metin2: the chat opens with its line ready to type in (open already, the line takes the keys again).
   openChat: () => { if (!hud.chatOpen) closePanels(); hud.toggleChat(true, true); },
 });
@@ -588,7 +593,12 @@ function frame(now: number) {
     gearShown = { gear: game.myGear, worn: game.myWorn };
     hud.setWearing(wornViews(game.myGear, items, game.myWorn));
   }
-  if (game.tools !== toolsShown) hud.setTools((toolsShown = game.tools).map(item => ({ item, name: items.get(item).name, icon: iconFor(items.get(item)) })));
+  // Your maps are one button, which opens the one for where you are; any other tool has its own.
+  if (game.tools !== toolsShown) {
+    toolsShown = game.tools;
+    const others = toolsShown.filter(t => !items.get(t).chart).map(item => ({ item, name: items.get(item).name, icon: iconFor(items.get(item)) }));
+    hud.setTools(others, toolsShown.some(t => items.get(t).chart) ? MAP_ICON : null);
+  }
   if (game.chest !== chestShown || game.progress !== progressShown) {
     if (game.chest && !chestShown) hud.toggleStash(true);
     if (!game.chest && chestShown) hud.toggleStash(false);

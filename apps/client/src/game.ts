@@ -41,8 +41,8 @@ interface Mover {
 }
 
 /**
- * Something you face and press A at: a person or a sign (talk), the notice board (the server writes
- * it), a fire or the Old Stone (you feed them).
+ * Something you face and press A at: a person, a sign or one of NAPO's desks (talk), the notice
+ * board (the server writes it), a fire or the Old Stone (you feed them).
  */
 export type Talker = { x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench'; id?: string };
 
@@ -95,7 +95,8 @@ type Creature = Mover & { kind: CreatureView['kind']; chasing: string | undefine
 function talkersOf(map: TileMap): Talker[] {
   return map.data.objects.flatMap((o: MapObject): Talker[] => {
     if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines, kind: 'talk', id: o.id }];
-    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: 'Sign', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: o.style === 'napo' ? 'NAPO sign' : 'Sign', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'console') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk' }];
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
@@ -933,7 +934,7 @@ export class Game {
     this.dialog = { who: t.who, lines: word ? [word, ...t.lines] : t.lines, i: 0, shown: 0 };
   }
 
-  /** "Word from the woods today: thick fog, and a supply drop. This week: copper week." Null when nothing is going on. */
+  /** "Word from the woods today: thick fog, and a NAPO cache. This week: copper week." Null when nothing is going on. */
   miraWord(): string | null {
     const today = this.conditionNames(this.conditions.today).map(lower);
     const week = this.conditionNames(this.conditions.week ? [this.conditions.week] : []).map(lower)[0];
@@ -967,6 +968,11 @@ export class Game {
 
   private float(text: string, color: string, x: number, y: number, row = 0) {
     this.floats.push({ id: ++this.fid, text, color, x, y, t: 0, row });
+  }
+
+  /** Says something short over your head, in the grey of "Nothing here". */
+  murmur(text: string) {
+    this.floatOverMe(text, GREY);
   }
 
   private floatOverMe(text: string, color: string, row = 0) {

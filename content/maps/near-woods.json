@@ -1,7 +1,7 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 6,
+  "version": 7,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
@@ -208,6 +208,9 @@
     {"kind":"sign","x":30,"y":74,"text":["The Near Woods","The deeper you go, the faster you tire. The lights only help you see.","The old cabin's fire never goes out. The others burn down: bring something to feed them."]},
     {"kind":"sign","x":28,"y":40,"text":["West: the pond. East: the old cabin.","North of here the lights stop. Mostly."]},
     {"kind":"sign","x":27,"y":9,"text":["No wires run to this light.","It was on when we found it. It gives no warmth.","The hut behind it has a fire. Rest there, and feed it before you go on."]},
+    {"kind":"sign","x":33,"y":74,"style":"napo","text":["NAPO: Napoland Zone","Observation area. Keep to the road after dark.","Do not touch the instruments."]},
+    {"kind":"antenna","x":5,"y":1},
+    {"kind":"sign","x":9,"y":4,"style":"napo","text":["NAPO listening post","These stones hum back to the Old Stone. Instruments in use.","Do not move the stones."]},
     {"kind":"rock","x":38,"y":20,"s":1.195,"v":0.367},
     {"kind":"rock","x":35,"y":21,"s":0.87,"v":0.141},
     {"kind":"rock","x":37,"y":21,"s":0.97,"v":0.048},
@@ -278,5 +281,12 @@
   "storm": {"every":2400,"warn":60,"length":180,"offset":1200},
   "flashes": {"every":75,"steps":[30,999]},
   "watchers": {"count":3,"steps":[55,999]},
-  "skulkers": {"count":3,"steps":[50,999],"when":["night","storm"]}
+  "skulkers": {"count":3,"steps":[50,999],"when":["night","storm"]},
+  "places": [
+    {"name":"pond","x":20,"y":41},
+    {"name":"the crossroads","x":32,"y":41},
+    {"name":"the rocks","x":35,"y":23},
+    {"name":"the bog","x":57,"y":26},
+    {"name":"ring of stones","x":6,"y":5}
+  ]
 }

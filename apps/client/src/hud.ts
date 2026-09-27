@@ -64,8 +64,10 @@ export interface HudHandlers {
   social?(a: SocialAction): void;
   /** The chat panel: opened, another tab picked, or something said. */
   chat?(a: { a: 'opened' } | { a: 'tab'; to: 'world' | 'local' } | { a: 'say'; to: 'world' | 'local'; text: string }): void;
-  /** A tool in the bag's header was tapped (a paper map: open it). */
+  /** A tool in the bag's header was tapped (one that is not a map). */
   tool?(item: string): void;
+  /** The map button in the bag's header: the paper map of the area you are in. */
+  map?(): void;
   /** The sound was muted or unmuted, or its volume moved. */
   sound?(s: SoundSetting): void;
   a(): void;
@@ -431,8 +433,9 @@ export class Hud {
     });
     this.el.benchClose!.addEventListener('click', () => this.toggleBench(false));
     this.el.tools!.addEventListener('click', e => {
-      const it = (e.target as Element).closest<HTMLElement>('[data-tool]');
-      if (it) this.h.tool?.(it.dataset.tool!);
+      const it = (e.target as Element).closest<HTMLElement>('[data-tool], [data-map]');
+      if (it?.dataset.tool) this.h.tool?.(it.dataset.tool);
+      else if (it) this.h.map?.();
     });
     this.el.paperClose!.addEventListener('click', () => this.showPaper(null));
     // On a phone the whole map is small: a tap shows it at full size, to pan around with a finger.
@@ -694,9 +697,10 @@ export class Hud {
     line.hidden = false;
   }
 
-  /** Your tools, as buttons in the bag's header. */
-  setTools(tools: Array<{ item: string; name: string; icon: string }>) {
-    const html = tools.map(t => `<button type="button" class="slot" data-tool="${esc(t.item)}" aria-label="${esc(`Open the ${t.name.toLowerCase()}`)}">${t.icon}</button>`).join('');
+  /** Your tools, as buttons in the bag's header: first one button for all your maps (`map`, its icon; it opens the one for where you are), then the rest. */
+  setTools(tools: Array<{ item: string; name: string; icon: string }>, map: string | null = null) {
+    const html = (map ? `<button type="button" class="slot" data-map aria-label="Open the map">${map}</button>` : '')
+      + tools.map(t => `<button type="button" class="slot" data-tool="${esc(t.item)}" aria-label="${esc(`Open the ${t.name.toLowerCase()}`)}">${t.icon}</button>`).join('');
     if (this.el.tools!.innerHTML !== html) this.el.tools!.innerHTML = html;
   }
 

@@ -7,7 +7,8 @@
  * rusted car; a dirt track fords the creek to a lit crossroads, where the power line turns off to the
  * old cabin. West lies the pond, north the rocks. Past them there is one lonely lamp nobody wired,
  * with a ranger's hut behind it, and beyond it the deepest spots: a ring of stones (west) and the
- * cabin at the end (east).
+ * cabin at the end (east). NAPO was here too: its Zone warning where the road comes in, and a
+ * listening post by the ring, the rocks that hum back to the Old Stone.
  *
  * Energy only comes back by a fire, so the three buildings are shelters that keep one burning (their
  * rooms are in gen-interiors.ts): the old cabin, the hut and the cabin at the end, each a stage deeper.
@@ -298,6 +299,12 @@ const signs: Array<{ x: number; y: number; text: string[] }> = [
   { x: 27, y: 9, text: ['No wires run to this light.', 'It was on when we found it. It gives no warmth.', 'The hut behind it has a fire. Rest there, and feed it before you go on.'] },
 ];
 for (const s of signs) place({ kind: 'sign', ...s });
+// What NAPO left in these woods (docs/DESIGN.md, the story): its warning where the road comes in, across
+// from the residents' sign, and the listening post by the ring of stones, the rocks deep in that hum
+// back: a mast on the glade's north edge, and a notice where the trail comes in.
+must({ kind: 'sign', x: 33, y: 74, style: 'napo', text: ['NAPO: Napoland Zone', 'Observation area. Keep to the road after dark.', 'Do not touch the instruments.'] });
+must({ kind: 'antenna', x: 5, y: 1 });
+must({ kind: 'sign', x: 9, y: 4, style: 'napo', text: ['NAPO listening post', 'These stones hum back to the Old Stone. Instruments in use.', 'Do not move the stones.'] });
 
 // Rocks on and around the outcrop.
 for (let y = 18; y <= 28; y++) for (let x = 33; x <= 45; x++) {
@@ -375,7 +382,7 @@ const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 6, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 7, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
@@ -391,6 +398,11 @@ const map: MapData = {
   watchers: { count: 3, steps: [55, 999] },
   // Three skulkers in the deep ferns, 50 steps or more out, at night and in a storm.
   skulkers: { count: 3, steps: [50, 999], when: ['night', 'storm'] },
+  // What the paper map names, besides the cabins and the way home.
+  places: [
+    { name: 'pond', x: 20, y: 41 }, { name: 'the crossroads', x: 32, y: 41 }, { name: 'the rocks', x: 35, y: 23 },
+    { name: 'the bog', x: 57, y: 26 }, { name: 'ring of stones', x: Math.floor(RING.x), y: Math.floor(RING.y) },
+  ],
 };
 
 // One row or object per line, so map changes show up as small, readable diffs.
@@ -408,7 +420,8 @@ const json = [
   `  "storm": ${JSON.stringify(map.storm)},`,
   `  "flashes": ${JSON.stringify(map.flashes)},`,
   `  "watchers": ${JSON.stringify(map.watchers)},`,
-  `  "skulkers": ${JSON.stringify(map.skulkers)}`,
+  `  "skulkers": ${JSON.stringify(map.skulkers)},`,
+  '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ]',
   '}',
   '',
 ].join('\n');
@@ -423,6 +436,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', sign: '!', board: '!', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
   // Furniture belongs inside (gen-interiors.ts), but a campfire could stand out here one day.
   fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_',
+  // NAPO's listening post has a mast here, by the ring of stones; its desks stand on the South Road (gen-south-road.ts).
+  antenna: 'i', console: 'n',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();

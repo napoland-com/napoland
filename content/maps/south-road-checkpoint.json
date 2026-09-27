@@ -1,0 +1,37 @@
+{
+  "id": "south-road-checkpoint",
+  "name": "The checkpoint",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 7,
+  "height": 6,
+  "tiles": [
+    "xxxxxxx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xxxpxxx"
+  ],
+  "levels": [
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000"
+  ],
+  "spawn": {"x":3,"y":4,"dir":"up"},
+  "exits": [
+    {"x":3,"y":5,"w":1,"h":1,"to":"south-road","tx":40,"ty":84,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"console","x":1,"y":1,"name":"Checkpoint log","text":["Day 1. Road closed on NAPO's orders. Everyone out, nobody in.","Day 9. The last cars went through. The lights in the woods are brighter.","Day 40. No relief again. The radio only plays the hum.","Day 212. I can see the Tower's light from here. Every forty minutes the woods to the north light up."]},
+    {"kind":"fireplace","x":3,"y":1},
+    {"kind":"bed","x":5,"y":1},
+    {"kind":"table","x":1,"y":3},
+    {"kind":"crate","x":5,"y":4}
+  ],
+  "style": "napo"
+}

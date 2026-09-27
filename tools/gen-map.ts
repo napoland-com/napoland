@@ -73,6 +73,7 @@ place({
     'The street lights won\'t warm you. But when a surge comes through the woods, stand in one.',
     'Found something strange out there? Bring it back to town and look at it in the light.',
     'The notice board by me says how things stand out there. Read it before you go.',
+    'The south road goes down to NAPO\'s old grounds. Ruth keeps a fire in the bunker there; past it, you feed your own.',
   ],
 });
 const STONE = { x: 15, y: 8 };
@@ -80,7 +81,7 @@ place({ kind: 'stone', x: STONE.x, y: STONE.y });
 const signs = [
   { x: 13, y: 37, text: ['Stonebrook. Pop. 23', 'Most people left after the lights started showing up in the woods.'] },
   { x: 28, y: 16, text: ['North: the Near Woods', 'Out there your energy drains, faster the deeper you go.', 'Only a fire brings it back. The old cabin\'s never goes out; feed the others.'] },
-  { x: 17, y: 10, text: ['The Old Stone', 'It hums at night, and shards break off it.', 'Bring the shards back to it. When it has enough, it wakes, and the surges out there grow gentler.'] },
+  { x: 17, y: 10, text: ['The Old Stone', 'It hums at night, and shards break off it. The stones deep in the woods pull them in.', 'Bring the shards back to it. When it has enough, it wakes, and the surges out there grow gentler.'] },
 ];
 for (const s of signs) place({ kind: 'sign', ...s });
 // The notice board, next to Mira: how things stand out there (the server writes it).
@@ -159,14 +160,48 @@ function round(v: number) { return Math.round(v * 1000) / 1000; }
   }
 }
 
+// The signpost for the South Road, on grass beside the south road. Placed last, so the trees drawn
+// from rnd() above keep their places; it only needs its tile and the one in front free.
+{
+  const SOUTH = { x: 10, y: 38 };
+  for (const [x, y] of [[SOUTH.x, SOUTH.y], [SOUTH.x, SOUTH.y + 1]] as const) {
+    if (blocked[y]![x] || tile[y]![x] !== 'g') throw new Error(`the South Road's signpost needs open grass at ${x},${y}`);
+  }
+  place({ kind: 'sign', ...SOUTH, text: ['South: the South Road', 'NAPO\'s old grounds. Your energy drains out there too, faster the farther you go.', 'The bunker\'s fire never goes out; feed the others.'] });
+}
+
+// NAPO's evacuation notice, across the south road from the signpost: the way everyone left. Placed
+// last too, on grass with room in front to read it.
+{
+  const NOTICE = { x: 15, y: 38 };
+  for (const [x, y] of [[NOTICE.x, NOTICE.y], [NOTICE.x, NOTICE.y + 1]] as const) {
+    if (blocked[y]![x] || tile[y]![x] !== 'g') throw new Error(`NAPO's notice needs open grass at ${x},${y}`);
+  }
+  place({
+    kind: 'sign', ...NOTICE, style: 'napo',
+    text: ['NAPO NOTICE', 'By order of the Observatory, Stonebrook lies inside the Napoland Zone. All residents leave by the south road.', 'Take only what you can carry. Back in two weeks.'],
+  });
+}
+
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 6, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 7, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
-  // The north road leads into the Near Woods (its road enters at x 31-32 on the bottom row).
-  exits: [{ x: 29, y: 0, w: 2, h: 1, to: 'near-woods', tx: 31, ty: 78, dir: 'up' }, ...doors],
+  // The north road leads into the Near Woods (its road enters at x 31-32 on the bottom row), the south
+  // road down the South Road (its road enters at x 35-36 on the top row).
+  exits: [
+    { x: 29, y: 0, w: 2, h: 1, to: 'near-woods', tx: 31, ty: 78, dir: 'up' },
+    { x: 11, y: 43, w: 2, h: 1, to: 'south-road', tx: 35, ty: 1, dir: 'down' },
+    ...doors,
+  ],
   objects,
+  // What the town calls these spots, for its paper map (Home, the lodge and the roads out are named by their doors and exits).
+  places: [
+    { name: 'the Old Stone', x: STONE.x, y: STONE.y },
+    { name: 'the notice board', x: 12, y: 23 },
+    { name: 'the pond', x: Math.floor(POND.x), y: Math.floor(POND.y) },
+  ],
 };
 
 // One row or object per line, so map changes show up as small, readable diffs.
@@ -179,7 +214,8 @@ const json = [
   '  "levels": [', map.levels.map(r => `    ${JSON.stringify(r)}`).join(',\n'), '  ],',
   `  "spawn": ${JSON.stringify(map.spawn)},`,
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
-  '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ]',
+  '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
+  '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ]',
   '}',
   '',
 ].join('\n');

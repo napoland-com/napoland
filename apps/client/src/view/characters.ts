@@ -4,6 +4,7 @@
  * its materials come from toon(), which every model shares and nothing frees.
  */
 import * as THREE from 'three';
+import type { NpcLook } from '@napoland/shared';
 import { box, flat, part, pivot, softTexture, toon } from './toon';
 
 export interface Rig {
@@ -73,17 +74,22 @@ export function makePlayer(jacket: string, look: Look = {}): Rig {
   return { root, legL, legR, armL, armR };
 }
 
-/** A townsperson in a long coat and scarf, with a floating "!" above. */
-export function makeNpc(): { root: THREE.Group; bang: THREE.Group } {
+/**
+ * A townsperson in a long coat and scarf, with a floating "!" above. `look` (from the map) changes
+ * their colors, so each person is someone; with a `hat` they wear a hard hat, as NAPO's crews did.
+ */
+export function makeNpc(look: NpcLook = {}): { root: THREE.Group; bang: THREE.Group } {
+  const coat = look.coat ?? '#4f7a70', scarf = look.scarf ?? '#d9703a', skin = look.skin ?? '#f2cda8', hair = look.hair ?? '#6a3a24';
   const root = new THREE.Group();
-  root.add(part(flat(new THREE.CylinderGeometry(0.15, 0.25, 0.4, 6)), '#4f7a70', 0, 0.2, 0));
-  root.add(box(0.26, 0.14, 0.2, '#4f7a70', 0, 0.44, 0));
-  root.add(box(0.3, 0.06, 0.24, '#d9703a', 0, 0.5, 0));
-  for (const x of [-0.17, 0.17]) root.add(box(0.07, 0.16, 0.08, '#f2cda8', x, 0.36, 0));
-  root.add(box(0.4, 0.36, 0.35, '#f2cda8', 0, 0.68, 0));
-  root.add(box(0.43, 0.14, 0.38, '#6a3a24', 0, 0.83, 0));
-  root.add(box(0.43, 0.32, 0.1, '#6a3a24', 0, 0.68, -0.14));
-  for (const x of [-0.21, 0.21]) root.add(box(0.12, 0.12, 0.12, '#6a3a24', x, 0.86, -0.08));
+  root.add(part(flat(new THREE.CylinderGeometry(0.15, 0.25, 0.4, 6)), coat, 0, 0.2, 0));
+  root.add(box(0.26, 0.14, 0.2, coat, 0, 0.44, 0));
+  root.add(box(0.3, 0.06, 0.24, scarf, 0, 0.5, 0));
+  for (const x of [-0.17, 0.17]) root.add(box(0.07, 0.16, 0.08, skin, x, 0.36, 0));
+  root.add(box(0.4, 0.36, 0.35, skin, 0, 0.68, 0));
+  root.add(box(0.43, 0.14, 0.38, hair, 0, 0.83, 0));
+  root.add(box(0.43, 0.32, 0.1, hair, 0, 0.68, -0.14));
+  for (const x of [-0.21, 0.21]) root.add(box(0.12, 0.12, 0.12, hair, x, 0.86, -0.08));
+  if (look.hat) root.add(box(0.45, 0.1, 0.4, look.hat, 0, 0.94, 0), box(0.5, 0.03, 0.46, look.hat, 0, 0.885, 0.02));
   eyes(root, 0.68, 0.176, 0.085);
   const bangMat = toon('#ffcf3a', { emissive: 0x7a5a00 });
   const bang = new THREE.Group();

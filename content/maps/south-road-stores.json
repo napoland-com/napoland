@@ -1,0 +1,43 @@
+{
+  "id": "south-road-stores",
+  "name": "The stores",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 9,
+  "height": 6,
+  "tiles": [
+    "xxxxxxxxx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xxxxpxxxx"
+  ],
+  "levels": [
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000"
+  ],
+  "spawn": {"x":4,"y":4,"dir":"up"},
+  "exits": [
+    {"x":4,"y":5,"w":1,"h":1,"to":"south-road","tx":22,"ty":52,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"shelf","x":1,"y":1},
+    {"kind":"shelf","x":2,"y":1},
+    {"kind":"crate","x":4,"y":1},
+    {"kind":"shelf","x":6,"y":1},
+    {"kind":"shelf","x":7,"y":1},
+    {"kind":"crate","x":1,"y":3},
+    {"kind":"crate","x":2,"y":3},
+    {"kind":"crate","x":7,"y":3},
+    {"kind":"barrel","x":1,"y":4},
+    {"kind":"crate","x":6,"y":4},
+    {"kind":"crate","x":7,"y":4}
+  ],
+  "style": "napo"
+}
