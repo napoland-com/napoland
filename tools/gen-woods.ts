@@ -375,7 +375,7 @@ const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 5, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 6, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
@@ -389,6 +389,8 @@ const map: MapData = {
   flashes: { every: 75, steps: [30, 999] },
   // Three watchers in the deeper half, past the old cabin.
   watchers: { count: 3, steps: [55, 999] },
+  // Three skulkers in the deep ferns, 50 steps or more out, at night and in a storm.
+  skulkers: { count: 3, steps: [50, 999], when: ['night', 'storm'] },
 };
 
 // One row or object per line, so map changes show up as small, readable diffs.
@@ -405,7 +407,8 @@ const json = [
   `  "surge": ${JSON.stringify(map.surge)},`,
   `  "storm": ${JSON.stringify(map.storm)},`,
   `  "flashes": ${JSON.stringify(map.flashes)},`,
-  `  "watchers": ${JSON.stringify(map.watchers)}`,
+  `  "watchers": ${JSON.stringify(map.watchers)},`,
+  `  "skulkers": ${JSON.stringify(map.skulkers)}`,
   '}',
   '',
 ].join('\n');
@@ -442,9 +445,11 @@ const deepest = Math.max(...steps);
 const deepTiles: string[] = [];
 steps.forEach((v, i) => { if (v === deepest) deepTiles.push(`${i % W},${(i / W) | 0}`); });
 const count = (k: MapObject['kind']) => objects.filter(o => o.kind === k).length;
+const lairs = steps.filter((v, i) => tile[(i / W) | 0]![i % W] === 'f' && v >= map.skulkers!.steps[0]).length;
 console.log(`wrote ${out}: ${W}x${H} tiles, ${objects.length} objects (${count('rock')} rocks, ${count('tree')} firs, ${count('pole')} poles, ${count('shrooms')} shrooms)`);
 console.log(`steps from the way home: ${PLACES.map(([name, p]) => `${name} ${stepsTo(steps, p)}`).join(', ')}`);
 console.log(`deepest: ${deepest} steps, at ${deepTiles.join(' ')}`);
+console.log(`ferns ${map.skulkers!.steps[0]} steps or more out, where skulkers lie: ${lairs} tiles`);
 console.log(`shelter doors: ${shelters.map((s, i) => { const d = doorOf(s); return `${cabins[i]!.inside} ${tm.homeSteps(d.x, d.y)} steps`; }).join(', ')}`);
 // The tuning targets in energy.ts: how long a full bar lasts standing still in the rain.
 const lasts = (x: number, y: number) => (ENERGY_MAX / -energyRate(tm, x, y, 'rain') / 60).toFixed(1);
