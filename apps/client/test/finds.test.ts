@@ -7,7 +7,7 @@ import { FULL, ITEMS, tinyTown, tinyWoods, welcome, zone } from './fixtures';
 // The 7x5 test town: open grass with a road up the middle, a sign at 1,1, the way to the woods at 3,0.
 const town = tinyTown(), woods = tinyWoods();
 const maps = new Maps([town, woods]);
-const me = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir, color: '#f29e4c', gear: {} });
+const me = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir, color: '#f29e4c', gear: {}, quirks: [] });
 const glowcap = (id: number, x: number, y: number): FindView => ({ id, item: 'glowcap', x, y });
 const pile = (owner: string, x: number, y: number): DropView => ({ id: owner, x, y, owner, name: owner === 'me' ? 'Aldo' : 'Bea', until: 1e13, trail: [] });
 

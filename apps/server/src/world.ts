@@ -20,6 +20,10 @@
  * awake it calms every surge. Strange objects found deep in turn into something when looked at in
  * town. Feats, earned by what you do out there, make it a little easier for good (feats.ts).
  *
+ * Gear is kept piece by piece (gear.ts): what a player wears wears down while they are out in the
+ * wilds, protects less and less when nearly worn out, and is mended at the workbench; anomalous
+ * pieces have a quirk, which everyone on the map knows (some show in the world).
+ *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
  * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts).
  *
@@ -31,6 +35,7 @@
  * collapse. The rules for items and bags are in shared/items.ts.
  */
 import {
+  QUIRKS,
   SLOTS,
   STARTER_GEAR,
   STARTER_TOOLS,
@@ -51,6 +56,10 @@ import {
   charmsIn,
   energyRate,
   featsOf,
+  fitPieces,
+  mendCost,
+  newPiece,
+  wearSeconds,
   flashHits,
   findTiles,
   gearEnergy,
@@ -92,6 +101,9 @@ import {
   type Gear,
   type ItemDef,
   type ItemsData,
+  type Piece,
+  type Quirk,
+  type Worn,
   type MapRef,
   type MarkView,
   type Mods,
@@ -335,13 +347,15 @@ interface Flare {
   until: number;
 }
 
-const view = (r: PlayerRecord): PlayerView => ({ id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear } });
+const quirksOf = (w: Worn | undefined): Quirk[] => SLOTS.flatMap(s => (w?.[s]?.quirk ? [w[s]!.quirk!] : []));
+const view = (r: PlayerRecord): PlayerView => ({ id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn) });
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 const flashView = (f: Flash, now: number): FlashView => ({ x: f.x, y: f.y, kind: f.kind, left: round((f.until - now) / 1000, 1) });
 const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), max: p.max, rate: round(p.rate, 3) });
-const bodyView = (p: Online): BodyView => ({ wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched });
+const copyWorn = (w: Worn | undefined): Worn => Object.fromEntries(Object.entries(w ?? {}).map(([s, p]) => [s, { ...p, cond: round(p.cond, 3) }]));
+const bodyView = (p: Online): BodyView => ({ wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched, worn: copyWorn(p.rec.worn) });
 /**
  * Draining and not empty yet, or refilling and not full yet. Holding (rate 0) changes nothing.
  * Wetness is left out: it moves at a steady rate the client counts on, and is told when that turns.
@@ -354,10 +368,18 @@ const dropView = (d: DropRecord): DropView => ({
 const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, name: m.name, until: m.placedAt + MARK_LIFETIME_MS });
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: 'watcher', x: w.x, y: w.y, dir: w.dir });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count }));
-const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out } });
+const copyStash = (s: Stash): Stash => ({
+  items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: Object.fromEntries(Object.entries(s.pieces).map(([id, l]) => [id, l.map(p => ({ ...p }))])) } : {}),
+});
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
+  ...(r.worn ? { worn: copyWorn(r.worn) } : {}),
 });
+/** A saved piece as the server writes them: a condition from 0 to 1, and a quirk the game knows (or none). */
+const isPiece = (p: unknown): p is Piece => {
+  const { cond, quirk } = (typeof p === 'object' && p !== null ? p : {}) as Partial<Piece>;
+  return typeof cond === 'number' && cond >= 0 && cond <= 1 && (quirk === undefined || QUIRKS.includes(quirk));
+};
 /** A bag slot as the server writes them; saved data is checked with this before it is trusted. */
 const isSlot = (s: unknown): s is BagSlot => {
   const { item, count } = (typeof s === 'object' && s !== null ? s : {}) as Partial<BagSlot>;
@@ -378,6 +400,8 @@ const cleanStash = (s: unknown, items: Map<string, ItemDef>): Stash => {
     const part = (typeof raw[k] === 'object' && raw[k] !== null ? raw[k] : {}) as Record<string, unknown>;
     for (const [id, n] of Object.entries(part)) if (items.has(id) && Number.isInteger(n) && (n as number) > 0) out[k][id] = n as number;
   }
+  const pieces = (typeof raw.pieces === 'object' && raw.pieces !== null ? raw.pieces : {}) as Record<string, unknown>;
+  for (const [id, list] of Object.entries(pieces)) if (Array.isArray(list)) (out.pieces ??= {})[id] = list.filter(isPiece).map(p => ({ ...p }));
   return out;
 };
 const manhattan = (ax: number, ay: number, bx: number, by: number) => Math.abs(ax - bx) + Math.abs(ay - by);
@@ -405,6 +429,9 @@ export class World {
   private readonly itemOrder: ItemDef[];
   /** What the workbench makes, by recipe id. */
   private readonly recipes: Map<string, Recipe>;
+  /** How gear wears out, and what mending it costs (content/items.json). */
+  private readonly wear: ItemsData['wear'];
+  private readonly mendCosts: ItemsData['mend'];
   private readonly rng: () => number;
   private readonly epochOffset: number;
   private readonly rules: Rule[] = [];
@@ -484,6 +511,8 @@ export class World {
     this.items = itemIndex(items);
     this.itemOrder = items.items;
     this.recipes = new Map((items.recipes ?? []).map(rc => [rc.id, rc]));
+    this.wear = items.wear;
+    this.mendCosts = items.mend;
     this.itemsVersion = items.version;
     for (const f of items.finds) {
       // loadItems checks this and more (validateItems).
@@ -588,7 +617,9 @@ export class World {
     if (this.players.has(rec.id)) throw new Error(`player ${rec.id} is already online`);
     const gear = this.cleanGear(rec.gear);
     const r: PlayerRecord = {
-      ...rec, gear, bag: this.fitBag(rec.bag, bagSlotsOf(gear, this.items)), stats: cleanStats(rec.stats), stash: cleanStash(rec.stash, this.items),
+      ...rec, gear, worn: this.cleanWorn(rec.worn, gear), bag: this.fitBag(rec.bag, bagSlotsOf(gear, this.items)), stats: cleanStats(rec.stats),
+      // Gear counted in the stash gets its pieces (all of it, for a stash saved before pieces existed).
+      stash: fitPieces(cleanStash(rec.stash, this.items), this.items, this.rng),
       xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
     };
     // Maps change between visits: a map may be gone (start over at home), or the saved tile may be
@@ -816,7 +847,8 @@ export class World {
     const going = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
     if (!going.length) return this.refuse(p, 'store', 'empty_slot');
     const r = store(p.rec.stash ?? emptyStash(), merge(going), this.items);
-    p.rec.stash = r.stash;
+    // Gear brought home (an identified strange object) gets its piece, and its quirk if anomalous.
+    p.rec.stash = fitPieces(r.stash, this.items, this.rng);
     p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
     const before = levelOf(p.rec.xp ?? 0);
     p.rec.xp = (p.rec.xp ?? 0) + r.xp;
@@ -834,7 +866,7 @@ export class World {
    * wore in its slot goes into the stash. A smaller bag has to hold what they carry. Everyone on the
    * map sees the change; the player hears their new bar (gear can add energy) and rates.
    */
-  equip(id: string, x: number, y: number, item: string, now: number): void {
+  equip(id: string, x: number, y: number, item: string, now: number, n = 0): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
@@ -844,10 +876,14 @@ export class World {
     if (!def || !(stash.items[item] ?? 0)) return this.refuse(p, 'equip', 'not_stashed');
     if (def.kind !== 'gear' || !def.slot) return this.refuse(p, 'equip', 'not_gear');
     if (def.slot === 'bag' && p.rec.bag.length > (def.bag ?? 0)) return this.refuse(p, 'equip', 'bag_too_full');
-    const gear = { ...p.rec.gear }, old = gear[def.slot];
+    const gear = { ...p.rec.gear }, old = gear[def.slot], worn = { ...p.rec.worn };
+    const pieces = { ...stash.pieces, [item]: [...(stash.pieces?.[item] ?? [])] };
+    const [piece] = pieces[item]!.splice(Math.min(n, Math.max(0, pieces[item]!.length - 1)), 1);
+    if (old) pieces[old] = [...(pieces[old] ?? []), worn[def.slot] ?? { cond: 1 }];
     gear[def.slot] = item;
-    p.rec.stash = moveStash(stash, item, -1, old);
-    this.wear(p, gear, now);
+    worn[def.slot] = piece ?? newPiece(def, this.rng);
+    p.rec.stash = fitPieces({ ...moveStash(stash, item, -1, old), pieces }, this.items, this.rng);
+    this.wearGear(p, gear, worn, now);
   }
 
   /** Takes off what the player wears in `slot`, at the chest on tile x,y next to them: it goes into the stash. Not the bag. */
@@ -858,11 +894,13 @@ export class World {
     this.advance(p, now);
     if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'unequip', 'too_far');
     if (slot === 'bag') return this.refuse(p, 'unequip', 'keep_bag');
-    const gear = { ...p.rec.gear }, old = gear[slot];
+    const gear = { ...p.rec.gear }, old = gear[slot], worn = { ...p.rec.worn }, stash = p.rec.stash ?? emptyStash();
     if (!old) return this.refuse(p, 'unequip', 'empty_slot');
+    const pieces = { ...stash.pieces, [old]: [...(stash.pieces?.[old] ?? []), worn[slot] ?? { cond: 1 }] };
     delete gear[slot];
-    p.rec.stash = moveStash(p.rec.stash ?? emptyStash(), undefined, 0, old);
-    this.wear(p, gear, now);
+    delete worn[slot];
+    p.rec.stash = fitPieces({ ...moveStash(stash, undefined, 0, old), pieces }, this.items, this.rng);
+    this.wearGear(p, gear, worn, now);
   }
 
   /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. */
@@ -888,9 +926,36 @@ export class World {
       if (!items[n.item]) delete items[n.item];
     }
     items[recipe.make] = (items[recipe.make] ?? 0) + count;
-    p.rec.stash = { items, out: { ...stash.out } };
+    // Gear made comes new, piece by piece.
+    p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
     this.saveNow.set(id, p.rec);
     this.outbox.push({ to: id, msg: { t: 'crafted', item: recipe.make, count } });
+    this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
+  }
+
+  /** Mends the piece the player wears in `slot`, at the workbench on tile x,y next to them, paying from their stash: it is whole again. */
+  mend(id: string, x: number, y: number, slot: Slot, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    this.advance(p, now);
+    if (!this.benchNextTo(p, x, y)) return this.refuse(p, 'mend', 'too_far');
+    const item = p.rec.gear?.[slot], piece = p.rec.worn?.[slot], cost = mendCost(item ? this.items.get(item) : undefined, this.mendCosts);
+    if (!item || !cost || !piece || piece.cond >= 1) return this.refuse(p, 'mend', 'whole');
+    const stash = p.rec.stash ?? emptyStash();
+    if (!canMake({ id: 'mend', make: item, needs: cost }, stash.items)) return this.refuse(p, 'mend', 'missing');
+    const items = { ...stash.items };
+    for (const n of cost) {
+      items[n.item] = items[n.item]! - n.count;
+      if (!items[n.item]) delete items[n.item];
+    }
+    p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
+    p.rec.worn = { ...p.rec.worn, [slot]: { ...piece, cond: 1 } };
+    this.saveNow.set(id, p.rec);
+    this.outbox.push({ to: id, msg: { t: 'mended', item } });
+    // Its condition (in the body) before the bench, so the bench's mend row is gone when it redraws.
+    this.refresh(p, now);
+    this.tell(p, now);
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
   }
 
@@ -902,6 +967,8 @@ export class World {
     if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'take', 'too_far');
     const stash = p.rec.stash ?? emptyStash(), have = stash.items[item] ?? 0, def = this.items.get(item);
     if (!def || !have) return this.refuse(p, 'take', 'not_stashed');
+    // A piece in the bag would forget how worn it is: gear is put on from the chest instead.
+    if (def.kind === 'gear') return this.refuse(p, 'take', 'gear_stays');
     const want = Math.min(have, count);
     const r = addToBag(p.rec.bag, def, want, p.slots);
     const taken = want - r.left;
@@ -1128,7 +1195,7 @@ export class World {
     p.load = bagLoad(p.rec.bag, this.items, p.mods.load);
     p.max = this.maxOf(p.rec);
     p.slots = bagSlotsOf(p.rec.gear ?? {}, this.items);
-    const resist = resistOf(p.rec.gear ?? {}, this.items);
+    const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn);
     const warmth = p.map.warm(x, y) ? this.fires.warmth(p.map, x, y, now) : 0;
     const storm = this.stormOf(p.map, now)?.phase === 'storm';
     p.rate = energyRate(p.map, x, y, this.sky, {
@@ -1166,9 +1233,20 @@ export class World {
       const dt = (now - p.energyAt) / 1000;
       p.rec.energy = Math.min(p.max, Math.max(0, p.rec.energy + p.rate * dt));
       p.rec.wet = clamp01((p.rec.wet ?? 0) + p.wetRate * dt);
+      if (p.map.data.kind === 'wilds') this.wearDown(p, dt);
       p.energyAt = now;
     }
     return p.rec.energy;
+  }
+
+  /** Out in the wilds, what the player wears wears down: `dt` seconds of it. The rates follow on the next refresh. */
+  private wearDown(p: Online, dt: number): void {
+    const worn = p.rec.worn;
+    if (!worn) return;
+    for (const slot of SLOTS) {
+      const piece = worn[slot], s = wearSeconds(p.rec.gear?.[slot] ? this.items.get(p.rec.gear[slot]!) : undefined, this.wear);
+      if (piece && s && piece.cond > 0) piece.cond = Math.max(0, piece.cond - dt / s);
+    }
   }
 
   /** Sends the player their energy and body; call advance() first so the values are current. */
@@ -1720,11 +1798,12 @@ export class World {
     this.sendBag(p);
   }
 
-  /** The player wears `gear` now: saved, everyone on the map sees it, and the player hears their bar and stash. */
-  private wear(p: Online, gear: Gear, now: number): void {
+  /** The player wears `gear` (piece by piece: `worn`) now: saved, everyone on the map sees it, and the player hears their bar and stash. */
+  private wearGear(p: Online, gear: Gear, worn: Worn, now: number): void {
     p.rec.gear = gear;
+    p.rec.worn = worn;
     this.saveNow.set(p.rec.id, p.rec);
-    this.toMap(p.map.data.id, { t: 'gear', id: p.rec.id, gear: { ...gear } });
+    this.toMap(p.map.data.id, { t: 'gear', id: p.rec.id, gear: { ...gear }, quirks: quirksOf(worn) });
     this.sendStash(p);
     this.refresh(p, now);
     // A bar that shrank (a piece with extra energy came off) cannot hold more than it can.
@@ -1734,7 +1813,7 @@ export class World {
 
   /** A full bar: the level's, plus what the gear worn gives. */
   private maxOf(r: PlayerRecord): number {
-    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items);
+    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items, r.worn);
   }
 
   /**
@@ -1751,6 +1830,19 @@ export class World {
     }
     const bag = STARTER_GEAR.bag!;
     if (!out.bag && this.items.get(bag)?.kind === 'gear') out.bag = bag;
+    return out;
+  }
+
+  /** Saved pieces for what the player wears: each kept if it is a piece, else a new one (an anomalous one with its quirk). */
+  private cleanWorn(saved: unknown, gear: Gear): Worn {
+    const raw = (typeof saved === 'object' && saved !== null && !Array.isArray(saved) ? saved : {}) as Record<string, unknown>;
+    const out: Worn = {};
+    for (const slot of SLOTS) {
+      const def = gear[slot] ? this.items.get(gear[slot]!) : undefined;
+      if (!def) continue;
+      const had = raw[slot];
+      out[slot] = isPiece(had) && (had.quirk !== undefined || def.tier !== 'anomalous') ? { ...had } : newPiece(def, this.rng);
+    }
     return out;
   }
 
@@ -1772,7 +1864,7 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'bag', bag: copyBag(p.rec.bag) } });
   }
 
-  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft', reason: Refusal): void {
+  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
   }
 
