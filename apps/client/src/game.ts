@@ -7,6 +7,8 @@
  *   pile walks onto it and picks it up;
  * - A picks up what lies on your tile or the one you face, else feeds the fire or the Old Stone you
  *   face (with the best you carry for it), reads the notice board, talks to people and reads signs;
+ * - people and NAPO's desks are in the story (story.ts): what someone says follows the chapter you
+ *   are in, and the server hears whom you talked to or what you read; it says when a chapter is reached;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
  *   it tells us, we show them;
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
@@ -14,9 +16,9 @@
  *   everything moves smoothly.
  */
 import {
-  STEP_MS, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, stepTarget, surgeFront, DIR_VEC,
-  type BagSlot, type BodyView, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
-  type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type SurgeView, type TileMap,
+  STEP_MS, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, journal, stepTarget, storyLines, surgeFront, DIR_VEC,
+  type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
+  type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type FlashKind, type FlashView, type StormView,
 } from '@napoland/shared';
 import type { FriendsMsg, TalkLine } from './friends';
@@ -42,9 +44,13 @@ interface Mover {
 
 /**
  * Something you face and press A at: a person, a sign or one of NAPO's desks (talk), the notice
- * board (the server writes it), a fire or the Old Stone (you feed them).
+ * board (the server writes it), a fire or the Old Stone (you feed them). People and desks are in
+ * the story (`story`): talking to one, or reading one, may move it on.
  */
-export type Talker = { x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' };
+export type Talker = {
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench';
+  story?: { talk: string } | { read: string };
+};
 
 /** Something lying on a tile to pick up: a pile someone left when they collapsed, or a find. */
 export type Thing = { kind: 'drop'; drop: DropView } | { kind: 'find'; find: FindView };
@@ -91,9 +97,9 @@ const CREATURE_STEP_MS = 420;
 
 function talkersOf(map: TileMap): Talker[] {
   return map.data.objects.flatMap((o: MapObject): Talker[] => {
-    if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines, kind: 'talk' }];
+    if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines, kind: 'talk', story: { talk: o.id } }];
     if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: o.style === 'napo' ? 'NAPO sign' : 'Sign', lines: o.text, kind: 'talk' }];
-    if (o.kind === 'console') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk' }];
+    if (o.kind === 'console') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', story: { read: o.id } }];
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
@@ -112,7 +118,11 @@ export function minutes(seconds: number): string {
 
 /** News from the world for the interface to announce (status.ts, newsBanner). */
 export type News =
-  | { kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView };
+  | { kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView }
+  | { kind: 'chapter'; chapter: Chapter };
+
+/** No story: a game that was given none (and a copy of the game without content/story.json). */
+const NO_STORY: StoryData = { version: 0, chapters: [] };
 
 export class Game {
   meId: string | null = null;
@@ -158,6 +168,10 @@ export class Game {
   tools: string[] = [];
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
+  /** The id of the chapter of the story you are in, as the server said ('' until its welcome). */
+  chapter = '';
+  /** Counts every chapter reached, so the journal is redrawn only when it changed. */
+  storyChanges = 0;
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
@@ -208,7 +222,7 @@ export class Game {
   /** When the server last emptied a bag that held something. */
   private emptiedAt = -Infinity;
 
-  constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items) {
+  constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY) {
     this.current = maps.home();
     this.talkers = talkersOf(this.current);
   }
@@ -287,9 +301,9 @@ export class Game {
     switch (msg.t) {
       case 'welcome': {
         const map = this.maps.get(msg.map);
-        // A map we do not have, or other items than the server's: this client is out of date and
-        // about to reload, so it must not play.
-        if (!map || msg.items !== this.items.version) { this.disconnected(now); break; }
+        // A map we do not have, or other items or another story than the server's: this client is
+        // out of date and about to reload, so it must not play.
+        if (!map || msg.items !== this.items.version || msg.story.version !== this.story.version) { this.disconnected(now); break; }
         this.meId = msg.you;
         this.online = true;
         this.stepMs = msg.stepMs;
@@ -302,6 +316,8 @@ export class Game {
         this.stats = msg.stats;
         this.progress = msg.progress;
         this.tools = msg.tools;
+        this.chapter = msg.story.chapter;
+        this.storyChanges++;
         break;
       }
       case 'zone': {
@@ -388,6 +404,13 @@ export class Game {
         this.stats = msg.stats;
         this.news.push({ kind: 'feat', id: msg.id });
         break;
+      case 'chapter': {
+        const chapter = this.story.chapters.find(c => c.id === msg.id);
+        this.chapter = msg.id;
+        this.storyChanges++;
+        if (chapter) this.news.push({ kind: 'chapter', chapter });
+        break;
+      }
       case 'chest': {
         // The answer to opening one, or news of the one already open.
         const o = this.opening;
@@ -603,7 +626,13 @@ export class Game {
 
   /** What A does at someone or something you face: talk, read the board, feed a fire or the Old Stone. */
   private meet(t: Talker) {
-    if (t.kind === 'talk') return this.openDialog(t);
+    if (t.kind === 'talk') {
+      // People say what the story has them say too; the server hears who you talked to, or what you read.
+      const person = t.story && 'talk' in t.story ? t.story.talk : undefined;
+      this.openDialog(person ? { ...t, lines: storyLines(this.story, this.chapter, person, t.lines) } : t);
+      if (t.story && this.online) this.send({ t: 'talk', x: t.x, y: t.y });
+      return;
+    }
     if (t.kind === 'board') {
       if (this.online) this.send({ t: 'board', x: t.x, y: t.y });
       return;
@@ -839,6 +868,11 @@ export class Game {
    */
   carrying(now: number): boolean {
     return this.bag.length > 0 || now - this.emptiedAt < JUST_NOW_MS;
+  }
+
+  /** The chapters of the story you reached, first to latest: what the journal keeps. */
+  reached(): Chapter[] {
+    return journal(this.story, this.chapter);
   }
 
   /** Piles close enough to show whose they are. */

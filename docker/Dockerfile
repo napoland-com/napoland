@@ -1,6 +1,6 @@
 # napoland game server + web client in one small image.
 #   build stage:   installs everything, builds the client (Vite) and bundles the server (esbuild)
-#   runtime stage: Node + the bundle + static client files + content (maps, items) + SQL migrations
+#   runtime stage: Node + the bundle + static client files + content (maps, items, story) + SQL migrations
 # The build stage runs on the builder's own CPU and makes only JavaScript, and the runtime stage has
 # no RUN steps, so an arm64 image for the server builds fast on an x86 PC or CI without emulation.
 FROM --platform=$BUILDPLATFORM node:24-alpine AS build
@@ -25,6 +25,7 @@ ENV APP_VERSION=$APP_VERSION \
     CLIENT_DIR=/app/client \
     MAPS_DIR=/app/content/maps \
     ITEMS_FILE=/app/content/items.json \
+    STORY_FILE=/app/content/story.json \
     MIGRATIONS_DIR=/app/migrations
 WORKDIR /app
 COPY --from=build /src/apps/server/dist ./server

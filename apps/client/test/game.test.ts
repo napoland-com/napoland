@@ -143,7 +143,7 @@ describe('tapping and talking', () => {
       ...tinyTown(),
       objects: [
         { kind: 'sign', x: 1, y: 1, text: ['NAPO Tower', 'Do not climb.'], style: 'napo' },
-        { kind: 'console', x: 5, y: 1, name: 'Station log', text: ['Week 1. The Old Stone hums.'] },
+        { kind: 'console', x: 5, y: 1, id: 'station-log', name: 'Station log', text: ['Week 1. The Old Stone hums.'] },
       ],
     };
     const read = (x: number, y: number) => {

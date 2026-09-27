@@ -276,7 +276,7 @@ describe('what NAPO left behind', () => {
 
   it('stands in the way: nobody walks through a mast or a desk', () => {
     const m = tinyMap();
-    m.objects.push({ kind: 'antenna', x: 0, y: 1 }, { kind: 'console', x: 2, y: 3, name: 'Station log', text: ['Week 1.'] });
+    m.objects.push({ kind: 'antenna', x: 0, y: 1 }, { kind: 'console', x: 2, y: 3, id: 'station-log', name: 'Station log', text: ['Week 1.'] });
     expect(validateMap(m).filter(p => p.level === 'error')).toEqual([]);
     const map = new TileMap(m);
     expect(map.walkable(0, 1)).toBe(false);
@@ -284,9 +284,9 @@ describe('what NAPO left behind', () => {
   });
 
   it('wants a desk to have a name, something to read and room in front to read it from', () => {
-    expect(errorsWith({ kind: 'console', x: 2, y: 3, name: ' ', text: ['Week 1.'] })).toMatch(/console at 2,3 needs a name and something to read/);
-    expect(errorsWith({ kind: 'console', x: 2, y: 3, name: 'Radio', text: [] })).toMatch(/needs a name and something to read/);
-    expect(errorsWith({ kind: 'console', x: 3, y: 4, name: 'Radio', text: ['A hum.'] })).toMatch(/console at 3,4: the tile in front/);
+    expect(errorsWith({ kind: 'console', x: 2, y: 3, id: 'station-log', name: ' ', text: ['Week 1.'] })).toMatch(/console at 2,3 needs a name and something to read/);
+    expect(errorsWith({ kind: 'console', x: 2, y: 3, id: 'radio', name: 'Radio', text: [] })).toMatch(/needs a name and something to read/);
+    expect(errorsWith({ kind: 'console', x: 3, y: 4, id: 'radio', name: 'Radio', text: ['A hum.'] })).toMatch(/console at 3,4: the tile in front/);
   });
 
   it('builds cabins 3 by 2, and only NAPO builds bigger', () => {

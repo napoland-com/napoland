@@ -1,7 +1,7 @@
 /**
  * The interface over the world: status and energy (and how wet you are, and what clings to you), the
- * surge clock, the menu with the status and About panels, the joystick and A/B, name tags, the text
- * box, the bag, and the fade and name banner when you arrive somewhere.
+ * surge clock, the menu with the journal, status and About panels, the joystick and A/B, name tags,
+ * the text box, the bag, and the fade and name banner when you arrive somewhere.
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
@@ -9,6 +9,7 @@ import { BAG_SLOTS, SLOTS, type BodyView, type Dir, type EnergyView, type Slot, 
 import { aboutBody, versionView } from './about';
 import type { FriendsView } from './friends';
 import type { SlotView } from './items';
+import type { JournalView } from './journal';
 
 const svg = (inner: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 const ICON = {
@@ -154,7 +155,9 @@ export class Hud {
   private tagEls = new Map<string, HTMLElement>();
   private floatEls = new Map<number, HTMLElement>();
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
-  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', friends: '', personActs: '', talk: '' };
+  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', friends: '', personActs: '', talk: '', journal: '' };
+  /** What the dots on the menu say is new: among friends (a request, an unread message), and in the journal (a chapter). */
+  private news = { social: false, journal: false };
   private load = 0;
   private capacity = BAG_SLOTS;
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
@@ -188,6 +191,7 @@ export class Hud {
       <button type="button" class="menu-btn" data-el="menuBtn" aria-label="Menu" aria-expanded="false">${ICON.menu}</button>
       <div class="menu-panel panel" data-el="menu" hidden>
         <button type="button" data-el="menuBag">Bag</button>
+        <button type="button" data-el="menuJournal" hidden>Journal</button>
         <button type="button" data-el="menuStatus">Status</button>
         <button type="button" data-el="menuFriends">Friends</button>
         <button type="button" data-el="menuAbout">About</button>
@@ -245,6 +249,11 @@ export class Hud {
           <form class="say" data-el="sayForm" hidden><input data-el="sayText" maxlength="200" placeholder="Write to them" autocomplete="off" enterkeyhint="send" aria-label="Message"><button type="submit" class="act go">Send</button></form>
         </div>
       </div>
+      <div class="sheet panel journal-sheet" data-el="journalSheet" data-open="false" role="dialog" aria-label="Journal">
+        <div class="sheet-head"><b>Journal</b><button type="button" class="close" data-el="journalClose" aria-label="Close the journal">${ICON.x}</button></div>
+        <p class="hint">The story so far, the latest first. It goes on: new chapters come as the world grows.</p>
+        <div class="journal-body" data-el="journalBody"></div>
+      </div>
       <div class="sheet panel about-sheet" data-el="aboutSheet" data-open="false" role="dialog" aria-label="About napoland">
         <div class="sheet-head"><b>About</b><button type="button" class="close" data-el="aboutClose" aria-label="Close About">${ICON.x}</button></div>
         ${aboutBody()}
@@ -295,6 +304,8 @@ export class Hud {
     this.el.menuBtn!.addEventListener('click', () => this.toggleMenu());
     this.el.menuBag!.addEventListener('click', () => { this.toggleMenu(false); this.toggleBag(true); });
     this.el.menuStatus!.addEventListener('click', () => { this.toggleMenu(false); this.toggleStatus(true); });
+    this.el.menuJournal!.addEventListener('click', () => { this.toggleMenu(false); this.toggleJournal(true); });
+    this.el.journalClose!.addEventListener('click', () => this.toggleJournal(false));
     this.el.menuFriends!.addEventListener('click', () => { this.toggleMenu(false); this.toggleFriends(true); });
     this.el.friendsClose!.addEventListener('click', () => this.toggleFriends(false));
     this.el.friendsBack!.addEventListener('click', () => this.h.social?.({ a: 'back' }));
@@ -399,14 +410,14 @@ export class Hud {
   toggleStatus(open = !this.statusOpen) {
     this.el.statusSheet!.dataset.open = String(open);
     // The bag, the stash, the status and the About panel open in the same place: one at a time.
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.h.status?.(); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.h.status?.(); }
   }
 
   get friendsOpen(): boolean {
     return this.el.friendsSheet!.dataset.open === 'true';
   }
   toggleFriends(open = !this.friendsOpen) {
-    if (open) { this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
     const was = this.friendsOpen;
     this.el.friendsSheet!.dataset.open = String(open);
     if (open && !was) this.h.social?.({ a: 'opened' });
@@ -459,8 +470,40 @@ export class Hud {
 
   /** A dot on the menu button and on Friends: a request or an unread message. */
   setSocialNews(on: boolean) {
-    this.el.menuBtn!.toggleAttribute('data-news', on);
-    this.el.menuFriends!.toggleAttribute('data-news', on);
+    this.news.social = on;
+    this.showNews();
+  }
+  /** A dot on the menu button and on Journal: a chapter you have not read yet. Opening the journal takes it away. */
+  setJournalNews(on: boolean) {
+    this.news.journal = on;
+    this.showNews();
+  }
+  private showNews() {
+    this.el.menuBtn!.toggleAttribute('data-news', this.news.social || this.news.journal);
+    this.el.menuFriends!.toggleAttribute('data-news', this.news.social);
+    this.el.menuJournal!.toggleAttribute('data-news', this.news.journal);
+  }
+
+  get journalOpen(): boolean {
+    return this.el.journalSheet!.dataset.open === 'true';
+  }
+  toggleJournal(open = !this.journalOpen) {
+    // It opens where the bag and the other panels do: one at a time.
+    if (open) {
+      this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false';
+      this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false);
+      this.el.journalSheet!.scrollTop = 0;
+      this.setJournalNews(false);
+    }
+    this.el.journalSheet!.dataset.open = String(open);
+  }
+  /** The chapters of the story you reached. Only written to the page when they changed; the menu offers the journal once there is one. */
+  setJournal(v: JournalView) {
+    this.el.menuJournal!.hidden = !v.chapters.length;
+    const html = v.chapters.map(c => `<article class="chapter"${c.latest ? ' data-latest' : ''}><h3><span class="n">Chapter ${c.n}</span>${esc(c.title)}</h3><p>${esc(c.text)}</p></article>`).join('');
+    if (html === this.shown.journal) return;
+    this.shown.journal = html;
+    this.el.journalBody!.innerHTML = html;
   }
 
   get stashOpen(): boolean {
@@ -469,7 +512,7 @@ export class Hud {
   /** Opens or closes the stash sheet (the chest at home). Closing it tells the game. */
   toggleStash(open = !this.stashOpen) {
     const was = this.stashOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
     this.el.stashSheet!.dataset.open = String(open);
     if (was && !open) this.h.stashClosed?.();
   }
@@ -480,7 +523,7 @@ export class Hud {
   /** Opens or closes the workbench sheet. Closing it tells the game. */
   toggleBench(open = !this.benchOpen) {
     const was = this.benchOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.el.statusSheet!.dataset.open = 'false'; }
     this.el.benchSheet!.dataset.open = String(open);
     if (was && !open) this.h.benchClosed?.();
   }
@@ -532,7 +575,7 @@ export class Hud {
   }
   toggleBag(open = !this.bagOpen) {
     // The bag, the status and the About panel open in the same place: one at a time.
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); }
     this.el.sheet!.dataset.open = String(open);
     if (open) this.el.statusSheet!.dataset.open = 'false';
     // It opens on the whole bag, never on the details left from last time.
@@ -544,7 +587,7 @@ export class Hud {
   }
   toggleAbout(open = !this.aboutOpen) {
     if (open && this.bagOpen) this.toggleBag(false);
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.toggleStash(false); this.toggleBench(false); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleStash(false); this.toggleBench(false); }
     this.el.aboutSheet!.dataset.open = String(open);
     if (open && !this.versionAsked) {
       this.versionAsked = true;
@@ -596,6 +639,7 @@ export class Hud {
       return true;
     }
     if (this.statusOpen) { this.toggleStatus(false); return true; }
+    if (this.journalOpen) { this.toggleJournal(false); return true; }
     if (this.stashOpen) { this.toggleStash(false); return true; }
     if (this.benchOpen) { this.toggleBench(false); return true; }
     if (!this.bagOpen) return false;
@@ -767,6 +811,10 @@ export class Hud {
   }
 
   /** The name of where you arrived (or what happened), for a few seconds. A line break in `sub` starts a new line. */
+  /** A banner is up: the name of a place just reached, or news. */
+  get bannerUp(): boolean {
+    return this.el.banner!.hasAttribute('data-show');
+  }
   showBanner(title: string, sub = '') {
     const banner = this.el.banner!;
     this.el.bannerTitle!.textContent = title;

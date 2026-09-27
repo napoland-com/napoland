@@ -54,6 +54,7 @@ import {
   bagSlotsOf,
   canMake,
   charmsIn,
+  chapterOf,
   energyRate,
   featsOf,
   fitPieces,
@@ -71,6 +72,7 @@ import {
   merge,
   modsOf,
   progressOf,
+  reachedBy,
   resistOf,
   stashList,
   store,
@@ -115,6 +117,9 @@ import {
   type ServerMsg,
   type Stats,
   type StoneView,
+  type StoryData,
+  type StoryEvent,
+  type StoryView,
   type StormPhase,
   type StormView,
   type SurgePhase,
@@ -220,6 +225,7 @@ export interface Joined extends Scene {
   progress: ProgressView;
   /** Every tool the player carries (for now, the starter tools that exist). */
   tools: string[];
+  story: StoryView;
 }
 
 /** What storage must hear: piles and marks to write (or remove: undefined), players to save now, and the Old Stone if it changed. */
@@ -238,6 +244,8 @@ export interface WorldOptions {
   onCollapse?: (id: string, where: { map: string; x: number; y: number }) => void;
   /** Items and where finds grow (content/items.json, checked with validateItems); none if unset. */
   items?: ItemsData;
+  /** The story's chapters (content/story.json, checked with validateStory); none if unset. */
+  story?: StoryData;
   /** Where finds grow, when and which half of a pile someone else gets, what a strange object is. Math.random unless a test sets its own. */
   rng?: () => number;
   /** Piles saved before a restart; they lie where they were until they fade. */
@@ -412,6 +420,8 @@ export class World {
   readonly home: TileMap;
   /** The version of the items (content/items.json): a client with another one reloads. */
   readonly itemsVersion: number;
+  /** The story's chapters (story.ts): where each player is in it is theirs (PlayerRecord.story). */
+  private readonly story: StoryData;
   private readonly maps = new Map<string, TileMap>();
   /** For each inside, the kind of map its door opens onto: a shelter in the wilds, or a house in town. */
   private readonly outside = new Map<string, TileMap['data']['kind']>();
@@ -514,6 +524,7 @@ export class World {
     this.wear = items.wear;
     this.mendCosts = items.mend;
     this.itemsVersion = items.version;
+    this.story = options.story ?? { version: 0, chapters: [] };
     for (const f of items.finds) {
       // loadItems checks this and more (validateItems).
       const map = this.maps.get(f.map);
@@ -653,6 +664,8 @@ export class World {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: copyBag(r.bag),
       stone: this.stoneView(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
       tools: STARTER_TOOLS.filter(t => this.items.get(t)?.kind === 'tool'),
+      // The chapter they are in, which is the first for someone who never started (story.ts).
+      story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
     };
   }
 
@@ -810,6 +823,7 @@ export class World {
       this.chargeStone(def.charge, now);
       this.sendBag(p);
       this.saveNow.set(id, p.rec);
+      this.moveStory(p, { feed: 'stone' });
       return this.rerate(p, now);
     }
     const fire = this.fires.at(p.map, x, y);
@@ -822,6 +836,7 @@ export class World {
     this.sendBag(p);
     this.toMap(p.map.data.id, { t: 'fire', fire: this.fires.view(fire, now) });
     this.count(p, 'fed', now);
+    this.moveStory(p, { feed: 'fire' });
     // A dead fire lit again warms whoever stands by it.
     for (const q of this.onMap.get(p.map.data.id)!) this.rerate(q, now);
   }
@@ -859,6 +874,7 @@ export class World {
     // A bigger bar: the player hears it (and at home, by the fire, it fills up).
     if (levelOf(p.rec.xp) !== before) this.refresh(p, now);
     this.tell(p, now);
+    this.moveStory(p, { store: true });
   }
 
   /**
@@ -979,6 +995,20 @@ export class World {
     this.sendBag(p);
     this.sendStash(p);
     this.rerate(p, now);
+  }
+
+  /**
+   * The player talked to the person, or read the desk, on tile x,y next to them (the client talks and
+   * reads by itself; this only tells the story): their story may move on.
+   */
+  talk(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
+    const o = p.map.data.objects.find(o => o.x === x && o.y === y && (o.kind === 'npc' || o.kind === 'console'));
+    if (o?.kind === 'npc') this.moveStory(p, { talk: o.id });
+    else if (o?.kind === 'console') this.moveStory(p, { read: o.id });
   }
 
   /** Reads the notice board on tile x,y (next to the player): how things stand out there, in plain words. */
@@ -1114,6 +1144,7 @@ export class World {
     const from = p.map;
     this.place(p, this.maps.get(to.to)!, to.x, to.y, to.dir);
     this.arrive(p, from, 'exit', now);
+    this.moveStory(p, { reach: p.map.data.id });
   }
 
   /** Out of energy while online: the player wakes up at home, and both maps see it. */
@@ -1256,6 +1287,18 @@ export class World {
     p.heardLoad = p.load;
     p.heardAt = now;
     this.outbox.push({ to: p.rec.id, msg: { t: 'energy', energy: energyView(p), body: bodyView(p) } });
+  }
+
+  /**
+   * Something the player did that the story may wait for: the next chapter, if this is what reaches
+   * it (story.ts). A chapter reached is theirs for good: they hear it, and it is saved at once.
+   */
+  private moveStory(p: Online, event: StoryEvent): void {
+    const next = reachedBy(this.story, p.rec.story, event);
+    if (!next) return;
+    p.rec.story = next.id;
+    this.saveNow.set(p.rec.id, p.rec);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'chapter', id: next.id } });
   }
 
   /** One more of what counts toward a feat; a feat reached is the player's for good, and they hear it. */
@@ -1644,6 +1687,7 @@ export class World {
     this.got(p, [{ item: rule.item.id, count: 1 }], 'find');
     this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
     this.rerate(p, now);
+    this.moveStory(p, { pick: rule.item.id });
   }
 
   /**

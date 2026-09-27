@@ -3,7 +3,7 @@
  * restart), its tick and periodic saves. main.ts builds it from the environment; tests start it directly.
  */
 import type { AddressInfo } from 'node:net';
-import { DROP_LIFETIME_MS, weatherAt, type ItemsData, type TileMap, type Weather } from '@napoland/shared';
+import { DROP_LIFETIME_MS, weatherAt, type ItemsData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
 import { legacyAuth, type Auth } from './auth';
 import { createHttpServer } from './http';
 import { log } from './log';
@@ -20,6 +20,8 @@ export interface ServerOptions {
   maps: Iterable<TileMap>;
   /** Items and where finds grow; they must fit the maps (loadItems checks that). No items if unset. */
   items?: ItemsData;
+  /** The story's chapters; they must fit the maps and items (loadStory checks that). No story if unset. */
+  story?: StoryData;
   /** Where finds grow and which half of a pile others get: Math.random unless a test sets its own. */
   rng?: () => number;
   /** The id of the town where new players start and collapsed players wake up. */
@@ -71,6 +73,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     // Where players run out tells how hard each part of the world really is.
     onCollapse: (id, where) => log.info('player collapsed', { id, ...where }),
     items: o.items,
+    story: o.story,
     rng: o.rng,
     drops,
     // Game time never goes backwards; piles keep wall clock time, which is this far ahead of it.

@@ -1,7 +1,7 @@
 {
   "id": "south-road-tower-shed",
   "name": "The tower shed",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 7,
@@ -28,7 +28,7 @@
   ],
   "objects": [
     {"kind":"crate","x":1,"y":1},
-    {"kind":"console","x":3,"y":1,"name":"Tower panel","text":["NAPO Tower · relay control.","Relay armed. Pulse every 40:00.","A note is taped over the switch, in capitals: \"DO NOT SWITCH OFF.\""]},
+    {"kind":"console","x":3,"y":1,"id":"tower-panel","name":"Tower panel","text":["NAPO Tower · relay control.","Relay armed. Pulse every 40:00.","A note is taped over the switch, in capitals: \"DO NOT SWITCH OFF.\""]},
     {"kind":"crate","x":5,"y":1},
     {"kind":"shelf","x":1,"y":3},
     {"kind":"crate","x":5,"y":4}

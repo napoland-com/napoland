@@ -6,14 +6,17 @@
 import '@fontsource-variable/fredoka';
 import '@fontsource-variable/nunito';
 import './style.css';
-import { HUM_BEFORE_S, bagSlotsOf, type AuthConfig, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type ServerMsg, type Slot, type Weather, type Worn } from '@napoland/shared';
+import {
+  HUM_BEFORE_S, bagSlotsOf, type AuthConfig, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type ServerMsg, type Slot, type StoryData, type Weather, type Worn,
+} from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
-import { Game } from './game';
+import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
 import { iconFor } from './icons';
 import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, wearText, wornViews } from './items';
+import { journalView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { paperMap } from './papermap';
@@ -41,10 +44,12 @@ const store = safe(() => localStorage);
 const tabStore = safe(() => sessionStorage);
 
 // Every map is bundled, so moving between them needs no download; the items too, so the bag can
-// name what it holds. (A glob, not an import: a checkout without items.json still builds, and the
-// version check below sends it the message that it does not match.)
+// name what it holds, and the story, for what people say and the journal. (Globs, not imports: a
+// checkout without items.json or story.json still builds, and the version check below sends it the
+// message that it does not match.)
 const maps = new Maps(Object.values(import.meta.glob<MapData>('../../../content/maps/*.json', { eager: true, import: 'default' })));
 const items = new Items(Object.values(import.meta.glob<ItemsData>('../../../content/items.json', { eager: true, import: 'default' }))[0]);
+const story: StoryData = Object.values(import.meta.glob<StoryData>('../../../content/story.json', { eager: true, import: 'default' }))[0] ?? { version: 0, chapters: [] };
 const app = document.getElementById('app')!;
 const screen = document.createElement('div');
 screen.className = 'screen';
@@ -65,12 +70,14 @@ let weather: Weather = 'rain';
 let welcomed = false;
 /** The first welcome of this page shows where you are; later ones are reconnects. */
 let arrived = false;
-const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items);
-/** Close the bag, the status and About panels and the menu; true when one was open. */
+const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story);
+/** A panel is open over the world (the bag, the journal, the stash...), where it covers the banners. */
+const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.friendsOpen || hud.paperOpen;
+/** Close the bag, the journal, the status and About panels and the menu; true when one was open. */
 const closePanels = () => {
-  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.menuOpen || hud.friendsOpen || hud.paperOpen;
+  const open = panelOpen() || hud.menuOpen;
   hud.showPaper(null);
-  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false);
+  hud.toggleBag(false); hud.toggleJournal(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false);
   return open;
 };
 /** The status panel, as the game stands now. */
@@ -86,7 +93,7 @@ const showStatus = () => {
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
 const controls = {
   pad: (dir: Dir | null) => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
-  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the About panel and the text box, then out of the status or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
 };
@@ -346,7 +353,7 @@ conn.onMessage = (msg: ServerMsg) => {
   const now = performance.now();
   switch (msg.t) {
     case 'welcome':
-      if (!known(msg.map) || msg.items !== items.version) return outdated();
+      if (!known(msg.map) || msg.items !== items.version || msg.story.version !== story.version) return outdated();
       welcomed = true;
       signin?.welcomed(msg);
       if (msg.claimed) claimNote = 'Your character is now linked to your account. Sign in anywhere to play it.';
@@ -463,6 +470,13 @@ let humFor = -Infinity;
 let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: null };
 let toolsShown: string[] | null = null;
 let progressShown: typeof game.progress | null = null;
+let storyShown = -1;
+/**
+ * Chapters reached and not announced yet. Each waits until it can be read: for what is being said
+ * (a chapter reached by talking to someone), the panel that is open (the stash you put things in),
+ * the fade and the banner already up.
+ */
+const chaptersToSay: News[] = [];
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
   requestAnimationFrame(frame);
@@ -520,8 +534,18 @@ function frame(now: number) {
   hud.setBody(body);
   if (body) hud.setLoad(body.load);
   for (const n of game.news.splice(0)) {
+    // A dot on the menu until the journal is opened (it shows the chapter at once if it is open).
+    if (n.kind === 'chapter') { chaptersToSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
     const b = newsBanner(n, game.map.data.name);
     if (b) hud.showBanner(b.title, b.sub);
+  }
+  if (chaptersToSay.length && !game.dialog && !panelOpen() && !hud.bannerUp && !arrival.dark) {
+    const b = newsBanner(chaptersToSay.shift()!, game.map.data.name);
+    if (b) hud.showBanner(b.title, b.sub);
+  }
+  if (game.storyChanges !== storyShown) {
+    storyShown = game.storyChanges;
+    hud.setJournal(journalView(game.reached()));
   }
   if (hud.statusOpen && now - statusAt > 500) { statusAt = now; showStatus(); }
   if (game.socialChanges !== friendsShown.changes || hud.friendsOpen !== friendsShown.open) {

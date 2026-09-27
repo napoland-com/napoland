@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ItemsData, MapData } from '@napoland/shared';
-import { loadItems, loadMaps } from '../src/content';
+import type { ItemsData, MapData, StoryData } from '@napoland/shared';
+import { loadItems, loadMaps, loadStory } from '../src/content';
 import { fixtureMaps, houseData, itemsData, townData, woodsData } from './fixtures';
 
 const dirs: string[] = [];
@@ -119,5 +119,39 @@ describe('loadItems', () => {
     expect(() => loadItems(file('{}'), fixtureMaps())).toThrow(/cannot be read: it needs a version, a list of items and a list of finds/);
     expect(() => loadItems(file('{"version": 1, "items": [null], "finds": []}'), fixtureMaps())).toThrow(/cannot be read/);
     expect(() => loadItems(join(tmpdir(), 'napoland-no-such-items.json'), fixtureMaps())).toThrow(/cannot be read/);
+  });
+});
+
+describe('loadStory', () => {
+  /** A story file with this content, in a folder of its own. */
+  const file = (body: StoryData | string) => join(folder({ 'story.json': typeof body === 'string' ? body : JSON.stringify(body) }), 'story.json');
+  /** Home, then bring moss home, then walk into the woods. */
+  const story = (): StoryData => ({
+    version: 1,
+    chapters: [
+      { id: 'home', title: 'Home', text: 'You woke up at home.' },
+      { id: 'moss', title: 'Moss', text: 'You picked moss.', when: { pick: 'moss' } },
+      { id: 'the-woods', title: 'The woods', text: 'You walked into the woods.', when: { reach: 'woods' } },
+    ],
+  });
+
+  it('loads a story about maps and items that exist', () => {
+    expect(loadStory(file(story()), fixtureMaps(), itemsData())).toEqual(story());
+  });
+
+  it('stops at a story that names what does not exist, naming the file and every problem', () => {
+    const bad = story();
+    bad.chapters.push({ id: 'moss', title: 'Again', text: 'Again.', when: { talk: 'nobody' } });
+    const path = file(bad);
+    expect(() => loadStory(path, fixtureMaps(), itemsData())).toThrow(/^the story in .*story\.json is not valid:/);
+    expect(() => loadStory(path, fixtureMaps(), itemsData())).toThrow(/chapter 4 \("moss"\) is there twice/);
+    expect(() => loadStory(path, fixtureMaps(), itemsData())).toThrow(/nobody has the id nobody/);
+  });
+
+  it('stops at a file it cannot read', () => {
+    expect(() => loadStory(file('{"version": 1, "chapters": ['), fixtureMaps())).toThrow(/the story in .* cannot be read: .*JSON/);
+    expect(() => loadStory(file('{}'), fixtureMaps())).toThrow(/cannot be read: it needs a version and a list of chapters/);
+    expect(() => loadStory(file('{"version": 1, "chapters": [null]}'), fixtureMaps())).toThrow(/cannot be read/);
+    expect(() => loadStory(join(tmpdir(), 'napoland-no-such-story.json'), fixtureMaps())).toThrow(/cannot be read/);
   });
 });

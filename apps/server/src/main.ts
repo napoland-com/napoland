@@ -4,7 +4,7 @@
  */
 import { createAuth } from './auth';
 import { loadConfig } from './config';
-import { loadItems, loadMaps } from './content';
+import { loadItems, loadMaps, loadStory } from './content';
 import { flushLogs, log, setLogLevel } from './log';
 import { startServer } from './server';
 import { MemoryStorage, PgStorage, type Storage } from './storage';
@@ -30,6 +30,8 @@ async function main(): Promise<void> {
     items: items.items.map(i => i.id),
     finds: items.finds.reduce((n, f) => n + f.count, 0),
   });
+  const story = loadStory(cfg.storyFile, maps.values(), items);
+  log.info('story loaded', { file: cfg.storyFile, version: story.version, chapters: story.chapters.length });
 
   const storage: Storage = cfg.databaseUrl ? new PgStorage(cfg.databaseUrl, cfg.migrationsDir!) : new MemoryStorage();
   await storage.init();
@@ -41,6 +43,7 @@ async function main(): Promise<void> {
     storage,
     maps: maps.values(),
     items,
+    story,
     homeMap: cfg.homeMap,
     weather: cfg.weather,
     maxPlayers: cfg.maxPlayers,

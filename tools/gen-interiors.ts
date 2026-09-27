@@ -197,7 +197,7 @@ const ROOMS: readonly Room[] = [
   {
     // The NAPO Bunker, the first building down the South Road and its nearest shelter to town: bunks,
     // NAPO's rules for staff on the wall, and Ruth, who keeps the fire going, so it never goes out.
-    id: 'south-road-bunker', name: 'NAPO Bunker', version: 1, outside: 'south-road', door: [42, 15], style: 'napo',
+    id: 'south-road-bunker', name: 'NAPO Bunker', version: 2, outside: 'south-road', door: [42, 15], style: 'napo',
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -212,7 +212,7 @@ const ROOMS: readonly Room[] = [
       { kind: 'shelf', x: 2, y: 1 },
       { kind: 'bed', x: 7, y: 1 },
       {
-        kind: 'console', x: 6, y: 1, name: 'Staff notice',
+        kind: 'console', x: 6, y: 1, id: 'staff-notice', name: 'Staff notice',
         text: [
           'NAPO · What to do during an event.',
           'In a surge, get under a light and stay there until it passes.',
@@ -239,7 +239,7 @@ const ROOMS: readonly Room[] = [
     // The NAPO Laboratory, in the research station's main building: benches, the station's log and a
     // radio still on, a stove against the back wall (it burns down unless someone feeds it), and Vera,
     // the last of NAPO's researchers, who never left.
-    id: 'south-road-laboratory', name: 'NAPO Laboratory', version: 1, outside: 'south-road', door: [23, 42], style: 'napo',
+    id: 'south-road-laboratory', name: 'NAPO Laboratory', version: 2, outside: 'south-road', door: [23, 42], style: 'napo',
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -254,7 +254,7 @@ const ROOMS: readonly Room[] = [
       { kind: 'fireplace', x: 5, y: 1 },
       { kind: 'shelf', x: 1, y: 1 },
       {
-        kind: 'console', x: 2, y: 1, name: 'Station log',
+        kind: 'console', x: 2, y: 1, id: 'station-log', name: 'Station log',
         text: [
           'Week 1. The Old Stone hums. So do the rocks deep in the woods: the same hum, at the same time.',
           'Week 30. When we play the hum back, it changes. It is not an echo. It is a reply.',
@@ -263,7 +263,7 @@ const ROOMS: readonly Room[] = [
         ],
       },
       {
-        kind: 'console', x: 8, y: 1, name: 'Radio',
+        kind: 'console', x: 8, y: 1, id: 'station-radio', name: 'Radio',
         text: [
           'The radio is on. Under the static, a low hum rises and falls.',
           'A card is taped to it, in Vera\'s hand: "Still listening. Day 3,041."',
@@ -344,7 +344,7 @@ const ROOMS: readonly Room[] = [
   {
     // The Tower's shed: the panel that works the Tower, with a note taped over its switch, and crates of
     // spare parts. No fire.
-    id: 'south-road-tower-shed', name: 'The tower shed', version: 1, outside: 'south-road', door: [46, 44], style: 'napo',
+    id: 'south-road-tower-shed', name: 'The tower shed', version: 2, outside: 'south-road', door: [46, 44], style: 'napo',
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -356,7 +356,7 @@ const ROOMS: readonly Room[] = [
     things: [
       { kind: 'crate', x: 1, y: 1 },
       {
-        kind: 'console', x: 3, y: 1, name: 'Tower panel',
+        kind: 'console', x: 3, y: 1, id: 'tower-panel', name: 'Tower panel',
         text: [
           'NAPO Tower · relay control.',
           'Relay armed. Pulse every 40:00.',
@@ -371,7 +371,7 @@ const ROOMS: readonly Room[] = [
   {
     // The checkpoint's booth on the quarantine line, at the end of the South Road: a stove that burns
     // down, a cot, and the log the last guard kept.
-    id: 'south-road-checkpoint', name: 'The checkpoint', version: 1, outside: 'south-road', door: [40, 83], style: 'napo',
+    id: 'south-road-checkpoint', name: 'The checkpoint', version: 2, outside: 'south-road', door: [40, 83], style: 'napo',
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -382,7 +382,7 @@ const ROOMS: readonly Room[] = [
     ],
     things: [
       {
-        kind: 'console', x: 1, y: 1, name: 'Checkpoint log',
+        kind: 'console', x: 1, y: 1, id: 'checkpoint-log', name: 'Checkpoint log',
         text: [
           'Day 1. Road closed on NAPO\'s orders. Everyone out, nobody in.',
           'Day 9. The last cars went through. The lights in the woods are brighter.',

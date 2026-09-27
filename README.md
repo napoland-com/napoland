@@ -15,7 +15,7 @@ napoland is **open source and made by its community**. It is published by **Ange
 
 **N.A.P.O., the National Anomalous Phenomena Observatory**, was set up to study strange environmental phenomena, and it came to Stonebrook for the hum of the Old Stone. It built a research station down the south road, a tower to listen with, a bunker and a checkpoint. Then NAPO answered the hum, and something went wrong: the woods lit up, the first surge rolled toward town and the Old Stone cracked. The land around it became unstable, dangerous, and in the end abandoned or quarantined. People started calling the whole affected region **Napoland**.
 
-That is where the game takes place, and you are one of the Napoland residents who stayed. Down the south road, what NAPO left behind still stands: the research station and its laboratory, the NAPO Tower, the bunker and the checkpoint on the quarantine line, with NAPO's logs and warning signs to read and a few people who remember. No mission will tell you the story; the world does, and the people in it. More in the [design](docs/DESIGN.md#the-story-napo-and-napoland).
+That is where the game takes place, and you are one of the Napoland residents who stayed. Down the south road, what NAPO left behind still stands: the research station and its laboratory, the NAPO Tower, the bunker and the checkpoint on the quarantine line, with NAPO's logs and warning signs to read and a few people who remember. No mission will tell you the story; the world does, and the people in it. You go through it in chapters, each reached by something the game asks of you anyway (bring something home, feed a fire, talk to someone, read what NAPO left), and your journal keeps them. The story never ends: new chapters come as the world grows. More in the [design](docs/DESIGN.md#the-story-napo-and-napoland).
 
 ## Run it on your computer
 
@@ -46,7 +46,7 @@ Then open http://localhost:8080.
 | `packages/shared` | The rules both sides run: maps, movement, energy, items, and the protocol between client and server |
 | `apps/server` | The game server (Node, WebSockets, PostgreSQL). It decides everything; clients only send what they want to do. |
 | `apps/client` | The web client: a three.js world and an HTML interface that works on any screen shape |
-| `content` | The world as data: maps (`content/maps`) and items (`content/items.json`) |
+| `content` | The world as data: maps (`content/maps`), items (`content/items.json`) and the story's chapters (`content/story.json`) |
 | `tools` | Map generators, validators, test bots, the dev runner and the release script |
 | `roadmap` | What is done and what comes next, one file per item |
 | `docs` | [Design](docs/DESIGN.md) (what the game is and why), [architecture](docs/ARCHITECTURE.md) (how it is built), [operations](docs/OPERATIONS.md) (production) |

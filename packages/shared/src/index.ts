@@ -7,4 +7,5 @@ export * from './movement';
 export * from './progress';
 export * from './protocol';
 export * from './sky';
+export * from './story';
 export * from './validate';

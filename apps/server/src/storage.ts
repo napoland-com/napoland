@@ -45,6 +45,8 @@ export interface PlayerRecord {
   gear?: Gear;
   /** The condition and quirk of each piece worn, by slot. None: as good as new. */
   worn?: Worn;
+  /** The id of the latest chapter of the story the player reached (story.ts). None: they never started. */
+  story?: string;
   /** Milliseconds since the epoch. */
   createdAt: number;
   lastSeenAt: number;
@@ -236,7 +238,7 @@ export class MemoryStorage implements Storage {
       Object.assign(cur, {
         map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(rec.bag), wet: rec.wet ?? 0, stats: { ...rec.stats },
         xp: rec.xp ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
-        ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), lastSeenAt: rec.lastSeenAt,
+        ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), lastSeenAt: rec.lastSeenAt,
       });
     }
   }
@@ -369,6 +371,8 @@ interface PlayerRow {
   gear: unknown;
   /** Null for a player whose pieces were never worn down. */
   worn: unknown;
+  /** Null for a player who never started the story. */
+  story: string | null;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -429,6 +433,7 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.gear && typeof r.gear === 'object' && !Array.isArray(r.gear) ? { gear: r.gear as Gear } : {}),
   // What the World checks again when the player joins.
   ...(r.worn && typeof r.worn === 'object' && !Array.isArray(r.worn) ? { worn: r.worn as Worn } : {}),
+  ...(r.story ? { story: r.story } : {}),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -494,10 +499,11 @@ export class PgStorage implements Storage {
   async save(rec: PlayerRecord): Promise<void> {
     await this.pool.query(
       `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
-       gear = $14::jsonb, worn = $15::jsonb, last_seen_at = $13 WHERE id = $1`,
+       gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), last_seen_at = $13 WHERE id = $1`,
       [
         rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
+        rec.story ?? null,
       ],
     );
   }

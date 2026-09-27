@@ -8,11 +8,15 @@ import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type Npc
 import { DIRS, stepTarget } from './movement';
 import { Dir } from './protocol';
 import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
+import { STORY_EVENTS, type StoryData } from './story';
 
 export interface Problem {
   level: 'error' | 'warning';
   message: string;
 }
+
+/** Ids that content refers to (desks, chapters): lowercase words joined by hyphens. */
+const ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** What a townsperson's look may set (map.ts, NpcLook). */
 const NPC_LOOK = ['coat', 'scarf', 'hair', 'skin', 'hat'] as const satisfies ReadonlyArray<keyof NpcLook>;
@@ -78,6 +82,7 @@ export function validateMap(data: MapData): Problem[] {
     if (o.kind === 'sign' && (!o.text.length || o.text.some(t => !t.trim()))) err(`sign at ${o.x},${o.y} has no text`);
     if (o.kind === 'sign' && o.style !== undefined && o.style !== 'napo') err(`sign at ${o.x},${o.y}: style is napo or left out, not ${JSON.stringify(o.style)}`);
     if (o.kind === 'console' && (!o.name?.trim() || !o.text?.length || o.text.some(t => !t.trim()))) err(`console at ${o.x},${o.y} needs a name and something to read`);
+    if (o.kind === 'console' && !ID.test(o.id ?? '')) err(`console at ${o.x},${o.y}: its id is lowercase words joined by hyphens (the story names it by it)`);
     if (o.kind === 'npc' && !o.lines.length) err(`npc ${o.id} has nothing to say`);
     if (o.kind === 'npc') for (const [k, c] of Object.entries(o.look ?? {})) {
       if (!(NPC_LOOK as readonly string[]).includes(k)) err(`npc ${o.id}: a look has ${NPC_LOOK.join(', ')}, not ${k}`);
@@ -330,6 +335,54 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (room < f.count) err(`${name}: only ${room} tiles fit the rule, fewer than count ${f.count}`);
     else if (room < f.count * 3) warn(`${name}: only ${room} tiles fit the rule for ${f.count} finds; they have little room to move`);
     return undefined;
+  });
+  return out;
+}
+
+/**
+ * content/story.json: chapters with ids, titles and texts, in order. The first is where everyone
+ * starts, so nothing reaches it; each other is reached by one thing a player does, about maps, items,
+ * people and desks that exist. Hints come only from people who exist. People and desks the story can
+ * name must each have an id of their own.
+ */
+export function validateStory(story: StoryData, maps: MapData[], items?: ItemsData): Problem[] {
+  const out: Problem[] = [];
+  const err = (message: string) => out.push({ level: 'error', message });
+  if (!Number.isInteger(story.version) || story.version < 1) err('version must be a whole number from 1');
+  if (!Array.isArray(story.chapters) || !story.chapters.length) {
+    err('there are no chapters');
+    return out;
+  }
+  const people = new Map<string, number>(), desks = new Map<string, number>();
+  for (const m of maps) for (const o of m.objects) {
+    if (o.kind === 'npc') people.set(o.id, (people.get(o.id) ?? 0) + 1);
+    if (o.kind === 'console') desks.set(o.id, (desks.get(o.id) ?? 0) + 1);
+  }
+  for (const [id, n] of people) if (n > 1) err(`${n} people have the id ${id}: the story could not tell them apart`);
+  for (const [id, n] of desks) if (n > 1) err(`${n} desks have the id ${id}: the story could not tell them apart`);
+  const mapIds = new Set(maps.map(m => m.id)), itemIds = new Set((items?.items ?? []).map(i => i.id)), ids = new Set<string>();
+  story.chapters.forEach((c, i) => {
+    const name = `chapter ${i + 1} (${JSON.stringify(c.id)})`;
+    if (!ID.test(c.id ?? '')) err(`${name}: an id is lowercase words joined by hyphens`);
+    if (ids.has(c.id)) err(`${name} is there twice`);
+    ids.add(c.id);
+    if (!c.title?.trim() || !c.text?.trim()) err(`${name} needs a title and a text`);
+    if (i === 0) {
+      if (c.when) err(`${name}: the first chapter is where everyone starts, so nothing reaches it`);
+    } else {
+      const kinds = Object.keys(c.when ?? {}), kind = kinds[0], value = kind && (c.when as Record<string, unknown>)[kind];
+      if (kinds.length !== 1 || !(STORY_EVENTS as readonly string[]).includes(kind!)) err(`${name}: when is one of ${STORY_EVENTS.join(', ')}`);
+      else if (kind === 'store' && value !== true) err(`${name}: when store is true`);
+      else if (kind === 'feed' && value !== 'fire' && value !== 'stone') err(`${name}: when feed is fire or stone`);
+      else if (kind === 'reach' && !mapIds.has(value as string)) err(`${name}: there is no map ${String(value)}`);
+      else if (kind === 'pick' && !itemIds.has(value as string)) err(`${name}: there is no item ${String(value)}`);
+      else if (kind === 'talk' && !people.has(value as string)) err(`${name}: nobody has the id ${String(value)}`);
+      else if (kind === 'read' && !desks.has(value as string)) err(`${name}: no desk has the id ${String(value)}`);
+    }
+    for (const [who, line] of Object.entries(c.hints ?? {})) {
+      if (!people.has(who)) err(`${name}: a hint from ${who}, but nobody has that id`);
+      else if (typeof line !== 'string' || !line.trim()) err(`${name}: ${who}'s hint says nothing`);
+    }
   });
   return out;
 }
