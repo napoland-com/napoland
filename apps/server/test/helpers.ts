@@ -116,12 +116,14 @@ export async function savedPlayer(storage: Storage, where: Partial<PlayerRecord>
   return { id, name, token };
 }
 
-/** Logs in on the server at `port` with a saved token; the welcome and the energy message after it are taken out of the inbox. */
+/** Logs in on the server at `port` with a saved token; the welcome, and the energy, friends list and unread messages after it, are taken out of the inbox. */
 export async function loginTo(port: number, token: string): Promise<{ c: Client; welcome: Extract<ServerMsg, { t: 'welcome' }> }> {
   const c = await Client.open(port);
   c.send({ t: 'hello', v: PROTOCOL_VERSION, token });
   const welcome = await c.next('welcome');
   await c.next('energy');
+  await c.next('friends');
+  await c.next('tells');
   return { c, welcome };
 }
 
@@ -256,11 +258,13 @@ export function setup(options: Partial<ServerOptions> | (() => Partial<ServerOpt
     clients.push(c);
     return c;
   };
-  /** Says hello and takes the welcome and the energy message that follows it out of the inbox. */
+  /** Says hello and takes the welcome, and the energy, friends list and unread messages that follow it, out of the inbox. */
   const welcomed = async (c: Client, hello: ClientMsg) => {
     c.send(hello);
     const welcome = await c.next('welcome');
     expect(await c.next('energy')).toEqual({ t: 'energy', energy: welcome.energy, body: expect.any(Object) });
+    await c.next('friends');
+    await c.next('tells');
     return welcome;
   };
   /** A new player, welcomed. */
@@ -286,4 +290,37 @@ export function setup(options: Partial<ServerOptions> | (() => Partial<ServerOpt
     return c;
   };
   return { ctx, open, join, login, enter, refused, welcomed };
+}
+
+/**
+ * Links, private messages, the requests setting and reports, stored and read back: the same for
+ * every storage. Links name both players; messages come oldest first and go when read.
+ */
+export async function keepsFriendsAndMessages(storage: Storage): Promise<void> {
+  const a = await savedPlayer(storage), b = await savedPlayer(storage);
+  expect(await storage.findPerson({ name: a.name.toUpperCase() })).toEqual({ id: a.id, name: a.name, requestsOff: false });
+  expect(await storage.findPerson({ id: randomUUID() })).toBeNull();
+  await storage.setRequestsOff(b.id, true);
+  expect((await storage.findPerson({ id: b.id }))?.requestsOff).toBe(true);
+
+  await storage.setLink(a.id, b.id, 'request', true);
+  await storage.setLink(a.id, b.id, 'request', true);
+  await storage.setLink(b.id, a.id, 'block', true);
+  expect(await storage.linksOf(b.id)).toEqual([
+    { from: a.id, to: b.id, kind: 'request', fromName: a.name, toName: b.name },
+    { from: b.id, to: a.id, kind: 'block', fromName: b.name, toName: a.name },
+  ]);
+  await storage.setLink(a.id, b.id, 'request', false);
+  await storage.setLink(b.id, a.id, 'block', false);
+  expect(await storage.linksOf(a.id)).toEqual([]);
+
+  await storage.addTell({ from: a.id, to: b.id, text: 'first', at: 1_700_000_000_000 });
+  await storage.addTell({ from: a.id, to: b.id, text: 'second', at: 1_700_000_001_000 });
+  expect(await storage.tellsTo(b.id)).toEqual([
+    { from: a.id, fromName: a.name, to: b.id, text: 'first', at: 1_700_000_000_000 },
+    { from: a.id, fromName: a.name, to: b.id, text: 'second', at: 1_700_000_001_000 },
+  ]);
+  await storage.deleteTells(b.id, a.id);
+  expect(await storage.tellsTo(b.id)).toEqual([]);
+  await storage.addReport({ reporter: a.id, reported: b.id, reason: 'spam', quote: null, at: 1_700_000_002_000 });
 }

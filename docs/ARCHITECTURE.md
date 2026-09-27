@@ -76,6 +76,14 @@ The rules are in `packages/shared` (so client and server agree) and the World ru
 - `{t:'equip', x, y, item}` and `{t:'unequip', x, y, slot}` work next to a chest: the piece moves between the stash and the slot, without XP and without touching what was taken out; everyone on the map hears `gear` with what the player wears now (and `PlayerView` carries it, so newcomers see it). `{t:'bench', x, y}` next to a map object `workbench` answers `bench` with the stash; `{t:'craft', x, y, recipe}` pays from the stash, puts the result in it, and answers `crafted` and `bench`.
 - The client draws gear by slot and color: an icon per slot tinted with the piece's color (`icons.ts`, `iconFor`), and the character's parts in those colors (`characters.ts`, `Look`), the bag bigger the more it holds.
 
+## Friends and private messages
+
+- Friends, requests, blocks, messages and reports involve players who are offline, so they are not in the World: `apps/server/src/social.ts` reads and writes storage for every action, and `net.ts` hands it each message (one player's actions run one after another) and says who is online where.
+- Storage: `links` (`friend`, stored both ways; `request`, from who asked; `block`, from who blocks), `tells` (private messages, deleted when read), `reports`, and `players.requests_off`.
+- Client messages: `befriend` (by `id` or `name`; if they asked you first, you are friends at once), `answer`, `unfriend` (also takes back a request), `tell`, `read`, `block` (ends a friendship and any request either way), `report`, `requests` (the setting) and `friends` (the list again). The server answers with `friends`: the whole list, with each online friend's map. After the welcome come `friends` and `tells` (every unread message); each new message to someone online is a `tells` of one.
+- Refusals (`refused` with `action: 'befriend' | 'tell'`): `unknown_player`, `requests_off` (also when they blocked you, so nobody learns who blocked them), `you_blocked`, `not_friends`, `too_many` (20 requests waiting, or 50 unread from you), `slow_down` (20 messages a minute).
+- The client keeps the conversation for the session only (`friends.ts`, `Game.talks`); opening someone's card sends `read`. A report carries the last thing they wrote you as the reporter's `quote`. The word filter comes with chat ([chat](../roadmap/chat.md)).
+
 ## Connecting and signing in
 
 The server runs in one of three sign-in modes (`AUTH_MODE`, `apps/server/src/auth.ts`), and `GET /auth-config` tells the client which. It is never cached, so the page loaded after a release that changes the mode sees it.
@@ -106,7 +114,7 @@ No single client can wear the server down (`net.ts`, `limits.ts`):
 
 ## Saving
 
-Players (position, map, energy, bag, wetness, feat counts, XP, stash, gear) live in memory while online and are written to PostgreSQL every 15 s, when they leave and on shutdown, and at once whenever items move between a bag and a pile (or a watcher takes one, or a feat is earned). A player's row also says whose it is (`auth_sub`, empty for a character made before sign-in until someone claims it) and, for characters made without sign-in, holds the hash of their token. Piles and marks are written on every change and loaded at start (the last hour's piles, the last day's marks; older ones are deleted), and so is the Old Stone (`world_state`); finds, fires, watchers and flares live in memory only. Schema changes are SQL files in `apps/server/migrations`, applied in order at start-up and recorded in `schema_migrations`; they only add, so the previous release still runs if a new one rolls back.
+Friends, requests, blocks, unread messages and reports are written at once (`social.ts`). Players (position, map, energy, bag, wetness, feat counts, XP, stash, gear) live in memory while online and are written to PostgreSQL every 15 s, when they leave and on shutdown, and at once whenever items move between a bag and a pile (or a watcher takes one, or a feat is earned). A player's row also says whose it is (`auth_sub`, empty for a character made before sign-in until someone claims it) and, for characters made without sign-in, holds the hash of their token. Piles and marks are written on every change and loaded at start (the last hour's piles, the last day's marks; older ones are deleted), and so is the Old Stone (`world_state`); finds, fires, watchers and flares live in memory only. Schema changes are SQL files in `apps/server/migrations`, applied in order at start-up and recorded in `schema_migrations`; they only add, so the previous release still runs if a new one rolls back.
 
 ## Rendering
 

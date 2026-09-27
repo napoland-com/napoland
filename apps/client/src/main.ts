@@ -10,6 +10,7 @@ import { bagSlotsOf, type AuthConfig, type BagSlot, type Dir, type Gear, type It
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
 import { Game } from './game';
+import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
 import { Items, recipeViews, resistText, slotViews, wornViews } from './items';
 import { Keys, keyTarget } from './keys';
@@ -64,8 +65,8 @@ let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items);
 /** Close the bag, the status and About panels and the menu; true when one was open. */
 const closePanels = () => {
-  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.menuOpen;
-  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false);
+  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.menuOpen || hud.friendsOpen;
+  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false);
   return open;
 };
 /** The status panel, as the game stands now. */
@@ -80,7 +81,7 @@ const showStatus = () => {
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
 const controls = {
   pad: (dir: Dir | null) => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
-  a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the About panel and the text box, then out of the status or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
 };
@@ -99,6 +100,27 @@ const hud = new Hud(screen, {
   unequip: slot => game.unequip(slot),
   craft: recipe => game.craft(recipe),
   benchClosed: () => game.closeBench(),
+  social: a => {
+    switch (a.a) {
+      case 'opened': friendsAskedAt = 0; return;
+      case 'person': game.openPerson({ id: a.id, name: a.name }); return hud.toggleFriends(true);
+      case 'back': return game.openPerson(null);
+      case 'befriend': return game.befriend(a.id ? { id: a.id } : { name: a.name ?? '' });
+      case 'answer': return game.social({ t: 'answer', id: a.id, yes: a.yes });
+      case 'unfriend': return game.social({ t: 'unfriend', id: a.id });
+      case 'block': return game.social({ t: 'block', id: a.id, on: a.on });
+      case 'requests': return game.social({ t: 'requests', off: a.off });
+      case 'tell': return game.tell(a.id, a.text);
+      case 'report': {
+        // What they wrote last goes with it: the server keeps no messages once read.
+        const quote = lastFrom(game.talks.get(a.id));
+        game.social({ t: 'report', id: a.id, reason: a.reason, ...(quote ? { quote } : {}) });
+        game.socialNote = 'Reported. Thank you: the maintainers will look into it.';
+        game.socialChanges++;
+        return;
+      }
+    }
+  },
   version: () => loadVersion(),
 });
 watchFires(view);
@@ -410,6 +432,10 @@ let marksShown = { changes: -1, view: null as WorldView | null };
 /** Echoes are chosen again when the piles change or you reach another tile. */
 let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
 let statusAt = 0;
+let friendsShown = { changes: -1, open: false };
+/** The friends panel asks for the list again this often while it is open: who is online, and where. */
+const FRIENDS_REFRESH_MS = 10_000;
+let friendsAskedAt = 0;
 /** The chest as the stash sheet shows it: it opens when the game opens one, and follows what is in it. */
 let chestShown: typeof game.chest = null;
 let capacityShown = 0;
@@ -457,6 +483,12 @@ function frame(now: number) {
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (hud.statusOpen && now - statusAt > 500) { statusAt = now; showStatus(); }
+  if (game.socialChanges !== friendsShown.changes || hud.friendsOpen !== friendsShown.open) {
+    friendsShown = { changes: game.socialChanges, open: hud.friendsOpen };
+    hud.setFriends(friendsView(game.friends, game, id => maps.find(id)?.name), game.socialNote);
+    hud.setSocialNews(game.socialNews);
+  }
+  if (hud.friendsOpen && now - friendsAskedAt > FRIENDS_REFRESH_MS) { friendsAskedAt = now; game.social({ t: 'friends' }); }
   if (game.bench !== benchShown) {
     if (game.bench && !benchShown) hud.toggleBench(true);
     if (!game.bench && benchShown) hud.toggleBench(false);

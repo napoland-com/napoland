@@ -6,7 +6,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
-import type { BagSlot, Dir, Gear, Stash, Stats } from '@napoland/shared';
+import type { BagSlot, Dir, Gear, ReportReason, Stash, Stats } from '@napoland/shared';
 import { log } from './log';
 
 export interface PlayerRecord {
@@ -86,6 +86,43 @@ export interface StoneRecord {
   at: number;
 }
 
+/**
+ * A link between two players: `friend` (stored both ways), a friend `request` from who asked to
+ * who was asked, or a `block` from who blocks to who is blocked. With both players' names.
+ */
+export type LinkKind = 'friend' | 'request' | 'block';
+export interface LinkRecord {
+  from: string;
+  to: string;
+  kind: LinkKind;
+  fromName: string;
+  toName: string;
+}
+
+/** Someone as a friend request finds them: who, and whether they take requests. */
+export interface PersonRecord {
+  id: string;
+  name: string;
+  requestsOff: boolean;
+}
+
+/** A private message nobody has read yet (ms since the epoch), with the sender's name. */
+export interface TellRecord {
+  from: string;
+  fromName: string;
+  to: string;
+  text: string;
+  at: number;
+}
+
+export interface ReportRecord {
+  reporter: string;
+  reported: string;
+  reason: ReportReason;
+  quote: string | null;
+  at: number;
+}
+
 export interface Storage {
   init(): Promise<void>;
   findByTokenHash(hash: string): Promise<PlayerRecord | null>;
@@ -116,6 +153,19 @@ export interface Storage {
   /** The Old Stone as it was last saved, or null. */
   loadStone(): Promise<StoneRecord | null>;
   saveStone(stone: StoneRecord): Promise<void>;
+  /** A player by id, or by name regardless of case. */
+  findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null>;
+  setRequestsOff(id: string, off: boolean): Promise<void>;
+  /** Every link from or to a player. */
+  linksOf(id: string): Promise<LinkRecord[]>;
+  /** Adds (on) or removes a link; adding one that exists, or removing one that does not, changes nothing. */
+  setLink(from: string, to: string, kind: LinkKind, on: boolean): Promise<void>;
+  addTell(tell: Omit<TellRecord, 'fromName'>): Promise<void>;
+  /** Unread messages to a player, oldest first. */
+  tellsTo(id: string): Promise<TellRecord[]>;
+  /** Forgets every message from `from` to `to`: they have been read. */
+  deleteTells(to: string, from: string): Promise<void>;
+  addReport(report: ReportRecord): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -134,6 +184,11 @@ export class MemoryStorage implements Storage {
   private readonly drops = new Map<string, Omit<DropRecord, 'name'>>();
   private readonly marks = new Map<number, Omit<MarkRecord, 'name' | 'color'>>();
   private stone: StoneRecord | null = null;
+  private readonly off = new Set<string>();
+  private links: Array<{ from: string; to: string; kind: LinkKind }> = [];
+  private tells: Array<Omit<TellRecord, 'fromName'>> = [];
+  /** Reports made, for tests. */
+  readonly reports: ReportRecord[] = [];
 
   async init(): Promise<void> {}
 
@@ -232,6 +287,46 @@ export class MemoryStorage implements Storage {
 
   async saveStone(stone: StoneRecord): Promise<void> {
     this.stone = { ...stone };
+  }
+
+  async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {
+    const id = 'id' in by ? by.id : this.idByName.get(by.name.toLowerCase());
+    const rec = id === undefined ? undefined : this.byId.get(id);
+    return rec ? { id: rec.id, name: rec.name, requestsOff: this.off.has(rec.id) } : null;
+  }
+
+  async setRequestsOff(id: string, off: boolean): Promise<void> {
+    if (off) this.off.add(id);
+    else this.off.delete(id);
+  }
+
+  async linksOf(id: string): Promise<LinkRecord[]> {
+    return this.links.filter(l => l.from === id || l.to === id).map(l => ({ ...l, fromName: this.byId.get(l.from)!.name, toName: this.byId.get(l.to)!.name }));
+  }
+
+  async setLink(from: string, to: string, kind: LinkKind, on: boolean): Promise<void> {
+    const has = this.links.some(l => l.from === from && l.to === to && l.kind === kind);
+    if (on && !has) {
+      if (!this.byId.has(from) || !this.byId.has(to)) throw new Error('a link joins two players who exist');
+      this.links.push({ from, to, kind });
+    }
+    if (!on && has) this.links = this.links.filter(l => !(l.from === from && l.to === to && l.kind === kind));
+  }
+
+  async addTell(tell: Omit<TellRecord, 'fromName'>): Promise<void> {
+    this.tells.push({ ...tell });
+  }
+
+  async tellsTo(id: string): Promise<TellRecord[]> {
+    return this.tells.filter(t => t.to === id).map(t => ({ ...t, fromName: this.byId.get(t.from)!.name }));
+  }
+
+  async deleteTells(to: string, from: string): Promise<void> {
+    this.tells = this.tells.filter(t => !(t.to === to && t.from === from));
+  }
+
+  async addReport(report: ReportRecord): Promise<void> {
+    this.reports.push({ ...report });
   }
 
   async close(): Promise<void> {}
@@ -459,6 +554,53 @@ export class PgStorage implements Storage {
       `INSERT INTO world_state (key, value) VALUES ('stone', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
       [JSON.stringify(stone)],
     );
+  }
+
+  async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {
+    const r = 'id' in by
+      ? await this.pool.query<{ id: string; name: string; requests_off: boolean }>('SELECT id, name, requests_off FROM players WHERE id = $1', [by.id])
+      : await this.pool.query<{ id: string; name: string; requests_off: boolean }>('SELECT id, name, requests_off FROM players WHERE lower(name) = lower($1)', [by.name]);
+    const p = r.rows[0];
+    return p ? { id: p.id, name: p.name, requestsOff: p.requests_off } : null;
+  }
+
+  async setRequestsOff(id: string, off: boolean): Promise<void> {
+    await this.pool.query('UPDATE players SET requests_off = $2 WHERE id = $1', [id, off]);
+  }
+
+  async linksOf(id: string): Promise<LinkRecord[]> {
+    const r = await this.pool.query<{ player: string; other: string; kind: LinkKind; from_name: string; to_name: string }>(
+      `SELECT l.player, l.other, l.kind, a.name AS from_name, b.name AS to_name
+       FROM links l JOIN players a ON a.id = l.player JOIN players b ON b.id = l.other
+       WHERE l.player = $1 OR l.other = $1 ORDER BY l.since`,
+      [id],
+    );
+    return r.rows.map(l => ({ from: l.player, to: l.other, kind: l.kind, fromName: l.from_name, toName: l.to_name }));
+  }
+
+  async setLink(from: string, to: string, kind: LinkKind, on: boolean): Promise<void> {
+    if (on) await this.pool.query('INSERT INTO links (player, other, kind) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [from, to, kind]);
+    else await this.pool.query('DELETE FROM links WHERE player = $1 AND other = $2 AND kind = $3', [from, to, kind]);
+  }
+
+  async addTell(t: Omit<TellRecord, 'fromName'>): Promise<void> {
+    await this.pool.query('INSERT INTO tells (sender, recipient, body, sent_at) VALUES ($1, $2, $3, $4)', [t.from, t.to, t.text, new Date(t.at)]);
+  }
+
+  async tellsTo(id: string): Promise<TellRecord[]> {
+    const r = await this.pool.query<{ sender: string; name: string; body: string; sent_at: Date }>(
+      'SELECT t.sender, p.name, t.body, t.sent_at FROM tells t JOIN players p ON p.id = t.sender WHERE t.recipient = $1 ORDER BY t.id',
+      [id],
+    );
+    return r.rows.map(t => ({ from: t.sender, fromName: t.name, to: id, text: t.body, at: t.sent_at.getTime() }));
+  }
+
+  async deleteTells(to: string, from: string): Promise<void> {
+    await this.pool.query('DELETE FROM tells WHERE recipient = $1 AND sender = $2', [to, from]);
+  }
+
+  async addReport(r: ReportRecord): Promise<void> {
+    await this.pool.query('INSERT INTO reports (reporter, reported, reason, quote, made_at) VALUES ($1, $2, $3, $4, $5)', [r.reporter, r.reported, r.reason, r.quote, new Date(r.at)]);
   }
 
   async close(): Promise<void> {

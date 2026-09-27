@@ -4,6 +4,7 @@
  * out what the World has to say, each message to the players it is for: one player, or everyone on
  * one map. Nothing a client sends is trusted. It also stores players (now and then, and when they
  * leave), piles and marks (whenever one changes) and the Old Stone (whenever it is fed or falls asleep).
+ * Friends, requests, blocks, private messages and reports go to social.ts, one player's in order.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
@@ -24,6 +25,7 @@ import {
 import { legacyAuth, type Auth } from './auth';
 import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
+import { Social, type SocialMsg } from './social';
 import type { DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord } from './storage';
 import { colorFor, type World } from './world';
 
@@ -143,6 +145,14 @@ export function attachNet(o: NetOptions): Net {
   const warnConnections = throttledLog('warn', 'too many connections from one address', clock);
   const warnNewPlayers = throttledLog('warn', 'too many new players from one address', clock);
   const warnCannotCheck = throttledLog('error', 'cannot check sign-ins (are Supabase\'s keys reachable?)', clock);
+  const social = new Social({
+    storage,
+    clock,
+    where: id => playing.get(id)?.map || undefined,
+    send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
+  });
+  /** Each player's social actions, one after another: each reads what the one before wrote. */
+  const socialQueue = new Map<string, Promise<void>>();
 
   o.server.on('upgrade', onUpgrade);
 
@@ -259,9 +269,29 @@ export function attachNet(o: NetOptions): Net {
       case 'take':
         world.take(s.id, msg.x, msg.y, msg.item, msg.count, now);
         return flush();
+      case 'befriend':
+      case 'answer':
+      case 'unfriend':
+      case 'tell':
+      case 'read':
+      case 'block':
+      case 'report':
+      case 'requests':
+      case 'friends':
+        return befriends(s.id, () => social.handle(s.id, msg as SocialMsg));
       case 'hello':
         return fail(s, 'bad_message', 'Already said hello');
     }
+  }
+
+  function befriends(id: string, run: () => Promise<void>): void {
+    const done = (socialQueue.get(id) ?? Promise.resolve())
+      .then(run)
+      .catch((err: unknown) => log.error('a friends action failed', { id, err }))
+      .finally(() => {
+        if (socialQueue.get(id) === done) socialQueue.delete(id);
+      });
+    socialQueue.set(id, done);
   }
 
   function onFirstMessage(s: Session, raw: string, msg: ClientMsg | null): void {
@@ -442,6 +472,7 @@ export function attachNet(o: NetOptions): Net {
       serverTime: Date.now(),
     });
     flush();
+    befriends(rec.id, () => social.joined(rec.id));
     log.info('player joined', { id: rec.id, name: rec.name, map: joined.map.id, online: world.size });
   }
 

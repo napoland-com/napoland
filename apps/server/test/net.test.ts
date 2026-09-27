@@ -21,8 +21,8 @@ describe('connecting', () => {
   it('welcomes a new player with a token, at the home spawn with full energy that holds there', async () => {
     const c = await open();
     c.send({ t: 'hello', v: PROTOCOL_VERSION, name: 'Aldo' });
-    await waitFor(() => c.inbox.length >= 2, 'the welcome and the energy');
-    expect(c.inbox.map(m => m.t)).toEqual(['welcome', 'energy']);
+    await waitFor(() => c.inbox.length >= 4, 'the welcome, the energy, the friends list and the unread messages');
+    expect(c.inbox.map(m => m.t)).toEqual(['welcome', 'energy', 'friends', 'tells']);
     const welcome = await c.next('welcome');
     const id = welcome.you;
     expect(await c.next('energy')).toEqual({ t: 'energy', energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 }, body: expect.any(Object) });

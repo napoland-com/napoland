@@ -82,6 +82,12 @@ export function refusalText(reason: Refusal): string {
     case 'bag_too_full': return 'What you carry does not fit in that bag';
     case 'keep_bag': return 'You always carry a bag';
     case 'missing': return 'Your stash lacks what it needs';
+    case 'unknown_player': return 'Nobody by that name';
+    case 'requests_off': return 'They take no friend requests';
+    case 'not_friends': return 'You can only message friends';
+    case 'you_blocked': return 'You blocked them';
+    case 'too_many': return 'Too many waiting already';
+    case 'slow_down': return 'Slow down a little';
   }
 }
 

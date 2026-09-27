@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DROP_LIFETIME_MS } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord } from '../src/storage';
-import { restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
+import { keepsFriendsAndMessages, restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -55,7 +55,7 @@ describe.skipIf(!url)('PgStorage', () => {
   });
 
   it('applies each migration once', async () => {
-    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql'];
+    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql'];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
     await storage.init();
@@ -305,5 +305,11 @@ describe.skipIf(!url)('PgStorage', () => {
     expect(await storage.nameTaken('Pg Cid')).toBe(false);
     expect(await storage.create(player('PG BEA'))).toBe(false);
     expect(await storage.count()).toBe(before + 1);
+  });
+
+  it('keeps friends, requests, blocks, unread messages, the requests setting and reports', async () => {
+    await keepsFriendsAndMessages(storage);
+    const r = await admin.query<{ reason: string; quote: string | null }>(`SELECT reason, quote FROM ${schema}.reports`);
+    expect(r.rows).toEqual([{ reason: 'spam', quote: null }]);
   });
 });
