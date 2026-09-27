@@ -10,10 +10,13 @@ import { HUM_BEFORE_S, bagSlotsOf, type AuthConfig, type BagSlot, type Dir, type
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
 import { Game } from './game';
+import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
+import { iconFor } from './icons';
 import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, wearText, wornViews } from './items';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
+import { paperMap } from './papermap';
 import { Connection, serverUrl } from './net';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { levelText, newsBanner, statusView } from './status';
@@ -65,8 +68,9 @@ let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items);
 /** Close the bag, the status and About panels and the menu; true when one was open. */
 const closePanels = () => {
-  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.menuOpen;
-  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false);
+  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.menuOpen || hud.friendsOpen || hud.paperOpen;
+  hud.showPaper(null);
+  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false);
   return open;
 };
 /** The status panel, as the game stands now. */
@@ -82,9 +86,9 @@ const showStatus = () => {
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
 const controls = {
   pad: (dir: Dir | null) => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
-  a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the About panel and the text box, then out of the status or the bag's details, before the bag itself opens or closes.
-  b: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
+  b: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
 };
 const hud = new Hud(screen, {
   ...controls,
@@ -102,6 +106,35 @@ const hud = new Hud(screen, {
   // The workbench's rows are recipes, and mending ("mend:" and the slot).
   craft: recipe => (recipe.startsWith('mend:') ? game.mend(recipe.slice(5) as Slot) : game.craft(recipe)),
   benchClosed: () => game.closeBench(),
+  social: a => {
+    switch (a.a) {
+      case 'opened': friendsAskedAt = 0; return;
+      case 'person': game.openPerson({ id: a.id, name: a.name }); return hud.toggleFriends(true);
+      case 'back': return game.openPerson(null);
+      case 'befriend': return game.befriend(a.id ? { id: a.id } : { name: a.name ?? '' });
+      case 'answer': return game.social({ t: 'answer', id: a.id, yes: a.yes });
+      case 'unfriend': return game.social({ t: 'unfriend', id: a.id });
+      case 'block': return game.social({ t: 'block', id: a.id, on: a.on });
+      case 'requests': return game.social({ t: 'requests', off: a.off });
+      case 'tell': return game.tell(a.id, a.text);
+      case 'report': {
+        // What they wrote last goes with it: the server keeps no messages once read.
+        const quote = lastFrom(game.talks.get(a.id));
+        game.social({ t: 'report', id: a.id, reason: a.reason, ...(quote ? { quote } : {}) });
+        game.socialNote = 'Reported. Thank you: the maintainers will look into it.';
+        game.socialChanges++;
+        return;
+      }
+    }
+  },
+  // A paper map: drawn from our copy of the map it charts, and never with you on it.
+  tool: item => {
+    const chart = items.get(item).chart, data = chart ? maps.find(chart) : undefined;
+    const map = data && maps.get(data);
+    if (!map) return;
+    hud.toggleBag(false);
+    hud.showPaper(paperMap(map, id => maps.find(id)?.name));
+  },
   version: () => loadVersion(),
 });
 watchFires(view);
@@ -413,6 +446,10 @@ let marksShown = { changes: -1, view: null as WorldView | null };
 /** Echoes are chosen again when the piles change or you reach another tile. */
 let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
 let statusAt = 0;
+let friendsShown = { changes: -1, open: false };
+/** The friends panel asks for the list again this often while it is open: who is online, and where. */
+const FRIENDS_REFRESH_MS = 10_000;
+let friendsAskedAt = 0;
 /** The chest as the stash sheet shows it: it opens when the game opens one, and follows what is in it. */
 let chestShown: typeof game.chest = null;
 let capacityShown = 0;
@@ -424,6 +461,7 @@ let prints: Array<{ map: string; x: number; y: number; dir: Dir; at: number }> =
 /** When the last hum said the region grows restless: one hum for each time it does. */
 let humFor = -Infinity;
 let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: null };
+let toolsShown: string[] | null = null;
 let progressShown: typeof game.progress | null = null;
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
@@ -486,6 +524,12 @@ function frame(now: number) {
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (hud.statusOpen && now - statusAt > 500) { statusAt = now; showStatus(); }
+  if (game.socialChanges !== friendsShown.changes || hud.friendsOpen !== friendsShown.open) {
+    friendsShown = { changes: game.socialChanges, open: hud.friendsOpen };
+    hud.setFriends(friendsView(game.friends, game, id => maps.find(id)?.name), game.socialNote);
+    hud.setSocialNews(game.socialNews);
+  }
+  if (hud.friendsOpen && now - friendsAskedAt > FRIENDS_REFRESH_MS) { friendsAskedAt = now; game.social({ t: 'friends' }); }
   const benchChanged = game.bench !== benchShown;
   if (benchChanged) {
     if (game.bench && !benchShown) hud.toggleBench(true);
@@ -500,6 +544,7 @@ function frame(now: number) {
     gearShown = { gear: game.myGear, worn: game.myWorn };
     hud.setWearing(wornViews(game.myGear, items, game.myWorn));
   }
+  if (game.tools !== toolsShown) hud.setTools((toolsShown = game.tools).map(item => ({ item, name: items.get(item).name, icon: iconFor(items.get(item)) })));
   if (game.chest !== chestShown || game.progress !== progressShown) {
     if (game.chest && !chestShown) hud.toggleStash(true);
     if (!game.chest && chestShown) hud.toggleStash(false);

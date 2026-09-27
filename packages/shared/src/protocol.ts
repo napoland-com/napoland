@@ -11,7 +11,7 @@ import type { ProgressView } from './progress';
 import type { FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 11;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -45,6 +45,12 @@ export const AUTH_MODES: readonly AuthMode[] = ['legacy', 'dev', 'supabase'];
  * provider such as Google puts in it, and is usually 1 to 2 KB.
  */
 export const MAX_AUTH_CHARS = 8192;
+
+/** The longest private message. */
+export const MAX_TELL_CHARS = 200;
+/** Why someone is reported (a report also keeps what they wrote, as the reporter saw it). */
+export const ReportReason = z.enum(['rude', 'spam', 'cheating', 'other']);
+export type ReportReason = z.infer<typeof ReportReason>;
 
 export const ClientMsg = z.discriminatedUnion('t', [
   /**
@@ -91,6 +97,24 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('mend'), x: z.number().int(), y: z.number().int(), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
   /** Take up to `count` of an item out of the chest on tile x,y, as much as fits in your bag. */
   z.object({ t: z.literal('take'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), count: z.number().int().positive().max(9999) }),
+  /** Ask someone to be your friend, by id (tapping their name tag) or by name. If they asked you already, you are friends. */
+  z.object({ t: z.literal('befriend'), id: z.uuid().optional(), name: PlayerName.optional() }),
+  /** Answer someone's friend request: yes makes you friends, no drops it. */
+  z.object({ t: z.literal('answer'), id: z.uuid(), yes: z.boolean() }),
+  /** Stop being friends, or take back a request you sent. */
+  z.object({ t: z.literal('unfriend'), id: z.uuid() }),
+  /** A private message to a friend, kept until they read it. */
+  z.object({ t: z.literal('tell'), to: z.uuid(), text: z.string().trim().min(1).max(MAX_TELL_CHARS) }),
+  /** You read what `from` sent you: the server forgets it. */
+  z.object({ t: z.literal('read'), from: z.uuid() }),
+  /** Block someone (on) or stop blocking them: a blocked player can send you no requests and no messages, and a friendship ends. */
+  z.object({ t: z.literal('block'), id: z.uuid(), on: z.boolean() }),
+  /** Report someone to the maintainers; `quote` is what they wrote, as you saw it. */
+  z.object({ t: z.literal('report'), id: z.uuid(), reason: ReportReason, quote: z.string().max(MAX_TELL_CHARS).optional() }),
+  /** Settings: turn friend requests from others off, or back on. */
+  z.object({ t: z.literal('requests'), off: z.boolean() }),
+  /** Send me my friends list again: who is online now, and where. */
+  z.object({ t: z.literal('friends') }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -193,10 +217,41 @@ export type Refusal =
   | 'keep_bag'
   /** The stash lacks what the recipe needs. */
   | 'missing'
+  /** Nobody has that name (or that is you). */
+  | 'unknown_player'
+  /** They take no friend requests (or they blocked you: the same answer, so nobody learns who blocked them). */
+  | 'requests_off'
+  /** Messages go to friends only. */
+  | 'not_friends'
+  /** You blocked them: unblock them first. */
+  | 'you_blocked'
+  /** Too many requests waiting, or messages they have not read. */
+  | 'too_many'
+  /** Too many messages at once. */
+  | 'slow_down'
   /** Gear stays in the chest: it is put on from there. */
   | 'gear_stays'
   /** That is as good as new already, or cannot be mended. */
   | 'whole';
+
+/** Someone, by id and name. */
+export interface PersonView {
+  id: string;
+  name: string;
+}
+
+/** A friend: online on map `map` (an id), or offline (null). */
+export interface FriendView extends PersonView {
+  map: string | null;
+}
+
+/** A private message to you, kept until you read it; `at` is ms since the epoch. */
+export interface TellView {
+  from: string;
+  name: string;
+  text: string;
+  at: number;
+}
 
 /** What every client knows about a player it can see. x and y are tile coordinates. */
 export interface PlayerView {
@@ -252,6 +307,8 @@ export type ServerMsg =
       stats: Stats;
       /** Your XP and level (progress.ts). */
       progress: ProgressView;
+      /** Your tools (item ids, items.ts): kept for good, apart from the bag. */
+      tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
       items: number;
       serverTime: number;
@@ -271,7 +328,11 @@ export type ServerMsg =
   /** You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message. */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify' }
   /** A pick, use, discard or feed that did not happen, and why. */
-  | { t: 'refused'; action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend'; reason: Refusal }
+  | { t: 'refused'; action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'befriend' | 'tell'; reason: Refusal }
+  /** Your friends (with who is online, and where), requests to you and from you, who you block and your setting: whole, after any change and when asked. */
+  | { t: 'friends'; friends: FriendView[]; incoming: PersonView[]; outgoing: PersonView[]; blocked: PersonView[]; requestsOff: boolean }
+  /** Private messages to you: every unread one after the welcome, then each new one as it comes. */
+  | { t: 'tells'; tells: TellView[] }
   /** On your map: a fire was fed (or lit again). */
   | { t: 'fire'; fire: FireView }
   /** On your map: a mark was painted, or faded. */

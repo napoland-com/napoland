@@ -16,9 +16,10 @@
 import {
   STEP_MS, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, stepTarget, surgeFront, DIR_VEC,
   type BagSlot, type BodyView, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
-  type Gear, type MarkView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type SurgeView, type TileMap,
+  type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type SurgeView, type TileMap,
   type FlashKind, type FlashView, type StormView,
 } from '@napoland/shared';
+import type { FriendsMsg, TalkLine } from './friends';
 import { countOf, lookOf, refusalText, useText, type Items } from './items';
 import type { Maps } from './maps';
 import type { Avatar } from './view/world';
@@ -153,12 +154,26 @@ export class Game {
   /** The Old Stone in town, and your counts toward feats. */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
+  /** Your tools (item ids), as the welcome said: a paper map, for now. */
+  tools: string[] = [];
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
   bench: { x: number; y: number; stash: BagSlot[] } | null = null;
+  /** Your friends, requests and blocks as the server last told them (null until it has). */
+  friends: FriendsMsg | null = null;
+  /** Private messages this session, by the other player's id, oldest first; replaced whole on every change. */
+  talks = new Map<string, TalkLine[]>();
+  /** Friends whose messages you have not opened yet. */
+  unread = new Set<string>();
+  /** Whose card is open in the friends panel: their messages count as read while it is. */
+  person: PersonView | null = null;
+  /** The last friends action that did not go through, in words, for the panel. */
+  socialNote: string | null = null;
+  /** Counts every change to all of the above, so the panel is rebuilt only when something changed. */
+  socialChanges = 0;
   /** The quirks of what everyone on this map wears, by player id: some show in the world. */
   quirks = new Map<string, Quirk[]>();
   /** What everyone on this map wears, by player id (you too). */
@@ -286,6 +301,7 @@ export class Game {
         this.stone = msg.stone;
         this.stats = msg.stats;
         this.progress = msg.progress;
+        this.tools = msg.tools;
         break;
       }
       case 'zone': {
@@ -469,7 +485,21 @@ export class Game {
         if (!msg.items.length) this.floatOverMe('Nothing in it for you', NO);
         break;
       }
+      case 'friends':
+        this.friends = msg;
+        this.socialChanges++;
+        break;
+      case 'tells':
+        for (const t of msg.tells) {
+          this.talks.set(t.from, [...(this.talks.get(t.from) ?? []), { mine: false, text: t.text }]);
+          if (this.person?.id !== t.from) this.unread.add(t.from);
+        }
+        // Read at once when their card is open.
+        if (this.person && msg.tells.some(t => t.from === this.person!.id)) this.send({ t: 'read', from: this.person.id });
+        this.socialChanges++;
+        break;
       case 'refused':
+        if (msg.action === 'befriend' || msg.action === 'tell') { this.socialNote = refusalText(msg.reason); this.socialChanges++; break; }
         if (msg.action === 'pick') this.picking = null;
         if (msg.action === 'use') this.using = null;
         if (msg.action === 'feed') this.feeding = null;
@@ -614,6 +644,42 @@ export class Game {
   }
 
   /** At the open chest: put on a piece of gear from the stash, or take off what a slot wears. */
+  // ---------- friends ----------
+
+  /** Opens someone's card (null: back to the list). Opening it reads what they sent. */
+  openPerson(p: PersonView | null) {
+    this.person = p;
+    this.socialNote = null;
+    if (p && this.unread.delete(p.id) && this.online) this.send({ t: 'read', from: p.id });
+    this.socialChanges++;
+  }
+
+  befriend(by: { id: string } | { name: string }) {
+    this.socialNote = null;
+    this.socialChanges++;
+    if (this.online) this.send({ t: 'befriend', ...by });
+  }
+
+  /** Says something to a friend: it shows at once, and the server keeps it until they read it. */
+  tell(to: string, text: string) {
+    const t = text.trim();
+    if (!t || !this.online) return;
+    this.talks.set(to, [...(this.talks.get(to) ?? []), { mine: true, text: t }]);
+    this.socialNote = null;
+    this.socialChanges++;
+    this.send({ t: 'tell', to, text: t });
+  }
+
+  /** Any other friends action: answer, unfriend, block, report, the requests setting, or asking for the list again. */
+  social(msg: Extract<ClientMsg, { t: 'answer' | 'unfriend' | 'block' | 'report' | 'requests' | 'friends' }>) {
+    if (this.online) this.send(msg);
+  }
+
+  /** Something new for the menu's dot: a friend request, or a message not opened yet. */
+  get socialNews(): boolean {
+    return this.unread.size > 0 || (this.friends?.incoming.length ?? 0) > 0;
+  }
+
   /** Puts on the `n`th piece of `item` in the stash (their order in the chest). */
   equip(item: string, n = 0) {
     const c = this.chest;
