@@ -278,7 +278,7 @@ export class Hud {
       </div>
       <div class="sheet panel bench-sheet" data-el="benchSheet" data-open="false" role="dialog" aria-label="Workbench">
         <div class="sheet-head"><b>Workbench</b><button type="button" class="close" data-el="benchClose" aria-label="Close the workbench">${ICON.x}</button></div>
-        <p class="hint">It makes gear from what is in your stash at home, and puts it there. Put it on at the chest.</p>
+        <p class="hint">It makes gear from what is in your stash, and puts it there. Put it on at the chest beside it.</p>
         <div class="recipes" data-el="benchList"></div>
       </div>
       <div class="sheet panel status-sheet" data-el="statusSheet" data-open="false" role="dialog" aria-label="Status">
