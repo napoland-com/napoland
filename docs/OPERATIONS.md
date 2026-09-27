@@ -72,7 +72,7 @@ players in its own database. [deploy/compose.yaml](../deploy/compose.yaml) sets:
 
 | Setting | Value |
 |---|---|
-| `AUTH_MODE` | `legacy` (names and browser tokens, no sign-in) until the project below is ready, then `supabase`. `dev` (any email, no code) is refused in production. |
+| `AUTH_MODE` | `supabase` (since 2026-09-27; the codes go out through the owner's Amazon SES). `legacy` is names and browser tokens without sign-in; `dev` (any email, no code) is refused in production. |
 | `SUPABASE_URL` | `https://azczuzefhfyopmsnuosv.supabase.co` |
 | `SUPABASE_PUBLISHABLE_KEY` | The project's publishable key, `sb_publishable_...`. Public: every browser gets it from `/auth-config`. The server refuses to start with a secret key (`sb_secret_...` or a `service_role` JWT). `SUPABASE_ANON_KEY` is accepted as the older name. |
 | `SUPABASE_JWT_SECRET` | Not set: the project signs tokens with an ES256 key whose public half is at `/auth/v1/.well-known/jwks.json`. Only a project that still signs with a shared HS256 secret needs it. |

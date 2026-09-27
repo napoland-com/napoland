@@ -40,11 +40,10 @@ services:
       # Caddy is the only way in, so X-Forwarded-For carries the real player address.
       TRUST_PROXY: "1"
       WEATHER: cycle
-      # Sign-in through Supabase Auth (an email and a 6-digit code) waits for the Supabase project:
-      # its email templates must show the code, and it needs its own mail service
-      # (docs/OPERATIONS.md, "Sign-in"). Until then players keep names and browser tokens (legacy);
-      # AUTH_MODE: supabase switches. Both Supabase values are public: browsers get them from /auth-config.
-      AUTH_MODE: legacy
+      # Sign-in through Supabase Auth: an email and a 6-digit code, sent through the project's own
+      # mail service (docs/OPERATIONS.md, "Sign-in"). AUTH_MODE: legacy goes back to names and
+      # browser tokens. Both Supabase values are public: browsers get them from /auth-config.
+      AUTH_MODE: supabase
       SUPABASE_URL: https://azczuzefhfyopmsnuosv.supabase.co
       SUPABASE_PUBLISHABLE_KEY: sb_publishable_MjuYAHlcbXjup4pBciyVGw_QRMps_UU # public by design; gitleaks:allow
     depends_on:
