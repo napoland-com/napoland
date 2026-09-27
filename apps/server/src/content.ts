@@ -59,6 +59,24 @@ export function loadMaps(dir: string, homeId: string): { maps: Map<string, TileM
 }
 
 /**
+ * The words chat masks (content/words.json, next to the items): a list of lowercase words. None if
+ * the file is not there. Throws if it is there and is not such a list.
+ */
+export function loadWords(file: string): string[] {
+  let raw: string;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  const data = JSON.parse(raw) as { words?: unknown };
+  if (!Array.isArray(data.words) || !data.words.every(w => typeof w === 'string' && /^[\p{Ll}]+$/u.test(w))) {
+    throw new Error(`the words in ${file} are not a list of lowercase words`);
+  }
+  return data.words as string[];
+}
+
+/**
  * The items file (content/items.json), checked against the maps its finds grow on. Throws with every
  * error found; returns the items and the warnings.
  */

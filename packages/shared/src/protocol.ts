@@ -3,6 +3,7 @@
  * Everything the client sends is validated with these schemas; the server never trusts it.
  */
 import { z } from 'zod';
+import { MAX_SAY_CHARS, type ChatTo } from './chat';
 import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { Gear, Quirk, Worn } from './gear';
@@ -11,7 +12,7 @@ import type { ProgressView } from './progress';
 import type { FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 11;
+export const PROTOCOL_VERSION = 12;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -115,6 +116,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('requests'), off: z.boolean() }),
   /** Send me my friends list again: who is online now, and where. */
   z.object({ t: z.literal('friends') }),
+  /** Say something to everyone online (world) or to whoever is near you (local). Only signed-in players can. */
+  z.object({ t: z.literal('say'), to: z.enum(['world', 'local']), text: z.string().trim().min(1).max(MAX_SAY_CHARS) }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -229,6 +232,8 @@ export type Refusal =
   | 'too_many'
   /** Too many messages at once. */
   | 'slow_down'
+  /** Only signed-in players can talk. */
+  | 'sign_in_first'
   /** Gear stays in the chest: it is put on from there. */
   | 'gear_stays'
   /** That is as good as new already, or cannot be mended. */
@@ -328,7 +333,9 @@ export type ServerMsg =
   /** You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message. */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify' }
   /** A pick, use, discard or feed that did not happen, and why. */
-  | { t: 'refused'; action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'befriend' | 'tell'; reason: Refusal }
+  | { t: 'refused'; action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'befriend' | 'tell' | 'say'; reason: Refusal }
+  /** Someone said something you can hear: to everyone online, or near them on your map (a bubble over their head). You hear your own too. */
+  | { t: 'said'; to: ChatTo; id: string; name: string; text: string }
   /** Your friends (with who is online, and where), requests to you and from you, who you block and your setting: whole, after any change and when asked. */
   | { t: 'friends'; friends: FriendView[]; incoming: PersonView[]; outgoing: PersonView[]; blocked: PersonView[]; requestsOff: boolean }
   /** Private messages to you: every unread one after the welcome, then each new one as it comes. */

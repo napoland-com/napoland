@@ -1,8 +1,8 @@
 ---
 id: chat
 title: World and local chat
-status: planned
-order: 30
+status: done
+order: 150
 area: social
 depends: [sign-in]
 ---
