@@ -202,6 +202,32 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }
 /* The status panel: rows about you, then the feats. It sits where the bag does. */
+/* Friends: the list, someone's card and a conversation. Text you type is at least 16px, so iPhone Safari never zooms in. */
+.friends-sheet .note { margin: 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); color: #ffb4a0; }
+.friends-sheet .note[hidden], .friends-sheet [hidden] { display: none; }
+.friends-list, .person { display: grid; gap: calc(var(--u) * .6); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); min-height: 0; }
+.friends-sheet h3 { margin: calc(var(--u) * .4) 0 0; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; }
+.frow { display: flex; align-items: center; gap: calc(var(--u) * .5); width: 100%; margin-top: calc(var(--u) * .35); }
+.hud .frow.open { display: flex; padding: .5em .8em; border-radius: 9px; border: 1px solid #3a4356; background: #1c222c; box-shadow: none; text-align: left; font: inherit; color: inherit; }
+.frow .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frow .fwhere { color: #8a8474; font-size: .9em; white-space: nowrap; }
+.frow .fwhere[data-on="true"] { color: #8fd98a; }
+.friends-sheet .say { display: flex; gap: calc(var(--u) * .5); }
+.friends-sheet .say input { flex: 1; min-width: 0; font: 600 max(16px, calc(var(--u) * 1.2)) var(--font-text); padding: .45em .7em; border-radius: 9px; border: 1px solid #4a5468; background: #131820; color: #f1ece0; }
+.friends-sheet .setting { display: flex; align-items: center; gap: .5em; color: #d3ccbb; }
+.friends-sheet .setting input { width: 1.2em; height: 1.2em; accent-color: #e0873a; }
+.person .where { margin: 0; color: #b9b2a2; }
+.person .acts { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--u) * .5); }
+.person .ask { font-weight: 700; }
+.person .talk { display: flex; flex-direction: column; gap: calc(var(--u) * .4); max-height: calc(var(--u) * 16); overflow-y: auto; overscroll-behavior: contain; }
+.person .line { align-self: flex-start; margin: 0; max-width: 85%; padding: .4em .7em; border-radius: 12px 12px 12px 3px; background: #262d3a; overflow-wrap: anywhere; }
+.person .line[data-mine] { align-self: flex-end; border-radius: 12px 12px 3px 12px; background: #5a3a1c; }
+/* Something new among friends: a request, or a message not opened yet. */
+.hud .dot, .hud [data-news]::after { display: inline-block; width: .55em; height: .55em; margin-right: .4em; border-radius: 50%; background: #ff6b4a; box-shadow: 0 0 0 2px #0e1117; vertical-align: .1em; }
+.menu-panel [data-news] { position: relative; }
+.hud [data-news]::after { content: ""; position: absolute; top: .35em; right: .35em; margin: 0; }
+/* A player's name tag is a button: their card. */
+.tag[data-player] { pointer-events: auto; cursor: pointer; }
 .status-body { display: grid; gap: calc(var(--u) * .55); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); }
 .status-body h3 { margin: calc(var(--u) * .5) 0 0; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.25); color: #ffcf5a; }
 .srow { display: grid; grid-template-columns: minmax(5.5em, auto) 1fr; gap: .15em .8em; align-items: baseline; }
