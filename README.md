@@ -11,6 +11,12 @@ napoland is **open source and made by its community**. It is published by **Ange
 <!-- Screenshot placeholder: add a phone screenshot (for example docs/images/stonebrook.png, taken at 390x844) and show it here. -->
 > **Screenshot coming soon.** Until then, the quickest look is https://www.napoland.com.
 
+## The story
+
+**N.A.P.O., the National Anomalous Phenomena Observatory**, was set up to study strange environmental phenomena. Something went wrong. The land around it became unstable, dangerous, and in the end abandoned or quarantined. People started calling the whole affected region **Napoland**. That is where the game takes place, and you are one of the Napoland residents.
+
+What NAPO left behind can turn up anywhere on the map: old NAPO facilities (research stations, towers, laboratories, bunkers, shelters), their signs and antennas, warning signs and abandoned equipment. None of it is in the game yet: it is on the [roadmap](roadmap/napo-in-the-world.md). No mission will tell you the story; the world does. More in the [design](docs/DESIGN.md#the-story-napo-and-napoland).
+
 ## Run it on your computer
 
 You need [Node.js 24](https://nodejs.org) (npm comes with it) and git. Docker is optional.

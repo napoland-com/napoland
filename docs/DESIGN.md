@@ -14,6 +14,16 @@ The decisions so far, with the reason for each. Change this file when a decision
 4. **Together you go farther.** Deep areas need several people (see Cooperation).
 5. **One fixed world you learn.** The map does not reshuffle, so players can share guides, routes and strategies. It grows over time as new regions are added farther out.
 
+## The story: NAPO and Napoland
+
+**N.A.P.O., the National Anomalous Phenomena Observatory**, was originally an organization, or a research program, set up to study strange environmental phenomena. Something went wrong. The territory around it became unstable, dangerous, and in the end abandoned or quarantined. People started calling the whole affected region **Napoland**. The game is set there, and the players are Napoland residents.
+
+- **Why:** it gives a reason for what the world already shows: the land is unstable (surges, anomalies) and dangerous (watchers, hitchhikers), and most people left (Stonebrook's sign: "Most people left after the lights started showing up in the woods"). It gives the game its name, and what NAPO left behind makes landmarks in a world you learn by walking it.
+- **What NAPO left behind** can appear throughout the map: old NAPO facilities, signs, antennas, laboratories, shelters, warning signs and abandoned equipment (planned: [napo-in-the-world](../roadmap/napo-in-the-world.md)).
+- **Names in the world** come from it, for example: NAPO Research Station, NAPO Tower, NAPO Laboratory, NAPO Equipment, NAPO Bunker, Napoland Zone, Napoland Residents.
+- **Told by the world, never by a mission** (pillar 1): by what stands out there, what signs say, what people tell you and what items are.
+- **Still open:** anything this section does not say, starting with what went wrong. A new fact about the story is a design decision: write it here first, so signs, people and items never contradict each other.
+
 ## The loop
 
 1. Wake up at home (your cabin). Equip gear. Equipment can be put on or taken off **only at home**, so choosing gear is part of planning a trip.
@@ -145,7 +155,7 @@ The roadmap lives in [roadmap/](../roadmap/): one file per item, each with its s
 ## Look and feel
 
 - Low-poly 3D with the structure of Pokemon FireRed: a steep, almost top-down camera over a tile grid, ledges and walls of trees, chunky chibi characters, two-tone toon shading with outlines, a text box at the bottom for talking.
-- A **dark world** in the mood of **Pacific Drive**: a Pacific Northwest forest of tall firs, fog, rain, night, abandoned cabins, orange sodium street lights, utility poles, glowing anomalies (the Old Stone, wisps).
+- A **dark world** in the mood of **Pacific Drive**: a Pacific Northwest forest of tall firs, fog, rain, night, abandoned cabins, orange sodium street lights, utility poles, glowing anomalies (the Old Stone, wisps), and the old facilities, antennas and warning signs NAPO left behind ([the story](#the-story-napo-and-napoland)).
 - Dark interface: dark panels with cream borders, Fredoka and Nunito fonts.
 - **Any screen shape works:** nothing forces portrait or landscape. The camera shows the same circle of world around you on every screen; controls sit in the thumb corners and are sized from the short side; panels open where they cover the least.
 
