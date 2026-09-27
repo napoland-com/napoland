@@ -18,7 +18,7 @@ import { loadMaps } from '../src/content';
 import { EMBERS, FIRE_LOW_S, FIRE_MAX_S } from '../src/fires';
 import type { MarkRecord, PlayerRecord } from '../src/storage';
 import {
-  HITCH_STEPS, MARKS_PER_PLAYER, MARK_LIFETIME_MS, SKULKER_CATCH, SKULKER_CHASE_MS, SKULKER_STEP_MS, STONE_NEED, STONE_SHARD_S, TRAIL_STEPS, WATCHER_STEP_MS, WATCHER_TOUCH, World, colorFor, faces,
+  HITCH_STEPS, MARKS_PER_PLAYER, MARK_LIFETIME_MS, SKULKER_CATCH, SKULKER_CHASE_MS, SKULKER_STEP_MS, STONE_NEED, STONE_SHARD_S, TRAIL_STEPS, WATCHER_HUNT, WATCHER_HUNT_LIVE, WATCHER_STEP_MS, WATCHER_TOUCH, World, colorFor, faces,
   type Outgoing, type WorldOptions,
 } from '../src/world';
 import { fixtureMaps, houseData, townData } from './fixtures';
@@ -375,6 +375,81 @@ describe('watchers', () => {
   });
 });
 
+describe('live finds', () => {
+  // Restless from 60 s to 80 s of each 100 s round; a live shard (40 XP, fresh 240 s, 5 less a minute) fades into a 12 XP shard at 600 s.
+  const surge = { every: 100, unstable: 20, surge: 20, sweep: 10 };
+  const items: ItemsData = {
+    ...ITEMS,
+    items: [
+      ...ITEMS.items.map(i => (i.id === 'shard' ? { ...i, xp: 12 } : i)),
+      { id: 'live-shard', name: 'Live shard', kind: 'resource', stack: 1, xp: 12, weight: 0.3, charge: 1, text: 'Burning.', live: { xp: 40, fresh: 240, fade: 5, into: 'shard' } },
+    ],
+    finds: [{ item: 'live-shard', map: 'field', count: 1, respawn: [5, 5], when: 'unstable' }],
+  };
+  const live = (since: number) => ({ item: 'live-shard', count: 1, since });
+
+  it('start fading when picked, and make the carrier glow for everyone on the map', () => {
+    const w = world(fieldData(12, { surge }), 'overcast', { items }, rec('b', 'field', 1, 1));
+    w.tick(60_000);
+    const [find] = w.findViews('field');
+    w.join(rec('a', 'field', find!.x, find!.y), 60_000);
+    w.drain();
+    w.pick('a', find!.x, find!.y, 61_000);
+    const out = w.drain();
+    expect(of(to(out, 'a'), 'bag').at(-1)).toEqual({ t: 'bag', bag: [{ item: 'live-shard', count: 1, age: 0 }] });
+    expect(onMap(out, 'field')).toContainEqual({ t: 'glow', id: 'a', on: true });
+    expect(w.get('a')!.bag).toEqual([live(61_000)]);
+    // Someone who comes along later sees it too.
+    expect(w.join(rec('c', 'field', 8, 1), 62_000).players.find(p => p.id === 'a')?.live).toBe(true);
+  });
+
+  it('are worth 40 XP stashed within 4 minutes, less after, and never pay off what was taken out', () => {
+    const field = fieldData(12, { objects: [{ kind: 'chest', x: 1, y: 1 }] });
+    const stash = { items: {}, out: { shard: 2 } };
+    const w = world(field, 'overcast', { items },
+      rec('a', 'field', 1, 2, 'up', { bag: [live(0)], stash }), rec('b', 'field', 2, 1, 'left', { bag: [live(0), { item: 'twig', count: 1 }], stash }));
+    w.store('a', 1, 1, undefined, 180_000);
+    expect(of(to(w.drain(), 'a'), 'progress')[0]?.gained).toBe(40);
+    expect(w.get('a')!.stash).toEqual({ items: { shard: 1 }, out: { shard: 2 } });
+    w.store('b', 1, 1, 0, 360_000);
+    expect(of(to(w.drain(), 'b'), 'progress')[0]?.gained).toBe(30);
+    expect(w.get('b')!.bag).toEqual([{ item: 'twig', count: 1 }]);
+  });
+
+  it('turn into a plain shard after 10 minutes, and the map sees the glow go out', () => {
+    const w = world(fieldData(), 'overcast', { items }, rec('a', 'town', 1, 2, 'up', { bag: [{ item: 'shard', count: 1 }, live(0)] }), rec('b', 'town', 2, 2));
+    w.tick(599_000);
+    expect(of(onMap(w.drain(), 'town'), 'glow')).toEqual([]);
+    w.tick(600_000);
+    const out = w.drain();
+    expect(w.get('a')!.bag).toEqual([{ item: 'shard', count: 2 }]);
+    expect(of(to(out, 'a'), 'bag').at(-1)).toEqual({ t: 'bag', bag: [{ item: 'shard', count: 2 }] });
+    expect(onMap(out, 'town')).toContainEqual({ t: 'glow', id: 'a', on: false });
+    expect(w.takeWrites().players.map(p => p.id)).toEqual(['a']);
+  });
+
+  it('go dim in a collapse: the pile holds a plain shard', () => {
+    const w = world(fieldData(), 'overcast', { items }, rec('a', 'field', 4, 5, 'up', { energy: 0.01, bag: [live(0), { item: 'rock', count: 1 }] }));
+    w.tick(10_000);
+    expect(onMap(w.drain(), 'field')).toContainEqual({ t: 'glow', id: 'a', on: false });
+    expect(w.takeWrites().drops[0]?.drop?.items).toEqual([{ item: 'shard', count: 1 }, { item: 'rock', count: 1 }]);
+  });
+
+  it('draw watchers from farther away', () => {
+    expect(WATCHER_HUNT_LIVE).toBeGreaterThan(WATCHER_HUNT);
+    // The watcher wakes at 1,1 (as in the watchers' tests); 4,9 is 11 steps from it.
+    const hunted = (bag: PlayerRecord['bag']) => {
+      const w = world(fieldData(12, { watchers: { count: 1, steps: [12, 99] } }), 'overcast', { items }, rec('a', 'field', 4, 9, 'down', { bag }));
+      w.tick(0);
+      w.drain();
+      w.tick(WATCHER_STEP_MS);
+      return of(onMap(w.drain(), 'field'), 'creature').length > 0;
+    };
+    expect(hunted([live(0)])).toBe(true);
+    expect(hunted([{ item: 'shard', count: 1 }])).toBe(false);
+  });
+});
+
 describe('skulkers', () => {
   // One skulker, out at night and in storms, that may go 8 steps from home or more. The field has one
   // fern tile, at 4,3: its lair (h - 4 steps from home).
@@ -500,6 +575,21 @@ describe('skulkers', () => {
     expect(seen.slice(0, quit).every(c => c.chasing === 'a' && c.dir === 'down')).toBe(true);
     expect(seen.slice(quit + 1).every(c => c.dir === 'up')).toBe(true);
     expect(quit).toBeGreaterThan((SKULKER_CHASE_MS - 1000) / SKULKER_STEP_MS);
+  });
+
+  it('knock a live shard out of your bag dim: your pile holds a plain shard, and your glow goes out', () => {
+    const items: ItemsData = {
+      ...ITEMS,
+      items: [...ITEMS.items, { id: 'live-shard', name: 'Live shard', kind: 'resource', stack: 1, xp: 12, weight: 0.3, charge: 1, text: 'Burning.', live: { xp: 40, fresh: 240, fade: 5, into: 'shard' } }],
+    };
+    const w = world(data(), 'night', { items });
+    w.tick(0);
+    w.join(rec('a', 'field', 4, 6, 'up', { bag: [{ item: 'live-shard', count: 1, since: 0 }] }), 0);
+    w.drain();
+    const out = run(w, 50, 1500);
+    expect(of(to(out, 'a'), 'touched')).toHaveLength(1);
+    expect(onMap(out, 'field')).toContainEqual({ t: 'glow', id: 'a', on: false });
+    expect(w.takeWrites().drops).toMatchObject([{ owner: 'a', drop: { items: [{ item: 'shard', count: 1 }] } }]);
   });
 
   it('keep off a flare: lit while one chases you, it slinks away', () => {

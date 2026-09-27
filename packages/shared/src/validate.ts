@@ -261,6 +261,14 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (i.use?.flare !== undefined && !(i.use.flare > 0)) err(`${name}: a flare burns for some seconds above 0`);
     if (i.use?.identify && !i.reveals?.length) err(`${name} can be identified but reveals nothing`);
     if (i.reveals && !i.use?.identify) err(`${name} reveals things but cannot be identified`);
+    if (i.live) {
+      const into = data.items.find(d => d.id === i.live!.into);
+      if (!into) err(`${name}: turns into ${i.live.into}, which is not an item`);
+      else if (into.live) err(`${name}: turns into ${into.id}, which is live too`);
+      if (!(typeof i.live.xp === 'number' && i.live.xp > (into?.xp ?? 0))) err(`${name}: live, it is worth more XP than what it turns into`);
+      if (!(i.live.fresh > 0) || !(i.live.fade > 0)) err(`${name}: live, it stays fresh and fades by numbers above 0`);
+      if (i.stack !== 1) err(`${name}: a live item stacks one to a slot`);
+    }
   }
   // Once there is gear at all, everyone starts in some: it must exist.
   if (data.items.some(i => i.kind === 'gear')) for (const g of Object.values(STARTER_GEAR)) {

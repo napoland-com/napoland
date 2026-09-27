@@ -108,6 +108,14 @@ export function store(s: Stash, add: readonly BagSlot[], items: Map<string, Item
   return { stash: out, xp };
 }
 
+/**
+ * A live find brought home: one `into` (the plain item it becomes) goes into the stash, worth `xp`
+ * (liveXp). It is a new find that never came out of the stash, so it pays nothing off `out`.
+ */
+export function storeLive(s: Stash, into: string, xp: number): { stash: Stash; xp: number } {
+  return { stash: { ...s, items: { ...s.items, [into]: (s.items[into] ?? 0) + 1 }, out: { ...s.out } }, xp };
+}
+
 /** Takes up to `count` of an item out of the stash. Returns the new stash and how many came out. */
 export function takeOut(s: Stash, item: string, count: number): { stash: Stash; taken: number } {
   const have = s.items[item] ?? 0, taken = Math.max(0, Math.min(have, Math.floor(count)));

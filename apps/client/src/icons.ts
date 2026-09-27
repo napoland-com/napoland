@@ -49,6 +49,13 @@ const ICONS: Record<string, string> = {
     <path d="M16 2.8l6.2 10.4L16 26z" fill="#c9adff"/>
     <path d="M9.8 13.2l6.2 2.4 6.2-2.4M16 15.6V26" stroke-width="1.1"/>
     <path d="M25.5 4.5v4M23.5 6.5h4" stroke="#f3eaff" stroke-width="1.2"/>`),
+  // The same crystal still burning: paler, brighter, with rays of light around it.
+  'live-shard': icon(`${halo(16, 14, 15, '#e6d6ff')}
+    <path d="M16 1v3M3.5 14h3M25.5 14h3M6.5 5l2 2M25.5 5l-2 2" stroke="#fff4c8" stroke-width="1.4"/>
+    <ellipse cx="16" cy="29.2" rx="4.6" ry="1.2" fill="#000" opacity=".4" stroke="none"/>
+    <path d="M16 4.8l-6.2 10.4L16 26z" fill="#c9adff"/>
+    <path d="M16 4.8l6.2 10.4L16 26z" fill="#f3eaff"/>
+    <path d="M9.8 15.2l6.2 2.4 6.2-2.4M16 17.6V26" stroke-width="1.1"/>`),
   // A steel thermos: dark cup, red band, a handle.
   thermos: icon(`<path d="M21.5 12.5h1.6c1 0 1.8.8 1.8 1.8v6.4c0 1-.8 1.8-1.8 1.8h-1.6" fill="none" stroke-width="1.8"/>
     <rect x="10.5" y="9.5" width="11" height="19" rx="2.2" fill="#a7b6be"/>

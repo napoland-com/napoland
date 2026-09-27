@@ -16,7 +16,7 @@ const SKULKER_HEARD = 8;
 const FLASH_HEARD = 6;
 
 export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water';
-export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'skulker';
+export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'skulker' | 'shimmer';
 export type Shot = { kind: 'step'; surface: Surface } | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'cry' | 'dawn' };
 
 export interface Mix {
@@ -44,6 +44,8 @@ export interface Scene {
   /** The creatures on this map, and whom each one chases (a player's id). */
   creatures: Array<{ id: string; kind: CreatureView['kind']; x: number; y: number; moving: boolean; chasing: string | undefined }>;
   flashes: FlashView[];
+  /** You carry a live find: it shimmers faintly. */
+  live: boolean;
   /** News that came this frame. */
   news: News[];
 }
@@ -80,6 +82,7 @@ export function soundscape(s: Scene, was?: Scene): Mix {
     watcher: loudest(s.creatures.filter(c => c.kind === 'watcher' && c.moving), WATCHER_HEARD),
     // Something rushing through the ferns: the nearest skulker on a chase, whoever it is after.
     skulker: loudest(s.creatures.filter(c => c.chasing !== undefined), SKULKER_HEARD),
+    shimmer: s.live ? 0.3 : 0,
   };
 
   const shots: Shot[] = [];
