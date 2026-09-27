@@ -68,6 +68,7 @@ export function refusalText(reason: Refusal): string {
     case 'fire_full': return 'The fire is as big as it gets';
     case 'tended': return 'Someone keeps this fire going';
     case 'marked': return 'There is a mark here already';
+    case 'not_stashed': return 'That is not in your stash';
   }
 }
 
@@ -94,6 +95,7 @@ export function slotViews(bag: readonly BagSlot[], items: Items): SlotView[] {
 /** What is worth knowing about an item besides its text, in a few words each. */
 export function factsOf(def: ItemDef): string[] {
   const out: string[] = [];
+  if (def.xp) out.push(`${def.xp} XP at home`);
   if (def.weight) out.push(def.weight >= 0.95 ? `${Math.round(def.weight * 10) / 10} kg` : `${Math.round(def.weight * 1000)} g`);
   if (def.fuel) out.push(`Burns ${Math.round(def.fuel / 60)} min`);
   if (def.charge) out.push('The Old Stone wants it');

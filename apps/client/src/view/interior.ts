@@ -269,6 +269,18 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
       g.add(box(0.58, 0.11, 0.3, '#ece5d4', 0, 0.43, -0.64, 0.018));
       return g;
     }
+    case 'chest': {
+      // Your stash: a wooden chest with iron bands and a brass lock, its lid a little rounded.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = againstWall(map, o.x, o.y);
+      g.add(box(0.74, 0.36, 0.46, '#6b4424', 0, 0.2, -0.04));
+      const lid = part(flat(new THREE.CylinderGeometry(0.23, 0.23, 0.76, 8, 1, false, 0, Math.PI)), '#7a4e2a', 0, 0.38, -0.04, 0.016);
+      lid.rotation.set(0, Math.PI / 2, Math.PI / 2);
+      g.add(lid);
+      for (const bx of [-0.26, 0.26]) g.add(box(0.05, 0.37, 0.47, '#3b3a3a', bx, 0.2, -0.04, false), box(0.05, 0.02, 0.47, '#3b3a3a', bx, 0.5, -0.04, false));
+      g.add(box(0.1, 0.12, 0.03, '#c9a24a', 0, 0.33, 0.2, 0.01));
+      return g;
+    }
     case 'table': {
       const g = pivot(o.x + 0.5, 0, o.y + 0.5);
       g.add(box(0.86, 0.07, 0.72, '#6b4a31', 0, 0.57, 0));
@@ -334,6 +346,7 @@ export function furnitureShadows(map: TileMap): Array<[number, number, number, n
     if (o.kind === 'bed') out.push([o.x + 0.5, o.y + 1, 0.5, 1.0]);
     else if (o.kind === 'table') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.44]);
     else if (o.kind === 'crate') out.push([o.x + 0.5, o.y + 0.5, 0.42, 0.42]);
+    else if (o.kind === 'chest') out.push([o.x + 0.5, o.y + 0.46, 0.46, 0.32]);
     else if (o.kind === 'shelf' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.28, 0.52, 0.26]);
   }
   return out;

@@ -411,7 +411,7 @@ writeFileSync(out, json);
 const ORDER = '*!HC@SFvibBnLc-T^o~=",_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
-  lamp: '*', sign: '!', board: '!', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
+  lamp: '*', sign: '!', board: '!', chest: 'c', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
   // Furniture belongs inside (gen-interiors.ts), but a campfire could stand out here one day.
   fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_',
 };

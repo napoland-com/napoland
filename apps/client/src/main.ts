@@ -16,7 +16,7 @@ import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { Connection, serverUrl } from './net';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
-import { newsBanner, statusView } from './status';
+import { levelText, newsBanner, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { WorldView, createRenderer } from './view/world';
 
@@ -60,8 +60,8 @@ let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items);
 /** Close the bag, the status and About panels and the menu; true when one was open. */
 const closePanels = () => {
-  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.menuOpen;
-  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleMenu(false);
+  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.menuOpen;
+  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleMenu(false);
   return open;
 };
 /** The status panel, as the game stands now. */
@@ -69,12 +69,13 @@ const showStatus = () => {
   const now = performance.now();
   hud.setStatus(statusView({
     energy: game.energy(now), body: game.bodyNow(now), surge: game.surgeNow(now), caught: game.caught(now), stone: game.stone, stats: game.stats, bag: game.bag, items,
+    progress: game.progress,
   }));
 };
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
 const controls = {
   pad: (dir: Dir | null) => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
-  a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the About panel and the text box, then out of the status or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
 };
@@ -86,6 +87,9 @@ const hud = new Hud(screen, {
   use: slot => { game.use(slot); hud.toggleBag(false); },
   discard: slot => game.discard(slot),
   status: showStatus,
+  store: slot => game.store(slot),
+  take: item => game.take(item),
+  stashClosed: () => game.closeChest(),
   version: () => loadVersion(),
 });
 watchFires(view);
@@ -397,6 +401,9 @@ let marksShown = { changes: -1, view: null as WorldView | null };
 /** Echoes are chosen again when the piles change or you reach another tile. */
 let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
 let statusAt = 0;
+/** The chest as the stash sheet shows it: it opens when the game opens one, and follows what is in it. */
+let chestShown: typeof game.chest = null;
+let progressShown: typeof game.progress | null = null;
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
   requestAnimationFrame(frame);
@@ -434,6 +441,14 @@ function frame(now: number) {
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (hud.statusOpen && now - statusAt > 500) { statusAt = now; showStatus(); }
+  if (game.chest !== chestShown || game.progress !== progressShown) {
+    if (game.chest && !chestShown) hud.toggleStash(true);
+    if (!game.chest && chestShown) hud.toggleStash(false);
+    chestShown = game.chest;
+    progressShown = game.progress;
+    if (game.chest) hud.setStash(slotViews(game.chest.stash, items), levelText(game.progress));
+    hud.setLevel(game.progress.level);
+  }
   view.render((now - start) / 1000, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const tags: TagView[] = [...game.players.values()].filter(p => p.id !== game.meId).map(p => { const s = view.project(p.x, p.y, 1.25); return { id: p.id, name: p.name, x: s.x, y: s.y }; });
   // Whose pile it is, while you are near. Its id is its owner's, so it gets a key of its own.

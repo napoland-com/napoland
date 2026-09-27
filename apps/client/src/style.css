@@ -42,6 +42,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .energy[data-level="low"], .energy[data-level="critical"] { color: #ff7a5c; }
 .energy[data-level="low"] .fill, .energy[data-level="critical"] .fill { background: linear-gradient(#ff8d70, #cf3326); }
 .energy[data-refill] .fill::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: max(6px, calc(var(--u) * .9)); border-radius: inherit; background: linear-gradient(90deg, rgba(255, 248, 222, 0), #fff8de); }
+/* Your level, next to your name. */
+.status .name .lvl { margin-left: .45em; padding: .05em .4em; border-radius: 6px; font-size: .78em; font-weight: 600; color: #1a0f04; background: #ffcf5a; vertical-align: .08em; }
+.status .name .lvl[hidden] { display: none; }
 /* How wet you are: a thin blue bar under the energy. */
 .wet { display: flex; align-items: center; gap: calc(var(--u) * .4); color: #8cc8ff; }
 .wet[hidden] { display: none; }
@@ -149,6 +152,11 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .act.toss { color: #ffb4a0; }
 .hud .act.toss.sure { background: #9c2b3a; border-color: #f3a6b0; color: #fff4f4; }
 
+/* The stash (the chest at home): your bag above, to put things away; the stash below, to take them out. */
+.stash-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.stash-sheet .hint, .stash-sheet .acts { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.stash-sheet .hint[hidden] { display: none; }
+.hud .act:disabled { opacity: .45; cursor: default; }
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }
 /* The status panel: rows about you, then the feats. It sits where the bag does. */

@@ -1,19 +1,19 @@
 {
-  "version": 2,
+  "version": 3,
   "items": [
-    {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
-    {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
-    {"id":"scrap","name":"Scrap metal","kind":"resource","stack":10,"weight":1,"text":"Rusted metal from cars and cabins nobody came back for. Still good for patching things, and heavy to carry."},
-    {"id":"wire","name":"Copper wire","kind":"resource","stack":10,"weight":0.4,"text":"Copper wire from where the old power line came down. Sometimes it still hums, and on aurora nights more of it turns up by the poles."},
-    {"id":"cloth","name":"Cloth scraps","kind":"resource","stack":10,"weight":0.1,"fuel":90,"text":"Strips of curtain and blanket from rooms nobody lives in anymore. Still dry, so they catch fast in a fire."},
-    {"id":"shard","name":"Anomaly shard","kind":"resource","stack":5,"weight":0.3,"charge":1,"text":"A sliver of something like glass, warm even in the cold. It gives off a light of its own. The Old Stone in town wants them back."},
-    {"id":"thermos","name":"Thermos","kind":"consumable","stack":2,"weight":0.6,"text":"Hot coffee someone left by the fire for whoever comes next. Drink it to get some energy back.","use":{"energy":30}},
-    {"id":"flare","name":"Road flare","kind":"consumable","stack":3,"weight":0.3,"text":"A red road flare from a glovebox. Light it and nothing comes near you while it burns, and whatever clings to your back lets go.","use":{"flare":45}},
-    {"id":"strange","name":"Strange object","kind":"resource","stack":1,"weight":0.8,"text":"Something that was not here yesterday. It is too dark out here to tell what it is: look at it in town, in the light.","use":{"identify":true},
+    {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
+    {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
+    {"id":"scrap","name":"Scrap metal","kind":"resource","stack":10,"xp":3,"weight":1,"text":"Rusted metal from cars and cabins nobody came back for. Still good for patching things, and heavy to carry."},
+    {"id":"wire","name":"Copper wire","kind":"resource","stack":10,"xp":4,"weight":0.4,"text":"Copper wire from where the old power line came down. Sometimes it still hums, and on aurora nights more of it turns up by the poles."},
+    {"id":"cloth","name":"Cloth scraps","kind":"resource","stack":10,"xp":2,"weight":0.1,"fuel":90,"text":"Strips of curtain and blanket from rooms nobody lives in anymore. Still dry, so they catch fast in a fire."},
+    {"id":"shard","name":"Anomaly shard","kind":"resource","stack":5,"xp":12,"weight":0.3,"charge":1,"text":"A sliver of something like glass, warm even in the cold. It gives off a light of its own. The Old Stone in town wants them back."},
+    {"id":"thermos","name":"Thermos","kind":"consumable","stack":2,"xp":3,"weight":0.6,"text":"Hot coffee someone left by the fire for whoever comes next. Drink it to get some energy back.","use":{"energy":30}},
+    {"id":"flare","name":"Road flare","kind":"consumable","stack":3,"xp":3,"weight":0.3,"text":"A red road flare from a glovebox. Light it and nothing comes near you while it burns, and whatever clings to your back lets go.","use":{"flare":45}},
+    {"id":"strange","name":"Strange object","kind":"resource","stack":1,"xp":15,"weight":0.8,"text":"Something that was not here yesterday. It is too dark out here to tell what it is: look at it in town, in the light.","use":{"identify":true},
       "reveals":[{"item":"shard","count":2,"weight":4},{"item":"thermos","count":1,"weight":2},{"item":"flare","count":2,"weight":2},{"item":"warm-pebble","count":1,"weight":1},{"item":"hollow-feather","count":1,"weight":1},{"item":"humming-bead","count":1,"weight":1}]},
-    {"id":"warm-pebble","name":"Warm pebble","kind":"charm","stack":1,"weight":0.1,"charm":{"wetting":0.6},"text":"A smooth black pebble that never cools. While it is in your bag, rain soaks you much slower."},
-    {"id":"hollow-feather","name":"Hollow feather","kind":"charm","stack":1,"weight":0.05,"charm":{"load":0.75},"text":"A long grey feather, light as nothing. While it is in your bag, what you carry feels lighter."},
-    {"id":"humming-bead","name":"Humming bead","kind":"charm","stack":1,"weight":0.05,"charm":{"hitch":0.4},"text":"A glass bead that hums when something is near. While it is in your bag, what wants to cling to you in the dark thinks twice."}
+    {"id":"warm-pebble","name":"Warm pebble","kind":"charm","stack":1,"xp":25,"weight":0.1,"charm":{"wetting":0.6},"text":"A smooth black pebble that never cools. While it is in your bag, rain soaks you much slower."},
+    {"id":"hollow-feather","name":"Hollow feather","kind":"charm","stack":1,"xp":25,"weight":0.05,"charm":{"load":0.75},"text":"A long grey feather, light as nothing. While it is in your bag, what you carry feels lighter."},
+    {"id":"humming-bead","name":"Humming bead","kind":"charm","stack":1,"xp":25,"weight":0.05,"charm":{"hitch":0.4},"text":"A glass bead that hums when something is near. While it is in your bag, what wants to cling to you in the dark thinks twice."}
   ],
   "finds": [
     {"item":"glowcap","map":"near-woods","on":["mud","ferns"],"steps":[15,50],"count":4,"respawn":[90,240]},

@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-home",
   "name": "Home",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -34,6 +34,7 @@
     {"kind":"shelf","x":1,"y":1},
     {"kind":"shelf","x":2,"y":1},
     {"kind":"bed","x":7,"y":1},
-    {"kind":"table","x":2,"y":4}
+    {"kind":"table","x":2,"y":4},
+    {"kind":"chest","x":6,"y":1}
   ]
 }

@@ -40,7 +40,8 @@ const MAX_W = 11, MAX_H = 8;
 const ROOMS: readonly Room[] = [
   {
     // Where you wake up: the spawn is at its door. A small warm room, and the fire never goes out.
-    id: 'stonebrook-home', name: 'Home', version: 1, outside: 'stonebrook', door: [8, 20],
+    // The chest by the fire is your stash: what you put in it earns XP.
+    id: 'stonebrook-home', name: 'Home', version: 2, outside: 'stonebrook', door: [8, 20],
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -57,6 +58,7 @@ const ROOMS: readonly Room[] = [
       { kind: 'shelf', x: 2, y: 1 },
       { kind: 'bed', x: 7, y: 1 },
       { kind: 'table', x: 2, y: 4 },
+      { kind: 'chest', x: 6, y: 1 },
     ],
   },
   {
@@ -249,7 +251,7 @@ function json(map: MapData): string {
 }
 
 /** A glance at a room: # wall, . floor, + warm floor (next to the fire), v the way out, letters for furniture. */
-const GLYPH: Partial<Record<MapObject['kind'], string>> = { fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', rug: '_' };
+const GLYPH: Partial<Record<MapObject['kind'], string>> = { fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', rug: '_', chest: 'H' };
 function glance(map: MapData): string[] {
   const tm = new TileMap(map);
   const things = new Map<string, string>();

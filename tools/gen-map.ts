@@ -67,6 +67,7 @@ place({
   kind: 'npc', id: 'mira', name: 'Mira', x: 10, y: 24, dir: 'down',
   lines: [
     'Heading out? The woods pay better the farther you go.',
+    'Bring home what you find and put it in the chest by your fire. That is how you get stronger.',
     'Watch your energy. If it runs out, you wake up at home and your backpack stays where you fell.',
     'Only a fire brings your energy back. Somebody keeps the old cabin\'s going; the other shelters\' fires burn down. Carry resin to feed them.',
     'The street lights won\'t warm you. But when a surge comes through the woods, stand in one.',
@@ -159,7 +160,7 @@ function round(v: number) { return Math.round(v * 1000) / 1000; }
 }
 
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 5, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 6, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },

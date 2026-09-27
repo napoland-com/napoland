@@ -75,6 +75,8 @@ export type MapObject =
   | { kind: 'fireplace'; x: number; y: number; tended?: boolean }
   /** A notice board: reading it tells how things stand out there (the server writes it). */
   | { kind: 'board'; x: number; y: number }
+  /** Your stash: a chest at home. Everyone who opens it sees only their own things in it. */
+  | { kind: 'chest'; x: number; y: number }
   /** Furniture, inside buildings. A bed is one tile wide and two long (head at y); a rug is only drawn. */
   | { kind: 'bed'; x: number; y: number }
   | { kind: 'table'; x: number; y: number }
@@ -123,7 +125,7 @@ export interface Arrival {
 
 /** Objects that stand on a tile and stop anyone from walking onto it (a house's door tile excepted). */
 const BLOCKING = new Set<MapObject['kind']>([
-  'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board',
+  'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest',
 ]);
 /** Objects that are only drawn: you walk over or through them. */
 export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug']);

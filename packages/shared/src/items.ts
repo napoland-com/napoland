@@ -37,6 +37,8 @@ export interface ItemDef {
   text: string;
   /** What using it does. Consumables must do something; a resource may (a glowcap paints a mark). */
   use?: ItemUse;
+  /** XP for each one put into your stash at home (progress.ts). None: it earns nothing. */
+  xp?: number;
   /** Kilograms. A bag heavier than CARRY_KG drains energy faster. None: it weighs nothing to speak of. */
   weight?: number;
   /** Seconds a fire burns longer when you feed it one. */
