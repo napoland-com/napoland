@@ -1500,7 +1500,8 @@ export class World {
   /**
    * At dawn, and when the week turns, the conditions change: everyone online hears them, their finds
    * grow (or go), the watchers move or sleep, and a fire may go out overnight. The first tick after
-   * start-up sets it all up but puts no fire out: a restart mid-day must not put one out again.
+   * start-up sets it all up, the day's fire out included: fires are not kept across a restart, so
+   * without it that fire would burn again while the notice board and Mira say it went out.
    */
   private moveConditions(now: number): void {
     const data = this.conditionsData;
@@ -1534,7 +1535,7 @@ export class World {
         if (w.awake && (asleep || !allowed.has(w.y * w.map.width + w.x))) this.sendAway(w, now);
       }
     }
-    if (!first && newDay) for (const c of on) if (c.fireOut && daily.has(c.id)) this.fireOut(c.map, day, now);
+    if (newDay) for (const c of on) if (c.fireOut && daily.has(c.id)) this.fireOut(c.map, day, now);
   }
 
   /** One untended fire on the map (or in its shelters) goes out, the same one for everyone that day. */

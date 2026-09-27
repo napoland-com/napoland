@@ -817,9 +817,9 @@ describe('what the woods are like today', () => {
     expect(of(onMap(w.drain(), 'field'), 'findGone')).toHaveLength(2);
   });
 
-  it('a fire goes out overnight: exactly one that burns down, never the old cabin\'s, and not when a world starts mid-day', () => {
-    const conditions: ConditionsData = { seed: 1, second: 0, daily: [day('out', { fireOut: true })], weekly: [] };
-    const dawn = 20_000 * DAY_MS;
+  it('a fire goes out overnight: exactly one that burns down, never the old cabin\'s, and the same one when a world starts that day', () => {
+    const conditions: ConditionsData = { seed: 1, second: 0, daily: [day('out', { fireOut: true }), day('calm')], weekly: [] };
+    const dawn = dawnWhere(conditions, (b, t) => b[0] === 'calm' && t[0] === 'out');
     const w = shelterWorld(conditions, dawn - 1000);
     w.tick(0);
     expect(fires(w, 0).filter(f => f.left === 0)).toEqual([]);
@@ -829,11 +829,13 @@ describe('what the woods are like today', () => {
     expect(out[0]!.map).not.toBe('cabin');
     expect(fires(w, 1000).filter(f => f.left === null)).toEqual([{ map: 'field', x: 6, y: 6, left: null }, { map: 'cabin', x: 2, y: 1, left: null }]);
     expect(onMap(w.drain(), out[0]!.map)).toContainEqual({ t: 'fire', fire: { x: out[0]!.x, y: out[0]!.y, left: 0 } });
-    // A restart in the middle of that day puts no fire out again.
+    // Fires are not kept across a restart: one in the middle of that day puts the same fire out again,
+    // or it would burn while the notice board says it went out.
     const again = shelterWorld(conditions, dawn + 10 * 60_000);
     again.tick(0);
+    expect(fires(again, 0).filter(f => f.left === 0)).toEqual(out);
     again.tick(60_000);
-    expect(fires(again, 60_000).filter(f => f.left === 0)).toEqual([]);
+    expect(fires(again, 60_000).filter(f => f.left === 0)).toEqual(out);
   });
 
   it('quiet woods keep the watchers asleep all week, and send away one that was out', () => {
