@@ -152,7 +152,7 @@ describe('what the server says about the world out there', () => {
     g.handle(welcome(camp(), [me(3, 3)]), now);
     g.handle({ t: 'touched', by: 'watcher', lost: 'resin' }, now);
     g.handle({ t: 'hitch', on: true }, now);
-    expect(texts()).toEqual(['It took your fir resin', 'The cold goes right through you', 'Something clings to your back']);
+    expect(texts()).toEqual(['It took your fir resin', 'The cold goes right through you', 'Something clings to you. Find a light']);
     g.handle({ t: 'surge', surge: { phase: 'unstable', left: 20, into: 0 } }, now);
     g.handle({ t: 'stone', stone: { ...ASLEEP, charge: 20, awake: true, left: 3600 } }, now);
     g.handle({ t: 'feat', id: 'rain-walker', stats: { rainSteps: 1500 } }, now);

@@ -301,7 +301,7 @@ export class Game {
         break;
       }
       case 'hitch':
-        this.floatOverMe(msg.on ? 'Something clings to your back' : 'It let go of you', msg.on ? EERIE : GAIN);
+        this.floatOverMe(msg.on ? 'Something clings to you. Find a light' : 'It let go of you', msg.on ? EERIE : GAIN);
         break;
       case 'flare':
         this.flares.push({ x: msg.flare.x, y: msg.flare.y, until: now + msg.flare.left * 1000 });

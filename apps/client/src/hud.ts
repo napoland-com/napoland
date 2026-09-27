@@ -143,7 +143,8 @@ export class Hud {
       <div class="banner panel" data-el="banner" role="status" aria-live="polite"><b data-el="bannerTitle"></b><span data-el="bannerSub"></span></div>
       <div class="status panel"><div class="name"><span data-el="name">...</span><span data-el="online"></span></div>
         <div class="energy" data-el="energy" hidden>${ICON.bolt}<div class="bar" data-el="energyBar" role="meter" aria-label="Energy" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="energyFill"></div></div></div>
-        <div class="wet" data-el="wet" hidden>${ICON.drop}<div class="bar" data-el="wetBar" role="meter" aria-label="Wet" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="wetFill"></div></div><span class="cling" data-el="cling" hidden title="Something clings to your back">${ICON.cling}</span></div>
+        <div class="wet" data-el="wet" hidden>${ICON.drop}<div class="bar" data-el="wetBar" role="meter" aria-label="Wet" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="wetFill"></div></div></div>
+        <div class="cling" data-el="cling" hidden role="status">${ICON.cling}<span>Something clings to you</span></div>
         <div class="surge-pill" data-el="surge" hidden role="status" aria-live="polite"></div>
         <div class="sub"><span class="conn" data-el="conn" data-state="connecting"><i></i><span data-el="connText">Connecting</span></span><span data-el="ping"></span></div></div>
       <div class="surge-glow" data-el="surgeGlow"></div>
@@ -416,21 +417,26 @@ export class Hud {
   }
 
   /**
-   * How wet you are (a blue bar under the energy, shown once there is something to show) and whether
-   * something clings to your back. Called every frame; only writes what changed.
+   * How wet you are (a blue bar under the energy, shown once there is something to show) and, in
+   * words, whether something clings to your back: an icon alone says nothing on a phone, where
+   * nothing shows a tooltip. Called every frame; only writes what changed.
    */
   setBody(b: BodyView | null) {
     const s = this.shown;
-    const show = !!b && (b.wet > 0.005 || b.wetRate > 0 || b.hitched);
+    const show = !!b && (b.wet > 0.005 || b.wetRate > 0);
     if (show !== s.wetShown) this.el.wet!.hidden = !(s.wetShown = show);
-    if (!b) return;
+    if (!b) {
+      if (s.hitched) this.el.cling!.hidden = !(s.hitched = false);
+      return;
+    }
     const wet = Math.round(b.wet * 200) / 200;
     if (wet !== s.wet) {
       s.wet = wet;
       this.el.wetFill!.style.transform = `translateX(${((wet - 1) * 100).toFixed(1)}%)`;
       this.el.wetBar!.setAttribute('aria-valuenow', String(Math.round(wet * 100)));
     }
-    if (b.hitched !== s.hitched) this.el.cling!.hidden = !(s.hitched = b.hitched);
+    const hitched = !!b?.hitched;
+    if (hitched !== s.hitched) this.el.cling!.hidden = !(s.hitched = hitched);
   }
 
   /** The surge clock (hidden while calm) and the violet edges while the front is over you. */

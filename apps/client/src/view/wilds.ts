@@ -1,7 +1,7 @@
 /**
  * What the world does to you out there, drawn: arrows people painted on the ground, watchers, flares,
- * the echoes of people who collapsed walking their last steps again, the thing that clings to your
- * back at night, and the notice board in town. Each is a small class or model that world.ts owns and
+ * the echoes of people who collapsed walking their last steps again, the thing that clings to you at
+ * night, and the notice board in town. Each is a small class or model that world.ts owns and
  * feeds from the game's lists; nothing here decides anything.
  */
 import * as THREE from 'three';
@@ -293,22 +293,29 @@ export class Echoes {
 }
 
 /**
- * The thing that clings to your back at night: small, hunched, arms over your shoulders, two pale
- * eyes over your cap. Hung on your character (world.ts) and shown while it clings.
+ * The thing that clings to you at night: a small dark hunched body over your shoulders, peeking over
+ * the top of your head with two pale eyes, long arms hanging down both sides of your face. It sits
+ * high on purpose: the camera looks down from the south, so anything lower on your back would only
+ * show while you face north. Hung on your character (world.ts) and shown while it clings.
  */
 export function hitchhikerModel(): THREE.Group {
   const g = new THREE.Group();
-  g.position.set(0, 0.35, -0.3);
-  const body = part(new THREE.SphereGeometry(0.17, 7, 5), '#17151c', 0, 0.2, 0, 0.018);
-  body.scale.set(1, 1.2, 0.8);
-  g.add(body);
-  for (const x of [-0.16, 0.16]) {
-    const arm = box(0.05, 0.05, 0.3, '#17151c', x, 0.34, 0.14, 0.01);
-    arm.rotation.x = -0.4;
-    g.add(arm);
+  // Your cap's top is about 1 above the ground; it squats on it, a little to the back.
+  g.position.set(0, 0.98, -0.08);
+  const body = part(new THREE.SphereGeometry(0.2, 8, 6), '#1a1722', 0, 0.1, -0.04, 0.02);
+  body.scale.set(1.15, 0.8, 1);
+  const head = part(new THREE.SphereGeometry(0.12, 7, 5), '#1a1722', 0, 0.2, 0.1, 0.018);
+  g.add(body, head);
+  // Arms over your shoulders, hanging beside your face; legs down your back.
+  for (const x of [-1, 1]) {
+    const arm = box(0.06, 0.42, 0.06, '#1a1722', x * 0.25, -0.16, 0.1, 0.012);
+    arm.rotation.z = x * -0.25;
+    const leg = box(0.07, 0.4, 0.07, '#1a1722', x * 0.13, -0.3, -0.22, 0.012);
+    leg.rotation.x = 0.35;
+    g.add(arm, leg);
   }
-  const eyes = new THREE.MeshBasicMaterial({ color: 0xc8f0ff });
-  for (const x of [-0.05, 0.05]) g.add(part(new THREE.BoxGeometry(0.035, 0.02, 0.01), eyes, x, 0.34, 0.12, false));
+  const eyes = new THREE.MeshBasicMaterial({ color: 0xd8f4ff });
+  for (const x of [-0.045, 0.045]) g.add(part(new THREE.BoxGeometry(0.04, 0.025, 0.02), eyes, x, 0.23, 0.21, false));
   return g;
 }
 
