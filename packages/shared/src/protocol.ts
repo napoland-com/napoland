@@ -6,10 +6,11 @@ import { z } from 'zod';
 import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { BagSlot } from './items';
+import type { ProgressView } from './progress';
 import type { SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -73,6 +74,12 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('feed'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63) }),
   /** Read the notice board on tile x,y, next to you: how things stand out there. */
   z.object({ t: z.literal('board'), x: z.number().int(), y: z.number().int() }),
+  /** Open the chest (your stash) on tile x,y, next to you: the server answers with what is in it. */
+  z.object({ t: z.literal('chest'), x: z.number().int(), y: z.number().int() }),
+  /** Put bag slot `slot` into the chest on tile x,y, or everything you carry when `slot` is left out. */
+  z.object({ t: z.literal('store'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63).optional() }),
+  /** Take up to `count` of an item out of the chest on tile x,y, as much as fits in your bag. */
+  z.object({ t: z.literal('take'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), count: z.number().int().positive().max(9999) }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -162,7 +169,9 @@ export type Refusal =
   /** A tended fire, in town: it needs nothing. */
   | 'tended'
   /** A mark already lies here. */
-  | 'marked';
+  | 'marked'
+  /** The chest holds none of that. */
+  | 'not_stashed';
 
 /** What every client knows about a player it can see. x and y are tile coordinates. */
 export interface PlayerView {
@@ -211,6 +220,8 @@ export type ServerMsg =
       stone: StoneView;
       /** What you did so far that counts toward feats, and the feats earned (feats.ts). */
       stats: Stats;
+      /** Your XP and level (progress.ts). */
+      progress: ProgressView;
       /** The version of content/items.json the server runs; a client with another version reloads. */
       items: number;
       serverTime: number;
@@ -230,7 +241,7 @@ export type ServerMsg =
   /** You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message. */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify' }
   /** A pick, use, discard or feed that did not happen, and why. */
-  | { t: 'refused'; action: 'pick' | 'use' | 'discard' | 'feed'; reason: Refusal }
+  | { t: 'refused'; action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take'; reason: Refusal }
   /** On your map: a fire was fed (or lit again). */
   | { t: 'fire'; fire: FireView }
   /** On your map: a mark was painted, or faded. */
@@ -253,6 +264,10 @@ export type ServerMsg =
   | { t: 'board'; lines: string[] }
   /** You earned a feat (feats.ts); `stats` is where your counts stand now. */
   | { t: 'feat'; id: string; stats: Stats }
+  /** What is in your stash, whole, after you opened the chest or anything went in or out. */
+  | { t: 'chest'; stash: BagSlot[] }
+  /** Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did). */
+  | { t: 'progress'; progress: ProgressView; gained: number }
   /** On your map: a find grew here, or someone took one / it went. */
   | { t: 'find'; find: FindView }
   | { t: 'findGone'; id: number }

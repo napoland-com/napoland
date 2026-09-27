@@ -20,7 +20,7 @@ napoland is a mobile-first online exploration game in the browser: leave home, g
 
 ## How it is built
 
-- `packages/shared`: the contract both sides run. Maps (`TileMap`), movement (`STEP_MS`, `findPath`), energy and what wears you down (`energy.ts`), the day and surges (`sky.ts`), feats (`feats.ts`), items, the protocol (zod schemas for every client message), content validation.
+- `packages/shared`: the contract both sides run. Maps (`TileMap`), movement (`STEP_MS`, `findPath`), energy and what wears you down (`energy.ts`), the day and surges (`sky.ts`), feats (`feats.ts`), the stash, XP and levels (`progress.ts`), items, the protocol (zod schemas for every client message), content validation.
 - `apps/server`: `world.ts` (the rules, no I/O), `fires.ts` (fires burning down), `net.ts` (WebSocket sessions, the hello, limits), `auth.ts` (who is signing in: legacy, dev or Supabase), `http.ts` (health, `/auth-config`, the static client), `storage.ts` (memory or PostgreSQL), `migrations/`.
 - `apps/client`: `game.ts` (state and prediction), `hud.ts` (interface), `status.ts` (the status panel and banners), `view/` (three.js world; `wilds.ts` for marks, watchers, flares, echoes), `net.ts`, `signin.ts` (the sign-in cards), `supabase.ts` (Supabase Auth, loaded only in that mode), `about.ts` (the About panel and the sign-in small print).
 - `content/`: maps and items as JSON. `tools/`: generators, validators, test bots. `roadmap/`: one file per roadmap item.

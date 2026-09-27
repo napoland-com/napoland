@@ -34,6 +34,10 @@ export interface HudHandlers {
   pad(dir: Dir | null): void;
   /** The status panel opened: fill it (setStatus), and keep it current while it is open. */
   status?(): void;
+  /** In the open stash: put bag slot `slot` in (or everything, left out), take a stack of an item out, or close it. */
+  store?(slot?: number): void;
+  take?(item: string): void;
+  stashClosed?(): void;
   a(): void;
   b(): void;
   dialogTap(): void;
@@ -120,7 +124,7 @@ export class Hud {
   private tagEls = new Map<string, HTMLElement>();
   private floatEls = new Map<number, HTMLElement>();
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
-  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '' };
+  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '' };
   private load = 0;
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
   private slotEls: HTMLButtonElement[] = [];
@@ -141,7 +145,7 @@ export class Hud {
       <div class="vignette" data-el="vignette"></div>
       <div class="fade" data-el="fade"></div>
       <div class="banner panel" data-el="banner" role="status" aria-live="polite"><b data-el="bannerTitle"></b><span data-el="bannerSub"></span></div>
-      <div class="status panel"><div class="name"><span data-el="name">...</span><span data-el="online"></span></div>
+      <div class="status panel"><div class="name"><span><span data-el="name">...</span><span class="lvl" data-el="level" hidden></span></span><span data-el="online"></span></div>
         <div class="energy" data-el="energy" hidden>${ICON.bolt}<div class="bar" data-el="energyBar" role="meter" aria-label="Energy" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="energyFill"></div></div></div>
         <div class="wet" data-el="wet" hidden>${ICON.drop}<div class="bar" data-el="wetBar" role="meter" aria-label="Wet" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="wetFill"></div></div></div>
         <div class="cling" data-el="cling" hidden role="status">${ICON.cling}<span>Something clings to you</span></div>
@@ -168,6 +172,15 @@ export class Hud {
           <div class="acts" data-el="acts" hidden><button type="button" class="act go" data-el="use">Use</button><button type="button" class="act toss" data-el="toss">Throw away</button></div>
           <div class="acts" data-el="ask" hidden><span class="ask" data-el="askText"></span><button type="button" class="act toss sure" data-el="tossYes">Throw away</button><button type="button" class="act" data-el="tossNo">Keep</button></div>
         </div>
+      </div>
+      <div class="sheet panel stash-sheet" data-el="stashSheet" data-open="false" role="dialog" aria-label="Stash">
+        <div class="sheet-head"><b>Stash</b><span class="room" data-el="stashXp"></span><button type="button" class="close" data-el="stashClose" aria-label="Close the stash">${ICON.x}</button></div>
+        <p class="hint">Tap something in your bag to put it away. What you bring home earns XP.</p>
+        <div class="grid" data-el="stashBag">${Array.from({ length: BAG_SLOTS }, (_, i) => `<button type="button" class="slot" data-bag="${i}" data-empty="true" aria-label="Empty slot"></button>`).join('')}</div>
+        <div class="acts"><button type="button" class="act go" data-el="storeAll">Put everything in</button></div>
+        <h3 class="stash-title">In the stash</h3>
+        <div class="grid" data-el="stashGrid"></div>
+        <p class="hint" data-el="stashEmpty">Nothing here yet.</p>
       </div>
       <div class="sheet panel status-sheet" data-el="statusSheet" data-open="false" role="dialog" aria-label="Status">
         <div class="sheet-head"><b>Status</b><button type="button" class="close" data-el="statusClose" aria-label="Close the status">${ICON.x}</button></div>
@@ -223,6 +236,16 @@ export class Hud {
     this.el.menuBag!.addEventListener('click', () => { this.toggleMenu(false); this.toggleBag(true); });
     this.el.menuStatus!.addEventListener('click', () => { this.toggleMenu(false); this.toggleStatus(true); });
     this.el.statusClose!.addEventListener('click', () => this.toggleStatus(false));
+    this.el.stashClose!.addEventListener('click', () => this.toggleStash(false));
+    this.el.storeAll!.addEventListener('click', () => this.h.store?.());
+    this.el.stashBag!.addEventListener('click', e => {
+      const slot = (e.target as Element).closest<HTMLElement>('[data-bag]');
+      if (slot && this.bag[Number(slot.dataset.bag)]) this.h.store?.(Number(slot.dataset.bag));
+    });
+    this.el.stashGrid!.addEventListener('click', e => {
+      const it = (e.target as Element).closest<HTMLElement>('[data-item]');
+      if (it) this.h.take?.(it.dataset.item!);
+    });
     this.el.menuAbout!.addEventListener('click', () => { this.toggleMenu(false); this.toggleAbout(true); });
     this.el.aboutClose!.addEventListener('click', () => this.toggleAbout(false));
     this.el.menuLogout!.addEventListener('click', () => { this.toggleMenu(false); this.h.logout(); });
@@ -252,8 +275,34 @@ export class Hud {
   }
   toggleStatus(open = !this.statusOpen) {
     this.el.statusSheet!.dataset.open = String(open);
-    // The bag, the status and the About panel open in the same place: one at a time.
-    if (open) { this.toggleBag(false); this.toggleAbout(false); this.h.status?.(); }
+    // The bag, the stash, the status and the About panel open in the same place: one at a time.
+    if (open) { this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.h.status?.(); }
+  }
+
+  get stashOpen(): boolean {
+    return this.el.stashSheet!.dataset.open === 'true';
+  }
+  /** Opens or closes the stash sheet (the chest at home). Closing it tells the game. */
+  toggleStash(open = !this.stashOpen) {
+    const was = this.stashOpen;
+    if (open) { this.toggleBag(false); this.toggleAbout(false); this.el.statusSheet!.dataset.open = 'false'; }
+    this.el.stashSheet!.dataset.open = String(open);
+    if (was && !open) this.h.stashClosed?.();
+  }
+
+  /** What the open stash holds, and your XP for its header. Only written to the page when it changed. */
+  setStash(stash: SlotView[], xp: string) {
+    const html = stash.map(s => `<button type="button" class="slot" data-item="${esc(s.item)}" aria-label="${esc(`Take out ${s.name}, ${s.count}`)}">${itemIcon(s.item)}<span class="n">${s.count}</span></button>`).join('');
+    if (html !== this.shown.stash) { this.shown.stash = html; this.el.stashGrid!.innerHTML = html; }
+    this.el.stashEmpty!.hidden = stash.length > 0;
+    if (this.el.stashXp!.textContent !== xp) this.el.stashXp!.textContent = xp;
+  }
+
+  /** Your level next to your name. */
+  setLevel(level: number) {
+    const t = `Lv ${level}`, el = this.el.level!;
+    if (el.textContent !== t) el.textContent = t;
+    el.hidden = false;
   }
 
   /** What the status panel shows. Only written to the page when it changed. */
@@ -269,7 +318,7 @@ export class Hud {
   }
   toggleBag(open = !this.bagOpen) {
     // The bag, the status and the About panel open in the same place: one at a time.
-    if (open) this.toggleAbout(false);
+    if (open) { this.toggleAbout(false); this.toggleStash(false); }
     this.el.sheet!.dataset.open = String(open);
     if (open) this.el.statusSheet!.dataset.open = 'false';
     // It opens on the whole bag, never on the details left from last time.
@@ -281,7 +330,7 @@ export class Hud {
   }
   toggleAbout(open = !this.aboutOpen) {
     if (open && this.bagOpen) this.toggleBag(false);
-    if (open) this.el.statusSheet!.dataset.open = 'false';
+    if (open) { this.el.statusSheet!.dataset.open = 'false'; this.toggleStash(false); }
     this.el.aboutSheet!.dataset.open = String(open);
     if (open && !this.versionAsked) {
       this.versionAsked = true;
@@ -310,6 +359,7 @@ export class Hud {
   /** B in the bag: out of the question, then out of the details. False when there is nothing to back out of (B closes the bag). */
   back(): boolean {
     if (this.statusOpen) { this.toggleStatus(false); return true; }
+    if (this.stashOpen) { this.toggleStash(false); return true; }
     if (!this.bagOpen) return false;
     if (this.asking) { this.asking = false; this.showDetail(); return true; }
     if (this.picked) { this.choose(null); return true; }
@@ -329,6 +379,14 @@ export class Hud {
     });
     this.showRoom();
     this.showDetail();
+    // The stash sheet's bag row shows the same slots.
+    this.root.querySelectorAll<HTMLButtonElement>('[data-bag]').forEach((el, i) => {
+      const s = slots[i];
+      el.dataset.empty = String(!s);
+      el.innerHTML = s ? `${itemIcon(s.item)}<span class="n">${s.count}</span>` : '';
+      el.setAttribute('aria-label', s ? `Put away ${s.name}, ${s.count}` : 'Empty slot');
+    });
+    (this.el.storeAll as HTMLButtonElement).disabled = !slots.length;
   }
 
   /** What the bag weighs, for its header. */

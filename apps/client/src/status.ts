@@ -2,7 +2,7 @@
  * What the status panel and the banners say, from the game's state. Plain words, no drawing, so it
  * can be tested; hud.ts shows it and main.ts asks for it.
  */
-import { FEATS, type BagSlot, type BodyView, type EnergyView, type Stats, type StoneView, type SurgeView } from '@napoland/shared';
+import { FEATS, type BagSlot, type BodyView, type EnergyView, type ProgressView, type Stats, type StoneView, type SurgeView } from '@napoland/shared';
 import { minutes } from './game';
 import type { StatusView } from './hud';
 import type { Items } from './items';
@@ -17,10 +17,18 @@ export interface StatusInput {
   stats: Stats;
   bag: readonly BagSlot[];
   items: Items;
+  progress: ProgressView;
+}
+
+/** "Level 3 · 150 XP, 120 to go": where you stand, for the status panel and the stash's header. */
+export function levelText(p: ProgressView): string {
+  return p.to === null ? `Level ${p.level} · ${p.xp} XP, the top` : `Level ${p.level} · ${p.xp} XP, ${p.to - p.xp} to go`;
 }
 
 export function statusView(s: StatusInput): StatusView {
   const rows: StatusView['rows'] = [];
+  const p = s.progress;
+  rows.push({ label: 'Level', text: levelText(p), bar: p.to === null ? 1 : (p.xp - p.from) / (p.to - p.from), tone: 'good' });
   if (s.energy) {
     const e = s.energy, how = e.rate < 0 ? 'draining' : e.rate > 0 && e.value < e.max ? 'coming back' : 'holding';
     rows.push({ label: 'Energy', text: `${Math.round(e.value)} of ${e.max}, ${how}`, bar: e.value / e.max, tone: e.rate < 0 ? 'bad' : e.rate > 0 ? 'good' : 'plain' });
@@ -45,9 +53,10 @@ export function statusView(s: StatusInput): StatusView {
 
 /** The banner for news from the world: a surge's new phase, the Old Stone waking or sleeping, a feat. Null: nothing to say. */
 export function newsBanner(
-  n: { kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'stone'; view: StoneView },
+  n: { kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView },
   place: string,
 ): { title: string; sub: string } | null {
+  if (n.kind === 'level') return { title: `Level ${n.progress.level}`, sub: `Your energy bar grows to ${n.progress.maxEnergy}.\nYou can go a little farther now.` };
   if (n.kind === 'feat') {
     const f = FEATS.find(x => x.id === n.id);
     return f ? { title: `Feat: ${f.name}`, sub: f.text } : null;

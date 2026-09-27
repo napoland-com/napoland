@@ -35,7 +35,7 @@ describe.skipIf(!url)('PgStorage', () => {
 
   const player = (name: string): PlayerRecord & { tokenHash: string } => ({
     id: randomUUID(), name, tokenHash: randomBytes(32).toString('hex'), authSub: null, map: 'stonebrook',
-    x: 8, y: 21, dir: 'down', color: '#3a86ff', energy: 100, bag: [], wet: 0, stats: {}, createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
+    x: 8, y: 21, dir: 'down', color: '#3a86ff', energy: 100, bag: [], wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} }, createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   });
 
   let schema: string;
@@ -55,7 +55,7 @@ describe.skipIf(!url)('PgStorage', () => {
   });
 
   it('applies each migration once', async () => {
-    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql'];
+    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql'];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
     await storage.init();
@@ -109,13 +109,13 @@ describe.skipIf(!url)('PgStorage', () => {
       `INSERT INTO ${schema}.players (id, name, token_hash, x, y, dir, color, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [old.id, old.name, old.tokenHash, old.x, old.y, old.dir, old.color, new Date(old.createdAt), new Date(old.lastSeenAt)],
     );
-    expect(await storage.findByTokenHash(old.tokenHash)).toEqual({ ...old, map: 'stonebrook', energy: 100, bag: [], wet: 0, stats: {} });
+    expect(await storage.findByTokenHash(old.tokenHash)).toEqual({ ...old, map: 'stonebrook', energy: 100, bag: [], wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } });
     const before = { ...player('Pg Before'), map: 'near-woods', energy: 55 };
     await admin.query(
       `INSERT INTO ${schema}.players (id, name, token_hash, map, x, y, dir, color, energy, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [before.id, before.name, before.tokenHash, before.map, before.x, before.y, before.dir, before.color, before.energy, new Date(before.createdAt), new Date(before.lastSeenAt)],
     );
-    expect(await storage.findByTokenHash(before.tokenHash)).toEqual({ ...before, bag: [], wet: 0, stats: {} });
+    expect(await storage.findByTokenHash(before.tokenHash)).toEqual({ ...before, bag: [], wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } });
     // Its save leaves the bag alone.
     await storage.save({ ...before, bag: [{ item: 'resin', count: 4 }] });
     await admin.query(`UPDATE ${schema}.players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, last_seen_at = $8 WHERE id = $1`, [
@@ -185,6 +185,18 @@ describe.skipIf(!url)('PgStorage', () => {
       await first.close();
       await second.close();
     }
+  });
+
+  it('keeps XP and the stash, with what was taken out of it', async () => {
+    const rec = { ...player('Pg Hoarder'), xp: 340, stash: { items: { shard: 7, glowcap: 40 }, out: { thermos: 1 } } };
+    expect(await storage.create(rec)).toBe(true);
+    expect(await storage.findByTokenHash(rec.tokenHash!)).toEqual(rec);
+    const more = { ...rec, xp: 352, stash: { items: { shard: 8, glowcap: 40 }, out: {} } };
+    await storage.save(more);
+    expect(await storage.findByTokenHash(rec.tokenHash!)).toEqual(more);
+    // Whatever else the column holds reads as an empty stash (the World checks every count too).
+    await admin.query(`UPDATE ${schema}.players SET stash = '[1]' WHERE id = $1`, [rec.id]);
+    expect((await storage.findByTokenHash(rec.tokenHash!))!.stash).toEqual({ items: {}, out: {} });
   });
 
   it('keeps how wet a player is and what counts toward their feats', async () => {

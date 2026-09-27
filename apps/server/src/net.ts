@@ -238,6 +238,15 @@ export function attachNet(o: NetOptions): Net {
       case 'board':
         world.board(s.id, msg.x, msg.y, now);
         return flush();
+      case 'chest':
+        world.chest(s.id, msg.x, msg.y);
+        return flush();
+      case 'store':
+        world.store(s.id, msg.x, msg.y, msg.slot, now);
+        return flush();
+      case 'take':
+        world.take(s.id, msg.x, msg.y, msg.item, msg.count, now);
+        return flush();
       case 'hello':
         return fail(s, 'bad_message', 'Already said hello');
     }
@@ -364,7 +373,7 @@ export function attachNet(o: NetOptions): Net {
       const { id: map, spawn } = world.home.data;
       const rec: PlayerRecord = {
         id, name, tokenHash: token === undefined ? null : hashToken(token), authSub: sub, map, x: spawn.x, y: spawn.y, dir: spawn.dir,
-        color: colorFor(id), energy: ENERGY_MAX, bag: [], wet: 0, stats: {}, createdAt: now, lastSeenAt: now,
+        color: colorFor(id), energy: ENERGY_MAX, bag: [], wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} }, createdAt: now, lastSeenAt: now,
       };
       // create() also refuses the name if another player took it since nameTaken().
       made = await storage.create(rec);
@@ -414,6 +423,7 @@ export function attachNet(o: NetOptions): Net {
       body: joined.body,
       stone: joined.stone,
       stats: joined.stats,
+      progress: joined.progress,
       items: world.itemsVersion,
       serverTime: Date.now(),
     });

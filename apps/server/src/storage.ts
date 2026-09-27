@@ -6,7 +6,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
-import type { BagSlot, Dir, Stats } from '@napoland/shared';
+import type { BagSlot, Dir, Stash, Stats } from '@napoland/shared';
 import { log } from './log';
 
 export interface PlayerRecord {
@@ -37,6 +37,10 @@ export interface PlayerRecord {
   wet?: number;
   /** What counts toward feats (feats.ts). None: nothing yet. */
   stats?: Stats;
+  /** XP in all (progress.ts): the level follows from it. None: 0. */
+  xp?: number;
+  /** What lies in the player's stash at home, and what they took out of it. None: empty. */
+  stash?: Stash;
   /** Milliseconds since the epoch. */
   createdAt: number;
   lastSeenAt: number;
@@ -114,7 +118,10 @@ export interface Storage {
 }
 
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count }));
-const copyRecord = (rec: PlayerRecord): PlayerRecord => ({ ...rec, bag: copyBag(rec.bag), ...(rec.stats ? { stats: { ...rec.stats } } : {}) });
+const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out } });
+const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
+  ...rec, bag: copyBag(rec.bag), ...(rec.stats ? { stats: { ...rec.stats } } : {}), ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
+});
 
 export class MemoryStorage implements Storage {
   private readonly byId = new Map<string, PlayerRecord>();
@@ -166,6 +173,7 @@ export class MemoryStorage implements Storage {
     if (cur) {
       Object.assign(cur, {
         map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(rec.bag), wet: rec.wet ?? 0, stats: { ...rec.stats },
+        xp: rec.xp ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} },
         lastSeenAt: rec.lastSeenAt,
       });
     }
@@ -253,6 +261,8 @@ interface PlayerRow {
   bag: unknown;
   wet: number;
   stats: unknown;
+  xp: number;
+  stash: unknown;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -287,6 +297,12 @@ const trail = (json: unknown): Array<[number, number]> =>
   Array.isArray(json) ? json.filter((t): t is [number, number] => Array.isArray(t) && t.length === 2 && t.every(Number.isInteger)) : [];
 /** A jsonb object of counts as the server wrote it; anything else reads as none (the World checks it again). */
 const stats = (json: unknown): Stats => (typeof json === 'object' && json !== null && !Array.isArray(json) ? (json as Stats) : {});
+/** A jsonb stash as the server wrote it; anything else reads as empty (the World checks every count too). */
+const stash = (json: unknown): Stash => {
+  const o = (typeof json === 'object' && json !== null && !Array.isArray(json) ? json : {}) as Partial<Stash>;
+  const rec = (v: unknown) => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, number>) : {});
+  return { items: rec(o.items), out: rec(o.out) };
+};
 
 const fromRow = (r: PlayerRow): PlayerRecord => ({
   id: r.id,
@@ -302,6 +318,8 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   bag: slots(r.bag),
   wet: r.wet,
   stats: stats(r.stats),
+  xp: r.xp,
+  stash: stash(r.stash),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -353,12 +371,12 @@ export class PgStorage implements Storage {
   // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
-      `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, created_at, last_seen_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15)
+      `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, created_at, last_seen_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16, $17)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}),
-        new Date(rec.createdAt), new Date(rec.lastSeenAt),
+        rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.createdAt), new Date(rec.lastSeenAt),
       ],
     );
     return r.rowCount === 1;
@@ -366,8 +384,12 @@ export class PgStorage implements Storage {
 
   async save(rec: PlayerRecord): Promise<void> {
     await this.pool.query(
-      'UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, last_seen_at = $11 WHERE id = $1',
-      [rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}), new Date(rec.lastSeenAt)],
+      `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
+       last_seen_at = $13 WHERE id = $1`,
+      [
+        rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}), rec.xp ?? 0,
+        JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt),
+      ],
     );
   }
 

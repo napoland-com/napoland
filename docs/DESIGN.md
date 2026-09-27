@@ -21,6 +21,7 @@ The decisions so far, with the reason for each. Change this file when a decision
    - **What else wears you down out there** (each a factor on the drain): a **heavy bag** (items weigh something; at 10 kg or more the drain is 40% faster, so every find is a choice), being **wet** (rain soaks you through in 2.5 minutes, anywhere outdoors; soaked drains 50% faster; a burning fire dries you in 25 seconds, a roof slowly), a **surge** (below), and a **hitchhiker**: at night, 25 steps or more from home and away from light, something may cling to your back (50% faster) until you reach a street light, a burning fire, a roof or light a flare.
 3. Gather resources and power-ups. What you pick up goes in your bag (limited slots). Finds are shared: when someone takes one, a new one of the same kind grows later somewhere else in the same kind of place (deep finds stay deep).
 4. Come home and stash what you carry. Stashing earns XP; levels and home upgrades let you go farther next time.
+   - **Built:** the stash is the chest by the fire at home (A, facing it); each player sees only their own things in it. Everything put in earns its item's XP (`xp` in `content/items.json`: a glowcap 1, resin 2, scrap 3, a shard 12, a strange object 15, a charm 25...), once: what you take out and bring back earns nothing again, and what you use up after taking it out (a thermos drunk, resin burned) no longer counts against new finds, so XP cannot be farmed. Reaching level L takes 30 × (L − 1)² XP in all (level 2 at 30, 5 at 480, 10 at 2,430, 20, the top, at 10,830), and every level makes the energy bar 5 bigger (100 at level 1, 195 at 20). Home upgrades wait for your own cabin.
 5. **If your energy runs out** you wake up at home. What you carried falls out where you collapsed, as a small pile on the ground (the bag itself is equipment and stays with you, like all equipment). If you go back for it, you get everything. If someone else finds it first, they get a random half and the rest is lost. The pile disappears one hour after you collapsed, and a new collapse replaces your old pile: each player has at most one.
 
 **Light is not energy.** Street lights, and later torches and gadgets, let you see where you walk; some areas will be almost dark without them. They do not refill energy, but they shelter you from a surge and shake off a hitchhiker.
@@ -122,6 +123,8 @@ Everything is data (`content/items.json`: name, what it is, stack size, stats, w
 A status tab (in the menu) shows your level and XP, energy (maximum, now, and what is draining it at the moment, element by element), your five resistances with where they come from (each piece of gear), and any effects running (a hand warmer, a storm you are in).
 
 Built so far: energy, how wet you are, your load, what clings to you, your charms, the surge, the Old Stone, and your **feats**. Feats are small perks for good, earned by what you do out there, not bought: Rain walker (1,500 steps in the rain: rain soaks you 20% slower), Night owl (1,000 steps in the dark: hitchhikers half as often), Pack mule (800 steps with a heavy bag: it feels 15% lighter), Fire keeper (20 fires fed: fires warm you 15% faster). Earning one is announced with a banner.
+
+Your level shows next to your name, and the Status panel starts with your level and the XP to the next one.
 
 ## Together: chat and friends
 

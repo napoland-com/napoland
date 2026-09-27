@@ -16,7 +16,7 @@
 import {
   STEP_MS, dirOf, dirToward, energyAfter, findPath, inSurge, stepTarget, surgeFront, DIR_VEC,
   type BagSlot, type BodyView, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
-  type MarkView, type PlayerView, type ServerMsg, type Stats, type StoneView, type SurgeView, type TileMap,
+  type MarkView, type PlayerView, type ProgressView, type ServerMsg, type Stats, type StoneView, type SurgeView, type TileMap,
 } from '@napoland/shared';
 import { countOf, refusalText, useText, type Items } from './items';
 import type { Maps } from './maps';
@@ -42,7 +42,7 @@ interface Mover {
  * Something you face and press A at: a person or a sign (talk), the notice board (the server writes
  * it), a fire or the Old Stone (you feed them).
  */
-export type Talker = { x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' };
+export type Talker = { x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' };
 
 /** Something lying on a tile to pick up: a pile someone left when they collapsed, or a find. */
 export type Thing = { kind: 'drop'; drop: DropView } | { kind: 'find'; find: FindView };
@@ -94,6 +94,7 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
+    if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     return [];
   });
 }
@@ -141,8 +142,12 @@ export class Game {
   /** The Old Stone in town, and your counts toward feats. */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
+  /** Your XP and level. */
+  progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
+  /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
+  chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** Feats just earned, for the interface to announce (it empties the list). */
-  news: Array<{ kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'stone'; view: StoneView }> = [];
+  news: Array<{ kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView }> = [];
   private fid = 0;
   private seq = 0;
   private pending: Array<{ seq: number; x: number; y: number }> = [];
@@ -164,6 +169,8 @@ export class Game {
   private using: { item: string; had: number; at: number } | null = null;
   /** A fire fed and not answered yet, to say how it took it. */
   private feeding: { x: number; y: number; at: number } | null = null;
+  /** A chest asked to open and not answered yet. */
+  private opening: { x: number; y: number; at: number } | null = null;
   /** When the server last emptied a bag that held something. */
   private emptiedAt = -Infinity;
 
@@ -242,6 +249,7 @@ export class Game {
         this.body = { view: msg.body, at: now };
         this.stone = msg.stone;
         this.stats = msg.stats;
+        this.progress = msg.progress;
         break;
       }
       case 'zone': {
@@ -320,6 +328,18 @@ export class Game {
       case 'feat':
         this.stats = msg.stats;
         this.news.push({ kind: 'feat', id: msg.id });
+        break;
+      case 'chest': {
+        // The answer to opening one, or news of the one already open.
+        const o = this.opening;
+        if (o && this.clock - o.at < ANSWER_WAIT_MS) { this.chest = { x: o.x, y: o.y, stash: msg.stash }; this.opening = null; }
+        else if (this.chest) this.chest = { ...this.chest, stash: msg.stash };
+        break;
+      }
+      case 'progress':
+        if (msg.gained > 0) this.floatOverMe(`+${msg.gained} XP`, GAIN);
+        if (msg.progress.level > this.progress.level) this.news.push({ kind: 'level', progress: msg.progress });
+        this.progress = msg.progress;
         break;
       case 'join':
         this.players.set(msg.player.id, this.mover(msg.player));
@@ -404,7 +424,7 @@ export class Game {
     this.online = false;
     this.pending = []; this.path = []; this.goal = null;
     // Answers to what we asked went with the connection.
-    this.picking = null; this.using = null; this.feeding = null;
+    this.picking = null; this.using = null; this.feeding = null; this.opening = null; this.chest = null;
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
     if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
@@ -418,6 +438,7 @@ export class Game {
     if (map !== this.current) {
       this.current = map;
       this.talkers = talkersOf(map);
+      this.chest = null; this.opening = null;
       this.dialog = null; this.marker = null; this.floats = [];
     }
     this.players.clear();
@@ -490,7 +511,32 @@ export class Game {
       return;
     }
     if (t.kind === 'fire') return this.tend(t.x, t.y);
+    if (t.kind === 'chest') {
+      if (!this.online) return;
+      this.opening = { x: t.x, y: t.y, at: this.clock };
+      this.send({ t: 'chest', x: t.x, y: t.y });
+      return;
+    }
     return this.offer(t.x, t.y);
+  }
+
+  /** Put bag slot `slot` (or everything, left out) into the open chest. */
+  store(slot?: number) {
+    const c = this.chest;
+    if (!c || !this.online) return;
+    this.send(slot === undefined ? { t: 'store', x: c.x, y: c.y } : { t: 'store', x: c.x, y: c.y, slot });
+  }
+
+  /** Take a stack of an item out of the open chest (as much as fits the server decides). */
+  take(item: string) {
+    const c = this.chest;
+    if (!c || !this.online) return;
+    this.send({ t: 'take', x: c.x, y: c.y, item, count: this.items.get(item).stack });
+  }
+
+  /** Close the chest (the panel went away). */
+  closeChest() {
+    this.chest = null;
   }
 
   /**

@@ -67,7 +67,7 @@ export function validateMap(data: MapData): Problem[] {
     }
     if (o.kind === 'sign' && (!o.text.length || o.text.some(t => !t.trim()))) err(`sign at ${o.x},${o.y} has no text`);
     if (o.kind === 'npc' && !o.lines.length) err(`npc ${o.id} has nothing to say`);
-    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board') {
+    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board' || o.kind === 'chest') {
       const front = stepTarget(o.x, o.y, 'down');
       if (!map.walkable(front.x, front.y)) err(`${o.kind} at ${o.x},${o.y}: the tile in front (below) is not walkable, so nobody can talk to it`);
     }
@@ -205,7 +205,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (i.kind === 'charm' && !Object.values(i.charm ?? {}).some(v => typeof v === 'number' && v > 0 && v !== 1)) err(`${name} is a charm that does nothing`);
     if (i.kind !== 'charm' && i.charm) err(`${name}: only charms have a charm`);
     for (const k of Object.keys(i.charm ?? {})) if (!['wetting', 'load', 'hitch', 'warmth'].includes(k)) err(`${name}: a charm changes wetting, load, hitch or warmth, not ${k}`);
-    for (const [field, v] of [['weight', i.weight], ['fuel', i.fuel], ['charge', i.charge]] as const) {
+    for (const [field, v] of [['weight', i.weight], ['fuel', i.fuel], ['charge', i.charge], ['xp', i.xp]] as const) {
       if (v !== undefined && !(typeof v === 'number' && v > 0)) err(`${name}: ${field} must be a number above 0`);
     }
     if (i.use?.flare !== undefined && !(i.use.flare > 0)) err(`${name}: a flare burns for some seconds above 0`);

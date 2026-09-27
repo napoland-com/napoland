@@ -18,6 +18,9 @@
  * awake it calms every surge. Strange objects found deep in turn into something when looked at in
  * town. Feats, earned by what you do out there, make it a little easier for good (feats.ts).
  *
+ * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
+ * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts).
+ *
  * Finds lie on the maps for everyone: whoever picks one up first gets it, and a new one of the same
  * rule grows a while later on another tile that fits the rule; some grow only while a region is
  * restless, or on aurora nights. What a player picks up goes in their bag. When they collapse, the
@@ -28,7 +31,6 @@
 import {
   BAG_SLOTS,
   DROP_LIFETIME_MS,
-  ENERGY_MAX,
   ENERGY_SYNC_MS,
   FEATS,
   HEAVY_LOAD,
@@ -43,9 +45,17 @@ import {
   featsOf,
   findTiles,
   halfOf,
+  emptyStash,
   itemIndex,
+  levelOf,
+  maxEnergy,
   merge,
   modsOf,
+  progressOf,
+  stashList,
+  store,
+  takeOut,
+  usedUp,
   reveal,
   stepTarget,
   surgeAt,
@@ -71,7 +81,9 @@ import {
   type MarkView,
   type Mods,
   type PlayerView,
+  type ProgressView,
   type Refusal,
+  type Stash,
   type ServerMsg,
   type Stats,
   type StoneView,
@@ -172,6 +184,7 @@ export interface Joined extends Scene {
   bag: BagSlot[];
   stone: StoneView;
   stats: Stats;
+  progress: ProgressView;
 }
 
 /** What storage must hear: piles and marks to write (or remove: undefined), players to save now, and the Old Stone if it changed. */
@@ -291,13 +304,15 @@ const view = (r: PlayerRecord): PlayerView => ({ id: r.id, name: r.name, x: r.x,
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
-const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), max: ENERGY_MAX, rate: round(p.rate, 3) });
+/** A full bar for this player: it grows with their level. */
+const maxOf = (r: PlayerRecord): number => maxEnergy(levelOf(r.xp ?? 0));
+const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), max: maxOf(p.rec), rate: round(p.rate, 3) });
 const bodyView = (p: Online): BodyView => ({ wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched });
 /**
  * Draining and not empty yet, or refilling and not full yet. Holding (rate 0) changes nothing.
  * Wetness is left out: it moves at a steady rate the client counts on, and is told when that turns.
  */
-const changing = (p: Online): boolean => (p.rate < 0 && p.rec.energy > 0) || (p.rate > 0 && p.rec.energy < ENERGY_MAX);
+const changing = (p: Online): boolean => (p.rate < 0 && p.rec.energy > 0) || (p.rate > 0 && p.rec.energy < maxOf(p.rec));
 const findView = (f: Find): FindView => ({ id: f.id, item: f.rule.item.id, x: f.tile % f.rule.map.width, y: Math.floor(f.tile / f.rule.map.width) });
 const dropView = (d: DropRecord): DropView => ({
   id: d.owner, x: d.x, y: d.y, owner: d.owner, name: d.name, until: d.droppedAt + DROP_LIFETIME_MS, trail: (d.trail ?? []).map(([x, y]) => [x, y]),
@@ -305,7 +320,8 @@ const dropView = (d: DropRecord): DropView => ({
 const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, name: m.name, until: m.placedAt + MARK_LIFETIME_MS });
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: 'watcher', x: w.x, y: w.y, dir: w.dir });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count }));
-const copyRecord = (r: PlayerRecord): PlayerRecord => ({ ...r, bag: copyBag(r.bag), stats: { ...r.stats } });
+const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out } });
+const copyRecord = (r: PlayerRecord): PlayerRecord => ({ ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}) });
 /** A bag slot as the server writes them; saved data is checked with this before it is trusted. */
 const isSlot = (s: unknown): s is BagSlot => {
   const { item, count } = (typeof s === 'object' && s !== null ? s : {}) as Partial<BagSlot>;
@@ -316,6 +332,16 @@ const cleanStats = (s: unknown): Stats => {
   const out: Stats = {};
   const raw = (typeof s === 'object' && s !== null ? s : {}) as Record<string, unknown>;
   for (const k of STATS) if (Number.isInteger(raw[k]) && (raw[k] as number) > 0) out[k] = raw[k] as number;
+  return out;
+};
+/** A saved stash as today's items fit it: counts that are whole numbers above 0, of items that still exist. */
+const cleanStash = (s: unknown, items: Map<string, ItemDef>): Stash => {
+  const out = emptyStash();
+  const raw = (typeof s === 'object' && s !== null ? s : {}) as Partial<Record<keyof Stash, unknown>>;
+  for (const k of ['items', 'out'] as const) {
+    const part = (typeof raw[k] === 'object' && raw[k] !== null ? raw[k] : {}) as Record<string, unknown>;
+    for (const [id, n] of Object.entries(part)) if (items.has(id) && Number.isInteger(n) && (n as number) > 0) out[k][id] = n as number;
+  }
   return out;
 };
 const manhattan = (ax: number, ay: number, bx: number, by: number) => Math.abs(ax - bx) + Math.abs(ay - by);
@@ -339,6 +365,8 @@ export class World {
   private readonly cycle: boolean;
   private readonly onCollapse: WorldOptions['onCollapse'];
   private readonly items: Map<string, ItemDef>;
+  /** The items in the order of content/items.json: a stash lists them so. */
+  private readonly itemOrder: ItemDef[];
   private readonly rng: () => number;
   private readonly epochOffset: number;
   private readonly rules: Rule[] = [];
@@ -409,6 +437,7 @@ export class World {
 
     const items = options.items ?? { version: 0, items: [], finds: [] };
     this.items = itemIndex(items);
+    this.itemOrder = items.items;
     this.itemsVersion = items.version;
     for (const f of items.finds) {
       // loadItems checks this and more (validateItems).
@@ -509,7 +538,10 @@ export class World {
   /** Puts a player in the world, tells everyone on their map and returns what goes in the welcome. */
   join(rec: PlayerRecord, now: number): Joined {
     if (this.players.has(rec.id)) throw new Error(`player ${rec.id} is already online`);
-    const r: PlayerRecord = { ...rec, bag: this.fitBag(rec.bag), stats: cleanStats(rec.stats) };
+    const r: PlayerRecord = {
+      ...rec, bag: this.fitBag(rec.bag), stats: cleanStats(rec.stats), stash: cleanStash(rec.stash, this.items),
+      xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
+    };
     // Maps change between visits: a map may be gone (start over at home), or the saved tile may be
     // inside something new or part of an exit now (start at that map's spawn). Never start inside
     // a wall, or on an exit that would move you the moment you step.
@@ -521,7 +553,7 @@ export class World {
       toSpawn(r, map);
     }
     r.map = map.data.id;
-    r.energy = Number.isFinite(r.energy) ? Math.min(ENERGY_MAX, Math.max(0, r.energy)) : ENERGY_MAX;
+    r.energy = Number.isFinite(r.energy) ? Math.min(maxOf(r), Math.max(0, r.energy)) : maxOf(r);
     r.wet = Number.isFinite(r.wet) ? clamp01(r.wet!) : 0;
     const readyAt = this.resting.get(r.id) ?? -Infinity;
     this.resting.delete(r.id);
@@ -539,7 +571,7 @@ export class World {
     const here = map.data.id;
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: copyBag(r.bag),
-      stone: this.stoneView(now), stats: { ...r.stats },
+      stone: this.stoneView(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
     };
   }
 
@@ -639,8 +671,10 @@ export class World {
       }
     }
     p.rec.bag = bag;
+    // Used up: if it came out of the stash, it will never go back.
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
     if (use.energy) {
-      p.rec.energy = Math.min(ENERGY_MAX, Math.max(0, p.rec.energy + use.energy));
+      p.rec.energy = Math.min(maxOf(p.rec), Math.max(0, p.rec.energy + use.energy));
     }
     if (use.mark) this.paint(p, now);
     if (use.flare) this.light(p, use.flare, now);
@@ -662,7 +696,9 @@ export class World {
       this.collapse(p, now);
       return this.refuse(p, 'discard', 'empty_slot');
     }
-    if (!p.rec.bag[slot]) return this.refuse(p, 'discard', 'empty_slot');
+    const thrown = p.rec.bag[slot];
+    if (!thrown) return this.refuse(p, 'discard', 'empty_slot');
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), thrown.item, thrown.count);
     p.rec.bag = takeFromBag(p.rec.bag, slot);
     this.sendBag(p);
     this.rerate(p, now);
@@ -689,6 +725,7 @@ export class World {
     if (stone && stone.map === p.map && stone.x === x && stone.y === y) {
       if (!def?.charge) return this.refuse(p, 'feed', 'not_fuel');
       p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
+      p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
       this.chargeStone(def.charge, now);
       this.sendBag(p);
       this.saveNow.set(id, p.rec);
@@ -700,11 +737,66 @@ export class World {
     if (!def?.fuel) return this.refuse(p, 'feed', 'not_fuel');
     if (!this.fires.feed(fire, def.fuel, now)) return this.refuse(p, 'feed', 'fire_full');
     p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
     this.sendBag(p);
     this.toMap(p.map.data.id, { t: 'fire', fire: this.fires.view(fire, now) });
     this.count(p, 'fed', now);
     // A dead fire lit again warms whoever stands by it.
     for (const q of this.onMap.get(p.map.data.id)!) this.rerate(q, now);
+  }
+
+  /** Opens the chest on tile x,y (next to the player): they hear what is in their stash. */
+  chest(id: string, x: number, y: number): void {
+    const p = this.players.get(id);
+    if (!p || !this.chestNextTo(p, x, y)) return;
+    this.sendStash(p);
+  }
+
+  /**
+   * Puts bag slot `slot` (or, left out, everything in the bag) into the player's stash, in the chest on
+   * tile x,y next to them. What goes in earns XP, except what they took out before and bring back;
+   * a new level raises their energy bar at once.
+   */
+  store(id: string, x: number, y: number, slot: number | undefined, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    this.advance(p, now);
+    if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'store', 'too_far');
+    const going = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
+    if (!going.length) return this.refuse(p, 'store', 'empty_slot');
+    const r = store(p.rec.stash ?? emptyStash(), merge(going), this.items);
+    p.rec.stash = r.stash;
+    p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
+    const before = levelOf(p.rec.xp ?? 0);
+    p.rec.xp = (p.rec.xp ?? 0) + r.xp;
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p);
+    this.sendStash(p);
+    this.outbox.push({ to: id, msg: { t: 'progress', progress: progressOf(p.rec.xp), gained: r.xp } });
+    // A bigger bar: the player hears it (and at home, by the fire, it fills up).
+    if (levelOf(p.rec.xp) !== before) this.refresh(p, now);
+    this.tell(p, now);
+  }
+
+  /** Takes up to `count` of an item out of the player's stash, in the chest on tile x,y, as much as fits in the bag. */
+  take(id: string, x: number, y: number, item: string, count: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'take', 'too_far');
+    const stash = p.rec.stash ?? emptyStash(), have = stash.items[item] ?? 0, def = this.items.get(item);
+    if (!def || !have) return this.refuse(p, 'take', 'not_stashed');
+    const want = Math.min(have, count);
+    const r = addToBag(p.rec.bag, def, want);
+    const taken = want - r.left;
+    if (!taken) return this.refuse(p, 'take', 'bag_full');
+    p.rec.bag = r.bag;
+    p.rec.stash = takeOut(stash, item, taken).stash;
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p);
+    this.sendStash(p);
+    this.rerate(p, now);
   }
 
   /** Reads the notice board on tile x,y (next to the player): how things stand out there, in plain words. */
@@ -852,7 +944,7 @@ export class World {
     this.dropBag(p, now);
     const { spawn } = this.home.data;
     this.place(p, this.home, spawn.x, spawn.y, spawn.dir);
-    p.rec.energy = ENERGY_MAX;
+    p.rec.energy = maxOf(p.rec);
     p.rec.wet = 0;
     p.hitched = false;
     this.collapses = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
@@ -946,7 +1038,7 @@ export class World {
   private advance(p: Online, now: number): number {
     if (now > p.energyAt) {
       const dt = (now - p.energyAt) / 1000;
-      p.rec.energy = Math.min(ENERGY_MAX, Math.max(0, p.rec.energy + p.rate * dt));
+      p.rec.energy = Math.min(maxOf(p.rec), Math.max(0, p.rec.energy + p.rate * dt));
       p.rec.wet = clamp01((p.rec.wet ?? 0) + p.wetRate * dt);
       p.energyAt = now;
     }
@@ -1195,6 +1287,7 @@ export class World {
       const slot = units[this.roll(units.length)]!;
       lost = p.rec.bag[slot]!.item;
       p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
+      p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), lost, 1);
       this.sendBag(p);
       this.saveNow.set(p.rec.id, p.rec);
     }
@@ -1441,11 +1534,20 @@ export class World {
     this.sendBag(p);
   }
 
+  /** Is there a chest on tile x,y of the player's map, right next to them? */
+  private chestNextTo(p: Online, x: number, y: number): boolean {
+    return manhattan(x, y, p.rec.x, p.rec.y) === 1 && p.map.data.objects.some(o => o.kind === 'chest' && o.x === x && o.y === y);
+  }
+
+  private sendStash(p: Online): void {
+    this.outbox.push({ to: p.rec.id, msg: { t: 'chest', stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder) } });
+  }
+
   private sendBag(p: Online): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'bag', bag: copyBag(p.rec.bag) } });
   }
 
-  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed', reason: Refusal): void {
+  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
   }
 
