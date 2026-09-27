@@ -2,7 +2,7 @@
 id: south-road
 title: "The South Road: NAPO's old grounds"
 status: done
-order: 160
+order: 170
 area: world
 depends: [buildings-fireplaces-shelters]
 ---

@@ -6,7 +6,7 @@
 import '@fontsource-variable/fredoka';
 import '@fontsource-variable/nunito';
 import './style.css';
-import { HUM_BEFORE_S, bagSlotsOf, type AuthConfig, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type ServerMsg, type Slot, type Weather, type Worn } from '@napoland/shared';
+import { HUM_BEFORE_S, bagSlotsOf, surgeFront, type AuthConfig, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type ServerMsg, type ChatTo, type Slot, type Weather, type Worn } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
 import { Game } from './game';
@@ -18,11 +18,13 @@ import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { paperMap } from './papermap';
 import { Connection, serverUrl } from './net';
+import { Sound, type SoundSetting } from './sound';
+import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { levelText, newsBanner, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
-import { WorldView, createRenderer } from './view/world';
+import { WorldView, createRenderer, lightningAt } from './view/world';
 import { guardZoom } from './zoom';
 
 // Before anything can be touched: on iPhones two thumbs (the stick and A) would zoom the page.
@@ -39,6 +41,15 @@ const safe = (storage: () => Storage) => ({
 /** What this browser keeps, and what only this tab keeps (so in dev mode each tab can be someone else). */
 const store = safe(() => localStorage);
 const tabStore = safe(() => sessionStorage);
+/** The sound's volume and mute, as this browser keeps them. */
+const SOUND_KEY = 'napoland.sound';
+const soundSetting = ((): SoundSetting => {
+  try {
+    const s = JSON.parse(store.get(SOUND_KEY) ?? '{}') as Partial<SoundSetting>;
+    return { volume: typeof s.volume === 'number' ? Math.min(1, Math.max(0, s.volume)) : 0.7, muted: s.muted === true };
+  } catch { return { volume: 0.7, muted: false }; }
+})();
+const sound = new Sound(soundSetting);
 
 // Every map is bundled, so moving between them needs no download; the items too, so the bag can
 // name what it holds. (A glob, not an import: a checkout without items.json still builds, and the
@@ -68,9 +79,9 @@ let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items);
 /** Close the bag, the status and About panels and the menu; true when one was open. */
 const closePanels = () => {
-  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.menuOpen || hud.friendsOpen || hud.paperOpen;
+  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.menuOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen;
   hud.showPaper(null);
-  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false);
+  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false); hud.toggleChat(false);
   return open;
 };
 /** The status panel, as the game stands now. */
@@ -86,7 +97,7 @@ const showStatus = () => {
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
 const controls = {
   pad: (dir: Dir | null) => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
-  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the About panel and the text box, then out of the status or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
 };
@@ -106,6 +117,10 @@ const hud = new Hud(screen, {
   // The workbench's rows are recipes, and mending ("mend:" and the slot).
   craft: recipe => (recipe.startsWith('mend:') ? game.mend(recipe.slice(5) as Slot) : game.craft(recipe)),
   benchClosed: () => game.closeBench(),
+  chat: a => {
+    if (a.a === 'tab') chatTab = a.to;
+    else if (a.a === 'say') game.say(a.to, a.text);
+  },
   social: a => {
     switch (a.a) {
       case 'opened': friendsAskedAt = 0; return;
@@ -118,8 +133,8 @@ const hud = new Hud(screen, {
       case 'requests': return game.social({ t: 'requests', off: a.off });
       case 'tell': return game.tell(a.id, a.text);
       case 'report': {
-        // What they wrote last goes with it: the server keeps no messages once read.
-        const quote = lastFrom(game.talks.get(a.id));
+        // What they wrote last goes with it (a private message, or else a line of chat): the server keeps neither.
+        const quote = lastFrom(game.talks.get(a.id)) ?? game.chat.findLast(l => l.id === a.id)?.text;
         game.social({ t: 'report', id: a.id, reason: a.reason, ...(quote ? { quote } : {}) });
         game.socialNote = 'Reported. Thank you: the maintainers will look into it.';
         game.socialChanges++;
@@ -136,7 +151,9 @@ const hud = new Hud(screen, {
     hud.showPaper(paperMap(map, id => maps.find(id)?.name));
   },
   version: () => loadVersion(),
+  sound: s => { sound.set(s); store.set(SOUND_KEY, JSON.stringify(s)); },
 });
+hud.setSound(soundSetting);
 watchFires(view);
 
 // ---------- the keyboard, on a computer ----------
@@ -447,6 +464,10 @@ let marksShown = { changes: -1, view: null as WorldView | null };
 let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
 let statusAt = 0;
 let friendsShown = { changes: -1, open: false };
+/** The chat tab shown, what of the chat is drawn, and the dots drawn on the menu. */
+let chatTab: ChatTo = 'local';
+let chatShown: { changes: number; tab: ChatTo } = { changes: -1, tab: chatTab };
+let newsShown = '';
 /** The friends panel asks for the list again this often while it is open: who is online, and where. */
 const FRIENDS_REFRESH_MS = 10_000;
 let friendsAskedAt = 0;
@@ -463,6 +484,8 @@ let humFor = -Infinity;
 let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: null };
 let toolsShown: string[] | null = null;
 let progressShown: typeof game.progress | null = null;
+/** The scene sound was mixed for last frame: what changed since is what makes a one-shot. */
+let heard: Scene | undefined;
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
   requestAnimationFrame(frame);
@@ -519,7 +542,8 @@ function frame(now: number) {
   const body = game.online ? game.bodyNow(now) : null;
   hud.setBody(body);
   if (body) hud.setLoad(body.load);
-  for (const n of game.news.splice(0)) {
+  const worldNews = game.news.splice(0);
+  for (const n of worldNews) {
     const b = newsBanner(n, game.map.data.name);
     if (b) hud.showBanner(b.title, b.sub);
   }
@@ -527,8 +551,15 @@ function frame(now: number) {
   if (game.socialChanges !== friendsShown.changes || hud.friendsOpen !== friendsShown.open) {
     friendsShown = { changes: game.socialChanges, open: hud.friendsOpen };
     hud.setFriends(friendsView(game.friends, game, id => maps.find(id)?.name), game.socialNote);
-    hud.setSocialNews(game.socialNews);
   }
+  // Chat: what the open tab heard (reading it clears the dot), and the dots on the menu.
+  if (hud.chatOpen) game.chatNews = false;
+  if (game.chatChanges !== chatShown.changes || chatTab !== chatShown.tab) {
+    chatShown = { changes: game.chatChanges, tab: chatTab };
+    hud.setChat(chatTab, game.chat.filter(l => l.to === chatTab), game.chatNote);
+  }
+  const news = `${game.socialNews}${game.chatNews}`;
+  if (news !== newsShown) { newsShown = news; hud.setNews(game.socialNews, game.chatNews); }
   if (hud.friendsOpen && now - friendsAskedAt > FRIENDS_REFRESH_MS) { friendsAskedAt = now; game.social({ t: 'friends' }); }
   const benchChanged = game.bench !== benchShown;
   if (benchChanged) {
@@ -553,11 +584,31 @@ function frame(now: number) {
     if (game.chest) hud.setStash(slotViews(game.chest.stash, items), levelText(game.progress));
     hud.setLevel(game.progress.level);
   }
-  view.render((now - start) / 1000, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
+  const t = (now - start) / 1000;
+  view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
+  const map = game.map, rule = map.data.surge;
+  const scene: Scene = {
+    map: map.data.id, kind: map.data.kind, weather, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
+    me: me ? { x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty) } : null,
+    fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),
+    poles: map.data.objects.filter(o => o.kind === 'pole'),
+    // How far the front still has to come to reach your tile, as a share of its sweep.
+    surge: surge && { phase: surge.phase, gap: rule && me && map.deepest ? ((surgeFront(rule, map.deepest, surge) ?? map.deepest) - map.homeSteps(me.tx, me.ty)) / map.deepest : 1 },
+    caught, watchers: game.creatureViews(), flashes: game.flashesNow(now), news: worldNews,
+  };
+  sound.update(soundscape(scene, heard));
+  heard = scene;
   const tags: TagView[] = [...game.players.values()].filter(p => p.id !== game.meId).map(p => { const s = view.project(p.x, p.y, 1.25); return { id: p.id, name: p.name, x: s.x, y: s.y }; });
   // Whose pile it is, while you are near. Its id is its owner's, so it gets a key of its own.
   for (const d of game.pilesNear()) { const s = view.project(d.x, d.y, 0.62); tags.push({ id: `pile:${d.id}`, name: d.name, x: s.x, y: s.y, pile: true }); }
   hud.setTags(tags);
+  // A speech bubble over whoever said something near you, above their name.
+  hud.setBubbles(game.bubblesNow(now).flatMap(b => {
+    const p = game.players.get(b.id);
+    if (!p) return [];
+    const s = view.project(p.x, p.y, 1.75);
+    return [{ id: b.id, text: b.text, x: s.x, y: s.y }];
+  }));
   hud.setFloats(game.floats.map(f => { const s = view.project(f.x, f.y, 1.3); return { ...f, x: s.x, y: s.y }; }));
   const d = game.dialog, line = d ? d.lines[d.i] ?? '' : '';
   hud.setDialog(d ? { who: d.who, text: line.slice(0, Math.floor(d.shown)), done: d.shown >= line.length } : null);
@@ -568,4 +619,4 @@ requestAnimationFrame(frame);
 
 // Development only: reach the game from the browser console, and play server messages by hand
 // (for example a zone) to try things the server does not do yet.
-if (import.meta.env.DEV) Object.assign(window, { napoland: { game, maps, items, hud, renderer, arrival, get view() { return view; }, get signin() { return signin; }, receive: (msg: ServerMsg) => conn.onMessage(msg) } });
+if (import.meta.env.DEV) Object.assign(window, { napoland: { game, maps, items, hud, renderer, arrival, sound, get view() { return view; }, get signin() { return signin; }, receive: (msg: ServerMsg) => conn.onMessage(msg) } });

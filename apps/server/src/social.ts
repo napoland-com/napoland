@@ -52,10 +52,22 @@ const has = (links: LinkRecord[], from: string, to: string, kind: LinkRecord['ki
 export class Social {
   private readonly tellLimit: RollingLimit;
   private readonly reportLimit: RollingLimit;
+  /** Who each player online blocks, kept at hand: chat asks it for every message (chat.ts). */
+  private readonly blocking = new Map<string, Set<string>>();
 
   constructor(private readonly o: SocialOptions) {
     this.tellLimit = new RollingLimit(TELLS_PER_MINUTE, 60_000, o.clock);
     this.reportLimit = new RollingLimit(REPORTS_PER_HOUR, 3_600_000, o.clock);
+  }
+
+  /** Who `id` blocks, while they are online (nobody before joined() has run). */
+  blocks(id: string): ReadonlySet<string> {
+    return this.blocking.get(id) ?? new Set();
+  }
+
+  /** A player left: nothing of theirs is kept at hand. */
+  left(id: string): void {
+    this.blocking.delete(id);
   }
 
   /** A player came online: their list, and what is waiting for them. */
@@ -89,6 +101,8 @@ export class Social {
         if (msg.id === me || !(await s.findPerson({ id: msg.id }))) return;
         if (msg.on) await this.unlink(me, msg.id);
         await s.setLink(me, msg.id, 'block', msg.on);
+        if (msg.on) this.blocking.set(me, new Set([...this.blocks(me), msg.id]));
+        else this.blocking.get(me)?.delete(msg.id);
         return this.lists(me, msg.id);
       case 'tell':
         return this.tell(me, msg.to, msg.text);
@@ -176,6 +190,8 @@ export class Social {
     const s = this.o.storage;
     const [links, me] = [await s.linksOf(id), await s.findPerson({ id })];
     const out = (kind: LinkRecord['kind']): PersonView[] => links.filter(l => l.from === id && l.kind === kind).map(l => ({ id: l.to, name: l.toName }));
+    // The list is read whole here anyway: the blocks at hand follow it.
+    this.blocking.set(id, new Set(out('block').map(p => p.id)));
     this.o.send(id, {
       t: 'friends',
       friends: out('friend').map(p => ({ ...p, map: this.o.where(p.id) ?? null })),

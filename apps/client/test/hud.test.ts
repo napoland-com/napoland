@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { REFILL_PER_SECOND } from '@napoland/shared';
-import { energyLook } from '../src/hud';
+import { energyLook, soundRow } from '../src/hud';
+import type { SoundSetting } from '../src/sound';
 
 describe('the energy bar', () => {
   it('shows neither refilling nor draining while energy holds, in town and inside (rate 0)', () => {
@@ -25,5 +26,42 @@ describe('the energy bar', () => {
 
   it('shows a full, quiet bar before the first report', () => {
     expect(energyLook(null)).toEqual({ fill: 1, level: 'ok', refill: false, vignette: 0 });
+  });
+});
+
+describe("the menu's sound row", () => {
+  /** Plain EventTargets stand in for the mute button, its label and the slider. */
+  function setup() {
+    const mute = Object.assign(new EventTarget(), { attrs: {} as Record<string, string>, setAttribute(k: string, v: string) { this.attrs[k] = v; } });
+    const label = { textContent: '' as string | null }, volume = Object.assign(new EventTarget(), { value: '' });
+    const said: SoundSetting[] = [];
+    const show = soundRow({ mute, label, volume }, s => said.push(s));
+    return { mute, label, volume, said, show };
+  }
+
+  it('shows the setting it is given', () => {
+    const { mute, label, volume, said, show } = setup();
+    show({ volume: 0.4, muted: true });
+    expect([mute.attrs['aria-pressed'], label.textContent, volume.value]).toEqual(['false', 'Sound off', '40']);
+    show({ volume: 1, muted: false });
+    expect([mute.attrs['aria-pressed'], label.textContent, volume.value]).toEqual(['true', 'Sound on', '100']);
+    expect(said).toEqual([]);
+  });
+
+  it('mutes and unmutes with the button, keeping the volume', () => {
+    const { mute, label, said, show } = setup();
+    show({ volume: 0.4, muted: false });
+    mute.dispatchEvent(new Event('click'));
+    mute.dispatchEvent(new Event('click'));
+    expect(said).toEqual([{ volume: 0.4, muted: true }, { volume: 0.4, muted: false }]);
+    expect(label.textContent).toBe('Sound on');
+  });
+
+  it('sets the volume with the slider, and a muted game comes back on', () => {
+    const { volume, said, show } = setup();
+    show({ volume: 0.7, muted: true });
+    volume.value = '25';
+    volume.dispatchEvent(new Event('input'));
+    expect(said).toEqual([{ volume: 0.25, muted: false }]);
   });
 });
