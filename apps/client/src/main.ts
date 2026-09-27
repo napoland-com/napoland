@@ -177,7 +177,7 @@ const keys = new Keys({
 window.addEventListener('keydown', e => {
   // Behind the sign-in cards the keys are the page's (typing a name, pressing Enter to go on).
   if (!overlay.hidden) return;
-  if (keys.down(e.code, keyTarget(e.target), e.repeat, e.ctrlKey || e.altKey || e.metaKey)) e.preventDefault();
+  if (keys.down(e.code, keyTarget(e.target), e.repeat, e.ctrlKey || e.altKey || e.metaKey, e.key)) e.preventDefault();
 });
 // A button a tap or a click pressed lets go of the focus at once, so the keys stay the game's (Enter
 // opens the chat instead of pressing that button again). One reached with Tab keeps it: its clicks

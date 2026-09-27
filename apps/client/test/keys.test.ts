@@ -58,10 +58,23 @@ describe('the keyboard', () => {
   });
 
   it('opens the map with M, once per press', () => {
-    expect(keys.down('KeyM', 'page')).toBe(true);
-    keys.down('KeyM', 'page', true);
-    expect(keys.down('KeyM', 'text')).toBe(false);
+    expect(keys.down('KeyM', 'page', false, false, 'm')).toBe(true);
+    keys.down('KeyM', 'page', true, false, 'm');
+    expect(keys.down('KeyM', 'text', false, false, 'm')).toBe(false);
     expect(heard).toEqual(['map']);
+  });
+
+  it('opens the map with the key that types M, wherever a layout puts it', () => {
+    // French: M sits right of L, and the key in its place types a comma.
+    expect(keys.down('Semicolon', 'page', false, false, 'm')).toBe(true);
+    expect(keys.down('KeyM', 'page', false, false, ',')).toBe(false);
+    expect(keys.down('Semicolon', 'page', false, false, 'M')).toBe(true);
+    // A layout without Latin letters goes by where M sits, and so does an event without its letter.
+    expect(keys.down('KeyM', 'page', false, false, 'ь')).toBe(true);
+    expect(keys.down('KeyM', 'page')).toBe(true);
+    // The keys that walk and press A and B stay where they sit, whatever they type.
+    keys.down('KeyE', 'page', false, false, 'm');
+    expect(heard).toEqual(['map', 'map', 'map', 'map', 'A']);
   });
 
   it('leaves the browser its shortcuts, fields their typing, and buttons their Enter and Space', () => {
