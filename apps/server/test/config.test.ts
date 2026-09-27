@@ -16,13 +16,16 @@ describe('loadConfig', () => {
     });
     expect(cfg.mapsDir).toBe(join(REPO, 'content', 'maps'));
     expect(cfg.itemsFile).toBe(join(REPO, 'content', 'items.json'));
+    expect(cfg.storyFile).toBe(join(REPO, 'content', 'story.json'));
     expect(cfg.homeMap).toBe('stonebrook');
     expect(cfg.migrationsDir).toBe(join(REPO, 'apps', 'server', 'migrations'));
   });
 
-  it('reads the maps folder, the items file and the home map', () => {
-    const cfg = loadConfig({ MAPS_DIR: 'content/maps', ITEMS_FILE: 'content/items.json', HOME_MAP: ' riverside ' }, REPO);
-    expect(cfg).toMatchObject({ mapsDir: join(REPO, 'content', 'maps'), itemsFile: join(REPO, 'content', 'items.json'), homeMap: 'riverside' });
+  it('reads the maps folder, the items file, the story file and the home map', () => {
+    const cfg = loadConfig({ MAPS_DIR: 'content/maps', ITEMS_FILE: 'content/items.json', STORY_FILE: 'content/story.json', HOME_MAP: ' riverside ' }, REPO);
+    expect(cfg).toMatchObject({
+      mapsDir: join(REPO, 'content', 'maps'), itemsFile: join(REPO, 'content', 'items.json'), storyFile: join(REPO, 'content', 'story.json'), homeMap: 'riverside',
+    });
   });
 
   it('reads the environment', () => {
@@ -71,9 +74,11 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ MAPS_DIR: 'content/maps/stonebrook.json' }, REPO)).toThrow(/MAPS_DIR must point to an existing directory/);
     expect(() => loadConfig({ ITEMS_FILE: 'nope.json' }, REPO)).toThrow(/ITEMS_FILE must point to an existing file/);
     expect(() => loadConfig({ ITEMS_FILE: 'content' }, REPO)).toThrow(/ITEMS_FILE must point to an existing file/);
+    expect(() => loadConfig({ STORY_FILE: 'nope.json' }, REPO)).toThrow(/STORY_FILE must point to an existing file/);
     expect(() => loadConfig({ CLIENT_DIR: `nope${sep}dist` }, REPO)).toThrow(/CLIENT_DIR/);
     expect(() => loadConfig({}, tmpdir())).toThrow(/MAPS_DIR is not set/);
     expect(() => loadConfig({}, tmpdir())).toThrow(/ITEMS_FILE is not set and content\/items\.json was not found/);
+    expect(() => loadConfig({}, tmpdir())).toThrow(/STORY_FILE is not set and content\/story\.json was not found/);
   });
 
   it('refuses the old MAP_FILE, which would quietly be ignored', () => {

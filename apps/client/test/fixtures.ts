@@ -1,6 +1,6 @@
 import {
   PROTOCOL_VERSION, STEP_MS, type BagSlot, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type FlashView, type StormView, type ItemsData,
-  type MapData, type MarkView, type PlayerView, type ProgressView, type ServerMsg, type StoneView, type SurgeView, type ConditionsView,
+  type MapData, type MarkView, type PlayerView, type ProgressView, type ServerMsg, type StoneView, type StoryData, type StoryView, type SurgeView, type ConditionsView,
 } from '@napoland/shared';
 import { Items } from '../src/items';
 
@@ -105,6 +105,19 @@ export function itemsData(): ItemsData {
 }
 export const ITEMS = new Items(itemsData());
 
+/** A short story: home, then bring something home, then talk to Rook (in the woods), then read the station's log. */
+export function storyData(): StoryData {
+  return {
+    version: 2,
+    chapters: [
+      { id: 'home', title: 'Home', text: 'You woke up at home.', hints: { rook: 'Bring something home first.' } },
+      { id: 'what-glows', title: 'What glows', text: 'You brought something home.', when: { store: true } },
+      { id: 'the-woods', title: 'The woods', text: 'Rook told you about the woods.', when: { talk: 'rook' }, hints: { rook: 'Go and read the log.' } },
+      { id: 'the-log', title: 'The log', text: 'You read the log.', when: { read: 'log' } },
+    ],
+  };
+}
+
 /** A full bar that holds, as it does in town and inside (only a fire refills it). */
 export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 
@@ -112,7 +125,7 @@ export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 export interface Extras {
   finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; items?: number;
   fires?: FireView[]; marks?: MarkView[]; creatures?: CreatureView[]; flares?: FlareView[]; flashes?: FlashView[]; surge?: SurgeView | null; storm?: StormView | null; body?: BodyView; stone?: StoneView;
-  progress?: ProgressView; tools?: string[]; conditions?: ConditionsView;
+  progress?: ProgressView; tools?: string[]; story?: StoryView; conditions?: ConditionsView;
 }
 /** Dry, light and alone. */
 export const DRY: BodyView = { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} };
@@ -126,6 +139,8 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
     finds: extras.finds ?? [], drops: extras.drops ?? [], bag: extras.bag ?? [], items: extras.items ?? ITEMS.version,
     fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], flashes: extras.flashes ?? [], surge: extras.surge ?? null, storm: extras.storm ?? null,
     body: extras.body ?? DRY, stone: extras.stone ?? ASLEEP, stats: {}, progress: extras.progress ?? START, tools: extras.tools ?? [],
+    // A game made without a story has none (version 0).
+    story: extras.story ?? { version: 0, chapter: '' },
     conditions: extras.conditions ?? { today: [], week: null, next: null },
   };
 }

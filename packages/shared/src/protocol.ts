@@ -12,7 +12,7 @@ import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 16;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -116,6 +116,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('requests'), off: z.boolean() }),
   /** Send me my friends list again: who is online now, and where. */
   z.object({ t: z.literal('friends') }),
+  /** You talked to the person, or read the desk, on tile x,y next to you: the story may move on (story.ts). */
+  z.object({ t: z.literal('talk'), x: z.number().int(), y: z.number().int() }),
   /** Say something to everyone online (world) or to whoever is near you (local). Only signed-in players can. */
   z.object({ t: z.literal('say'), to: z.enum(['world', 'local']), text: z.string().trim().min(1).max(MAX_SAY_CHARS) }),
 ]);
@@ -283,6 +285,13 @@ export interface MapRef {
   version: number;
 }
 
+/** Where you are in the story (story.ts): the latest chapter you reached, in the version of content/story.json the server runs. */
+export interface StoryView {
+  /** A client with another version of the story reloads. */
+  version: number;
+  chapter: string;
+}
+
 export type ServerMsg =
   | {
       t: 'welcome';
@@ -324,6 +333,8 @@ export type ServerMsg =
       tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
       items: number;
+      /** Where you are in the story. */
+      story: StoryView;
       serverTime: number;
     }
   /**
@@ -381,6 +392,8 @@ export type ServerMsg =
   | { t: 'board'; lines: string[] }
   /** You earned a feat (feats.ts); `stats` is where your counts stand now. */
   | { t: 'feat'; id: string; stats: Stats }
+  /** You reached this chapter of the story (story.ts): it goes into your journal. */
+  | { t: 'chapter'; id: string }
   /** What is in your stash, whole, after you opened the chest or anything went in or out. */
   | { t: 'chest'; stash: BagSlot[] }
   /** Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did). */

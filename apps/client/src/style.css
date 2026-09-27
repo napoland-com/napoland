@@ -272,6 +272,15 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .feat[data-done] { box-shadow: inset 0 0 0 1px #8a7440; }
 .feat[data-done] b { color: #ffcf5a; }
 .feat[data-done] b::after { content: " ✓"; }
+/* The journal (journal.ts): the chapters of the story reached, the latest first. It opens where the bag does. */
+.journal-sheet .hint, .journal-body { flex: none; width: 100%; max-width: max(440px, calc(var(--u) * 40)); }
+.journal-body { display: grid; gap: calc(var(--u) * .6); font-family: var(--font-text); font-weight: 700; font-size: max(12px, calc(var(--u) * 1.2)); line-height: 1.4; }
+.chapter { padding: .6em .8em; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.chapter h3 { display: flex; flex-direction: column; gap: .1em; margin: 0 0 .3em; font-family: var(--font-ui); font-weight: 600; font-size: 1.1em; line-height: 1.2; color: #d3ccbb; }
+.chapter h3 .n { font-size: .72em; letter-spacing: .06em; text-transform: uppercase; color: #8a8474; }
+.chapter p { margin: 0; color: #e6dfcf; }
+.chapter[data-latest] { box-shadow: inset 0 0 0 1px #8a7440; }
+.chapter[data-latest] h3 { color: #ffcf5a; }
 /* About (about.ts): who makes the game, and where its code and rules are. It opens where the bag does.
    Its words never go below 11 to 12px, so a small phone can still read the small print. */
 .about-sheet .sheet-head { font-size: max(14px, calc(var(--u) * 1.35)); }

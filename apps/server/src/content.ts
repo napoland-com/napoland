@@ -5,7 +5,7 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { TileMap, validateItems, validateMap, validateWorld, type ItemsData, type MapData, type Problem } from '@napoland/shared';
+import { TileMap, validateItems, validateMap, validateStory, validateWorld, type ItemsData, type MapData, type Problem, type StoryData } from '@napoland/shared';
 
 /** Something odd about a map that does not stop the server, for the log. */
 export interface MapWarning {
@@ -96,6 +96,25 @@ export function loadItems(file: string, maps: Iterable<TileMap>): { items: Items
   const errors = problems.filter(p => p.level === 'error').map(p => p.message);
   if (errors.length) throw new Error(`the items in ${file} are not valid:\n  ${errors.join('\n  ')}`);
   return { items: data, warnings: problems.map(p => p.message) };
+}
+
+/**
+ * The story (content/story.json), checked against the maps and items it names: the people and desks
+ * that move it on, the maps you reach, the finds you pick. Throws with every error found.
+ */
+export function loadStory(file: string, maps: Iterable<TileMap>, items?: ItemsData): StoryData {
+  let data: StoryData;
+  let problems: Problem[];
+  try {
+    data = JSON.parse(readFileSync(file, 'utf8')) as StoryData;
+    if (typeof data !== 'object' || data === null || !Array.isArray(data.chapters)) throw new Error('it needs a version and a list of chapters');
+    problems = validateStory(data, [...maps].map(m => m.data), items);
+  } catch (err) {
+    throw new Error(`the story in ${file} cannot be read: ${reason(err)}`);
+  }
+  const errors = problems.filter(p => p.level === 'error').map(p => p.message);
+  if (errors.length) throw new Error(`the story in ${file} is not valid:\n  ${errors.join('\n  ')}`);
+  return data;
 }
 
 function reason(err: unknown): string {

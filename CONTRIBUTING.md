@@ -65,6 +65,7 @@ The world is data, and changing data is better than changing code.
 - **Maps** are `content/maps/<id>.json`, one file per map and per room. Stonebrook, the Near Woods, the South Road and every room inside a building are written by generators: `tools/gen-map.ts`, `tools/gen-woods.ts`, `tools/gen-south-road.ts` and `tools/gen-interiors.ts`. To change one, change its generator, run `npm run gen` (all four, in the right order), then `npm run validate`, and commit the generator together with the JSON it wrote. Never edit generated JSON by hand: CI runs the generators again and fails if anything in `content/` changes.
 - **Versions**: when a map changes, bump its `version` (in its generator) so that players' games reload it. The same goes for `version` in `content/items.json`.
 - **Items** are `content/items.json`: what each item is, its stack size, what using it does, and where it grows. It is written by hand; `npm run validate` checks it against the maps.
+- **The story** is `content/story.json`: its chapters in order, what reaches each one and what people hint while you are in it ([the design](docs/DESIGN.md#the-story-napo-and-napoland)). It is written by hand; `npm run validate` checks that the people, desks, maps and items it names exist. New chapters go at the end, and a chapter is never removed, renamed or reordered: each player's place in the story is the id of the latest chapter they reached. Bump its `version` when it changes.
 - A new map needs exits both ways and a way home; `npm run validate` says what is missing.
 
 ## Tests come with changes
@@ -112,7 +113,7 @@ When several people change a small game at the same time, they sometimes touch t
 - **Generated content is never merged by hand.** When two branches both changed generated maps, merge the generators (they are code), then take main's JSON and run `npm run gen` again, so the JSON is exactly what the merged generators make. CI checks this on every pull request. `package-lock.json` is generated too: take main's version and run `npm install`.
 - **Numbers that have to stay unique.** Git cannot see these clashes, so check them whenever you update your branch:
   - Migrations run in name order, once each. If `main` got a migration with the same number as yours, give yours the next free number. Never change a migration that is already on `main`.
-  - `PROTOCOL_VERSION`, a map's `version` and the `version` in `content/items.json` make players' games reload when they change. If `main` bumped the same version you bumped, bump it once more, so players get both changes.
+  - `PROTOCOL_VERSION`, a map's `version` and the `version` in `content/items.json` and `content/story.json` make players' games reload when they change. If `main` bumped the same version you bumped, bump it once more, so players get both changes.
 - **Short-lived branches.** The longer a branch lives, the more `main` moves under it. Small pull requests merge before they drift.
 
 ### When main moves on

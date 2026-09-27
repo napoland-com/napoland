@@ -83,8 +83,8 @@ export type MapObject =
   | { kind: 'shrooms'; x: number; y: number }
   /** A tall radio mast, like the NAPO Tower's, with a red light blinking at the top. */
   | { kind: 'antenna'; x: number; y: number }
-  /** One of NAPO's desks with a screen, a radio or a log on it: you read it like a sign, under its `name`. */
-  | { kind: 'console'; x: number; y: number; name: string; text: string[] }
+  /** One of NAPO's desks with a screen, a radio or a log on it: you read it like a sign, under its `name`. `id` names it for the story. */
+  | { kind: 'console'; x: number; y: number; id: string; name: string; text: string[] }
   /**
    * Stand on a tile next to it to recover energy while it burns. In town it is always tended; out in
    * the wilds (and in their shelters) it burns down unless someone feeds it, or `tended` says someone

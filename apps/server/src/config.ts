@@ -30,6 +30,8 @@ export interface Config {
   mapsDir: string;
   /** Items and where finds grow (content/items.json). */
   itemsFile: string;
+  /** The story's chapters (content/story.json). */
+  storyFile: string;
   /** The id of the town where new players start and collapsed players wake up. */
   homeMap: string;
   /** Only needed with a database. */
@@ -111,6 +113,9 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   // Whether the items fit the maps is checked with them (content.ts).
   const itemsFile = path('ITEMS_FILE', 'content/items.json', 'file');
   if (itemsFile === undefined) errors.push(`ITEMS_FILE is not set and content/items.json was not found in ${cwd} or its parents`);
+  // Whether the story fits the maps and items is checked with them too (content.ts).
+  const storyFile = path('STORY_FILE', 'content/story.json', 'file');
+  if (storyFile === undefined) errors.push(`STORY_FILE is not set and content/story.json was not found in ${cwd} or its parents`);
   // Whether the map exists and is a town is checked with the maps (content.ts).
   const homeMap = get('HOME_MAP') ?? 'stonebrook';
   const migrationsDir = path('MIGRATIONS_DIR', 'apps/server/migrations', 'dir');
@@ -170,7 +175,7 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
-    port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
+    port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, storyFile: storyFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
     logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, auth,
   };
 }

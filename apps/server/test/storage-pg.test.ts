@@ -55,7 +55,7 @@ describe.skipIf(!url)('PgStorage', () => {
   });
 
   it('applies each migration once', async () => {
-    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql'];
+    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql'];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
     await storage.init();
@@ -205,6 +205,17 @@ describe.skipIf(!url)('PgStorage', () => {
     };
     await storage.save(worn);
     expect(await storage.findByTokenHash(rec.tokenHash!)).toEqual(worn);
+  });
+
+  it('keeps the latest chapter of the story reached, none for a player who never started, and never loses one to a save without it', async () => {
+    const rec = player('Pg Reader');
+    expect(await storage.create(rec)).toBe(true);
+    expect((await storage.findByTokenHash(rec.tokenHash!))!.story).toBeUndefined();
+    const reader = { ...rec, story: 'the-lineman' };
+    await storage.save(reader);
+    expect(await storage.findByTokenHash(rec.tokenHash!)).toEqual(reader);
+    await storage.save(rec);
+    expect((await storage.findByTokenHash(rec.tokenHash!))!.story).toBe('the-lineman');
   });
 
   it('keeps XP and the stash, with what was taken out of it', async () => {

@@ -143,7 +143,7 @@ describe('furniture', () => {
   });
 
   it('builds NAPO\'s desk on its tile, its back to the wall and its screen still glowing', () => {
-    const desk = furnitureModel({ kind: 'console', x: 4, y: 1, name: 'Radio', text: ['A hum.'] }, room)!;
+    const desk = furnitureModel({ kind: 'console', x: 4, y: 1, id: 'radio', name: 'Radio', text: ['A hum.'] }, room)!;
     const b = new THREE.Box3().setFromObject(desk);
     expect(b.min.x).toBeGreaterThanOrEqual(3.99);
     expect(b.max.x).toBeLessThanOrEqual(5.01);

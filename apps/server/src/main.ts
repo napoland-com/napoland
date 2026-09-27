@@ -5,7 +5,7 @@
 import { dirname, join } from 'node:path';
 import { createAuth } from './auth';
 import { loadConfig } from './config';
-import { loadItems, loadMaps, loadWords } from './content';
+import { loadItems, loadMaps, loadStory, loadWords } from './content';
 import { flushLogs, log, setLogLevel } from './log';
 import { startServer } from './server';
 import { MemoryStorage, PgStorage, type Storage } from './storage';
@@ -31,6 +31,8 @@ async function main(): Promise<void> {
     items: items.items.map(i => i.id),
     finds: items.finds.reduce((n, f) => n + f.count, 0),
   });
+  const story = loadStory(cfg.storyFile, maps.values(), items);
+  log.info('story loaded', { file: cfg.storyFile, version: story.version, chapters: story.chapters.length });
 
   // The words chat masks lie next to the items.
   const words = loadWords(join(dirname(cfg.itemsFile), 'words.json'));
@@ -46,6 +48,7 @@ async function main(): Promise<void> {
     storage,
     maps: maps.values(),
     items,
+    story,
     words,
     homeMap: cfg.homeMap,
     weather: cfg.weather,
