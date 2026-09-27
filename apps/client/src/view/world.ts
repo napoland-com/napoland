@@ -83,6 +83,8 @@ const SURGE_SKY = new THREE.Color('#2b1152');
 const SURGE_HEMI = new THREE.Color('#9a6ae0');
 /** A storm darkens the sky, and its lightning lights everything for a blink now and then. */
 const STORM_SKY = new THREE.Color('#1b2126');
+/** Is the lightning blinking at `t` seconds? Every several seconds, never on a fixed beat; the thunder follows it (sound.ts). */
+export const lightningAt = (t: number) => Math.sin(t * 0.71) * Math.sin(t * 1.93) > 0.93;
 /** The forest goes on this many tiles outside the map, so its edge never shows. */
 const RING = 4;
 /** Poles farther apart than this belong to different lines: no wire between them. */
@@ -980,8 +982,7 @@ export class WorldView {
     this.echoes.update(t, (x, z) => this.groundAt(x, z));
     this.light(fx, fz, t, dt);
     const dark = this.weather === 'night' || this.weather === 'aurora';
-    // Lightning: a blink of cold light every several seconds, never on a fixed beat.
-    if (this.storm && this.outdoors) this.hemi.intensity = this.amb.hemi.intensity * L * (Math.sin(t * 0.71) * Math.sin(t * 1.93) > 0.93 ? 2.6 : 0.8);
+    if (this.storm && this.outdoors) this.hemi.intensity = this.amb.hemi.intensity * L * (lightningAt(t) ? 2.6 : 0.8);
     this.stoneLight.intensity = this.hasStone ? (dark ? 2.4 : 1.2) * (this.stoneAwake ? 2 : 1) * L * (0.85 + 0.15 * Math.sin(t * 3.1)) : 0;
     const flare = this.flares.nearest();
     this.flareLight.intensity = flare ? FLARE_LIGHT * L * flare.k * (0.8 + 0.2 * Math.sin(t * 19)) : 0;

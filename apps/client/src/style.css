@@ -93,6 +93,12 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .menu-panel { position: absolute; right: calc(var(--pad) + var(--safe-r)); top: calc(var(--pad) * 1.6 + var(--btn) + var(--safe-t)); display: grid; gap: calc(var(--u) * .45); padding: calc(var(--u) * .7); min-width: calc(var(--u) * 13); pointer-events: auto; }
 .menu-panel[hidden] { display: none; }
 .hud .menu-panel button { display: block; width: 100%; text-align: left; padding: .5em .9em; border-radius: 8px; border: 1px solid #3e4658; background: #1c222c; box-shadow: none; font-size: calc(var(--u) * 1.15); font-weight: 600; }
+.sound-row { display: grid; gap: calc(var(--u) * .35); padding-top: calc(var(--u) * .45); border-top: 1px solid #3e4658; }
+.hud .sound-row button { display: flex; align-items: center; gap: .45em; }
+.hud .sound-row svg { width: 1.15em; height: 1.15em; flex: none; }
+.sound-row [aria-pressed="true"] .off, .sound-row [aria-pressed="false"] .on { display: none; }
+.sound-row [aria-pressed="false"] { color: #8d93a0; }
+.sound-row input { width: 100%; margin: 0; height: calc(var(--u) * 2.2); accent-color: #d9cfb8; touch-action: none; }
 
 .stick { position: absolute; left: calc(var(--pad) * 1.6 + var(--safe-l)); bottom: calc(var(--pad) * 1.6 + var(--safe-b)); width: var(--dp); height: var(--dp); pointer-events: auto; touch-action: none; cursor: pointer; border-radius: 50%; background: rgba(14, 17, 23, .42); border: 2px solid rgba(217, 207, 184, .7); box-shadow: 0 0 0 2px rgba(12, 15, 21, .55); }
 .knob { position: absolute; left: 29%; top: 29%; width: 42%; height: 42%; border-radius: 50%; background: #d9cfb8; box-shadow: inset 0 -3px 0 #a79d86, 0 0 0 2px #0c0f15; will-change: transform; transition: transform .1s ease-out; }
@@ -296,6 +302,10 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   .hud.talking .stick { visibility: hidden; }
   .sheet { left: 0; top: 0; bottom: 0; width: min(calc(100% - var(--pad) * 2.6 - var(--ab) * 2.25 - var(--safe-r)), 440px); border-radius: 0 18px 18px 0; padding-left: calc(var(--u) * 1.2 + var(--safe-l)); }
   .sheet[data-open="false"] { transform: translateX(-105%); }
+  /* The menu stays short enough to clear A and B: two buttons a row, the slider beside the mute button. */
+  .menu-panel { grid-template-columns: 1fr 1fr; }
+  .menu-panel .sound-row, .hud .menu-panel [data-el="menuLogout"] { grid-column: 1 / -1; }
+  .sound-row { grid-template-columns: auto minmax(calc(var(--u) * 7), 1fr); align-items: center; }
 }
 @media (prefers-reduced-motion: reduce) { .sheet, .sheet[data-open="false"] { transition: none; } }
 
