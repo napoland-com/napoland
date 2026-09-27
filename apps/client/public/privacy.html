@@ -55,7 +55,7 @@
 <p>You sign in with your email address and a 6-digit code sent to it. Signing in is handled by Supabase, which keeps your email address and a record of your sign-ins (when, and from which IP address and browser) to send the codes and keep accounts safe. Your browser talks to Supabase directly for this. Our game server then checks your sign-in and keeps only the random id Supabase gave your account, never your email address. We never store your codes or sign-in tokens.</p>
 
 <h3>Your character</h3>
-<p>Its name and color, where it is in the world, its energy, what is in its bag, the pile of things it leaves when it collapses, and when it was created and last played. The game cannot run without these. Other players on the same map see your character's name and color, where it walks, and whose pile a pile is.</p>
+<p>Its name and color, where it is in the world, its energy, how wet it is, what is in its bag, what counts toward its feats, the arrows it paints on the ground, the pile of things it leaves when it collapses (with the last steps it walked before, which others see as a pale figure walking back to the pile), and when it was created and last played. The game cannot run without these. Other players on the same map see your character's name and color, where it walks, and whose pile or arrow is whose.</p>
 
 <h3>While you play</h3>
 <p>While you are connected, the game server uses your IP address, in memory only, to limit how many connections and new characters one address can make. That protects the game from abuse. The address is never written down: not in the database and not in any log. Our web server keeps no record of your visits.</p>
@@ -87,10 +87,11 @@
 <h2>How long we keep it</h2>
 <ul>
 <li>Your character, and your sign-in account at Supabase with its record of your sign-ins: until you ask us to delete them.</li>
+<li>A pile, with the last steps before the collapse: an hour. An arrow you paint: a day.</li>
 <li>Server logs: 30 days.</li>
 <li>Nightly database backups: 30 days. Server disk snapshots: 7 days.</li>
 </ul>
-<p>When you ask us to delete your data, we delete your character, its pile, your sign-in account and its record of sign-ins. The copies inside backups disappear by themselves within 30 days after that.</p>
+<p>When you ask us to delete your data, we delete your character, its pile and arrows, your sign-in account and its record of sign-ins. The copies inside backups disappear by themselves within 30 days after that.</p>
 
 <h2>Your rights</h2>
 <p>You can ask us to show you your data, correct it, delete it, limit what we do with it, or give it to you in a form you can take elsewhere, and you can object to how we use it. Write to <a href="mailto:support@neuramare.com">support@neuramare.com</a> from the email address you sign in with, so that we know it is you. We answer within 30 days.</p>

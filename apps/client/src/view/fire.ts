@@ -1,5 +1,6 @@
 /**
- * Fire and smoke. A fireplace is always burning, day and night, whatever the weather: a stone hearth
+ * Fire and smoke. A fireplace burns day and night, whatever the weather, for as long as it has fuel
+ * (a fire out in the wilds burns down; its flames shrink as it does, and a dead one is dark coals): a stone hearth
  * against the wall (or a ring of stones where no wall stands behind it) with flickering flames,
  * glowing embers, a soft glow over the flames and on the floor around it (the warm tiles, where
  * energy comes back), and a real light, which world.ts hands out like a lamp's. A house whose room
@@ -9,6 +10,7 @@
  * costs a few draw calls for all the fires of a map together.
  */
 import * as THREE from 'three';
+import { FIRE_LOW_S, FIRE_MAX_S } from '@napoland/shared';
 import { WALL_TALL } from './interior';
 import { box, flat, glowQuads, mulberry32, part, pivot, softTexture } from './toon';
 
@@ -195,6 +197,8 @@ export class Fires {
   private readonly o = new THREE.Object3D();
   private readonly hot = new THREE.Color('#ffb347');
   private readonly cool = new THREE.Color('#e2481a');
+  private readonly dead = new THREE.Color('#2a1710');
+  private readonly glows: THREE.Sprite[] = [];
 
   constructor(private readonly spots: FireSpot[], private readonly embers: THREE.MeshBasicMaterial) {
     const cone = flat(new THREE.ConeGeometry(1, 1, 5, 1, true));
@@ -212,6 +216,7 @@ export class Fires {
       glow.position.set(s.x, s.y + 0.22, s.z + 0.06);
       glow.scale.set(1.25, 1.25, 1);
       this.objects.push(glow);
+      this.glows.push(glow);
     }
 
     // The warm tiles: a soft light on the floor around each fire, leaning into the room from a hearth.
@@ -224,30 +229,45 @@ export class Fires {
     this.objects.push(this.sparks.points);
   }
 
-  update(t: number) {
+  /**
+   * `levels`: how big each fire burns, in the order of the spots (fireLevel): 1 well fed, more when
+   * full, a little for embers, 0 out. Left out, every fire burns as it always did.
+   */
+  update(t: number, levels?: readonly number[]) {
     const { o } = this;
+    let most = 0;
     this.spots.forEach((s, f) => {
+      const level = levels?.[f] ?? 1;
+      most = Math.max(most, level);
       FLAMES.forEach(([fx, fz, r, h], k) => {
         const w = t * (5.1 + k * 0.83) + s.ph + k * 1.7;
         const tall = 0.8 + 0.13 * Math.sin(w) + 0.08 * Math.sin(w * 2.3 + 1.1) + 0.05 * Math.sin(t * 17 + k + s.ph);
         o.position.set(s.x + fx + 0.012 * Math.sin(w * 1.3), s.y, s.z + fz);
         o.rotation.set(0.1 * Math.sin(w * 0.7), t * 0.9 + k, 0.13 * Math.sin(w * 0.9 + 0.5));
-        o.scale.set(r * (0.92 + 0.08 * Math.sin(w * 1.7)), h * tall, r * (0.92 + 0.08 * Math.cos(w * 1.5)));
+        // Low, the small bright flames in front go first; out, none stand at all.
+        const size = level <= 0 ? 0 : Math.min(1.2, level * (k > 2 ? 1 : 1.15));
+        o.scale.set(r * (0.92 + 0.08 * Math.sin(w * 1.7)) * Math.max(0.001, size), h * tall * Math.max(0.001, size), r * (0.92 + 0.08 * Math.cos(w * 1.5)) * Math.max(0.001, size));
         o.updateMatrix();
         this.flames.setMatrixAt(f * FLAMES.length + k, o.matrix);
       });
+      const g = this.glows[f]!;
+      g.scale.setScalar(1.25 * Math.min(1.2, level));
+      g.visible = level > 0;
       for (let k = 0; k < SPARKS; k++) {
         const a = ((t + s.ph) / SPARK_S + k / SPARKS) % 1, seed = Math.floor((t + s.ph) / SPARK_S + k / SPARKS) * 7 + k;
         const drift = Math.sin(seed * 12.9898) * 0.12;
-        this.sparks.set(f * SPARKS + k, s.x + drift * a + Math.sin(a * 9 + k) * 0.03, s.y + 0.15 + a * 0.85, s.z + Math.cos(seed) * 0.05 * a, 0.07 * (1 - a * 0.6), Math.min(1, a * 8) * (1 - a) ** 2);
+        this.sparks.set(f * SPARKS + k, s.x + drift * a + Math.sin(a * 9 + k) * 0.03, s.y + 0.15 + a * 0.85 * Math.min(1, level), s.z + Math.cos(seed) * 0.05 * a, 0.07 * (1 - a * 0.6), Math.min(1, a * 8) * (1 - a) ** 2 * Math.min(1, level));
       }
     });
     this.flames.instanceMatrix.needsUpdate = true;
     this.sparks.commit();
     const k = flicker(t, 0);
     this.glowMat.opacity = 0.42 * k;
-    this.floorMat.opacity = 0.2 * (0.9 + 0.1 * k);
+    this.floorMat.opacity = 0.2 * (0.9 + 0.1 * k) * Math.min(1, most);
     this.embers.color.copy(this.cool).lerp(this.hot, 0.55 + 0.3 * Math.sin(t * 1.9) + 0.15 * Math.sin(t * 5.3));
+    // Dead coals: the embers go dark, with the faintest pulse left.
+    if (most <= 0) this.embers.color.copy(this.dead).lerp(this.cool, 0.08 + 0.05 * Math.sin(t * 0.7));
+    else if (most < 0.5) this.embers.color.lerp(this.dead, 0.35);
   }
 }
 
@@ -273,4 +293,15 @@ export class Smoke {
     });
     this.puffs.commit();
   }
+}
+
+/**
+ * How big a fire burns, from the seconds of fuel it has (null: tended): a well-fed one a little
+ * bigger the fuller it is, a low one small, a dead one not at all.
+ */
+export function fireLevel(left: number | null | undefined): number {
+  if (left === null || left === undefined) return 1;
+  if (left <= 0) return 0;
+  if (left < FIRE_LOW_S) return 0.35 + 0.2 * (left / FIRE_LOW_S);
+  return 0.8 + 0.3 * Math.min(1, left / FIRE_MAX_S);
 }

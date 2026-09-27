@@ -8,6 +8,7 @@ import {
   AuthProblem, CODE_SENT_KEY, DEV_EMAIL_KEY, RESEND_AFTER_MS, SignIn, TOKEN_KEY, digits, loadAuthConfig,
   type AuthBackend, type Screen, type Session, type Store,
 } from '../src/signin';
+import { ASLEEP, DRY } from './fixtures';
 
 /** Supabase as the flow sees it: one right code, a session kept after it, refreshes that can go three ways. */
 class FakeSupabase implements AuthBackend {
@@ -64,7 +65,8 @@ class MemoryStore implements Store {
 type Welcome = Extract<ServerMsg, { t: 'welcome' }>;
 const welcome = (more: Partial<Welcome> = {}): Welcome => ({
   t: 'welcome', v: PROTOCOL_VERSION, you: 'p1', name: 'Aldo', map: { id: 'stonebrook', version: 1 }, players: [], finds: [], drops: [], stepMs: 200,
-  weather: 'rain', energy: { value: 100, max: 100, rate: 0 }, bag: [], items: 1, serverTime: 0, ...more,
+  weather: 'rain', energy: { value: 100, max: 100, rate: 0 }, bag: [], items: 1, serverTime: 0,
+  fires: [], marks: [], creatures: [], flares: [], surge: null, body: DRY, stone: ASLEEP, stats: {}, ...more,
 });
 
 const SUPABASE: AuthConfig = { mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_x' };

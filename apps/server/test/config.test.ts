@@ -10,7 +10,7 @@ describe('loadConfig', () => {
   it('has defaults for everything, and finds the content from anywhere in the repo', () => {
     const cfg = loadConfig({}, join(REPO, 'apps', 'server', 'src'));
     expect(cfg).toMatchObject({
-      port: 8080, host: '0.0.0.0', databaseUrl: undefined, weather: 'rain',
+      port: 8080, host: '0.0.0.0', databaseUrl: undefined, weather: 'cycle',
       maxPlayers: 500, tickMs: 50, saveEveryMs: 15_000, logLevel: 'info',
       trustProxy: false, maxConnectionsPerIp: 20, newPlayersPerIpPerHour: 10, version: 'dev', auth: { mode: 'legacy' },
     });

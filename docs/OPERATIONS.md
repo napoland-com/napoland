@@ -112,12 +112,12 @@ their character is the row with `auth_sub = '<UID>'`.
 
 - **Show or export their data:** on the server,
   `napoland-compose exec -T db psql -U napoland -At -c "select row_to_json(p) from players p where auth_sub = '<UID>'"`
-  (and the same for `drops` with `owner = '<player id>'`); send it together with what the Supabase
+  (and the same for `drops` and `marks` with `owner = '<player id>'`); send it together with what the Supabase
   dashboard shows for the user.
 - **Delete everything:** stop the game for a moment so it cannot save the character again, delete, start it:
   `napoland-compose stop game`, then
   `napoland-compose exec -T db psql -U napoland -c "delete from players where auth_sub = '<UID>'"`
-  (its pile goes with it), then `napoland-compose start game`. Then delete the user in the Supabase
+  (its pile and marks go with it), then `napoland-compose start game`. Then delete the user in the Supabase
   dashboard, and their sign-in records in its SQL editor:
   `delete from auth.audit_log_entries where payload->>'actor_id' = '<UID>';`. Backups and logs age out
   by themselves (30 days); say so in the answer.

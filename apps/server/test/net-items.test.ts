@@ -104,7 +104,7 @@ describe('finds and the bag', () => {
   it('uses a thermos (energy up, one gone), refuses what cannot be used, and throws a slot away; the bag is saved', async () => {
     const a = await enter({ map: 'town', x: 0, y: 5, energy: 50, bag: [{ item: 'tea', count: 2 }, { item: 'nail', count: 3 }] });
     a.c.send({ t: 'use', slot: 0 });
-    expect(await a.c.next('energy')).toEqual({ t: 'energy', energy: told(80, 0) });
+    expect(await a.c.next('energy')).toEqual({ t: 'energy', energy: told(80, 0), body: expect.any(Object) });
     expect(await a.c.next('bag')).toEqual({ t: 'bag', bag: [{ item: 'tea', count: 1 }, { item: 'nail', count: 3 }] });
     a.c.send({ t: 'use', slot: 1 });
     expect(await a.c.next('refused')).toEqual({ t: 'refused', action: 'use', reason: 'not_usable' });
@@ -152,7 +152,7 @@ describe('piles', () => {
     await Promise.all([w.c.settle(), a.c.settle()]);
     now += 5000; // 1 energy lasts about 4.1 s at 3,6
     const { drop } = await w.c.next('drop');
-    expect(drop).toEqual({ id: a.id, x: 3, y: 6, owner: a.id, name: a.welcome.name, until: expect.any(Number) });
+    expect(drop).toEqual({ id: a.id, x: 3, y: 6, owner: a.id, name: a.welcome.name, until: expect.any(Number), trail: [] });
     // An hour after the collapse, on the wall clock.
     expect(Math.abs(drop.until - DROP_LIFETIME_MS - Date.now())).toBeLessThan(60_000);
     expect(await w.c.next('leave')).toEqual({ t: 'leave', id: a.id });
@@ -160,7 +160,7 @@ describe('piles', () => {
     expect(await a.c.next('zone')).toMatchObject({ map: { id: 'town' }, reason: 'collapse', drops: [] });
     // The pile and the emptied bag are stored right away.
     await waitFor(() => ctx.storage.drop(a.id) !== undefined && ctx.storage.get(a.id)!.bag.length === 0, 'the pile and the empty bag to be stored');
-    expect(ctx.storage.drop(a.id)).toEqual({ owner: a.id, map: 'woods', x: 3, y: 6, items: bag, droppedAt: drop.until - DROP_LIFETIME_MS });
+    expect(ctx.storage.drop(a.id)).toEqual({ owner: a.id, map: 'woods', x: 3, y: 6, items: bag, droppedAt: drop.until - DROP_LIFETIME_MS, trail: [] });
 
     await walk(a.c, ...TO_THE_WOODS);
     expect(await a.c.next('zone', m => m.reason === 'exit')).toMatchObject({ map: { id: 'woods' }, x: 3, y: 6, drops: [drop] });
@@ -248,18 +248,17 @@ describe('piles', () => {
   });
 
   it('fades an hour after the collapse, for everyone on the map and in storage', async () => {
-    const w = await enter({ map: 'woods', x: 4, y: 1 });
     const a = await enter({ map: 'woods', x: 3, y: 6, energy: 1, bag: [{ item: 'nail', count: 1 }] });
     now += 5000;
     const fell = now;
-    await w.c.next('drop', m => m.drop.owner === a.id);
     await waitFor(() => ctx.storage.drop(a.id) !== undefined, 'the pile to be stored');
-    await w.c.settle();
     now = fell + DROP_LIFETIME_MS - 1;
     await ticks();
+    // Nobody lasts an hour in the woods (the campfire burns down), so the one who sees it fade comes just before.
     // (Piles left by the tests before this one have faded by now.)
-    expect((await w.c.settle()).filter(m => m.t === 'dropGone' && m.id === a.id)).toEqual([]);
-    expect(ctx.server.world.dropViews('woods').map(d => d.owner)).toEqual([a.id]);
+    const w = await enter({ map: 'woods', x: 4, y: 1 });
+    expect(w.welcome.drops.map(d => d.owner)).toEqual([a.id]);
+    await w.c.settle();
     now = fell + DROP_LIFETIME_MS;
     expect(await w.c.next('dropGone', m => m.id === a.id)).toEqual({ t: 'dropGone', id: a.id });
     await waitFor(() => ctx.storage.drop(a.id) === undefined, 'the pile to be forgotten');

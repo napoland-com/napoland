@@ -17,7 +17,7 @@ import { GLOW_Y, Puffs } from './fire';
 import { OUTLINE, OUTLINE_INSTANCED, bake, box, flat, hash2, ownToon, part, pivot, softTexture, toon } from './toon';
 
 /** Items with a look of their own; any other item is drawn as a sack. */
-export const ITEM_LOOKS = ['glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'thermos'] as const;
+export const ITEM_LOOKS = ['glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead'] as const;
 export type Look = (typeof ITEM_LOOKS)[number] | 'sack' | 'pile';
 
 export function lookOf(item: string): Look {
@@ -44,6 +44,11 @@ const STYLE: Record<Look, Style> = {
   cloth: { pool: '#ffc79c', size: 1.2, top: 0.16 },
   shard: { pool: '#a77dff', size: 1.55, top: 0.78, glow: { color: '#bf9cff', emissive: '#6a34d0' }, floats: true },
   thermos: { pool: '#c7dcff', size: 1.25, top: 0.22 },
+  flare: { pool: '#ff5a4a', size: 1.25, top: 0.2, glow: { color: '#ff6a55', emissive: '#a31d12' } },
+  strange: { pool: '#b8a0ff', size: 1.45, top: 0.36, glow: { color: '#d7c8ff', emissive: '#5a3fa8' } },
+  'warm-pebble': { pool: '#ff9a4a', size: 1.2, top: 0.16, glow: { color: '#ff9447', emissive: '#8a3a0c' } },
+  'hollow-feather': { pool: '#e8e2d6', size: 1.2, top: 0.12 },
+  'humming-bead': { pool: '#5ff0e0', size: 1.3, top: 0.3, glow: { color: '#8ff7ee', emissive: '#1f8f86' }, floats: true },
   sack: { pool: '#ffeec4', size: 1.2, top: 0.34 },
   pile: { pool: '#ffcf87', size: 1.7, top: 0.3 },
 };
@@ -138,6 +143,43 @@ export function lootModel(look: Look, glow: THREE.Material): THREE.Group {
       g.add(lying(new THREE.CylinderGeometry(0.085, 0.085, 0.1, 8), '#434f59', 0.17, 0.085, 0, 0.015));
       g.add(lying(new THREE.CylinderGeometry(0.083, 0.083, 0.05, 8), '#c0443a', -0.06, 0.085, 0, false));
       break;
+    case 'flare':
+      // A road flare lying in the leaves: a red stick, its striker cap, and a glowing tip.
+      g.add(lying(new THREE.CylinderGeometry(0.035, 0.035, 0.34, 7), '#c8322a', 0, 0.04, 0, 0.012));
+      g.add(lying(new THREE.CylinderGeometry(0.038, 0.038, 0.06, 7), '#2a2a2e', -0.18, 0.04, 0, 0.012));
+      g.add(part(new THREE.IcosahedronGeometry(0.04, 0), glow, 0.18, 0.04, 0, false));
+      break;
+    case 'strange': {
+      // Something that should not be there: a knot of dark stone with a pale light in its seams.
+      const knot = part(new THREE.TorusKnotGeometry(0.1, 0.035, 24, 5, 2, 3), '#2e2a3a', 0, 0.2, 0, 0.014);
+      knot.rotation.set(0.6, 0.3, 0.2);
+      g.add(knot, part(new THREE.OctahedronGeometry(0.06, 0), glow, 0, 0.2, 0, false));
+      break;
+    }
+    case 'warm-pebble': {
+      const pebble = part(new THREE.DodecahedronGeometry(0.09, 0), '#2a2522', 0, 0.06, 0, 0.012);
+      pebble.scale.set(1.3, 0.6, 1);
+      g.add(pebble, part(new THREE.IcosahedronGeometry(0.03, 0), glow, 0.03, 0.1, 0.02, false));
+      break;
+    }
+    case 'hollow-feather': {
+      // A long grey feather: a quill and a vane on either side, lying slightly curled.
+      const f = pivot(0, 0.02, 0);
+      f.rotation.y = 0.5;
+      f.add(box(0.36, 0.01, 0.012, '#d9d2c2', 0, 0.01, 0, false));
+      for (const side of [-1, 1]) {
+        const vane = box(0.3, 0.008, 0.06, side > 0 ? '#9a9a96' : '#b7b4ab', 0.02, 0.012, side * 0.033, 0.008);
+        vane.rotation.x = side * 0.18;
+        f.add(vane);
+      }
+      g.add(f);
+      break;
+    }
+    case 'humming-bead': {
+      g.add(part(new THREE.IcosahedronGeometry(0.07, 1), glow, 0, 0.26, 0, 0.012));
+      g.add(part(flat(new THREE.TorusGeometry(0.1, 0.008, 4, 16)), '#c9d6d4', 0, 0.26, 0, false));
+      break;
+    }
     case 'sack': {
       const sack = part(new THREE.DodecahedronGeometry(0.14, 0), '#9a8158', 0, 0.12, 0, 0.016);
       sack.scale.set(1, 0.9, 0.95);
@@ -169,7 +211,7 @@ export function lootModel(look: Look, glow: THREE.Material): THREE.Group {
  */
 export function lootGlow(kind: MapKind, weather: Weather, warmRoom: boolean): number {
   if (kind === 'inside') return warmRoom ? 0.65 : 1;
-  return weather === 'night' ? 1 : weather === 'rain' ? 0.72 : 0.55;
+  return weather === 'night' || weather === 'aurora' ? 1 : weather === 'rain' ? 0.72 : 0.55;
 }
 
 /** One thing placed on the ground: where, turned how far, how big, and its phase (for bobbing and glints). */

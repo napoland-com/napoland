@@ -111,9 +111,10 @@ const ROOMS: readonly Room[] = [
     ],
   },
   {
-    // The Near Woods' first shelter, past the crossroads. Abandoned once; now somebody keeps the fire
-    // going. A bunk, crates, not much else.
-    id: 'near-woods-old-cabin', name: 'The old cabin', version: 1, outside: 'near-woods', door: [47, 38],
+    // The Near Woods' first shelter, past the crossroads, and the nearest to town. Abandoned once; now
+    // somebody keeps the fire going, so it never goes out: a new player always has one safe fire (the
+    // other shelters' fires burn down). A bunk, crates, not much else.
+    id: 'near-woods-old-cabin', name: 'The old cabin', version: 2, outside: 'near-woods', door: [47, 38],
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -123,7 +124,7 @@ const ROOMS: readonly Room[] = [
       'xxxxpxxxx',
     ],
     things: [
-      { kind: 'fireplace', x: 4, y: 1 },
+      { kind: 'fireplace', x: 4, y: 1, tended: true },
       { kind: 'bed', x: 1, y: 1 },
       { kind: 'shelf', x: 6, y: 1 },
       { kind: 'crate', x: 7, y: 1 },

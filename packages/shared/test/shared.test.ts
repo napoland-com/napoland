@@ -289,6 +289,24 @@ describe('validateWorld', () => {
     expect(msgs).toMatch(/its door leads to woods, which is not an inside/);
     expect(new TileMap(tinyHouse()).homeSteps(2, 3)).toBe(0); // safe inside, not "lost"
   });
+  it('wants the shelter nearest to the way home to keep a fire that never goes out', () => {
+    // Two huts in the woods: one 4 steps from the way home, one 6.
+    const woods = woodsMap();
+    woods.exits.push(
+      { x: 1, y: 3, w: 1, h: 1, to: 'near-hut', tx: 2, ty: 3, dir: 'left' },
+      { x: 5, y: 1, w: 1, h: 1, to: 'far-hut', tx: 2, ty: 3, dir: 'up' },
+    );
+    const hut = (id: string, back: [number, number], tended: boolean): MapData => ({
+      ...tinyHouse(), id, exits: [{ x: 2, y: 4, w: 1, h: 1, to: 'woods', tx: back[0], ty: back[1], dir: 'down' }],
+      objects: [{ kind: 'fireplace', x: 2, y: 1, ...(tended && { tended: true }) }],
+    });
+    const world = (nearTended: boolean, farTended: boolean) =>
+      validateWorld([townWithExit(), woods, tinyHouse(), hut('near-hut', [1, 4], nearTended), hut('far-hut', [5, 2], farTended)], 'tiny');
+    expect(world(true, false)).toEqual([]);
+    const problem = { level: 'error', map: 'near-hut', message: expect.stringMatching(/nearest to the way home from woods must keep a fire that never goes out/) };
+    expect(world(false, false)).toEqual([problem]);
+    expect(world(false, true)).toEqual([problem]);
+  });
   it('wants a town at home and every map reachable from it', () => {
     expect(validateWorld([woodsMap()], 'tiny').map(p => p.message).join('\n')).toMatch(/home map tiny does not exist/);
     const msgs = validateWorld([tinyMap(), woodsMap()], 'tiny');

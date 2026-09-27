@@ -260,7 +260,7 @@ export function setup(options: Partial<ServerOptions> | (() => Partial<ServerOpt
   const welcomed = async (c: Client, hello: ClientMsg) => {
     c.send(hello);
     const welcome = await c.next('welcome');
-    expect(await c.next('energy')).toEqual({ t: 'energy', energy: welcome.energy });
+    expect(await c.next('energy')).toEqual({ t: 'energy', energy: welcome.energy, body: expect.any(Object) });
     return welcome;
   };
   /** A new player, welcomed. */

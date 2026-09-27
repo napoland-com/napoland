@@ -17,12 +17,13 @@ The decisions so far, with the reason for each. Change this file when a decision
 ## The loop
 
 1. Wake up at home (your cabin). Equip gear. Equipment can be put on or taken off **only at home**, so choosing gear is part of planning a trip.
-2. Walk out through the town into the wilds. Energy drains in the wilds, faster the farther you are, at night and in the rain; in town and inside buildings it holds. The only way to get it back is **a fireplace**: shelters out in the wilds (and some buildings, your home among them) keep one burning, always. Sit near it and you recover. Tuned so that standing at the edge of the Near Woods in the rain empties a full bar in about 5.5 minutes, and its deepest corner in under 2.
+2. Walk out through the town into the wilds. Energy drains in the wilds, faster the farther you are, at night and in the rain; in town and inside buildings it holds. The only way to get it back is **a fireplace**. Fires in town (your home's, the lodge's) are tended and never go out, and so is the fire of the shelter nearest to town (the Near Woods' old cabin), so a new player always has one safe fire. **The other fires out in the wilds burn down**: a well-fed one gives energy back at the full rate, a low one (under 3 minutes of fuel) only glows and gives 40%, a dead one gives nothing. Anyone can feed one (A, facing it) with what burns: resin (5 minutes), cloth (1.5); a fire holds 30 at most. So players keep the shelters going for each other without ever meeting, and whoever arrives cold at a dead fire had better carry resin. Tuned so that standing at the edge of the Near Woods in the rain, dry and light, empties a full bar in about 5.5 minutes, and its deepest corner in under 2.
+   - **What else wears you down out there** (each a factor on the drain): a **heavy bag** (items weigh something; at 10 kg or more the drain is 40% faster, so every find is a choice), being **wet** (rain soaks you through in 2.5 minutes, anywhere outdoors; soaked drains 50% faster; a burning fire dries you in 25 seconds, a roof slowly), a **surge** (below), and a **hitchhiker**: at night, 25 steps or more from home and away from light, something may cling to your back (50% faster) until you reach a street light, a burning fire, a roof or light a flare.
 3. Gather resources and power-ups. What you pick up goes in your bag (limited slots). Finds are shared: when someone takes one, a new one of the same kind grows later somewhere else in the same kind of place (deep finds stay deep).
 4. Come home and stash what you carry. Stashing earns XP; levels and home upgrades let you go farther next time.
 5. **If your energy runs out** you wake up at home. What you carried falls out where you collapsed, as a small pile on the ground (the bag itself is equipment and stays with you, like all equipment). If you go back for it, you get everything. If someone else finds it first, they get a random half and the rest is lost. The pile disappears one hour after you collapsed, and a new collapse replaces your old pile: each player has at most one.
 
-**Light is not energy.** Street lights, and later torches and gadgets, let you see where you walk; some areas will be almost dark without them. They do not refill energy.
+**Light is not energy.** Street lights, and later torches and gadgets, let you see where you walk; some areas will be almost dark without them. They do not refill energy, but they shelter you from a surge and shake off a hitchhiker.
 
 **Every building can be entered**, like in FireRed: walk into the door and you are inside a small room (a map of its own). Shelters and some houses have a fireplace; empty houses are dark.
 
@@ -53,7 +54,17 @@ Regions are separate maps joined at their edges, like FireRed's towns and routes
 
 Creatures do not fight. They chase. You are a little faster than them, so you escape by moving away in time. If one catches you, you lose energy and drop something. They do not follow you into town or under a street light.
 
+The first kind are the **watchers** of the Near Woods (three, in its deeper half): tall figures with pale blank faces that come closer **only while nobody on the map looks their way** (faces them, with the four-way facing everyone already has). Face one and it freezes; a friend facing it holds it for you. Out of the light and within 9 steps, it walks toward you (slower than you walk); reaching you, it takes 15 energy and one thing you carry, then goes away for a minute or two. They never stand in light, next to a fire or near a flare. On aurora nights they are faster.
+
 ## Cooperation (how groups go farther)
+
+Built so far, working even when nobody is online at the same time:
+
+- **Shelter fires** (all but the nearest one) burn down and anyone can feed them: you arrive at a fire someone else kept going.
+- **Marks**: crush a glowcap (Use in the bag) to paint a glowing arrow on the ground where you stand, pointing where you face, in your jacket color. Everyone sees it for a day; each player keeps their newest 6. Routes spread without a map.
+- **The notice board** in Stonebrook, next to Mira: the weather and when it changes, each region's surge clock, which shelter fires are low or out, the collapses of the last hour, the Old Stone.
+- **The Old Stone** wakes when the whole server has fed it 20 shards (A, facing it). Awake, it halves the extra drain of every surge, and burns a shard every 30 minutes; at none left it sleeps, and the count starts again. It is kept across restarts. (It is where a new region will open, later.)
+- **Echoes**: a pile keeps the last 16 steps its owner walked out there; near it, a pale figure walks them again and sinks where they fell. You see where it went wrong.
 
 Ideas to build and test:
 
@@ -68,6 +79,8 @@ Ideas to build and test:
 
 Each region has its own climate (rainforest, snowy ridge, marsh, burnt forest...), its own weather cycle and seasons, and there is day and night. Weather changes what you find (glowcaps after rain, shards at night, frozen lakes you can cross in winter) and how dangerous it is. The server owns all of it, so everyone sees the same sky.
 
+So far there is one day for the whole world, 48 minutes long and set by the wall clock (so a restart never jumps the sky, and players can learn it): 12 overcast, 12 rain, 8 overcast, 16 night. **Every third night is an aurora**: green light, the dead power lines hum and glow, copper wire turns up by the poles (finds that grow only then), watchers are restless. Only rain soaks you, so only rain falls on screen.
+
 ## Hazards, anomalies and resistances
 
 Like in Pacific Drive, the world itself wears you down, on top of the steady drain of being out there. Five elements, each with its own resistance:
@@ -81,6 +94,7 @@ Like in Pacific Drive, the world itself wears you down, on top of the steady dra
 | **Radiation** | glowing anomalies, shards, the deepest places |
 
 - **Anomalies are events**, shared by everyone on the map and announced before they hit so you can react: a **storm** rolls in over a region (wind, electricity, less to see); a **flash** marks a patch of ground that glows and then discharges; a **surge** near the Old Stone and the shards. Being caught costs energy, less with the right resistance. Some anomalies leave rare finds behind.
+- **Surges are built** (before the elements): each region can have a surge clock, fixed to the wall clock so everyone learns it ("the woods surge at a quarter to"). The Near Woods: every 40 minutes, 6 restless, then a surge of 2.5 minutes. Restless, rare finds show up deep in (shards, strange objects), and they are gone when the calm comes back: the best loot sits right before the danger. The surge's front starts at the deepest tile and reaches the way home in 90 seconds; wherever it has passed, away from a street light, energy drains 3 times as fast. Every phase is announced with a banner, and a clock shows in the status panel.
 - A shelter protects from everything outside. Resistance never makes you immune: it cuts the loss (a percentage per element).
 
 ## Equipment and stats
@@ -96,13 +110,18 @@ Six slots: **cap, shirt, gloves, pants, shoes, bag**. Better equipment means bet
 
 Everything is data (`content/items.json`: name, what it is, stack size, stats, where it grows), so the list can grow and be tuned without code. A first set:
 
-- **Resources** (for crafting and XP): glowcaps, fir resin, scrap metal, copper wire, cloth scraps, anomaly shards (rare, deep in).
-- **Consumables** (used from the bag): a thermos (+30 energy), hand warmers (cold resistance for a while), rad tablets (radiation resistance for a while).
+- **Resources** (for crafting and XP): glowcaps (they paint marks), fir resin and cloth scraps (they burn), scrap metal (heavy), copper wire, anomaly shards (rare, deep in; the Old Stone wants them).
+- **Consumables** (used from the bag): a thermos (+30 energy), a road flare (45 seconds of red light: creatures keep off, a hitchhiker lets go), hand warmers (cold resistance for a while), rad tablets (radiation resistance for a while).
+- **Strange objects**, found deep in (more while a region is restless): what they are shows only when you look at them in town, in the light (a house in town counts). Mostly shards, a thermos or flares; now and then a charm.
+- **Charms** work while they are in your bag, one of each kind: a warm pebble (rain soaks you 40% slower), a hollow feather (your bag feels 25% lighter), a humming bead (hitchhikers find you 60% less often). They stand in for the quirks of anomalous gear until equipment exists.
+- Every item has a **weight** (it shows in the bag with what burns and what a charm does).
 - **Equipment**: a few pieces per slot and tier, starting with worn clothes everyone has.
 
 ## Status
 
 A status tab (in the menu) shows your level and XP, energy (maximum, now, and what is draining it at the moment, element by element), your five resistances with where they come from (each piece of gear), and any effects running (a hand warmer, a storm you are in).
+
+Built so far: energy, how wet you are, your load, what clings to you, your charms, the surge, the Old Stone, and your **feats**. Feats are small perks for good, earned by what you do out there, not bought: Rain walker (1,500 steps in the rain: rain soaks you 20% slower), Night owl (1,000 steps in the dark: hitchhikers half as often), Pack mule (800 steps with a heavy bag: it feels 15% lighter), Fire keeper (20 fires fed: fires warm you 15% faster). Earning one is announced with a banner.
 
 ## Together: chat and friends
 

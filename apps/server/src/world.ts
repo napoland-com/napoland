@@ -2,16 +2,26 @@
  * The game rules for the players who are online. No I/O, no clock and no dice of its own: every call
  * that depends on time gets `now` (ms), randomness comes from `rng`, everything the players should
  * hear is queued as Outgoing messages for the network layer to drain and send, and what storage must
- * hear at once (piles) is queued for it the same way (takeWrites).
+ * hear at once (piles, marks, the Old Stone) is queued for it the same way (takeWrites).
  *
  * The world is several maps joined by exits (a house's door is one, into the house); players see
  * and hear only the players on their own map. Everyone online has energy, which drains in the wilds,
- * holds in town and inside buildings, and only comes back next to a fireplace (the rules and numbers
- * are in shared/energy.ts). At zero a player collapses and wakes up at home.
+ * holds in town and inside buildings, and only comes back next to a burning fire (the rules and
+ * numbers are in shared/energy.ts). At zero a player collapses and wakes up at home.
+ *
+ * Out there more wears you down (energy.ts): a heavy bag, rain soaking you, a surge sweeping the
+ * region (its clock is the wall clock's, sky.ts), a hitchhiker clinging to you at night. Fires in the
+ * wilds burn down unless fed (fires.ts). Watchers roam some regions: they come closer only while
+ * nobody on the map looks their way, and one that reaches you takes energy and something you carry.
+ * A flare keeps them off and shakes off a hitchhiker. Anyone can paint arrows on the ground with a
+ * glowcap; they last a day. The Old Stone in town wakes when enough shards are fed to it, and while
+ * awake it calms every surge. Strange objects found deep in turn into something when looked at in
+ * town. Feats, earned by what you do out there, make it a little easier for good (feats.ts).
  *
  * Finds lie on the maps for everyone: whoever picks one up first gets it, and a new one of the same
- * rule grows a while later on another tile that fits the rule. What a player picks up goes in their
- * bag. When they collapse, the bag falls out as a pile where they fell (one per player): its owner
+ * rule grows a while later on another tile that fits the rule; some grow only while a region is
+ * restless, or on aurora nights. What a player picks up goes in their bag. When they collapse, the
+ * bag falls out as a pile where they fell (one per player), with the last steps they walked: its owner
  * gets it all back, anyone else a random half (the rest is lost), and it fades an hour after the
  * collapse. The rules for items and bags are in shared/items.ts.
  */
@@ -20,32 +30,58 @@ import {
   DROP_LIFETIME_MS,
   ENERGY_MAX,
   ENERGY_SYNC_MS,
+  FEATS,
+  HEAVY_LOAD,
+  STATS,
   STEP_MS,
+  SURGE_DRAIN,
   addAllToBag,
   addToBag,
+  bagLoad,
+  charmsIn,
   energyRate,
+  featsOf,
   findTiles,
   halfOf,
   itemIndex,
   merge,
+  modsOf,
+  reveal,
   stepTarget,
+  surgeAt,
+  surgeFront,
   takeFromBag,
+  untilSurge,
+  weatherAt,
+  wetRate,
   type Arrival,
   type BagSlot,
+  type BodyView,
+  type CreatureView,
   type Dir,
   type DropView,
   type EnergyView,
   type FindView,
+  type FindWhen,
+  type FireView,
+  type FlareView,
   type ItemDef,
   type ItemsData,
   type MapRef,
+  type MarkView,
+  type Mods,
   type PlayerView,
   type Refusal,
   type ServerMsg,
+  type Stats,
+  type StoneView,
+  type SurgePhase,
+  type SurgeView,
   type TileMap,
   type Weather,
 } from '@napoland/shared';
-import type { DropRecord, PlayerRecord } from './storage';
+import { FIRE_LOW_S, Fires, type Fire } from './fires';
+import type { DropRecord, MarkRecord, PlayerRecord, StoneRecord } from './storage';
 
 /** A step may start this much early: messages sent at a steady pace arrive bunched up. */
 export const STEP_TOLERANCE_MS = 40;
@@ -56,6 +92,34 @@ export const STEP_QUEUE_MAX = 2;
  * last heard. Smaller changes (one more step into the woods) wait for the regular repeat.
  */
 export const ENERGY_RATE_CHANGE = 0.1;
+/** Marks fade this long after they are painted, and each player has at most this many. */
+export const MARK_LIFETIME_MS = 24 * 60 * 60 * 1000;
+export const MARKS_PER_PLAYER = 6;
+/** A pile keeps this many of the last steps its owner walked out there: their echo. */
+export const TRAIL_STEPS = 16;
+/** A watcher takes a step this often (on aurora nights, AURORA_WATCHER_STEP_MS); players are faster. */
+export const WATCHER_STEP_MS = 520;
+export const AURORA_WATCHER_STEP_MS = 400;
+/** A watcher goes after players at most this many steps away (as the crow walks), and freezes while any player this close faces it. */
+export const WATCHER_HUNT = 9;
+export const WATCHER_SEE = 12;
+/** What a watcher's touch costs, and how long it stays away after (seconds, a random time in the range). */
+export const WATCHER_TOUCH = 15;
+export const WATCHER_AWAY_S: [number, number] = [60, 150];
+/** A watcher wakes up at least this far (as the crow walks) from every player on its map. */
+export const WATCHER_WAKE_AWAY = 8;
+/** Watchers look this many tiles ahead for a way to you. */
+const WATCHER_PATH_NODES = 600;
+/** In the dark, this many steps or more from home, something may cling to your back: on average once in HITCH_EVERY_S. */
+export const HITCH_STEPS = 25;
+export const HITCH_EVERY_S = 150;
+/** A flare keeps creatures this far away (tiles, center to center) while it burns. */
+export const FLARE_RADIUS = 5;
+/** The Old Stone wakes with this many shards in it; awake, one burns away every STONE_SHARD_S. */
+export const STONE_NEED = 20;
+export const STONE_SHARD_S = 30 * 60;
+/** The notice board counts collapses this far back. */
+const COLLAPSES_MS = 60 * 60 * 1000;
 
 /** Jacket colors, all easy to tell apart in the rain and at night. */
 export const JACKET_COLORS = [
@@ -80,29 +144,43 @@ export function colorFor(id: string): string {
 
 /**
  * A message for one player (by id), or for everyone on a map ('*'), optionally leaving one player
- * out. '*' means everyone on the map when the message was queued: the network layer sends the
- * messages in order and moves a player over to the new map's audience at their `zone` message.
+ * out, or for everyone online ('all'). '*' means everyone on the map when the message was queued: the
+ * network layer sends the messages in order and moves a player over to the new map's audience at
+ * their `zone` message.
  */
-export type Outgoing = { to: string; msg: ServerMsg } | { to: '*'; map: string; except?: string; msg: ServerMsg };
+export type Outgoing = { to: string; msg: ServerMsg } | { to: '*'; map: string; except?: string; msg: ServerMsg } | { to: 'all'; msg: ServerMsg };
 
-/** What a player who joins is told in the welcome: where they are, who and what is there, their energy and bag. */
-export interface Joined {
+/** What a map holds besides players, as its welcome or zone lists it. */
+export interface Scene {
+  finds: FindView[];
+  drops: DropView[];
+  fires: FireView[];
+  marks: MarkView[];
+  creatures: CreatureView[];
+  flares: FlareView[];
+  surge: SurgeView | null;
+}
+
+/** What a player who joins is told in the welcome: where they are, who and what is there, their energy, body and bag. */
+export interface Joined extends Scene {
   player: PlayerView;
   map: MapRef;
   /** Everyone on the player's map, the player included. */
   players: PlayerView[];
-  /** What lies on the player's map to pick up. */
-  finds: FindView[];
-  drops: DropView[];
   energy: EnergyView;
+  body: BodyView;
   bag: BagSlot[];
+  stone: StoneView;
+  stats: Stats;
 }
 
-/** What storage must hear: piles to write (or remove: undefined), and players to save now. */
+/** What storage must hear: piles and marks to write (or remove: undefined), players to save now, and the Old Stone if it changed. */
 export interface Writes {
   drops: Array<{ owner: string; drop: DropRecord | undefined }>;
   /** Players whose bag changed along with a pile, as they are now: saved with it, so a crash cannot leave items in both. */
   players: PlayerRecord[];
+  marks: Array<{ id: number; mark: MarkRecord | undefined }>;
+  stone?: StoneRecord;
 }
 
 export interface WorldOptions {
@@ -112,15 +190,24 @@ export interface WorldOptions {
   onCollapse?: (id: string, where: { map: string; x: number; y: number }) => void;
   /** Items and where finds grow (content/items.json, checked with validateItems); none if unset. */
   items?: ItemsData;
-  /** Where finds grow, when and which half of a pile someone else gets. Math.random unless a test sets its own. */
+  /** Where finds grow, when and which half of a pile someone else gets, what a strange object is. Math.random unless a test sets its own. */
   rng?: () => number;
   /** Piles saved before a restart; they lie where they were until they fade. */
   drops?: DropRecord[];
+  /** Marks saved before a restart. */
+  marks?: MarkRecord[];
+  /** The Old Stone as it was saved. */
+  stone?: StoneRecord | null;
   /**
-   * Add to `now` for ms since the epoch. Piles fade by the wall clock, which clients and the database
-   * see, while `now` is game time, which must never go backwards. 0 (the default): `now` is the wall clock.
+   * Add to `now` for ms since the epoch. Piles and marks fade by the wall clock, which clients and the
+   * database see, and the weather and the surges follow it, while `now` is game time, which must never
+   * go backwards. 0 (the default): `now` is the wall clock.
    */
   epochOffset?: number;
+  /** The weather follows the day (sky.ts) instead of staying as it was given. */
+  cycle?: boolean;
+  /** Game time now, when the world starts: the fires out there start burning from here. */
+  now?: number;
 }
 
 interface Online {
@@ -129,11 +216,23 @@ interface Online {
   /** When the current step is over and the next one may start. */
   readyAt: number;
   queue: Array<{ dir: Dir; seq: number }>;
-  /** Energy per second on the player's tile. rec.energy is up to date as of energyAt. */
+  /** Energy and wetness per second on the player's tile. rec.energy and rec.wet are up to date as of energyAt. */
   rate: number;
+  wetRate: number;
   energyAt: number;
-  /** The rate the player last heard, and when: the client counts on from there. */
+  /** What the bag weighs now (bagLoad), with feats and charms. */
+  load: number;
+  /** Feats and charms, as factors. */
+  mods: Mods;
+  /** Something clings to their back, and when that was last checked. */
+  hitched: boolean;
+  hitchAt: number;
+  /** The last tiles walked on this map, out in the wilds. */
+  trail: Array<[number, number]>;
+  /** What the player last heard, and when: the client counts on from there. */
   heardRate: number;
+  heardWetRate: number;
+  heardLoad: number;
   heardAt: number;
 }
 
@@ -146,6 +245,9 @@ interface Rule {
   count: number;
   /** Seconds, shortest and longest. */
   respawn: [number, number];
+  /** Only then; and whether it is now. Rules without `when` are always open. */
+  when?: FindWhen;
+  open: boolean;
 }
 
 interface Find {
@@ -162,24 +264,61 @@ interface Growing {
   not: number | undefined;
 }
 
+interface Watcher {
+  id: number;
+  map: TileMap;
+  x: number;
+  y: number;
+  dir: Dir;
+  /** Out and about, or away until wakeAt. */
+  awake: boolean;
+  wakeAt: number;
+  /** When it may take its next step. */
+  readyAt: number;
+  /** Where it may wake up (y * width + x). */
+  lairs: number[];
+}
+
+interface Flare {
+  map: string;
+  x: number;
+  y: number;
+  /** Game time when it burns out. */
+  until: number;
+}
+
 const view = (r: PlayerRecord): PlayerView => ({ id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color });
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
-const energyView = (p: Online): EnergyView => ({
-  value: Math.round(p.rec.energy * 10) / 10,
-  max: ENERGY_MAX,
-  rate: Math.round(p.rate * 1000) / 1000,
-});
-/** Draining and not empty yet, or refilling and not full yet. Holding (rate 0) changes nothing. */
+const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), max: ENERGY_MAX, rate: round(p.rate, 3) });
+const bodyView = (p: Online): BodyView => ({ wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched });
+/**
+ * Draining and not empty yet, or refilling and not full yet. Holding (rate 0) changes nothing.
+ * Wetness is left out: it moves at a steady rate the client counts on, and is told when that turns.
+ */
 const changing = (p: Online): boolean => (p.rate < 0 && p.rec.energy > 0) || (p.rate > 0 && p.rec.energy < ENERGY_MAX);
 const findView = (f: Find): FindView => ({ id: f.id, item: f.rule.item.id, x: f.tile % f.rule.map.width, y: Math.floor(f.tile / f.rule.map.width) });
-const dropView = (d: DropRecord): DropView => ({ id: d.owner, x: d.x, y: d.y, owner: d.owner, name: d.name, until: d.droppedAt + DROP_LIFETIME_MS });
+const dropView = (d: DropRecord): DropView => ({
+  id: d.owner, x: d.x, y: d.y, owner: d.owner, name: d.name, until: d.droppedAt + DROP_LIFETIME_MS, trail: (d.trail ?? []).map(([x, y]) => [x, y]),
+});
+const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, name: m.name, until: m.placedAt + MARK_LIFETIME_MS });
+const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: 'watcher', x: w.x, y: w.y, dir: w.dir });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count }));
-const copyRecord = (r: PlayerRecord): PlayerRecord => ({ ...r, bag: copyBag(r.bag) });
+const copyRecord = (r: PlayerRecord): PlayerRecord => ({ ...r, bag: copyBag(r.bag), stats: { ...r.stats } });
 /** A bag slot as the server writes them; saved data is checked with this before it is trusted. */
 const isSlot = (s: unknown): s is BagSlot => {
   const { item, count } = (typeof s === 'object' && s !== null ? s : {}) as Partial<BagSlot>;
   return typeof item === 'string' && Number.isInteger(count) && count! > 0;
 };
+/** Saved counts, trusted only where they are whole numbers from 0. */
+const cleanStats = (s: unknown): Stats => {
+  const out: Stats = {};
+  const raw = (typeof s === 'object' && s !== null ? s : {}) as Record<string, unknown>;
+  for (const k of STATS) if (Number.isInteger(raw[k]) && (raw[k] as number) > 0) out[k] = raw[k] as number;
+  return out;
+};
+const manhattan = (ax: number, ay: number, bx: number, by: number) => Math.abs(ax - bx) + Math.abs(ay - by);
 
 export class World {
   readonly stepMs: number;
@@ -188,6 +327,8 @@ export class World {
   /** The version of the items (content/items.json): a client with another one reloads. */
   readonly itemsVersion: number;
   private readonly maps = new Map<string, TileMap>();
+  /** For each inside, the kind of map its door opens onto: a shelter in the wilds, or a house in town. */
+  private readonly outside = new Map<string, TileMap['data']['kind']>();
   private readonly players = new Map<string, Online>();
   /** Who is on each map, by map id. */
   private readonly onMap = new Map<string, Set<Online>>();
@@ -195,6 +336,7 @@ export class World {
   private readonly resting = new Map<string, number>();
   private outbox: Outgoing[] = [];
   private sky: Weather;
+  private readonly cycle: boolean;
   private readonly onCollapse: WorldOptions['onCollapse'];
   private readonly items: Map<string, ItemDef>;
   private readonly rng: () => number;
@@ -215,6 +357,26 @@ export class World {
   private readonly pileWrites = new Map<string, DropRecord | undefined>();
   /** By id: the record itself, which stays whole after a player leaves (their collapse on the way out counts too). */
   private readonly saveNow = new Map<string, PlayerRecord>();
+  private readonly fires: Fires;
+  /** Marks by id, and by map id and tile (one per tile). */
+  private readonly marks = new Map<number, MarkRecord>();
+  private readonly markTiles = new Map<string, Map<number, MarkRecord>>();
+  private readonly markWrites = new Map<number, MarkRecord | undefined>();
+  private nextMarkId = 1;
+  private markFadeAt = Infinity;
+  /** Each surging map's phase as its players last heard it. */
+  private readonly surgePhase = new Map<string, SurgePhase>();
+  private readonly watchers = new Map<string, Watcher[]>();
+  private nextCreatureId = 1;
+  private flares: Flare[] = [];
+  /** The Old Stone: where it stands (if anywhere), its charge in shards, and when that charge was so (game time). */
+  private readonly stone: { map: TileMap; x: number; y: number } | undefined;
+  private stoneCharge = 0;
+  private stoneAwake = false;
+  private stoneAt = 0;
+  private stoneWrite: StoneRecord | undefined;
+  /** Collapses in the last hour, for the notice board. */
+  private collapses: Array<{ map: string; at: number }> = [];
 
   /** `maps` must fit together (validateWorld) and `items` must fit the maps (validateItems); `homeId` is a town. */
   constructor(maps: Iterable<TileMap>, homeId: string, weather: Weather, options: WorldOptions = {}) {
@@ -224,19 +386,26 @@ export class World {
       this.onMap.set(m.data.id, new Set());
       this.finds.set(m.data.id, new Map());
       this.pileTiles.set(m.data.id, new Map());
+      this.markTiles.set(m.data.id, new Map());
     }
     // loadMaps checks this and more; a world without it would lose players walking through an exit.
     for (const m of this.maps.values()) {
       for (const e of m.data.exits) if (!this.maps.has(e.to)) throw new Error(`map ${m.data.id} has an exit to ${e.to}, which does not exist`);
     }
+    for (const m of this.maps.values()) {
+      if (m.data.kind === 'inside') continue;
+      for (const e of m.data.exits) if (this.maps.get(e.to)!.data.kind === 'inside') this.outside.set(e.to, m.data.kind);
+    }
     const home = this.maps.get(homeId);
     if (!home) throw new Error(`the home map ${homeId} does not exist`);
     this.home = home;
     this.sky = weather;
+    this.cycle = options.cycle ?? false;
     this.stepMs = options.stepMs ?? STEP_MS;
     this.onCollapse = options.onCollapse;
     this.rng = options.rng ?? Math.random;
     this.epochOffset = options.epochOffset ?? 0;
+    this.fires = new Fires(this.maps.values(), m => this.wild(m), this.rng, options.now ?? 0);
 
     const items = options.items ?? { version: 0, items: [], finds: [] };
     this.items = itemIndex(items);
@@ -248,13 +417,35 @@ export class World {
       const item = this.items.get(f.item);
       if (!item) throw new Error(`a find rule on map ${f.map} grows ${f.item}, which is not an item`);
       const tiles = findTiles(map, f).map(t => t.y * map.width + t.x);
-      this.rules.push({ item, map, tiles, count: f.count, respawn: f.respawn });
+      // Finds that only grow at certain times wait for the first tick to tell whether it is one.
+      this.rules.push({ item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, open: !f.when });
     }
     // The piles first: finds never grow on a tile that has one.
     for (const d of options.drops ?? []) this.restore(d);
-    for (const rule of this.rules) {
-      // No free tile left (other rules took them): it grows as soon as there is one.
-      for (let i = 0; i < rule.count; i++) if (!this.put(rule, undefined)) this.later(rule, -Infinity, undefined);
+    for (const rule of this.rules) if (rule.open) this.sow(rule);
+    for (const m of options.marks ?? []) this.restoreMark(m);
+
+    for (const m of this.maps.values()) {
+      const w = m.data.watchers;
+      if (m.data.kind !== 'wilds' || !w) continue;
+      const lairs: number[] = [];
+      for (let y = 0; y < m.height; y++) for (let x = 0; x < m.width; x++) {
+        const s = m.homeSteps(x, y);
+        if (this.watcherMayStand(m, x, y) && s >= w.steps[0] && s <= w.steps[1]) lairs.push(y * m.width + x);
+      }
+      if (!lairs.length) continue;
+      // They all wake on the first tick, each where nobody is.
+      this.watchers.set(m.data.id, Array.from({ length: w.count }, () => ({ id: this.nextCreatureId++, map: m, x: 0, y: 0, dir: 'down', awake: false, wakeAt: -Infinity, readyAt: 0, lairs })));
+    }
+
+    const stone = [...this.maps.values()].flatMap(m => m.data.objects.filter(o => o.kind === 'stone').map(o => ({ map: m, x: o.x, y: o.y })))[0];
+    this.stone = stone;
+    const saved = options.stone;
+    if (saved && Number.isFinite(saved.charge) && Number.isFinite(saved.at)) {
+      this.stoneCharge = Math.max(0, saved.charge);
+      this.stoneAwake = saved.awake;
+      // Awake, it kept burning while the server was down.
+      this.stoneAt = saved.at - this.epochOffset;
     }
   }
 
@@ -295,10 +486,30 @@ export class World {
     return [...(this.pileTiles.get(mapId)?.values() ?? [])].flat().map(dropView);
   }
 
+  /** Everything a map holds besides players, as of `now`. */
+  scene(mapId: string, now: number): Scene {
+    const map = this.maps.get(mapId);
+    return {
+      finds: this.findViews(mapId),
+      drops: this.dropViews(mapId),
+      fires: this.fires.views(mapId, now),
+      marks: [...(this.markTiles.get(mapId)?.values() ?? [])].map(markView),
+      creatures: (this.watchers.get(mapId) ?? []).filter(w => w.awake).map(creatureView),
+      flares: this.flares.filter(f => f.map === mapId && f.until > now).map(f => ({ x: f.x, y: f.y, left: round((f.until - now) / 1000, 1) })),
+      surge: map ? this.surgeOf(map, now) : null,
+    };
+  }
+
+  /** The Old Stone as everyone sees it. */
+  stoneView(now: number): StoneView {
+    this.burnStone(now);
+    return { charge: Math.ceil(this.stoneCharge), need: STONE_NEED, awake: this.stoneAwake, left: this.stoneAwake ? Math.round(this.stoneCharge * STONE_SHARD_S) : 0 };
+  }
+
   /** Puts a player in the world, tells everyone on their map and returns what goes in the welcome. */
   join(rec: PlayerRecord, now: number): Joined {
     if (this.players.has(rec.id)) throw new Error(`player ${rec.id} is already online`);
-    const r: PlayerRecord = { ...rec, bag: this.fitBag(rec.bag) };
+    const r: PlayerRecord = { ...rec, bag: this.fitBag(rec.bag), stats: cleanStats(rec.stats) };
     // Maps change between visits: a map may be gone (start over at home), or the saved tile may be
     // inside something new or part of an exit now (start at that map's spawn). Never start inside
     // a wall, or on an exit that would move you the moment you step.
@@ -311,10 +522,14 @@ export class World {
     }
     r.map = map.data.id;
     r.energy = Number.isFinite(r.energy) ? Math.min(ENERGY_MAX, Math.max(0, r.energy)) : ENERGY_MAX;
+    r.wet = Number.isFinite(r.wet) ? clamp01(r.wet!) : 0;
     const readyAt = this.resting.get(r.id) ?? -Infinity;
     this.resting.delete(r.id);
-    const rate = energyRate(map, r.x, r.y, this.sky);
-    const p: Online = { rec: r, map, readyAt, queue: [], rate, energyAt: now, heardRate: rate, heardAt: now };
+    const p: Online = {
+      rec: r, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), hitched: false, hitchAt: now, trail: [],
+      heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now,
+    };
+    this.refresh(p, now);
     this.players.set(r.id, p);
     this.onMap.get(map.data.id)!.add(p);
     const player = view(r);
@@ -323,7 +538,8 @@ export class World {
     this.tell(p, now);
     const here = map.data.id;
     return {
-      player, map: mapRef(map), players: this.views(here), finds: this.findViews(here), drops: this.dropViews(here), energy: energyView(p), bag: copyBag(r.bag),
+      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: copyBag(r.bag),
+      stone: this.stoneView(now), stats: { ...r.stats },
     };
   }
 
@@ -379,18 +595,22 @@ export class World {
       this.collapse(p, now);
       return this.refuse(p, 'pick', 'too_far');
     }
-    if (Math.abs(x - p.rec.x) + Math.abs(y - p.rec.y) > 1) return this.refuse(p, 'pick', 'too_far');
+    if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return this.refuse(p, 'pick', 'too_far');
     const pile = this.pileAt(p.map, x, y, id);
-    if (pile) return this.pickPile(p, pile);
+    if (pile) return this.pickPile(p, pile, now);
     const find = p.map.inside(x, y) ? this.finds.get(p.map.data.id)!.get(y * p.map.width + x) : undefined;
     if (find) return this.pickFind(p, find, now);
     this.refuse(p, 'pick', 'gone');
   }
 
-  /** Uses one of what is in bag slot `slot`. Only consumables can be used; a thermos gives energy. */
+  /**
+   * Uses one of what is in bag slot `slot`: a thermos gives energy, a glowcap paints a mark where you
+   * stand, a flare keeps creatures off, a strange object turns into what it really is (in town only).
+   */
   use(id: string, slot: number, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
+    this.runQueue(p, now);
     if (this.advance(p, now) <= 0) {
       // Too late: the player collapses, and the bag falls out.
       this.collapse(p, now);
@@ -399,15 +619,35 @@ export class World {
     const s = p.rec.bag[slot];
     if (!s) return this.refuse(p, 'use', 'empty_slot');
     const def = this.items.get(s.item);
-    if (def?.kind !== 'consumable' || !def.use) return this.refuse(p, 'use', 'not_usable');
-    p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
-    const energy = def.use.energy ?? 0;
-    if (energy) {
-      p.rec.energy = Math.min(ENERGY_MAX, Math.max(0, p.rec.energy + energy));
-      // The bar jumped: the client counts on from the new value.
-      p.rate = energyRate(p.map, p.rec.x, p.rec.y, this.sky);
-      this.tell(p, now);
+    const use = def?.use;
+    if (!def || !use) return this.refuse(p, 'use', 'not_usable');
+    const { x, y, map: mapId } = p.rec;
+    // Everything that can fail is checked before the item is spent.
+    if (use.mark && (p.map.data.kind === 'inside' || p.map.exitAt(x, y))) return this.refuse(p, 'use', 'not_here');
+    if (use.mark && this.markTiles.get(mapId)!.has(y * p.map.width + x)) return this.refuse(p, 'use', 'marked');
+    if (use.identify && !this.inTown(p.map)) return this.refuse(p, 'use', 'not_here');
+    let bag = takeFromBag(p.rec.bag, slot, 1);
+    let got: BagSlot | undefined;
+    if (use.identify) {
+      const r = reveal(def.reveals ?? [], this.rng);
+      const into = r && this.items.get(r.item);
+      if (into) {
+        const put = addToBag(bag, into, r.count);
+        if (put.left) return this.refuse(p, 'use', 'bag_full');
+        bag = put.bag;
+        got = { item: into.id, count: r.count };
+      }
     }
+    p.rec.bag = bag;
+    if (use.energy) {
+      p.rec.energy = Math.min(ENERGY_MAX, Math.max(0, p.rec.energy + use.energy));
+    }
+    if (use.mark) this.paint(p, now);
+    if (use.flare) this.light(p, use.flare, now);
+    // The bar may have jumped, the bag got lighter: the client counts on from the new values.
+    this.refresh(p, now);
+    this.tell(p, now);
+    if (got) this.outbox.push({ to: id, msg: { t: 'got', items: [got], from: 'identify' } });
     this.sendBag(p);
     // Something that takes energy could empty the bar.
     if (p.rec.energy <= 0) this.collapse(p, now);
@@ -425,33 +665,96 @@ export class World {
     if (!p.rec.bag[slot]) return this.refuse(p, 'discard', 'empty_slot');
     p.rec.bag = takeFromBag(p.rec.bag, slot);
     this.sendBag(p);
+    this.rerate(p, now);
+  }
+
+  /**
+   * Feeds one of what is in bag slot `slot` to the fire on tile x,y (next to the player, diagonals
+   * too: a fire warms the tiles around it) or to the Old Stone. Everyone on the map sees the fire
+   * burn higher; everyone online hears about the Stone.
+   */
+  feed(id: string, x: number, y: number, slot: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'feed', 'too_far');
+    }
+    if (Math.max(Math.abs(x - p.rec.x), Math.abs(y - p.rec.y)) > 1) return this.refuse(p, 'feed', 'too_far');
+    const s = p.rec.bag[slot];
+    if (!s) return this.refuse(p, 'feed', 'empty_slot');
+    const def = this.items.get(s.item);
+    const stone = this.stone;
+    if (stone && stone.map === p.map && stone.x === x && stone.y === y) {
+      if (!def?.charge) return this.refuse(p, 'feed', 'not_fuel');
+      p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
+      this.chargeStone(def.charge, now);
+      this.sendBag(p);
+      this.saveNow.set(id, p.rec);
+      return this.rerate(p, now);
+    }
+    const fire = this.fires.at(p.map, x, y);
+    if (!fire) return this.refuse(p, 'feed', 'gone');
+    if (fire.tended) return this.refuse(p, 'feed', 'tended');
+    if (!def?.fuel) return this.refuse(p, 'feed', 'not_fuel');
+    if (!this.fires.feed(fire, def.fuel, now)) return this.refuse(p, 'feed', 'fire_full');
+    p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
+    this.sendBag(p);
+    this.toMap(p.map.data.id, { t: 'fire', fire: this.fires.view(fire, now) });
+    this.count(p, 'fed', now);
+    // A dead fire lit again warms whoever stands by it.
+    for (const q of this.onMap.get(p.map.data.id)!) this.rerate(q, now);
+  }
+
+  /** Reads the notice board on tile x,y (next to the player): how things stand out there, in plain words. */
+  board(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    const here = p.map.data.objects.some(o => o.kind === 'board' && o.x === x && o.y === y);
+    if (!here || manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
+    this.outbox.push({ to: id, msg: { t: 'board', lines: this.news(now) } });
   }
 
   /**
    * Brings everyone's energy up to `now` (whoever ran out collapses), starts queued steps whose time
-   * has come and repeats the energy of players whose bar is moving; piles whose hour is over fade and
-   * finds whose time has come grow. Call it often (every TICK_MS).
+   * has come and repeats the energy of players whose bar is moving; the sky, the surges and the Old
+   * Stone move on, watchers walk, piles and marks whose time is over fade and finds whose time has
+   * come grow. Call it often (every TICK_MS).
    */
   tick(now: number): void {
+    const wall = now + this.epochOffset;
+    if (this.cycle) this.setWeather(weatherAt(wall).weather, now);
+    this.moveSurges(now);
+    const wasAwake = this.stoneAwake;
+    this.burnStone(now);
+    if (wasAwake && !this.stoneAwake) this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
     for (const p of this.players.values()) {
       if (this.advance(p, now) <= 0) {
         this.collapse(p, now);
         continue;
       }
       if (p.queue.length) this.runQueue(p, now);
-      // The client counts on with the rate it heard; repeating the value keeps it from drifting.
+      this.hitch(p, now);
+      this.rerate(p, now);
+      // The client counts on with the rates it heard; repeating the values keeps it from drifting.
       if (now - p.heardAt >= ENERGY_SYNC_MS && changing(p)) this.tell(p, now);
     }
+    this.walkWatchers(now);
+    if (this.flares.length) this.flares = this.flares.filter(f => f.until > now);
     for (const [id, readyAt] of this.resting) if (readyAt <= now) this.resting.delete(id);
     this.fadePiles(now);
+    this.fadeMarks(now);
     this.growFinds(now);
   }
 
-  /** Changes the weather everywhere. Energy rates follow: bad weather drains faster. */
+  /** Changes the weather everywhere. Energy rates follow: bad weather drains faster, and rain soaks. */
   setWeather(weather: Weather, now: number): void {
     if (weather === this.sky) return;
+    const aurora = weather === 'aurora' || this.sky === 'aurora';
     this.sky = weather;
     for (const [map, here] of this.onMap) if (here.size) this.outbox.push({ to: '*', map, msg: { t: 'weather', weather } });
+    if (aurora) for (const rule of this.rules) if (rule.when === 'aurora') this.openRule(rule, weather === 'aurora', now);
     for (const p of this.players.values()) {
       // Up to now at the rate of the old weather, which the player still has.
       if (this.advance(p, now) <= 0) this.collapse(p, now);
@@ -466,14 +769,18 @@ export class World {
     return out;
   }
 
-  /** What storage must hear since the last call: each pile as it is now (or gone), and players to save now. */
+  /** What storage must hear since the last call: each pile and mark as it is now (or gone), players to save now, the Old Stone. */
   takeWrites(): Writes {
     const out: Writes = {
-      drops: [...this.pileWrites].map(([owner, d]) => ({ owner, drop: d && { ...d, items: copyBag(d.items) } })),
+      drops: [...this.pileWrites].map(([owner, d]) => ({ owner, drop: d && { ...d, items: copyBag(d.items), trail: [...(d.trail ?? [])] } })),
       players: [...this.saveNow.values()].map(copyRecord),
+      marks: [...this.markWrites].map(([id, m]) => ({ id, mark: m && { ...m } })),
+      ...(this.stoneWrite ? { stone: { ...this.stoneWrite } } : {}),
     };
     this.pileWrites.clear();
     this.saveNow.clear();
+    this.markWrites.clear();
+    this.stoneWrite = undefined;
     return out;
   }
 
@@ -504,6 +811,13 @@ export class World {
     p.readyAt = Math.max(now, p.readyAt) + this.stepMs;
     this.outbox.push({ to: id, msg: { t: 'step', id, x, y, dir, seq } });
     this.toMap(p.map.data.id, { t: 'step', id, x, y, dir }, id);
+    if (p.map.data.kind === 'wilds') {
+      p.trail.push([x, y]);
+      if (p.trail.length > TRAIL_STEPS) p.trail.shift();
+      if (this.sky === 'rain') this.count(p, 'rainSteps', now);
+      if (this.sky === 'night' || this.sky === 'aurora') this.count(p, 'nightSteps', now);
+      if (p.load >= HEAVY_LOAD) this.count(p, 'heavySteps', now);
+    }
     const exit = p.map.exitAt(x, y);
     if (exit) this.cross(p, exit, now);
     else this.rerate(p, now);
@@ -532,13 +846,17 @@ export class World {
     this.arrive(p, from, 'collapse', now);
   }
 
-  /** Out of energy: what the player carries falls out where they are, and they go home to the spawn with a full bar. */
+  /** Out of energy: what the player carries falls out where they are, and they go home to the spawn with a full bar, dry and alone. */
   private fall(p: Online, now: number): void {
     const { id, map, x, y } = p.rec;
     this.dropBag(p, now);
     const { spawn } = this.home.data;
     this.place(p, this.home, spawn.x, spawn.y, spawn.dir);
     p.rec.energy = ENERGY_MAX;
+    p.rec.wet = 0;
+    p.hitched = false;
+    this.collapses = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
+    this.collapses.push({ map, at: now });
     this.onCollapse?.(id, { map, x, y });
   }
 
@@ -551,7 +869,8 @@ export class World {
     const old = this.piles.get(id);
     if (old) this.removePile(old);
     if (!bag.length) return;
-    const pile: DropRecord = { owner: id, name, map, x, y, items: merge(bag), droppedAt: Math.floor(now + this.epochOffset) };
+    const trail = p.map.data.kind === 'wilds' ? p.trail.map(([tx, ty]) => [tx, ty] as [number, number]) : [];
+    const pile: DropRecord = { owner: id, name, map, x, y, items: merge(bag), droppedAt: Math.floor(now + this.epochOffset), trail };
     this.addPile(pile);
     this.pileWrites.set(id, pile);
     this.toMap(map, { t: 'drop', drop: dropView(pile) });
@@ -560,7 +879,7 @@ export class World {
     this.saveNow.set(id, p.rec);
   }
 
-  /** Puts a player on a tile of a map. Queued steps go: they were planned on the old map. */
+  /** Puts a player on a tile of a map. Queued steps go: they were planned on the old map, and so does the trail. */
   private place(p: Online, map: TileMap, x: number, y: number, dir: Dir): void {
     this.onMap.get(p.map.data.id)!.delete(p);
     this.onMap.get(map.data.id)!.add(p);
@@ -570,6 +889,7 @@ export class World {
     p.rec.y = y;
     p.rec.dir = dir;
     p.queue.length = 0;
+    p.trail = [];
   }
 
   /**
@@ -583,38 +903,361 @@ export class World {
     this.toMap(here, { t: 'join', player: view(p.rec) }, id);
     this.outbox.push({
       to: id,
-      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), finds: this.findViews(here), drops: this.dropViews(here), reason },
+      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), stats: { ...p.rec.stats }, reason },
     });
-    p.rate = energyRate(p.map, x, y, this.sky);
+    // A roof or town shakes off whatever clung to you.
+    if (p.hitched && p.map.data.kind !== 'wilds') this.unhitch(p);
+    this.refresh(p, now);
     this.tell(p, now);
   }
 
-  /**
-   * A new rate for where the player stands now. They hear it when it turns between draining,
-   * holding and refilling, or moves far from the rate they last heard; small changes wait for tick().
-   */
-  private rerate(p: Online, now: number): void {
-    p.rate = energyRate(p.map, p.rec.x, p.rec.y, this.sky);
-    const turned = Math.sign(p.rate) !== Math.sign(p.heardRate);
-    const moved = Math.abs(p.rate - p.heardRate) > ENERGY_RATE_CHANGE * Math.abs(p.heardRate);
-    if (turned || moved) this.tell(p, now);
+  /** The rates and load for where the player stands now, and their mods. Nobody is told. */
+  private refresh(p: Online, now: number): void {
+    const { x, y } = p.rec;
+    p.mods = modsOf(p.rec.stats ?? {}, charmsIn(p.rec.bag, this.items));
+    p.load = bagLoad(p.rec.bag, this.items, p.mods.load);
+    const warmth = p.map.warm(x, y) ? this.fires.warmth(p.map, x, y, now) : 0;
+    p.rate = energyRate(p.map, x, y, this.sky, {
+      warmth: warmth * p.mods.warmth,
+      wet: p.rec.wet,
+      load: p.load,
+      surgeFront: this.frontOf(p.map, now),
+      // An awake Old Stone takes half the edge off every surge.
+      surgeDrain: this.stoneAwake ? 1 + (SURGE_DRAIN - 1) / 2 : SURGE_DRAIN,
+      hitched: p.hitched,
+    });
+    p.wetRate = wetRate(p.map.data.kind, this.sky, warmth > 0, p.mods.wetting);
   }
 
-  /** Brings the player's energy up to `now` at their current rate, and returns it. */
+  /**
+   * New rates for where the player stands now. They hear them when energy turns between draining,
+   * holding and refilling or moves far from the rate they last heard, when they start drying or
+   * getting wet, or when their load changes; small changes wait for tick().
+   */
+  private rerate(p: Online, now: number): void {
+    this.refresh(p, now);
+    const turned = Math.sign(p.rate) !== Math.sign(p.heardRate);
+    const moved = Math.abs(p.rate - p.heardRate) > ENERGY_RATE_CHANGE * Math.abs(p.heardRate);
+    const wet = Math.sign(p.wetRate) !== Math.sign(p.heardWetRate);
+    if (turned || moved || wet || p.load !== p.heardLoad) this.tell(p, now);
+  }
+
+  /** Brings the player's energy and wetness up to `now` at their current rates, and returns the energy. */
   private advance(p: Online, now: number): number {
     if (now > p.energyAt) {
-      p.rec.energy = Math.min(ENERGY_MAX, Math.max(0, p.rec.energy + (p.rate * (now - p.energyAt)) / 1000));
+      const dt = (now - p.energyAt) / 1000;
+      p.rec.energy = Math.min(ENERGY_MAX, Math.max(0, p.rec.energy + p.rate * dt));
+      p.rec.wet = clamp01((p.rec.wet ?? 0) + p.wetRate * dt);
       p.energyAt = now;
     }
     return p.rec.energy;
   }
 
-  /** Sends the player their energy; call advance() first so the value is current. */
+  /** Sends the player their energy and body; call advance() first so the values are current. */
   private tell(p: Online, now: number): void {
     p.heardRate = p.rate;
+    p.heardWetRate = p.wetRate;
+    p.heardLoad = p.load;
     p.heardAt = now;
-    this.outbox.push({ to: p.rec.id, msg: { t: 'energy', energy: energyView(p) } });
+    this.outbox.push({ to: p.rec.id, msg: { t: 'energy', energy: energyView(p), body: bodyView(p) } });
   }
+
+  /** One more of what counts toward a feat; a feat reached is the player's for good, and they hear it. */
+  private count(p: Online, stat: (typeof STATS)[number], now: number): void {
+    const stats = (p.rec.stats ??= {});
+    const had = featsOf(stats).length;
+    stats[stat] = (stats[stat] ?? 0) + 1;
+    const earned = featsOf(stats);
+    if (earned.length === had) return;
+    const feat = FEATS.find(f => f.stat === stat && (stats[stat] ?? 0) === f.need);
+    if (feat) this.outbox.push({ to: p.rec.id, msg: { t: 'feat', id: feat.id, stats: { ...stats } } });
+    this.saveNow.set(p.rec.id, p.rec);
+    // The feat changes the rates right away, however little: the player hears them.
+    this.refresh(p, now);
+    this.tell(p, now);
+  }
+
+  // ---------- the sky, surges and the Old Stone ----------
+
+  /** A region's surge clock now, or null for a map that never surges. */
+  private surgeOf(map: TileMap, now: number): SurgeView | null {
+    const rule = map.data.kind === 'wilds' ? map.data.surge : undefined;
+    if (!rule) return null;
+    const s = surgeAt(rule, now + this.epochOffset);
+    return { phase: s.phase, left: round(s.left, 1), into: round(s.into, 1) };
+  }
+
+  /** Where a surge's front is on this map now (steps from home), or undefined when none is on. */
+  private frontOf(map: TileMap, now: number): number | undefined {
+    const rule = map.data.kind === 'wilds' ? map.data.surge : undefined;
+    return rule && surgeFront(rule, map.deepest, surgeAt(rule, now + this.epochOffset));
+  }
+
+  /** Tells each surging map when its phase changes, and grows (or clears away) the finds of restless times. */
+  private moveSurges(now: number): void {
+    for (const map of this.maps.values()) {
+      const s = this.surgeOf(map, now);
+      if (!s || this.surgePhase.get(map.data.id) === s.phase) continue;
+      const first = !this.surgePhase.has(map.data.id);
+      this.surgePhase.set(map.data.id, s.phase);
+      if (!first) this.toMap(map.data.id, { t: 'surge', surge: s });
+      for (const rule of this.rules) if (rule.when === 'unstable' && rule.map === map) this.openRule(rule, s.phase !== 'calm', now);
+    }
+    // The first tick also opens aurora finds if the world starts on an aurora night.
+    for (const rule of this.rules) if (rule.when === 'aurora' && rule.open !== (this.sky === 'aurora')) this.openRule(rule, this.sky === 'aurora', now);
+  }
+
+  /** Awake, the Old Stone burns one shard every STONE_SHARD_S; at none left it sleeps. */
+  private burnStone(now: number): void {
+    if (!this.stoneAwake) {
+      this.stoneAt = now;
+      return;
+    }
+    if (now <= this.stoneAt) return;
+    this.stoneCharge = Math.max(0, this.stoneCharge - (now - this.stoneAt) / 1000 / STONE_SHARD_S);
+    this.stoneAt = now;
+    // Burning away in many small bites leaves crumbs a float cannot count to zero: a few ms' worth is nothing.
+    if (this.stoneCharge <= 1e-6) {
+      this.stoneCharge = 0;
+      this.stoneAwake = false;
+      this.stoneWrite = { charge: 0, awake: false, at: now + this.epochOffset };
+      for (const p of this.players.values()) this.rerate(p, now);
+    }
+  }
+
+  private chargeStone(charge: number, now: number): void {
+    this.burnStone(now);
+    this.stoneCharge += charge;
+    const woke = !this.stoneAwake && this.stoneCharge >= STONE_NEED;
+    if (woke) this.stoneAwake = true;
+    this.stoneWrite = { charge: this.stoneCharge, awake: this.stoneAwake, at: now + this.epochOffset };
+    this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
+    if (woke) for (const p of this.players.values()) this.rerate(p, now);
+  }
+
+  // ---------- hitchhikers, flares, marks ----------
+
+  /** In the dark, deep in and away from light, something may cling to you; light, a fire or a roof shakes it off. */
+  private hitch(p: Online, now: number): void {
+    const dt = Math.max(0, now - p.hitchAt) / 1000;
+    p.hitchAt = now;
+    const { x, y } = p.rec;
+    const safe = p.map.data.kind !== 'wilds' || p.map.lit(x, y) || (p.map.warm(x, y) && this.fires.warmth(p.map, x, y, now) > 0);
+    if (p.hitched) {
+      if (safe || this.nearFlare(p.map.data.id, x, y, now)) this.unhitch(p);
+      return;
+    }
+    const dark = this.sky === 'night' || this.sky === 'aurora';
+    if (safe || !dark || p.map.homeSteps(x, y) < HITCH_STEPS || this.nearFlare(p.map.data.id, x, y, now)) return;
+    if (this.rng() < 1 - Math.exp((-dt / HITCH_EVERY_S) * p.mods.hitch)) {
+      p.hitched = true;
+      this.outbox.push({ to: p.rec.id, msg: { t: 'hitch', on: true } });
+    }
+  }
+
+  private unhitch(p: Online): void {
+    p.hitched = false;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'hitch', on: false } });
+  }
+
+  private nearFlare(map: string, x: number, y: number, now: number): boolean {
+    return this.flares.some(f => f.map === map && f.until > now && Math.hypot(f.x - x, f.y - y) <= FLARE_RADIUS);
+  }
+
+  /** A flare where the player stands: whatever clings to them lets go, and watchers nearby slink off. */
+  private light(p: Online, seconds: number, now: number): void {
+    const { x, y } = p.rec, map = p.map.data.id;
+    this.flares.push({ map, x, y, until: now + seconds * 1000 });
+    this.toMap(map, { t: 'flare', flare: { x, y, left: seconds } });
+    if (p.hitched) this.unhitch(p);
+    for (const w of this.watchers.get(map) ?? []) if (w.awake && Math.hypot(w.x - x, w.y - y) <= FLARE_RADIUS + 3) this.sendAway(w, now);
+  }
+
+  /** An arrow on the player's tile, pointing where they face. Their oldest goes when they have too many. */
+  private paint(p: Online, now: number): void {
+    const { id, name, color, map, x, y, dir } = p.rec;
+    const mine = [...this.marks.values()].filter(m => m.owner === id).sort((a, b) => a.placedAt - b.placedAt);
+    for (const m of mine.slice(0, Math.max(0, mine.length - MARKS_PER_PLAYER + 1))) this.removeMark(m);
+    const mark: MarkRecord = { id: this.nextMarkId++, owner: id, name, color, map, x, y, dir, placedAt: Math.floor(now + this.epochOffset) };
+    this.addMark(mark);
+    this.markWrites.set(mark.id, mark);
+    this.toMap(map, { t: 'mark', mark: markView(mark) });
+  }
+
+  private restoreMark(m: MarkRecord): void {
+    const map = this.maps.get(m.map);
+    if (!map || !map.inside(m.x, m.y) || this.markTiles.get(m.map)!.has(m.y * map.width + m.x)) return;
+    this.addMark({ ...m });
+    this.nextMarkId = Math.max(this.nextMarkId, m.id + 1);
+  }
+
+  private addMark(m: MarkRecord): void {
+    this.marks.set(m.id, m);
+    this.markTiles.get(m.map)!.set(m.y * this.maps.get(m.map)!.width + m.x, m);
+    this.markFadeAt = Math.min(this.markFadeAt, m.placedAt + MARK_LIFETIME_MS - this.epochOffset);
+  }
+
+  private removeMark(m: MarkRecord): void {
+    this.marks.delete(m.id);
+    this.markTiles.get(m.map)!.delete(m.y * this.maps.get(m.map)!.width + m.x);
+    this.markWrites.set(m.id, undefined);
+    this.toMap(m.map, { t: 'markGone', id: m.id });
+  }
+
+  private fadeMarks(now: number): void {
+    if (now < this.markFadeAt) return;
+    const wall = now + this.epochOffset;
+    for (const m of [...this.marks.values()]) if (wall >= m.placedAt + MARK_LIFETIME_MS) this.removeMark(m);
+    this.markFadeAt = [...this.marks.values()].reduce((at, m) => Math.min(at, m.placedAt + MARK_LIFETIME_MS - this.epochOffset), Infinity);
+  }
+
+  // ---------- watchers ----------
+
+  /** Where a watcher may stand: open ground out of the light, away from fires and exits. */
+  private watcherMayStand(map: TileMap, x: number, y: number): boolean {
+    return map.walkable(x, y) && !map.exitAt(x, y) && !map.lit(x, y) && !map.warm(x, y);
+  }
+
+  /**
+   * Each watcher that may step: wakes up where nobody is, or freezes while someone on its map faces
+   * it, or takes one step toward the nearest player out of the light; reaching one, it takes energy
+   * and something they carry, and goes away for a while.
+   */
+  private walkWatchers(now: number): void {
+    const every = this.sky === 'aurora' ? AURORA_WATCHER_STEP_MS : WATCHER_STEP_MS;
+    for (const [mapId, list] of this.watchers) {
+      for (const w of list) {
+        // Asked again for each watcher: another one's touch may have just sent someone home.
+        const here = [...this.onMap.get(mapId)!];
+        if (!w.awake) {
+          if (now >= w.wakeAt) this.wake(w, here, now);
+          continue;
+        }
+        if (now < w.readyAt) continue;
+        w.readyAt = now + every;
+        const map = w.map;
+        if (this.nearFlare(mapId, w.x, w.y, now)) {
+          this.sendAway(w, now);
+          continue;
+        }
+        // Anyone who faces it holds it still, prey or not: a friend can keep watch.
+        if (here.some(p => manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_SEE && faces(p.rec.x, p.rec.y, p.rec.dir, w.x, w.y))) continue;
+        const prey = here
+          .filter(p => p.rec.energy > 0 && this.exposed(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_HUNT)
+          .sort((a, b) => manhattan(a.rec.x, a.rec.y, w.x, w.y) - manhattan(b.rec.x, b.rec.y, w.x, w.y))[0];
+        if (!prey) continue;
+        const next = pathStep(map, w.x, w.y, prey.rec.x, prey.rec.y, (x, y) => this.watcherMayStand(map, x, y) && !this.nearFlare(mapId, x, y, now) && !list.some(o => o !== w && o.awake && o.x === x && o.y === y));
+        if (next) {
+          w.dir = dirTo(next.x - w.x, next.y - w.y) ?? w.dir;
+          w.x = next.x;
+          w.y = next.y;
+          this.toMap(mapId, { t: 'creature', creature: creatureView(w) });
+        }
+        if (manhattan(prey.rec.x, prey.rec.y, w.x, w.y) <= 1) this.touch(w, prey, now);
+      }
+    }
+  }
+
+  /** Out in the open: not by a burning fire, not in a street light, not near a flare. */
+  private exposed(p: Online, now: number): boolean {
+    const { x, y } = p.rec;
+    if (p.map.lit(x, y) || this.nearFlare(p.map.data.id, x, y, now)) return false;
+    return !(p.map.warm(x, y) && this.fires.warmth(p.map, x, y, now) > 0);
+  }
+
+  private wake(w: Watcher, here: Online[], now: number): void {
+    const far = w.lairs.filter(t => here.every(p => manhattan(p.rec.x, p.rec.y, t % w.map.width, Math.floor(t / w.map.width)) >= WATCHER_WAKE_AWAY));
+    if (!far.length) {
+      w.wakeAt = now + 10_000;
+      return;
+    }
+    const t = far[this.roll(far.length)]!;
+    w.x = t % w.map.width;
+    w.y = Math.floor(t / w.map.width);
+    w.awake = true;
+    w.readyAt = now + WATCHER_STEP_MS;
+    this.toMap(w.map.data.id, { t: 'creature', creature: creatureView(w) });
+  }
+
+  private sendAway(w: Watcher, now: number): void {
+    const [soonest, latest] = WATCHER_AWAY_S;
+    w.awake = false;
+    w.wakeAt = now + (soonest + this.rng() * (latest - soonest)) * 1000;
+    this.toMap(w.map.data.id, { t: 'creatureGone', id: w.id });
+  }
+
+  /** A watcher reached a player: energy lost, one thing they carried taken (at random), and it goes away. */
+  private touch(w: Watcher, p: Online, now: number): void {
+    this.sendAway(w, now);
+    const units = p.rec.bag.flatMap((s, slot) => Array.from({ length: s.count }, () => slot));
+    let lost: string | null = null;
+    if (units.length) {
+      const slot = units[this.roll(units.length)]!;
+      lost = p.rec.bag[slot]!.item;
+      p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
+      this.sendBag(p);
+      this.saveNow.set(p.rec.id, p.rec);
+    }
+    this.advance(p, now);
+    p.rec.energy = Math.max(0, p.rec.energy - WATCHER_TOUCH);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'watcher', lost } });
+    if (p.rec.energy <= 0) return this.collapse(p, now);
+    this.refresh(p, now);
+    this.tell(p, now);
+  }
+
+  // ---------- where things are ----------
+
+  /** Fires out there burn down: on the wilds and in the shelters whose door opens onto them. */
+  private wild(map: TileMap): boolean {
+    return map.data.kind === 'wilds' || (map.data.kind === 'inside' && this.outside.get(map.data.id) === 'wilds');
+  }
+
+  /** In town, or in one of its houses: where there is light and a table to look at things closely. */
+  private inTown(map: TileMap): boolean {
+    return map.data.kind === 'town' || (map.data.kind === 'inside' && this.outside.get(map.data.id) === 'town');
+  }
+
+  /** The notice board: the weather, each region's surge clock, the fires that need feeding, recent collapses, the Old Stone. */
+  private news(now: number): string[] {
+    const lines: string[] = [];
+    const wall = now + this.epochOffset;
+    if (this.cycle) {
+      const w = weatherAt(wall);
+      const next = weatherAt(wall + w.left * 1000 + 1000).weather;
+      lines.push(`${WEATHER_WORDS[this.sky]} now. ${capital(WEATHER_WORDS[next])} ${about(w.left)}.`);
+    } else lines.push(`${WEATHER_WORDS[this.sky]}.`);
+    for (const map of this.maps.values()) {
+      const s = this.surgeOf(map, now), rule = map.data.surge;
+      if (!s || !rule) continue;
+      if (s.phase === 'surge') lines.push(`${map.data.name}: a surge is on, ${about(s.left)} more. Get to a light.`);
+      else if (s.phase === 'unstable') lines.push(`${map.data.name}: restless. A surge comes ${about(s.left)}.`);
+      else lines.push(`${map.data.name}: calm. The next surge comes ${about(untilSurge(rule, s))}.`);
+    }
+    const low: string[] = [], out: string[] = [];
+    for (const f of this.fires.all()) {
+      if (f.tended) continue;
+      const left = this.fires.left(f, now);
+      if (left <= 0) out.push(fireName(f));
+      else if (left < FIRE_LOW_S * 2) low.push(fireName(f));
+    }
+    if (out.length) lines.push(`Gone out: ${listOf(out)}. Bring something that burns.`);
+    if (low.length) lines.push(`Burning low: ${listOf(low)}.`);
+    if (!out.length && !low.length && this.fires.all().some(f => !f.tended)) lines.push('Every shelter fire is burning.');
+    const recent = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
+    if (recent.length) {
+      const by = new Map<string, number>();
+      for (const c of recent) by.set(c.map, (by.get(c.map) ?? 0) + 1);
+      lines.push(`Collapsed in the last hour: ${[...by].map(([m, n]) => `${n} in ${this.maps.get(m)?.data.name ?? m}`).join(', ')}.`);
+    } else lines.push('Nobody collapsed in the last hour.');
+    if (this.stone) {
+      const st = this.stoneView(now);
+      lines.push(st.awake ? `The Old Stone is awake: surges are gentler for ${about(st.left, true)}.` : `The Old Stone sleeps. ${st.charge} of ${st.need} shards fed.`);
+    }
+    return lines;
+  }
+
+  // ---------- bags, piles and finds ----------
 
   /**
    * A saved bag as it fits today's items: items that no longer exist are gone, and a bag that no
@@ -643,6 +1286,7 @@ export class World {
     this.later(rule, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
     this.got(p, [{ item: rule.item.id, count: 1 }], 'find');
     this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
+    this.rerate(p, now);
   }
 
   /**
@@ -651,7 +1295,7 @@ export class World {
    * fit, it stays as it is: the half is only drawn once the picker can carry something of it, so
    * asking again and again never draws a better half.
    */
-  private pickPile(p: Online, d: DropRecord): void {
+  private pickPile(p: Online, d: DropRecord, now: number): void {
     if (!d.items.some(s => this.fits(p.rec.bag, s.item))) return this.refuse(p, 'pick', 'bag_full');
     const mine = d.owner === p.rec.id;
     const offered = mine ? d.items : halfOf(d.items, this.rng);
@@ -666,6 +1310,7 @@ export class World {
     } else {
       this.removePile(d);
     }
+    this.rerate(p, now);
   }
 
   /** The pile on a tile, the picker's own first (that one they get all of). */
@@ -680,7 +1325,8 @@ export class World {
     const map = this.maps.get(d.map);
     const items = merge((Array.isArray(d.items) ? d.items : []).filter(s => isSlot(s) && this.items.has(s.item)));
     if (!map || !map.inside(d.x, d.y) || !items.length || this.piles.has(d.owner)) return;
-    this.addPile({ ...d, items });
+    const trail = (Array.isArray(d.trail) ? d.trail : []).filter(([x, y]) => map.inside(x, y)).slice(-TRAIL_STEPS);
+    this.addPile({ ...d, items, trail });
   }
 
   private addPile(d: DropRecord): void {
@@ -713,6 +1359,29 @@ export class World {
     this.fadeAt = [...this.piles.values()].reduce((at, d) => Math.min(at, d.droppedAt + DROP_LIFETIME_MS - this.epochOffset), Infinity);
   }
 
+  /** All of a rule's finds, on free tiles; those with no free tile grow as soon as there is one. */
+  private sow(rule: Rule, now?: number): void {
+    for (let i = 0; i < rule.count; i++) {
+      const find = this.put(rule, undefined);
+      if (!find) this.later(rule, -Infinity, undefined);
+      else if (now !== undefined) this.toMap(rule.map.data.id, { t: 'find', find: findView(find) });
+    }
+  }
+
+  /** A rule's time has come (its finds grow, and everyone on its map sees them) or is over (its finds go). */
+  private openRule(rule: Rule, open: boolean, now: number): void {
+    if (rule.open === open) return;
+    rule.open = open;
+    if (open) return this.sow(rule, now);
+    this.growing = this.growing.filter(g => g.rule !== rule);
+    const finds = this.finds.get(rule.map.data.id)!;
+    for (const [tile, f] of [...finds]) {
+      if (f.rule !== rule) continue;
+      finds.delete(tile);
+      this.toMap(rule.map.data.id, { t: 'findGone', id: f.id });
+    }
+  }
+
   /** Finds whose time has come grow, and everyone on their map hears it. */
   private growFinds(now: number): void {
     if (now < this.growAt) return;
@@ -720,6 +1389,7 @@ export class World {
     this.growing = this.growing.filter(g => g.at > now);
     this.growAt = this.growing.reduce((at, g) => Math.min(at, g.at), Infinity);
     for (const g of due) {
+      if (!g.rule.open) continue;
       const find = this.put(g.rule, g.not);
       // Every tile it may grow on is taken (by other finds and by piles): it tries again a while later.
       if (!find) this.later(g.rule, now + g.rule.respawn[0] * 1000, g.not);
@@ -775,7 +1445,7 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'bag', bag: copyBag(p.rec.bag) } });
   }
 
-  private refuse(p: Online, action: 'pick' | 'use' | 'discard', reason: Refusal): void {
+  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
   }
 
@@ -799,4 +1469,75 @@ function less(all: readonly BagSlot[], left: readonly BagSlot[]): BagSlot[] {
     const n = s.count - (rest.get(s.item) ?? 0);
     return n > 0 ? [{ item: s.item, count: n }] : [];
   });
+}
+
+/** Does someone at x,y facing `dir` look toward tile tx,ty? Anything on the side they face counts. */
+export function faces(x: number, y: number, dir: Dir, tx: number, ty: number): boolean {
+  switch (dir) {
+    case 'up': return ty < y;
+    case 'down': return ty > y;
+    case 'left': return tx < x;
+    case 'right': return tx > x;
+  }
+}
+
+function dirTo(dx: number, dy: number): Dir | undefined {
+  if (dx === 0 && dy === -1) return 'up';
+  if (dx === 0 && dy === 1) return 'down';
+  if (dx === -1 && dy === 0) return 'left';
+  if (dx === 1 && dy === 0) return 'right';
+  return undefined;
+}
+
+/**
+ * The first step from x,y on a shortest way next to tx,ty over tiles where `may` allows standing (the
+ * target's own tile excepted: it is where the prey stands). Null if there is no way within a few hundred tiles.
+ */
+export function pathStep(map: TileMap, x: number, y: number, tx: number, ty: number, may: (x: number, y: number) => boolean): { x: number; y: number } | null {
+  if (manhattan(x, y, tx, ty) <= 1) return null;
+  const W = map.width, start = y * W + x;
+  const prev = new Map<number, number>([[start, -1]]);
+  const queue = [start];
+  for (let head = 0; head < queue.length && head < WATCHER_PATH_NODES; head++) {
+    const i = queue[head]!, cx = i % W, cy = Math.floor(i / W);
+    if (manhattan(cx, cy, tx, ty) <= 1 && i !== start) {
+      let at = i;
+      while (prev.get(at) !== start) at = prev.get(at)!;
+      return { x: at % W, y: Math.floor(at / W) };
+    }
+    for (const [nx, ny] of [[cx, cy - 1], [cx + 1, cy], [cx, cy + 1], [cx - 1, cy]] as const) {
+      const j = ny * W + nx;
+      if (prev.has(j) || (nx === tx && ny === ty) || !may(nx, ny)) continue;
+      prev.set(j, i);
+      queue.push(j);
+    }
+  }
+  return null;
+}
+
+const WEATHER_WORDS: Record<Weather, string> = { overcast: 'Overcast', rain: 'Rain', night: 'Night', aurora: 'An aurora night' };
+const capital = (s: string) => s[0]!.toUpperCase() + s.slice(1);
+
+/** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours"). */
+function about(seconds: number, plain = false): string {
+  const pre = plain ? '' : 'in ';
+  if (seconds < 60) return plain ? 'under a minute' : 'in under a minute';
+  if (seconds < 90 * 60) {
+    const m = Math.round(seconds / 60);
+    return `${pre}about ${m} minute${m === 1 ? '' : 's'}`;
+  }
+  const h = Math.round(seconds / 3600);
+  return `${pre}about ${h} hour${h === 1 ? '' : 's'}`;
+}
+
+function listOf(names: string[]): string {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+/** A shelter's fire is called after its shelter; a campfire after its region. */
+function fireName(f: Fire): string {
+  const name = f.map.data.name;
+  // Names read "The old cabin"; in the middle of a sentence it is "the old cabin".
+  return f.map.data.kind === 'inside' ? name.replace(/^The /, 'the ') : `the campfire in ${name.replace(/^The /, 'the ')}`;
 }

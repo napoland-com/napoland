@@ -1,26 +1,39 @@
 {
-  "version": 1,
+  "version": 2,
   "items": [
-    {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"text":"A small pale mushroom that glows blue-green in the dark. It grows where the ground stays wet."},
-    {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright."},
-    {"id":"scrap","name":"Scrap metal","kind":"resource","stack":10,"text":"Rusted metal from cars and cabins nobody came back for. Still good for patching things."},
-    {"id":"wire","name":"Copper wire","kind":"resource","stack":10,"text":"Copper wire from where the old power line came down. Sometimes it still hums."},
-    {"id":"cloth","name":"Cloth scraps","kind":"resource","stack":10,"text":"Strips of curtain and blanket from rooms nobody lives in anymore. Still dry."},
-    {"id":"shard","name":"Anomaly shard","kind":"resource","stack":5,"text":"A sliver of something like glass, warm even in the cold. It gives off a light of its own."},
-    {"id":"thermos","name":"Thermos","kind":"consumable","stack":2,"text":"Hot coffee someone left by the fire for whoever comes next. Drink it to get some energy back.","use":{"energy":30}}
+    {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
+    {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
+    {"id":"scrap","name":"Scrap metal","kind":"resource","stack":10,"weight":1,"text":"Rusted metal from cars and cabins nobody came back for. Still good for patching things, and heavy to carry."},
+    {"id":"wire","name":"Copper wire","kind":"resource","stack":10,"weight":0.4,"text":"Copper wire from where the old power line came down. Sometimes it still hums, and on aurora nights more of it turns up by the poles."},
+    {"id":"cloth","name":"Cloth scraps","kind":"resource","stack":10,"weight":0.1,"fuel":90,"text":"Strips of curtain and blanket from rooms nobody lives in anymore. Still dry, so they catch fast in a fire."},
+    {"id":"shard","name":"Anomaly shard","kind":"resource","stack":5,"weight":0.3,"charge":1,"text":"A sliver of something like glass, warm even in the cold. It gives off a light of its own. The Old Stone in town wants them back."},
+    {"id":"thermos","name":"Thermos","kind":"consumable","stack":2,"weight":0.6,"text":"Hot coffee someone left by the fire for whoever comes next. Drink it to get some energy back.","use":{"energy":30}},
+    {"id":"flare","name":"Road flare","kind":"consumable","stack":3,"weight":0.3,"text":"A red road flare from a glovebox. Light it and nothing comes near you while it burns, and whatever clings to your back lets go.","use":{"flare":45}},
+    {"id":"strange","name":"Strange object","kind":"resource","stack":1,"weight":0.8,"text":"Something that was not here yesterday. It is too dark out here to tell what it is: look at it in town, in the light.","use":{"identify":true},
+      "reveals":[{"item":"shard","count":2,"weight":4},{"item":"thermos","count":1,"weight":2},{"item":"flare","count":2,"weight":2},{"item":"warm-pebble","count":1,"weight":1},{"item":"hollow-feather","count":1,"weight":1},{"item":"humming-bead","count":1,"weight":1}]},
+    {"id":"warm-pebble","name":"Warm pebble","kind":"charm","stack":1,"weight":0.1,"charm":{"wetting":0.6},"text":"A smooth black pebble that never cools. While it is in your bag, rain soaks you much slower."},
+    {"id":"hollow-feather","name":"Hollow feather","kind":"charm","stack":1,"weight":0.05,"charm":{"load":0.75},"text":"A long grey feather, light as nothing. While it is in your bag, what you carry feels lighter."},
+    {"id":"humming-bead","name":"Humming bead","kind":"charm","stack":1,"weight":0.05,"charm":{"hitch":0.4},"text":"A glass bead that hums when something is near. While it is in your bag, what wants to cling to you in the dark thinks twice."}
   ],
   "finds": [
     {"item":"glowcap","map":"near-woods","on":["mud","ferns"],"steps":[15,50],"count":4,"respawn":[90,240]},
     {"item":"glowcap","map":"near-woods","on":["mud","ferns"],"steps":[51,90],"count":8,"respawn":[90,240]},
     {"item":"resin","map":"near-woods","on":["grass"],"steps":[35,95],"count":6,"respawn":[150,360]},
+    {"item":"resin","map":"near-woods","on":["grass"],"steps":[8,34],"count":2,"respawn":[300,600]},
     {"item":"scrap","map":"near-woods","near":{"kinds":["car","barrel","house"],"radius":3},"count":4,"respawn":[480,900]},
     {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"steps":[20,999],"count":3,"respawn":[600,1200]},
+    {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"count":4,"respawn":[120,300],"when":"aurora"},
     {"item":"cloth","map":"stonebrook-empty-house","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[2700,5400]},
     {"item":"cloth","map":"near-woods-old-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1800,3600]},
     {"item":"cloth","map":"near-woods-end-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]},
     {"item":"shard","map":"near-woods","steps":[95,999],"count":2,"respawn":[1800,3600]},
+    {"item":"shard","map":"near-woods","steps":[70,999],"count":3,"respawn":[60,120],"when":"unstable"},
+    {"item":"strange","map":"near-woods","steps":[80,999],"count":1,"respawn":[1800,3600]},
+    {"item":"strange","map":"near-woods","steps":[60,999],"count":2,"respawn":[120,240],"when":"unstable"},
     {"item":"thermos","map":"near-woods-old-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"thermos","map":"near-woods-ranger-hut","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
-    {"item":"thermos","map":"near-woods-end-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]}
+    {"item":"thermos","map":"near-woods-end-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
+    {"item":"flare","map":"near-woods","near":{"kinds":["car"],"radius":2},"count":1,"respawn":[1800,3600]},
+    {"item":"flare","map":"near-woods-ranger-hut","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]}
   ]
 }

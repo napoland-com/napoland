@@ -25,7 +25,7 @@ describe('connecting', () => {
     expect(c.inbox.map(m => m.t)).toEqual(['welcome', 'energy']);
     const welcome = await c.next('welcome');
     const id = welcome.you;
-    expect(await c.next('energy')).toEqual({ t: 'energy', energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 } });
+    expect(await c.next('energy')).toEqual({ t: 'energy', energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 }, body: expect.any(Object) });
     expect(welcome).toMatchObject({
       t: 'welcome', v: PROTOCOL_VERSION, name: 'Aldo', stepMs: 200, map: { id: 'town', version: 1 }, weather: 'rain',
       energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 },

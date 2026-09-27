@@ -276,7 +276,8 @@ for (const [px, py] of [[33, 77], [33, 72], [33, 65], [34, 58], [31, 53], [31, 4
 place({ kind: 'car', x: 32, y: 60, w: 2 });
 // The shelters, each a stage deeper: the old cabin past the crossroads, the ranger's hut behind the
 // lonely lamp (the west loop's refuge, and the last fire before the deepest spots) and the cabin at the
-// end of the east trail. A fire burns in each, day and night, so their windows are lit.
+// end of the east trail. Each has a fire; the old cabin's never goes out (somebody tends it, so a new
+// player always has one), the other two burn down unless someone feeds them. Their windows are lit.
 const cabins = [
   { x: 46, y: 37, roof: '#5a4a3f', inside: 'near-woods-old-cabin' },
   { x: 29, y: 5, roof: '#6b5b3e', inside: 'near-woods-ranger-hut' },
@@ -292,9 +293,9 @@ for (const [x, y] of [[50, 38], [50, 39], [44, 37], [13, 56]] as const) must({ k
 for (let x = 44; x <= 52; x++) if (x !== 47 && x !== 48 && x !== 50) must({ kind: 'fence', x, y: 43, dir: 'h' });
 
 const signs: Array<{ x: number; y: number; text: string[] }> = [
-  { x: 30, y: 74, text: ['The Near Woods', 'The deeper you go, the faster you tire. The lights only help you see.', 'The shelters keep a fire going, day and night.'] },
+  { x: 30, y: 74, text: ['The Near Woods', 'The deeper you go, the faster you tire. The lights only help you see.', 'The old cabin\'s fire never goes out. The others burn down: bring something to feed them.'] },
   { x: 28, y: 40, text: ['West: the pond. East: the old cabin.', 'North of here the lights stop. Mostly.'] },
-  { x: 27, y: 9, text: ['No wires run to this light.', 'It was on when we found it. It gives no warmth.', 'The hut behind it keeps a fire. Rest there before you go on.'] },
+  { x: 27, y: 9, text: ['No wires run to this light.', 'It was on when we found it. It gives no warmth.', 'The hut behind it has a fire. Rest there, and feed it before you go on.'] },
 ];
 for (const s of signs) place({ kind: 'sign', ...s });
 
@@ -374,12 +375,16 @@ const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 2, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 4, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
   exits: [EXIT, ...doors],
   objects,
+  // Every 40 minutes: 6 restless, then a surge of 2.5 minutes whose front takes 1.5 to sweep home.
+  surge: { every: 2400, unstable: 360, surge: 150, sweep: 90 },
+  // Three watchers in the deeper half, past the old cabin.
+  watchers: { count: 3, steps: [55, 999] },
 };
 
 // One row or object per line, so map changes show up as small, readable diffs.
@@ -392,7 +397,9 @@ const json = [
   '  "levels": [', map.levels.map(r => `    ${JSON.stringify(r)}`).join(',\n'), '  ],',
   `  "spawn": ${JSON.stringify(map.spawn)},`,
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
-  '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ]',
+  '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
+  `  "surge": ${JSON.stringify(map.surge)},`,
+  `  "watchers": ${JSON.stringify(map.watchers)}`,
   '}',
   '',
 ].join('\n');
@@ -404,7 +411,7 @@ writeFileSync(out, json);
 const ORDER = '*!HC@SFvibBnLc-T^o~=",_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
-  lamp: '*', sign: '!', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
+  lamp: '*', sign: '!', board: '!', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
   // Furniture belongs inside (gen-interiors.ts), but a campfire could stand out here one day.
   fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_',
 };

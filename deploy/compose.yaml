@@ -39,7 +39,7 @@ services:
       DATABASE_URL: postgres://napoland:${POSTGRES_PASSWORD:?}@db:5432/napoland
       # Caddy is the only way in, so X-Forwarded-For carries the real player address.
       TRUST_PROXY: "1"
-      WEATHER: rain
+      WEATHER: cycle
       # Sign-in through Supabase Auth (an email and a 6-digit code) waits for the Supabase project:
       # its email templates must show the code, and it needs its own mail service
       # (docs/OPERATIONS.md, "Sign-in"). Until then players keep names and browser tokens (legacy);

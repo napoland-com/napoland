@@ -1,10 +1,11 @@
 /**
- * The interface over the world: status and energy, the menu, the joystick and A/B, name tags,
- * the text box, the bag, the About panel, and the fade and name banner when you arrive somewhere.
+ * The interface over the world: status and energy (and how wet you are, and what clings to you), the
+ * surge clock, the menu with the status and About panels, the joystick and A/B, name tags, the text
+ * box, the bag, and the fade and name banner when you arrive somewhere.
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
-import { BAG_SLOTS, type Dir, type EnergyView } from '@napoland/shared';
+import { BAG_SLOTS, type BodyView, type Dir, type EnergyView, type SurgeView } from '@napoland/shared';
 import { aboutBody, versionView } from './about';
 import { itemIcon } from './icons';
 import type { SlotView } from './items';
@@ -14,6 +15,8 @@ const ICON = {
   menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
   x: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
   bolt: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.5 2 4 13.5h6.5L9 22l10-12h-6.6z"/></svg>`,
+  drop: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5C9 7 5.5 10.6 5.5 14.6a6.5 6.5 0 0 0 13 0c0-4-3.5-7.6-6.5-12.1z"/></svg>`,
+  cling: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3c-4.4 0-7 3.3-7 7.6V21l2.3-1.8L9.6 21l2.4-1.8 2.4 1.8 2.3-1.8L19 21V10.6C19 6.3 16.4 3 12 3zm-3 8.2a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8zm6 0a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8z"/></svg>`,
 };
 
 /** How far the stick must be pushed (fraction of its radius) before it counts as a direction. */
@@ -29,6 +32,8 @@ const BANNER_MS_PER_CHAR = 45;
 
 export interface HudHandlers {
   pad(dir: Dir | null): void;
+  /** The status panel opened: fill it (setStatus), and keep it current while it is open. */
+  status?(): void;
   a(): void;
   b(): void;
   dialogTap(): void;
@@ -50,6 +55,31 @@ export function tossQuestion(count: number): string {
 export function bannerMs(title: string, sub: string): number {
   return Math.max(BANNER_MS, 1200 + (title.length + sub.length) * BANNER_MS_PER_CHAR);
 }
+
+/** "3:05": minutes and seconds, for the surge clock. */
+export function clock(seconds: number): string {
+  const s = Math.max(0, Math.ceil(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** What the surge pill says, and how it looks: nothing while calm. `caught`: the front is over you. */
+export function surgeLook(s: SurgeView | null, caught: boolean): { text: string; level: 'restless' | 'surge' | 'caught' } | null {
+  if (!s || s.phase === 'calm') return null;
+  if (s.phase === 'unstable') return { text: `Restless. A surge in ${clock(s.left)}`, level: 'restless' };
+  return caught ? { text: `Caught in the surge! Find a light. ${clock(s.left)}`, level: 'caught' } : { text: `Surge! It sweeps toward home. ${clock(s.left)}`, level: 'surge' };
+}
+
+/** What the bag's header says: slots used, and the load once there is some to speak of. */
+export function roomText(slots: number, load: number): string {
+  const room = `${slots} of ${BAG_SLOTS}`;
+  if (load < 0.05) return room;
+  return `${room} · ${load >= 1 ? 'heavy' : `load ${Math.round(load * 100)}%`}`;
+}
+
+/** One row of the status panel: a label, what it says, and a bar (0 to 1) when it has one. */
+export interface StatusRow { label: string; text: string; bar?: number; tone?: 'good' | 'bad' | 'plain' }
+/** The status panel: rows about you, then a section per feat. */
+export interface StatusView { rows: StatusRow[]; feats: Array<{ name: string; text: string; done: boolean; progress: number }> }
 
 const EMPTY_BAG = 'Your bag is empty. Things you find out there go here, and you keep them only if you bring them home.';
 const PICK_SLOT = 'Tap something to see what it is.';
@@ -90,7 +120,8 @@ export class Hud {
   private tagEls = new Map<string, HTMLElement>();
   private floatEls = new Map<number, HTMLElement>();
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
-  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1 };
+  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '' };
+  private load = 0;
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
   private slotEls: HTMLButtonElement[] = [];
   /** The bag as shown, the slot whose details are open (and the item in it), and whether throwing it away is being asked. */
@@ -112,10 +143,15 @@ export class Hud {
       <div class="banner panel" data-el="banner" role="status" aria-live="polite"><b data-el="bannerTitle"></b><span data-el="bannerSub"></span></div>
       <div class="status panel"><div class="name"><span data-el="name">...</span><span data-el="online"></span></div>
         <div class="energy" data-el="energy" hidden>${ICON.bolt}<div class="bar" data-el="energyBar" role="meter" aria-label="Energy" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="energyFill"></div></div></div>
+        <div class="wet" data-el="wet" hidden>${ICON.drop}<div class="bar" data-el="wetBar" role="meter" aria-label="Wet" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="wetFill"></div></div></div>
+        <div class="cling" data-el="cling" hidden role="status">${ICON.cling}<span>Something clings to you</span></div>
+        <div class="surge-pill" data-el="surge" hidden role="status" aria-live="polite"></div>
         <div class="sub"><span class="conn" data-el="conn" data-state="connecting"><i></i><span data-el="connText">Connecting</span></span><span data-el="ping"></span></div></div>
+      <div class="surge-glow" data-el="surgeGlow"></div>
       <button type="button" class="menu-btn" data-el="menuBtn" aria-label="Menu" aria-expanded="false">${ICON.menu}</button>
       <div class="menu-panel panel" data-el="menu" hidden>
         <button type="button" data-el="menuBag">Bag</button>
+        <button type="button" data-el="menuStatus">Status</button>
         <button type="button" data-el="menuAbout">About</button>
         <button type="button" data-el="menuLogout">Log out</button>
       </div>
@@ -128,10 +164,14 @@ export class Hud {
         <div class="detail" data-el="detail" aria-live="polite">
           <p class="hint" data-el="hint">${EMPTY_BAG}</p>
           <div class="about" data-el="about" hidden><div class="big" data-el="bigIcon"></div>
-            <div class="words"><div class="title"><b data-el="itemName"></b><span class="count" data-el="itemCount"></span></div><p data-el="itemText"></p></div></div>
+            <div class="words"><div class="title"><b data-el="itemName"></b><span class="count" data-el="itemCount"></span></div><p data-el="itemText"></p><p class="facts" data-el="itemFacts"></p></div></div>
           <div class="acts" data-el="acts" hidden><button type="button" class="act go" data-el="use">Use</button><button type="button" class="act toss" data-el="toss">Throw away</button></div>
           <div class="acts" data-el="ask" hidden><span class="ask" data-el="askText"></span><button type="button" class="act toss sure" data-el="tossYes">Throw away</button><button type="button" class="act" data-el="tossNo">Keep</button></div>
         </div>
+      </div>
+      <div class="sheet panel status-sheet" data-el="statusSheet" data-open="false" role="dialog" aria-label="Status">
+        <div class="sheet-head"><b>Status</b><button type="button" class="close" data-el="statusClose" aria-label="Close the status">${ICON.x}</button></div>
+        <div class="status-body" data-el="statusBody"></div>
       </div>
       <div class="sheet panel about-sheet" data-el="aboutSheet" data-open="false" role="dialog" aria-label="About napoland">
         <div class="sheet-head"><b>About</b><button type="button" class="close" data-el="aboutClose" aria-label="Close About">${ICON.x}</button></div>
@@ -181,6 +221,8 @@ export class Hud {
     this.el.close!.addEventListener('click', () => this.toggleBag(false));
     this.el.menuBtn!.addEventListener('click', () => this.toggleMenu());
     this.el.menuBag!.addEventListener('click', () => { this.toggleMenu(false); this.toggleBag(true); });
+    this.el.menuStatus!.addEventListener('click', () => { this.toggleMenu(false); this.toggleStatus(true); });
+    this.el.statusClose!.addEventListener('click', () => this.toggleStatus(false));
     this.el.menuAbout!.addEventListener('click', () => { this.toggleMenu(false); this.toggleAbout(true); });
     this.el.aboutClose!.addEventListener('click', () => this.toggleAbout(false));
     this.el.menuLogout!.addEventListener('click', () => { this.toggleMenu(false); this.h.logout(); });
@@ -204,10 +246,32 @@ export class Hud {
   get bagOpen(): boolean {
     return this.el.sheet!.dataset.open === 'true';
   }
+
+  get statusOpen(): boolean {
+    return this.el.statusSheet!.dataset.open === 'true';
+  }
+  toggleStatus(open = !this.statusOpen) {
+    this.el.statusSheet!.dataset.open = String(open);
+    // The bag, the status and the About panel open in the same place: one at a time.
+    if (open) { this.toggleBag(false); this.toggleAbout(false); this.h.status?.(); }
+  }
+
+  /** What the status panel shows. Only written to the page when it changed. */
+  setStatus(v: StatusView) {
+    const html = [
+      ...v.rows.map(r => `<div class="srow" data-tone="${r.tone ?? 'plain'}"><span class="k">${esc(r.label)}</span><span class="v">${esc(r.text)}</span>${r.bar === undefined ? '' : `<span class="sbar"><i style="transform:translateX(${((Math.min(1, Math.max(0, r.bar)) - 1) * 100).toFixed(1)}%)"></i></span>`}</div>`),
+      '<h3>Feats</h3>',
+      ...v.feats.map(f => `<div class="feat"${f.done ? ' data-done' : ''}><b>${esc(f.name)}</b><span>${esc(f.text)}</span>${f.done ? '' : `<span class="sbar"><i style="transform:translateX(${((f.progress - 1) * 100).toFixed(1)}%)"></i></span>`}</div>`),
+    ].join('');
+    if (html === this.shown.status) return;
+    this.shown.status = html;
+    this.el.statusBody!.innerHTML = html;
+  }
   toggleBag(open = !this.bagOpen) {
-    // The bag and the About panel open in the same place: one at a time.
+    // The bag, the status and the About panel open in the same place: one at a time.
     if (open) this.toggleAbout(false);
     this.el.sheet!.dataset.open = String(open);
+    if (open) this.el.statusSheet!.dataset.open = 'false';
     // It opens on the whole bag, never on the details left from last time.
     this.choose(null);
   }
@@ -217,6 +281,7 @@ export class Hud {
   }
   toggleAbout(open = !this.aboutOpen) {
     if (open && this.bagOpen) this.toggleBag(false);
+    if (open) this.el.statusSheet!.dataset.open = 'false';
     this.el.aboutSheet!.dataset.open = String(open);
     if (open && !this.versionAsked) {
       this.versionAsked = true;
@@ -244,6 +309,7 @@ export class Hud {
 
   /** B in the bag: out of the question, then out of the details. False when there is nothing to back out of (B closes the bag). */
   back(): boolean {
+    if (this.statusOpen) { this.toggleStatus(false); return true; }
     if (!this.bagOpen) return false;
     if (this.asking) { this.asking = false; this.showDetail(); return true; }
     if (this.picked) { this.choose(null); return true; }
@@ -261,8 +327,19 @@ export class Hud {
       el.innerHTML = s ? `${itemIcon(s.item)}<span class="n">${s.count}</span>` : '';
       el.setAttribute('aria-label', s ? `${s.name}, ${s.count}` : 'Empty slot');
     });
-    this.el.room!.textContent = `${slots.length} of ${BAG_SLOTS}`;
+    this.showRoom();
     this.showDetail();
+  }
+
+  /** What the bag weighs, for its header. */
+  setLoad(load: number) {
+    this.load = load;
+    this.showRoom();
+  }
+
+  private showRoom() {
+    const t = roomText(this.bag.length, this.load);
+    if (t !== this.shown.room) this.el.room!.textContent = this.shown.room = t;
   }
 
   private choose(slot: number | null) {
@@ -287,6 +364,9 @@ export class Hud {
     this.el.itemName!.textContent = s.name;
     this.el.itemCount!.textContent = s.count > 1 ? `× ${s.count}` : '';
     this.el.itemText!.textContent = s.text;
+    this.el.itemFacts!.textContent = s.facts.join(' · ');
+    this.el.itemFacts!.hidden = !s.facts.length;
+    this.el.use!.textContent = s.useLabel;
     if (this.asking) {
       this.el.ask!.hidden = false;
       this.el.askText!.textContent = tossQuestion(s.count);
@@ -333,6 +413,44 @@ export class Hud {
       vignette.style.opacity = String(v);
       // Scaled up, the dark edge sits off screen; as energy runs out it closes in.
       vignette.style.transform = `scale(${(1.35 - 0.35 * v).toFixed(3)})`;
+    }
+  }
+
+  /**
+   * How wet you are (a blue bar under the energy, shown once there is something to show) and, in
+   * words, whether something clings to your back: an icon alone says nothing on a phone, where
+   * nothing shows a tooltip. Called every frame; only writes what changed.
+   */
+  setBody(b: BodyView | null) {
+    const s = this.shown;
+    const show = !!b && (b.wet > 0.005 || b.wetRate > 0);
+    if (show !== s.wetShown) this.el.wet!.hidden = !(s.wetShown = show);
+    if (!b) {
+      if (s.hitched) this.el.cling!.hidden = !(s.hitched = false);
+      return;
+    }
+    const wet = Math.round(b.wet * 200) / 200;
+    if (wet !== s.wet) {
+      s.wet = wet;
+      this.el.wetFill!.style.transform = `translateX(${((wet - 1) * 100).toFixed(1)}%)`;
+      this.el.wetBar!.setAttribute('aria-valuenow', String(Math.round(wet * 100)));
+    }
+    const hitched = !!b?.hitched;
+    if (hitched !== s.hitched) this.el.cling!.hidden = !(s.hitched = hitched);
+  }
+
+  /** The surge clock (hidden while calm) and the violet edges while the front is over you. */
+  setSurge(v: SurgeView | null, caught: boolean) {
+    const s = this.shown, look = surgeLook(v, caught), pill = this.el.surge!;
+    const text = look?.text ?? '';
+    if (text !== s.surge) { s.surge = text; pill.textContent = text; pill.hidden = !look; }
+    if ((look?.level ?? '') !== s.surgeLevel) pill.dataset.level = s.surgeLevel = look?.level ?? '';
+    const glow = caught ? 1 : look?.level === 'surge' ? 0.35 : 0;
+    if (glow !== s.surgeGlow) {
+      s.surgeGlow = glow;
+      const g = this.el.surgeGlow!;
+      g.style.visibility = glow > 0 ? 'visible' : 'hidden';
+      g.style.opacity = String(glow);
     }
   }
 
@@ -395,4 +513,8 @@ export class Hud {
     }
     for (const [id, el] of this.floatEls) if (!seen.has(id)) { el.remove(); this.floatEls.delete(id); }
   }
+}
+
+function esc(t: string): string {
+  return t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 }

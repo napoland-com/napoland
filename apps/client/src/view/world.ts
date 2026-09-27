@@ -12,9 +12,10 @@
  * black: see interior.ts for the room, fire.ts for the fire and lighting.ts for the light.
  */
 import * as THREE from 'three';
-import { DIR_VEC, type Dir, type DropView, type FindView, type MapData, type MapObject, type TileKind, type TileMap, type Weather } from '@napoland/shared';
+import { DIR_VEC, type Dir, type DropView, type FindView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { makeNpc, makePlayer, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, flicker, hearthModel, type Puffs } from './fire';
+import { Echoes, Flares, Marks, Watchers, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
@@ -35,6 +36,17 @@ export interface Avatar {
   color: string;
   /** Seconds left of the turn-in-place shuffle. */
   turnT: number;
+  /** Something clings to their back (only ever told about yourself). */
+  hitched?: boolean;
+}
+
+/** A creature as the game draws it (watchers). */
+export interface CreatureAvatar {
+  id: string;
+  x: number;
+  y: number;
+  dir: Dir;
+  moving: boolean;
 }
 
 /** three.js lights are physically based; the preview's values were tuned for the old units. */
@@ -61,6 +73,12 @@ const LAMP_REACH = 7;
 const FIRE_COLOR = 0xff8438;
 const FIRE_REACH = 10;
 const FIRE_LIGHT = 2.6;
+/** A flare's light: red, and strong while it burns. It is a light of its own, always in the scene (off when no flare burns). */
+const FLARE_COLOR = 0xff3a28;
+const FLARE_LIGHT = 3.2;
+/** Where a surge washes the sky and the light. */
+const SURGE_SKY = new THREE.Color('#2b1152');
+const SURGE_HEMI = new THREE.Color('#9a6ae0');
 /** The forest goes on this many tiles outside the map, so its edge never shows. */
 const RING = 4;
 /** Poles farther apart than this belong to different lines: no wire between them. */
@@ -143,7 +161,7 @@ export class WorldView {
   /** How this place looks in the current weather (lighting.ts). */
   private amb: Ambience;
   private readonly pitch = THREE.MathUtils.degToRad(62);
-  private rigs = new Map<string, { rig: Rig; color: string; shadow: THREE.Mesh }>();
+  private rigs = new Map<string, { rig: Rig; color: string; shadow: THREE.Mesh; hitch?: THREE.Group }>();
   private animate: Array<(t: number, dt: number) => void> = [];
   private hemi = new THREE.HemisphereLight(0xa3b3bb, 0x1d2620, 0.55 * L);
   private sun = new THREE.DirectionalLight(0xc9d4d8, 0.36 * L);
@@ -181,6 +199,24 @@ export class WorldView {
   private puffs: Puffs[] = [];
   /** Finds and piles: they come and go, so they are drawn apart from the map (loot.ts). */
   private loot = new Loot();
+  /** What comes and goes out there (wilds.ts): marks, watchers, flares, echoes. */
+  private marks = new Marks();
+  private watchers: Watchers;
+  private flares = new Flares();
+  private echoes = new Echoes();
+  private creatureList: CreatureAvatar[] = [];
+  private flareLight = new THREE.PointLight(FLARE_COLOR, 0, 9, 2);
+  /** The fires of this map: their tiles in the order Fires draws them, how big each burns, and where the game says so. */
+  private fireTiles: Array<[number, number]> = [];
+  private fireLevels: number[] = [];
+  private fireLevel: (x: number, y: number) => number = () => 1;
+  /** The old power lines, which hum and glow on aurora nights. */
+  private wireMat = new THREE.LineBasicMaterial({ color: 0x0e1115 });
+  /** The Old Stone's crystal, brighter while it is awake. */
+  private crystalMat = stoneCrystal();
+  private stoneAwake = false;
+  /** How much a surge washes this map now, 0 to 1. */
+  private surgeK = 0;
   private marker: THREE.Mesh;
   private shadowGeo = new THREE.CircleGeometry(1, 14).rotateX(-Math.PI / 2);
   private shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -202,7 +238,8 @@ export class WorldView {
     // Inside too, only pushed out of reach: a scene with fog and one without would need different shaders.
     this.scene.fog = new THREE.Fog('#4c5961', 30, 50);
     this.sun.position.set(-4, 10, 6);
-    this.scene.add(this.hemi, this.sun, this.flash, this.flashTarget, this.headLight, this.stoneLight);
+    this.scene.add(this.hemi, this.sun, this.flash, this.flashTarget, this.headLight, this.stoneLight, this.flareLight);
+    this.watchers = new Watchers(this.shadowGeo, this.shadowMat);
     for (const s of this.slots) this.scene.add(s.light);
     this.flash.target = this.flashTarget;
     if (this.outdoors) this.findOpenings();
@@ -214,8 +251,12 @@ export class WorldView {
     this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
-    this.scene.add(this.loot.root);
+    this.scene.add(this.loot.root, this.marks.root, this.watchers.root, this.flares.root, this.echoes.root);
+    this.puffs.push(this.flares.sparks);
     this.animate.push(t => this.loot.update(t));
+    this.animate.push(t => { this.marks.update(t); this.flares.update(t); });
+    // Before the fires draw: how big each burns now.
+    this.animate.unshift(() => { this.fireTiles.forEach(([x, y], i) => { this.fireLevels[i] = this.fireLevel(x, y); }); });
     this.sources = lightSources(map);
     this.marker = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.66, 4, 1, Math.PI / 4).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xe9e6de, transparent: true, opacity: 0.9, depthWrite: false }));
     this.marker.visible = false;
@@ -229,6 +270,10 @@ export class WorldView {
   dispose() {
     for (const p of this.puffs) p.dispose();
     this.loot.dispose();
+    this.marks.dispose();
+    this.watchers.dispose();
+    this.flares.dispose();
+    this.echoes.dispose();
     disposeTree(this.scene);
     this.scene.clear();
     this.rigs.clear();
@@ -564,6 +609,7 @@ export class WorldView {
       still.push(car);
     }
 
+    for (const b of this.objects('board')) still.push(boardModel(b.x, b.y));
     for (const s of this.objects('sign')) {
       const g = new THREE.Group();
       g.position.set(s.x + 0.5, 0, s.y + 0.5);
@@ -603,12 +649,12 @@ export class WorldView {
         wire.push(a, mid, mid, b);
       }
     }
-    if (wire.length) this.scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(wire), new THREE.LineBasicMaterial({ color: 0x0e1115 })));
+    if (wire.length) this.scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(wire), this.wireMat));
 
     for (const st of this.objects('stone')) {
       const cx = st.x + 0.5, cz = st.y + 0.5;
       still.push(part(flat(new THREE.CylinderGeometry(0.62, 0.7, 0.2, 8)), '#5e5a54', cx, 0.1, cz, 0.03));
-      const crystal = part(new THREE.OctahedronGeometry(0.42, 0), ownToon('#8b5bd9', { emissive: 0x4a1a9c }), cx, 1.2, cz, 0.03);
+      const crystal = part(new THREE.OctahedronGeometry(0.42, 0), this.crystalMat, cx, 1.2, cz, 0.03);
       crystal.scale.set(0.8, 2, 0.8);
       this.scene.add(crystal);
       this.stoneLight.position.set(cx, 1.4, cz);
@@ -623,7 +669,7 @@ export class WorldView {
       }
       this.scene.add(debris);
       this.animate.push(t => {
-        crystal.rotation.y = t * 0.6;
+        crystal.rotation.y = t * (this.stoneAwake ? 1.4 : 0.6);
         crystal.position.y = 1.2 + Math.sin(t * 1.5) * 0.07;
         debris.rotation.y = t * 0.35;
         for (const d of debris.children) d.position.y = d.userData.y + Math.sin(t * 1.4 + d.userData.ph) * 0.12;
@@ -659,9 +705,11 @@ export class WorldView {
         return { ...spot, ph: hash2(f.x, f.y) * 6 };
       });
       const fires = new Fires(spots, embers);
+      this.fireTiles = fireplaces.map(f => [f.x, f.y]);
+      this.fireLevels = fireplaces.map(() => 1);
       this.scene.add(...fires.objects);
       this.puffs.push(fires.sparks);
-      this.animate.push(t => fires.update(t));
+      this.animate.push(t => fires.update(t, this.fireLevels));
     }
     this.instanced(this.shadowGeo, furnitureShadows(map), ([x, z, rx, rz], o) => { o.position.set(x, BLOB_Y, z); o.scale.set(rx, 1, rz); }, this.shadowMat);
     if (this.outdoors) return;
@@ -781,7 +829,61 @@ export class WorldView {
     this.paneMat.emissive.set(a.window.glow);
     if (this.skyLight) this.skyLight.opacity = a.window.light;
     this.loot.setGlow(lootGlow(this.map.data.kind, w, this.warmRoom));
+    // On aurora nights the dead power lines hum again: their wires glow.
+    this.wireMat.color.set(w === 'aurora' ? '#62ffc8' : '#0e1115');
+    this.applySurge();
     this.updateFog();
+  }
+
+  /** How big each fire burns (fire.ts, fireLevel), by its fireplace's tile: asked every frame. */
+  setFires(level: (x: number, y: number) => number) {
+    this.fireLevel = level;
+  }
+
+  /** The marks painted on this map, all of them (call it when they change). */
+  setMarks(marks: Iterable<MarkView>) {
+    this.marks.set(marks, (x, y) => this.groundAt(x + 0.5, y + 0.5));
+  }
+
+  /** The creatures on this map where the game draws them now, every frame. */
+  setCreatures(list: CreatureAvatar[]) {
+    this.creatureList = list;
+  }
+
+  /** The flares burning on this map, every frame; the nearest to `focus` gets the real light. */
+  setFlares(list: Array<{ x: number; y: number; left: number }>, focus: { x: number; y: number }) {
+    const near = [...list].sort((a, b) => Math.hypot(a.x - focus.x, a.y - focus.y) - Math.hypot(b.x - focus.x, b.y - focus.y));
+    this.flares.set(near, (x, y) => this.groundAt(x, y));
+  }
+
+  /** The piles on this map, for the echoes that walk to them: call it when they change or you move to another tile. */
+  setEchoes(drops: Iterable<DropView>, focus: { x: number; y: number }) {
+    this.echoes.set(drops, focus);
+  }
+
+  /** The Old Stone awake: its crystal and light burn brighter, and it turns faster. */
+  setStone(awake: boolean) {
+    this.stoneAwake = awake;
+    this.crystalMat.emissive.set(awake ? '#8a4dff' : '#4a1a9c');
+  }
+
+  /** How much a surge washes this map, 0 (none) to 1 (its front is over you): the sky and the light turn violet. */
+  setSurge(k: number) {
+    const v = Math.round(Math.min(1, Math.max(0, k)) * 50) / 50;
+    if (v === this.surgeK) return;
+    this.surgeK = v;
+    this.applySurge();
+  }
+
+  private applySurge() {
+    if (!this.outdoors) return;
+    const a = this.amb, k = this.surgeK;
+    const sky = new THREE.Color(a.sky).lerp(SURGE_SKY, k * 0.7);
+    (this.scene.background as THREE.Color).copy(sky);
+    (this.scene.fog as THREE.Fog).color.copy(sky);
+    this.hemi.color.set(a.hemi.sky).lerp(SURGE_HEMI, k * 0.55);
+    this.wispMat.color.set(0x9ef6ff).lerp(new THREE.Color('#c79bff'), k);
+    this.wispMat.opacity = a.wisps + (1 - a.wisps) * k;
   }
 
   /**
@@ -838,8 +940,14 @@ export class WorldView {
     for (const a of this.animate) a(t, dt);
     this.animateRain({ x: fx, y: fz }, dt);
     this.syncAvatars(avatars, meId);
+    this.watchers.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
+    this.echoes.update(t, (x, z) => this.groundAt(x, z));
     this.light(fx, fz, t, dt);
-    this.stoneLight.intensity = this.hasStone ? (this.weather === 'night' ? 2.4 : 1.2) * L * (0.85 + 0.15 * Math.sin(t * 3.1)) : 0;
+    const dark = this.weather === 'night' || this.weather === 'aurora';
+    this.stoneLight.intensity = this.hasStone ? (dark ? 2.4 : 1.2) * (this.stoneAwake ? 2 : 1) * L * (0.85 + 0.15 * Math.sin(t * 3.1)) : 0;
+    const flare = this.flares.nearest();
+    this.flareLight.intensity = flare ? FLARE_LIGHT * L * flare.k * (0.8 + 0.2 * Math.sin(t * 19)) : 0;
+    if (flare) this.flareLight.position.set(flare.x, flare.g + 0.6, flare.y);
     this.marker.visible = !!marker;
     if (marker) {
       this.marker.position.set(marker.x + 0.5, this.groundAt(marker.x + 0.5, marker.y + 0.5) + BLOB_Y + 0.006, marker.y + 0.5);
@@ -867,12 +975,12 @@ export class WorldView {
         s.light.distance = src.kind === 'fire' ? FIRE_REACH : LAMP_REACH;
       });
     }
-    const lamp = (this.weather === 'night' ? 1.8 : this.weather === 'rain' ? 0.9 : 0.5) * L;
+    const lamp = (this.weather === 'night' || this.weather === 'aurora' ? 1.8 : this.weather === 'rain' ? 0.9 : 0.5) * L;
     for (const s of this.slots) {
       const src = this.sources[s.source];
       if (!src) { s.light.intensity = 0; continue; }
       s.on = Math.min(1, s.on + dt / LIGHT_FADE_S);
-      if (src.kind === 'fire') { s.light.intensity = FIRE_LIGHT * L * flicker(t, src.ph) * s.on; continue; }
+      if (src.kind === 'fire') { s.light.intensity = FIRE_LIGHT * L * flicker(t, src.ph) * s.on * Math.min(1, this.fireLevel(src.tx, src.ty)); continue; }
       const off = src.flicker && (Math.sin(t * 13 + src.ph) > 0.92 || Math.sin(t * 2.3 + src.ph) > 0.97) ? 0.15 : 1;
       s.light.intensity = lamp * off * s.on;
     }
@@ -897,6 +1005,9 @@ export class WorldView {
       rig.legL.rotation.x = sw; rig.legR.rotation.x = -sw;
       rig.armL.rotation.x = -sw * 0.7; rig.armR.rotation.x = sw * 0.7;
       if (a.moving) this.rustleAt(x, z);
+      // Whatever clings to your back rides along.
+      if (a.hitched && !e.hitch) e.rig.root.add((e.hitch = hitchhikerModel()));
+      if (e.hitch) e.hitch.visible = !!a.hitched;
       if (a.id === meId && this.amb.flashlight) {
         const [dx, dy] = DIR_VEC[a.dir];
         this.flash.position.set(x + dx * 0.2, gy + 0.75, z + dy * 0.2);

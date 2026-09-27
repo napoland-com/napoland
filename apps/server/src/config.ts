@@ -36,7 +36,8 @@ export interface Config {
   migrationsDir: string | undefined;
   /** The built client; unset means this server only speaks WebSocket and /health. */
   clientDir: string | undefined;
-  weather: Weather;
+  /** A fixed weather, or cycle: it follows the day. */
+  weather: Weather | 'cycle';
   maxPlayers: number;
   tickMs: number;
   saveEveryMs: number;
@@ -113,7 +114,8 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   const migrationsDir = path('MIGRATIONS_DIR', 'apps/server/migrations', 'dir');
   if (databaseUrl !== undefined && migrationsDir === undefined) errors.push(`MIGRATIONS_DIR is not set and apps/server/migrations was not found in ${cwd} or its parents`);
   const clientDir = path('CLIENT_DIR', 'apps/client/dist', 'dir');
-  const weather = oneOf('WEATHER', Weather.options, 'rain');
+  // 'cycle': the weather follows the day, the same for everyone (sky.ts). A fixed one is for trying things out.
+  const weather = oneOf('WEATHER', [...Weather.options, 'cycle'] as const, 'cycle');
   const maxPlayers = int('MAX_PLAYERS', 500, 1, 100_000);
   const tickMs = int('TICK_MS', 50, 1, 1000);
   const saveEveryMs = int('SAVE_EVERY_MS', 15_000, 1000, 3_600_000);

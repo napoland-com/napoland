@@ -1,4 +1,7 @@
-import { PROTOCOL_VERSION, STEP_MS, type BagSlot, type DropView, type EnergyView, type FindView, type ItemsData, type MapData, type PlayerView, type ServerMsg } from '@napoland/shared';
+import {
+  PROTOCOL_VERSION, STEP_MS, type BagSlot, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type ItemsData,
+  type MapData, type MarkView, type PlayerView, type ServerMsg, type StoneView, type SurgeView,
+} from '@napoland/shared';
 import { Items } from '../src/items';
 
 /**
@@ -105,16 +108,27 @@ export const ITEMS = new Items(itemsData());
 /** A full bar that holds, as it does in town and inside (only a fire refills it). */
 export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 
-/** What else a welcome can carry: finds and piles on the map, your bag, the server's items version. */
-export interface Extras { finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; items?: number }
+/** What else a welcome can carry: finds and piles on the map, your bag, the server's items version, and the rest of the scene. */
+export interface Extras {
+  finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; items?: number;
+  fires?: FireView[]; marks?: MarkView[]; creatures?: CreatureView[]; flares?: FlareView[]; surge?: SurgeView | null; body?: BodyView; stone?: StoneView;
+}
+/** Dry, light and alone. */
+export const DRY: BodyView = { wet: 0, wetRate: 0, load: 0, hitched: false };
+export const ASLEEP: StoneView = { charge: 0, need: 20, awake: false, left: 0 };
 
 export function welcome(map: MapData, players: PlayerView[], energy: EnergyView = FULL, extras: Extras = {}): Extract<ServerMsg, { t: 'welcome' }> {
   return {
     t: 'welcome', v: PROTOCOL_VERSION, you: 'me', name: 'Aldo', token: 'x'.repeat(20), map: ref(map), players, stepMs: STEP_MS, weather: 'rain', energy, serverTime: 0,
     finds: extras.finds ?? [], drops: extras.drops ?? [], bag: extras.bag ?? [], items: extras.items ?? ITEMS.version,
+    fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], surge: extras.surge ?? null,
+    body: extras.body ?? DRY, stone: extras.stone ?? ASLEEP, stats: {},
   };
 }
 
-export function zone(map: MapData, x: number, y: number, players: PlayerView[], reason: 'exit' | 'collapse' = 'exit', extras: Pick<Extras, 'finds' | 'drops'> = {}): Extract<ServerMsg, { t: 'zone' }> {
-  return { t: 'zone', map: ref(map), x, y, dir: 'up', players, finds: extras.finds ?? [], drops: extras.drops ?? [], reason };
+export function zone(map: MapData, x: number, y: number, players: PlayerView[], reason: 'exit' | 'collapse' = 'exit', extras: Pick<Extras, 'finds' | 'drops' | 'fires' | 'marks' | 'creatures' | 'flares' | 'surge'> = {}): Extract<ServerMsg, { t: 'zone' }> {
+  return {
+    t: 'zone', map: ref(map), x, y, dir: 'up', players, finds: extras.finds ?? [], drops: extras.drops ?? [], reason,
+    fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], surge: extras.surge ?? null, stats: {},
+  };
 }

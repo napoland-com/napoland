@@ -37,8 +37,22 @@ export function plainName(id: string): string {
 
 /** What using an item did, for a float over your head: "+30 energy". */
 export function useText(item: ItemDef): string {
-  const e = item.use?.energy;
-  return e ? `${e > 0 ? '+' : ''}${e} energy` : `Used the ${item.name.toLowerCase()}`;
+  const u = item.use ?? {};
+  if (u.energy) return `${u.energy > 0 ? '+' : ''}${u.energy} energy`;
+  if (u.mark) return 'You marked the way';
+  if (u.flare) return 'The flare hisses red';
+  if (u.identify) return 'You turn it over in the light';
+  return `Used the ${item.name.toLowerCase()}`;
+}
+
+/** The word on the bag's button for using an item. */
+export function useLabel(item: ItemDef): string {
+  const u = item.use ?? {};
+  if (u.mark) return 'Mark the way';
+  if (u.flare) return 'Light it';
+  if (u.identify) return 'Look closely';
+  if (u.energy) return 'Drink';
+  return 'Use';
 }
 
 /** Why the server said no, in plain words, for a float over your head. */
@@ -49,6 +63,11 @@ export function refusalText(reason: Refusal): string {
     case 'gone': return 'Someone got there first';
     case 'not_usable': return 'That cannot be used';
     case 'empty_slot': return 'That slot is empty';
+    case 'not_here': return 'Not here';
+    case 'not_fuel': return 'That will not burn';
+    case 'fire_full': return 'The fire is as big as it gets';
+    case 'tended': return 'Someone keeps this fire going';
+    case 'marked': return 'There is a mark here already';
   }
 }
 
@@ -58,15 +77,28 @@ export interface SlotView {
   name: string;
   text: string;
   count: number;
-  /** A consumable: the bag offers Use. */
+  /** It can be used: the bag offers a button, with this word on it. */
   usable: boolean;
+  useLabel: string;
+  /** Small facts under the text: how heavy, what it does in a fire or in your bag. */
+  facts: string[];
 }
 
 export function slotViews(bag: readonly BagSlot[], items: Items): SlotView[] {
   return bag.map(s => {
     const def = items.get(s.item);
-    return { item: s.item, name: def.name, text: def.text, count: s.count, usable: def.kind === 'consumable' };
+    return { item: s.item, name: def.name, text: def.text, count: s.count, usable: !!def.use, useLabel: useLabel(def), facts: factsOf(def) };
   });
+}
+
+/** What is worth knowing about an item besides its text, in a few words each. */
+export function factsOf(def: ItemDef): string[] {
+  const out: string[] = [];
+  if (def.weight) out.push(def.weight >= 0.95 ? `${Math.round(def.weight * 10) / 10} kg` : `${Math.round(def.weight * 1000)} g`);
+  if (def.fuel) out.push(`Burns ${Math.round(def.fuel / 60)} min`);
+  if (def.charge) out.push('The Old Stone wants it');
+  if (def.kind === 'charm') out.push('Works while in your bag');
+  return out;
 }
 
 /** How many of an item a bag holds, over all its slots. */

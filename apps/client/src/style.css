@@ -42,7 +42,29 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .energy[data-level="low"], .energy[data-level="critical"] { color: #ff7a5c; }
 .energy[data-level="low"] .fill, .energy[data-level="critical"] .fill { background: linear-gradient(#ff8d70, #cf3326); }
 .energy[data-refill] .fill::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: max(6px, calc(var(--u) * .9)); border-radius: inherit; background: linear-gradient(90deg, rgba(255, 248, 222, 0), #fff8de); }
+/* How wet you are: a thin blue bar under the energy. */
+.wet { display: flex; align-items: center; gap: calc(var(--u) * .4); color: #8cc8ff; }
+.wet[hidden] { display: none; }
+.wet svg { width: calc(var(--u) * .9); height: calc(var(--u) * .9); flex: none; filter: drop-shadow(0 1px 0 #0c0f15); }
+.wet .bar { position: relative; flex: 1; height: max(4px, calc(var(--u) * .42)); border-radius: 99px; overflow: hidden; background: #1c222c; box-shadow: inset 0 0 0 1px #0c0f15, 0 0 0 1px #3e4658; }
+.wet .fill { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(#bfe2ff, #3f86d8); will-change: transform; }
+/* Something clings to your back: said in words, with its pale face. */
+.cling { display: flex; align-items: center; gap: .4em; max-width: calc(var(--u) * 16); padding: .2em .55em; border-radius: 7px; font-size: calc(var(--u) * .95); font-weight: 600; line-height: 1.2;
+  color: #e6dcff; background: rgba(40, 30, 64, .8); box-shadow: inset 0 0 0 1px #7e68b8; }
+.cling[hidden] { display: none; }
+.cling svg { width: calc(var(--u) * 1.15); height: calc(var(--u) * 1.15); flex: none; color: #d9c8ff; }
+/* The surge clock: a strip in the status panel, so it never covers anything else. */
+.surge-pill { margin-top: calc(var(--u) * .15); padding: .25em .6em; border-radius: 7px; max-width: calc(var(--u) * 16); font-size: calc(var(--u) * .95); font-weight: 600; line-height: 1.25;
+  color: #e3d4ff; background: rgba(60, 34, 100, .75); box-shadow: inset 0 0 0 1px #8a6cd0; font-variant-numeric: tabular-nums; }
+.surge-pill[hidden] { display: none; }
+.surge-pill[data-level="surge"] { color: #f1e6ff; background: rgba(76, 32, 128, .9); }
+.surge-pill[data-level="caught"] { color: #fff; background: rgba(118, 30, 150, .95); box-shadow: inset 0 0 0 1px #f0c6ff; }
+/* Caught in a surge, the edges of the screen glow violet. */
+.surge-glow { position: absolute; inset: 0; pointer-events: none; visibility: hidden; opacity: 0; transition: opacity .6s ease;
+  background: radial-gradient(ellipse at 50% 45%, rgba(120, 60, 220, 0) 38%, rgba(120, 60, 220, .35) 70%, rgba(170, 90, 255, .65) 100%); }
 @media (prefers-reduced-motion: no-preference) {
+  .surge-pill[data-level="caught"] { animation: energy-pulse 1.2s ease-in-out infinite; }
+  .cling svg { animation: energy-pulse 1.6s ease-in-out infinite; }
   .energy[data-level="critical"] .fill { animation: energy-pulse 1s ease-in-out infinite; }
   .energy[data-refill] .fill::after { animation: energy-glint 1.1s ease-in-out infinite; }
 }
@@ -127,6 +149,25 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .act.toss { color: #ffb4a0; }
 .hud .act.toss.sure { background: #9c2b3a; border-color: #f3a6b0; color: #fff4f4; }
 
+.detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
+.detail .words p.facts[hidden] { display: none; }
+/* The status panel: rows about you, then the feats. It sits where the bag does. */
+.status-body { display: grid; gap: calc(var(--u) * .55); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); }
+.status-body h3 { margin: calc(var(--u) * .5) 0 0; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.25); color: #ffcf5a; }
+.srow { display: grid; grid-template-columns: minmax(5.5em, auto) 1fr; gap: .15em .8em; align-items: baseline; }
+.srow .k { color: #b9b2a2; }
+.srow .v { color: #e6dfcf; }
+.srow[data-tone="bad"] .v { color: #ffae98; }
+.srow[data-tone="good"] .v { color: #b8f0a8; }
+.srow .sbar { grid-column: 2; }
+.sbar { position: relative; display: block; height: max(4px, calc(var(--u) * .4)); border-radius: 99px; overflow: hidden; background: #1c222c; box-shadow: inset 0 0 0 1px #0c0f15, 0 0 0 1px #3e4658; }
+.sbar i { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(#ffe0a0, #e0873a); }
+.feat { display: grid; grid-template-columns: minmax(0, 1fr); gap: .2em; padding: .5em .7em; border-radius: 9px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.feat b { font-family: var(--font-ui); font-weight: 600; color: #d3ccbb; }
+.feat span { color: #b9b2a2; font-size: .92em; }
+.feat[data-done] { box-shadow: inset 0 0 0 1px #8a7440; }
+.feat[data-done] b { color: #ffcf5a; }
+.feat[data-done] b::after { content: " ✓"; }
 /* About (about.ts): who makes the game, and where its code and rules are. It opens where the bag does.
    Its words never go below 11 to 12px, so a small phone can still read the small print. */
 .about-sheet .sheet-head { font-size: max(14px, calc(var(--u) * 1.35)); }

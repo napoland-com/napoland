@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { STEP_MS, type ClientMsg, type MapData, type PlayerView } from '@napoland/shared';
 import { Game } from '../src/game';
 import { Maps } from '../src/maps';
-import { ITEMS, cabin, houseTown, shed, tinyTown, tinyWoods, welcome, zone as zoneMsg } from './fixtures';
+import { DRY, ITEMS, cabin, houseTown, shed, tinyTown, tinyWoods, welcome, zone as zoneMsg } from './fixtures';
 
 const stonebrook = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/maps/stonebrook.json'), 'utf8')) as MapData;
 const maps = new Maps([stonebrook]);
@@ -320,7 +320,7 @@ describe('energy', () => {
     expect(g.energy(now)).toEqual({ value: 50, max: 100, rate: -2 });
     expect(g.energy(now + 1000)!.value).toBeCloseTo(48);
     expect(g.energy(now + 30_000)!.value).toBe(0);
-    g.handle({ t: 'energy', energy: { value: 20, max: 120, rate: 8 } }, now + 5000);
+    g.handle({ t: 'energy', energy: { value: 20, max: 120, rate: 8 }, body: DRY }, now + 5000);
     expect(g.energy(now + 6000)).toEqual({ value: 28, max: 120, rate: 8 });
     expect(g.energy(now + 60_000)!.value).toBe(120);
   });
