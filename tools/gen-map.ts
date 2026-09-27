@@ -68,7 +68,7 @@ place({
   lines: [
     'Heading out? The woods pay better the farther you go.',
     'Watch your energy. If it runs out, you wake up at home and your backpack stays where you fell.',
-    'Only a fire brings your energy back. The shelters out there have one, but it burns down. Carry resin to feed it.',
+    'Only a fire brings your energy back. Somebody keeps the old cabin\'s going; the other shelters\' fires burn down. Carry resin to feed them.',
     'The street lights won\'t warm you. But when a surge comes through the woods, stand in one.',
     'Found something strange out there? Bring it back to town and look at it in the light.',
     'The notice board by me says how things stand out there. Read it before you go.',
@@ -78,7 +78,7 @@ const STONE = { x: 15, y: 8 };
 place({ kind: 'stone', x: STONE.x, y: STONE.y });
 const signs = [
   { x: 13, y: 37, text: ['Stonebrook. Pop. 23', 'Most people left after the lights started showing up in the woods.'] },
-  { x: 28, y: 16, text: ['North: the Near Woods', 'Out there your energy drains, faster the deeper you go.', 'Only a fire brings it back. Feed the shelters\' fires, they burn down.'] },
+  { x: 28, y: 16, text: ['North: the Near Woods', 'Out there your energy drains, faster the deeper you go.', 'Only a fire brings it back. The old cabin\'s never goes out; feed the others.'] },
   { x: 17, y: 10, text: ['The Old Stone', 'It hums at night, and shards break off it.', 'Bring the shards back to it. When it has enough, it wakes, and the surges out there grow gentler.'] },
 ];
 for (const s of signs) place({ kind: 'sign', ...s });
@@ -159,7 +159,7 @@ function round(v: number) { return Math.round(v * 1000) / 1000; }
 }
 
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 4, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 5, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },

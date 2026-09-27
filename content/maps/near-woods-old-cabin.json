@@ -1,7 +1,7 @@
 {
   "id": "near-woods-old-cabin",
   "name": "The old cabin",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -27,7 +27,7 @@
     {"x":4,"y":5,"w":1,"h":1,"to":"near-woods","tx":47,"ty":39,"dir":"down"}
   ],
   "objects": [
-    {"kind":"fireplace","x":4,"y":1},
+    {"kind":"fireplace","x":4,"y":1,"tended":true},
     {"kind":"bed","x":1,"y":1},
     {"kind":"shelf","x":6,"y":1},
     {"kind":"crate","x":7,"y":1},

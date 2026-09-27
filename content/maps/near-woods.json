@@ -1,7 +1,7 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 3,
+  "version": 4,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
@@ -205,7 +205,7 @@
     {"kind":"fence","x":49,"y":43,"dir":"h"},
     {"kind":"fence","x":51,"y":43,"dir":"h"},
     {"kind":"fence","x":52,"y":43,"dir":"h"},
-    {"kind":"sign","x":30,"y":74,"text":["The Near Woods","The deeper you go, the faster you tire. The lights only help you see.","The shelters have a fire. It burns down: bring something to feed it."]},
+    {"kind":"sign","x":30,"y":74,"text":["The Near Woods","The deeper you go, the faster you tire. The lights only help you see.","The old cabin's fire never goes out. The others burn down: bring something to feed them."]},
     {"kind":"sign","x":28,"y":40,"text":["West: the pond. East: the old cabin.","North of here the lights stop. Mostly."]},
     {"kind":"sign","x":27,"y":9,"text":["No wires run to this light.","It was on when we found it. It gives no warmth.","The hut behind it has a fire. Rest there, and feed it before you go on."]},
     {"kind":"rock","x":38,"y":20,"s":1.195,"v":0.367},

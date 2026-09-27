@@ -7,7 +7,7 @@ area: gameplay
 depends: [buildings-fireplaces-shelters, finds-bag-piles]
 ---
 
-The world wears you down in more ways, inspired by The Long Dark and Pacific Drive. Fires in the wilds burn down and anyone can feed them (town fires are tended and never go out). A heavy bag drains you faster, rain soaks you and a fire dries you, and hitchhikers cling to you in the dark until you reach light. The Near Woods runs a surge clock: restless for a while, with rare finds deep in, then a front that sweeps toward the way home. Its deeper half has watchers, which move only while nobody faces them.
+The world wears you down in more ways, inspired by The Long Dark and Pacific Drive. Fires in the wilds burn down and anyone can feed them; town fires never go out, and neither does the old cabin's, the shelter nearest to town, so a new player always has one safe fire. A heavy bag drains you faster, rain soaks you and a fire dries you, and hitchhikers cling to you in the dark until you reach light. The Near Woods runs a surge clock: restless for a while, with rare finds deep in, then a front that sweeps toward the way home. Its deeper half has watchers, which move only while nobody faces them.
 
 Players help each other even when they are not online together: arrows painted with a glowcap, echoes that walk the last steps of someone who collapsed back to their pile, a notice board next to Mira, and the Old Stone, which shards from the whole server wake. Also road flares, strange objects and charms, feats in a new Status panel, and a day with aurora nights.
 

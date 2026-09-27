@@ -153,6 +153,23 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
     });
   }
 
+  // The owner's rule for the region right outside the home town: its shelter nearest to the way home
+  // keeps a fire that never goes out, so a new player always has one safe fire. Deeper shelters, and
+  // regions farther out, may let theirs burn down.
+  for (const map of byId.values()) {
+    if (map.data.kind !== 'wilds' || !map.data.exits.some(e => e.to === homeId)) continue;
+    let nearest: { id: string; steps: number } | undefined;
+    for (const e of map.data.exits) {
+      const inside = byId.get(e.to);
+      if (inside?.data.kind !== 'inside' || !inside.data.objects.some(o => o.kind === 'fireplace')) continue;
+      const steps = map.homeSteps(e.x, e.y);
+      if (steps >= 0 && (!nearest || steps < nearest.steps)) nearest = { id: e.to, steps };
+    }
+    if (nearest && !byId.get(nearest.id)!.data.objects.some(o => o.kind === 'fireplace' && o.tended === true)) {
+      out.push({ level: 'error', map: nearest.id, message: `the shelter nearest to the way home from ${map.data.id} must keep a fire that never goes out (a fireplace with tended: true), so new players always have one safe fire` });
+    }
+  }
+
   const reached = new Set([homeId]);
   const queue = [homeId];
   for (let h = 0; h < queue.length; h++) {
