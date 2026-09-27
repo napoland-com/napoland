@@ -7,7 +7,7 @@ area: world
 depends: [near-woods-energy]
 ---
 
-Every building can be entered, like in FireRed: walk into the door and you are in a small room of its own. Energy comes back only next to a fireplace, and fireplaces always burn: in the shelters out in the woods (the old cabin, the ranger's hut, the cabin at the end) and in some houses, your home among them. In town and inside buildings energy holds. Street lights are for seeing, not for energy. Rooms without a fire are cold and dark.
+Every building can be entered, like in FireRed: walk into the door and you are in a small room of its own. Energy comes back only next to a burning fireplace: in the shelters out in the woods (the old cabin, the ranger's hut, the cabin at the end) and in some houses, your home among them. The fires in town, the old cabin's and the NAPO Bunker's are kept going; the others burn down unless someone feeds them ([survival-dynamics](survival-dynamics.md)). In town and inside buildings energy holds. Street lights are for seeing, not for energy. Rooms without a fire are cold and dark.
 
 Why: fireplaces turn a trip into a route between warm places, and rooms make the world feel lived in.
 

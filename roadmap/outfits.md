@@ -4,7 +4,7 @@ title: "Outfits: how your character looks"
 status: next
 order: 60
 area: social
-depends: [play-first, home-stash-xp-levels]
+depends: [play-first, home-stash-xp-levels, gear-details]
 ---
 
 An outfit changes how your character looks, whatever gear it wears: a look only, with no stats. Everyone starts in the same first outfit, given with the first sign-in: a **NAPO work suit**, the grey coverall with the yellow NAPO patch that the station's stores held by the hundred. More come with levels:

@@ -7,7 +7,7 @@ area: gameplay
 depends: [gear-details]
 ---
 
-Out on the road, the bag shows what you wear, piece by piece, with how worn each one is, so you can check your gear anywhere, not only at the chest. Gear can now travel in the bag: a piece you carry takes a slot and weighs what it weighs, and you can put it on right where you stand, with what it replaces going into the bag if there is room. Gear that comes your way out there (a piece a strange object turns out to be, a friend's trade, a rare find deep in) can be worn at once.
+Out on the road, the bag shows what you wear, piece by piece, with how worn each one is, so you can check your gear anywhere, not only at the chest. Gear can now travel in the bag: a piece you carry takes a slot and weighs what it weighs, and you can put it on right where you stand, with what it replaces going into the bag if there is room. Gear that comes your way away from home (the piece a strange object turns out to be when you look at it in town, a friend's trade) can be worn at once.
 
 Each carried piece keeps its own condition, quirk and upgrade, as it does in the chest. If you collapse, what you wear stays on you, as today, and a piece in the bag falls into your pile like anything else you carry. The bag you wear is the one thing that only changes at home.
 

@@ -4,7 +4,7 @@ title: A parcel a day, and a lockbox for the whole week
 status: next
 order: 50
 area: gameplay
-depends: [play-first, home-stash-xp-levels]
+depends: [play-first, home-stash-xp-levels, ask-first]
 ---
 
 The residents look after whoever comes back. The first time you sign in, a welcome parcel waits in your chest at home: resin, cloth, a thermos and road flares, enough to feel the difference on a first trip. After that, the first time you play each day (calendar days, UTC), signed in, the day's parcel goes into your chest, never into the bag. The parcels follow a calendar of seven days, Monday to Sunday, the same for everyone and pinned on the notice board. Play on all seven days of a week and Sunday's parcel also holds a **NAPO lockbox**, sealed since the evacuation, which you open at your chest: shards, a strange object, a charm, or a good stack of cloth and wire.

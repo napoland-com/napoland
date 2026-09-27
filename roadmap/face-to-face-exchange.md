@@ -4,7 +4,7 @@ title: Face-to-face exchange
 status: planned
 order: 50
 area: social
-depends: [friends-messages]
+depends: [friends-messages, gear-on-the-road]
 ---
 
 Two friends on the same map, at most 10 tiles apart, open a trade. Each puts in items or gear from the bag (a piece keeps its condition, quirk and upgrade: [gear-on-the-road](gear-on-the-road.md)), both confirm the final offer, and the server swaps everything in one step, so nothing can go missing halfway. Walking farther apart cancels it. A setting in the menu turns trade requests off.
