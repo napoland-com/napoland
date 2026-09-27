@@ -1,0 +1,12 @@
+{
+  "why": "Chat masks these words with asterisks (packages/shared/src/chat.ts, maskWords). Whole words only, any case, with digits for letters read back (sh1t) and a letter said three or more times said once (fuuuck). Add the forms you want caught: the filter does not guess endings.",
+  "words": [
+    "fuck", "fucks", "fucking", "fucked", "fucker", "fuckers", "motherfucker", "motherfuckers",
+    "shit", "shits", "shitty", "bullshit",
+    "cunt", "cunts", "twat", "wanker", "wankers",
+    "bitch", "bitches", "bastard", "bastards", "asshole", "assholes", "dickhead", "cocksucker",
+    "whore", "whores", "slut", "sluts",
+    "fag", "fags", "faggot", "faggots", "nigger", "niggers", "nigga", "niggas", "retard", "retards", "kike", "kikes", "spic", "spics", "chink", "chinks",
+    "cazzo", "stronzo", "stronza", "puttana", "vaffanculo", "coglione", "frocio"
+  ]
+}
