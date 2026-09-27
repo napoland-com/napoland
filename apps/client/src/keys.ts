@@ -1,7 +1,8 @@
 /**
  * The keyboard, on a computer: WASD and the arrow keys are the joystick, Enter is A and Backspace is
- * B. Keys are read by where they sit (`KeyboardEvent.code`), so WASD is the same four keys on any
- * layout (ZQSD on a French one). Nothing ever needs the keyboard: the game stays mobile-first.
+ * B, and M opens the map of where you are. Keys are read by where they sit (`KeyboardEvent.code`),
+ * so WASD is the same four keys on any layout (ZQSD on a French one). Nothing ever needs the
+ * keyboard: the game stays mobile-first.
  *
  * The keys feed the same handlers as the stick and the buttons, so a direction keeps the stick's rules
  * (a quick tap on a new direction turns in place, holding walks). With several direction keys held,
@@ -18,11 +19,14 @@ const DIRS: Readonly<Record<string, Dir>> = {
 };
 const A_KEYS = new Set(['Enter', 'NumpadEnter']);
 const B_KEYS = new Set(['Backspace']);
+const MAP_KEYS = new Set(['KeyM']);
 
 export interface KeyHandlers {
   pad(dir: Dir | null): void;
   a(): void;
   b(): void;
+  /** M: the paper map of the area you are in. */
+  openMap(): void;
 }
 
 /** Where a key went: a field to type in (the game keeps out), a button or a link (it answers Enter itself), or the page. */
@@ -56,6 +60,10 @@ export class Keys {
     }
     if (B_KEYS.has(code)) {
       if (!repeat) this.h.b();
+      return true;
+    }
+    if (MAP_KEYS.has(code)) {
+      if (!repeat) this.h.openMap();
       return true;
     }
     return false;

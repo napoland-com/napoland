@@ -196,6 +196,12 @@ const map: MapData = {
     ...doors,
   ],
   objects,
+  // What the town calls these spots, for its paper map (Home, the lodge and the roads out are named by their doors and exits).
+  places: [
+    { name: 'the Old Stone', x: STONE.x, y: STONE.y },
+    { name: 'the notice board', x: 12, y: 23 },
+    { name: 'the pond', x: Math.floor(POND.x), y: Math.floor(POND.y) },
+  ],
 };
 
 // One row or object per line, so map changes show up as small, readable diffs.
@@ -208,7 +214,8 @@ const json = [
   '  "levels": [', map.levels.map(r => `    ${JSON.stringify(r)}`).join(',\n'), '  ],',
   `  "spawn": ${JSON.stringify(map.spawn)},`,
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
-  '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ]',
+  '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
+  '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ]',
   '}',
   '',
 ].join('\n');

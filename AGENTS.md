@@ -41,7 +41,7 @@ napoland is a mobile-first online exploration game in the browser: leave home, g
 
 ## Play-testing
 
-- Run `npm run dev` and open http://localhost:5173 at phone size (for example 390x844) and in landscape. Walk with the joystick, by tapping and with the keyboard (WASD or arrows, Enter for A, Backspace for B), talk to Mira, read signs, pick things up. A second tab is a second player.
+- Run `npm run dev` and open http://localhost:5173 at phone size (for example 390x844) and in landscape. Walk with the joystick, by tapping and with the keyboard (WASD or arrows, Enter for A, Backspace for B, M for the map), talk to Mira, read signs, pick things up. A second tab is a second player.
 - Automation tools may send key events without a `code` (the game reads `code`): to hold a key, dispatch one from the page, for example `dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyD' }))`, then the matching `keyup`.
 - Dev builds expose the game as `window.napoland`: `game`, `maps`, `items`, `hud`, `view`, `signin`, and `receive(msg)` to play a server message by hand.
 - Headless browsers and hidden tabs often do not run `requestAnimationFrame`, so the game stands still. Pump it from the page: `const pump = setInterval(() => napoland.game.update(0.05, performance.now()), 50)`, and `clearInterval(pump)` when done (seconds, then milliseconds). The picture only redraws when a real frame runs.

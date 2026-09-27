@@ -1,12 +1,13 @@
 /**
- * The old paper map of a region: a hand drawing made from the map's data, simplified and a little
+ * The old paper map of an area: a hand drawing made from the map's data, simplified and a little
  * off on purpose, so it reads as drawn by someone who walked it. It never shows where you are, which
  * way you face or anything that moves: finding yourself on it is the game (DESIGN.md, Movement).
+ * The one map button opens the map of the area you are in (mapFor), if you carry it.
  *
  * sketchOf turns a map into what to draw (plain data, so it can be tested); paperMap draws it on a
  * canvas once per map version and keeps it.
  */
-import type { TileMap } from '@napoland/shared';
+import type { MapData, TileMap } from '@napoland/shared';
 
 /** Tiles, center to center, apart from which two poles are not on one line (as in the 3D world). */
 const MAX_WIRE = 10;
@@ -45,6 +46,19 @@ export interface Sketch {
   cars: Pt[];
   signs: Pt[];
   labels: Array<{ x: number; y: number; text: string }>;
+}
+
+/** The area a map belongs to: the map itself, or for a room the place its door opens onto. */
+export function areaOf(id: string, find: (id: string) => MapData | undefined): string {
+  const here = find(id);
+  if (here?.kind !== 'inside') return id;
+  return here.exits.map(e => e.to).find(to => find(to)?.kind !== 'inside') ?? id;
+}
+
+/** Which of your tools is the map of the area you are in: the one that charts it, if you carry it (some areas have none). */
+export function mapFor(here: string, tools: readonly string[], chartOf: (item: string) => string | undefined, find: (id: string) => MapData | undefined): string | undefined {
+  const area = areaOf(here, find);
+  return tools.find(t => chartOf(t) === area);
 }
 
 /** A number from 0 to 1 that is always the same for a tile (and a salt). */

@@ -905,6 +905,11 @@ export class Game {
     this.floats.push({ id: ++this.fid, text, color, x, y, t: 0, row });
   }
 
+  /** Says something short over your head, in the grey of "Nothing here". */
+  murmur(text: string) {
+    this.floatOverMe(text, GREY);
+  }
+
   private floatOverMe(text: string, color: string, row = 0) {
     const me = this.me;
     if (me) this.float(text, color, me.tx, me.ty, row);
