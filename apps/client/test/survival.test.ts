@@ -114,7 +114,7 @@ describe('what the server says about the world out there', () => {
     }), now);
     expect(g.bodyNow(now + 20_000).wet).toBeCloseTo(0.2, 5);
     expect([...g.marks.keys()]).toEqual([1]);
-    expect(g.creatureViews()).toEqual([{ id: '4', x: 0, y: 0, dir: 'down', moving: false }]);
+    expect(g.creatureViews()).toEqual([{ id: '4', kind: 'watcher', x: 0, y: 0, dir: 'down', moving: false, chasing: undefined }]);
     expect(g.flaresNow(now + 5000)).toEqual([{ x: 1, y: 1, left: 5 }]);
     expect(g.flaresNow(now + 11_000)).toEqual([]);
     // A zone brings the new map's.
@@ -132,9 +132,19 @@ describe('what the server says about the world out there', () => {
     expect(mid.y).toBeGreaterThan(0);
     expect(mid.y).toBeLessThan(1);
     g.handle({ t: 'creature', creature: { id: 4, kind: 'watcher', x: 5, y: 5, dir: 'up' } }, now + 200);
-    expect(g.creatureViews()[0]).toEqual({ id: '4', x: 5, y: 5, dir: 'up', moving: false });
+    expect(g.creatureViews()[0]).toEqual({ id: '4', kind: 'watcher', x: 5, y: 5, dir: 'up', moving: false, chasing: undefined });
     g.handle({ t: 'creatureGone', id: 4 }, now);
     expect(g.creatureViews()).toEqual([]);
+  });
+
+  it('says so the first moment a skulker goes after you, and when it catches you', () => {
+    g.handle(welcome(camp(), [me(3, 3)], FULL, { creatures: [{ id: 5, kind: 'skulker', x: 0, y: 3, dir: 'down' }] }), now);
+    g.handle({ t: 'creature', creature: { id: 5, kind: 'skulker', x: 1, y: 3, dir: 'right', chasing: 'me' } }, now);
+    expect(g.creatureViews()[0]).toMatchObject({ kind: 'skulker', moving: true, chasing: 'me' });
+    g.handle({ t: 'creature', creature: { id: 5, kind: 'skulker', x: 2, y: 3, dir: 'right', chasing: 'me' } }, now + 250);
+    expect(g.floats.map(f => f.text)).toEqual(['Something is after you. Run']);
+    g.handle({ t: 'touched', by: 'skulker', lost: null }, now + 300);
+    expect(g.floats.map(f => f.text)).toEqual(['Something is after you. Run', 'It caught you', 'It slipped back into the ferns']);
   });
 
   it('counts the storm on, and knows when a flash discharges under you', () => {

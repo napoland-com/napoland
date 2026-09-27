@@ -86,8 +86,11 @@ const NO = '#ffae98';
 const GREY = '#c9c2b0';
 const FIRE = '#ffb36b';
 const EERIE = '#c7a6ff';
-/** How long a watcher takes to walk a tile, as drawn (the server moves them a little slower than this). */
-const CREATURE_STEP_MS = 420;
+/** How long a creature takes to walk a tile, as drawn: each a little quicker than the server moves it, so it never lags. */
+const CREATURE_STEP_MS: Record<CreatureView['kind'], number> = { watcher: 420, skulker: 230 };
+
+/** A creature as the game animates it: like a player, and what kind it is and whom it chases. */
+type Creature = Mover & { kind: CreatureView['kind']; chasing: string | undefined };
 
 function talkersOf(map: TileMap): Talker[] {
   return map.data.objects.flatMap((o: MapObject): Talker[] => {
@@ -141,8 +144,8 @@ export class Game {
   /** Marks painted on this map, by id; `markChanges` counts changes, like lootChanges. */
   marks = new Map<number, MarkView>();
   markChanges = 0;
-  /** Creatures on this map (watchers), animated like players. */
-  creatures = new Map<number, Mover>();
+  /** Creatures on this map (watchers, skulkers), animated like players. */
+  creatures = new Map<number, Creature>();
   /** Flares burning on this map, until when (our clock). */
   flares: Array<{ x: number; y: number; until: number }> = [];
   /** This map's surge clock as told, and when (null: it never surges). */
@@ -353,22 +356,30 @@ export class Game {
         break;
       case 'creature': {
         const c = this.creatures.get(msg.creature.id);
+        // The first moment one goes after you. The sound of it is soundscape.ts's.
+        if (msg.creature.chasing === this.meId && c?.chasing !== this.meId) this.floatOverMe('Something is after you. Run', EERIE, 1);
         if (!c) this.creatures.set(msg.creature.id, this.creatureMover(msg.creature));
         // One that jumped (it woke somewhere else) is put there at once; a step is walked.
         else if (Math.abs(c.tx - msg.creature.x) + Math.abs(c.ty - msg.creature.y) > 1) this.snapMover(c, msg.creature);
-        else {
-          c.anim = { fx: c.x, fy: c.y, t0: now, dur: CREATURE_STEP_MS };
+        else if (c.tx !== msg.creature.x || c.ty !== msg.creature.y) {
+          c.anim = { fx: c.x, fy: c.y, t0: now, dur: CREATURE_STEP_MS[c.kind] };
           c.tx = msg.creature.x; c.ty = msg.creature.y; c.dir = msg.creature.dir;
         }
+        if (c) c.chasing = msg.creature.chasing;
         break;
       }
       case 'creatureGone':
         this.creatures.delete(msg.id);
         break;
       case 'touched': {
-        const lost = msg.lost && this.items.get(msg.lost).name;
-        this.floatOverMe(lost ? `It took your ${lost.toLowerCase()}` : 'It touched you', EERIE, 1);
-        this.floatOverMe('The cold goes right through you', NO);
+        const lost = msg.lost && this.items.get(msg.lost).name.toLowerCase();
+        if (msg.by === 'skulker') {
+          this.floatOverMe(lost ? `It caught you. You dropped your ${lost}` : 'It caught you', EERIE, 1);
+          this.floatOverMe('It slipped back into the ferns', NO);
+        } else {
+          this.floatOverMe(lost ? `It took your ${lost}` : 'It touched you', EERIE, 1);
+          this.floatOverMe('The cold goes right through you', NO);
+        }
         break;
       }
       case 'hitch':
@@ -567,8 +578,8 @@ export class Game {
     return { id: p.id, name: p.name, color: p.color, tx: p.x, ty: p.y, x: p.x, y: p.y, dir: p.dir, anim: null, phase: 0, turnT: 0 };
   }
 
-  private creatureMover(c: CreatureView): Mover {
-    return { id: String(c.id), name: '', color: '', tx: c.x, ty: c.y, x: c.x, y: c.y, dir: c.dir, anim: null, phase: 0, turnT: 0 };
+  private creatureMover(c: CreatureView): Creature {
+    return { id: String(c.id), name: '', color: '', tx: c.x, ty: c.y, x: c.x, y: c.y, dir: c.dir, anim: null, phase: 0, turnT: 0, kind: c.kind, chasing: c.chasing };
   }
 
   private snapMover(m: Mover, c: CreatureView) {
@@ -1007,8 +1018,8 @@ export class Game {
     }));
   }
 
-  /** The creatures on this map, where they are drawn now. */
-  creatureViews(): Array<{ id: string; x: number; y: number; dir: Dir; moving: boolean }> {
-    return [...this.creatures.values()].map(c => ({ id: c.id, x: c.x, y: c.y, dir: c.dir, moving: !!c.anim }));
+  /** The creatures on this map, where they are drawn now, and whom they chase. */
+  creatureViews(): Array<{ id: string; kind: CreatureView['kind']; x: number; y: number; dir: Dir; moving: boolean; chasing: string | undefined }> {
+    return [...this.creatures.values()].map(c => ({ id: c.id, kind: c.kind, x: c.x, y: c.y, dir: c.dir, moving: !!c.anim, chasing: c.chasing }));
   }
 }

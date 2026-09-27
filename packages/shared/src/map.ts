@@ -113,12 +113,24 @@ export interface MapData {
   flashes?: FlashRule;
   /** The wilds only: watchers, creatures that come closer while nobody looks at them. */
   watchers?: WatcherRule;
+  /** The wilds only: skulkers, creatures that lie in the ferns and chase whoever they hear or see. */
+  skulkers?: SkulkerRule;
 }
 
 /** How many watchers roam a region at once, and how far from home (in steps) they wake up. */
 export interface WatcherRule {
   count: number;
   steps: [number, number];
+}
+
+/**
+ * How many skulkers lie in a region's ferns, how far from home (in steps) they wake and may go, and
+ * when they are out: 'night' (night and aurora nights) and 'storm' (while a storm blows over the region).
+ */
+export interface SkulkerRule {
+  count: number;
+  steps: [number, number];
+  when: Array<'night' | 'storm'>;
 }
 
 /** Where an exit tile leads: the map, the tile you arrive on and your facing. */

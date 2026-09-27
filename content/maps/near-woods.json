@@ -1,7 +1,7 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 5,
+  "version": 6,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
@@ -277,5 +277,6 @@
   "surge": {"every":2400,"unstable":360,"surge":150,"sweep":90},
   "storm": {"every":2400,"warn":60,"length":180,"offset":1200},
   "flashes": {"every":75,"steps":[30,999]},
-  "watchers": {"count":3,"steps":[55,999]}
+  "watchers": {"count":3,"steps":[55,999]},
+  "skulkers": {"count":3,"steps":[50,999],"when":["night","storm"]}
 }
