@@ -155,7 +155,28 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .act.toss { color: #ffb4a0; }
 .hud .act.toss.sure { background: #9c2b3a; border-color: #f3a6b0; color: #fff4f4; }
 
+/* What you wear, in the stash sheet: six slots, each with its name under the piece. */
+.sheet .grid.wear { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.hud .slot .lbl { position: absolute; left: 0; right: 0; bottom: 4%; text-align: center; font-size: calc(var(--u) * .78); font-weight: 600; color: #b9b2a2; text-transform: capitalize; }
+.hud .slot[data-wear][data-empty="true"] { background: #131820; box-shadow: inset 0 0 0 2px #232a36; }
+.hud .grid.wear .slot svg { width: 64%; height: 64%; margin-bottom: 18%; }
+/* The workbench: a recipe per row, what it makes, what it needs, and Make. */
+.bench-sheet .hint, .bench-sheet .recipes { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.recipes { display: grid; gap: calc(var(--u) * .6); }
+.recipe { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: calc(var(--u) * .7); padding: .5em .6em; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.recipe .big { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); display: grid; place-items: center; border-radius: 8px; background: #1c222c; }
+.recipe .big svg { width: 80%; height: 80%; }
+.recipe .words { display: grid; gap: .15em; min-width: 0; font-family: "Nunito", system-ui, sans-serif; font-weight: 700; }
+.recipe .words b { font-family: "Fredoka", system-ui, sans-serif; font-weight: 600; color: #ffcf5a; font-size: calc(var(--u) * 1.15); }
+.recipe .rfacts { color: #b9b2a2; font-size: calc(var(--u) * .95); }
+.recipe .needs { display: flex; flex-wrap: wrap; gap: .3em .6em; }
+.recipe .need { display: inline-flex; align-items: center; gap: .15em; font-size: calc(var(--u) * .95); color: #cfe9c3; }
+.recipe .need[data-short] { color: #ffae98; }
+.recipe .need svg { width: calc(var(--u) * 1.5); height: calc(var(--u) * 1.5); }
+.recipe .need i { font-style: normal; font-variant-numeric: tabular-nums; }
+.recipe[data-short] .words b { color: #d3ccbb; }
 /* The stash (the chest at home): your bag above, to put things away; the stash below, to take them out. */
+.hud .slot[hidden] { display: none; }
 .stash-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint, .stash-sheet .acts { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint[hidden] { display: none; }

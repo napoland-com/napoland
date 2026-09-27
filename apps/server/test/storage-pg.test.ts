@@ -55,7 +55,7 @@ describe.skipIf(!url)('PgStorage', () => {
   });
 
   it('applies each migration once', async () => {
-    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql'];
+    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql'];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
     await storage.init();
@@ -185,6 +185,15 @@ describe.skipIf(!url)('PgStorage', () => {
       await first.close();
       await second.close();
     }
+  });
+
+  it('keeps what a player wears, and none for one who never chose', async () => {
+    const plain = player('Pg Plain');
+    expect(await storage.create(plain)).toBe(true);
+    expect((await storage.findByTokenHash(plain.tokenHash!))!.gear).toBeUndefined();
+    const dressed = { ...plain, gear: { shirt: 'raincoat', bag: 'hiking-pack' } };
+    await storage.save(dressed);
+    expect(await storage.findByTokenHash(plain.tokenHash!)).toEqual(dressed);
   });
 
   it('keeps XP and the stash, with what was taken out of it', async () => {

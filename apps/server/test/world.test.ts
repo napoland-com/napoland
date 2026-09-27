@@ -53,7 +53,7 @@ const edge = energyRate(woods, 3, 6, 'overcast');
 const inTown = (id: string, x: number, y: number, dir: Dir = 'down', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'town', ...more });
 const inWoods = (id: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'woods', ...more });
 const inHouse = (id: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'house', ...more });
-const viewOf = (id: string, x: number, y: number, dir: Dir) => ({ id, name: id.toUpperCase(), x, y, dir, color: colorFor(id) });
+const viewOf = (id: string, x: number, y: number, dir: Dir) => ({ id, name: id.toUpperCase(), x, y, dir, color: colorFor(id), gear: {} });
 /** What a zone lists besides players, finds and piles, in the fixture world: fires burn down at random levels, and nothing else is there. */
 const SCENE = { fires: expect.any(Array), marks: [], creatures: [], flares: [], surge: null, stats: expect.any(Object) };
 /** The energy a player is told: value to 1 decimal, rate to 3. */
@@ -238,7 +238,7 @@ describe('World: turning, joining and leaving', () => {
     const w = new World([testMap()], 'test', 'rain');
     const joined = w.join(rec('a', 3, 3), 0);
     expect(joined).toEqual({
-      player: { id: 'a', name: 'A', x: 3, y: 3, dir: 'down', color: colorFor('a') },
+      player: { id: 'a', name: 'A', x: 3, y: 3, dir: 'down', color: colorFor('a'), gear: {} },
       map: { id: 'test', version: 1 },
       players: [joined.player],
       // A town without a fireplace: energy holds.

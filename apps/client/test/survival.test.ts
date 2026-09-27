@@ -36,7 +36,7 @@ const items = new Items({
   ],
 });
 const maps = new Maps([tinyTown(), camp()]);
-const me = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir, color: '#f29e4c' });
+const me = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir, color: '#f29e4c', gear: {} });
 
 let sent: ClientMsg[];
 let g: Game;
@@ -199,12 +199,14 @@ describe('what the interface says', () => {
       energy: { value: 40, max: 100, rate: -0.5 }, body: { wet: 0.5, wetRate: 0.01, load: 0.8, hitched: true },
       surge: { phase: 'surge', left: 30, into: 0 }, caught: true, stone: { charge: 3, need: 20, awake: false, left: 0 },
       stats: { rainSteps: 1500, fed: 5 }, bag: [{ item: 'pebble', count: 1 }], items, progress: { xp: 40, level: 2, from: 30, to: 120, maxEnergy: 105 },
+      resists: 'Cold 25%',
     });
     expect(v.rows[0]).toEqual({ label: 'Level', text: 'Level 2 · 40 XP, 80 to go', bar: 10 / 90, tone: 'good' });
     expect(v.rows.slice(1).map(r => [r.label, r.text])).toEqual([
       ['Energy', '40 of 100, draining'],
       ['Wet', '50%, getting wetter'],
       ['Load', '80% of what you carry easily'],
+      ['Resists', 'Cold 25%'],
       ['On you', 'Something clings to your back. Find a light, a fire or a roof.'],
       ['Charms', 'Warm pebble'],
       ['Surge', 'It has you. Get to a light!'],

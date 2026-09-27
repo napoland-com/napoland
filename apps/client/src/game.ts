@@ -16,9 +16,9 @@
 import {
   STEP_MS, dirOf, dirToward, energyAfter, findPath, inSurge, stepTarget, surgeFront, DIR_VEC,
   type BagSlot, type BodyView, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
-  type MarkView, type PlayerView, type ProgressView, type ServerMsg, type Stats, type StoneView, type SurgeView, type TileMap,
+  type Gear, type MarkView, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type SurgeView, type TileMap,
 } from '@napoland/shared';
-import { countOf, refusalText, useText, type Items } from './items';
+import { countOf, lookOf, refusalText, useText, type Items } from './items';
 import type { Maps } from './maps';
 import type { Avatar } from './view/world';
 
@@ -42,7 +42,7 @@ interface Mover {
  * Something you face and press A at: a person or a sign (talk), the notice board (the server writes
  * it), a fire or the Old Stone (you feed them).
  */
-export type Talker = { x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' };
+export type Talker = { x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' };
 
 /** Something lying on a tile to pick up: a pile someone left when they collapsed, or a find. */
 export type Thing = { kind: 'drop'; drop: DropView } | { kind: 'find'; find: FindView };
@@ -95,6 +95,7 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
+    if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
     return [];
   });
 }
@@ -146,6 +147,10 @@ export class Game {
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
+  /** The workbench you opened and what your stash holds, while it is open. */
+  bench: { x: number; y: number; stash: BagSlot[] } | null = null;
+  /** What everyone on this map wears, by player id (you too). */
+  gear = new Map<string, Gear>();
   /** Feats just earned, for the interface to announce (it empties the list). */
   news: Array<{ kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView }> = [];
   private fid = 0;
@@ -171,6 +176,8 @@ export class Game {
   private feeding: { x: number; y: number; at: number } | null = null;
   /** A chest asked to open and not answered yet. */
   private opening: { x: number; y: number; at: number } | null = null;
+  /** A workbench asked to open and not answered yet. */
+  private benching: { x: number; y: number; at: number } | null = null;
   /** When the server last emptied a bag that held something. */
   private emptiedAt = -Infinity;
 
@@ -336,6 +343,18 @@ export class Game {
         else if (this.chest) this.chest = { ...this.chest, stash: msg.stash };
         break;
       }
+      case 'gear':
+        this.gear.set(msg.id, msg.gear);
+        break;
+      case 'bench': {
+        const b = this.benching;
+        if (b && this.clock - b.at < ANSWER_WAIT_MS) { this.bench = { x: b.x, y: b.y, stash: msg.stash }; this.benching = null; }
+        else if (this.bench) this.bench = { ...this.bench, stash: msg.stash };
+        break;
+      }
+      case 'crafted':
+        this.floatOverMe(`Made: ${this.items.get(msg.item).name}`, GAIN);
+        break;
       case 'progress':
         if (msg.gained > 0) this.floatOverMe(`+${msg.gained} XP`, GAIN);
         if (msg.progress.level > this.progress.level) this.news.push({ kind: 'level', progress: msg.progress });
@@ -343,6 +362,7 @@ export class Game {
         break;
       case 'join':
         this.players.set(msg.player.id, this.mover(msg.player));
+        this.gear.set(msg.player.id, msg.player.gear ?? {});
         break;
       case 'leave':
         this.players.delete(msg.id);
@@ -424,7 +444,7 @@ export class Game {
     this.online = false;
     this.pending = []; this.path = []; this.goal = null;
     // Answers to what we asked went with the connection.
-    this.picking = null; this.using = null; this.feeding = null; this.opening = null; this.chest = null;
+    this.picking = null; this.using = null; this.feeding = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null;
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
     if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
@@ -438,11 +458,12 @@ export class Game {
     if (map !== this.current) {
       this.current = map;
       this.talkers = talkersOf(map);
-      this.chest = null; this.opening = null;
+      this.chest = null; this.opening = null; this.bench = null; this.benching = null;
       this.dialog = null; this.marker = null; this.floats = [];
     }
     this.players.clear();
     for (const p of players) this.players.set(p.id, this.mover(p));
+    this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
     this.lootChanges++;
@@ -517,6 +538,12 @@ export class Game {
       this.send({ t: 'chest', x: t.x, y: t.y });
       return;
     }
+    if (t.kind === 'bench') {
+      if (!this.online) return;
+      this.benching = { x: t.x, y: t.y, at: this.clock };
+      this.send({ t: 'bench', x: t.x, y: t.y });
+      return;
+    }
     return this.offer(t.x, t.y);
   }
 
@@ -537,6 +564,32 @@ export class Game {
   /** Close the chest (the panel went away). */
   closeChest() {
     this.chest = null;
+  }
+
+  /** At the open chest: put on a piece of gear from the stash, or take off what a slot wears. */
+  equip(item: string) {
+    const c = this.chest;
+    if (c && this.online) this.send({ t: 'equip', x: c.x, y: c.y, item });
+  }
+
+  unequip(slot: Slot) {
+    const c = this.chest;
+    if (c && this.online) this.send({ t: 'unequip', x: c.x, y: c.y, slot });
+  }
+
+  /** At the open workbench: make a recipe. */
+  craft(recipe: string) {
+    const b = this.bench;
+    if (b && this.online) this.send({ t: 'craft', x: b.x, y: b.y, recipe });
+  }
+
+  closeBench() {
+    this.bench = null;
+  }
+
+  /** What you wear. */
+  get myGear(): Gear {
+    return (this.meId && this.gear.get(this.meId)) || {};
   }
 
   /**
@@ -788,6 +841,7 @@ export class Game {
     const hitched = this.body.view.hitched;
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId,
+      look: lookOf(this.gear.get(p.id) ?? {}, this.items),
     }));
   }
 

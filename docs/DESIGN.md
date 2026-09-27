@@ -106,6 +106,9 @@ Six slots: **cap, shirt, gloves, pants, shoes, bag**. Better equipment means bet
 - The **bag** decides how many slots you carry (a tote 6, a backpack 8, a hiking pack 12, an expedition pack 16).
 - Gear comes in tiers (worn, sturdy, rugged, expedition, anomalous). It comes from **crafting at the town's workbench** with what you bring home, from rare finds deep in, and from trading with friends.
 - Gear is put on and taken off **only at home**, so choosing it is part of planning a trip. It is kept when you collapse. Your character wears what you equip, so others see your gear.
+- **Built:** everyone starts in worn clothes (they resist nothing) and a backpack (8 slots). The chest at home is where gear goes on and comes off: tap a piece you wear to put it in the stash, tap gear in the stash to put it on (what it replaces goes into the stash); the bag can be changed, never taken off, and a smaller one has to hold what you carry. The **workbench in Stonebrook Lodge** makes gear from what your stash holds, into your stash (recipes are data: `recipes` in `content/items.json`). Sturdy gear takes cloth, resin, scrap and wire; rugged and expedition gear takes shards too; anomalous gear only comes out of strange objects. Bags: a backpack 8, a hiking pack 12, an expedition pack 16. Some pieces add energy to the bar.
+- **What resistances do so far** (the five elements are in Hazards below): **cold** softens the extra drain of rain, night and aurora and of being wet; **wind** slows how fast rain soaks you (a raincoat); **electricity** and **radiation** each cut half of a surge's extra drain, so full protection takes both; **heat** has nothing to resist until the burnt forest. Resistances add up over what you wear and stop at 75%.
+- Still to come ([gear-wear-quirks](../roadmap/gear-wear-quirks.md)): gear that wears out and is mended at the workbench, and quirks on anomalous gear.
 
 ## Items
 

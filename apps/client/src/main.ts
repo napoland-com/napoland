@@ -6,12 +6,12 @@
 import '@fontsource-variable/fredoka';
 import '@fontsource-variable/nunito';
 import './style.css';
-import type { AuthConfig, BagSlot, Dir, ItemsData, MapData, MapRef, ServerMsg, Weather } from '@napoland/shared';
+import { bagSlotsOf, type AuthConfig, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type ServerMsg, type Weather } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
 import { Game } from './game';
 import { Hud, type TagView } from './hud';
-import { Items, slotViews } from './items';
+import { Items, recipeViews, resistText, slotViews, wornViews } from './items';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { Connection, serverUrl } from './net';
@@ -64,8 +64,8 @@ let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items);
 /** Close the bag, the status and About panels and the menu; true when one was open. */
 const closePanels = () => {
-  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.menuOpen;
-  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleMenu(false);
+  const open = hud.bagOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.menuOpen;
+  hud.toggleBag(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false);
   return open;
 };
 /** The status panel, as the game stands now. */
@@ -73,13 +73,13 @@ const showStatus = () => {
   const now = performance.now();
   hud.setStatus(statusView({
     energy: game.energy(now), body: game.bodyNow(now), surge: game.surgeNow(now), caught: game.caught(now), stone: game.stone, stats: game.stats, bag: game.bag, items,
-    progress: game.progress,
+    progress: game.progress, resists: resistText(game.myGear, items),
   }));
 };
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
 const controls = {
   pad: (dir: Dir | null) => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
-  a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the About panel and the text box, then out of the status or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
 };
@@ -94,6 +94,10 @@ const hud = new Hud(screen, {
   store: slot => game.store(slot),
   take: item => game.take(item),
   stashClosed: () => game.closeChest(),
+  equip: item => game.equip(item),
+  unequip: slot => game.unequip(slot),
+  craft: recipe => game.craft(recipe),
+  benchClosed: () => game.closeBench(),
   version: () => loadVersion(),
 });
 watchFires(view);
@@ -407,6 +411,10 @@ let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
 let statusAt = 0;
 /** The chest as the stash sheet shows it: it opens when the game opens one, and follows what is in it. */
 let chestShown: typeof game.chest = null;
+let capacityShown = 0;
+/** The workbench and the gear worn, as their sheets show them. */
+let benchShown: typeof game.bench = null;
+let gearShown: Gear | null = null;
 let progressShown: typeof game.progress | null = null;
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
@@ -421,7 +429,8 @@ function frame(now: number) {
     lootShown = { changes: game.lootChanges, view };
     view.setLoot(game.finds.values(), game.drops.values(), game.meId, me?.color ?? null);
   }
-  if (game.bag !== bagShown) hud.setBag(slotViews((bagShown = game.bag), items));
+  const capacity = bagSlotsOf(game.myGear, items.byId);
+  if (game.bag !== bagShown || capacity !== capacityShown) hud.setBag(slotViews((bagShown = game.bag), items), (capacityShown = capacity));
   if (game.markChanges !== marksShown.changes || view !== marksShown.view) {
     marksShown = { changes: game.markChanges, view };
     view.setMarks(game.marks.values());
@@ -445,6 +454,13 @@ function frame(now: number) {
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (hud.statusOpen && now - statusAt > 500) { statusAt = now; showStatus(); }
+  if (game.bench !== benchShown) {
+    if (game.bench && !benchShown) hud.toggleBench(true);
+    if (!game.bench && benchShown) hud.toggleBench(false);
+    benchShown = game.bench;
+    if (game.bench) hud.setBench(recipeViews(items.recipes, game.bench.stash, items));
+  }
+  if (game.myGear !== gearShown) { gearShown = game.myGear; hud.setWearing(wornViews(game.myGear, items)); }
   if (game.chest !== chestShown || game.progress !== progressShown) {
     if (game.chest && !chestShown) hud.toggleStash(true);
     if (!game.chest && chestShown) hud.toggleStash(false);

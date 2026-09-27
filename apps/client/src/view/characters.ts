@@ -21,33 +21,54 @@ function eyes(g: THREE.Object3D, y: number, z: number, sp: number) {
   }
 }
 
-/** The player character: red cap, rain jacket in the player's color, backpack. Faces +z. */
-export function makePlayer(jacket: string): Rig {
+/**
+ * What a character wears, as colors (and the bag's size): each slot's gear shows (gear.ts). A slot
+ * left out keeps the look everyone started with.
+ */
+export interface Look {
+  /** Null: no cap at all, the hair shows. */
+  cap?: string | null;
+  shirt?: string;
+  gloves?: string;
+  pants?: string;
+  shoes?: string;
+  bag?: string;
+  /** How big the bag is next to the backpack (8 slots): 1 is the backpack. */
+  bagSize?: number;
+}
+
+/** The player character: a cap, a rain jacket in the player's color, a backpack, and what they wear. Faces +z. */
+export function makePlayer(jacket: string, look: Look = {}): Rig {
   const root = new THREE.Group();
   const legL = pivot(-0.085, 0.24, 0), legR = pivot(0.085, 0.24, 0);
   for (const l of [legL, legR]) {
-    l.add(box(0.11, 0.17, 0.13, '#2f3442', 0, -0.085, 0));
-    l.add(box(0.12, 0.07, 0.17, '#3a2a20', 0, -0.2, 0.02));
+    l.add(box(0.11, 0.17, 0.13, look.pants ?? '#2f3442', 0, -0.085, 0));
+    l.add(box(0.12, 0.07, 0.17, look.shoes ?? '#3a2a20', 0, -0.2, 0.02));
     root.add(l);
   }
   root.add(box(0.36, 0.28, 0.24, jacket, 0, 0.36, 0));
-  root.add(box(0.1, 0.2, 0.02, '#2f3440', 0, 0.37, 0.121, false));
-  root.add(box(0.3, 0.32, 0.16, '#6b5a3a', 0, 0.4, -0.19));
-  const roll = part(flat(new THREE.CylinderGeometry(0.07, 0.07, 0.34, 8)), '#4f6a52', 0, 0.6, -0.19);
+  root.add(box(0.1, 0.2, 0.02, look.shirt ?? '#2f3440', 0, 0.37, 0.121, false));
+  // A bigger bag stands taller and deeper on your back.
+  const k = Math.min(1.4, Math.max(0.8, look.bagSize ?? 1));
+  root.add(box(0.3, 0.32 * k, 0.16 * k, look.bag ?? '#6b5a3a', 0, 0.4 + 0.08 * (k - 1), -0.12 - 0.07 * k));
+  const roll = part(flat(new THREE.CylinderGeometry(0.07, 0.07, 0.34, 8)), '#4f6a52', 0, 0.6 + 0.16 * (k - 1), -0.12 - 0.07 * k);
   roll.rotation.z = Math.PI / 2;
   root.add(roll);
   const armL = pivot(-0.225, 0.47, 0), armR = pivot(0.225, 0.47, 0);
   for (const a of [armL, armR]) {
     a.add(box(0.1, 0.2, 0.12, jacket, 0, -0.09, 0));
-    a.add(box(0.085, 0.07, 0.1, '#f2cda8', 0, -0.22, 0));
+    a.add(box(0.085, 0.07, 0.1, look.gloves ?? '#f2cda8', 0, -0.22, 0));
     root.add(a);
   }
   root.add(box(0.42, 0.37, 0.37, '#f2cda8', 0, 0.69, 0));
   root.add(box(0.44, 0.1, 0.39, '#2b2421', 0, 0.82, 0));
   root.add(box(0.44, 0.2, 0.1, '#2b2421', 0, 0.72, -0.15));
-  root.add(box(0.45, 0.13, 0.41, '#d63b33', 0, 0.92, 0));
-  root.add(box(0.22, 0.09, 0.02, '#f0ece2', 0, 0.925, 0.21, false));
-  root.add(box(0.32, 0.04, 0.17, '#d63b33', 0, 0.865, 0.26));
+  const cap = look.cap === undefined ? '#d63b33' : look.cap;
+  if (cap) {
+    root.add(box(0.45, 0.13, 0.41, cap, 0, 0.92, 0));
+    root.add(box(0.22, 0.09, 0.02, '#f0ece2', 0, 0.925, 0.21, false));
+    root.add(box(0.32, 0.04, 0.17, cap, 0, 0.865, 0.26));
+  } else root.add(box(0.44, 0.08, 0.39, '#2b2421', 0, 0.89, 0));
   eyes(root, 0.69, 0.186, 0.09);
   return { root, legL, legR, armL, armR };
 }

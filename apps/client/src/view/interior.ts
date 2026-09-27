@@ -269,6 +269,19 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
       g.add(box(0.58, 0.11, 0.3, '#ece5d4', 0, 0.43, -0.64, 0.018));
       return g;
     }
+    case 'workbench': {
+      // The workbench: a thick top on sturdy legs, a vise, tools hung on a board behind it.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = againstWall(map, o.x, o.y);
+      g.add(box(0.92, 0.08, 0.56, '#7a5634', 0, 0.62, -0.1));
+      for (const [lx, lz] of [[-0.4, -0.33], [0.4, -0.33], [-0.4, 0.13], [0.4, 0.13]] as const) g.add(box(0.07, 0.58, 0.07, '#4a3223', lx, 0.29, lz, false));
+      g.add(box(0.84, 0.05, 0.46, '#5a3d2a', 0, 0.2, -0.1, false));
+      g.add(box(0.92, 0.6, 0.04, '#5a4430', 0, 1.05, -0.4, false));
+      g.add(box(0.14, 0.12, 0.16, '#50565c', 0.3, 0.72, 0.05, 0.012), box(0.2, 0.03, 0.03, '#8f969c', 0.3, 0.7, 0.16, false));
+      for (const [tx, ty, h, c] of [[-0.3, 1.1, 0.3, '#8f969c'], [-0.15, 1.12, 0.26, '#6b4a31'], [0.05, 1.08, 0.34, '#8f969c']] as const) g.add(box(0.04, h, 0.02, c, tx, ty, -0.37, false));
+      g.add(box(0.26, 0.05, 0.12, '#b3643c', -0.18, 0.69, -0.02, 0.01));
+      return g;
+    }
     case 'chest': {
       // Your stash: a wooden chest with iron bands and a brass lock, its lid a little rounded.
       const g = pivot(o.x + 0.5, 0, o.y + 0.5);
@@ -347,6 +360,7 @@ export function furnitureShadows(map: TileMap): Array<[number, number, number, n
     else if (o.kind === 'table') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.44]);
     else if (o.kind === 'crate') out.push([o.x + 0.5, o.y + 0.5, 0.42, 0.42]);
     else if (o.kind === 'chest') out.push([o.x + 0.5, o.y + 0.46, 0.46, 0.32]);
+    else if (o.kind === 'workbench') out.push([o.x + 0.5, o.y + 0.42, 0.52, 0.36]);
     else if (o.kind === 'shelf' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.28, 0.52, 0.26]);
   }
   return out;

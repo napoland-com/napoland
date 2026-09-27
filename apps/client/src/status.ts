@@ -18,6 +18,8 @@ export interface StatusInput {
   bag: readonly BagSlot[];
   items: Items;
   progress: ProgressView;
+  /** What your gear resists, in words (items.ts, resistText); null for nothing. */
+  resists: string | null;
 }
 
 /** "Level 3 · 150 XP, 120 to go": where you stand, for the status panel and the stash's header. */
@@ -36,6 +38,7 @@ export function statusView(s: StatusInput): StatusView {
   const wet = s.body.wet, how = s.body.wetRate > 0 ? 'getting wetter' : wet > 0 ? 'drying' : 'dry';
   rows.push({ label: 'Wet', text: wet > 0.005 ? `${Math.round(wet * 100)}%, ${how}` : 'Dry', bar: wet, tone: s.body.wetRate > 0 ? 'bad' : 'plain' });
   rows.push({ label: 'Load', text: s.body.load >= 1 ? 'Heavy: it tires you out' : `${Math.round(s.body.load * 100)}% of what you carry easily`, bar: Math.min(1, s.body.load), tone: s.body.load >= 0.75 ? 'bad' : 'plain' });
+  rows.push({ label: 'Resists', text: s.resists ?? 'Nothing yet. Make gear at the workbench in the lodge.', tone: s.resists ? 'good' : 'plain' });
   if (s.body.hitched) rows.push({ label: 'On you', text: 'Something clings to your back. Find a light, a fire or a roof.', tone: 'bad' });
   const charms = [...new Set(s.bag.map(b => s.items.get(b.item)).filter(d => d.kind === 'charm').map(d => d.name))];
   if (charms.length) rows.push({ label: 'Charms', text: charms.join(', '), tone: 'good' });

@@ -3,6 +3,8 @@
  * outlines on the dark panel), one per item. Inline SVG, so they need no download and stay sharp at
  * any size. An item without its own drawing gets a sack.
  */
+import type { ItemDef, Slot } from '@napoland/shared';
+
 const CREAM = '#e8dfc8';
 
 const icon = (inner: string) =>
@@ -87,6 +89,29 @@ const SACK = icon(`<path d="M10 14c-4 4.4-4.2 12.4 6 12.8 10.2-.4 10-8.4 6-12.8z
 
 export function itemIcon(item: string): string {
   return ICONS[item] ?? SACK;
+}
+
+/** Gear by its slot, in its own color: one drawing per slot, so a new piece needs no new art. */
+const GEAR: Record<Slot, (c: string) => string> = {
+  // A cap: a dome and a brim.
+  cap: c => icon(`<path d="M6 19c0-6.4 4.5-10.5 10-10.5S26 12.6 26 19z" fill="${c}"/><path d="M4 19h24.5c0 2.4-2 3.5-4.5 3.5H8.5C6 22.5 4 21.4 4 19z" fill="${c}"/><path d="M16 8.5v-2" />`),
+  // A coat, arms out.
+  shirt: c => icon(`<path d="M11 5.5l5 3 5-3 7 5-3 5.5-2.5-1.5V27H9.5V14.5L7 16l-3-5.5z" fill="${c}"/><path d="M16 8.5V27" />`),
+  // A glove, thumb out.
+  gloves: c => icon(`<path d="M10 28V15c0-1.5.6-2.6 1.8-2.6s1.7 1 1.7 2V8.8c0-1.3.8-2.3 2-2.3s2 1 2 2.3V14l.2-4.2c0-1.2.8-2.1 1.9-2.1s1.9.9 1.9 2.1v4.4l2.2-2.4c1-1 2.5-.8 3 .3.4.9.1 1.8-.5 2.5L21 20v8z" fill="${c}"/><path d="M10 24h11" />`),
+  // Trousers.
+  pants: c => icon(`<path d="M8.5 5h15l1.5 22h-6l-3-14-3 14h-6z" fill="${c}"/><path d="M8.5 9h15" />`),
+  // A boot.
+  shoes: c => icon(`<path d="M9 5h8v13l9 3.5c1.5.6 2.5 2 2.5 3.5V27H5.5v-3.5L9 21z" fill="${c}"/><path d="M5.5 24h23" />`),
+  // A pack with a flap and a pocket.
+  bag: c => icon(`<path d="M8 11c0-3.6 3.6-6.5 8-6.5s8 2.9 8 6.5v15.5c0 .8-.7 1.5-1.5 1.5h-13c-.8 0-1.5-.7-1.5-1.5z" fill="${c}"/><path d="M8 13h16v4H8zM11.5 20h9v5h-9z" /><path d="M13 4.8c.8-1.3 2-2 3-2s2.2.7 3 2" />`),
+};
+
+/** The drawing for an item: its own, or its slot's in its color for gear, or a sack. */
+export function iconFor(def: ItemDef): string {
+  if (ICONS[def.id]) return ICONS[def.id]!;
+  if (def.kind === 'gear' && def.slot) return GEAR[def.slot](def.color ?? '#a58a5f');
+  return SACK;
 }
 
 /** The items that have a drawing of their own. */
