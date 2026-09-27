@@ -2,10 +2,11 @@
  * Boot: log in (a saved token, or pick a name), connect, then run the game loop.
  */
 import './style.css';
-import { NAME_RE, PROTOCOL_VERSION, type ClientMsg, type MapData, type MapRef, type ServerMsg, type Weather } from '@napoland/shared';
+import { NAME_RE, PROTOCOL_VERSION, type BagSlot, type ClientMsg, type ItemsData, type MapData, type MapRef, type ServerMsg, type Weather } from '@napoland/shared';
 import { Arrival } from './arrival';
 import { Game } from './game';
-import { Hud } from './hud';
+import { Hud, type TagView } from './hud';
+import { Items, slotViews } from './items';
 import { Maps } from './maps';
 import { Connection, serverUrl } from './net';
 import { WorldView, createRenderer } from './view/world';
@@ -19,8 +20,11 @@ const store = {
   del: (k: string) => { try { localStorage.removeItem(k); } catch { /* private mode */ } },
 };
 
-// Every map is bundled, so moving between them needs no download.
+// Every map is bundled, so moving between them needs no download; the items too, so the bag can
+// name what it holds. (A glob, not an import: a checkout without items.json still builds, and the
+// version check below sends it the message that it does not match.)
 const maps = new Maps(Object.values(import.meta.glob<MapData>('../../../content/maps/*.json', { eager: true, import: 'default' })));
+const items = new Items(Object.values(import.meta.glob<ItemsData>('../../../content/items.json', { eager: true, import: 'default' }))[0]);
 const app = document.getElementById('app')!;
 const screen = document.createElement('div');
 screen.className = 'screen';
@@ -39,7 +43,7 @@ let weather: Weather = 'rain';
 let welcomed = false;
 /** The first welcome of this page shows where you are; later ones are reconnects. */
 let arrived = false;
-const game = new Game(maps, msg => { if (welcomed) conn.send(msg); });
+const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items);
 /** Close the bag and the menu; true when one was open. */
 const closePanels = () => {
   const open = hud.bagOpen || hud.menuOpen;
@@ -49,12 +53,18 @@ const closePanels = () => {
 const hud = new Hud(screen, {
   pad: dir => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
   a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
-  b: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (!game.pressB()) hud.toggleBag(); },
+  // Back out of the text box, then out of the bag's details, before the bag itself opens or closes.
+  b: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
   dialogTap: () => game.advanceDialog(),
   logout: () => { store.del(TOKEN_KEY); conn.stop(); location.reload(); },
+  // Using something shows what it did over your head (and on the energy bar), so the bag closes.
+  use: slot => { game.use(slot); hud.toggleBag(false); },
+  discard: slot => game.discard(slot),
 });
 
 // ---------- arriving on another map ----------
+/** Set when a collapse arrives: you were carrying something, which now lies where you fell. */
+let leftPile = false;
 /** On the black screen: apply what waited, build the new map's view (freeing the old one) and say where you are. */
 const arrival = new Arrival(held => {
   const now = performance.now();
@@ -71,7 +81,7 @@ const arrival = new Arrival(held => {
     view.setWeather(weather);
     resize();
   }
-  if (collapsed) hud.showBanner('You collapsed from exhaustion', 'You woke up at home');
+  if (collapsed) hud.showBanner('You collapsed from exhaustion', leftPile ? 'You woke up at home.\nWhat you carried lies where you fell. It fades in an hour.' : 'You woke up at home');
   else hud.showBanner(game.map.data.name);
 });
 
@@ -151,7 +161,7 @@ conn.onMessage = (msg: ServerMsg) => {
   const now = performance.now();
   switch (msg.t) {
     case 'welcome':
-      if (!known(msg.map)) return outdated();
+      if (!known(msg.map) || msg.items !== items.version) return outdated();
       welcomed = true;
       store.set(TOKEN_KEY, msg.token);
       pendingName = null;
@@ -163,6 +173,9 @@ conn.onMessage = (msg: ServerMsg) => {
       break;
     case 'zone':
       if (!known(msg.map)) return outdated();
+      // Asked now, while the bag is as it was: the zone waits for the black screen, and the empty bag
+      // the collapse brings may come just before or just after it.
+      if (msg.reason === 'collapse') leftPile = game.carrying(now);
       break;
     case 'weather':
       weather = msg.weather;
@@ -215,6 +228,9 @@ resize();
 
 let last = performance.now();
 const start = last;
+/** What the bag and the ground show now: they are redrawn only when the game's lists change (or the map's view is new). */
+let bagShown: BagSlot[] | null = null;
+let lootShown = { changes: -1, view: null as WorldView | null };
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
   requestAnimationFrame(frame);
@@ -224,8 +240,16 @@ function frame(now: number) {
   game.held = arrival.leaving;
   game.update(dt, now);
   const me = game.me;
+  if (game.lootChanges !== lootShown.changes || view !== lootShown.view) {
+    lootShown = { changes: game.lootChanges, view };
+    view.setLoot(game.finds.values(), game.drops.values(), game.meId, me?.color ?? null);
+  }
+  if (game.bag !== bagShown) hud.setBag(slotViews((bagShown = game.bag), items));
   view.render((now - start) / 1000, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
-  hud.setTags([...game.players.values()].filter(p => p.id !== game.meId).map(p => { const s = view.project(p.x, p.y, 1.25); return { id: p.id, name: p.name, x: s.x, y: s.y }; }));
+  const tags: TagView[] = [...game.players.values()].filter(p => p.id !== game.meId).map(p => { const s = view.project(p.x, p.y, 1.25); return { id: p.id, name: p.name, x: s.x, y: s.y }; });
+  // Whose pile it is, while you are near. Its id is its owner's, so it gets a key of its own.
+  for (const d of game.pilesNear()) { const s = view.project(d.x, d.y, 0.62); tags.push({ id: `pile:${d.id}`, name: d.name, x: s.x, y: s.y, pile: true }); }
+  hud.setTags(tags);
   hud.setFloats(game.floats.map(f => { const s = view.project(f.x, f.y, 1.3); return { ...f, x: s.x, y: s.y }; }));
   const d = game.dialog, line = d ? d.lines[d.i] ?? '' : '';
   hud.setDialog(d ? { who: d.who, text: line.slice(0, Math.floor(d.shown)), done: d.shown >= line.length } : null);
@@ -236,4 +260,4 @@ requestAnimationFrame(frame);
 
 // Development only: reach the game from the browser console, and play server messages by hand
 // (for example a zone) to try things the server does not do yet.
-if (import.meta.env.DEV) Object.assign(window, { napoland: { game, maps, renderer, arrival, get view() { return view; }, receive: (msg: ServerMsg) => conn.onMessage(msg) } });
+if (import.meta.env.DEV) Object.assign(window, { napoland: { game, maps, items, hud, renderer, arrival, get view() { return view; }, receive: (msg: ServerMsg) => conn.onMessage(msg) } });

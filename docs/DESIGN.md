@@ -20,7 +20,7 @@ The decisions so far, with the reason for each. Change this file when a decision
 2. Walk out through the town into the wilds. Energy drains in the wilds, faster the farther you are, at night and in the rain; in town and inside buildings it holds. The only way to get it back is **a fireplace**: shelters out in the wilds (and some buildings, your home among them) keep one burning, always. Sit near it and you recover. Tuned so that standing at the edge of the Near Woods in the rain empties a full bar in about 5.5 minutes, and its deepest corner in under 2.
 3. Gather resources and power-ups. What you pick up goes in your bag (limited slots). Finds are shared: when someone takes one, a new one of the same kind grows later somewhere else in the same kind of place (deep finds stay deep).
 4. Come home and stash what you carry. Stashing earns XP; levels and home upgrades let you go farther next time.
-5. **If your energy runs out** you wake up at home. Your whole bag drops where you fell, as a backpack anyone can take, you included if you go back for it. It stays there until you collapse again: then the old backpack is gone for good and the new one drops. Equipment is kept.
+5. **If your energy runs out** you wake up at home. What you carried falls out where you collapsed, as a small pile on the ground (the bag itself is equipment and stays with you, like all equipment). If you go back for it, you get everything. If someone else finds it first, they get a random half and the rest is lost. The pile disappears one hour after you collapsed, and a new collapse replaces your old pile: each player has at most one.
 
 **Light is not energy.** Street lights, and later torches and gadgets, let you see where you walk; some areas will be almost dark without them. They do not refill energy.
 
@@ -118,8 +118,8 @@ A status tab (in the menu) shows your level and XP, energy (maximum, now, and wh
 Each step goes live when it is done, so it can be played and tuned.
 
 1. ✅ The Near Woods and energy.
-2. **Now:** buildings you can enter, fireplaces and shelters, the new energy rules.
-3. Finds and the bag (shared finds that grow back elsewhere), then backpacks dropped on collapse.
+2. ✅ Buildings you can enter, fireplaces and shelters, the new energy rules.
+3. **Next:** finds and the bag (shared finds that grow back elsewhere), and the pile you drop when you collapse (all back for you, half for anyone else, gone after an hour).
 4. Home: stash what you carry for XP, levels; the status tab.
 5. Equipment: the six slots, items as data, resistances, crafting at the workbench, gear shown on your character.
 6. Hazards and anomalies: the five elements, day and night, storms, flashes and surges, weather per region.

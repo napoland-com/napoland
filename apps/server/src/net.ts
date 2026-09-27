@@ -2,6 +2,7 @@
  * The WebSocket side: one connection per player. Holds each address to its limits, checks the
  * hello, feeds client messages to the World and sends out what the World has to say, each message
  * to the players it is for: one player, or everyone on one map. Nothing a client sends is trusted.
+ * It also stores players (now and then, and when they leave) and piles (whenever one changes).
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
@@ -20,7 +21,7 @@ import {
 } from '@napoland/shared';
 import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
-import type { PlayerRecord, Storage } from './storage';
+import type { DropRecord, PlayerRecord, Storage } from './storage';
 import { colorFor, type World } from './world';
 
 const HELLO_TIMEOUT_MS = 5000;
@@ -108,6 +109,8 @@ export function attachNet(o: NetOptions): Net {
   let joining = 0;
   /** The last save started for each player, while it runs. */
   const pendingSaves = new Map<string, Promise<void>>();
+  /** The same for each player's pile. */
+  const pendingDrops = new Map<string, Promise<void>>();
   let saving = false;
   let closing = false;
   /** Open sockets per client address. */
@@ -194,6 +197,15 @@ export function attachNet(o: NetOptions): Net {
       case 'face':
         world.face(s.id, msg.dir);
         return flush();
+      case 'pick':
+        world.pick(s.id, msg.x, msg.y, now);
+        return flush();
+      case 'use':
+        world.use(s.id, msg.slot, now);
+        return flush();
+      case 'discard':
+        world.discard(s.id, msg.slot, now);
+        return flush();
       case 'hello':
         return fail(s, 'bad_message', 'Already said hello');
     }
@@ -268,7 +280,7 @@ export function attachNet(o: NetOptions): Net {
     const now = Date.now();
     const { id: map, spawn } = world.home.data;
     const rec: PlayerRecord = {
-      id, name, tokenHash: hashToken(token), map, x: spawn.x, y: spawn.y, dir: spawn.dir, color: colorFor(id), energy: ENERGY_MAX,
+      id, name, tokenHash: hashToken(token), map, x: spawn.x, y: spawn.y, dir: spawn.dir, color: colorFor(id), energy: ENERGY_MAX, bag: [],
       createdAt: now, lastSeenAt: now,
     };
     // create() also refuses the name if another player took it since nameTaken().
@@ -294,9 +306,13 @@ export function attachNet(o: NetOptions): Net {
       token,
       map: joined.map,
       players: joined.players,
+      finds: joined.finds,
+      drops: joined.drops,
       stepMs: world.stepMs,
       weather: world.weather,
       energy: joined.energy,
+      bag: joined.bag,
+      items: world.itemsVersion,
       serverTime: Date.now(),
     });
     flush();
@@ -354,10 +370,30 @@ export function attachNet(o: NetOptions): Net {
     return done;
   }
 
+  /** Stores a player's pile as it is now, or forgets it (undefined). One owner's writes run in order, like persist(). */
+  function persistDrop(owner: string, drop: DropRecord | undefined): Promise<void> {
+    const done = (pendingDrops.get(owner) ?? Promise.resolve())
+      .then(() => (drop ? storage.saveDrop(drop) : storage.removeDrop(owner)))
+      .catch((err: unknown) => log.error('saving a pile failed', { owner, err }))
+      .finally(() => {
+        if (pendingDrops.get(owner) === done) pendingDrops.delete(owner);
+      });
+    pendingDrops.set(owner, done);
+    return done;
+  }
+
+  /** Starts the writes the World asked for: every pile that changed, and the players whose bag changed with one. */
+  function store(): void {
+    const { drops, players } = world.takeWrites();
+    for (const { owner, drop } of drops) void persistDrop(owner, drop);
+    for (const rec of players) void persist(rec);
+  }
+
   /**
-   * Sends everything the World has queued, in order. Runs after every World call. A message for a
-   * map goes to the players on it at that point of the queue: a player who changes maps hears the
-   * new map from their `zone` message on, even when several players moved in the same tick.
+   * Sends everything the World has queued, in order, and starts the writes it asked for. Runs after
+   * every World call. A message for a map goes to the players on it at that point of the queue: a
+   * player who changes maps hears the new map from their `zone` message on, even when several
+   * players moved in the same tick.
    */
   function flush(): void {
     for (const out of world.drain()) {
@@ -371,6 +407,7 @@ export function attachNet(o: NetOptions): Net {
       if (out.msg.t === 'zone') hear(s, out.msg.map.id);
       sendRaw(s, data);
     }
+    store();
   }
 
   /** Makes a session hear the news of another map ('' for none). */
@@ -437,9 +474,11 @@ export function attachNet(o: NetOptions): Net {
         s.ws.close(code, 'server restarting');
       }
       world.drain(); // Nobody is left to hear who left.
+      // Piles dropped by players whose energy ran out as they left.
+      store();
       for (const rec of recs) void persist(rec);
-      // Includes saves of players who left just before, so storage can be closed after this.
-      await Promise.all(pendingSaves.values());
+      // Includes writes for players who left just before, so storage can be closed after this.
+      await Promise.all([...pendingSaves.values(), ...pendingDrops.values()]);
       // Clients get a moment to answer the close; then their sockets are cut.
       const force = setTimeout(() => {
         for (const ws of wss.clients) ws.terminate();

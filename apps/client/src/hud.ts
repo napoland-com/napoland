@@ -4,7 +4,9 @@
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
-import type { Dir, EnergyView } from '@napoland/shared';
+import { BAG_SLOTS, type Dir, type EnergyView } from '@napoland/shared';
+import { itemIcon } from './icons';
+import type { SlotView } from './items';
 
 const svg = (inner: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 const ICON = {
@@ -20,8 +22,9 @@ const LOW = 0.25;
 const CRITICAL = 0.1;
 /** Below this share of energy the screen edges darken, more as it runs out. */
 const VIGNETTE_FROM = 0.2;
-/** How long the name of a place stays up after you arrive. */
+/** How long the name of a place stays up after you arrive; longer news stays longer, to be read. */
 const BANNER_MS = 2500;
+const BANNER_MS_PER_CHAR = 45;
 
 export interface HudHandlers {
   pad(dir: Dir | null): void;
@@ -29,7 +32,24 @@ export interface HudHandlers {
   b(): void;
   dialogTap(): void;
   logout(): void;
+  /** Use what is in bag slot `slot` (only offered for consumables). */
+  use(slot: number): void;
+  /** Throw away everything in bag slot `slot` (asked once first). */
+  discard(slot: number): void;
 }
+
+/** What the bag asks before throwing a slot away. */
+export function tossQuestion(count: number): string {
+  return count > 1 ? `Throw all ${count} away?` : 'Throw it away?';
+}
+
+/** How long a banner stays up: long enough to read what it says. */
+export function bannerMs(title: string, sub: string): number {
+  return Math.max(BANNER_MS, 1200 + (title.length + sub.length) * BANNER_MS_PER_CHAR);
+}
+
+const EMPTY_BAG = 'Your bag is empty. Things you find out there go here, and you keep them only if you bring them home.';
+const PICK_SLOT = 'Tap something to see what it is.';
 
 /** What the energy bar and the screen's edges show for a player's energy. */
 export interface EnergyLook {
@@ -55,8 +75,10 @@ export function energyLook(e: EnergyView | null): EnergyLook {
   };
 }
 
-export interface TagView { id: string; name: string; x: number; y: number }
-export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number }
+/** A name over someone's head, or over a pile (whose it is) while you are near it. */
+export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean }
+/** `row` stacks words said at once, 0 at the bottom. */
+export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number; row: number }
 export interface DialogView { who: string; text: string; done: boolean }
 
 export class Hud {
@@ -67,6 +89,11 @@ export class Hud {
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
   private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1 };
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
+  private slotEls: HTMLButtonElement[] = [];
+  /** The bag as shown, the slot whose details are open (and the item in it), and whether throwing it away is being asked. */
+  private bag: SlotView[] = [];
+  private picked: { slot: number; item: string } | null = null;
+  private asking = false;
 
   constructor(parent: HTMLElement, private h: HudHandlers) {
     this.root = document.createElement('div');
@@ -90,11 +117,21 @@ export class Hud {
       <div class="stick" data-el="stick" role="group" aria-label="Movement stick"><div class="knob" data-el="knob"></div></div>
       <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back">B</button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button></div>
       <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div data-el="text"></div><div class="more" data-el="more" aria-hidden="true">&#9660;</div></div>
-      <div class="sheet panel" data-el="sheet" data-open="false" role="dialog" aria-label="Bag"><div class="sheet-head"><b>Bag</b><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
-        <div class="grid">${'<div class="slot"></div>'.repeat(8)}</div><p class="hint">Your bag is empty. Things you find out there go here, and you keep them only if you bring them home.</p></div>`;
+      <div class="sheet panel" data-el="sheet" data-open="false" role="dialog" aria-label="Bag">
+        <div class="sheet-head"><b>Bag</b><span class="room" data-el="room"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
+        <div class="grid" data-el="grid">${Array.from({ length: BAG_SLOTS }, (_, i) => `<button type="button" class="slot" data-slot="${i}" data-empty="true" aria-label="Empty slot"></button>`).join('')}</div>
+        <div class="detail" data-el="detail" aria-live="polite">
+          <p class="hint" data-el="hint">${EMPTY_BAG}</p>
+          <div class="about" data-el="about" hidden><div class="big" data-el="bigIcon"></div>
+            <div class="words"><div class="title"><b data-el="itemName"></b><span class="count" data-el="itemCount"></span></div><p data-el="itemText"></p></div></div>
+          <div class="acts" data-el="acts" hidden><button type="button" class="act go" data-el="use">Use</button><button type="button" class="act toss" data-el="toss">Throw away</button></div>
+          <div class="acts" data-el="ask" hidden><span class="ask" data-el="askText"></span><button type="button" class="act toss sure" data-el="tossYes">Throw away</button><button type="button" class="act" data-el="tossNo">Keep</button></div>
+        </div>
+      </div>`;
     parent.appendChild(this.root);
     this.el = {};
     for (const node of this.root.querySelectorAll<HTMLElement>('[data-el]')) this.el[node.dataset.el!] = node;
+    this.slotEls = [...this.root.querySelectorAll<HTMLButtonElement>('.slot')];
     this.bindInput();
   }
 
@@ -136,6 +173,21 @@ export class Hud {
     this.el.menuBtn!.addEventListener('click', () => this.toggleMenu());
     this.el.menuBag!.addEventListener('click', () => { this.toggleMenu(false); this.toggleBag(true); });
     this.el.menuLogout!.addEventListener('click', () => { this.toggleMenu(false); this.h.logout(); });
+    this.el.grid!.addEventListener('click', e => {
+      const slot = (e.target as Element).closest<HTMLElement>('[data-slot]');
+      if (!slot) return;
+      const i = Number(slot.dataset.slot);
+      // Tapping the open slot again, or an empty one, closes the details.
+      this.choose(this.bag[i] && this.picked?.slot !== i ? i : null);
+    });
+    this.el.use!.addEventListener('click', () => { if (this.picked) this.h.use(this.picked.slot); });
+    this.el.toss!.addEventListener('click', () => { this.asking = true; this.showDetail(); });
+    this.el.tossNo!.addEventListener('click', () => { this.asking = false; this.showDetail(); });
+    this.el.tossYes!.addEventListener('click', () => {
+      if (!this.picked) return;
+      this.h.discard(this.picked.slot);
+      this.choose(null);
+    });
   }
 
   get bagOpen(): boolean {
@@ -143,7 +195,64 @@ export class Hud {
   }
   toggleBag(open = !this.bagOpen) {
     this.el.sheet!.dataset.open = String(open);
+    // It opens on the whole bag, never on the details left from last time.
+    this.choose(null);
   }
+
+  /** B in the bag: out of the question, then out of the details. False when there is nothing to back out of (B closes the bag). */
+  back(): boolean {
+    if (!this.bagOpen) return false;
+    if (this.asking) { this.asking = false; this.showDetail(); return true; }
+    if (this.picked) { this.choose(null); return true; }
+    return false;
+  }
+
+  /** The bag, slot by slot (the server's order). Call it when the bag changes. */
+  setBag(slots: SlotView[]) {
+    this.bag = slots;
+    // Details stay open while their slot still holds the same item (a thermos used: one fewer).
+    if (this.picked && slots[this.picked.slot]?.item !== this.picked.item) this.picked = null;
+    this.slotEls.forEach((el, i) => {
+      const s = slots[i];
+      el.dataset.empty = String(!s);
+      el.innerHTML = s ? `${itemIcon(s.item)}<span class="n">${s.count}</span>` : '';
+      el.setAttribute('aria-label', s ? `${s.name}, ${s.count}` : 'Empty slot');
+    });
+    this.el.room!.textContent = `${slots.length} of ${BAG_SLOTS}`;
+    this.showDetail();
+  }
+
+  private choose(slot: number | null) {
+    const s = slot === null ? undefined : this.bag[slot];
+    this.picked = s ? { slot: slot!, item: s.item } : null;
+    this.asking = false;
+    this.showDetail();
+  }
+
+  /** Under the slots: what the open slot holds and what can be done with it, or a hint. */
+  private showDetail() {
+    const p = this.picked, s = p ? this.bag[p.slot] : undefined;
+    this.slotEls.forEach((el, i) => el.toggleAttribute('data-picked', i === p?.slot));
+    this.el.hint!.hidden = !!s;
+    this.el.about!.hidden = this.el.acts!.hidden = this.el.ask!.hidden = true;
+    if (!s) {
+      this.el.hint!.textContent = this.bag.length ? PICK_SLOT : EMPTY_BAG;
+      return;
+    }
+    this.el.about!.hidden = false;
+    this.el.bigIcon!.innerHTML = itemIcon(s.item);
+    this.el.itemName!.textContent = s.name;
+    this.el.itemCount!.textContent = s.count > 1 ? `× ${s.count}` : '';
+    this.el.itemText!.textContent = s.text;
+    if (this.asking) {
+      this.el.ask!.hidden = false;
+      this.el.askText!.textContent = tossQuestion(s.count);
+    } else {
+      this.el.acts!.hidden = false;
+      this.el.use!.hidden = !s.usable;
+    }
+  }
+
   get menuOpen(): boolean {
     return !this.el.menu!.hidden;
   }
@@ -192,7 +301,7 @@ export class Hud {
     fade.style.opacity = String(d);
   }
 
-  /** The name of where you arrived (or what happened), for a couple of seconds. */
+  /** The name of where you arrived (or what happened), for a few seconds. A line break in `sub` starts a new line. */
   showBanner(title: string, sub = '') {
     const banner = this.el.banner!;
     this.el.bannerTitle!.textContent = title;
@@ -200,7 +309,7 @@ export class Hud {
     this.el.bannerSub!.hidden = !sub;
     banner.toggleAttribute('data-show', true);
     clearTimeout(this.bannerTimer);
-    this.bannerTimer = setTimeout(() => banner.toggleAttribute('data-show', false), BANNER_MS);
+    this.bannerTimer = setTimeout(() => banner.toggleAttribute('data-show', false), bannerMs(title, sub));
   }
   setConnection(state: 'connecting' | 'online' | 'offline', pingMs?: number) {
     this.el.conn!.dataset.state = state;
@@ -216,13 +325,13 @@ export class Hud {
     this.el.more!.style.visibility = d.done ? 'visible' : 'hidden';
   }
 
-  /** Name tags above other players, positioned in screen pixels. */
+  /** Name tags above other players and near piles, positioned in screen pixels. */
   setTags(tags: TagView[]) {
     const seen = new Set<string>();
     for (const t of tags) {
       seen.add(t.id);
       let el = this.tagEls.get(t.id);
-      if (!el) { el = document.createElement('div'); el.className = 'tag'; this.el.labels!.appendChild(el); this.tagEls.set(t.id, el); }
+      if (!el) { el = document.createElement('div'); el.className = t.pile ? 'tag pile' : 'tag'; this.el.labels!.appendChild(el); this.tagEls.set(t.id, el); }
       if (el.textContent !== t.name) el.textContent = t.name;
       el.style.transform = `translate(${t.x.toFixed(1)}px, ${t.y.toFixed(1)}px) translate(-50%, -100%)`;
     }
@@ -235,7 +344,8 @@ export class Hud {
       seen.add(f.id);
       let el = this.floatEls.get(f.id);
       if (!el) { el = document.createElement('div'); el.className = 'float'; el.textContent = f.text; el.style.color = f.color; this.el.floats!.appendChild(el); this.floatEls.set(f.id, el); }
-      el.style.transform = `translate(${f.x.toFixed(1)}px, ${(f.y - f.t * 30).toFixed(1)}px) translate(-50%, -100%)`;
+      // Several at once stand in a column, a line apart, and rise together.
+      el.style.transform = `translate(${f.x.toFixed(1)}px, ${(f.y - f.t * 30).toFixed(1)}px) translate(-50%, calc(-100% - ${f.row * 1.15}em))`;
       el.style.opacity = String(Math.max(0, 1 - Math.pow(f.t / 1.3, 3)));
     }
     for (const [id, el] of this.floatEls) if (!seen.has(id)) { el.remove(); this.floatEls.delete(id); }

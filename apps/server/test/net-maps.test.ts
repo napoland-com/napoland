@@ -26,7 +26,7 @@ describe('exits', () => {
     const me = { id: a.id, name: a.welcome.name, color: colorFor(a.id) };
     expect(await a.c.settle()).toEqual([
       { t: 'step', id: a.id, x: 4, y: 0, dir: 'up', seq: 1 },
-      { t: 'zone', map: { id: 'woods', version: 1 }, x: 3, y: 6, dir: 'up', players: [{ ...me, x: 3, y: 6, dir: 'up' }], reason: 'exit' },
+      { t: 'zone', map: { id: 'woods', version: 1 }, x: 3, y: 6, dir: 'up', players: [{ ...me, x: 3, y: 6, dir: 'up' }], finds: [], drops: [], reason: 'exit' },
       { t: 'energy', energy: told(ENERGY_MAX, energyRate(woods, 3, 6, 'rain')) },
     ]);
     expect(ctx.server.world.get(a.id)).toMatchObject({ map: 'woods', x: 3, y: 6, dir: 'up' });
@@ -35,7 +35,7 @@ describe('exits', () => {
     a.c.send({ t: 'step', dir: 'down', seq: 2 });
     expect(await a.c.next('step')).toEqual({ t: 'step', id: a.id, x: 3, y: 7, dir: 'down', seq: 2 });
     expect(await a.c.next('zone')).toEqual({
-      t: 'zone', map: { id: 'town', version: 1 }, x: 4, y: 1, dir: 'down', players: [{ ...me, x: 4, y: 1, dir: 'down' }], reason: 'exit',
+      t: 'zone', map: { id: 'town', version: 1 }, x: 4, y: 1, dir: 'down', players: [{ ...me, x: 4, y: 1, dir: 'down' }], finds: [], drops: [], reason: 'exit',
     });
     await a.c.next('energy', m => m.energy.rate === 0); // in town it holds
     expect(ctx.server.world.get(a.id)).toMatchObject({ map: 'town', x: 4, y: 1, dir: 'down' });
@@ -47,7 +47,7 @@ describe('exits', () => {
     a.c.send({ t: 'step', dir: 'up', seq: 1 });
     expect(await a.c.settle()).toEqual([
       { t: 'step', id: a.id, x: 7, y: 2, dir: 'up', seq: 1 },
-      { t: 'zone', map: { id: 'house', version: 1 }, x: 2, y: 3, dir: 'up', players: [{ ...me, x: 2, y: 3, dir: 'up' }], reason: 'exit' },
+      { t: 'zone', map: { id: 'house', version: 1 }, x: 2, y: 3, dir: 'up', players: [{ ...me, x: 2, y: 3, dir: 'up' }], finds: [], drops: [], reason: 'exit' },
       { t: 'energy', energy: told(50, 0) },
     ]);
     expect(ctx.server.world.get(a.id)).toMatchObject({ map: 'house', x: 2, y: 3, dir: 'up' });
@@ -55,7 +55,7 @@ describe('exits', () => {
     a.c.send({ t: 'step', dir: 'down', seq: 2 });
     expect(await a.c.next('step')).toEqual({ t: 'step', id: a.id, x: 2, y: 4, dir: 'down', seq: 2 });
     expect(await a.c.next('zone')).toEqual({
-      t: 'zone', map: { id: 'town', version: 1 }, x: 7, y: 3, dir: 'down', players: [{ ...me, x: 7, y: 3, dir: 'down' }], reason: 'exit',
+      t: 'zone', map: { id: 'town', version: 1 }, x: 7, y: 3, dir: 'down', players: [{ ...me, x: 7, y: 3, dir: 'down' }], finds: [], drops: [], reason: 'exit',
     });
     expect((await a.c.next('energy')).energy).toEqual(told(50, 0));
     expect(ctx.server.world.get(a.id)).toMatchObject({ map: 'town', x: 7, y: 3, dir: 'down', energy: 50 });
@@ -220,7 +220,7 @@ describe('energy', () => {
     now += 5000; // 1 energy lasts 4.1 s here
     const me = { id: a.id, name: a.welcome.name, x: 1, y: 2, dir: 'down' as const, color: colorFor(a.id) };
     expect(await a.c.next('zone')).toEqual({
-      t: 'zone', map: { id: 'town', version: 1 }, x: 1, y: 2, dir: 'down', players: [t.welcome.players[0], me], reason: 'collapse',
+      t: 'zone', map: { id: 'town', version: 1 }, x: 1, y: 2, dir: 'down', players: [t.welcome.players[0], me], finds: [], drops: [], reason: 'collapse',
     });
     // Full, and at the spawn in town it holds.
     expect(await a.c.next('energy')).toEqual({ t: 'energy', energy: told(ENERGY_MAX, 0) });

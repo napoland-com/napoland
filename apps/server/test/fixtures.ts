@@ -30,8 +30,14 @@
  * arrives, is one step from home, and (2,6) and (3,5) next to it are in the lamp's light. The way up
  * the right side, (6,6) to (6,1), leads away from home: 3 to 8 steps from the home exit. At its end,
  * (3,1) to (5,1) are next to the campfire, where energy comes back.
+ *
+ * Items (itemsData), made up for the tests: moss and nails to find, and tea to drink.
+ *   moss: one at a time in the woods, on a tile next to the campfire: (3,1), (4,1) or (5,1). From
+ *         (4,1) you reach all three; from (1,1) none.
+ *   nail: two at a time in the town, around the rock: the 8 tiles from (0,0) to (2,2), the spawn (1,2) among them.
+ *   tea:  +30 energy; it grows nowhere, tests put it in bags.
  */
-import { TileMap, type MapData } from '@napoland/shared';
+import { TileMap, type ItemsData, type MapData } from '@napoland/shared';
 
 export function townData(): MapData {
   return {
@@ -77,3 +83,21 @@ export function woodsData(): MapData {
 
 /** The town, the house and the woods, ready for a World (home: 'town'). */
 export const fixtureMaps = (): TileMap[] => [new TileMap(townData()), new TileMap(houseData()), new TileMap(woodsData())];
+
+/** Where moss grows in the woods: the tiles next to the campfire. */
+export const MOSS_TILES = [{ x: 3, y: 1 }, { x: 4, y: 1 }, { x: 5, y: 1 }];
+
+export function itemsData(): ItemsData {
+  return {
+    version: 4,
+    items: [
+      { id: 'moss', name: 'Moss', kind: 'resource', stack: 3, text: 'Soft and damp.' },
+      { id: 'nail', name: 'Nail', kind: 'resource', stack: 5, text: 'Bent, but it will do.' },
+      { id: 'tea', name: 'Tea', kind: 'consumable', stack: 2, text: 'Still warm.', use: { energy: 30 } },
+    ],
+    finds: [
+      { item: 'moss', map: 'woods', near: { kinds: ['fireplace'], radius: 1.5 }, count: 1, respawn: [10, 20] },
+      { item: 'nail', map: 'town', near: { kinds: ['rock'], radius: 1.5 }, count: 2, respawn: [30, 60] },
+    ],
+  };
+}

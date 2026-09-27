@@ -1,9 +1,9 @@
 /**
- * Entry point: reads the configuration, loads the maps, opens storage and runs the server until
- * SIGINT or SIGTERM, then saves everyone and exits.
+ * Entry point: reads the configuration, loads the maps and the items, opens storage and runs the
+ * server until SIGINT or SIGTERM, then saves everyone and exits.
  */
 import { loadConfig } from './config';
-import { loadMaps } from './content';
+import { loadItems, loadMaps } from './content';
 import { flushLogs, log, setLogLevel } from './log';
 import { startServer } from './server';
 import { MemoryStorage, PgStorage, type Storage } from './storage';
@@ -21,6 +21,14 @@ async function main(): Promise<void> {
     home: cfg.homeMap,
     maps: [...maps.values()].map(({ data: m }) => ({ id: m.id, version: m.version, kind: m.kind, depth: m.depth, size: `${m.width}x${m.height}` })),
   });
+  const { items, warnings: itemWarnings } = loadItems(cfg.itemsFile, maps.values());
+  for (const message of itemWarnings) log.warn('items warning', { warning: message });
+  log.info('items loaded', {
+    file: cfg.itemsFile,
+    version: items.version,
+    items: items.items.map(i => i.id),
+    finds: items.finds.reduce((n, f) => n + f.count, 0),
+  });
 
   const storage: Storage = cfg.databaseUrl ? new PgStorage(cfg.databaseUrl, cfg.migrationsDir!) : new MemoryStorage();
   await storage.init();
@@ -29,6 +37,7 @@ async function main(): Promise<void> {
     port: cfg.port,
     storage,
     maps: maps.values(),
+    items,
     homeMap: cfg.homeMap,
     weather: cfg.weather,
     maxPlayers: cfg.maxPlayers,

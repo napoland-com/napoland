@@ -1,4 +1,5 @@
-import { STEP_MS, type EnergyView, type MapData, type PlayerView, type ServerMsg } from '@napoland/shared';
+import { PROTOCOL_VERSION, STEP_MS, type BagSlot, type DropView, type EnergyView, type FindView, type ItemsData, type MapData, type PlayerView, type ServerMsg } from '@napoland/shared';
+import { Items } from '../src/items';
 
 /**
  * A 7x5 town: a road runs north up the middle, and its top tile (3,0) leads into the woods.
@@ -87,9 +88,33 @@ export function shed(): MapData {
 
 export const ref = (m: MapData) => ({ id: m.id, version: m.version });
 
+/** A few items, like content/items.json: two resources and a consumable. */
+export function itemsData(): ItemsData {
+  return {
+    version: 4,
+    items: [
+      { id: 'glowcap', name: 'Glowcap', kind: 'resource', stack: 10, text: 'A mushroom that glows after rain.' },
+      { id: 'shard', name: 'Anomaly shard', kind: 'resource', stack: 3, text: 'Warm to the touch.' },
+      { id: 'thermos', name: 'Thermos', kind: 'consumable', stack: 2, text: 'Hot tea. Drink it for energy.', use: { energy: 30 } },
+    ],
+    finds: [],
+  };
+}
+export const ITEMS = new Items(itemsData());
+
 /** A full bar that holds, as it does in town and inside (only a fire refills it). */
 export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 
-export function welcome(map: MapData, players: PlayerView[], energy: EnergyView = FULL): Extract<ServerMsg, { t: 'welcome' }> {
-  return { t: 'welcome', v: 2, you: 'me', name: 'Aldo', token: 'x'.repeat(20), map: ref(map), players, stepMs: STEP_MS, weather: 'rain', energy, serverTime: 0 };
+/** What else a welcome can carry: finds and piles on the map, your bag, the server's items version. */
+export interface Extras { finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; items?: number }
+
+export function welcome(map: MapData, players: PlayerView[], energy: EnergyView = FULL, extras: Extras = {}): Extract<ServerMsg, { t: 'welcome' }> {
+  return {
+    t: 'welcome', v: PROTOCOL_VERSION, you: 'me', name: 'Aldo', token: 'x'.repeat(20), map: ref(map), players, stepMs: STEP_MS, weather: 'rain', energy, serverTime: 0,
+    finds: extras.finds ?? [], drops: extras.drops ?? [], bag: extras.bag ?? [], items: extras.items ?? ITEMS.version,
+  };
+}
+
+export function zone(map: MapData, x: number, y: number, players: PlayerView[], reason: 'exit' | 'collapse' = 'exit', extras: Pick<Extras, 'finds' | 'drops'> = {}): Extract<ServerMsg, { t: 'zone' }> {
+  return { t: 'zone', map: ref(map), x, y, dir: 'up', players, finds: extras.finds ?? [], drops: extras.drops ?? [], reason };
 }

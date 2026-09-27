@@ -1,9 +1,9 @@
 /**
- * One running game server: HTTP + WebSocket on one port, the World, its tick and periodic saves.
- * main.ts builds it from the environment; tests start it directly.
+ * One running game server: HTTP + WebSocket on one port, the World (with the piles saved before a
+ * restart), its tick and periodic saves. main.ts builds it from the environment; tests start it directly.
  */
 import type { AddressInfo } from 'node:net';
-import type { TileMap, Weather } from '@napoland/shared';
+import { DROP_LIFETIME_MS, type ItemsData, type TileMap, type Weather } from '@napoland/shared';
 import { createHttpServer } from './http';
 import { log } from './log';
 import { attachNet } from './net';
@@ -17,6 +17,10 @@ export interface ServerOptions {
   storage: Storage;
   /** Every map of the world; they must fit together (loadMaps checks that). */
   maps: Iterable<TileMap>;
+  /** Items and where finds grow; they must fit the maps (loadItems checks that). No items if unset. */
+  items?: ItemsData;
+  /** Where finds grow and which half of a pile others get: Math.random unless a test sets its own. */
+  rng?: () => number;
   /** The id of the town where new players start and collapsed players wake up. */
   homeMap: string;
   weather: Weather;
@@ -46,9 +50,18 @@ export interface RunningServer {
 }
 
 export async function startServer(o: ServerOptions): Promise<RunningServer> {
+  const clock = o.clock ?? (() => performance.now());
+  // Piles fade an hour after the collapse, restart or not; older ones are forgotten.
+  const drops = await o.storage.loadDrops(Date.now() - DROP_LIFETIME_MS);
+  if (drops.length) log.info('piles loaded', { piles: drops.length });
   const world = new World(o.maps, o.homeMap, o.weather, {
     // Where players run out tells how hard each part of the world really is.
     onCollapse: (id, where) => log.info('player collapsed', { id, ...where }),
+    items: o.items,
+    rng: o.rng,
+    drops,
+    // Game time never goes backwards; piles keep wall clock time, which is this far ahead of it.
+    epochOffset: Date.now() - clock(),
   });
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version });
   const net = attachNet({
@@ -56,7 +69,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     world,
     storage: o.storage,
     maxPlayers: o.maxPlayers,
-    clock: o.clock,
+    clock,
     helloTimeoutMs: o.helloTimeoutMs,
     heartbeatMs: o.heartbeatMs,
     trustProxy: o.trustProxy,

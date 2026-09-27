@@ -1,10 +1,11 @@
 /**
  * Loads game content from disk. A map that fails validation stops the server: a broken map would
- * let players walk through walls, get stuck, or walk through an exit into nowhere.
+ * let players walk through walls, get stuck, or walk through an exit into nowhere. So do broken
+ * items: a find rule that points nowhere would never grow anything.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { TileMap, validateMap, validateWorld, type MapData } from '@napoland/shared';
+import { TileMap, validateItems, validateMap, validateWorld, type ItemsData, type MapData, type Problem } from '@napoland/shared';
 
 /** Something odd about a map that does not stop the server, for the log. */
 export interface MapWarning {
@@ -55,6 +56,28 @@ export function loadMaps(dir: string, homeId: string): { maps: Map<string, TileM
   }
   if (errors.length) throw new Error(`the maps in ${dir} are not valid:\n  ${errors.join('\n  ')}`);
   return { maps: new Map(valid.map(d => [d.id, new TileMap(d)])), warnings };
+}
+
+/**
+ * The items file (content/items.json), checked against the maps its finds grow on. Throws with every
+ * error found; returns the items and the warnings.
+ */
+export function loadItems(file: string, maps: Iterable<TileMap>): { items: ItemsData; warnings: string[] } {
+  let data: ItemsData;
+  let problems: Problem[];
+  try {
+    data = JSON.parse(readFileSync(file, 'utf8')) as ItemsData;
+    if (typeof data !== 'object' || data === null || !Array.isArray(data.items) || !Array.isArray(data.finds)) {
+      throw new Error('it needs a version, a list of items and a list of finds');
+    }
+    problems = validateItems(data, [...maps].map(m => m.data));
+  } catch (err) {
+    // Not JSON, or so far from items that the checks themselves fail.
+    throw new Error(`the items in ${file} cannot be read: ${reason(err)}`);
+  }
+  const errors = problems.filter(p => p.level === 'error').map(p => p.message);
+  if (errors.length) throw new Error(`the items in ${file} are not valid:\n  ${errors.join('\n  ')}`);
+  return { items: data, warnings: problems.map(p => p.message) };
 }
 
 function reason(err: unknown): string {

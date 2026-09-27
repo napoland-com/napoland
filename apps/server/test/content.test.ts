@@ -2,9 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { MapData } from '@napoland/shared';
-import { loadMaps } from '../src/content';
-import { houseData, townData, woodsData } from './fixtures';
+import type { ItemsData, MapData } from '@napoland/shared';
+import { loadItems, loadMaps } from '../src/content';
+import { fixtureMaps, houseData, itemsData, townData, woodsData } from './fixtures';
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -89,5 +89,35 @@ describe('loadMaps', () => {
     expect(msg).toMatch(/half\.json: cannot be read: .*JSON/);
     expect(failure(folder({ ...world(), 'empty.json': '{}' }))).toMatch(/empty\.json: cannot be read/);
     expect(() => loadMaps(join(tmpdir(), 'napoland-no-such-folder'), 'town')).toThrow(/the maps in .* cannot be read/);
+  });
+});
+
+describe('loadItems', () => {
+  /** An items file with this content, in a folder of its own. */
+  const file = (body: ItemsData | string) => join(folder({ 'items.json': typeof body === 'string' ? body : JSON.stringify(body) }), 'items.json');
+
+  it('loads items whose finds fit the maps, with the warnings', () => {
+    expect(loadItems(file(itemsData()), fixtureMaps())).toEqual({ items: itemsData(), warnings: [] });
+    // Three tiles for two moss: little room to move when one is picked.
+    const tight = itemsData();
+    tight.finds[0]!.count = 2;
+    expect(loadItems(file(tight), fixtureMaps()).warnings).toEqual([expect.stringMatching(/only 3 tiles fit the rule for 2 finds/)]);
+  });
+
+  it('stops at items that break the rules, naming the file and every problem', () => {
+    const bad = itemsData();
+    bad.items.push({ ...bad.items[0]! });
+    bad.finds.push({ item: 'moss', map: 'nowhere', count: 1, respawn: [1, 2] });
+    const path = file(bad);
+    expect(() => loadItems(path, fixtureMaps())).toThrow(/^the items in .*items\.json are not valid:/);
+    expect(() => loadItems(path, fixtureMaps())).toThrow(/item "moss" is defined twice/);
+    expect(() => loadItems(path, fixtureMaps())).toThrow(/there is no map nowhere/);
+  });
+
+  it('stops at a file it cannot read', () => {
+    expect(() => loadItems(file('{"version": 1, "items": ['), fixtureMaps())).toThrow(/the items in .* cannot be read: .*JSON/);
+    expect(() => loadItems(file('{}'), fixtureMaps())).toThrow(/cannot be read: it needs a version, a list of items and a list of finds/);
+    expect(() => loadItems(file('{"version": 1, "items": [null], "finds": []}'), fixtureMaps())).toThrow(/cannot be read/);
+    expect(() => loadItems(join(tmpdir(), 'napoland-no-such-items.json'), fixtureMaps())).toThrow(/cannot be read/);
   });
 });

@@ -2,7 +2,8 @@
  * Content checks for maps. Run on every change (npm run validate) so a broken map never ships.
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
-import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData } from './map';
+import { findTiles, type ItemsData } from './items';
+import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
 import { Dir } from './protocol';
 
@@ -143,5 +144,50 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
     for (const e of byId.get(queue[h]!)?.data.exits ?? []) if (byId.has(e.to) && !reached.has(e.to)) { reached.add(e.to); queue.push(e.to); }
   }
   for (const id of byId.keys()) if (!reached.has(id)) out.push({ level: 'warning', map: id, message: `cannot be reached from ${homeId}` });
+  return out;
+}
+
+/**
+ * content/items.json: every item well formed, and every find rule pointing at a real item and map,
+ * with enough tiles to grow on (at least as many as `count`, and a warning below three times that,
+ * because a picked find grows back somewhere else and needs room to move).
+ */
+export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
+  const out: Problem[] = [];
+  const err = (message: string) => out.push({ level: 'error', message });
+  const warn = (message: string) => out.push({ level: 'warning', message });
+  if (!Number.isInteger(data.version) || data.version < 1) err('version must be a whole number from 1');
+  const ids = new Set<string>();
+  for (const i of data.items) {
+    const name = `item ${JSON.stringify(i.id)}`;
+    if (!/^[a-z][a-z0-9-]*$/.test(i.id ?? '')) err(`${name}: ids are lowercase letters, digits and -`);
+    if (ids.has(i.id)) err(`${name} is defined twice`);
+    ids.add(i.id);
+    if (!i.name?.trim()) err(`${name} has no name`);
+    if (!i.text?.trim()) err(`${name} has no text`);
+    if (i.kind !== 'resource' && i.kind !== 'consumable') err(`${name}: kind must be resource or consumable`);
+    if (!Number.isInteger(i.stack) || i.stack < 1) err(`${name}: stack must be a whole number from 1`);
+    const effects = Object.values(i.use ?? {}).filter(v => typeof v === 'number' && v !== 0).length;
+    if (i.kind === 'consumable' && !effects) err(`${name} is a consumable that does nothing when used`);
+    if (i.kind === 'resource' && i.use) err(`${name} is a resource and cannot be used`);
+  }
+  const byId = new Map(maps.map(m => [m.id, m]));
+  const tileKinds = new Set<string>(Object.values(TILE_CHARS));
+  data.finds.forEach((f, n) => {
+    const name = `find ${n} (${f.item} in ${f.map})`;
+    if (!ids.has(f.item)) err(`${name}: there is no item ${f.item}`);
+    const mapData = byId.get(f.map);
+    if (!mapData) return err(`${name}: there is no map ${f.map}`);
+    if (!Number.isInteger(f.count) || f.count < 1) err(`${name}: count must be a whole number from 1`);
+    if (!(f.respawn?.length === 2 && f.respawn[0] > 0 && f.respawn[0] <= f.respawn[1])) err(`${name}: respawn is [shortest, longest] seconds, above 0`);
+    if (f.steps && !(f.steps.length === 2 && f.steps[0] >= 0 && f.steps[0] <= f.steps[1])) err(`${name}: steps is [nearest, farthest], from 0`);
+    for (const k of f.on ?? []) if (!tileKinds.has(k)) err(`${name}: unknown tile kind ${k as TileKind}`);
+    if (f.near && !(f.near.radius > 0 && f.near.kinds.length)) err(`${name}: near needs kinds and a radius above 0`);
+    if (out.some(p => p.level === 'error' && p.message.startsWith(name))) return undefined;
+    const room = findTiles(new TileMap(mapData), f).length;
+    if (room < f.count) err(`${name}: only ${room} tiles fit the rule, fewer than count ${f.count}`);
+    else if (room < f.count * 3) warn(`${name}: only ${room} tiles fit the rule for ${f.count} finds; they have little room to move`);
+    return undefined;
+  });
   return out;
 }

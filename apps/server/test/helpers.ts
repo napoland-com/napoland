@@ -5,13 +5,13 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
-import { ENERGY_MAX, PROTOCOL_VERSION, type ClientMsg, type ServerMsg } from '@napoland/shared';
+import { DROP_LIFETIME_MS, ENERGY_MAX, PROTOCOL_VERSION, type BagSlot, type ClientMsg, type DropView, type ServerMsg } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
-import { MemoryStorage, type PlayerRecord } from '../src/storage';
+import { MemoryStorage, type PlayerRecord, type Storage } from '../src/storage';
 import { colorFor } from '../src/world';
-import { fixtureMaps } from './fixtures';
+import { fixtureMaps, itemsData } from './fixtures';
 
 export type Msg<T extends ServerMsg['t']> = Extract<ServerMsg, { t: T }>;
 
@@ -103,6 +103,78 @@ export async function eventually<T>(attempt: () => Promise<T>, what: string, tim
 let names = 0;
 export const newName = (): string => `Player ${++names}`;
 
+/** A player saved in `storage` where the test wants them (in the town at the spawn, full, with an empty bag, unless `where` says otherwise). */
+export async function savedPlayer(storage: Storage, where: Partial<PlayerRecord> = {}): Promise<{ id: string; name: string; token: string }> {
+  const token = randomBytes(32).toString('base64url');
+  const id = randomUUID();
+  const name = newName();
+  await storage.create({
+    id, name, tokenHash: hashToken(token), map: 'town', x: 1, y: 2, dir: 'down', color: colorFor(id), energy: ENERGY_MAX, bag: [],
+    createdAt: 1, lastSeenAt: 1, ...where,
+  });
+  return { id, name, token };
+}
+
+/** Logs in on the server at `port` with a saved token; the welcome and the energy message after it are taken out of the inbox. */
+export async function loginTo(port: number, token: string): Promise<{ c: Client; welcome: Extract<ServerMsg, { t: 'welcome' }> }> {
+  const c = await Client.open(port);
+  c.send({ t: 'hello', v: PROTOCOL_VERSION, token });
+  const welcome = await c.next('welcome');
+  await c.next('energy');
+  return { c, welcome };
+}
+
+/**
+ * Bags and piles through a restart. A server on `first` where one player carries things and another
+ * collapses with things in the bag is stopped; then a server starts on `second` (the same storage, or
+ * a new connection to the same database). The bag comes back with its player, the pile lies where it
+ * fell until its hour is over, and a pile older than an hour is forgotten. `stored` tells whether a
+ * player's pile is in storage.
+ */
+export async function restartKeepsBagsAndPiles(first: Storage, second: Storage, stored: (owner: string) => Promise<boolean>): Promise<void> {
+  setLogLevel('silent');
+  let now = 1_000_000;
+  const options = (storage: Storage): ServerOptions => ({ ...serverDefaults(), storage, items: itemsData(), weather: 'overcast', clock: () => now });
+  const bag: BagSlot[] = [{ item: 'nail', count: 2 }, { item: 'tea', count: 1 }];
+  const carrier = await savedPlayer(first, { map: 'town', x: 0, y: 5, bag });
+  const faller = await savedPlayer(first, { map: 'woods', x: 3, y: 6, energy: 1, bag: [{ item: 'moss', count: 2 }] });
+  const watcher = await savedPlayer(first, { map: 'woods', x: 4, y: 1 }); // by the campfire
+  const late = await savedPlayer(first, { map: 'town', x: 0, y: 6 });
+
+  let dropped: DropView[] = [];
+  const one = await startServer(options(first));
+  try {
+    const c = await loginTo(one.port, carrier.token);
+    const f = await loginTo(one.port, faller.token);
+    now += 5000; // 1 energy lasts about 4.1 s where the faller stands
+    await f.c.next('zone', m => m.reason === 'collapse');
+    await eventually(async () => expect(await stored(faller.id)).toBe(true), 'the pile to be stored');
+    dropped = one.world.dropViews('woods');
+    expect(dropped).toEqual([expect.objectContaining({ owner: faller.id, x: 3, y: 6 })]);
+    for (const x of [c, f]) x.c.ws.terminate();
+  } finally {
+    await one.stop();
+  }
+  // A pile from more than an hour ago: the server was down when it should have faded.
+  await second.saveDrop({ owner: late.id, name: late.name, map: 'woods', x: 5, y: 5, items: [{ item: 'moss', count: 1 }], droppedAt: Date.now() - DROP_LIFETIME_MS - 1000 });
+
+  now += 60_000;
+  const two = await startServer(options(second));
+  try {
+    const w = await loginTo(two.port, watcher.token);
+    expect(w.welcome.drops).toEqual(dropped);
+    const c = await loginTo(two.port, carrier.token);
+    expect(c.welcome.bag).toEqual(bag);
+    const f = await loginTo(two.port, faller.token);
+    expect(f.welcome).toMatchObject({ map: { id: 'town' }, bag: [] });
+    expect(await stored(faller.id)).toBe(true);
+    expect(await stored(late.id)).toBe(false);
+    for (const x of [w, c, f]) x.c.ws.terminate();
+  } finally {
+    await two.stop();
+  }
+}
+
 /** What every test server gets unless the test says otherwise: the fixture maps, home in the town. */
 export const serverDefaults = (): ServerOptions => ({
   host: '127.0.0.1', port: 0, storage: new MemoryStorage(), maps: fixtureMaps(), homeMap: 'town',
@@ -150,16 +222,8 @@ export function setup(options: Partial<ServerOptions> = {}) {
     const welcome = await welcomed(c, { t: 'hello', v: PROTOCOL_VERSION, token });
     return { c, welcome, id: welcome.you, token };
   };
-  /** A player saved where the test wants them (in the town at the spawn, full, unless `where` says otherwise), welcomed. */
-  const enter = async (where: Partial<PlayerRecord> = {}) => {
-    const token = randomBytes(32).toString('base64url');
-    const id = randomUUID();
-    await ctx.storage.create({
-      id, name: newName(), tokenHash: hashToken(token), map: 'town', x: 1, y: 2, dir: 'down', color: colorFor(id), energy: ENERGY_MAX,
-      createdAt: 1, lastSeenAt: 1, ...where,
-    });
-    return login(token);
-  };
+  /** A player saved where the test wants them (in the town at the spawn, full, with an empty bag, unless `where` says otherwise), welcomed. */
+  const enter = async (where: Partial<PlayerRecord> = {}) => login((await savedPlayer(ctx.storage, where)).token);
   /** Opens a connection, sends `first` and expects an error with `code`, then the close. */
   const refused = async (first: ClientMsg | string, code: string, closeCode: number) => {
     const c = await open();

@@ -4,9 +4,10 @@
  */
 import { z } from 'zod';
 import type { EnergyView } from './energy';
+import type { BagSlot } from './items';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -26,8 +27,36 @@ export const ClientMsg = z.discriminatedUnion('t', [
   /** Turn in place. */
   z.object({ t: z.literal('face'), dir: Dir }),
   z.object({ t: z.literal('ping'), at: z.number() }),
+  /** Pick up the find or the pile on tile x,y: your own tile or the one next to you. */
+  z.object({ t: z.literal('pick'), x: z.number().int(), y: z.number().int() }),
+  /** Use what is in bag slot `slot` (a consumable, like a thermos). */
+  z.object({ t: z.literal('use'), slot: z.number().int().nonnegative().max(63) }),
+  /** Throw away everything in bag slot `slot`. */
+  z.object({ t: z.literal('discard'), slot: z.number().int().nonnegative().max(63) }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
+
+/** Something to pick up, lying on a tile of your map. */
+export interface FindView {
+  id: number;
+  item: string;
+  x: number;
+  y: number;
+}
+
+/** What someone carried when they collapsed, lying where they fell until `until` (ms since the epoch). */
+export interface DropView {
+  id: string;
+  x: number;
+  y: number;
+  /** The player who collapsed (their id) and their name: they get all of it back, anyone else half. */
+  owner: string;
+  name: string;
+  until: number;
+}
+
+/** Why the server did not do what was asked. */
+export type Refusal = 'bag_full' | 'too_far' | 'gone' | 'not_usable' | 'empty_slot';
 
 /** What every client knows about a player it can see. x and y are tile coordinates. */
 export interface PlayerView {
@@ -57,18 +86,36 @@ export type ServerMsg =
       map: MapRef;
       /** Everyone on your map, you included. */
       players: PlayerView[];
+      /** What lies on your map to pick up. */
+      finds: FindView[];
+      drops: DropView[];
       stepMs: number;
       weather: Weather;
       energy: EnergyView;
+      bag: BagSlot[];
+      /** The version of content/items.json the server runs; a client with another version reloads. */
+      items: number;
       serverTime: number;
     }
   /**
    * You are on another map now, at x,y: you walked through an exit, or you collapsed and woke up at
-   * home. Forget the old map's players and pending steps; `players` is everyone on the new map, you included.
+   * home. Forget the old map's players, finds, piles and pending steps; the lists are the new map's.
    */
-  | { t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; reason: 'exit' | 'collapse' }
+  | { t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; finds: FindView[]; drops: DropView[]; reason: 'exit' | 'collapse' }
   /** Your energy, sent when its rate changes and every few seconds (ENERGY_SYNC_MS). */
   | { t: 'energy'; energy: EnergyView }
+  /** Your bag, whole, after any change. */
+  | { t: 'bag'; bag: BagSlot[] }
+  /** You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message. */
+  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' }
+  /** A pick, use or discard that did not happen, and why. */
+  | { t: 'refused'; action: 'pick' | 'use' | 'discard'; reason: Refusal }
+  /** On your map: a find grew here, or someone took one / it went. */
+  | { t: 'find'; find: FindView }
+  | { t: 'findGone'; id: number }
+  /** On your map: someone collapsed and left a pile; or a pile was taken or faded. */
+  | { t: 'drop'; drop: DropView }
+  | { t: 'dropGone'; id: string }
   /** Someone arrived on your map (logged in, or walked in from another map). */
   | { t: 'join'; player: PlayerView }
   /** Someone left your map (logged out, or walked to another map). */

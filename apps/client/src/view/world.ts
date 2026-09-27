@@ -1,7 +1,7 @@
 /**
  * Draws one map with three.js: tile terrain with ledges, forest, town props, the insides of
- * buildings, fires, weather and the characters. Everything comes from the map data; this file only
- * decides how it looks.
+ * buildings, fires, weather, the characters, and the finds and piles lying around (loot.ts).
+ * Everything comes from the map data and the server's lists; this file only decides how it looks.
  *
  * The WebGL renderer lives for the whole visit (createRenderer); a WorldView is built for one map
  * and disposed when you leave it, which frees what it put on the GPU. Big maps stay fast on
@@ -12,7 +12,7 @@
  * black: see interior.ts for the room, fire.ts for the fire and lighting.ts for the light.
  */
 import * as THREE from 'three';
-import { DIR_VEC, type Dir, type MapData, type MapObject, type TileKind, type TileMap, type Weather } from '@napoland/shared';
+import { DIR_VEC, type Dir, type DropView, type FindView, type MapData, type MapObject, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { makeNpc, makePlayer, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, flicker, hearthModel, type Puffs } from './fire';
 import {
@@ -20,6 +20,7 @@ import {
   type QuadFn, type WallShape,
 } from './interior';
 import { ambience, assignLights, lightSources, type Ambience, type LightSource } from './lighting';
+import { Loot, lootGlow } from './loot';
 import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
 
 export interface Avatar {
@@ -178,6 +179,8 @@ export class WorldView {
   /** Chimney smoke, and every set of puffs (smoke, sparks), which need the screen's scale. */
   private smoke: Smoke | null = null;
   private puffs: Puffs[] = [];
+  /** Finds and piles: they come and go, so they are drawn apart from the map (loot.ts). */
+  private loot = new Loot();
   private marker: THREE.Mesh;
   private shadowGeo = new THREE.CircleGeometry(1, 14).rotateX(-Math.PI / 2);
   private shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -211,6 +214,8 @@ export class WorldView {
     this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
+    this.scene.add(this.loot.root);
+    this.animate.push(t => this.loot.update(t));
     this.sources = lightSources(map);
     this.marker = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.66, 4, 1, Math.PI / 4).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xe9e6de, transparent: true, opacity: 0.9, depthWrite: false }));
     this.marker.visible = false;
@@ -223,6 +228,7 @@ export class WorldView {
   /** Frees everything this view put on the GPU. The renderer and the shared toon materials stay for the next map. */
   dispose() {
     for (const p of this.puffs) p.dispose();
+    this.loot.dispose();
     disposeTree(this.scene);
     this.scene.clear();
     this.rigs.clear();
@@ -774,7 +780,16 @@ export class WorldView {
     this.smoke?.puffs.color.set(a.smoke);
     this.paneMat.emissive.set(a.window.glow);
     if (this.skyLight) this.skyLight.opacity = a.window.light;
+    this.loot.setGlow(lootGlow(this.map.data.kind, w, this.warmRoom));
     this.updateFog();
+  }
+
+  /**
+   * The finds and piles lying on this map, all of them (call it when they change). `me` and `color`:
+   * your id and jacket color, for the ring around your own pile.
+   */
+  setLoot(finds: Iterable<FindView>, drops: Iterable<DropView>, me: string | null, color: string | null) {
+    this.loot.set(finds, drops, me, color, (x, y) => this.groundAt(x + 0.5, y + 0.5));
   }
 
   private updateFog() {
@@ -798,6 +813,7 @@ export class WorldView {
     // Smoke and sparks are sized in world units: the pixels one unit covers, one unit from the camera.
     const perUnit = this.renderer.getDrawingBufferSize(this.tmp2).y / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)));
     for (const p of this.puffs) p.resize(perUnit);
+    this.loot.resize(perUnit);
     this.updateFog();
   }
 

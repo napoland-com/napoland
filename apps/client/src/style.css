@@ -54,7 +54,7 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
   visibility: hidden; opacity: 0; transform: translate(-50%, calc(var(--u) * -.8)); transition: opacity .45s ease, transform .45s ease, visibility 0s .45s; }
 .banner[data-show] { visibility: visible; opacity: 1; transform: translate(-50%, 0); transition: opacity .35s ease, transform .35s ease, visibility 0s; }
 .banner b { display: block; font-weight: 600; font-size: calc(var(--u) * 1.9); line-height: 1.15; color: #ffcf5a; letter-spacing: .01em; }
-.banner span { display: block; margin-top: .3em; font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.1); color: #d3ccbb; }
+.banner span { display: block; margin-top: .3em; font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.1); color: #d3ccbb; white-space: pre-line; }
 @media (prefers-reduced-motion: reduce) { .banner, .banner[data-show] { transform: translate(-50%, 0); } }
 
 .hud .menu-btn { position: absolute; right: calc(var(--pad) + var(--safe-r)); top: calc(var(--pad) + var(--safe-t)); width: var(--btn); height: var(--btn); border-radius: 12px; }
@@ -74,6 +74,11 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 
 .labels, .floats { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .tag { position: absolute; left: 0; top: 0; padding: .1em .5em; border-radius: 99px; background: rgba(12, 15, 21, .72); font-size: calc(var(--u) * .95); font-weight: 600; white-space: nowrap; will-change: transform; }
+/* Whose pile it is: warm, with a small sack before the name, so it is not taken for a person. */
+.tag.pile { background: rgba(44, 31, 15, .84); color: #ffdca0; font-size: calc(var(--u) * .88); box-shadow: 0 0 0 1px rgba(255, 207, 135, .35); }
+.tag.pile::before { content: ""; display: inline-block; width: .9em; height: .9em; margin-right: .3em; vertical-align: -.12em; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat; }
 .float { position: absolute; left: 0; top: 0; font-weight: 700; font-size: calc(var(--u) * 1.4); white-space: nowrap; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; will-change: transform, opacity; }
 
 .dialog { position: absolute; left: calc(var(--pad) + var(--safe-l)); right: calc(var(--pad) + var(--safe-r)); bottom: calc(var(--pad) * 3.2 + var(--dp) + var(--pad) + var(--safe-b)); min-height: calc(var(--u) * 7.4); padding: calc(var(--u) * 1.2) calc(var(--u) * 1.5) calc(var(--u) * 1.4); font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.35); line-height: 1.4; pointer-events: auto; cursor: pointer; display: none; }
@@ -83,14 +88,40 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 @media (prefers-reduced-motion: no-preference) { .dialog .more { animation: bob .9s steps(2, jump-none) infinite; } }
 @keyframes bob { 50% { transform: translateY(3px); } }
 
-.sheet { position: absolute; background: #0e1117; pointer-events: auto; display: flex; flex-direction: column; gap: calc(var(--u) * .8); padding: calc(var(--u) * 1.2); transition: transform .22s ease, visibility 0s; }
+/* The bag. --sheet-h is the most height it can have (the whole screen in landscape; above the
+   controls in portrait); --detail-h what the details under the slots need. */
+.sheet { position: absolute; background: #0e1117; pointer-events: auto; display: flex; flex-direction: column; gap: var(--gap); padding: calc(var(--u) * 1.2); overflow: hidden auto; overscroll-behavior: contain; transition: transform .22s ease, visibility 0s;
+  --gap: calc(var(--u) * .8); --g: calc(var(--u) * .6); --detail-h: calc(var(--u) * 10); --sheet-h: 100cqh;
+  /* The slots' width: as wide as the sheet allows, but never so big that the details under them no longer fit. */
+  --col: min(calc(var(--u) * 34), calc((var(--sheet-h) - var(--u) * 2.4 - var(--safe-t) - var(--btn) - var(--gap) * 2 - var(--detail-h)) * 2 + var(--g))); }
 .sheet[data-open="false"] { visibility: hidden; transition: transform .22s ease, visibility 0s .22s; }
-.sheet-head { display: flex; align-items: center; gap: calc(var(--u) * .8); font-size: calc(var(--u) * 1.35); font-weight: 600; }
+.sheet-head { display: flex; align-items: center; gap: calc(var(--u) * .8); font-size: calc(var(--u) * 1.35); font-weight: 600; flex: none; }
 .sheet-head b { font-weight: inherit; flex: 1; color: #ffcf5a; }
+.sheet-head .room { font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.1); color: #b9b2a2; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hud .close { width: var(--btn); height: var(--btn); flex: none; }
-.sheet .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--u) * 4.4), 1fr)); gap: calc(var(--u) * .5); overflow: auto; align-content: start; flex: 1; }
-.slot { aspect-ratio: 1; position: relative; display: grid; place-items: center; border-radius: 8px; background: #1c222c; box-shadow: inset 0 0 0 2px #384152; }
-.sheet .hint { font-size: calc(var(--u) * .95); color: #b9b2a2; margin: 0; }
+/* Four slots a row, two rows. */
+.sheet .grid { flex: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--g); width: 100%; max-width: var(--col); margin-inline: auto; }
+.hud .slot { aspect-ratio: 1; position: relative; display: grid; place-items: center; border-radius: 10px; border: 0; background: #1c222c; box-shadow: inset 0 0 0 2px #3a4356; }
+.hud .slot svg { width: 72%; height: 72%; }
+.hud .slot[data-empty="true"] { background: #131820; box-shadow: inset 0 0 0 2px #232a36; cursor: default; }
+.hud .slot[data-picked] { background: #262d3a; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
+.slot .n { position: absolute; right: 8%; bottom: 5%; font-size: calc(var(--u) * 1.1); font-weight: 700; line-height: 1; color: #f1ece0; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; font-variant-numeric: tabular-nums; }
+/* Under the slots: what the chosen one holds and what can be done with it, or a hint. */
+.sheet .detail { flex: none; min-height: var(--detail-h); display: flex; flex-direction: column; gap: calc(var(--u) * .7); }
+.sheet .hint { margin: 0; font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.2); line-height: 1.35; color: #b9b2a2; }
+.detail .about { display: flex; align-items: flex-start; gap: calc(var(--u) * .9); }
+.detail .big { flex: none; width: calc(var(--u) * 4.2); height: calc(var(--u) * 4.2); display: grid; place-items: center; border-radius: 10px; background: #1c222c; box-shadow: inset 0 0 0 2px #3a4356; }
+.detail .big svg { width: 76%; height: 76%; }
+.detail .words { min-width: 0; }
+.detail .title { display: flex; align-items: baseline; gap: .5em; font-size: calc(var(--u) * 1.5); font-weight: 600; color: #ffcf5a; }
+.detail .count { font-size: .8em; color: #d3ccbb; font-variant-numeric: tabular-nums; }
+.detail .words p { margin: .2em 0 0; font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.25); line-height: 1.35; color: #e6dfcf; }
+.detail .acts { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--u) * .6); }
+.detail .ask { margin-right: auto; font-size: calc(var(--u) * 1.25); font-weight: 600; }
+.hud .act { display: inline-block; width: auto; border-radius: 9px; padding: .45em 1em; font-size: calc(var(--u) * 1.25); font-weight: 600; background: #1c222c; border: 1px solid #4a5468; box-shadow: none; }
+.hud .act.go { background: #e0873a; border-color: #f3b27a; color: #1a0f04; }
+.hud .act.toss { color: #ffb4a0; }
+.hud .act.toss.sure { background: #9c2b3a; border-color: #f3a6b0; color: #fff4f4; }
 
 @container scr (max-width: 330px) {
   .hud { --dp: clamp(84px, calc(var(--u) * 9.5), 112px); --ab: clamp(40px, calc(var(--u) * 4.4), 54px); --btn: clamp(32px, calc(var(--u) * 3), 40px); }
@@ -98,7 +129,10 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 /* The text box and the bag never cover A and B, so B can always close them. */
 @container scr (orientation: portrait) {
   .stick, .ab { bottom: calc(var(--pad) * 3.2 + var(--safe-b)); }
-  .sheet { left: 0; right: 0; top: 0; bottom: calc(var(--pad) * 4 + var(--dp) + var(--safe-b)); border-radius: 0 0 18px 18px; padding-top: calc(var(--u) * 1.2 + var(--safe-t)); }
+  .sheet { left: 0; right: 0; top: 0; max-height: var(--sheet-h); border-radius: 0 0 18px 18px; padding-top: calc(var(--u) * 1.2 + var(--safe-t));
+    --sheet-h: calc(100cqh - var(--pad) * 4 - var(--dp) - var(--safe-b)); }
+  /* On a wide upright screen the details line up under the slots. */
+  .sheet .detail { width: 100%; max-width: var(--col); margin-inline: auto; }
   .sheet[data-open="false"] { transform: translateY(-105%); }
 }
 /* In landscape they take the stick's side instead: nobody walks while reading. */

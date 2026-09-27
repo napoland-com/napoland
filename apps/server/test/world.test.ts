@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ENERGY_MAX, ENERGY_SYNC_MS, REFILL_PER_SECOND, STEP_MS, TileMap, energyRate, type Dir, type EnergyView, type MapData, type Weather,
+  BAG_SLOTS, DROP_LIFETIME_MS, ENERGY_MAX, ENERGY_SYNC_MS, REFILL_PER_SECOND, STEP_MS, TileMap, energyRate,
+  type BagSlot, type Dir, type DropView, type EnergyView, type MapData, type ServerMsg, type Weather,
 } from '@napoland/shared';
-import type { PlayerRecord } from '../src/storage';
-import { JACKET_COLORS, STEP_QUEUE_MAX, STEP_TOLERANCE_MS, World, colorFor, type Outgoing } from '../src/world';
-import { fixtureMaps, houseData, woodsData } from './fixtures';
+import type { DropRecord, PlayerRecord } from '../src/storage';
+import { JACKET_COLORS, STEP_QUEUE_MAX, STEP_TOLERANCE_MS, World, colorFor, type Outgoing, type WorldOptions } from '../src/world';
+import { MOSS_TILES, fixtureMaps, houseData, itemsData, woodsData } from './fixtures';
 
 /** 8x5 grass with water in the two right columns and rocks at 1,0 and 2,0: a town of its own. */
 function testMap(): TileMap {
@@ -25,7 +26,7 @@ function testMap(): TileMap {
 /** A player saved on map 'test' with a full bar, unless `more` says otherwise. */
 function rec(id: string, x: number, y: number, dir: Dir = 'down', more: Partial<PlayerRecord> = {}): PlayerRecord {
   return {
-    id, name: id.toUpperCase(), tokenHash: `hash-${id}`, map: 'test', x, y, dir, color: colorFor(id), energy: ENERGY_MAX,
+    id, name: id.toUpperCase(), tokenHash: `hash-${id}`, map: 'test', x, y, dir, color: colorFor(id), energy: ENERGY_MAX, bag: [],
     createdAt: 1, lastSeenAt: 1, ...more,
   };
 }
@@ -60,6 +61,28 @@ const told = (value: number, rate: number): EnergyView => ({ value: Math.round(v
 const answers = (out: Outgoing[], id: string) => out.filter(o => o.to === id).map(o => o.msg);
 /** The energy messages in `out`, as [to, energy]. */
 const energies = (out: Outgoing[]) => out.flatMap(o => (o.msg.t === 'energy' ? [[o.to, o.msg.energy] as const] : []));
+/** The messages in `out` for everyone on `map`, in order. */
+const heardOn = (out: Outgoing[], map: string) => out.flatMap(o => ('map' in o && o.map === map ? [o.msg] : []));
+/** Everything in `out` but energy (which the woods repeat every few seconds). */
+const noEnergy = (out: Outgoing[]) => out.filter(o => o.msg.t !== 'energy');
+
+/** Dice that roll the same every run (Park-Miller). */
+const seeded = (seed: number) => () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+/** The fixture world with the fixture items (fixtures.ts), players joined at time 0; joins and writes drained. */
+function itemsWorld(options: WorldOptions = {}, ...players: PlayerRecord[]): World {
+  const w = new World(fixtureMaps(), 'town', 'overcast', { items: itemsData(), rng: seeded(7), ...options });
+  for (const p of players) w.join(p, 0);
+  w.drain();
+  w.takeWrites();
+  return w;
+}
+/** A pile as storage keeps it. */
+const pileOf = (owner: string, map: string, x: number, y: number, items: BagSlot[], droppedAt = 0): DropRecord => ({
+  owner, name: owner.toUpperCase(), map, x, y, items, droppedAt,
+});
+const dropOf = (d: DropRecord): DropView => ({ id: d.owner, x: d.x, y: d.y, owner: d.owner, name: d.name, until: d.droppedAt + DROP_LIFETIME_MS });
+const units = (slots: BagSlot[]) => slots.reduce((n, s) => n + s.count, 0);
+const fullOfNails = (): BagSlot[] => Array.from({ length: BAG_SLOTS }, () => ({ item: 'nail', count: 5 }));
 
 describe('World: stepping', () => {
   it('moves one tile, gives the mover its seq and everyone else the step without it', () => {
@@ -218,6 +241,10 @@ describe('World: turning, joining and leaving', () => {
       players: [joined.player],
       // A town without a fireplace: energy holds.
       energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 },
+      // No items in this world: nothing lies around, and the bag is empty.
+      finds: [],
+      drops: [],
+      bag: [],
     });
     expect(w.drain()).toEqual([
       { to: '*', map: 'test', except: 'a', msg: { t: 'join', player: joined.player } },
@@ -276,7 +303,7 @@ describe('World: maps and exits', () => {
       { to: '*', map: 'woods', except: 'a', msg: { t: 'join', player: viewOf('a', 3, 6, 'up') } },
       {
         to: 'a',
-        msg: { t: 'zone', map: { id: 'woods', version: 1 }, x: 3, y: 6, dir: 'up', players: [viewOf('c', 5, 5, 'up'), viewOf('a', 3, 6, 'up')], reason: 'exit' },
+        msg: { t: 'zone', map: { id: 'woods', version: 1 }, x: 3, y: 6, dir: 'up', players: [viewOf('c', 5, 5, 'up'), viewOf('a', 3, 6, 'up')], finds: [], drops: [], reason: 'exit' },
       },
       { to: 'a', msg: { t: 'energy', energy: told(ENERGY_MAX, energyRate(woods, 3, 6, 'overcast')) } },
     ]);
@@ -293,7 +320,7 @@ describe('World: maps and exits', () => {
     const back = answers(w.drain(), 'a');
     expect(back.map(m => m.t)).toEqual(['step', 'zone', 'energy']);
     expect(back[0]).toEqual({ t: 'step', id: 'a', x: 4, y: 7, dir: 'down', seq: 2 });
-    expect(back[1]).toEqual({ t: 'zone', map: { id: 'town', version: 1 }, x: 5, y: 1, dir: 'down', players: [viewOf('a', 5, 1, 'down')], reason: 'exit' });
+    expect(back[1]).toEqual({ t: 'zone', map: { id: 'town', version: 1 }, x: 5, y: 1, dir: 'down', players: [viewOf('a', 5, 1, 'down')], finds: [], drops: [], reason: 'exit' });
     // What the woods took in the 200 ms there, and in town it holds.
     expect(back[2]).toEqual({ t: 'energy', energy: told(ENERGY_MAX + 0.2 * energyRate(woods, 4, 6, 'overcast'), 0) });
     expect(w.get('a')).toMatchObject({ map: 'town', x: 5, y: 1, dir: 'down' });
@@ -307,7 +334,7 @@ describe('World: maps and exits', () => {
       { to: '*', map: 'town', except: 'a', msg: { t: 'step', id: 'a', x: 7, y: 2, dir: 'up' } },
       { to: '*', map: 'town', except: 'a', msg: { t: 'leave', id: 'a' } },
       { to: '*', map: 'house', except: 'a', msg: { t: 'join', player: viewOf('a', 2, 3, 'up') } },
-      { to: 'a', msg: { t: 'zone', map: { id: 'house', version: 1 }, x: 2, y: 3, dir: 'up', players: [viewOf('a', 2, 3, 'up')], reason: 'exit' } },
+      { to: 'a', msg: { t: 'zone', map: { id: 'house', version: 1 }, x: 2, y: 3, dir: 'up', players: [viewOf('a', 2, 3, 'up')], finds: [], drops: [], reason: 'exit' } },
       { to: 'a', msg: { t: 'energy', energy: told(50, 0) } },
     ]);
     expect(w.views('house').map(v => v.id)).toEqual(['a']);
@@ -317,7 +344,7 @@ describe('World: maps and exits', () => {
     expect(out.map(m => m.t)).toEqual(['step', 'zone', 'energy']);
     expect(out[0]).toEqual({ t: 'step', id: 'a', x: 2, y: 4, dir: 'down', seq: 2 });
     expect(out[1]).toEqual({
-      t: 'zone', map: { id: 'town', version: 1 }, x: 7, y: 3, dir: 'down', players: [viewOf('b', 0, 5, 'down'), viewOf('a', 7, 3, 'down')], reason: 'exit',
+      t: 'zone', map: { id: 'town', version: 1 }, x: 7, y: 3, dir: 'down', players: [viewOf('b', 0, 5, 'down'), viewOf('a', 7, 3, 'down')], finds: [], drops: [], reason: 'exit',
     });
     expect(out[2]).toEqual({ t: 'energy', energy: told(50, 0) });
     expect(w.get('a')).toMatchObject({ map: 'town', x: 7, y: 3, dir: 'down', energy: 50 });
@@ -521,7 +548,7 @@ describe('World: collapsing', () => {
       { to: '*', map: 'town', except: 'a', msg: { t: 'join', player: viewOf('a', 1, 2, 'down') } },
       {
         to: 'a',
-        msg: { t: 'zone', map: { id: 'town', version: 1 }, x: 1, y: 2, dir: 'down', players: [viewOf('t', 0, 5, 'down'), viewOf('a', 1, 2, 'down')], reason: 'collapse' },
+        msg: { t: 'zone', map: { id: 'town', version: 1 }, x: 1, y: 2, dir: 'down', players: [viewOf('t', 0, 5, 'down'), viewOf('a', 1, 2, 'down')], finds: [], drops: [], reason: 'collapse' },
       },
       // Full, and at the spawn in town it holds.
       { to: 'a', msg: { t: 'energy', energy: told(ENERGY_MAX, 0) } },
@@ -570,6 +597,450 @@ describe('World: collapsing', () => {
     w.tick(60_000);
     expect(w.get('a')!.energy).toBe(saved.energy);
     expect(collapses).toEqual([]);
+  });
+});
+
+describe('World: finds', () => {
+  it('lays out the finds of every rule at start, on tiles that fit the rule, and tells nobody', () => {
+    const w = new World(fixtureMaps(), 'town', 'overcast', { items: itemsData(), rng: seeded(1) });
+    expect(w.drain()).toEqual([]);
+    const moss = w.findViews('woods');
+    expect(moss).toEqual([{ id: expect.any(Number), item: 'moss', x: expect.any(Number), y: 1 }]);
+    expect(MOSS_TILES).toContainEqual({ x: moss[0]!.x, y: moss[0]!.y });
+    const nails = w.findViews('town');
+    expect(nails.map(n => n.item)).toEqual(['nail', 'nail']);
+    // Around the rock at 1,1, on two different tiles.
+    for (const n of nails) expect(Math.max(Math.abs(n.x - 1), Math.abs(n.y - 1))).toBe(1);
+    expect(new Set(nails.map(n => `${n.x},${n.y}`)).size).toBe(2);
+    expect(new Set([...moss, ...nails].map(f => f.id)).size).toBe(3);
+    expect(w.findViews('house')).toEqual([]);
+  });
+
+  it('never puts two finds on one tile, whatever the dice say', () => {
+    const crowded = { ...itemsData(), finds: [{ item: 'nail', map: 'town', near: { kinds: ['rock' as const], radius: 1.5 }, count: 7, respawn: [1, 2] as [number, number] }] };
+    for (let seed = 1; seed <= 50; seed++) {
+      const w = new World(fixtureMaps(), 'town', 'rain', { items: crowded, rng: seeded(seed) });
+      expect(new Set(w.findViews('town').map(f => `${f.x},${f.y}`)).size).toBe(7);
+    }
+  });
+
+  it('refuses find rules for maps or items that do not exist', () => {
+    const items = itemsData();
+    const rule = items.finds[0]!;
+    expect(() => new World(fixtureMaps(), 'town', 'rain', { items: { ...items, finds: [{ ...rule, map: 'nowhere' }] } })).toThrow(/map nowhere, which does not exist/);
+    expect(() => new World(fixtureMaps(), 'town', 'rain', { items: { ...items, finds: [{ ...rule, item: 'nothing' }] } })).toThrow(/nothing, which is not an item/);
+  });
+
+  it('shows a player what lies on their map when they arrive, in the welcome and in zone', () => {
+    const w = itemsWorld({}, inTown('a', 4, 1, 'up'));
+    expect(w.join(inWoods('b', 1, 1), 0).finds).toEqual(w.findViews('woods'));
+    expect(w.join(inTown('c', 0, 5), 0)).toMatchObject({ finds: w.findViews('town'), drops: [], bag: [] });
+    w.step('a', 'up', 1, 1000); // into the woods
+    expect(answers(w.drain(), 'a').find(m => m.t === 'zone')).toMatchObject({ map: { id: 'woods' }, finds: w.findViews('woods'), drops: [] });
+  });
+
+  it('lets a player pick up a find on their own tile: they hear what they got and their bag, the map hears it gone', () => {
+    // With the dice at 0.9, the moss lies at 5,1.
+    const w = itemsWorld({ rng: () => 0.9 }, inWoods('b', 1, 1), inTown('t', 0, 5), inWoods('a', 5, 1));
+    expect(w.findViews('woods')).toEqual([{ id: 1, item: 'moss', x: 5, y: 1 }]);
+    w.pick('a', 5, 1, 1000);
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'got', items: [{ item: 'moss', count: 1 }], from: 'find' } },
+      { to: 'a', msg: { t: 'bag', bag: [{ item: 'moss', count: 1 }] } },
+      { to: '*', map: 'woods', msg: { t: 'findGone', id: 1 } },
+    ]);
+    expect(w.get('a')!.bag).toEqual([{ item: 'moss', count: 1 }]);
+    expect(w.findViews('woods')).toEqual([]);
+    // Finds live in memory, and the bag is saved with the player later: nothing to write now.
+    expect(w.takeWrites()).toEqual({ drops: [], players: [] });
+  });
+
+  it('reaches the four tiles next to the player, not across a corner or farther; an empty tile is gone', () => {
+    const w = itemsWorld({ rng: () => 0.9 }, inWoods('far', 3, 1), inWoods('corner', 6, 2), inWoods('next', 6, 1, 'left'));
+    w.pick('far', 5, 1, 1000);
+    w.pick('corner', 5, 1, 1000);
+    w.pick('far', 3, 1, 1000); // its own tile, where nothing lies
+    expect(w.drain()).toEqual([
+      { to: 'far', msg: { t: 'refused', action: 'pick', reason: 'too_far' } },
+      { to: 'corner', msg: { t: 'refused', action: 'pick', reason: 'too_far' } },
+      { to: 'far', msg: { t: 'refused', action: 'pick', reason: 'gone' } },
+    ]);
+    expect(w.findViews('woods')).toHaveLength(1);
+    w.pick('next', 5, 1, 1000);
+    expect(answers(w.drain(), 'next').map(m => m.t)).toEqual(['got', 'bag']);
+    w.pick('corner', 6, 1, 1100); // next to it, but nothing lies there
+    w.pick('next', 5, 1, 1100); // taken a moment ago
+    expect(w.drain()).toEqual([
+      { to: 'corner', msg: { t: 'refused', action: 'pick', reason: 'gone' } },
+      { to: 'next', msg: { t: 'refused', action: 'pick', reason: 'gone' } },
+    ]);
+  });
+
+  it('refuses a find that does not fit in the bag, and it stays where it is', () => {
+    const full = fullOfNails();
+    const w = itemsWorld({ rng: () => 0.9 }, inWoods('a', 5, 1, 'up', { bag: full }));
+    w.pick('a', 5, 1, 1000);
+    expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'refused', action: 'pick', reason: 'bag_full' } }]);
+    expect(w.findViews('woods')).toHaveLength(1);
+    expect(w.get('a')!.bag).toEqual(full);
+    // Every slot taken, but one of them has room for one more moss.
+    const w2 = itemsWorld({ rng: () => 0.9 }, inWoods('b', 5, 1, 'up', { bag: [...full.slice(1), { item: 'moss', count: 2 }] }));
+    w2.pick('b', 5, 1, 1000);
+    expect(w2.get('b')!.bag.at(-1)).toEqual({ item: 'moss', count: 3 });
+    expect(w2.findViews('woods')).toEqual([]);
+  });
+
+  it('grows a picked find back after a random time within its respawn, on another tile that fits the rule, and tells that map', () => {
+    // With the dice at 0.5, the moss lies at 4,1 and grows back 10 + 0.5 * (20 - 10) = 15 s after it is taken.
+    const w = itemsWorld({ rng: () => 0.5 }, inWoods('a', 4, 1), inTown('t', 0, 5));
+    expect(w.findViews('woods')).toEqual([{ id: 1, item: 'moss', x: 4, y: 1 }]);
+    w.pick('a', 4, 1, 1000);
+    w.drain();
+    w.tick(16_000 - 1);
+    expect(noEnergy(w.drain())).toEqual([]);
+    expect(w.findViews('woods')).toEqual([]);
+    w.tick(16_000);
+    // Ids go on counting: the moss was 1, the nails 2 and 3.
+    const grown = { id: 4, item: 'moss', x: 5, y: 1 };
+    expect(noEnergy(w.drain())).toEqual([{ to: '*', map: 'woods', msg: { t: 'find', find: grown } }]);
+    expect(w.findViews('woods')).toEqual([grown]);
+  });
+
+  it('moves a find on every time it is picked, never sooner than its shortest respawn nor later than its longest', () => {
+    const w = itemsWorld({ rng: seeded(3) }, inWoods('a', 4, 1)); // next to the campfire: never runs out
+    let now = 0;
+    for (let i = 0; i < 20; i++) {
+      const taken = w.findViews('woods')[0]!;
+      w.pick('a', taken.x, taken.y, now);
+      w.tick(now + 10_000 - 1);
+      expect(w.findViews('woods')).toEqual([]);
+      w.tick(now + 20_000);
+      const grown = w.findViews('woods')[0]!;
+      expect(MOSS_TILES).toContainEqual({ x: grown.x, y: grown.y });
+      expect(grown.x).not.toBe(taken.x);
+      now += 20_000;
+    }
+    // 20 moss: six full slots of 3 and one of 2.
+    expect(w.get('a')!.bag).toEqual([...Array.from({ length: 6 }, () => ({ item: 'moss', count: 3 })), { item: 'moss', count: 2 }]);
+  });
+
+  it('never grows a find on a tile with a pile, and on the tile it was taken from only when no other is free', () => {
+    const pile = (owner: string, x: number) => pileOf(owner, 'woods', x, 1, [{ item: 'nail', count: 1 }]);
+    const w = itemsWorld({ drops: [pile('p', 3), pile('q', 5)] }, inWoods('a', 4, 1));
+    expect(w.findViews('woods')).toMatchObject([{ x: 4, y: 1 }]);
+    w.pick('a', 4, 1, 1000);
+    w.tick(21_000);
+    expect(w.findViews('woods')).toMatchObject([{ x: 4, y: 1 }]);
+  });
+
+  it('waits for room when every tile a find may grow on has a pile', () => {
+    const pile = (owner: string, x: number) => pileOf(owner, 'woods', x, 1, [{ item: 'nail', count: 1 }]);
+    const w = itemsWorld({ drops: [pile('p', 3), pile('a', 4), pile('q', 5)] }, inWoods('a', 4, 1));
+    expect(w.findViews('woods')).toEqual([]);
+    w.tick(1000); // still no room: it tries again after the shortest respawn
+    w.pick('a', 4, 1, 2000); // 'a' takes their own pile back: 4,1 is free
+    w.tick(11_000 - 1);
+    expect(w.findViews('woods')).toEqual([]);
+    w.tick(11_000);
+    expect(w.findViews('woods')).toMatchObject([{ item: 'moss', x: 4, y: 1 }]);
+  });
+});
+
+describe('World: the bag', () => {
+  it('uses a consumable: its energy, up to a full bar, and one unit is gone; the player hears the energy, then the bag', () => {
+    const w = itemsWorld({}, inTown('a', 0, 5, 'down', { energy: 50, bag: [{ item: 'tea', count: 2 }, { item: 'moss', count: 1 }] }));
+    w.use('a', 0, 1000);
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'energy', energy: told(80, 0) } },
+      { to: 'a', msg: { t: 'bag', bag: [{ item: 'tea', count: 1 }, { item: 'moss', count: 1 }] } },
+    ]);
+    w.use('a', 0, 2000); // 80 + 30 is more than a full bar
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'energy', energy: told(ENERGY_MAX, 0) } },
+      { to: 'a', msg: { t: 'bag', bag: [{ item: 'moss', count: 1 }] } },
+    ]);
+    expect(w.get('a')).toMatchObject({ energy: ENERGY_MAX, bag: [{ item: 'moss', count: 1 }] });
+  });
+
+  it('keeps the rate of the tile: in the wilds the bar drains on from its new value', () => {
+    const w = itemsWorld({}, inWoods('a', 3, 6, 'up', { energy: 20, bag: [{ item: 'tea', count: 1 }] }));
+    w.use('a', 0, 10_000);
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'energy', energy: told(20 + 10 * edge + 30, edge) } },
+      { to: 'a', msg: { t: 'bag', bag: [] } },
+    ]);
+    w.tick(11_000);
+    expect(w.get('a')!.energy).toBeCloseTo(20 + 11 * edge + 30);
+  });
+
+  it('refuses to use what cannot be used, and an empty slot', () => {
+    const w = itemsWorld({}, inTown('a', 0, 5, 'down', { energy: 50, bag: [{ item: 'moss', count: 1 }] }));
+    w.use('a', 0, 1000);
+    w.use('a', 1, 1000);
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'refused', action: 'use', reason: 'not_usable' } },
+      { to: 'a', msg: { t: 'refused', action: 'use', reason: 'empty_slot' } },
+    ]);
+    expect(w.get('a')).toMatchObject({ energy: 50, bag: [{ item: 'moss', count: 1 }] });
+  });
+
+  it('throws a whole slot away, and refuses an empty one', () => {
+    const w = itemsWorld({}, inTown('a', 0, 5, 'down', { bag: [{ item: 'moss', count: 3 }, { item: 'nail', count: 2 }, { item: 'tea', count: 1 }] }));
+    w.discard('a', 1, 1000);
+    w.discard('a', 5, 1000);
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'bag', bag: [{ item: 'moss', count: 3 }, { item: 'tea', count: 1 }] } },
+      { to: 'a', msg: { t: 'refused', action: 'discard', reason: 'empty_slot' } },
+    ]);
+  });
+
+  it('fits a saved bag to today\'s items: what no longer exists goes, and a bag that no longer fits is packed again', () => {
+    const w = itemsWorld();
+    const odd = [{ item: 'gone', count: 2 }, { item: 'moss', count: 2 }, null, { item: 'nail', count: 0 }, { item: 'nail', count: 1.5 }, { item: 'tea' }];
+    expect(w.join(inTown('a', 0, 5, 'down', { bag: odd as BagSlot[] }), 0).bag).toEqual([{ item: 'moss', count: 2 }]);
+    // Moss stacks up to 3 now, so a saved 5 takes two slots.
+    expect(w.join(inTown('b', 0, 5, 'down', { bag: [{ item: 'nail', count: 1 }, { item: 'moss', count: 5 }] }), 0).bag).toEqual([
+      { item: 'nail', count: 1 }, { item: 'moss', count: 3 }, { item: 'moss', count: 2 },
+    ]);
+    const ten = Array.from({ length: 10 }, () => ({ item: 'nail', count: 5 }));
+    expect(w.join(inTown('c', 0, 5, 'down', { bag: ten }), 0).bag).toEqual(fullOfNails());
+    expect(w.get('c')!.bag).toEqual(fullOfNails());
+  });
+
+  it('lets nobody drink once their energy has run out: they collapse first, and the bag falls out', () => {
+    const w = itemsWorld({}, inWoods('a', 3, 6, 'up', { energy: 0.5, bag: [{ item: 'tea', count: 1 }] }));
+    w.use('a', 0, 5000);
+    const out = answers(w.drain(), 'a');
+    expect(out.map(m => m.t)).toEqual(['bag', 'zone', 'energy', 'refused']);
+    expect(out.at(-1)).toEqual({ t: 'refused', action: 'use', reason: 'empty_slot' });
+    expect(w.dropViews('woods')).toMatchObject([{ id: 'a', x: 3, y: 6 }]);
+  });
+});
+
+describe('World: piles', () => {
+  it('turns the whole bag into a pile where the player fell: the map hears drop, the player an empty bag, storage both', () => {
+    const bag = [{ item: 'moss', count: 2 }, { item: 'nail', count: 3 }, { item: 'moss', count: 1 }];
+    const w = itemsWorld({}, inWoods('a', 3, 6, 'up', { energy: 1, bag }), inWoods('c', 5, 5));
+    const at = 4200; // 1 energy lasts about 4.1 s at 3,6
+    expect(-1000 / edge).toBeLessThan(at);
+    w.tick(at);
+    const drop = { id: 'a', x: 3, y: 6, owner: 'a', name: 'A', until: at + DROP_LIFETIME_MS };
+    expect(noEnergy(w.drain())).toEqual([
+      { to: '*', map: 'woods', msg: { t: 'drop', drop } },
+      { to: 'a', msg: { t: 'bag', bag: [] } },
+      { to: '*', map: 'woods', except: 'a', msg: { t: 'leave', id: 'a' } },
+      { to: '*', map: 'town', except: 'a', msg: { t: 'join', player: viewOf('a', 1, 2, 'down') } },
+      {
+        to: 'a',
+        msg: { t: 'zone', map: { id: 'town', version: 1 }, x: 1, y: 2, dir: 'down', players: [viewOf('a', 1, 2, 'down')], finds: w.findViews('town'), drops: [], reason: 'collapse' },
+      },
+    ]);
+    expect(w.dropViews('woods')).toEqual([drop]);
+    expect(w.get('a')).toMatchObject({ map: 'town', bag: [], energy: ENERGY_MAX });
+    // The pile (equal items joined) and the emptied bag go to storage together.
+    const writes = w.takeWrites();
+    expect(writes.drops).toEqual([
+      { owner: 'a', drop: { owner: 'a', name: 'A', map: 'woods', x: 3, y: 6, items: [{ item: 'moss', count: 3 }, { item: 'nail', count: 3 }], droppedAt: at } },
+    ]);
+    expect(writes.players).toEqual([w.get('a')]);
+  });
+
+  it('drops the bag of a player whose energy runs out as they leave, and saves the empty bag', () => {
+    const w = itemsWorld({}, inWoods('a', 3, 6, 'up', { energy: 0.05, bag: [{ item: 'moss', count: 1 }] }));
+    const saved = w.leave('a', 1000)!;
+    expect(saved).toMatchObject({ map: 'town', bag: [] });
+    expect(w.dropViews('woods')).toEqual([{ id: 'a', x: 3, y: 6, owner: 'a', name: 'A', until: 1000 + DROP_LIFETIME_MS }]);
+    const writes = w.takeWrites();
+    expect(writes.drops).toMatchObject([{ owner: 'a', drop: { items: [{ item: 'moss', count: 1 }] } }]);
+    expect(writes.players).toEqual([saved]);
+  });
+
+  it('gives the owner all of it back: got and bag for them, and the pile is gone for everyone on the map', () => {
+    const items = [{ item: 'moss', count: 3 }, { item: 'nail', count: 3 }, { item: 'tea', count: 1 }];
+    const w = itemsWorld({ drops: [pileOf('a', 'woods', 4, 5, items)] }, inWoods('a', 4, 6), inWoods('c', 1, 1));
+    w.pick('a', 4, 5, 1000);
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'got', items, from: 'drop' } },
+      { to: 'a', msg: { t: 'bag', bag: items } },
+      { to: '*', map: 'woods', msg: { t: 'dropGone', id: 'a' } },
+    ]);
+    expect(w.dropViews('woods')).toEqual([]);
+    expect(w.takeWrites()).toEqual({ drops: [{ owner: 'a', drop: undefined }], players: [w.get('a')] });
+  });
+
+  it('leaves in the pile what does not fit in the owner\'s bag (the map hears it again), and refuses when nothing fits', () => {
+    const nails = fullOfNails().slice(2);
+    const pile = pileOf('a', 'woods', 4, 5, [{ item: 'moss', count: 3 }, { item: 'nail', count: 5 }, { item: 'tea', count: 2 }]);
+    const w = itemsWorld({ drops: [pile] }, inWoods('a', 4, 5, 'up', { bag: [...nails, { item: 'moss', count: 2 }] }));
+    w.pick('a', 4, 5, 1000);
+    // One moss tops up the moss slot and two go in the last free slot; the nails and the tea do not fit.
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'got', items: [{ item: 'moss', count: 3 }], from: 'drop' } },
+      { to: 'a', msg: { t: 'bag', bag: [...nails, { item: 'moss', count: 3 }, { item: 'moss', count: 2 }] } },
+      { to: '*', map: 'woods', msg: { t: 'drop', drop: dropOf(pile) } },
+    ]);
+    expect(w.takeWrites().drops).toEqual([{ owner: 'a', drop: { ...pile, items: [{ item: 'nail', count: 5 }, { item: 'tea', count: 2 }] } }]);
+    w.pick('a', 4, 5, 2000);
+    expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'refused', action: 'pick', reason: 'bag_full' } }]);
+    expect(w.dropViews('woods')).toEqual([dropOf(pile)]);
+    expect(w.takeWrites()).toEqual({ drops: [], players: [] });
+    // With two slots free, the rest comes back and the pile is gone.
+    w.discard('a', 0, 3000);
+    w.discard('a', 0, 3000);
+    w.drain();
+    w.pick('a', 4, 5, 4000);
+    expect(answers(w.drain(), 'a')[0]).toEqual({ t: 'got', items: [{ item: 'nail', count: 5 }, { item: 'tea', count: 2 }], from: 'drop' });
+    expect(w.dropViews('woods')).toEqual([]);
+  });
+
+  it('gives anyone else a random half; the rest is lost and the pile is gone for everyone', () => {
+    const pile = pileOf('a', 'woods', 4, 5, [{ item: 'moss', count: 3 }, { item: 'nail', count: 5 }, { item: 'tea', count: 2 }]);
+    const w = itemsWorld({ drops: [pile] }, inWoods('b', 4, 5), inWoods('a', 4, 6));
+    w.pick('b', 4, 5, 1000);
+    const out = w.drain();
+    const got = out[0]!.msg as Extract<ServerMsg, { t: 'got' }>;
+    expect(got).toMatchObject({ t: 'got', from: 'drop' });
+    expect(units(got.items)).toBe(5);
+    for (const s of got.items) expect(s.count).toBeLessThanOrEqual(pile.items.find(p => p.item === s.item)!.count);
+    expect(out).toEqual([
+      { to: 'b', msg: got },
+      { to: 'b', msg: { t: 'bag', bag: got.items } },
+      { to: '*', map: 'woods', msg: { t: 'dropGone', id: 'a' } },
+    ]);
+    expect(w.takeWrites()).toEqual({ drops: [{ owner: 'a', drop: undefined }], players: [w.get('b')] });
+    // The owner comes too late.
+    w.pick('a', 4, 5, 2000);
+    expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'refused', action: 'pick', reason: 'gone' } }]);
+  });
+
+  it('gives someone else only what fits of their half, and leaves the pile alone when nothing of it would fit', () => {
+    const pile = pileOf('a', 'woods', 4, 5, [{ item: 'moss', count: 2 }, { item: 'tea', count: 2 }]);
+    const w = itemsWorld({ drops: [pile] }, inWoods('b', 4, 5, 'up', { bag: fullOfNails() }));
+    w.pick('b', 4, 5, 1000);
+    expect(w.drain()).toEqual([{ to: 'b', msg: { t: 'refused', action: 'pick', reason: 'bag_full' } }]);
+    expect(w.dropViews('woods')).toEqual([dropOf(pile)]);
+    // One slot free: the first item of the half goes in it; whatever else there was is lost with the pile.
+    w.discard('b', 0, 2000);
+    w.drain();
+    w.pick('b', 4, 5, 3000);
+    const out = w.drain();
+    const got = out[0]!.msg as Extract<ServerMsg, { t: 'got' }>;
+    expect(got.items).toHaveLength(1);
+    expect(units(got.items)).toBeGreaterThanOrEqual(1);
+    expect(units(got.items)).toBeLessThanOrEqual(2);
+    expect(w.get('b')!.bag).toEqual([...fullOfNails().slice(1), ...got.items]);
+    expect(heardOn(out, 'woods')).toEqual([{ t: 'dropGone', id: 'a' }]);
+  });
+
+  it('picks a pile before a find on the same tile, and the picker\'s own pile before someone else\'s', () => {
+    // With the dice at 0.9, the nails lie at 2,2 and 1,2 (the spawn).
+    const w = itemsWorld({ rng: () => 0.9 });
+    expect(w.findViews('town')).toEqual([{ id: 2, item: 'nail', x: 2, y: 2 }, { id: 3, item: 'nail', x: 1, y: 2 }]);
+    // Empty in town, where energy holds: they fall at the next tick, on the nail at 2,2.
+    w.join(inTown('a', 2, 2, 'down', { energy: 0, bag: [{ item: 'moss', count: 2 }] }), 0);
+    w.join(inTown('b', 2, 2, 'down', { energy: 0, bag: [{ item: 'tea', count: 1 }] }), 0);
+    w.tick(1);
+    expect(w.dropViews('town')).toMatchObject([{ id: 'a', x: 2, y: 2 }, { id: 'b', x: 2, y: 2 }]);
+    w.drain();
+    w.pick('b', 2, 2, 2); // from the spawn, next to it
+    expect(answers(w.drain(), 'b')[0]).toEqual({ t: 'got', items: [{ item: 'tea', count: 1 }], from: 'drop' });
+    w.join(inTown('c', 2, 3), 2);
+    w.drain();
+    w.pick('c', 2, 2, 3);
+    expect(heardOn(w.drain(), 'town')).toEqual([{ t: 'dropGone', id: 'a' }]);
+    w.pick('c', 2, 2, 4);
+    const out = w.drain();
+    expect(answers(out, 'c')[0]).toEqual({ t: 'got', items: [{ item: 'nail', count: 1 }], from: 'find' });
+    expect(heardOn(out, 'town')).toEqual([{ t: 'findGone', id: 2 }]);
+  });
+
+  it('replaces the old pile when its owner collapses again, and only takes it away when the bag was empty', () => {
+    const first = pileOf('a', 'woods', 5, 5, [{ item: 'moss', count: 1 }]);
+    const w = itemsWorld({ drops: [first] }, inWoods('a', 3, 6, 'up', { energy: 1, bag: [{ item: 'nail', count: 2 }] }));
+    w.tick(4200);
+    const second = { id: 'a', x: 3, y: 6, owner: 'a', name: 'A', until: 4200 + DROP_LIFETIME_MS };
+    expect(heardOn(w.drain(), 'woods').filter(m => m.t === 'drop' || m.t === 'dropGone')).toEqual([
+      { t: 'dropGone', id: 'a' },
+      { t: 'drop', drop: second },
+    ]);
+    expect(w.dropViews('woods')).toEqual([second]);
+    // Storage only needs the pile as it is now.
+    expect(w.takeWrites().drops).toEqual([{ owner: 'a', drop: pileOf('a', 'woods', 3, 6, [{ item: 'nail', count: 2 }], 4200) }]);
+
+    // Out again with nothing in the bag: the pile goes, and no new one comes.
+    const back = w.leave('a', 5000)!;
+    w.join({ ...back, map: 'woods', x: 2, y: 6, energy: 0.5 }, 5000);
+    w.drain();
+    w.tick(8000);
+    expect(heardOn(w.drain(), 'woods').filter(m => m.t === 'drop' || m.t === 'dropGone')).toEqual([{ t: 'dropGone', id: 'a' }]);
+    expect(w.dropViews('woods')).toEqual([]);
+    expect(w.takeWrites().drops).toEqual([{ owner: 'a', drop: undefined }]);
+  });
+
+  it('fades an hour after the collapse, by the wall clock', () => {
+    // Game time runs this far behind the wall clock here.
+    const offset = 5_000_000;
+    const old = pileOf('b', 'woods', 5, 5, [{ item: 'moss', count: 1 }], offset + 1000);
+    const w = itemsWorld({ drops: [old], epochOffset: offset }, inWoods('a', 3, 6, 'up', { energy: 1, bag: [{ item: 'nail', count: 1 }] }));
+    w.tick(4200); // 'a' falls: an hour from now on the wall clock, their pile fades
+    expect(w.dropViews('woods')).toEqual([dropOf(old), { id: 'a', x: 3, y: 6, owner: 'a', name: 'A', until: offset + 4200 + DROP_LIFETIME_MS }]);
+    w.drain();
+    w.takeWrites();
+    w.tick(1000 + DROP_LIFETIME_MS - 1);
+    expect(heardOn(w.drain(), 'woods')).toEqual([]);
+    w.tick(1000 + DROP_LIFETIME_MS);
+    expect(heardOn(w.drain(), 'woods')).toEqual([{ t: 'dropGone', id: 'b' }]);
+    expect(w.takeWrites().drops).toEqual([{ owner: 'b', drop: undefined }]);
+    w.tick(4200 + DROP_LIFETIME_MS);
+    expect(heardOn(w.drain(), 'woods')).toEqual([{ t: 'dropGone', id: 'a' }]);
+    expect(w.dropViews('woods')).toEqual([]);
+  });
+
+  it('shows the piles of a map in the welcome and in zone, and none of the other maps', () => {
+    const inWoodsPile = pileOf('p', 'woods', 4, 5, [{ item: 'moss', count: 1 }]);
+    const inTownPile = pileOf('q', 'town', 0, 5, [{ item: 'nail', count: 1 }]);
+    const w = itemsWorld({ drops: [inWoodsPile, inTownPile] });
+    expect(w.join(inTown('a', 4, 1, 'up'), 0).drops).toEqual([dropOf(inTownPile)]);
+    w.step('a', 'up', 1, 1000);
+    expect(answers(w.drain(), 'a').find(m => m.t === 'zone')).toMatchObject({ map: { id: 'woods' }, drops: [dropOf(inWoodsPile)] });
+  });
+
+  it('restores saved piles without the items that no longer exist, and none on maps that are gone', () => {
+    const w = itemsWorld({
+      drops: [
+        pileOf('p', 'gone', 1, 1, [{ item: 'moss', count: 1 }]),
+        pileOf('q', 'woods', 4, 5, [{ item: 'old', count: 3 }]),
+        pileOf('r', 'woods', 5, 5, [{ item: 'old', count: 1 }, { item: 'moss', count: 2 }]),
+        pileOf('s', 'woods', 50, 50, [{ item: 'moss', count: 1 }]),
+      ],
+    });
+    expect(w.dropViews('woods')).toEqual([dropOf(pileOf('r', 'woods', 5, 5, []))]);
+    expect(w.dropViews('gone')).toEqual([]);
+    w.join(inWoods('r', 5, 5), 0);
+    w.drain();
+    w.pick('r', 5, 5, 1000);
+    expect(answers(w.drain(), 'r')[0]).toEqual({ t: 'got', items: [{ item: 'moss', count: 2 }], from: 'drop' });
+  });
+});
+
+describe('World: a restart', () => {
+  it('keeps bags with the players and piles in storage: a new World gets them back', () => {
+    const w = itemsWorld({ rng: () => 0.9 }, inWoods('a', 3, 6, 'up', { energy: 1, bag: [{ item: 'nail', count: 4 }] }), inWoods('b', 5, 1));
+    w.pick('b', 5, 1, 1000); // the moss
+    w.tick(4200); // 'a' falls
+    const piles = w.takeWrites().drops.map(d => d.drop!);
+    const b = w.leave('b', 5000)!;
+    const a = w.leave('a', 5000)!;
+    expect([a.bag, b.bag]).toEqual([[], [{ item: 'moss', count: 1 }]]);
+
+    const again = new World(fixtureMaps(), 'town', 'overcast', { items: itemsData(), drops: piles });
+    expect(again.dropViews('woods')).toEqual(w.dropViews('woods'));
+    expect(again.join(b, 6000).bag).toEqual([{ item: 'moss', count: 1 }]);
+    // The owner still gets all of it back.
+    again.join({ ...a, map: 'woods', x: 3, y: 5 }, 6000);
+    again.drain();
+    again.pick('a', 3, 6, 7000);
+    expect(answers(again.drain(), 'a')[0]).toEqual({ t: 'got', items: [{ item: 'nail', count: 4 }], from: 'drop' });
   });
 });
 

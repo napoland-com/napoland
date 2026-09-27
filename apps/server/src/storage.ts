@@ -1,11 +1,12 @@
 /**
- * Where players are kept between sessions. Postgres in production; memory for tests and for
- * running without a database (everything is forgotten on restart).
+ * Where players are kept between sessions, with what they carry, and the piles dropped when someone
+ * collapsed. Postgres in production; memory for tests and for running without a database
+ * (everything is forgotten on restart).
  */
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
-import type { Dir } from '@napoland/shared';
+import type { BagSlot, Dir } from '@napoland/shared';
 import { log } from './log';
 
 export interface PlayerRecord {
@@ -22,9 +23,25 @@ export interface PlayerRecord {
   color: string;
   /** 0 to ENERGY_MAX. It only changes while playing: offline, a player's energy waits for them. */
   energy: number;
+  /** What the player carries, slot by slot (at most BAG_SLOTS). */
+  bag: BagSlot[];
   /** Milliseconds since the epoch. */
   createdAt: number;
   lastSeenAt: number;
+}
+
+/** What a player carried when they last collapsed, lying where they fell. One per player. */
+export interface DropRecord {
+  /** The player who collapsed; their id is the pile's id too. */
+  owner: string;
+  /** The owner's name, shown with the pile. Not stored with it: it comes from the player. */
+  name: string;
+  map: string;
+  x: number;
+  y: number;
+  items: BagSlot[];
+  /** When they collapsed, ms since the epoch. The pile fades DROP_LIFETIME_MS later. */
+  droppedAt: number;
 }
 
 export interface Storage {
@@ -34,23 +51,32 @@ export interface Storage {
   nameTaken(name: string): Promise<boolean>;
   /** False if the name was taken in the meantime (two players racing for it). */
   create(rec: PlayerRecord): Promise<boolean>;
-  /** Stores what changes while playing: map, position, direction, energy, color and lastSeenAt. */
+  /** Stores what changes while playing: map, position, direction, energy, bag, color and lastSeenAt. */
   save(rec: PlayerRecord): Promise<void>;
   /** How many players exist. */
   count(): Promise<number>;
+  /** Every pile dropped after `after` (ms since the epoch), oldest first. Older ones have faded: they are forgotten. */
+  loadDrops(after: number): Promise<DropRecord[]>;
+  /** Stores a player's pile, in place of the one they had. */
+  saveDrop(drop: DropRecord): Promise<void>;
+  removeDrop(owner: string): Promise<void>;
   close(): Promise<void>;
 }
+
+const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count }));
+const copyRecord = (rec: PlayerRecord): PlayerRecord => ({ ...rec, bag: copyBag(rec.bag) });
 
 export class MemoryStorage implements Storage {
   private readonly byId = new Map<string, PlayerRecord>();
   private readonly idByToken = new Map<string, string>();
   private readonly idByName = new Map<string, string>();
+  private readonly drops = new Map<string, Omit<DropRecord, 'name'>>();
 
   async init(): Promise<void> {}
 
   async findByTokenHash(hash: string): Promise<PlayerRecord | null> {
     const id = this.idByToken.get(hash);
-    return id === undefined ? null : { ...this.byId.get(id)! };
+    return id === undefined ? null : copyRecord(this.byId.get(id)!);
   }
 
   async nameTaken(name: string): Promise<boolean> {
@@ -60,7 +86,7 @@ export class MemoryStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const name = rec.name.toLowerCase();
     if (this.byId.has(rec.id) || this.idByToken.has(rec.tokenHash) || this.idByName.has(name)) return false;
-    this.byId.set(rec.id, { ...rec });
+    this.byId.set(rec.id, copyRecord(rec));
     this.idByToken.set(rec.tokenHash, rec.id);
     this.idByName.set(name, rec.id);
     return true;
@@ -68,11 +94,33 @@ export class MemoryStorage implements Storage {
 
   async save(rec: PlayerRecord): Promise<void> {
     const cur = this.byId.get(rec.id);
-    if (cur) Object.assign(cur, { map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, lastSeenAt: rec.lastSeenAt });
+    if (cur) {
+      Object.assign(cur, { map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(rec.bag), lastSeenAt: rec.lastSeenAt });
+    }
   }
 
   async count(): Promise<number> {
     return this.byId.size;
+  }
+
+  async loadDrops(after: number): Promise<DropRecord[]> {
+    const out: DropRecord[] = [];
+    for (const [owner, d] of this.drops) {
+      if (d.droppedAt <= after) this.drops.delete(owner);
+      else out.push({ ...d, name: this.byId.get(owner)!.name, items: copyBag(d.items) });
+    }
+    return out.sort((a, b) => a.droppedAt - b.droppedAt);
+  }
+
+  async saveDrop(drop: DropRecord): Promise<void> {
+    // Like the database's foreign key: a pile belongs to a player who exists.
+    if (!this.byId.has(drop.owner)) throw new Error(`there is no player ${drop.owner}`);
+    const { name: _name, ...stored } = drop;
+    this.drops.set(drop.owner, { ...stored, items: copyBag(drop.items) });
+  }
+
+  async removeDrop(owner: string): Promise<void> {
+    this.drops.delete(owner);
   }
 
   async close(): Promise<void> {}
@@ -80,7 +128,13 @@ export class MemoryStorage implements Storage {
   /** The stored copy of a player, for tests. */
   get(id: string): PlayerRecord | undefined {
     const rec = this.byId.get(id);
-    return rec && { ...rec };
+    return rec && copyRecord(rec);
+  }
+
+  /** The stored pile of a player, for tests. */
+  drop(owner: string): Omit<DropRecord, 'name'> | undefined {
+    const d = this.drops.get(owner);
+    return d && { ...d, items: copyBag(d.items) };
   }
 }
 
@@ -94,9 +148,24 @@ interface PlayerRow {
   dir: Dir;
   color: string;
   energy: number;
+  /** jsonb: node-postgres hands it over parsed. */
+  bag: unknown;
   created_at: Date;
   last_seen_at: Date;
 }
+
+interface DropRow {
+  owner: string;
+  name: string;
+  map: string;
+  x: number;
+  y: number;
+  items: unknown;
+  dropped_at: Date;
+}
+
+/** A jsonb list of slots as the server wrote it; anything else reads as empty (the World checks each slot again). */
+const slots = (json: unknown): BagSlot[] => (Array.isArray(json) ? (json as BagSlot[]) : []);
 
 const fromRow = (r: PlayerRow): PlayerRecord => ({
   id: r.id,
@@ -108,6 +177,7 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   dir: r.dir,
   color: r.color,
   energy: r.energy,
+  bag: slots(r.bag),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -138,26 +208,52 @@ export class PgStorage implements Storage {
     return (r.rowCount ?? 0) > 0;
   }
 
+  // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
-      `INSERT INTO players (id, name, token_hash, map, x, y, dir, color, energy, created_at, last_seen_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO players (id, name, token_hash, map, x, y, dir, color, energy, bag, created_at, last_seen_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12)
        ON CONFLICT DO NOTHING`,
-      [rec.id, rec.name, rec.tokenHash, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, new Date(rec.createdAt), new Date(rec.lastSeenAt)],
+      [
+        rec.id, rec.name, rec.tokenHash, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag),
+        new Date(rec.createdAt), new Date(rec.lastSeenAt),
+      ],
     );
     return r.rowCount === 1;
   }
 
   async save(rec: PlayerRecord): Promise<void> {
     await this.pool.query(
-      'UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, last_seen_at = $8 WHERE id = $1',
-      [rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, new Date(rec.lastSeenAt)],
+      'UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, last_seen_at = $9 WHERE id = $1',
+      [rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), new Date(rec.lastSeenAt)],
     );
   }
 
   async count(): Promise<number> {
     const r = await this.pool.query<{ n: number }>('SELECT count(*)::int AS n FROM players');
     return r.rows[0]!.n;
+  }
+
+  async loadDrops(after: number): Promise<DropRecord[]> {
+    await this.pool.query('DELETE FROM drops WHERE dropped_at <= $1', [new Date(after)]);
+    const r = await this.pool.query<DropRow>(
+      `SELECT d.owner, p.name, d.map, d.x, d.y, d.items, d.dropped_at
+       FROM drops d JOIN players p ON p.id = d.owner
+       ORDER BY d.dropped_at`,
+    );
+    return r.rows.map(d => ({ owner: d.owner, name: d.name, map: d.map, x: d.x, y: d.y, items: slots(d.items), droppedAt: d.dropped_at.getTime() }));
+  }
+
+  async saveDrop(drop: DropRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO drops (owner, map, x, y, items, dropped_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+       ON CONFLICT (owner) DO UPDATE SET map = EXCLUDED.map, x = EXCLUDED.x, y = EXCLUDED.y, items = EXCLUDED.items, dropped_at = EXCLUDED.dropped_at`,
+      [drop.owner, drop.map, drop.x, drop.y, JSON.stringify(drop.items), new Date(drop.droppedAt)],
+    );
+  }
+
+  async removeDrop(owner: string): Promise<void> {
+    await this.pool.query('DELETE FROM drops WHERE owner = $1', [owner]);
   }
 
   async close(): Promise<void> {

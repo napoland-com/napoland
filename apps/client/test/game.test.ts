@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { STEP_MS, type ClientMsg, type MapData, type PlayerView } from '@napoland/shared';
 import { Game } from '../src/game';
 import { Maps } from '../src/maps';
-import { cabin, houseTown, ref, shed, tinyTown, tinyWoods, welcome } from './fixtures';
+import { ITEMS, cabin, houseTown, shed, tinyTown, tinyWoods, welcome, zone as zoneMsg } from './fixtures';
 
 const stonebrook = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/maps/stonebrook.json'), 'utf8')) as MapData;
 const maps = new Maps([stonebrook]);
@@ -25,7 +25,7 @@ const steps = () => sent.filter(m => m.t === 'step');
 beforeEach(() => {
   sent = [];
   now = 1000;
-  game = new Game(maps, m => sent.push(m));
+  game = new Game(maps, m => sent.push(m), ITEMS);
   game.handle(welcome(stonebrook, [me, other]), now);
 });
 
@@ -108,7 +108,7 @@ describe('server answers', () => {
     expect(game.players.has('o2')).toBe(false);
   });
   it('does not play a map it does not have', () => {
-    const g = new Game(maps, m => sent.push(m));
+    const g = new Game(maps, m => sent.push(m), ITEMS);
     g.handle({ ...welcome(stonebrook, [me]), map: { id: 'stonebrook', version: stonebrook.version + 1 } }, now);
     expect(g.online).toBe(false);
     g.padChange('down', now);
@@ -130,7 +130,7 @@ describe('tapping and talking', () => {
   });
   it('reads a sign with A when facing it', () => {
     const sign = map.data.objects.find(o => o.kind === 'sign')!;
-    const g = new Game(maps, () => {});
+    const g = new Game(maps, () => {}, ITEMS);
     g.handle(welcome(stonebrook, [{ ...me, x: sign.x, y: sign.y + 1, dir: 'up' }]), now);
     g.pressA();
     expect(g.dialog?.who).toBe('Sign');
@@ -146,14 +146,14 @@ describe('moving between maps', () => {
   const at = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ ...me, x, y, dir });
   let g: Game;
   beforeEach(() => {
-    g = new Game(two, m => sent.push(m));
+    g = new Game(two, m => sent.push(m), ITEMS);
     g.handle(welcome(town, [at(3, 2), { ...other, x: 5, y: 3 }]), now);
   });
   const zone = (x: number, y: number, players: PlayerView[], reason: 'exit' | 'collapse' = 'exit') =>
-    g.handle({ t: 'zone', map: ref(woods), x, y, dir: 'up', players, reason }, now);
+    g.handle(zoneMsg(woods, x, y, players, reason), now);
 
   it('starts on the map the welcome names, wherever that is', () => {
-    const g2 = new Game(two, () => {});
+    const g2 = new Game(two, () => {}, ITEMS);
     expect(g2.map.data.id).toBe('town');
     g2.handle(welcome(woods, [at(2, 2)]), now);
     expect(g2.map.data.id).toBe('woods');
@@ -261,7 +261,7 @@ describe('going into a house', () => {
   const at = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ ...me, x, y, dir });
   let g: Game;
   beforeEach(() => {
-    g = new Game(world, m => sent.push(m));
+    g = new Game(world, m => sent.push(m), ITEMS);
     g.handle(welcome(town, [at(2, 3)]), now);
   });
 
@@ -273,7 +273,7 @@ describe('going into a house', () => {
     g.handle({ t: 'step', id: 'me', x: 2, y: 2, dir: 'up', seq: 1 }, now);
     run(1000, g);
     expect(steps()).toHaveLength(1);
-    g.handle({ t: 'zone', map: ref(home), x: 4, y: 5, dir: 'up', players: [at(4, 5)], reason: 'exit' }, now);
+    g.handle(zoneMsg(home, 4, 5, [at(4, 5)]), now);
     expect(g.map.data.id).toBe('cabin');
     expect(g.me).toMatchObject({ tx: 4, ty: 5, dir: 'up' });
   });
@@ -308,7 +308,7 @@ describe('energy', () => {
   const two = new Maps([town, tinyWoods()]);
   let g: Game;
   beforeEach(() => {
-    g = new Game(two, () => {});
+    g = new Game(two, () => {}, ITEMS);
   });
 
   it('is unknown until the server reports it', () => {
@@ -337,7 +337,7 @@ describe('energy', () => {
 
 describe('walking into another map', () => {
   it('walks up the north road onto the exit while the joystick is held, then waits there', () => {
-    const g = new Game(maps, m => sent.push(m));
+    const g = new Game(maps, m => sent.push(m), ITEMS);
     g.handle(welcome(stonebrook, [{ ...me, x: 29, y: 17, dir: 'right' }]), now);
     // The server confirms every step at once (a fast connection) and tracks where we really are.
     let y = 17, confirmed = 0;

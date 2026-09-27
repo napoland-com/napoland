@@ -10,8 +10,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DROP_LIFETIME_MS } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
-import { PgStorage, type PlayerRecord } from '../src/storage';
+import { PgStorage, type DropRecord, type PlayerRecord } from '../src/storage';
+import { restartKeepsBagsAndPiles } from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -33,7 +35,7 @@ describe.skipIf(!url)('PgStorage', () => {
 
   const player = (name: string): PlayerRecord => ({
     id: randomUUID(), name, tokenHash: randomBytes(32).toString('hex'), map: 'stonebrook',
-    x: 8, y: 21, dir: 'down', color: '#3a86ff', energy: 100, createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
+    x: 8, y: 21, dir: 'down', color: '#3a86ff', energy: 100, bag: [], createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   });
 
   let schema: string;
@@ -54,9 +56,9 @@ describe.skipIf(!url)('PgStorage', () => {
 
   it('applies each migration once', async () => {
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
-    expect(await names()).toEqual(['001_players.sql', '002_maps_energy.sql']);
+    expect(await names()).toEqual(['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql']);
     await storage.init();
-    expect(await names()).toEqual(['001_players.sql', '002_maps_energy.sql']);
+    expect(await names()).toEqual(['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql']);
   });
 
   it('rolls back a migration that fails, and does not record it', async () => {
@@ -99,14 +101,86 @@ describe.skipIf(!url)('PgStorage', () => {
     expect((await storage.findByTokenHash(rec.tokenHash))!.energy).toBeCloseTo(12.345678, 4);
   });
 
-  it('still takes players from the previous release, which knows nothing of maps and energy', async () => {
-    // The insert of the release before this schema: after a rollback, it runs on the new columns.
+  it('still takes players from the previous releases, which know nothing of maps, energy or bags', async () => {
+    // The inserts of the releases before these schemas: after a rollback, they run on the new columns.
     const old = player('Pg Old');
     await admin.query(
       `INSERT INTO ${schema}.players (id, name, token_hash, x, y, dir, color, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [old.id, old.name, old.tokenHash, old.x, old.y, old.dir, old.color, new Date(old.createdAt), new Date(old.lastSeenAt)],
     );
-    expect(await storage.findByTokenHash(old.tokenHash)).toEqual({ ...old, map: 'stonebrook', energy: 100 });
+    expect(await storage.findByTokenHash(old.tokenHash)).toEqual({ ...old, map: 'stonebrook', energy: 100, bag: [] });
+    const before = { ...player('Pg Before'), map: 'near-woods', energy: 55 };
+    await admin.query(
+      `INSERT INTO ${schema}.players (id, name, token_hash, map, x, y, dir, color, energy, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [before.id, before.name, before.tokenHash, before.map, before.x, before.y, before.dir, before.color, before.energy, new Date(before.createdAt), new Date(before.lastSeenAt)],
+    );
+    expect(await storage.findByTokenHash(before.tokenHash)).toEqual({ ...before, bag: [] });
+    // Its save leaves the bag alone.
+    await storage.save({ ...before, bag: [{ item: 'resin', count: 4 }] });
+    await admin.query(`UPDATE ${schema}.players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, last_seen_at = $8 WHERE id = $1`, [
+      before.id, 'stonebrook', 8, 21, 'down', before.color, 90, new Date(before.lastSeenAt),
+    ]);
+    expect((await storage.findByTokenHash(before.tokenHash))!.bag).toEqual([{ item: 'resin', count: 4 }]);
+  });
+
+  it('keeps the bag, slot by slot, through create and save', async () => {
+    const bag = [{ item: 'glowcap', count: 20 }, { item: 'thermos', count: 1 }, { item: 'glowcap', count: 3 }];
+    const rec = { ...player('Pg Carrier'), bag };
+    expect(await storage.create(rec)).toBe(true);
+    expect((await storage.findByTokenHash(rec.tokenHash))!.bag).toEqual(bag);
+    await storage.save({ ...rec, bag: [{ item: 'shard', count: 2 }] });
+    expect((await storage.findByTokenHash(rec.tokenHash))!.bag).toEqual([{ item: 'shard', count: 2 }]);
+    await storage.save({ ...rec, bag: [] });
+    expect((await storage.findByTokenHash(rec.tokenHash))!.bag).toEqual([]);
+    // Whatever else the column holds reads as an empty bag (the World checks each slot too).
+    await admin.query(`UPDATE ${schema}.players SET bag = '{"not": "a list"}' WHERE id = $1`, [rec.id]);
+    expect((await storage.findByTokenHash(rec.tokenHash))!.bag).toEqual([]);
+  });
+
+  it('keeps one pile per player, with the owner\'s name, and forgets piles older than asked', async () => {
+    const owner = player('Pg Faller');
+    const other = player('Pg Other');
+    await storage.create(owner);
+    await storage.create(other);
+    const now = Date.now();
+    const pile: DropRecord = { owner: owner.id, name: owner.name, map: 'near-woods', x: 31, y: 70, items: [{ item: 'glowcap', count: 5 }, { item: 'scrap', count: 2 }], droppedAt: now - 1000 };
+    await storage.saveDrop(pile);
+    const mine = async () => (await storage.loadDrops(now - DROP_LIFETIME_MS)).filter(d => d.owner === owner.id);
+    expect(await mine()).toEqual([pile]);
+    // A new collapse replaces it.
+    const again = { ...pile, map: 'stonebrook-lodge', x: 2, y: 3, items: [{ item: 'thermos', count: 1 }], droppedAt: now };
+    await storage.saveDrop(again);
+    expect(await mine()).toEqual([again]);
+    // The name comes from the player, whatever the pile says.
+    await storage.saveDrop({ ...pile, owner: other.id, name: 'Somebody Else', droppedAt: now - DROP_LIFETIME_MS - 1 });
+    const count = async () => (await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${schema}.drops WHERE owner = $1`, [other.id])).rows[0]!.n;
+    expect(await count()).toBe(1);
+    expect((await storage.loadDrops(now - DROP_LIFETIME_MS - 10)).find(d => d.owner === other.id)).toMatchObject({ name: other.name });
+    // Older than an hour: not loaded, and gone from the table.
+    expect((await storage.loadDrops(now - DROP_LIFETIME_MS)).map(d => d.owner)).not.toContain(other.id);
+    expect(await count()).toBe(0);
+    await storage.removeDrop(owner.id);
+    expect(await mine()).toEqual([]);
+    await storage.removeDrop(owner.id); // already gone: nothing happens
+  });
+
+  it('refuses a pile of a player who does not exist', async () => {
+    await expect(storage.saveDrop({ owner: randomUUID(), name: 'Nobody', map: 'stonebrook', x: 1, y: 1, items: [], droppedAt: Date.now() })).rejects.toThrow(/foreign key/);
+  });
+
+  it('keeps bags and piles through a restart of the server', async () => {
+    const fresh = await freshSchema();
+    const first = new PgStorage(fresh.url, MIGRATIONS);
+    const second = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await first.init();
+      await second.init();
+      const stored = async (owner: string) => ((await admin.query(`SELECT 1 FROM ${fresh.schema}.drops WHERE owner = $1`, [owner])).rowCount ?? 0) > 0;
+      await restartKeepsBagsAndPiles(first, second, stored);
+    } finally {
+      await first.close();
+      await second.close();
+    }
   });
 
   it('keeps names unique regardless of case', async () => {

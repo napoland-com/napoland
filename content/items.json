@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "items": [
+    {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"text":"A small pale mushroom that glows blue-green in the dark. It grows where the ground stays wet."},
+    {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright."},
+    {"id":"scrap","name":"Scrap metal","kind":"resource","stack":10,"text":"Rusted metal from cars and cabins nobody came back for. Still good for patching things."},
+    {"id":"wire","name":"Copper wire","kind":"resource","stack":10,"text":"Copper wire from where the old power line came down. Sometimes it still hums."},
+    {"id":"cloth","name":"Cloth scraps","kind":"resource","stack":10,"text":"Strips of curtain and blanket from rooms nobody lives in anymore. Still dry."},
+    {"id":"shard","name":"Anomaly shard","kind":"resource","stack":5,"text":"A sliver of something like glass, warm even in the cold. It gives off a light of its own."},
+    {"id":"thermos","name":"Thermos","kind":"consumable","stack":2,"text":"Hot coffee someone left by the fire for whoever comes next. Drink it to get some energy back.","use":{"energy":30}}
+  ],
+  "finds": [
+    {"item":"glowcap","map":"near-woods","on":["mud","ferns"],"steps":[15,50],"count":4,"respawn":[90,240]},
+    {"item":"glowcap","map":"near-woods","on":["mud","ferns"],"steps":[51,90],"count":8,"respawn":[90,240]},
+    {"item":"resin","map":"near-woods","on":["grass"],"steps":[35,95],"count":6,"respawn":[150,360]},
+    {"item":"scrap","map":"near-woods","near":{"kinds":["car","barrel","house"],"radius":3},"count":4,"respawn":[480,900]},
+    {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"steps":[20,999],"count":3,"respawn":[600,1200]},
+    {"item":"cloth","map":"stonebrook-empty-house","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[2700,5400]},
+    {"item":"cloth","map":"near-woods-old-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1800,3600]},
+    {"item":"cloth","map":"near-woods-end-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]},
+    {"item":"shard","map":"near-woods","steps":[95,999],"count":2,"respawn":[1800,3600]},
+    {"item":"thermos","map":"near-woods-old-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
+    {"item":"thermos","map":"near-woods-ranger-hut","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
+    {"item":"thermos","map":"near-woods-end-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]}
+  ]
+}

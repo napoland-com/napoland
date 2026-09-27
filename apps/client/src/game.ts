@@ -3,14 +3,18 @@
  * - your own steps are predicted (you move the instant you press) and confirmed or corrected by the server;
  * - other players are animated from the steps the server reports;
  * - D-pad: a quick tap on a new direction turns in place, holding walks (like FireRed);
- * - tapping the ground walks there; A talks to people and reads signs;
+ * - tapping the ground walks there; tapping a person or a sign walks up and talks, tapping a find or a
+ *   pile walks onto it and picks it up;
+ * - A picks up what lies on your tile or the one you face, else talks to people and reads signs;
+ * - finds and piles on your map, and your bag, are the server's: it tells us, we show them;
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
  * - energy is counted forward between the server's reports, so the bar moves smoothly.
  */
 import {
   STEP_MS, dirOf, dirToward, energyAfter, findPath, stepTarget, DIR_VEC,
-  type ClientMsg, type Dir, type EnergyView, type MapObject, type PlayerView, type ServerMsg, type TileMap,
+  type BagSlot, type ClientMsg, type Dir, type DropView, type EnergyView, type FindView, type MapObject, type PlayerView, type ServerMsg, type TileMap,
 } from '@napoland/shared';
+import { countOf, refusalText, useText, type Items } from './items';
 import type { Maps } from './maps';
 import type { Avatar } from './view/world';
 
@@ -30,7 +34,16 @@ interface Mover {
   turnT: number;
 }
 
-type Talker = { x: number; y: number; who: string; lines: string[] };
+export type Talker = { x: number; y: number; who: string; lines: string[] };
+
+/** Something lying on a tile to pick up: a pile someone left when they collapsed, or a find. */
+export type Thing = { kind: 'drop'; drop: DropView } | { kind: 'find'; find: FindView };
+
+/** What A does now: pick up what lies on tile x,y (a pile or a find), or talk. */
+export type Action = { kind: 'pick'; x: number; y: number; what: Thing['kind'] } | { kind: 'talk'; talker: Talker };
+
+/** Where a tap sends us, and what to do there. */
+type Goal = { talk: Talker } | { pick: { x: number; y: number } };
 
 /** How long a D-pad direction must be held before a turn becomes a walk. */
 const HOLD_TO_WALK_MS = 160;
@@ -42,6 +55,25 @@ const MAX_UNCONFIRMED = 2;
  * leaving the player stuck on the exit.
  */
 const EXIT_WAIT_MS = 3000;
+/**
+ * A pick, or a use, waits this long for the server's answer before another may be asked. The answer
+ * normally comes within a round trip; asking twice meanwhile would earn a "Someone got there first"
+ * for a find we took ourselves.
+ */
+const ANSWER_WAIT_MS = 2500;
+/**
+ * The server empties your bag in the same moment it sends you home, so when you collapse the empty
+ * bag arrives just before the zone or just after it. A bag emptied this recently still counts as
+ * carried then.
+ */
+const JUST_NOW_MS = 1000;
+/** Piles show whose they are while you are this close (tiles, center to center). */
+export const PILE_TAG_TILES = 3.5;
+/** Float colors: something gained, energy back, a gentle no, nothing there. */
+const GAIN = '#ffe3a1';
+const ENERGY = '#ffcf5a';
+const NO = '#ffae98';
+const GREY = '#c9c2b0';
 
 function talkersOf(map: TileMap): Talker[] {
   return map.data.objects.flatMap((o: MapObject): Talker[] => {
@@ -61,12 +93,21 @@ export class Game {
   stepMs = STEP_MS;
   marker: { x: number; y: number; t: number } | null = null;
   dialog: { who: string; lines: string[]; i: number; shown: number } | null = null;
-  floats: Array<{ id: number; text: string; color: string; x: number; y: number; t: number }> = [];
+  /** Words rising over a tile; `row` stacks several said at once (0 at the bottom). */
+  floats: Array<{ id: number; text: string; color: string; x: number; y: number; t: number; row: number }> = [];
+  /** What lies on this map to pick up, by id. */
+  finds = new Map<number, FindView>();
+  /** Piles on this map, by id (the owner's id: each player leaves at most one). */
+  drops = new Map<string, DropView>();
+  /** Counts every change to finds and piles, so the view rebuilds them only when something changed. */
+  lootChanges = 0;
+  /** Your bag as the server last told it; replaced whole, never changed in place. */
+  bag: BagSlot[] = [];
   private fid = 0;
   private seq = 0;
   private pending: Array<{ seq: number; x: number; y: number }> = [];
   private path: Array<{ x: number; y: number }> = [];
-  private talkTarget: Talker | null = null;
+  private goal: Goal | null = null;
   private pad = { dir: null as Dir | null, changedAt: 0, facingAtPress: false };
   private justStepped = false;
   /** When we started standing on an exit tile (null when not on one). */
@@ -75,8 +116,16 @@ export class Game {
   private talkers: Talker[];
   /** The server's last energy report and when it arrived. */
   private lastEnergy: { view: EnergyView; at: number } | null = null;
+  /** The time of the latest update or message: when things were asked. */
+  private clock = 0;
+  /** A pick asked for and not answered yet. */
+  private picking: { at: number } | null = null;
+  /** A use asked for: the item and how many the bag held, to tell when it went through. */
+  private using: { item: string; had: number; at: number } | null = null;
+  /** When the server last emptied a bag that held something. */
+  private emptiedAt = -Infinity;
 
-  constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void) {
+  constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items) {
     this.current = maps.home();
     this.talkers = talkersOf(this.current);
   }
@@ -100,15 +149,18 @@ export class Game {
   // ---------- messages from the server ----------
 
   handle(msg: ServerMsg, now: number) {
+    this.clock = now;
     switch (msg.t) {
       case 'welcome': {
         const map = this.maps.get(msg.map);
-        // A map we do not have: this client is out of date and about to reload, so it must not play.
-        if (!map) { this.disconnected(now); break; }
+        // A map we do not have, or other items than the server's: this client is out of date and
+        // about to reload, so it must not play.
+        if (!map || msg.items !== this.items.version) { this.disconnected(now); break; }
         this.meId = msg.you;
         this.online = true;
         this.stepMs = msg.stepMs;
-        this.enter(map, msg.players);
+        this.enter(map, msg.players, msg.finds, msg.drops);
+        this.bag = msg.bag;
         this.lastEnergy = { view: msg.energy, at: now };
         break;
       }
@@ -116,7 +168,7 @@ export class Game {
         const map = this.maps.get(msg.map);
         if (!map) { this.disconnected(now); break; }
         const old = this.me;
-        this.enter(map, msg.players);
+        this.enter(map, msg.players, msg.finds, msg.drops);
         this.dialog = null; this.marker = null; this.floats = [];
         // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
         const me = this.me ?? (old ? { ...old } : undefined);
@@ -159,6 +211,48 @@ export class Game {
         if (p) this.snap(p, msg.x, msg.y, msg.dir);
         break;
       }
+      case 'find':
+        this.finds.set(msg.find.id, msg.find);
+        this.lootChanges++;
+        break;
+      case 'findGone':
+        if (this.finds.delete(msg.id)) this.lootChanges++;
+        break;
+      case 'drop':
+        // A new collapse replaces the owner's old pile: same id.
+        this.drops.set(msg.drop.id, msg.drop);
+        this.lootChanges++;
+        break;
+      case 'dropGone':
+        if (this.drops.delete(msg.id)) this.lootChanges++;
+        break;
+      case 'bag': {
+        // A use went through when the bag holds one fewer of it. One never answered is forgotten, so
+        // it cannot take a later change for its answer.
+        const u = this.using;
+        if (u && now - u.at >= ANSWER_WAIT_MS) this.using = null;
+        else if (u && countOf(msg.bag, u.item) < u.had) {
+          this.using = null;
+          this.floatOverMe(useText(this.items.get(u.item)), ENERGY);
+        }
+        if (this.bag.length && !msg.bag.length) this.emptiedAt = now;
+        this.bag = msg.bag;
+        break;
+      }
+      case 'got': {
+        this.picking = null;
+        // A column over your head, in the order the server listed them, first on top.
+        msg.items.forEach((s, i) => this.floatOverMe(`+${s.count} ${this.items.get(s.item).name}`, GAIN, msg.items.length - 1 - i));
+        // Someone else's pile can leave you nothing (your half did not fit, or the coin went the
+        // other way); it is gone all the same, so say so rather than let it vanish silently.
+        if (!msg.items.length) this.floatOverMe('Nothing in it for you', NO);
+        break;
+      }
+      case 'refused':
+        if (msg.action === 'pick') this.picking = null;
+        if (msg.action === 'use') this.using = null;
+        this.floatOverMe(refusalText(msg.reason), NO);
+        break;
       default:
         break;
     }
@@ -167,14 +261,19 @@ export class Game {
   /** The connection dropped: stop predicting until the next welcome puts us back in sync. */
   disconnected(now: number) {
     this.online = false;
-    this.pending = []; this.path = []; this.talkTarget = null;
+    this.pending = []; this.path = []; this.goal = null;
+    // Answers to what we asked went with the connection.
+    this.picking = null; this.using = null;
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
     if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
   }
 
-  /** Arrive on a map: its players replace the old ones, and plans made for the old map are dropped. */
-  private enter(map: TileMap, players: PlayerView[]) {
+  /**
+   * Arrive on a map: its players, finds and piles replace the old ones, and plans made for the old
+   * map are dropped.
+   */
+  private enter(map: TileMap, players: PlayerView[], finds: FindView[], drops: DropView[]) {
     if (map !== this.current) {
       this.current = map;
       this.talkers = talkersOf(map);
@@ -182,7 +281,11 @@ export class Game {
     }
     this.players.clear();
     for (const p of players) this.players.set(p.id, this.mover(p));
-    this.pending = []; this.path = []; this.talkTarget = null; this.justStepped = false; this.exitSince = null;
+    this.finds = new Map(finds.map(f => [f.id, f]));
+    this.drops = new Map(drops.map(d => [d.id, d]));
+    this.lootChanges++;
+    this.pending = []; this.path = []; this.goal = null; this.justStepped = false; this.exitSince = null;
+    this.picking = null;
   }
 
   private mover(p: PlayerView): Mover {
@@ -197,7 +300,7 @@ export class Game {
 
   private snap(p: Mover, x: number, y: number, dir: Dir) {
     p.tx = p.x = x; p.ty = p.y = y; p.dir = dir; p.anim = null;
-    this.pending = []; this.path = []; this.talkTarget = null;
+    this.pending = []; this.path = []; this.goal = null;
   }
 
   // ---------- input ----------
@@ -214,10 +317,33 @@ export class Game {
     if (this.dialog) return this.advanceDialog();
     const me = this.me;
     if (!me || me.anim) return;
+    const act = this.action();
+    if (!act) this.float('Nothing here', GREY, me.tx, me.ty);
+    else if (act.kind === 'talk') this.openDialog(act.talker);
+    else this.pick(act.x, act.y);
+  }
+
+  /**
+   * What A would do now: pick up what lies on your own tile, else on the tile you face (on either, a
+   * pile before a find), and only then talk to whoever you face or read the sign.
+   */
+  action(): Action | null {
+    const me = this.me;
+    if (!me) return null;
     const [dx, dy] = DIR_VEC[me.dir];
-    const t = this.talkerAt(me.tx + dx, me.ty + dy);
-    if (t) this.openDialog(t);
-    else this.float('Nothing here', '#c9c2b0', me.tx, me.ty);
+    for (const [x, y] of [[me.tx, me.ty], [me.tx + dx, me.ty + dy]] as const) {
+      const thing = this.thingAt(x, y);
+      if (thing) return { kind: 'pick', x, y, what: thing.kind };
+    }
+    const talker = this.talkerAt(me.tx + dx, me.ty + dy);
+    return talker ? { kind: 'talk', talker } : null;
+  }
+
+  /** What lies on tile x,y to pick up: a pile before a find. */
+  thingAt(x: number, y: number): Thing | undefined {
+    for (const drop of this.drops.values()) if (drop.x === x && drop.y === y) return { kind: 'drop', drop };
+    for (const find of this.finds.values()) if (find.x === x && find.y === y) return { kind: 'find', find };
+    return undefined;
   }
 
   /** B: back. Returns true when it handled something (so the caller does not open the bag). */
@@ -230,23 +356,70 @@ export class Game {
     if (this.dialog) return this.advanceDialog();
     const me = this.me;
     if (!me) return;
-    const talker = this.talkerAt(x, y) ?? this.talkerAt(x, y + 1);
     const from = { x: me.tx, y: me.ty };
+    // Something to pick up: walk onto it (finds are small, so a tap on one lands on its own tile).
+    if (this.thingAt(x, y)) {
+      this.goal = { pick: { x, y } };
+      this.path = findPath(this.map, from.x, from.y, x, y);
+      const end = this.path.at(-1) ?? from;
+      this.marker = { x: end.x, y: end.y, t: 0 };
+      return;
+    }
+    // People and signs are tall: a tap on the head lands on the tile behind them.
+    const talker = this.talkerAt(x, y) ?? this.talkerAt(x, y + 1);
     if (talker) {
-      this.talkTarget = talker;
+      this.goal = { talk: talker };
       this.path = findPath(this.map, from.x, from.y, talker.x, talker.y, true);
       const end = this.path.at(-1) ?? from;
       this.marker = { x: end.x, y: end.y, t: 0 };
       return;
     }
     if (!this.map.inside(x, y)) return;
-    this.talkTarget = null;
+    this.goal = null;
     this.path = findPath(this.map, from.x, from.y, x, y);
     if (this.path.length) { const end = this.path.at(-1)!; this.marker = { x: end.x, y: end.y, t: 0 }; }
   }
 
   private talkerAt(x: number, y: number): Talker | undefined {
     return this.talkers.find(t => t.x === x && t.y === y);
+  }
+
+  /** Asks the server for what lies on tile x,y. One pick at a time: the answer is on its way. */
+  private pick(x: number, y: number) {
+    if (!this.online || (this.picking && this.clock - this.picking.at < ANSWER_WAIT_MS)) return;
+    this.picking = { at: this.clock };
+    this.send({ t: 'pick', x, y });
+  }
+
+  /** Use what is in bag slot `slot` (a thermos: energy back). The server says whether it went through. */
+  use(slot: number) {
+    const s = this.bag[slot];
+    if (!s || !this.online) return;
+    this.using = { item: s.item, had: countOf(this.bag, s.item), at: this.clock };
+    this.send({ t: 'use', slot });
+  }
+
+  /** Throw away everything in bag slot `slot`. */
+  discard(slot: number) {
+    if (!this.bag[slot] || !this.online) return;
+    // A use still waiting would take this for its answer.
+    this.using = null;
+    this.send({ t: 'discard', slot });
+  }
+
+  /**
+   * Were you carrying something just now? Asked when a collapse arrives, to say that what you
+   * carried lies where you fell: the bag itself, or what it held if the server emptied it a moment ago.
+   */
+  carrying(now: number): boolean {
+    return this.bag.length > 0 || now - this.emptiedAt < JUST_NOW_MS;
+  }
+
+  /** Piles close enough to show whose they are. */
+  pilesNear(): DropView[] {
+    const me = this.me;
+    if (!me) return [];
+    return [...this.drops.values()].filter(d => Math.hypot(d.x - me.x, d.y - me.y) <= PILE_TAG_TILES);
   }
 
   // ---------- dialog ----------
@@ -264,13 +437,19 @@ export class Game {
     if (d.i >= d.lines.length) this.dialog = null;
   }
 
-  private float(text: string, color: string, x: number, y: number) {
-    this.floats.push({ id: ++this.fid, text, color, x, y, t: 0 });
+  private float(text: string, color: string, x: number, y: number, row = 0) {
+    this.floats.push({ id: ++this.fid, text, color, x, y, t: 0, row });
+  }
+
+  private floatOverMe(text: string, color: string, row = 0) {
+    const me = this.me;
+    if (me) this.float(text, color, me.tx, me.ty, row);
   }
 
   // ---------- simulation ----------
 
   update(dt: number, now: number) {
+    this.clock = now;
     for (const f of this.floats) f.t += dt;
     this.floats = this.floats.filter(f => f.t < 1.3);
     if (this.marker) { this.marker.t += dt; if (this.marker.t > 0.8) this.marker = null; }
@@ -299,14 +478,14 @@ export class Game {
     // On an exit the server is about to move us to another map, and steps planned on this one would be refused.
     if (this.map.exitAt(me.tx, me.ty)) {
       this.exitSince ??= now;
-      this.path = []; this.talkTarget = null; this.justStepped = false;
+      this.path = []; this.goal = null; this.justStepped = false;
       if (now - this.exitSince < EXIT_WAIT_MS) return;
     } else this.exitSince = null;
     const wasWalking = this.justStepped;
     this.justStepped = false;
     let dir: Dir | null = null;
     if (this.pad.dir) {
-      this.path = []; this.talkTarget = null;
+      this.path = []; this.goal = null;
       if (me.dir !== this.pad.dir) {
         me.dir = this.pad.dir;
         if (wasWalking) dir = this.pad.dir;
@@ -316,14 +495,9 @@ export class Game {
       const next = this.path[0]!;
       dir = dirOf(next.x - me.tx, next.y - me.ty);
       if (!dir) this.path = [];
-    } else if (this.talkTarget) {
-      const t = this.talkTarget;
-      this.talkTarget = null;
-      if (Math.abs(t.x - me.tx) + Math.abs(t.y - me.ty) === 1) {
-        const face = dirToward(t.x - me.tx, t.y - me.ty);
-        if (face !== me.dir) { me.dir = face; this.send({ t: 'face', dir: face }); }
-        this.openDialog(t);
-      }
+    } else if (this.goal) {
+      this.reach(me, this.goal);
+      this.goal = null;
     }
     if (!dir) return;
     if (this.pending.length >= MAX_UNCONFIRMED) return; // wait for the server to catch up
@@ -338,6 +512,23 @@ export class Game {
     this.pending.push({ seq, x: to.x, y: to.y });
     this.walk(me, to.x, to.y, dir, now);
     this.send({ t: 'step', dir, seq });
+  }
+
+  /**
+   * The walk to what was tapped is over: talk to the person next to us, or pick up what we stand on
+   * (or what lies next to us, when its tile could not be reached). Nothing, if it went away meanwhile.
+   */
+  private reach(me: Mover, goal: Goal) {
+    const at = 'talk' in goal ? goal.talk : goal.pick;
+    const d = Math.abs(at.x - me.tx) + Math.abs(at.y - me.ty);
+    const there = 'talk' in goal ? d === 1 : d <= 1 && !!this.thingAt(at.x, at.y);
+    if (!there) return;
+    if (d === 1) {
+      const face = dirToward(at.x - me.tx, at.y - me.ty);
+      if (face !== me.dir) { me.dir = face; this.send({ t: 'face', dir: face }); }
+    }
+    if ('talk' in goal) this.openDialog(goal.talk);
+    else this.pick(at.x, at.y);
   }
 
   avatars(): Avatar[] {
