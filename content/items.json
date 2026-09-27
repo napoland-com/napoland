@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -10,10 +10,28 @@
     {"id":"thermos","name":"Thermos","kind":"consumable","stack":2,"xp":3,"weight":0.6,"text":"Hot coffee someone left by the fire for whoever comes next. Drink it to get some energy back.","use":{"energy":30}},
     {"id":"flare","name":"Road flare","kind":"consumable","stack":3,"xp":3,"weight":0.3,"text":"A red road flare from a glovebox. Light it and nothing comes near you while it burns, and whatever clings to your back lets go.","use":{"flare":45}},
     {"id":"strange","name":"Strange object","kind":"resource","stack":1,"xp":15,"weight":0.8,"text":"Something that was not here yesterday. It is too dark out here to tell what it is: look at it in town, in the light.","use":{"identify":true},
-      "reveals":[{"item":"shard","count":2,"weight":4},{"item":"thermos","count":1,"weight":2},{"item":"flare","count":2,"weight":2},{"item":"warm-pebble","count":1,"weight":1},{"item":"hollow-feather","count":1,"weight":1},{"item":"humming-bead","count":1,"weight":1}]},
+      "reveals":[{"item":"shard","count":2,"weight":4},{"item":"thermos","count":1,"weight":2},{"item":"flare","count":2,"weight":2},{"item":"warm-pebble","count":1,"weight":1},{"item":"hollow-feather","count":1,"weight":1},{"item":"humming-bead","count":1,"weight":1},{"item":"shard-cap","count":1,"weight":1}]},
     {"id":"warm-pebble","name":"Warm pebble","kind":"charm","stack":1,"xp":25,"weight":0.1,"charm":{"wetting":0.6},"text":"A smooth black pebble that never cools. While it is in your bag, rain soaks you much slower."},
     {"id":"hollow-feather","name":"Hollow feather","kind":"charm","stack":1,"xp":25,"weight":0.05,"charm":{"load":0.75},"text":"A long grey feather, light as nothing. While it is in your bag, what you carry feels lighter."},
-    {"id":"humming-bead","name":"Humming bead","kind":"charm","stack":1,"xp":25,"weight":0.05,"charm":{"hitch":0.4},"text":"A glass bead that hums when something is near. While it is in your bag, what wants to cling to you in the dark thinks twice."}
+    {"id":"humming-bead","name":"Humming bead","kind":"charm","stack":1,"xp":25,"weight":0.05,"charm":{"hitch":0.4},"text":"A glass bead that hums when something is near. While it is in your bag, what wants to cling to you in the dark thinks twice."},
+    {"id":"worn-cap","name":"Worn cap","kind":"gear","stack":1,"slot":"cap","tier":"worn","color":"#d63b33","weight":0.1,"text":"A faded red cap. It keeps the hair out of your eyes and nothing else out."},
+    {"id":"worn-shirt","name":"Worn shirt","kind":"gear","stack":1,"slot":"shirt","tier":"worn","color":"#2f3440","weight":0.3,"text":"A thin flannel shirt under your jacket. Fine in town."},
+    {"id":"worn-gloves","name":"Fingerless gloves","kind":"gear","stack":1,"slot":"gloves","tier":"worn","color":"#7a6048","weight":0.1,"text":"Knitted gloves with the fingertips cut off. Your fingers still go numb in the cold."},
+    {"id":"worn-pants","name":"Worn pants","kind":"gear","stack":1,"slot":"pants","tier":"worn","color":"#2f3442","weight":0.4,"text":"Jeans with a hole in one knee."},
+    {"id":"worn-shoes","name":"Worn sneakers","kind":"gear","stack":1,"slot":"shoes","tier":"worn","color":"#3a2a20","weight":0.4,"text":"Sneakers that soak through in the first puddle."},
+    {"id":"backpack","name":"Backpack","kind":"gear","stack":1,"slot":"bag","tier":"worn","color":"#6b5a3a","weight":0.6,"bag":8,"text":"A school backpack. Eight things fit in it."},
+    {"id":"wool-cap","name":"Wool cap","kind":"gear","stack":1,"slot":"cap","tier":"sturdy","color":"#3d6a8a","weight":0.2,"resist":{"cold":0.15},"text":"A thick knitted cap. Cold bites 15% less."},
+    {"id":"raincoat","name":"Raincoat","kind":"gear","stack":1,"slot":"shirt","tier":"sturdy","color":"#e8c547","weight":0.6,"resist":{"wind":0.35,"cold":0.1},"text":"A yellow raincoat under your jacket. Rain soaks you 35% slower, and cold bites 10% less."},
+    {"id":"rubber-gloves","name":"Rubber gloves","kind":"gear","stack":1,"slot":"gloves","tier":"sturdy","color":"#d9a83a","weight":0.2,"resist":{"electricity":0.25},"text":"Thick rubber gloves from an old toolbox. They take a quarter of the sting out of electricity."},
+    {"id":"lined-pants","name":"Lined pants","kind":"gear","stack":1,"slot":"pants","tier":"sturdy","color":"#4a5a3a","weight":0.6,"resist":{"cold":0.15,"wind":0.1},"text":"Canvas pants lined with blanket. Cold bites 15% less, rain soaks you 10% slower."},
+    {"id":"rubber-boots","name":"Rubber boots","kind":"gear","stack":1,"slot":"shoes","tier":"sturdy","color":"#2f4f3a","weight":0.9,"resist":{"electricity":0.2,"wind":0.05},"text":"Tall rubber boots. They keep your feet dry and take a fifth of the sting out of electricity."},
+    {"id":"hiking-pack","name":"Hiking pack","kind":"gear","stack":1,"slot":"bag","tier":"sturdy","color":"#7a4a2a","weight":1.0,"bag":12,"text":"A hiking pack with side pockets. Twelve things fit in it."},
+    {"id":"lead-cap","name":"Lead-lined cap","kind":"gear","stack":1,"slot":"cap","tier":"rugged","color":"#7f878c","weight":0.8,"resist":{"radiation":0.35,"cold":0.05},"text":"A cap with lead sewn into its lining. Heavy, but it takes a third of the glow out of the anomalies."},
+    {"id":"storm-coat","name":"Storm coat","kind":"gear","stack":1,"slot":"shirt","tier":"rugged","color":"#2e5a8a","weight":1.2,"resist":{"wind":0.45,"cold":0.25,"electricity":0.1},"bonus":5,"text":"A long waxed coat with copper stitched through the seams. It keeps out rain, cold and a little lightning, and gives you 5 more energy."},
+    {"id":"insulated-gloves","name":"Insulated gloves","kind":"gear","stack":1,"slot":"gloves","tier":"rugged","color":"#3a3a3a","weight":0.3,"resist":{"electricity":0.35,"cold":0.1},"text":"Lineman’s gloves wrapped in copper-threaded cloth. Electricity stings a third less."},
+    {"id":"expedition-pack","name":"Expedition pack","kind":"gear","stack":1,"slot":"bag","tier":"expedition","color":"#8a3a2a","weight":1.6,"bag":16,"bonus":5,"text":"A frame pack for long trips. Sixteen things fit, and it carries so well you have 5 more energy."},
+    {"id":"expedition-boots","name":"Expedition boots","kind":"gear","stack":1,"slot":"shoes","tier":"expedition","color":"#5a3a22","weight":1.2,"resist":{"electricity":0.25,"cold":0.15,"wind":0.1},"text":"Heavy boots with rubber soles and wool inside. Good against cold, wet and electricity alike."},
+    {"id":"shard-cap","name":"Shard-lined cap","kind":"gear","stack":1,"xp":40,"slot":"cap","tier":"anomalous","color":"#9a6cf0","weight":0.4,"resist":{"radiation":0.5,"electricity":0.2},"bonus":10,"text":"A cap lined with slivers of glass that hum against your skull. Half the glow of the anomalies never reaches you, and you have 10 more energy."}
   ],
   "finds": [
     {"item":"glowcap","map":"near-woods","on":["mud","ferns"],"steps":[15,50],"count":4,"respawn":[90,240]},
@@ -35,5 +53,18 @@
     {"item":"thermos","map":"near-woods-end-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"flare","map":"near-woods","near":{"kinds":["car"],"radius":2},"count":1,"respawn":[1800,3600]},
     {"item":"flare","map":"near-woods-ranger-hut","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]}
+  ],
+  "recipes": [
+    {"id":"wool-cap","make":"wool-cap","needs":[{"item":"cloth","count":6},{"item":"resin","count":1}]},
+    {"id":"raincoat","make":"raincoat","needs":[{"item":"cloth","count":8},{"item":"resin","count":4}]},
+    {"id":"rubber-gloves","make":"rubber-gloves","needs":[{"item":"resin","count":6},{"item":"cloth","count":2}]},
+    {"id":"lined-pants","make":"lined-pants","needs":[{"item":"cloth","count":8},{"item":"scrap","count":1}]},
+    {"id":"rubber-boots","make":"rubber-boots","needs":[{"item":"resin","count":8},{"item":"scrap","count":2}]},
+    {"id":"hiking-pack","make":"hiking-pack","needs":[{"item":"cloth","count":10},{"item":"scrap","count":4},{"item":"wire","count":3}]},
+    {"id":"lead-cap","make":"lead-cap","needs":[{"item":"scrap","count":8},{"item":"shard","count":2}]},
+    {"id":"storm-coat","make":"storm-coat","needs":[{"item":"cloth","count":12},{"item":"wire","count":4},{"item":"resin","count":4},{"item":"shard","count":1}]},
+    {"id":"insulated-gloves","make":"insulated-gloves","needs":[{"item":"wire","count":4},{"item":"resin","count":6},{"item":"cloth","count":4}]},
+    {"id":"expedition-pack","make":"expedition-pack","needs":[{"item":"cloth","count":16},{"item":"scrap","count":8},{"item":"wire","count":6},{"item":"shard","count":3}]},
+    {"id":"expedition-boots","make":"expedition-boots","needs":[{"item":"scrap","count":6},{"item":"resin","count":10},{"item":"cloth","count":6},{"item":"shard","count":2}]}
   ]
 }

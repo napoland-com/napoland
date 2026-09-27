@@ -10,8 +10,8 @@ const stonebrook = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../.
 const maps = new Maps([stonebrook]);
 const map = maps.get(stonebrook)!;
 const spawn = map.data.spawn;
-const me: PlayerView = { id: 'me', name: 'Aldo', x: spawn.x, y: spawn.y, dir: 'down', color: '#d9a53a' };
-const other: PlayerView = { id: 'o1', name: 'Bea', x: spawn.x + 1, y: spawn.y, dir: 'left', color: '#58a8f8' };
+const me: PlayerView = { id: 'me', name: 'Aldo', x: spawn.x, y: spawn.y, dir: 'down', color: '#d9a53a', gear: {} };
+const other: PlayerView = { id: 'o1', name: 'Bea', x: spawn.x + 1, y: spawn.y, dir: 'left', color: '#58a8f8', gear: {} };
 
 let sent: ClientMsg[];
 let game: Game;

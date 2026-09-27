@@ -13,7 +13,7 @@
  */
 import * as THREE from 'three';
 import { DIR_VEC, type Dir, type DropView, type FindView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
-import { makeNpc, makePlayer, type Rig } from './characters';
+import { makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, flicker, hearthModel, type Puffs } from './fire';
 import { Echoes, Flares, Marks, Watchers, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
@@ -38,6 +38,8 @@ export interface Avatar {
   turnT: number;
   /** Something clings to their back (only ever told about yourself). */
   hitched?: boolean;
+  /** What they wear (characters.ts). */
+  look?: Look;
 }
 
 /** A creature as the game draws it (watchers). */
@@ -161,7 +163,7 @@ export class WorldView {
   /** How this place looks in the current weather (lighting.ts). */
   private amb: Ambience;
   private readonly pitch = THREE.MathUtils.degToRad(62);
-  private rigs = new Map<string, { rig: Rig; color: string; shadow: THREE.Mesh; hitch?: THREE.Group }>();
+  private rigs = new Map<string, { rig: Rig; color: string; look: string; shadow: THREE.Mesh; hitch?: THREE.Group }>();
   private animate: Array<(t: number, dt: number) => void> = [];
   private hemi = new THREE.HemisphereLight(0xa3b3bb, 0x1d2620, 0.55 * L);
   private sun = new THREE.DirectionalLight(0xc9d4d8, 0.36 * L);
@@ -991,9 +993,11 @@ export class WorldView {
     for (const a of avatars) {
       seen.add(a.id);
       let e = this.rigs.get(a.id);
-      if (!e || e.color !== a.color) {
+      // A new jacket or new gear: the character is built again in it.
+      const look = JSON.stringify(a.look ?? {});
+      if (!e || e.color !== a.color || e.look !== look) {
         if (e) this.dropRig(e);
-        e = { rig: makePlayer(a.color), color: a.color, shadow: this.blob(0.3, 0, 0) };
+        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0) };
         this.scene.add(e.rig.root, e.shadow);
         this.rigs.set(a.id, e);
       }

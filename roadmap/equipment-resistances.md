@@ -1,8 +1,8 @@
 ---
 id: equipment-resistances
 title: Equipment, crafting and resistances
-status: planned
-order: 10
+status: done
+order: 100
 area: gameplay
 depends: [home-stash-xp-levels]
 ---

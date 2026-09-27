@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-lodge",
   "name": "Stonebrook Lodge",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 11,
@@ -42,6 +42,7 @@
     {"kind":"table","x":7,"y":4},
     {"kind":"table","x":8,"y":4},
     {"kind":"barrel","x":1,"y":6},
-    {"kind":"barrel","x":9,"y":6}
+    {"kind":"barrel","x":9,"y":6},
+    {"kind":"workbench","x":9,"y":3}
   ]
 }

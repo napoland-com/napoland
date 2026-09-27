@@ -15,6 +15,7 @@
  * Tuning targets: standing at the woods' edge in the rain, dry and light, empties a full bar in about
  * 5.5 minutes, the deep end of the Near Woods in under 2, so the shelters' fires matter.
  */
+import type { Resist } from './gear';
 import type { MapKind, TileMap } from './map';
 import type { Weather } from './protocol';
 
@@ -80,6 +81,8 @@ export interface Conditions {
   surgeDrain?: number;
   /** Something clings to your back. */
   hitched?: boolean;
+  /** What your gear resists (gear.ts): cold softens the weather's and wetness's extra drain, electricity and radiation a surge's. */
+  resist?: Partial<Resist>;
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -92,9 +95,15 @@ export function energyRate(map: TileMap, x: number, y: number, weather: Weather,
   // A tile with no way home (it should not exist; the validator warns) counts as far away.
   const steps = map.homeSteps(x, y);
   const far = steps < 0 ? 3 * DRAIN_GROWTH_STEPS : steps;
-  let k = WEATHER_DRAIN[weather] * (1 + LOAD_DRAIN * clamp01(c.load ?? 0)) * (1 + WET_DRAIN * clamp01(c.wet ?? 0));
+  const cold = clamp01(c.resist?.cold ?? 0);
+  const weatherK = 1 + (WEATHER_DRAIN[weather] - 1) * (1 - cold);
+  let k = weatherK * (1 + LOAD_DRAIN * clamp01(c.load ?? 0)) * (1 + WET_DRAIN * clamp01(c.wet ?? 0) * (1 - cold));
   if (c.hitched) k *= HITCH_DRAIN;
-  if (inSurge(map, x, y, c.surgeFront)) k *= c.surgeDrain ?? SURGE_DRAIN;
+  if (inSurge(map, x, y, c.surgeFront)) {
+    // A surge is electric and radiant: each resistance cuts half of its extra drain.
+    const shield = (clamp01(c.resist?.electricity ?? 0) + clamp01(c.resist?.radiation ?? 0)) / 2;
+    k *= 1 + ((c.surgeDrain ?? SURGE_DRAIN) - 1) * (1 - shield);
+  }
   return -DRAIN_PER_SECOND * Math.max(1, map.data.depth) * (1 + far / DRAIN_GROWTH_STEPS) * k;
 }
 

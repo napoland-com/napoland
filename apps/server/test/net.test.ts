@@ -32,7 +32,7 @@ describe('connecting', () => {
     });
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(welcome.token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 random bytes
-    expect(welcome.players).toEqual([{ id, name: 'Aldo', x: 1, y: 2, dir: 'down', color: colorFor(id) }]);
+    expect(welcome.players).toEqual([{ id, name: 'Aldo', x: 1, y: 2, dir: 'down', color: colorFor(id), gear: {} }]);
     expect(Math.abs(welcome.serverTime - Date.now())).toBeLessThan(5000);
     // Only the token's hash is kept.
     expect(ctx.storage.get(id)).toMatchObject({ name: 'Aldo', tokenHash: hashToken(welcome.token!), map: 'town', x: 1, y: 2, energy: ENERGY_MAX });

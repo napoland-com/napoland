@@ -2,6 +2,7 @@
  * Content checks for maps. Run on every change (npm run validate) so a broken map never ships.
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
+import { ELEMENTS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
 import { findTiles, type ItemsData } from './items';
 import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
@@ -67,7 +68,7 @@ export function validateMap(data: MapData): Problem[] {
     }
     if (o.kind === 'sign' && (!o.text.length || o.text.some(t => !t.trim()))) err(`sign at ${o.x},${o.y} has no text`);
     if (o.kind === 'npc' && !o.lines.length) err(`npc ${o.id} has nothing to say`);
-    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board' || o.kind === 'chest') {
+    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board' || o.kind === 'chest' || o.kind === 'workbench') {
       const front = stepTarget(o.x, o.y, 'down');
       if (!map.walkable(front.x, front.y)) err(`${o.kind} at ${o.x},${o.y}: the tile in front (below) is not walkable, so nobody can talk to it`);
     }
@@ -197,7 +198,20 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     ids.add(i.id);
     if (!i.name?.trim()) err(`${name} has no name`);
     if (!i.text?.trim()) err(`${name} has no text`);
-    if (i.kind !== 'resource' && i.kind !== 'consumable' && i.kind !== 'charm') err(`${name}: kind must be resource, consumable or charm`);
+    if (!['resource', 'consumable', 'charm', 'gear'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm or gear`);
+    if (i.kind === 'gear') {
+      if (!SLOTS.includes(i.slot!)) err(`${name}: gear needs a slot (${SLOTS.join(', ')})`);
+      if (i.tier !== undefined && !TIERS.includes(i.tier)) err(`${name}: tier is one of ${TIERS.join(', ')}`);
+      if (i.stack !== 1) err(`${name}: gear stacks one to a slot`);
+      for (const [e, v] of Object.entries(i.resist ?? {})) {
+        if (!ELEMENTS.includes(e as Element)) err(`${name}: resists an unknown element ${e}`);
+        else if (!(typeof v === 'number' && v > 0 && v <= 1)) err(`${name}: a resistance is a share above 0, at most 1`);
+      }
+      if (i.slot === 'bag' && !(Number.isInteger(i.bag) && i.bag! >= 1 && i.bag! <= 64)) err(`${name}: a bag has 1 to 64 slots`);
+      if (i.slot !== 'bag' && i.bag !== undefined) err(`${name}: only a bag has slots`);
+      if (i.bonus !== undefined && !(Number.isInteger(i.bonus) && i.bonus > 0)) err(`${name}: bonus energy is a whole number above 0`);
+      if (i.color !== undefined && !/^#[0-9a-f]{6}$/i.test(i.color)) err(`${name}: color is #rrggbb`);
+    } else if (i.slot || i.resist || i.bag || i.bonus || i.tier) err(`${name}: only gear has a slot, a tier, resistances, a bag or bonus energy`);
     if (!Number.isInteger(i.stack) || i.stack < 1) err(`${name}: stack must be a whole number from 1`);
     const effects = Object.values(i.use ?? {}).filter(v => (typeof v === 'number' && v !== 0) || v === true).length;
     if (i.kind === 'consumable' && !effects) err(`${name} is a consumable that does nothing when used`);
@@ -211,6 +225,26 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (i.use?.flare !== undefined && !(i.use.flare > 0)) err(`${name}: a flare burns for some seconds above 0`);
     if (i.use?.identify && !i.reveals?.length) err(`${name} can be identified but reveals nothing`);
     if (i.reveals && !i.use?.identify) err(`${name} reveals things but cannot be identified`);
+  }
+  // Once there is gear at all, everyone starts in some: it must exist.
+  if (data.items.some(i => i.kind === 'gear')) for (const g of Object.values(STARTER_GEAR)) {
+    const def = data.items.find(i => i.id === g);
+    if (!def) err(`the starter gear ${g} is not an item`);
+    else if (def.kind !== 'gear') err(`the starter gear ${g} is not gear`);
+  }
+  const recipeIds = new Set<string>();
+  for (const r of data.recipes ?? []) {
+    const name = `recipe ${JSON.stringify(r.id)}`;
+    if (!/^[a-z][a-z0-9-]*$/.test(r.id ?? '')) err(`${name}: ids are lowercase letters, digits and -`);
+    if (recipeIds.has(r.id)) err(`${name} is defined twice`);
+    recipeIds.add(r.id);
+    if (!ids.has(r.make)) err(`${name} makes ${r.make}, which is not an item`);
+    if (r.count !== undefined && !(Number.isInteger(r.count) && r.count >= 1)) err(`${name}: count is a whole number from 1`);
+    if (!r.needs?.length) err(`${name} needs nothing`);
+    for (const n of r.needs ?? []) {
+      if (!ids.has(n.item)) err(`${name} needs ${n.item}, which is not an item`);
+      if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
+    }
   }
   for (const i of data.items) for (const r of i.reveals ?? []) {
     if (!ids.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, which is not an item`);

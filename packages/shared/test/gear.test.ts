@@ -1,0 +1,78 @@
+import { describe, expect, it } from 'vitest';
+import {
+  BAG_SLOTS, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, RESIST_MAX, SURGE_DRAIN, TileMap, WEATHER_DRAIN, WET_DRAIN, bagSlotsOf, canMake, energyRate, gearEnergy,
+  itemIndex, resistOf, validateItems, type ItemsData, type MapData,
+} from '../src';
+
+const data: ItemsData = {
+  version: 1,
+  items: [
+    { id: 'coat', name: 'Coat', kind: 'gear', stack: 1, text: 'Warm.', slot: 'shirt', resist: { cold: 0.5, wind: 0.3 }, bonus: 5 },
+    { id: 'hat', name: 'Hat', kind: 'gear', stack: 1, text: 'Warm.', slot: 'cap', resist: { cold: 0.4, radiation: 0.2 } },
+    { id: 'pack', name: 'Pack', kind: 'gear', stack: 1, text: 'Big.', slot: 'bag', bag: 12 },
+    { id: 'cloth', name: 'Cloth', kind: 'resource', stack: 10, text: 'Dry.' },
+  ],
+  finds: [],
+};
+const items = itemIndex(data);
+
+/** A 3x5 strip of wilds, its way home at the bottom: 1,1 is 3 steps from it. */
+const strip: MapData = {
+  id: 'strip', name: 'Strip', version: 1, kind: 'wilds', depth: 1, width: 3, height: 5,
+  tiles: ['ggg', 'ggg', 'ggg', 'ggg', 'tgt'], levels: Array<string>(5).fill('000'),
+  spawn: { x: 1, y: 3, dir: 'up' }, exits: [{ x: 1, y: 4, w: 1, h: 1, to: 'town', tx: 0, ty: 0, dir: 'down', home: true }], objects: [],
+};
+const map = new TileMap(strip);
+const base = DRAIN_PER_SECOND * (1 + 3 / DRAIN_GROWTH_STEPS);
+
+describe('what gear does', () => {
+  it('adds up resistances over what is worn, never past the cap', () => {
+    expect(resistOf({ shirt: 'coat', cap: 'hat' }, items)).toEqual({ heat: 0, cold: RESIST_MAX, wind: 0.3, electricity: 0, radiation: 0.2 });
+    // A piece in the wrong place, or no gear at all, resists nothing.
+    expect(resistOf({ shirt: 'cloth', cap: 'nope' }, items).cold).toBe(0);
+  });
+
+  it('sets the bag\'s slots and adds energy', () => {
+    expect(bagSlotsOf({ bag: 'pack' }, items)).toBe(12);
+    expect(bagSlotsOf({}, items)).toBe(BAG_SLOTS);
+    expect(gearEnergy({ shirt: 'coat', bag: 'pack' }, items)).toBe(5);
+  });
+
+  it('lets cold soften the weather and wetness, and electricity and radiation a surge', () => {
+    const night = -base * WEATHER_DRAIN.night;
+    expect(energyRate(map, 1, 1, 'night')).toBeCloseTo(night, 10);
+    // Half cold: half of the night's extra drain.
+    expect(energyRate(map, 1, 1, 'night', { resist: { cold: 0.5 } })).toBeCloseTo(-base * (1 + (WEATHER_DRAIN.night - 1) / 2), 10);
+    expect(energyRate(map, 1, 1, 'overcast', { wet: 1, resist: { cold: 0.5 } })).toBeCloseTo(-base * (1 + WET_DRAIN / 2), 10);
+    // A surge: each of electricity and radiation cuts half of its extra.
+    expect(energyRate(map, 1, 1, 'overcast', { surgeFront: 0, resist: { electricity: 1, radiation: 1 } })).toBeCloseTo(-base, 10);
+    expect(energyRate(map, 1, 1, 'overcast', { surgeFront: 0, resist: { electricity: 1 } })).toBeCloseTo(-base * (1 + (SURGE_DRAIN - 1) / 2), 10);
+  });
+
+  it('knows what the stash can make', () => {
+    const r = { id: 'coat', make: 'coat', needs: [{ item: 'cloth', count: 8 }] };
+    expect(canMake(r, { cloth: 8 })).toBe(true);
+    expect(canMake(r, { cloth: 7 })).toBe(false);
+  });
+});
+
+describe('validation of gear and recipes', () => {
+  const problems = (d: Partial<ItemsData>) => validateItems({ version: 1, items: [], finds: [], ...d }, [strip]).filter(p => p.level === 'error').map(p => p.message);
+  const starter = ['worn-cap', 'worn-shirt', 'worn-gloves', 'worn-pants', 'worn-shoes'].map(id => ({ id, name: id, kind: 'gear' as const, stack: 1, text: 'Old.', slot: id.slice(5) as 'cap' }))
+    .concat([{ id: 'backpack', name: 'Backpack', kind: 'gear', stack: 1, text: 'Old.', slot: 'bag', bag: 8 } as never]);
+
+  it('checks slots, resistances, bags and that everyone has something to start in', () => {
+    expect(problems({ items: starter })).toEqual([]);
+    expect(problems({ items: [...starter, { id: 'x', name: 'X', kind: 'gear', stack: 2, text: 'X.', resist: { fire: 0.2 } as never }] })).toEqual([
+      'item "x": gear needs a slot (cap, shirt, gloves, pants, shoes, bag)', 'item "x": gear stacks one to a slot', 'item "x": resists an unknown element fire',
+    ]);
+    expect(problems({ items: [{ id: 'coat', name: 'Coat', kind: 'gear', stack: 1, text: 'Warm.', slot: 'shirt' }] })).toContain('the starter gear worn-cap is not an item');
+    expect(problems({ items: [{ id: 'rock', name: 'Rock', kind: 'resource', stack: 1, text: 'Hard.', slot: 'cap' }] })).toEqual(['item "rock": only gear has a slot, a tier, resistances, a bag or bonus energy']);
+  });
+
+  it('checks recipes make and need real items', () => {
+    expect(problems({ items: starter, recipes: [{ id: 'hat', make: 'nope', needs: [{ item: 'dust', count: 0 }] }] })).toEqual([
+      'recipe "hat" makes nope, which is not an item', 'recipe "hat" needs dust, which is not an item', 'recipe "hat": each need is a whole number from 1',
+    ]);
+  });
+});

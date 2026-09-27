@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { Weather, type ItemsData } from '@napoland/shared';
 import { bannerMs, tossQuestion } from '../src/hud';
-import { DRAWN_ITEMS, itemIcon } from '../src/icons';
+import { DRAWN_ITEMS, iconFor, itemIcon } from '../src/icons';
 import { Items, countOf, plainName, slotViews, useText } from '../src/items';
 import { ITEM_LOOKS, lookOf, lootGlow, lootModel, type Look } from '../src/view/loot';
 import { ITEMS, itemsData } from './fixtures';
@@ -53,6 +53,12 @@ describe('what items look like', () => {
   it('draws every item in content/items.json: an icon for the bag and a model for the ground', () => {
     expect(content.items.length).toBeGreaterThan(0);
     for (const i of content.items) {
+      // Gear is drawn by its slot, in its color: never a sack. It never grows as a find, so it needs no model on the ground.
+      if (i.kind === 'gear') {
+        expect(iconFor(i), i.id).not.toBe(itemIcon('fir-cone'));
+        expect(content.finds.map(f => f.item), i.id).not.toContain(i.id);
+        continue;
+      }
       expect(DRAWN_ITEMS, i.id).toContain(i.id);
       expect(lookOf(i.id), i.id).toBe(i.id);
     }

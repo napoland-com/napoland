@@ -9,10 +9,11 @@
  * else gets a random half (the rest is lost), and it fades an hour after the collapse.
  */
 import type { Mods } from './feats';
+import type { Element, Recipe, Slot, Tier } from './gear';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 
-/** A resource is gathered, a consumable used up, a charm works while it is in your bag. */
-export type ItemKind = 'resource' | 'consumable' | 'charm';
+/** A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn (gear.ts). */
+export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear';
 
 /** What using an item does. A mark costs the item; so does everything else here. */
 export interface ItemUse {
@@ -49,6 +50,15 @@ export interface ItemDef {
   reveals?: Array<{ item: string; count: number; weight: number }>;
   /** What a charm does while it is in your bag, as factors (feats.ts). */
   charm?: Partial<Mods>;
+  /** Gear only: the slot it is worn in, its tier, what it resists (0.3: 30% of the loss) and extra energy it gives. */
+  slot?: Slot;
+  tier?: Tier;
+  resist?: Partial<Record<Element, number>>;
+  bonus?: number;
+  /** A bag's slots. */
+  bag?: number;
+  /** Gear: its color on your character. */
+  color?: string;
 }
 
 /** Where one kind of find grows, and how many are out there at once. */
@@ -79,6 +89,8 @@ export interface ItemsData {
   version: number;
   items: ItemDef[];
   finds: FindRule[];
+  /** What the workbench in town makes (gear.ts). None: it makes nothing. */
+  recipes?: Recipe[];
 }
 
 /** One bag slot: an item and how many of it (at most its stack). */

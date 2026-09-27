@@ -244,6 +244,18 @@ export function attachNet(o: NetOptions): Net {
       case 'store':
         world.store(s.id, msg.x, msg.y, msg.slot, now);
         return flush();
+      case 'equip':
+        world.equip(s.id, msg.x, msg.y, msg.item, now);
+        return flush();
+      case 'unequip':
+        world.unequip(s.id, msg.x, msg.y, msg.slot, now);
+        return flush();
+      case 'bench':
+        world.bench(s.id, msg.x, msg.y);
+        return flush();
+      case 'craft':
+        world.craft(s.id, msg.x, msg.y, msg.recipe, now);
+        return flush();
       case 'take':
         world.take(s.id, msg.x, msg.y, msg.item, msg.count, now);
         return flush();
