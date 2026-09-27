@@ -71,6 +71,26 @@ describe('the paper map', () => {
     expect(Math.abs(a!.y - b!.y)).toBeGreaterThanOrEqual(1.9);
   });
 
+  it('never writes a name over a mast or a sign: a place named at one, or beside it, goes to the nearest clear line', () => {
+    const grounds: MapData = {
+      ...woods(), width: 30, height: 20, tiles: Array<string>(20).fill('g'.repeat(30)), levels: Array<string>(20).fill('0'.repeat(30)),
+      exits: [], objects: [{ kind: 'antenna', x: 15, y: 10 }, { kind: 'antenna', x: 24, y: 14 }, { kind: 'sign', x: 6, y: 16, text: ['The ford'] }],
+      places: [{ name: 'the Tower', x: 15, y: 10 }, { name: 'field site', x: 21, y: 15 }, { name: 'the ford', x: 6, y: 16 }],
+    };
+    const g = sketchOf(new TileMap(grounds), id => names[id]);
+    // A name is 0.95 a letter wide and 1.9 high. A mast is drawn from 2.2 tiles above its point to half
+    // a tile below, 0.45 each side; a sign from 0.75 above to 5/12 below, 5/12 each side.
+    const marks = [...g.masts.map(([x, y]) => ({ x, y, up: 2.2, down: 0.5, side: 0.45 })), ...g.signs.map(([x, y]) => ({ x, y, up: 0.75, down: 5 / 12, side: 5 / 12 }))];
+    expect(marks).toHaveLength(3);
+    for (const l of g.labels) for (const m of marks) {
+      const beside = Math.abs(l.x - m.x) >= (l.text.length * 0.95) / 2 + m.side;
+      const aboveOrBelow = l.y + 0.95 <= m.y - m.up || l.y - 0.95 >= m.y + m.down;
+      expect(beside || aboveOrBelow, `${l.text} and the drawing at ${m.x}`).toBe(true);
+    }
+    // Still by the place it names: one line off, not across the paper.
+    for (const l of g.labels) expect(Math.abs(l.y - (grounds.places!.find(p => p.name === l.text)!.y + 0.5)), l.text).toBeCloseTo(1.9);
+  });
+
   it('is the same drawing every time, and knows nothing of who looks at it', () => {
     expect(sketchOf(new TileMap(woods()), id => names[id])).toEqual(s);
     expect(sketchOf.length).toBe(2);

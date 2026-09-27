@@ -18,8 +18,21 @@ const POND_TILES = 6;
 /** How much room a word takes on the paper, in tiles: a letter's width, and a line's height. */
 const LETTER = 0.95;
 const LINE = 1.9;
+/**
+ * How far from its point a landmark the words keep clear of is drawn (tiles): a mast from this far
+ * above down to this far below, this wide each side; a sign's board up top, and its post.
+ */
+const MAST_TOP = 2.2;
+const MAST_FOOT = 0.5;
+const MAST_HALF = 0.45;
+const SIGN_TOP = 0.75;
+const SIGN_HALF = 5 / 12;
 
 type Pt = [number, number];
+/** What a drawing covers on the paper, in tiles. */
+interface Box { x0: number; x1: number; y0: number; y1: number }
+const mastBox = ([x, y]: Pt): Box => ({ x0: x - MAST_HALF, x1: x + MAST_HALF, y0: y - MAST_TOP, y1: y + MAST_FOOT });
+const signBox = ([x, y]: Pt): Box => ({ x0: x - SIGN_HALF, x1: x + SIGN_HALF, y0: y - SIGN_TOP, y1: y + SIGN_HALF });
 
 export interface Sketch {
   title: string;
@@ -105,22 +118,26 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
   for (const p of map.data.places ?? []) s.labels.push({ x: p.x + 0.5, y: p.y + 0.5, text: p.name });
   const pond = biggest(map, 'water');
   if (!map.data.places && pond.length >= POND_TILES) s.labels.push({ x: pond.reduce((n, [x]) => n + x, 0) / pond.length + 0.5, y: pond.reduce((n, [, y]) => n + y, 0) / pond.length + 0.5, text: 'pond' });
-  s.labels = apart(s.labels, W);
+  s.labels = apart(s.labels, W, H, [...s.masts.map(mastBox), ...s.signs.map(signBox)]);
   return s;
 }
 
 /**
- * Labels where they are drawn (kept off the paper's edge), each moved up a line, or down near the top,
- * until it covers none written before it: two doors side by side get one name above the other.
+ * Labels where they are drawn (kept off the paper's edge), each on the nearest line (a line up first,
+ * then down, then two up...) where it covers no name written before it, no mast and no sign: two doors
+ * side by side get one name above the other, and a place named at its mast gets its name clear of it.
  */
-function apart(labels: Sketch['labels'], width: number): Sketch['labels'] {
+function apart(labels: Sketch['labels'], width: number, height: number, marks: Box[]): Sketch['labels'] {
+  type Label = Sketch['labels'][number];
   const done: Sketch['labels'] = [];
-  const clash = (a: Sketch['labels'][number], b: Sketch['labels'][number]) =>
-    Math.abs(a.x - b.x) < ((a.text.length + b.text.length) * LETTER) / 2 && Math.abs(a.y - b.y) < LINE;
+  const half = (l: Label) => (l.text.length * LETTER) / 2;
+  const clash = (a: Label, b: Label) => Math.abs(a.x - b.x) < half(a) + half(b) && Math.abs(a.y - b.y) < LINE;
+  const covers = (a: Label) => marks.some(m => a.x + half(a) > m.x0 && a.x - half(a) < m.x1 && a.y + LINE / 2 > m.y0 && a.y - LINE / 2 < m.y1);
+  const free = (a: Label) => !done.some(d => clash(a, d)) && !covers(a);
   for (const l of labels) {
     const at = { ...l, x: Math.min(width - 3, Math.max(3, l.x)), y: Math.max(0.5, l.y) };
-    for (let tries = 0; tries < 8 && done.some(d => clash(at, d)); tries++) at.y = at.y - LINE < 0.5 ? at.y + LINE * (tries + 1) : at.y - LINE;
-    done.push(at);
+    const lines = [0, -1, 1, -2, 2, -3, 3, -4, 4].map(n => at.y + n * LINE).filter(y => y >= 0.5 && y <= height - 0.5);
+    done.push({ ...at, y: lines.find(y => free({ ...at, y })) ?? at.y });
   }
   return done;
 }
@@ -256,7 +273,7 @@ function draw(s: Sketch): HTMLCanvasElement {
   // Masts: a tall narrow A with its cross braces, and a dot at the top for the light.
   g.fillStyle = INK;
   for (const [x, y] of s.masts) {
-    const top = Y(y) - PX * 2.2, foot = Y(y) + PX * 0.5, half = PX * 0.45;
+    const top = Y(y) - PX * MAST_TOP, foot = Y(y) + PX * MAST_FOOT, half = PX * MAST_HALF;
     g.beginPath();
     g.moveTo(X(x) - half, foot); g.lineTo(X(x), top); g.lineTo(X(x) + half, foot);
     for (const f of [0.3, 0.6]) { const yy = foot + (top - foot) * f, w = half * (1 - f); g.moveTo(X(x) - w, yy); g.lineTo(X(x) + w, yy); }
@@ -265,7 +282,7 @@ function draw(s: Sketch): HTMLCanvasElement {
   }
   for (const [x, y] of s.cars) g.strokeRect(X(x) - 7, Y(y) - 4, 14, 8);
   g.beginPath();
-  for (const [x, y] of s.signs) { g.moveTo(X(x), Y(y) + 5); g.lineTo(X(x), Y(y) - 5); g.rect(X(x) - 5, Y(y) - 9, 10, 5); }
+  for (const [x, y] of s.signs) { g.moveTo(X(x), Y(y) + PX * SIGN_HALF); g.lineTo(X(x), Y(y) - PX * SIGN_HALF); g.rect(X(x) - PX * SIGN_HALF, Y(y) - PX * SIGN_TOP, PX * SIGN_HALF * 2, PX * SIGN_HALF); }
   g.stroke();
 
   // Words in handwriting, each a little tilted.

@@ -14,12 +14,6 @@ const icon = (inner: string) =>
 const halo = (cx: number, cy: number, r: number, color: string) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" opacity=".2" stroke="none"/>`;
 
 const ICONS: Record<string, string> = {
-  // NAPO's grounds: a folded map with NAPO's yellow band across the top and the Tower on it.
-  'south-road-map': icon(`<path d="M4 8l8-2.5 8 2.5 8-2.5v19L20 27l-8-2.5L4 27z" fill="#d8c9a3"/>
-    <path d="M4 8l8-2.5 8 2.5 8-2.5v3.6L20 11.6l-8-2.5-8 2.5z" fill="#d6ad2f" stroke="#8a7650"/>
-    <path d="M12 5.5v19M20 8v19" stroke="#8a7650"/>
-    <path d="M16.5 26l-.2-13" stroke="#6b4a31" stroke-dasharray="2 1.6"/>
-    <path d="M22.5 22l1.8-8.5 1.8 8.5M23.1 19h2.4" stroke="#9c2b2b"/>`),
   // Two luminous mushrooms, spotted caps.
   glowcap: icon(`${halo(16, 15, 14, '#5fe8d0')}
     <path d="M7.2 20h3.6l.6 6.5H6.6z" fill="#ece5d2"/>
