@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 11,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -67,8 +67,8 @@
     {"item":"wire","map":"south-road","near":{"kinds":["pole","antenna"],"radius":2.5},"steps":[20,999],"count":4,"respawn":[600,1200]},
     {"item":"wire","map":"south-road","near":{"kinds":["pole","antenna"],"radius":2.5},"count":4,"respawn":[120,300],"when":"aurora"},
     {"item":"flare","map":"south-road","near":{"kinds":["car"],"radius":2},"count":2,"respawn":[1800,3600]},
-    {"item":"shard","map":"south-road","steps":[80,999],"count":2,"respawn":[1800,3600]},
-    {"item":"strange","map":"south-road","near":{"kinds":["antenna"],"radius":4},"steps":[60,999],"count":1,"respawn":[1800,3600]},
+    {"item":"shard","map":"south-road","around":{"x":51,"y":71,"r":5},"steps":[80,999],"count":2,"respawn":[1800,3600]},
+    {"item":"strange","map":"south-road","around":{"x":51,"y":71,"r":5},"steps":[60,999],"count":1,"respawn":[1800,3600]},
     {"item":"cloth","map":"south-road-dormitory","near":{"kinds":["bed","crate"],"radius":1.5},"count":1,"respawn":[1800,3600]},
     {"item":"cloth","map":"south-road-stores","near":{"kinds":["crate","shelf"],"radius":1.5},"count":2,"respawn":[1800,3600]},
     {"item":"flare","map":"south-road-stores","near":{"kinds":["crate","shelf"],"radius":1.5},"count":1,"respawn":[1800,3600]},
@@ -133,7 +133,7 @@
       {"id":"scrap-by-the-car","name":"Scrap by the old car","text":"The old car by the power line fell apart a little more overnight. Scrap lies all around it.","weight":2,"map":"near-woods","group":"car"}
     ],
     "weekly": [
-      {"id":"copper-week","name":"Copper week","text":"Wire by every pole, all week.","map":"near-woods"},
+      {"id":"copper-week","name":"Copper week","text":"Wire by every pole in the Near Woods, all week.","map":"near-woods"},
       {"id":"quiet-woods","name":"Quiet woods","text":"The watchers sleep all week.","map":"near-woods","watchers":{"asleep":true}}
     ]
   }
