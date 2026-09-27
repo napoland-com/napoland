@@ -1,8 +1,8 @@
 ---
 id: creatures
 title: Creatures that chase
-status: planned
-order: 60
+status: done
+order: 170
 area: gameplay
 ---
 

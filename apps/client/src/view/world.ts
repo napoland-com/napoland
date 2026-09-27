@@ -14,9 +14,9 @@
  */
 import * as THREE from 'three';
 import { DIR_VEC, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
-import { makeNpc, makePlayer, type Look, type Rig } from './characters';
+import { LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, flicker, hearthModel, type Puffs } from './fire';
-import { Echoes, Flares, Flashes, Marks, Prints, Watchers, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
+import { Creatures, Echoes, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
@@ -40,17 +40,21 @@ export interface Avatar {
   turnT: number;
   /** Something clings to their back (only ever told about yourself). */
   hitched?: boolean;
+  /** They carry a live find: a column of light over them. */
+  live?: boolean;
   /** What they wear (characters.ts). */
   look?: Look;
 }
 
-/** A creature as the game draws it (watchers). */
+/** A creature as the game draws it: a watcher or a skulker, and whom it chases (if anyone). */
 export interface CreatureAvatar {
   id: string;
+  kind: 'watcher' | 'skulker';
   x: number;
   y: number;
   dir: Dir;
   moving: boolean;
+  chasing: string | undefined;
 }
 
 /** three.js lights are physically based; the preview's values were tuned for the old units. */
@@ -209,10 +213,11 @@ export class WorldView {
   private puffs: Puffs[] = [];
   /** Finds and piles: they come and go, so they are drawn apart from the map (loot.ts). */
   private loot = new Loot();
-  /** What comes and goes out there (wilds.ts): marks, watchers, flares, echoes. */
+  /** What comes and goes out there (wilds.ts): marks, creatures, flares, echoes. */
   private marks = new Marks();
-  private watchers: Watchers;
+  private creatures: Creatures;
   private flares = new Flares();
+  private liveGlows = new LiveGlows();
   private prints = new Prints();
   /** Where someone walks whose gear makes street lights flicker (tiles). */
   private flickerAt: Array<{ x: number; y: number }> = [];
@@ -233,6 +238,8 @@ export class WorldView {
   private surgeK = 0;
   /** A storm blows over this map (outdoors). */
   private storm = false;
+  /** A condition's fog: tiles you see past yourself. */
+  private fogCap: number | undefined;
   private marker: THREE.Mesh;
   private shadowGeo = new THREE.CircleGeometry(1, 14).rotateX(-Math.PI / 2);
   private shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -255,7 +262,7 @@ export class WorldView {
     this.scene.fog = new THREE.Fog('#4c5961', 30, 50);
     this.sun.position.set(-4, 10, 6);
     this.scene.add(this.hemi, this.sun, this.flash, this.flashTarget, this.headLight, this.stoneLight, this.flareLight);
-    this.watchers = new Watchers(this.shadowGeo, this.shadowMat);
+    this.creatures = new Creatures(this.shadowGeo, this.shadowMat);
     for (const s of this.slots) this.scene.add(s.light);
     this.flash.target = this.flashTarget;
     if (this.outdoors) this.findOpenings();
@@ -267,7 +274,7 @@ export class WorldView {
     this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
-    this.scene.add(this.loot.root, this.marks.root, this.watchers.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
+    this.scene.add(this.liveGlows.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
     this.puffs.push(this.flares.sparks);
     this.animate.push(t => this.loot.update(t));
     this.animate.push(t => { this.marks.update(t); this.flares.update(t); this.flashes.update(t); });
@@ -287,8 +294,9 @@ export class WorldView {
     for (const p of this.puffs) p.dispose();
     this.loot.dispose();
     this.marks.dispose();
-    this.watchers.dispose();
+    this.creatures.dispose();
     this.flares.dispose();
+    this.liveGlows.dispose();
     this.prints.dispose();
     this.flashes.dispose();
     this.echoes.dispose();
@@ -469,7 +477,7 @@ export class WorldView {
     this.instanced(rockGeo, rocks, (r, o, c) => { placeRock(r, o); c.set('#6d6f70'); c.offsetHSL(0, 0, (r.v - 0.5) * 0.06); });
     this.instanced(rockGeo, rocks, (r, o) => { placeRock(r, o); o.scale.multiplyScalar(1.1); }, OUTLINE_INSTANCED);
 
-    // Ferns: where the creatures will live. They rustle when something walks through.
+    // Ferns: where skulkers lie. They rustle when something walks through: the warning one is coming.
     const frondGeo = flat(new THREE.ConeGeometry(0.15, 0.52, 3));
     frondGeo.translate(0, 0.26, 0);
     type Frond = { x: number; y: number; r: number; tilt: number; k: number };
@@ -948,6 +956,13 @@ export class WorldView {
     this.loot.set(finds, drops, me, color, (x, y) => this.groundAt(x + 0.5, y + 0.5));
   }
 
+  /** Tiles you see past yourself while a condition brings fog to this map (undefined: none). */
+  setFogCap(tiles: number | undefined) {
+    if (tiles === this.fogCap) return;
+    this.fogCap = tiles;
+    this.updateFog();
+  }
+
   private updateFog() {
     const fog = this.scene.fog as THREE.Fog, f = this.amb.fog, d = this.dist;
     if (!f) { fog.near = 1e4; fog.far = 2e4; return; }
@@ -955,6 +970,8 @@ export class WorldView {
     const storm = this.storm && this.outdoors ? 0.6 : 1;
     fog.near = Math.max(1, d - 1.5);
     fog.far = d + Math.max(f.min, d * f.share) * storm;
+    // Thick fog (a condition) closes in whatever the weather.
+    if (this.fogCap !== undefined && this.outdoors) fog.far = Math.min(fog.far, d + this.fogCap);
   }
 
   /** Size in CSS pixels. The camera keeps the same circle of world around the player on every screen shape. */
@@ -996,7 +1013,10 @@ export class WorldView {
     for (const a of this.animate) a(t, dt);
     this.animateRain({ x: fx, y: fz }, dt);
     this.syncAvatars(avatars, meId);
-    this.watchers.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
+    const carriers = avatars.filter(a => a.live).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
+    this.liveGlows.set(carriers.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
+    this.creatures.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
+    for (const c of this.creatureList) if (c.moving) this.rustleAt(c.x + 0.5, c.y + 0.5);
     this.echoes.update(t, (x, z) => this.groundAt(x, z));
     this.light(fx, fz, t, dt);
     const dark = this.weather === 'night' || this.weather === 'aurora';

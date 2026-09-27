@@ -382,7 +382,7 @@ const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 6, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 7, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
@@ -396,6 +396,8 @@ const map: MapData = {
   flashes: { every: 75, steps: [30, 999] },
   // Three watchers in the deeper half, past the old cabin.
   watchers: { count: 3, steps: [55, 999] },
+  // Three skulkers in the deep ferns, 50 steps or more out, at night and in a storm.
+  skulkers: { count: 3, steps: [50, 999], when: ['night', 'storm'] },
   // What the paper map names, besides the cabins and the way home.
   places: [
     { name: 'pond', x: 20, y: 41 }, { name: 'the crossroads', x: 32, y: 41 }, { name: 'the rocks', x: 35, y: 23 },
@@ -418,6 +420,7 @@ const json = [
   `  "storm": ${JSON.stringify(map.storm)},`,
   `  "flashes": ${JSON.stringify(map.flashes)},`,
   `  "watchers": ${JSON.stringify(map.watchers)},`,
+  `  "skulkers": ${JSON.stringify(map.skulkers)},`,
   '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ]',
   '}',
   '',
@@ -433,7 +436,7 @@ const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', sign: '!', board: '!', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
   // Furniture belongs inside (gen-interiors.ts), but a campfire could stand out here one day.
   fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_',
-  // NAPO's masts and desks stand on the South Road (gen-south-road.ts), not here.
+  // NAPO's listening post has a mast here, by the ring of stones; its desks stand on the South Road (gen-south-road.ts).
   antenna: 'i', console: 'n',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '.' };
@@ -457,9 +460,11 @@ const deepest = Math.max(...steps);
 const deepTiles: string[] = [];
 steps.forEach((v, i) => { if (v === deepest) deepTiles.push(`${i % W},${(i / W) | 0}`); });
 const count = (k: MapObject['kind']) => objects.filter(o => o.kind === k).length;
+const lairs = steps.filter((v, i) => tile[(i / W) | 0]![i % W] === 'f' && v >= map.skulkers!.steps[0]).length;
 console.log(`wrote ${out}: ${W}x${H} tiles, ${objects.length} objects (${count('rock')} rocks, ${count('tree')} firs, ${count('pole')} poles, ${count('shrooms')} shrooms)`);
 console.log(`steps from the way home: ${PLACES.map(([name, p]) => `${name} ${stepsTo(steps, p)}`).join(', ')}`);
 console.log(`deepest: ${deepest} steps, at ${deepTiles.join(' ')}`);
+console.log(`ferns ${map.skulkers!.steps[0]} steps or more out, where skulkers lie: ${lairs} tiles`);
 console.log(`shelter doors: ${shelters.map((s, i) => { const d = doorOf(s); return `${cabins[i]!.inside} ${tm.homeSteps(d.x, d.y)} steps`; }).join(', ')}`);
 // The tuning targets in energy.ts: how long a full bar lasts standing still in the rain.
 const lasts = (x: number, y: number) => (ENERGY_MAX / -energyRate(tm, x, y, 'rain') / 60).toFixed(1);

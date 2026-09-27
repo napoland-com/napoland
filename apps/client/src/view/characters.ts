@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three';
 import type { NpcLook } from '@napoland/shared';
-import { box, flat, part, pivot, toon } from './toon';
+import { box, flat, part, pivot, softTexture, toon } from './toon';
 
 export interface Rig {
   root: THREE.Group;
@@ -97,4 +97,71 @@ export function makeNpc(look: NpcLook = {}): { root: THREE.Group; bang: THREE.Gr
   bang.add(box(0.07, 0.07, 0.07, bangMat, 0, -0.03, 0, 0.018));
   root.add(bang);
   return { root, bang };
+}
+
+/** Columns of light drawn at once, at most: more carriers of live finds on one map are rare. */
+const LIVE_GLOWS = 6;
+const COLUMN_H = 9;
+
+/**
+ * Pale columns of light over whoever carries a live find, and a faint glow at their feet. They ignore
+ * the fog, so they show from far beyond it. A few are built once and always in the scene; each frame
+ * shows as many as there are carriers (like the flares in wilds.ts), so nothing recompiles.
+ */
+export class LiveGlows {
+  readonly root = new THREE.Group();
+  private readonly tex: THREE.CanvasTexture;
+  private readonly foot: THREE.CanvasTexture;
+  private readonly geo = new THREE.CylinderGeometry(0.28, 0.42, COLUMN_H, 14, 1, true).translate(0, COLUMN_H / 2, 0);
+  private readonly footGeo = new THREE.PlaneGeometry(1.8, 1.8).rotateX(-Math.PI / 2);
+  private readonly mat: THREE.MeshBasicMaterial;
+  private readonly footMat: THREE.MeshBasicMaterial;
+  private readonly columns: THREE.Group[] = [];
+
+  constructor() {
+    // Bright at the feet, gone at the top.
+    const c = document.createElement('canvas');
+    c.width = 4;
+    c.height = 64;
+    const g = c.getContext('2d')!, gr = g.createLinearGradient(0, 0, 0, 64);
+    gr.addColorStop(0, 'rgba(255,255,255,0)');
+    gr.addColorStop(0.55, 'rgba(255,255,255,.35)');
+    gr.addColorStop(1, 'rgba(255,255,255,1)');
+    g.fillStyle = gr;
+    g.fillRect(0, 0, 4, 64);
+    this.tex = new THREE.CanvasTexture(c);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.foot = softTexture(0.3);
+    const glow = { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, color: 0xd9c4ff } as const;
+    this.mat = new THREE.MeshBasicMaterial({ ...glow, map: this.tex, opacity: 0.55, side: THREE.DoubleSide });
+    this.footMat = new THREE.MeshBasicMaterial({ ...glow, map: this.foot, opacity: 0.7 });
+    for (let i = 0; i < LIVE_GLOWS; i++) {
+      const col = new THREE.Group();
+      col.add(new THREE.Mesh(this.geo, this.mat), new THREE.Mesh(this.footGeo, this.footMat));
+      col.children[1]!.position.y = 0.03;
+      col.visible = false;
+      this.columns.push(col);
+      this.root.add(col);
+    }
+  }
+
+  /** Where the carriers stand now (world units, feet on the ground), nearest first; `t` makes them breathe. */
+  set(list: ReadonlyArray<{ x: number; y: number; z: number }>, t: number) {
+    const k = 0.85 + 0.15 * Math.sin(t * 2.2);
+    this.mat.opacity = 0.55 * k;
+    this.columns.forEach((col, i) => {
+      const at = list[i];
+      col.visible = !!at;
+      if (at) col.position.set(at.x, at.y, at.z);
+    });
+  }
+
+  dispose() {
+    this.geo.dispose();
+    this.footGeo.dispose();
+    this.tex.dispose();
+    this.foot.dispose();
+    this.mat.dispose();
+    this.footMat.dispose();
+  }
 }

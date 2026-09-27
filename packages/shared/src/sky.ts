@@ -130,3 +130,92 @@ export interface FlashView {
 export function flashHits(f: FlashView, x: number, y: number): boolean {
   return f.left > 0 && f.left <= FLASH_BURST_S && Math.hypot(f.x - x, f.y - y) <= FLASH_RADIUS;
 }
+
+/**
+ * What the woods are like today: every day (from dawn, when the night ends) a region draws one or two
+ * conditions from a list in content/ (thick fog, crates by the pond, the watchers moved north...), and
+ * a weekly one everyone shares comes round in a fixed order. The map never changes, only what happens
+ * on it. Drawn from the wall clock alone, so nothing is stored: every server and client gets the same
+ * answer, and a restart picks up the same day.
+ */
+export interface ConditionDef {
+  id: string;
+  name: string;
+  /** One or two plain sentences: the notice board reads them out. */
+  text: string;
+  /** The region it happens in. */
+  map: string;
+  /** Daily: how likely it is drawn, against the others. */
+  weight?: number;
+  /** Never two daily conditions of one group on the same day (two about the watchers would fight). */
+  group?: string;
+  /** You see about this many tiles past yourself, outdoors on `map`. */
+  fog?: number;
+  /** Watchers wake only this far from home (steps), or not at all. */
+  watchers?: { steps?: [number, number]; asleep?: boolean };
+  /** One untended fire on `map` (or in its shelters) went out overnight. */
+  fireOut?: boolean;
+}
+
+export interface ConditionsData {
+  seed: number;
+  /** The chance of a second daily condition. */
+  second: number;
+  daily: ConditionDef[];
+  weekly: ConditionDef[];
+}
+
+/** Today's daily conditions (ids), this week's and next week's. */
+export interface ConditionsView {
+  today: string[];
+  week: string | null;
+  next: string | null;
+}
+
+/** The day at a wall time: the same one weatherAt uses. It starts at dawn (overcast after the night). */
+export function dayIndex(wallMs: number): number {
+  return Math.floor(wallMs / 1000 / DAY_S);
+}
+
+/** The week at a wall time. Weeks turn on Monday at 00:00 UTC (the epoch was a Thursday), always at a dawn. */
+export function weekIndex(wallMs: number): number {
+  return Math.floor((wallMs / 1000 + 3 * 86400) / 604800);
+}
+
+/** Numbers from 0 to 1 that depend only on `n` (mulberry32): the same seed gives the same dice everywhere. */
+export function seeded(n: number): () => number {
+  let a = n >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** The conditions at a wall time: one daily by weight, a second (another group) by chance, and the week's in turn. */
+export function conditionsAt(data: ConditionsData | undefined, wallMs: number): ConditionsView {
+  if (!data) return { today: [], week: null, next: null };
+  const rng = seeded(dayIndex(wallMs) * 7919 + data.seed);
+  const pick = (pool: ConditionDef[]): ConditionDef | undefined => {
+    let roll = rng() * pool.reduce((n, c) => n + (c.weight ?? 0), 0);
+    for (const c of pool) if ((roll -= c.weight ?? 0) < 0) return c;
+    return pool.at(-1);
+  };
+  const first = pick(data.daily);
+  const today = first ? [first] : [];
+  if (first && rng() < data.second) {
+    const second = pick(data.daily.filter(c => c !== first && (first.group === undefined || c.group !== first.group)));
+    if (second) today.push(second);
+  }
+  const n = data.weekly.length, w = weekIndex(wallMs);
+  return { today: today.map(c => c.id), week: n ? data.weekly[w % n]!.id : null, next: n ? data.weekly[(w + 1) % n]!.id : null };
+}
+
+/** The conditions a view names that are on now (today's and this week's), as defined. */
+export function activeConditions(data: ConditionsData | undefined, view: ConditionsView): ConditionDef[] {
+  if (!data) return [];
+  const on = new Set([...view.today, ...(view.week ? [view.week] : [])]);
+  return [...data.daily, ...data.weekly].filter(c => on.has(c.id));
+}

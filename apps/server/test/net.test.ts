@@ -3,13 +3,13 @@
  * talked to by real WebSocket clients. Maps, exits and energy: net-maps.test.ts.
  */
 import { describe, expect, it } from 'vitest';
-import { ENERGY_MAX, PROTOCOL_VERSION, TileMap } from '@napoland/shared';
+import { DAY_S, ENERGY_MAX, PROTOCOL_VERSION, TileMap, dayIndex, type ConditionsData } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { colorFor } from '../src/world';
-import { townData } from './fixtures';
+import { itemsData, townData } from './fixtures';
 import { Client, eventually, newName, serverDefaults, setup, waitFor } from './helpers';
 
 /** The home town of the tests: spawn at 1,2 facing down, a rock above it, grass below. */
@@ -198,6 +198,37 @@ describe('playing', () => {
   });
 });
 
+describe('live finds', () => {
+  // A live ember grows by the campfire in the woods, always (in the game, live shards only grow while the woods are restless).
+  let now = 1_000_000;
+  const data = itemsData();
+  const items = {
+    ...data,
+    items: [...data.items, { id: 'ember', name: 'Ember', kind: 'resource' as const, stack: 1, xp: 5, text: 'Still hot.', live: { xp: 20, fresh: 60, fade: 5, into: 'nail' } }],
+    finds: [{ item: 'ember', map: 'woods', near: { kinds: ['fireplace' as const], radius: 1.5 }, count: 1, respawn: [10, 20] as [number, number] }],
+  };
+  const { ctx, enter, login } = setup({ items, weather: 'overcast', clock: () => now });
+
+  it('light up the carrier for everyone on the map, and keep fading across a reconnect', async () => {
+    const find = ctx.server.world.findViews('woods')[0]!;
+    const a = await enter({ map: 'woods', x: 4, y: 1 });
+    const b = await enter({ map: 'woods', x: 1, y: 1 });
+    await Promise.all([a.c.settle(), b.c.settle()]);
+    a.c.send({ t: 'pick', x: find.x, y: find.y });
+    expect(await a.c.next('bag')).toEqual({ t: 'bag', bag: [{ item: 'ember', count: 1, age: 0 }] });
+    expect(await b.c.next('glow')).toEqual({ t: 'glow', id: a.id, on: true });
+    a.c.ws.close();
+    await waitFor(() => ctx.storage.get(a.id)?.bag.length === 1, 'the bag to be saved');
+    const since = ctx.storage.get(a.id)!.bag[0]!.since;
+    expect(since).toEqual(expect.any(Number));
+    now += 30_000;
+    const again = await login(a.token);
+    expect(again.welcome.bag).toEqual([{ item: 'ember', count: 1, age: 30 }]);
+    expect(await b.c.next('join')).toMatchObject({ t: 'join', player: { id: a.id, live: true } });
+    expect(ctx.server.world.get(a.id)!.bag).toEqual([{ item: 'ember', count: 1, since }]);
+  });
+});
+
 describe('a full server', () => {
   const { open, join, refused } = setup({ maxPlayers: 1 });
 
@@ -339,6 +370,39 @@ describe('saving', () => {
       await waitFor(() => storage.get(you)?.y === 4, 'the save made when leaving', 5000);
       await new Promise(resolve => setTimeout(resolve, 600)); // an older save still running would land now
       expect(storage.get(you)).toMatchObject({ x: 1, y: 4 });
+    } finally {
+      await server.stop();
+    }
+  });
+});
+
+describe('what the woods are like today', () => {
+  it('the welcome carries the conditions, and everyone online hears the new ones at dawn', async () => {
+    setLogLevel('silent');
+    const conditions: ConditionsData = {
+      seed: 1, second: 0,
+      daily: [{ id: 'fog', name: 'Thick fog', text: 'Fog.', weight: 1, map: 'woods', fog: 5 }],
+      weekly: [{ id: 'copper', name: 'Copper week', text: 'Wire.', map: 'woods' }],
+    };
+    // The world's clock two seconds before the next dawn, and game time that the test moves on.
+    let now = 1_000_000;
+    const dawn = (dayIndex(Date.now()) + 1) * DAY_S * 1000;
+    const server = await startServer({ ...serverDefaults(), storage: new MemoryStorage(), items: { ...itemsData(), conditions }, clock: () => now, clockShiftMs: dawn - 2000 - Date.now() });
+    try {
+      const hello = async () => {
+        const c = await Client.open(server.port);
+        c.send({ t: 'hello', v: PROTOCOL_VERSION, name: newName() });
+        return { c, welcome: await c.next('welcome') };
+      };
+      const a = await hello(), b = await hello();
+      const view = { today: ['fog'], week: 'copper', next: 'copper' };
+      expect(a.welcome.conditions).toEqual(view);
+      expect(b.welcome.conditions).toEqual(view);
+      // Let the world tick once before dawn (the first tick after start-up tells nobody), then it is dawn.
+      await new Promise(resolve => setTimeout(resolve, 100));
+      now += 5000;
+      for (const x of [a, b]) expect(await x.c.next('conditions')).toEqual({ t: 'conditions', conditions: view });
+      for (const x of [a, b]) x.c.ws.terminate();
     } finally {
       await server.stop();
     }

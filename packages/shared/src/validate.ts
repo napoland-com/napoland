@@ -139,6 +139,22 @@ export function validateMap(data: MapData): Problem[] {
     if (!Number.isInteger(w.count) || w.count < 1) err('watchers: count must be a whole number from 1');
     if (!(w.steps?.length === 2 && w.steps[0] >= 0 && w.steps[0] <= w.steps[1])) err('watchers: steps is [nearest, farthest], from 0');
   }
+  if (data.skulkers) {
+    const s = data.skulkers;
+    if (data.kind !== 'wilds') err('skulkers live only in the wilds');
+    if (!Number.isInteger(s.count) || s.count < 1) err('skulkers: count must be a whole number from 1');
+    if (!(s.steps?.length === 2 && s.steps[0] >= 0 && s.steps[0] <= s.steps[1])) err('skulkers: steps is [nearest, farthest], from 0');
+    else {
+      let lairs = 0;
+      for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
+        const d = map.homeSteps(x, y);
+        if (map.kind(x, y) === 'ferns' && map.walkable(x, y) && !map.lit(x, y) && !map.warm(x, y) && d >= s.steps[0] && d <= s.steps[1]) lairs++;
+      }
+      if (!lairs) err('skulkers: no ferns to lie in that far from home, out of the light and away from fires');
+    }
+    if (!(Array.isArray(s.when) && s.when.length && s.when.every(w => w === 'night' || w === 'storm'))) err('skulkers: when lists night, storm or both');
+    else if (s.when.includes('storm') && !data.storm) warn('skulkers: out in a storm, but this region never storms');
+  }
   if (data.kind === 'wilds') {
     let lost = 0;
     for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (map.walkable(x, y) && map.homeSteps(x, y) < 0) lost++;
@@ -271,6 +287,14 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (i.use?.flare !== undefined && !(i.use.flare > 0)) err(`${name}: a flare burns for some seconds above 0`);
     if (i.use?.identify && !i.reveals?.length) err(`${name} can be identified but reveals nothing`);
     if (i.reveals && !i.use?.identify) err(`${name} reveals things but cannot be identified`);
+    if (i.live) {
+      const into = data.items.find(d => d.id === i.live!.into);
+      if (!into) err(`${name}: turns into ${i.live.into}, which is not an item`);
+      else if (into.live) err(`${name}: turns into ${into.id}, which is live too`);
+      if (!(typeof i.live.xp === 'number' && i.live.xp > (into?.xp ?? 0))) err(`${name}: live, it is worth more XP than what it turns into`);
+      if (!(i.live.fresh > 0) || !(i.live.fade > 0)) err(`${name}: live, it stays fresh and fades by numbers above 0`);
+      if (i.stack !== 1) err(`${name}: a live item stacks one to a slot`);
+    }
   }
   // Once there is gear at all, everyone starts in some: it must exist.
   if (data.items.some(i => i.kind === 'gear')) for (const g of Object.values(STARTER_GEAR)) {
@@ -319,6 +343,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!Number.isInteger(r.count) || r.count < 1 || !(r.weight > 0)) err(`item ${JSON.stringify(i.id)}: a reveal needs a count from 1 and a weight above 0`);
   }
   const byId = new Map(maps.map(m => [m.id, m]));
+  const conditionIds = validateConditions(data, byId, err);
   const tileKinds = new Set<string>(Object.values(TILE_CHARS));
   data.finds.forEach((f, n) => {
     const name = `find ${n} (${f.item} in ${f.map})`;
@@ -333,6 +358,16 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (f.when !== undefined && f.when !== 'unstable' && f.when !== 'aurora' && f.when !== 'storm') err(`${name}: when is unstable, aurora or storm`);
     if (f.when === 'unstable' && !mapData.surge) err(`${name}: grows while the map is restless, but ${f.map} never surges`);
     if (f.when === 'storm' && !mapData.storm) err(`${name}: grows during a storm, but ${f.map} never storms`);
+    if (f.condition !== undefined) {
+      if (!conditionIds.has(f.condition)) err(`${name}: grows while ${f.condition} is on, which is not a condition`);
+      if (f.when !== undefined) err(`${name}: grows with a condition or at a time (when), not both`);
+    }
+    if (f.around) {
+      const { x, y, r } = f.around;
+      const room = new TileMap(mapData);
+      if (!(r > 0) || !room.inside(x, y)) err(`${name}: around is a tile on the map and a radius above 0`);
+      else if (!findTiles(room, { item: f.item, map: f.map, count: 1, respawn: [1, 1], around: f.around }).length) err(`${name}: around ${x},${y} has no walkable tile within ${r}`);
+    }
     if (out.some(p => p.level === 'error' && p.message.startsWith(name))) return undefined;
     const room = findTiles(new TileMap(mapData), f).length;
     if (room < f.count) err(`${name}: only ${room} tiles fit the rule, fewer than count ${f.count}`);
@@ -340,4 +375,41 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     return undefined;
   });
   return out;
+}
+
+/** The conditions (sky.ts): well formed, each on a map where what it does can happen. Returns every condition id. */
+function validateConditions(data: ItemsData, byId: Map<string, MapData>, err: (message: string) => void): Set<string> {
+  const ids = new Set<string>();
+  const c = data.conditions;
+  if (!c) return ids;
+  if (!Number.isInteger(c.seed)) err('conditions: seed is a whole number');
+  if (!(c.second >= 0 && c.second <= 1)) err('conditions: second is a chance from 0 to 1');
+  if (!c.daily?.length) err('conditions: there are no daily conditions');
+  for (const [list, daily] of [[c.daily ?? [], true], [c.weekly ?? [], false]] as const) for (const d of list) {
+    const name = `condition ${JSON.stringify(d.id)}`;
+    if (!/^[a-z][a-z0-9-]*$/.test(d.id ?? '')) err(`${name}: ids are lowercase letters, digits and -`);
+    if (ids.has(d.id)) err(`${name} is defined twice`);
+    ids.add(d.id);
+    if (!d.name?.trim() || !d.text?.trim()) err(`${name} needs a name and a text`);
+    if (daily && !(typeof d.weight === 'number' && d.weight > 0)) err(`${name}: weight must be a number above 0`);
+    const mapData = byId.get(d.map);
+    if (!mapData) {
+      err(`${name}: there is no map ${d.map}`);
+      continue;
+    }
+    if (d.fog !== undefined && !(d.fog >= 3 && d.fog <= 12)) err(`${name}: fog is from 3 to 12 tiles`);
+    if (d.watchers) {
+      const steps = d.watchers.steps;
+      if (!mapData.watchers || mapData.kind !== 'wilds') err(`${name}: moves the watchers, but ${d.map} has none`);
+      else if (!d.watchers.asleep && !steps) err(`${name}: watchers need steps or asleep`);
+      else if (steps && !(steps.length === 2 && steps[0] >= 0 && steps[0] <= steps[1])) err(`${name}: watcher steps is [nearest, farthest], from 0`);
+      else if (steps && !new TileMap(mapData).lairs(steps).length) err(`${name}: leaves the watchers nowhere to wake`);
+    }
+    if (d.fireOut) {
+      const inside = mapData.exits.map(e => byId.get(e.to)).filter(m => m?.kind === 'inside');
+      const untended = [mapData, ...inside].some(m => m!.objects.some(o => o.kind === 'fireplace' && o.tended !== true));
+      if (mapData.kind !== 'wilds' || !untended) err(`${name}: puts a fire out, but ${d.map} has no fire that burns down`);
+    }
+  }
+  return ids;
 }

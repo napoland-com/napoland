@@ -10,6 +10,7 @@
  */
 import type { Mods } from './feats';
 import type { Element, Piece, Quirk, Recipe, Slot, Tier } from './gear';
+import type { ConditionsData } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 
 /**
@@ -65,6 +66,12 @@ export interface ItemDef {
   color?: string;
   /** A paper map (a tool): the id of the map it is a drawing of. */
   chart?: string;
+  /**
+   * Live: worth `xp` if stashed within `fresh` seconds of being picked, then `fade` XP less every
+   * minute until it is worth no more than `into` (a plain item), which it then becomes (liveXp, liveEnds).
+   * While someone carries one it glows: everyone on the map sees them, and watchers come from farther.
+   */
+  live?: { xp: number; fresh: number; fade: number; into: string };
 }
 
 /** Where one kind of find grows, and how many are out there at once. */
@@ -86,6 +93,10 @@ export interface FindRule {
    * during it), during an aurora night, or while a storm blows over the region. Left out: always.
    */
   when?: FindWhen;
+  /** Only while this daily or weekly condition is on (sky.ts, conditionsAt), and gone when it is over. Never with `when`. */
+  condition?: string;
+  /** Only within `r` tiles (center to center) of tile x,y: crates by the pond. */
+  around?: { x: number; y: number; r: number };
 }
 
 export type FindWhen = 'unstable' | 'aurora' | 'storm';
@@ -103,6 +114,8 @@ export interface ItemsData {
   mend?: Partial<Record<Tier, BagSlot[]>>;
   /** Names and words for the quirks of anomalous gear (gear.ts, QUIRKS). */
   quirks?: Array<{ id: Quirk; name: string; text: string }>;
+  /** What the woods are like today and this week (sky.ts). None: nothing changes from day to day. */
+  conditions?: ConditionsData;
 }
 
 /** One bag slot: an item and how many of it (at most its stack). In a stash's list, a piece of gear comes with its condition and quirk. */
@@ -110,6 +123,10 @@ export interface BagSlot {
   item: string;
   count: number;
   piece?: Piece;
+  /** A live item, in the saved bag: when it was picked (ms since the epoch). The server's clock only. */
+  since?: number;
+  /** A live item, as the client hears its bag: seconds since it was picked, when the message was sent. */
+  age?: number;
 }
 
 /**
@@ -156,6 +173,21 @@ export function reveal(list: NonNullable<ItemDef['reveals']>, rng: () => number)
   return last && { item: last.item, count: last.count };
 }
 
+/** What a live item is worth `ageS` seconds after it was picked: its full XP while fresh, then less each minute, never below `into`'s. */
+export function liveXp(def: ItemDef, ageS: number, into?: ItemDef): number {
+  const live = def.live;
+  if (!live) return def.xp ?? 0;
+  if (ageS <= live.fresh) return live.xp;
+  return Math.max(into?.xp ?? 0, live.xp - live.fade * Math.ceil((ageS - live.fresh) / 60));
+}
+
+/** Seconds after picking when a live item has faded down to `into` and becomes one. */
+export function liveEnds(def: ItemDef, into?: ItemDef): number {
+  const live = def.live;
+  if (!live) return 0;
+  return live.fresh + Math.ceil((live.xp - (into?.xp ?? 0)) / live.fade) * 60;
+}
+
 /** Items by id. */
 export function itemIndex(data: ItemsData): Map<string, ItemDef> {
   return new Map(data.items.map(i => [i.id, i]));
@@ -191,6 +223,8 @@ export function addAllToBag(bag: readonly BagSlot[], add: readonly BagSlot[], it
     const def = items.get(a.item);
     if (!def) continue; // an item that no longer exists is dropped silently
     const r = addToBag(out, def, a.count, slots);
+    // A live item keeps when it was picked (it stacks one to a slot, so its slots are new ones).
+    if (a.since !== undefined) for (const s of r.bag.slice(out.length)) s.since = a.since;
     out = r.bag;
     if (r.left) left.push({ item: a.item, count: r.left });
   }
@@ -230,7 +264,7 @@ export function halfOf(items: readonly BagSlot[], rng: () => number): BagSlot[] 
   return merge(units.slice(0, keep).map(item => ({ item, count: 1 })));
 }
 
-/** Every tile a find may grow on: walkable, not an exit, and fitting the rule's tiles, steps and nearness. */
+/** Every tile a find may grow on: walkable, not an exit, and fitting the rule's tiles, steps, nearness and place. */
 export function findTiles(map: TileMap, rule: FindRule): Array<{ x: number; y: number }> {
   const out: Array<{ x: number; y: number }> = [];
   // Measured from every tile an object covers, so a cabin or a car is near from all sides alike.
@@ -242,6 +276,7 @@ export function findTiles(map: TileMap, rule: FindRule): Array<{ x: number; y: n
       const s = map.homeSteps(x, y);
       if (s < rule.steps[0] || s > rule.steps[1]) continue;
     }
+    if (rule.around && Math.hypot(rule.around.x - x, rule.around.y - y) > rule.around.r) continue;
     if (rule.near && !near.some(([ox, oy]) => Math.hypot(ox - x, oy - y) <= rule.near!.radius)) continue;
     out.push({ x, y });
   }

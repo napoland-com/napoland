@@ -1,5 +1,5 @@
 /**
- * What the world does to you out there, drawn: arrows people painted on the ground, watchers, flares, flashes,
+ * What the world does to you out there, drawn: arrows people painted on the ground, creatures, flares, flashes,
  * the echoes of people who collapsed walking their last steps again, the thing that clings to you at
  * night, and the notice board in town. Each is a small class or model that world.ts owns and
  * feeds from the game's lists; nothing here decides anything.
@@ -9,6 +9,7 @@ import { FLASH_BURST_S, FLASH_GLOW_S, FLASH_RADIUS, type Dir, type DropView, typ
 import { makePlayer } from './characters';
 import { Puffs } from './fire';
 import { OUTLINE, box, disposeTree, flat, ownToon, part, pivot, softTexture } from './toon';
+import type { CreatureAvatar } from './world';
 
 const TURN: Record<Dir, number> = { up: 0, right: -Math.PI / 2, down: Math.PI, left: Math.PI / 2 };
 const FACE: Record<Dir, number> = { down: 0, up: Math.PI, right: Math.PI / 2, left: -Math.PI / 2 };
@@ -112,44 +113,70 @@ function watcherModel(eyes: THREE.Material): THREE.Group {
   return g;
 }
 
-/** The watchers on this map, where the game draws them. They lean a little into each step. */
-export class Watchers {
+/**
+ * A skulker: something long and low in the ferns, dark as wet bark, with a hunched back, thin legs and
+ * two small amber eyes near the ground. Lying in wait it presses flat; on a chase it rises and lunges.
+ */
+function skulkerModel(eyes: THREE.Material): THREE.Group {
+  const g = new THREE.Group();
+  const body = part(flat(new THREE.DodecahedronGeometry(0.2, 0)), '#2e2a22', 0, 0.21, -0.04, 0.02);
+  body.scale.set(0.85, 0.7, 1.6);
+  const snout = part(flat(new THREE.ConeGeometry(0.1, 0.26, 5)), '#2a2620', 0, 0.2, 0.3, 0.018);
+  snout.rotation.x = Math.PI / 2;
+  g.add(body, snout);
+  for (const [x, z] of [[-0.11, 0.14], [0.11, 0.14], [-0.11, -0.22], [0.11, -0.22]] as const) g.add(box(0.04, 0.18, 0.04, '#171512', x, 0.08, z, 0.01));
+  for (const x of [-0.05, 0.05]) g.add(part(new THREE.BoxGeometry(0.045, 0.03, 0.01), eyes, x, 0.25, 0.31, false));
+  return g;
+}
+
+/**
+ * The creatures on this map, where the game draws them: watchers drift and lean a little into each
+ * step, skulkers crouch in the ferns and rise to chase. A creature's model is built the first time it
+ * shows and only hidden when it goes, so one that wakes again costs nothing new.
+ */
+export class Creatures {
   readonly root = new THREE.Group();
   private readonly models = new Map<string, { g: THREE.Group; shadow: THREE.Mesh }>();
   private readonly eyes = new THREE.MeshBasicMaterial({ color: 0xb8f4ff });
+  private readonly skulkerEyes = new THREE.MeshBasicMaterial({ color: 0xffb14a });
 
   constructor(private readonly shadowGeo: THREE.BufferGeometry, private readonly shadowMat: THREE.Material) {}
 
-  sync(list: ReadonlyArray<{ id: string; x: number; y: number; dir: Dir; moving: boolean }>, t: number, ground: (x: number, y: number) => number) {
+  sync(list: readonly CreatureAvatar[], t: number, ground: (x: number, y: number) => number) {
     const seen = new Set<string>();
     for (const c of list) {
       seen.add(c.id);
+      const skulker = c.kind === 'skulker';
       let m = this.models.get(c.id);
       if (!m) {
-        m = { g: watcherModel(this.eyes), shadow: new THREE.Mesh(this.shadowGeo, this.shadowMat) };
-        m.shadow.scale.setScalar(0.28);
+        m = { g: skulker ? skulkerModel(this.skulkerEyes) : watcherModel(this.eyes), shadow: new THREE.Mesh(this.shadowGeo, this.shadowMat) };
+        m.shadow.scale.setScalar(skulker ? 0.34 : 0.28);
         this.root.add(m.g, m.shadow);
         this.models.set(c.id, m);
       }
+      m.g.visible = m.shadow.visible = true;
       const x = c.x + 0.5, z = c.y + 0.5, gy = ground(x, z);
-      m.g.position.set(x, gy + 0.06 + Math.sin(t * 1.3 + Number(c.id)) * 0.03, z);
-      m.g.rotation.set(c.moving ? 0.12 : 0, FACE[c.dir], 0, 'YXZ');
+      if (skulker) {
+        m.g.position.set(x, gy + (c.moving ? Math.abs(Math.sin(t * 22)) * 0.05 : 0), z);
+        m.g.rotation.set(c.moving ? 0.18 : 0, FACE[c.dir], 0, 'YXZ');
+        m.g.scale.set(1, c.chasing ? 1 : 0.55, 1);
+      } else {
+        m.g.position.set(x, gy + 0.06 + Math.sin(t * 1.3 + Number(c.id)) * 0.03, z);
+        m.g.rotation.set(c.moving ? 0.12 : 0, FACE[c.dir], 0, 'YXZ');
+      }
       m.shadow.position.set(x, gy + 0.036, z);
     }
-    for (const [id, m] of this.models) {
-      if (seen.has(id)) continue;
-      this.root.remove(m.g, m.shadow);
-      disposeTree(m.g);
-      this.models.delete(id);
-    }
-    // The eyes catch the light now and then.
+    for (const [id, m] of this.models) if (!seen.has(id)) m.g.visible = m.shadow.visible = false;
+    // The eyes catch the light now and then; a skulker's, low in the ferns, blink quicker.
     this.eyes.color.setScalar(0.55 + 0.45 * Math.max(0, Math.sin(t * 0.9)));
+    this.skulkerEyes.color.setRGB(1, 0.69, 0.29).multiplyScalar(0.5 + 0.5 * Math.max(0, Math.sin(t * 2.3)));
   }
 
   dispose() {
     for (const m of this.models.values()) disposeTree(m.g);
     this.models.clear();
     this.eyes.dispose();
+    this.skulkerEyes.dispose();
   }
 }
 
