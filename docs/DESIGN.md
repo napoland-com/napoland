@@ -48,7 +48,7 @@ Regions are separate maps joined at their edges, like FireRed's towns and routes
 - Tapping the ground walks there along the shortest path. Tapping a person or a sign walks up to it and talks.
 - Top right there is only a **menu button**. **No minimap and no position marker, ever:** you learn the world by walking it (and players share what they learn). The one map is an old **paper map drawn by hand**, a permanent tool in your bag: it shows the region's roads, trails, cabins and landmarks but never where you are, so you work that out from what you see around you (planned: [paper-map](../roadmap/paper-map.md)).
 - The text box and the bag **never cover A and B**, so B can always close them. In portrait they sit above the controls; in landscape they take the joystick's side (it hides while you read). Pushing the joystick or tapping the world closes the bag and the menu.
-- Mobile first. On desktop the mouse acts as a finger, and the keyboard is a shortcut, never a need: **WASD** or the **arrow keys** walk (with the joystick's rules), **Enter** is A and **Backspace** is B (planned: [keyboard-controls](../roadmap/keyboard-controls.md)).
+- Mobile first. On desktop the mouse acts as a finger, and the keyboard is a shortcut, never a need: **WASD** or the **arrow keys** walk (with the joystick's rules), **Enter** is A and **Backspace** is B. Keys are read by where they sit, so WASD is the same four keys on any layout (ZQSD on a French one); with several direction keys held, the last one pressed wins. Behind the sign-in cards, and in any text field, the keys stay the page's.
 
 ## Creatures
 

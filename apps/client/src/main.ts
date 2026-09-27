@@ -6,12 +6,13 @@
 import '@fontsource-variable/fredoka';
 import '@fontsource-variable/nunito';
 import './style.css';
-import type { AuthConfig, BagSlot, ItemsData, MapData, MapRef, ServerMsg, Weather } from '@napoland/shared';
+import type { AuthConfig, BagSlot, Dir, ItemsData, MapData, MapRef, ServerMsg, Weather } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
 import { Game } from './game';
 import { Hud, type TagView } from './hud';
 import { Items, slotViews } from './items';
+import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { Connection, serverUrl } from './net';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
@@ -70,11 +71,15 @@ const showStatus = () => {
     energy: game.energy(now), body: game.bodyNow(now), surge: game.surgeNow(now), caught: game.caught(now), stone: game.stone, stats: game.stats, bag: game.bag, items,
   }));
 };
-const hud = new Hud(screen, {
-  pad: dir => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
+/** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
+const controls = {
+  pad: (dir: Dir | null) => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
   a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the About panel and the text box, then out of the status or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
+};
+const hud = new Hud(screen, {
+  ...controls,
   dialogTap: () => game.advanceDialog(),
   logout: () => signOut(),
   // Using something shows what it did over your head (and on the energy bar), so the bag closes.
@@ -84,6 +89,17 @@ const hud = new Hud(screen, {
   version: () => loadVersion(),
 });
 watchFires(view);
+
+// ---------- the keyboard, on a computer ----------
+const keys = new Keys(controls);
+window.addEventListener('keydown', e => {
+  // Behind the sign-in cards the keys are the page's (typing a name, pressing Enter to go on).
+  if (!overlay.hidden) return;
+  if (keys.down(e.code, keyTarget(e.target), e.repeat, e.ctrlKey || e.altKey || e.metaKey)) e.preventDefault();
+});
+window.addEventListener('keyup', e => keys.up(e.code));
+window.addEventListener('blur', () => keys.clear());
+document.addEventListener('visibilitychange', () => { if (document.hidden) keys.clear(); });
 
 // ---------- arriving on another map ----------
 /** Set when a collapse arrives: you were carrying something, which now lies where you fell. */
