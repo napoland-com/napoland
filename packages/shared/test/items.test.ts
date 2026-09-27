@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  TileMap, addAllToBag, addToBag, findTiles, halfOf, itemIndex, merge, takeFromBag, validateItems,
+  TileMap, addAllToBag, addToBag, findTiles, halfOf, itemIndex, liveEnds, liveXp, merge, takeFromBag, validateItems,
   type ItemDef, type ItemsData, type MapData,
 } from '../src';
 
@@ -88,6 +88,33 @@ describe('where finds grow', () => {
     const byCar = findTiles(map, { item: 'shard', map: 'woods', near: { kinds: ['car'], radius: 1.5 }, count: 1, respawn: [1, 2] });
     expect(byCar.length).toBeGreaterThan(0);
     for (const t of byCar) expect(Math.hypot(t.x - 4, t.y - 0)).toBeLessThanOrEqual(1.5);
+  });
+});
+
+describe('live finds', () => {
+  const plain: ItemDef = { id: 'shard', name: 'Anomaly shard', kind: 'resource', stack: 5, xp: 12, text: 'Warm.' };
+  const live: ItemDef = { id: 'live-shard', name: 'Live shard', kind: 'resource', stack: 1, xp: 12, text: 'Burning.', live: { xp: 40, fresh: 240, fade: 5, into: 'shard' } };
+
+  it('are worth their most while fresh, then 5 XP less a minute, never below what they turn into', () => {
+    expect([0, 240, 241, 300, 420, 600].map(s => liveXp(live, s, plain))).toEqual([40, 40, 35, 35, 25, 12]);
+    expect(liveEnds(live, plain)).toBe(600);
+  });
+
+  it('keep when they were picked when repacked', () => {
+    const r = addAllToBag([], [{ item: 'live-shard', count: 1, since: 5 }, { item: 'shard', count: 1 }], itemIndex({ version: 1, items: [plain, live], finds: [] }));
+    expect(r.bag).toEqual([{ item: 'live-shard', count: 1, since: 5 }, { item: 'shard', count: 1 }]);
+  });
+
+  it('are checked: they turn into a plain item worth less, fade by numbers above 0 and stack one to a slot', () => {
+    const errors = (l: ItemDef, into: ItemDef = plain) =>
+      validateItems({ version: 1, items: [into, l], finds: [] }, [woods()]).filter(p => p.level === 'error').map(p => p.message);
+    expect(errors(live)).toEqual([]);
+    expect(errors({ ...live, live: { ...live.live!, into: 'nothing' } }).join()).toMatch(/not an item/);
+    expect(errors(live, { ...plain, live: { xp: 50, fresh: 1, fade: 1, into: 'live-shard' } }).join()).toMatch(/live too/);
+    expect(errors({ ...live, live: { ...live.live!, xp: 12 } }).join()).toMatch(/worth more XP/);
+    expect(errors({ ...live, live: { ...live.live!, fade: 0 } }).join()).toMatch(/above 0/);
+    expect(errors({ ...live, live: { ...live.live!, fresh: -1 } }).join()).toMatch(/above 0/);
+    expect(errors({ ...live, stack: 2 }).join()).toMatch(/one to a slot/);
   });
 });
 

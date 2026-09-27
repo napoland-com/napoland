@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 9,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -7,6 +7,7 @@
     {"id":"wire","name":"Copper wire","kind":"resource","stack":10,"xp":4,"weight":0.4,"text":"Copper wire from where the old power line came down. Sometimes it still hums, and on aurora nights more of it turns up by the poles."},
     {"id":"cloth","name":"Cloth scraps","kind":"resource","stack":10,"xp":2,"weight":0.1,"fuel":90,"text":"Strips of curtain and blanket from rooms nobody lives in anymore. Still dry, so they catch fast in a fire."},
     {"id":"shard","name":"Anomaly shard","kind":"resource","stack":5,"xp":12,"weight":0.3,"charge":1,"text":"A sliver of something like glass, warm even in the cold. It gives off a light of its own. The Old Stone in town wants them back."},
+    {"id":"live-shard","name":"Live shard","kind":"resource","stack":1,"xp":12,"weight":0.3,"charge":1,"live":{"xp":40,"fresh":240,"fade":5,"into":"shard"},"text":"A shard still burning with the surge that made it. Stash it soon: it is worth much more while it glows, and everyone can see you carry it."},
     {"id":"thermos","name":"Thermos","kind":"consumable","stack":2,"xp":3,"weight":0.6,"text":"Hot coffee someone left by the fire for whoever comes next. Drink it to get some energy back.","use":{"energy":30}},
     {"id":"flare","name":"Road flare","kind":"consumable","stack":3,"xp":3,"weight":0.3,"text":"A red road flare from a glovebox. Light it and nothing comes near you while it burns, and whatever clings to your back lets go.","use":{"flare":45}},
     {"id":"strange","name":"Strange object","kind":"resource","stack":1,"xp":15,"weight":0.8,"text":"Something that was not here yesterday. It is too dark out here to tell what it is: look at it in town, in the light.","use":{"identify":true},
@@ -47,7 +48,7 @@
     {"item":"cloth","map":"near-woods-old-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1800,3600]},
     {"item":"cloth","map":"near-woods-end-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]},
     {"item":"shard","map":"near-woods","steps":[95,999],"count":2,"respawn":[1800,3600]},
-    {"item":"shard","map":"near-woods","steps":[70,999],"count":3,"respawn":[60,120],"when":"unstable"},
+    {"item":"live-shard","map":"near-woods","steps":[70,999],"count":3,"respawn":[60,120],"when":"unstable"},
     {"item":"shard","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"steps":[30,999],"count":2,"respawn":[60,120],"when":"storm"},
     {"item":"strange","map":"near-woods","steps":[80,999],"count":1,"respawn":[1800,3600]},
     {"item":"strange","map":"near-woods","steps":[60,999],"count":2,"respawn":[120,240],"when":"unstable"},
@@ -55,7 +56,19 @@
     {"item":"thermos","map":"near-woods-ranger-hut","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"thermos","map":"near-woods-end-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"flare","map":"near-woods","near":{"kinds":["car"],"radius":2},"count":1,"respawn":[1800,3600]},
-    {"item":"flare","map":"near-woods-ranger-hut","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]}
+    {"item":"flare","map":"near-woods-ranger-hut","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]},
+    {"item":"scrap","map":"near-woods","around":{"x":20,"y":41,"r":4},"count":3,"respawn":[86400,86400],"condition":"supply-drop"},
+    {"item":"wire","map":"near-woods","around":{"x":20,"y":41,"r":4},"count":3,"respawn":[86400,86400],"condition":"supply-drop"},
+    {"item":"glowcap","map":"near-woods","on":["mud","ferns","grass"],"steps":[5,90],"count":12,"respawn":[60,180],"condition":"glowcap-bloom"},
+    {"item":"resin","map":"near-woods","on":["grass"],"steps":[10,95],"count":8,"respawn":[90,240],"condition":"resin-weeping"},
+    {"item":"cloth","map":"near-woods-end-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":3,"respawn":[300,600],"condition":"cabin-opened"},
+    {"item":"thermos","map":"near-woods-old-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[600,900],"condition":"coffee-left"},
+    {"item":"thermos","map":"near-woods-ranger-hut","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[600,900],"condition":"coffee-left"},
+    {"item":"thermos","map":"near-woods-end-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[600,900],"condition":"coffee-left"},
+    {"item":"flare","map":"near-woods","near":{"kinds":["car"],"radius":2},"count":3,"respawn":[300,600],"condition":"flares-in-the-car"},
+    {"item":"shard","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"steps":[20,60],"count":2,"respawn":[600,1200],"condition":"shards-shallow"},
+    {"item":"scrap","map":"near-woods","near":{"kinds":["car"],"radius":3},"count":4,"respawn":[240,480],"condition":"scrap-by-the-car"},
+    {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"count":8,"respawn":[120,300],"condition":"copper-week"}
   ],
   "recipes": [
     {"id":"wool-cap","make":"wool-cap","needs":[{"item":"cloth","count":6},{"item":"resin","count":1}]},
@@ -82,5 +95,27 @@
     {"id":"footprints","name":"Glowing steps","text":"Out there, your steps glow where you walk for a while. Everyone can follow them."},
     {"id":"flicker","name":"Restless light","text":"Street lights flicker as you pass under them. Everyone sees it."},
     {"id":"hum","name":"Humming","text":"It hums a minute before the region you are in grows restless, before anyone is told."}
-  ]
+  ],
+  "conditions": {
+    "seed": 31,
+    "second": 0.5,
+    "daily": [
+      {"id":"fog","name":"Thick fog","text":"Thick fog in the Near Woods. You will not see far, so keep to the paths you know.","weight":3,"map":"near-woods","fog":5},
+      {"id":"supply-drop","name":"A supply drop","text":"Crates came down by the pond in the night: scrap and wire. First come, first served.","weight":2,"map":"near-woods"},
+      {"id":"watchers-north","name":"The watchers moved north","text":"The watchers keep to the far end of the Near Woods today. Near the road it is quieter.","weight":2,"map":"near-woods","group":"watchers","watchers":{"steps":[80,999]}},
+      {"id":"watchers-near","name":"The watchers came closer","text":"The watchers came closer to the road overnight. Look behind you sooner than usual.","weight":1,"map":"near-woods","group":"watchers","watchers":{"steps":[40,999]}},
+      {"id":"fire-out","name":"A shelter fire went out","text":"One of the shelter fires went out overnight. Bring resin or cloth to light it again.","weight":2,"map":"near-woods","fireOut":true},
+      {"id":"glowcap-bloom","name":"Glowcaps everywhere","text":"Glowcaps came up all over the Near Woods after the night, even close to the road.","weight":2,"map":"near-woods"},
+      {"id":"resin-weeping","name":"The firs are weeping","text":"The old firs are weeping resin today. Plenty to keep the fires going.","weight":2,"map":"near-woods"},
+      {"id":"cabin-opened","name":"The cabin at the end was opened","text":"Someone forced the cupboards in the cabin at the end. There is cloth to take.","weight":1,"map":"near-woods"},
+      {"id":"coffee-left","name":"Coffee in the shelters","text":"Someone left hot coffee in every shelter. Drink one, and leave the rest for whoever comes next.","weight":1,"map":"near-woods","group":"shelters"},
+      {"id":"flares-in-the-car","name":"Flares in the old car","text":"Someone filled the glovebox of the old car by the power line with road flares.","weight":1,"map":"near-woods","group":"car"},
+      {"id":"shards-shallow","name":"Shards near the road","text":"Shards broke loose closer in than usual. Look by the poles along the power line.","weight":1,"map":"near-woods"},
+      {"id":"scrap-by-the-car","name":"Scrap by the old car","text":"The old car by the power line fell apart a little more overnight. Scrap lies all around it.","weight":2,"map":"near-woods","group":"car"}
+    ],
+    "weekly": [
+      {"id":"copper-week","name":"Copper week","text":"Wire by every pole, all week.","map":"near-woods"},
+      {"id":"quiet-woods","name":"Quiet woods","text":"The watchers sleep all week.","map":"near-woods","watchers":{"asleep":true}}
+    ]
+  }
 }

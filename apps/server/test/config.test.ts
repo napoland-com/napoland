@@ -113,6 +113,14 @@ describe('loadConfig: signing in', () => {
     expect(loadConfig({ NODE_ENV: 'production' }, REPO).auth).toEqual({ mode: 'legacy' });
   });
 
+  it('shifts the clock for a play-test, never in production', () => {
+    expect(loadConfig({}, REPO).clockShiftMs).toBe(0);
+    expect(loadConfig({ CLOCK_SHIFT_MS: '-120000' }, REPO).clockShiftMs).toBe(-120_000);
+    expect(loadConfig({ CLOCK_SHIFT_MS: '0', NODE_ENV: 'production' }, REPO).clockShiftMs).toBe(0);
+    expect(problem({ CLOCK_SHIFT_MS: '5000', NODE_ENV: 'production' })).toMatch(/CLOCK_SHIFT_MS .* refused when NODE_ENV=production/);
+    expect(problem({ CLOCK_SHIFT_MS: '5 minutes' })).toMatch(/CLOCK_SHIFT_MS must be a whole number/);
+  });
+
   it('takes a Supabase project: its address (as an origin) and its publishable key', () => {
     expect(loadConfig(supabase, REPO).auth).toEqual({ mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: PUBLISHABLE, jwtSecret: undefined });
     expect(loadConfig({ ...supabase, SUPABASE_URL: 'https://abcd.supabase.co/' }, REPO).auth).toMatchObject({ url: 'https://abcd.supabase.co' });

@@ -87,6 +87,11 @@ export class Fires {
     return true;
   }
 
+  /** Puts a wild fire out now (a condition: it went out overnight); someone has to light it again. */
+  douse(f: Fire, now: number): void {
+    if (!f.tended) f.outAt = Math.min(f.outAt, now);
+  }
+
   view(f: Fire, now: number): FireView {
     return { x: f.x, y: f.y, left: f.tended ? null : Math.round(this.left(f, now)) };
   }

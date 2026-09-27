@@ -5,7 +5,7 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, itemIndex, mendCost, resistOf, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type Quirk,
+  BAG_SLOTS, SLOTS, itemIndex, liveEnds, liveXp, mendCost, resistOf, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type Quirk,
   type Recipe, type Refusal, type Slot, type Worn,
 } from '@napoland/shared';
 import type { RecipeView, WornView } from './hud';
@@ -22,6 +22,8 @@ export class Items {
   /** How gear wears out and what mending it costs, and the quirks' names and words. */
   readonly wear: ItemsData['wear'];
   readonly mend: ItemsData['mend'];
+  /** What the woods may be like on a day or in a week (sky.ts). */
+  readonly conditions: ItemsData['conditions'];
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
 
   constructor(data: ItemsData | undefined) {
@@ -30,6 +32,7 @@ export class Items {
     this.recipes = data?.recipes ?? [];
     this.wear = data?.wear;
     this.mend = data?.mend;
+    this.conditions = data?.conditions;
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
 
@@ -125,19 +128,38 @@ export interface SlotView {
   /** A piece of gear in the stash: its condition (0 to 1), and which of that item's pieces it is (the stash's order). */
   cond?: number;
   n?: number;
+  /** A live find: what it is, what it fades into, and its age in seconds when the bag was told (liveState). */
+  live?: { def: ItemDef; into?: ItemDef; age: number };
 }
 
 export function slotViews(bag: readonly BagSlot[], items: Items): SlotView[] {
   const nth = new Map<string, number>();
   return bag.map(s => {
     const def = items.get(s.item), p = s.piece;
-    const base: SlotView = { item: s.item, name: def.name, text: def.text, count: s.count, usable: !!def.use, useLabel: useLabel(def), facts: factsOf(def), icon: iconFor(def), ...(def.slot ? { slot: def.slot } : {}) };
+    const base: SlotView = {
+      item: s.item, name: def.name, text: def.text, count: s.count, usable: !!def.use, useLabel: useLabel(def), facts: factsOf(def), icon: iconFor(def),
+      ...(def.slot ? { slot: def.slot } : {}), ...(def.live && s.age !== undefined ? { live: { def, into: items.has(def.live.into) ? items.get(def.live.into) : undefined, age: s.age } } : {}),
+    };
     if (!p) return base;
     const n = nth.get(s.item) ?? 0;
     nth.set(s.item, n + 1);
     const q = p.quirk && items.quirk(p.quirk);
     return { ...base, cond: p.cond, n, text: q ? `${def.text} ${q.name}: ${q.text}` : def.text, facts: [conditionText(p.cond, wearSeconds(def, items.wear) !== undefined), ...base.facts] };
   });
+}
+
+/**
+ * A live find `ageS` seconds after it was picked: "Worth 40 XP for 3:12 more" while fresh, then "Fading:
+ * 30 XP now"; and how much of that stretch is left (1 to 0), for the ring on its slot.
+ */
+export function liveState(live: NonNullable<SlotView['live']>, ageS: number): { text: string; left: number; fading: boolean } {
+  const { def, into } = live, fresh = def.live?.fresh ?? 0, xp = liveXp(def, ageS, into);
+  if (ageS <= fresh) {
+    const s = Math.ceil(fresh - ageS);
+    return { text: `Worth ${xp} XP for ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} more`, left: (fresh - ageS) / fresh, fading: false };
+  }
+  const ends = liveEnds(def, into);
+  return { text: `Fading: ${xp} XP now`, left: Math.max(0, (ends - ageS) / (ends - fresh)), fading: true };
 }
 
 /** "As good as new", "40% left", "Worn out: mend it at the workbench". Gear that never wears is always fine. */
@@ -172,7 +194,8 @@ export function factsOf(def: ItemDef): string[] {
     if (def.tier && def.tier !== 'worn') out.push(capital(def.tier));
     out.push(`Worn: ${def.slot}`);
   }
-  if (def.xp) out.push(`${def.xp} XP at home`);
+  // A live find's worth changes as it fades: its countdown says it (liveState).
+  if (def.xp && !def.live) out.push(`${def.xp} XP at home`);
   if (def.weight) out.push(def.weight >= 0.95 ? `${Math.round(def.weight * 10) / 10} kg` : `${Math.round(def.weight * 1000)} g`);
   if (def.fuel) out.push(`Burns ${Math.round(def.fuel / 60)} min`);
   if (def.charge) out.push('The Old Stone wants it');

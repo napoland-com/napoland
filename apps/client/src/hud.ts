@@ -8,7 +8,7 @@
 import { BAG_SLOTS, SLOTS, type BodyView, type Dir, type EnergyView, type Slot, type SurgeView } from '@napoland/shared';
 import { aboutBody, versionView } from './about';
 import type { FriendsView } from './friends';
-import type { SlotView } from './items';
+import { liveState, type SlotView } from './items';
 import type { SoundSetting } from './sound';
 
 const svg = (inner: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
@@ -202,6 +202,9 @@ export class Hud {
   private slotEls: HTMLButtonElement[] = [];
   /** The bag as shown, the slot whose details are open (and the item in it), and whether throwing it away is being asked. */
   private bag: SlotView[] = [];
+  /** When the bag was told (performance.now()), and what each live slot's countdown last showed. */
+  private bagAt = 0;
+  private readonly liveShown = new Map<number, string>();
   /** Whose card the friends panel shows, if anyone's. */
   private person: string | null = null;
   /** The chat tab shown, and the speech bubbles over heads by who said it. */
@@ -727,8 +730,10 @@ export class Hud {
   }
 
   /** The bag, slot by slot (the server's order). Call it when the bag changes. */
-  setBag(slots: SlotView[], capacity: number = BAG_SLOTS) {
+  setBag(slots: SlotView[], capacity: number = BAG_SLOTS, at = 0) {
     this.bag = slots;
+    this.bagAt = at;
+    this.liveShown.clear();
     if (capacity !== this.capacity) {
       this.capacity = capacity;
       // As many slots as the bag worn has, in the bag and in the stash sheet's bag row.
@@ -740,7 +745,7 @@ export class Hud {
     this.slotEls.forEach((el, i) => {
       const s = slots[i];
       el.dataset.empty = String(!s);
-      el.innerHTML = s ? `${s.icon}<span class="n">${s.count}</span>` : '';
+      el.innerHTML = s ? slotHtml(s) : '';
       el.setAttribute('aria-label', s ? `${s.name}, ${s.count}` : 'Empty slot');
     });
     this.showRoom();
@@ -749,10 +754,30 @@ export class Hud {
     this.root.querySelectorAll<HTMLButtonElement>('[data-bag]').forEach((el, i) => {
       const s = slots[i];
       el.dataset.empty = String(!s);
-      el.innerHTML = s ? `${s.icon}<span class="n">${s.count}</span>` : '';
+      el.innerHTML = s ? slotHtml(s) : '';
       el.setAttribute('aria-label', s ? `Put away ${s.name}, ${s.count}` : 'Empty slot');
     });
     (this.el.storeAll as HTMLButtonElement).disabled = !slots.length;
+  }
+
+  /**
+   * Live finds count down: the ring on each one's slot, and the line in its details. Every frame; it
+   * touches the page only when a shown value changes.
+   */
+  tickLive(now: number) {
+    const rows = [this.slotEls, [...this.root.querySelectorAll<HTMLElement>('[data-bag]')]];
+    this.bag.forEach((s, i) => {
+      if (!s.live) return;
+      const st = liveState(s.live, s.live.age + Math.max(0, now - this.bagAt) / 1000), key = `${st.text}|${st.left.toFixed(2)}`;
+      if (this.liveShown.get(i) === key) return;
+      this.liveShown.set(i, key);
+      for (const row of rows) {
+        const ring = row[i]?.querySelector<HTMLElement>('.ring');
+        ring?.style.setProperty('--left', st.left.toFixed(2));
+        ring?.toggleAttribute('data-fading', st.fading);
+      }
+      if (this.picked?.slot === i) this.el.itemFacts!.textContent = [st.text, ...s.facts].join(' · ');
+    });
   }
 
   /** What the bag weighs, for its header. */
@@ -790,6 +815,8 @@ export class Hud {
     this.el.itemText!.textContent = s.text;
     this.el.itemFacts!.textContent = s.facts.join(' · ');
     this.el.itemFacts!.hidden = !s.facts.length;
+    // Its countdown line comes with the next tickLive.
+    this.liveShown.delete(p!.slot);
     this.el.use!.textContent = s.useLabel;
     if (this.asking) {
       this.el.ask!.hidden = false;
@@ -946,6 +973,11 @@ export class Hud {
     }
     for (const [id, el] of this.floatEls) if (!seen.has(id)) { el.remove(); this.floatEls.delete(id); }
   }
+}
+
+/** A bag slot's drawing and count; a live find gets its countdown ring (tickLive turns it). */
+function slotHtml(s: SlotView): string {
+  return `${s.live ? '<i class="ring" aria-hidden="true"></i>' : ''}${s.icon}<span class="n">${s.count}</span>`;
 }
 
 /** A thin bar along a slot's bottom: how much of a piece is left. Nothing for gear that never wears. */

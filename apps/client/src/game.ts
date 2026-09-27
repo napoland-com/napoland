@@ -14,10 +14,10 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, STEP_MS, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, stepTarget, surgeFront, DIR_VEC,
+  BUBBLE_S, STEP_MS, activeConditions, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, stepTarget, surgeFront, DIR_VEC,
   type BagSlot, type BodyView, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
   type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type SurgeView, type TileMap,
-  type ChatTo, type FlashKind, type FlashView, type StormView,
+  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type StormView,
 } from '@napoland/shared';
 import type { FriendsMsg, TalkLine } from './friends';
 import { countOf, lookOf, refusalText, useText, type Items } from './items';
@@ -44,7 +44,7 @@ interface Mover {
  * Something you face and press A at: a person or a sign (talk), the notice board (the server writes
  * it), a fire or the Old Stone (you feed them).
  */
-export type Talker = { x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' };
+export type Talker = { x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench'; id?: string };
 
 /** Something lying on a tile to pick up: a pile someone left when they collapsed, or a find. */
 export type Thing = { kind: 'drop'; drop: DropView } | { kind: 'find'; find: FindView };
@@ -86,12 +86,15 @@ const NO = '#ffae98';
 const GREY = '#c9c2b0';
 const FIRE = '#ffb36b';
 const EERIE = '#c7a6ff';
-/** How long a watcher takes to walk a tile, as drawn (the server moves them a little slower than this). */
-const CREATURE_STEP_MS = 420;
+/** How long a creature takes to walk a tile, as drawn: each a little quicker than the server moves it, so it never lags. */
+const CREATURE_STEP_MS: Record<CreatureView['kind'], number> = { watcher: 420, skulker: 230 };
+
+/** A creature as the game animates it: like a player, and what kind it is and whom it chases. */
+type Creature = Mover & { kind: CreatureView['kind']; chasing: string | undefined };
 
 function talkersOf(map: TileMap): Talker[] {
   return map.data.objects.flatMap((o: MapObject): Talker[] => {
-    if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines, kind: 'talk' }];
+    if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines, kind: 'talk', id: o.id }];
     if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: 'Sign', lines: o.text, kind: 'talk' }];
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
@@ -102,6 +105,8 @@ function talkersOf(map: TileMap): Talker[] {
   });
 }
 
+const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
 /** "12 minutes", "under a minute". */
 export function minutes(seconds: number): string {
   if (seconds < 60) return 'under a minute';
@@ -111,7 +116,9 @@ export function minutes(seconds: number): string {
 
 /** News from the world for the interface to announce (status.ts, newsBanner). */
 export type News =
-  | { kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView };
+  | { kind: 'feat'; id: string } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView }
+  /** A new day's conditions, by name. */
+  | { kind: 'conditions'; names: string[] };
 
 /** Lines of chat a session keeps to scroll back through. */
 export const CHAT_LOG = 100;
@@ -136,13 +143,15 @@ export class Game {
   lootChanges = 0;
   /** Your bag as the server last told it; replaced whole, never changed in place. */
   bag: BagSlot[] = [];
+  /** When the bag was told (`now`): a live find's age counts on from there. */
+  bagAt = 0;
   /** The fires on this map by "x,y": fuel left as told, and when (null: tended, it never goes out). */
   fires = new Map<string, { left: number | null; at: number }>();
   /** Marks painted on this map, by id; `markChanges` counts changes, like lootChanges. */
   marks = new Map<number, MarkView>();
   markChanges = 0;
-  /** Creatures on this map (watchers), animated like players. */
-  creatures = new Map<number, Mover>();
+  /** Creatures on this map (watchers, skulkers), animated like players. */
+  creatures = new Map<number, Creature>();
   /** Flares burning on this map, until when (our clock). */
   flares: Array<{ x: number; y: number; until: number }> = [];
   /** This map's surge clock as told, and when (null: it never surges). */
@@ -156,6 +165,8 @@ export class Game {
   /** The Old Stone in town, and your counts toward feats. */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
+  /** What the woods are like today and this week (sky.ts), as the server said. */
+  conditions: ConditionsView = { today: [], week: null, next: null };
   /** Your tools (item ids), as the welcome said: a paper map, for now. */
   tools: string[] = [];
   /** Your XP and level. */
@@ -187,6 +198,8 @@ export class Game {
   bubbles = new Map<string, { text: string; until: number }>();
   /** The quirks of what everyone on this map wears, by player id: some show in the world. */
   quirks = new Map<string, Quirk[]>();
+  /** Who on this map carries a live find: a column of light stands over them. */
+  live = new Set<string>();
   /** What everyone on this map wears, by player id (you too). */
   gear = new Map<string, Gear>();
   /** Feats just earned, for the interface to announce (it empties the list). */
@@ -307,9 +320,11 @@ export class Game {
         this.enter(map, msg.players, msg.finds, msg.drops);
         this.scene(msg, now);
         this.bag = msg.bag;
+        this.bagAt = now;
         this.lastEnergy = { view: msg.energy, at: now };
         this.body = { view: msg.body, at: now };
         this.stone = msg.stone;
+        this.conditions = msg.conditions;
         this.stats = msg.stats;
         this.progress = msg.progress;
         this.tools = msg.tools;
@@ -353,22 +368,30 @@ export class Game {
         break;
       case 'creature': {
         const c = this.creatures.get(msg.creature.id);
+        // The first moment one goes after you. The sound of it is soundscape.ts's.
+        if (msg.creature.chasing === this.meId && c?.chasing !== this.meId) this.floatOverMe('Something is after you. Run', EERIE, 1);
         if (!c) this.creatures.set(msg.creature.id, this.creatureMover(msg.creature));
         // One that jumped (it woke somewhere else) is put there at once; a step is walked.
         else if (Math.abs(c.tx - msg.creature.x) + Math.abs(c.ty - msg.creature.y) > 1) this.snapMover(c, msg.creature);
-        else {
-          c.anim = { fx: c.x, fy: c.y, t0: now, dur: CREATURE_STEP_MS };
+        else if (c.tx !== msg.creature.x || c.ty !== msg.creature.y) {
+          c.anim = { fx: c.x, fy: c.y, t0: now, dur: CREATURE_STEP_MS[c.kind] };
           c.tx = msg.creature.x; c.ty = msg.creature.y; c.dir = msg.creature.dir;
         }
+        if (c) c.chasing = msg.creature.chasing;
         break;
       }
       case 'creatureGone':
         this.creatures.delete(msg.id);
         break;
       case 'touched': {
-        const lost = msg.lost && this.items.get(msg.lost).name;
-        this.floatOverMe(lost ? `It took your ${lost.toLowerCase()}` : 'It touched you', EERIE, 1);
-        this.floatOverMe('The cold goes right through you', NO);
+        const lost = msg.lost && this.items.get(msg.lost).name.toLowerCase();
+        if (msg.by === 'skulker') {
+          this.floatOverMe(lost ? `It caught you. You dropped your ${lost}` : 'It caught you', EERIE, 1);
+          this.floatOverMe('It slipped back into the ferns', NO);
+        } else {
+          this.floatOverMe(lost ? `It took your ${lost}` : 'It touched you', EERIE, 1);
+          this.floatOverMe('The cold goes right through you', NO);
+        }
         break;
       }
       case 'hitch':
@@ -392,6 +415,12 @@ export class Game {
         if (msg.stone.awake !== this.stone.awake) this.news.push({ kind: 'stone', view: msg.stone });
         this.stone = msg.stone;
         break;
+      case 'conditions': {
+        const fresh = msg.conditions.today.join() !== this.conditions.today.join();
+        this.conditions = msg.conditions;
+        if (fresh) this.news.push({ kind: 'conditions', names: this.conditionNames(msg.conditions.today) });
+        break;
+      }
       case 'board':
         this.openDialog({ x: 0, y: 0, who: 'Notice board', lines: msg.lines, kind: 'board' });
         break;
@@ -431,9 +460,16 @@ export class Game {
         this.players.set(msg.player.id, this.mover(msg.player));
         this.gear.set(msg.player.id, msg.player.gear ?? {});
         this.quirks.set(msg.player.id, msg.player.quirks ?? []);
+        if (msg.player.live) this.live.add(msg.player.id);
+        else this.live.delete(msg.player.id);
+        break;
+      case 'glow':
+        if (msg.on) this.live.add(msg.id);
+        else this.live.delete(msg.id);
         break;
       case 'leave':
         this.players.delete(msg.id);
+        this.live.delete(msg.id);
         break;
       case 'step': {
         const p = this.players.get(msg.id);
@@ -485,6 +521,7 @@ export class Game {
         }
         if (this.bag.length && !msg.bag.length) this.emptiedAt = now;
         this.bag = msg.bag;
+        this.bagAt = now;
         break;
       }
       case 'got': {
@@ -494,6 +531,8 @@ export class Game {
         // Someone else's pile can leave you nothing (your half did not fit, or the coin went the
         // other way); it is gone all the same, so say so rather than let it vanish silently.
         if (!msg.items.length) this.floatOverMe('Nothing in it for you', NO);
+        const live = msg.items.map(s => this.items.get(s.item).live).find(l => l);
+        if (live) this.news.push({ kind: 'live', fresh: live.fresh });
         break;
       }
       case 'friends':
@@ -556,6 +595,7 @@ export class Game {
     for (const p of players) this.players.set(p.id, this.mover(p));
     this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
     this.quirks = new Map(players.map(p => [p.id, p.quirks ?? []]));
+    this.live = new Set(players.filter(p => p.live).map(p => p.id));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
     this.lootChanges++;
@@ -567,8 +607,8 @@ export class Game {
     return { id: p.id, name: p.name, color: p.color, tx: p.x, ty: p.y, x: p.x, y: p.y, dir: p.dir, anim: null, phase: 0, turnT: 0 };
   }
 
-  private creatureMover(c: CreatureView): Mover {
-    return { id: String(c.id), name: '', color: '', tx: c.x, ty: c.y, x: c.x, y: c.y, dir: c.dir, anim: null, phase: 0, turnT: 0 };
+  private creatureMover(c: CreatureView): Creature {
+    return { id: String(c.id), name: '', color: '', tx: c.x, ty: c.y, x: c.x, y: c.y, dir: c.dir, anim: null, phase: 0, turnT: 0, kind: c.kind, chasing: c.chasing };
   }
 
   private snapMover(m: Mover, c: CreatureView) {
@@ -888,7 +928,32 @@ export class Game {
   // ---------- dialog ----------
 
   private openDialog(t: Talker) {
-    this.dialog = { who: t.who, lines: t.lines, i: 0, shown: 0 };
+    // Mira has heard what the woods are like today.
+    const word = t.id === 'mira' ? this.miraWord() : null;
+    this.dialog = { who: t.who, lines: word ? [word, ...t.lines] : t.lines, i: 0, shown: 0 };
+  }
+
+  /** "Word from the woods today: thick fog, and a supply drop. This week: copper week." Null when nothing is going on. */
+  miraWord(): string | null {
+    const today = this.conditionNames(this.conditions.today).map(lower);
+    const week = this.conditionNames(this.conditions.week ? [this.conditions.week] : []).map(lower)[0];
+    const parts = [
+      ...(today.length ? [`Word from the woods today: ${today.length > 1 ? `${today.slice(0, -1).join(', ')}, and ${today.at(-1)}` : today[0]}.`] : []),
+      ...(week ? [`This week: ${week}.`] : []),
+    ];
+    return parts.length ? parts.join(' ') : null;
+  }
+
+  /** You see this many tiles past yourself on this map, when a condition brings fog here (outdoors only). */
+  fogCap(): number | undefined {
+    if (this.current.data.kind === 'inside') return undefined;
+    const fogs = activeConditions(this.items.conditions, this.conditions).filter(c => c.map === this.current.data.id && c.fog !== undefined).map(c => c.fog!);
+    return fogs.length ? Math.min(...fogs) : undefined;
+  }
+
+  private conditionNames(ids: string[]): string[] {
+    const all = [...this.items.conditions?.daily ?? [], ...this.items.conditions?.weekly ?? []];
+    return ids.map(id => all.find(c => c.id === id)?.name ?? id);
   }
 
   advanceDialog() {
@@ -1002,13 +1067,13 @@ export class Game {
   avatars(): Avatar[] {
     const hitched = this.body.view.hitched;
     return [...this.players.values()].map(p => ({
-      id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId,
+      id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
       look: lookOf(this.gear.get(p.id) ?? {}, this.items),
     }));
   }
 
-  /** The creatures on this map, where they are drawn now. */
-  creatureViews(): Array<{ id: string; x: number; y: number; dir: Dir; moving: boolean }> {
-    return [...this.creatures.values()].map(c => ({ id: c.id, x: c.x, y: c.y, dir: c.dir, moving: !!c.anim }));
+  /** The creatures on this map, where they are drawn now, and whom they chase. */
+  creatureViews(): Array<{ id: string; kind: CreatureView['kind']; x: number; y: number; dir: Dir; moving: boolean; chasing: string | undefined }> {
+    return [...this.creatures.values()].map(c => ({ id: c.id, kind: c.kind, x: c.x, y: c.y, dir: c.dir, moving: !!c.anim, chasing: c.chasing }));
   }
 }

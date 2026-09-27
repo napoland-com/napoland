@@ -17,7 +17,7 @@ import { GLOW_Y, Puffs } from './fire';
 import { OUTLINE, OUTLINE_INSTANCED, bake, box, flat, hash2, ownToon, part, pivot, softTexture, toon } from './toon';
 
 /** Items with a look of their own; any other item is drawn as a sack. */
-export const ITEM_LOOKS = ['glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead'] as const;
+export const ITEM_LOOKS = ['glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'live-shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead'] as const;
 export type Look = (typeof ITEM_LOOKS)[number] | 'sack' | 'pile';
 
 export function lookOf(item: string): Look {
@@ -43,6 +43,7 @@ const STYLE: Record<Look, Style> = {
   wire: { pool: '#ff9657', size: 1.25, top: 0.24 },
   cloth: { pool: '#ffc79c', size: 1.2, top: 0.16 },
   shard: { pool: '#a77dff', size: 1.55, top: 0.78, glow: { color: '#bf9cff', emissive: '#6a34d0' }, floats: true },
+  'live-shard': { pool: '#e2d0ff', size: 1.9, top: 0.78, glow: { color: '#f1e6ff', emissive: '#a67cff' }, floats: true },
   thermos: { pool: '#c7dcff', size: 1.25, top: 0.22 },
   flare: { pool: '#ff5a4a', size: 1.25, top: 0.2, glow: { color: '#ff6a55', emissive: '#a31d12' } },
   strange: { pool: '#b8a0ff', size: 1.45, top: 0.36, glow: { color: '#d7c8ff', emissive: '#5a3fa8' } },
@@ -129,7 +130,8 @@ export function lootModel(look: Look, glow: THREE.Material): THREE.Group {
       layer(0.06, 0.34, 0.26, '#b35a4b', '#ecd3a8', -1, 0.18);
       break;
     }
-    case 'shard': {
+    case 'shard':
+    case 'live-shard': {
       // A crystal floating over the ground with two chips around it; the whole of it turns (see Kind).
       const crystal = part(new THREE.OctahedronGeometry(0.12, 0), glow, 0, 0.5, 0, 0.018);
       crystal.scale.set(0.8, 1.9, 0.8);
