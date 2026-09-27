@@ -5,7 +5,8 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, itemIndex, resistOf, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Recipe, type Refusal, type Slot,
+  BAG_SLOTS, SLOTS, itemIndex, mendCost, resistOf, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type Quirk,
+  type Recipe, type Refusal, type Slot, type Worn,
 } from '@napoland/shared';
 import type { RecipeView, WornView } from './hud';
 import type { Look } from './view/characters';
@@ -18,11 +19,23 @@ export class Items {
   readonly byId: Map<string, ItemDef>;
   /** What the workbench makes. */
   readonly recipes: Recipe[];
+  /** How gear wears out and what mending it costs, and the quirks' names and words. */
+  readonly wear: ItemsData['wear'];
+  readonly mend: ItemsData['mend'];
+  private readonly quirks: Map<Quirk, { name: string; text: string }>;
 
   constructor(data: ItemsData | undefined) {
     this.version = data?.version ?? 0;
     this.byId = data ? itemIndex(data) : new Map();
     this.recipes = data?.recipes ?? [];
+    this.wear = data?.wear;
+    this.mend = data?.mend;
+    this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
+  }
+
+  /** A quirk's name and words (its id, if this copy does not know it). */
+  quirk(id: Quirk): { name: string; text: string } {
+    return this.quirks.get(id) ?? { name: plainName(id), text: '' };
   }
 
   has(id: string): boolean {
@@ -82,6 +95,8 @@ export function refusalText(reason: Refusal): string {
     case 'bag_too_full': return 'What you carry does not fit in that bag';
     case 'keep_bag': return 'You always carry a bag';
     case 'missing': return 'Your stash lacks what it needs';
+    case 'gear_stays': return 'Put gear on from the chest';
+    case 'whole': return 'It needs no mending';
   }
 }
 
@@ -100,13 +115,44 @@ export interface SlotView {
   icon: string;
   /** Gear: the slot it is worn in. */
   slot?: Slot;
+  /** A piece of gear in the stash: its condition (0 to 1), and which of that item's pieces it is (the stash's order). */
+  cond?: number;
+  n?: number;
 }
 
 export function slotViews(bag: readonly BagSlot[], items: Items): SlotView[] {
+  const nth = new Map<string, number>();
   return bag.map(s => {
-    const def = items.get(s.item);
-    return { item: s.item, name: def.name, text: def.text, count: s.count, usable: !!def.use, useLabel: useLabel(def), facts: factsOf(def), icon: iconFor(def), ...(def.slot ? { slot: def.slot } : {}) };
+    const def = items.get(s.item), p = s.piece;
+    const base: SlotView = { item: s.item, name: def.name, text: def.text, count: s.count, usable: !!def.use, useLabel: useLabel(def), facts: factsOf(def), icon: iconFor(def), ...(def.slot ? { slot: def.slot } : {}) };
+    if (!p) return base;
+    const n = nth.get(s.item) ?? 0;
+    nth.set(s.item, n + 1);
+    const q = p.quirk && items.quirk(p.quirk);
+    return { ...base, cond: p.cond, n, text: q ? `${def.text} ${q.name}: ${q.text}` : def.text, facts: [conditionText(p.cond, wearSeconds(def, items.wear) !== undefined), ...base.facts] };
   });
+}
+
+/** "As good as new", "40% left", "Worn out: mend it at the workbench". Gear that never wears is always fine. */
+export function conditionText(cond: number, wears = true): string {
+  if (!wears || cond >= 0.995) return 'As good as new';
+  if (cond <= 0) return 'Worn out: mend it at the workbench';
+  return `${Math.max(1, Math.round(cond * 100))}% left`;
+}
+
+/** "Raincoat 40%, rubber boots worn out": what you wear that is wearing down, or null when all of it is fine. */
+export function wearText(gear: Gear, worn: Worn, items: Items): string | null {
+  const parts = SLOTS.flatMap(slot => {
+    const id = gear[slot], p = worn[slot], def = id ? items.get(id) : undefined;
+    if (!def || !p || p.cond >= 0.995 || wearSeconds(def, items.wear) === undefined) return [];
+    return [`${def.name} ${p.cond <= 0 ? 'worn out' : `${Math.max(1, Math.round(p.cond * 100))}%`}`];
+  });
+  return parts.length ? parts.join(', ') : null;
+}
+
+/** The quirks of what you wear, by name ("Glowing steps"). */
+export function quirkNames(worn: Worn, items: Items): string[] {
+  return SLOTS.flatMap(s => (worn[s]?.quirk ? [items.quirk(worn[s]!.quirk!).name] : []));
 }
 
 /** What is worth knowing about an item besides its text, in a few words each. */
@@ -150,19 +196,34 @@ export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[
   });
 }
 
-/** What is worn in each slot, in SLOTS order (null: bare). */
-export function wornViews(gear: Gear, items: Items): Array<WornView | null> {
-  return SLOTS.map(slot => {
-    const id = gear[slot];
-    if (!id || !items.has(id)) return null;
-    const def = items.get(id);
-    return { slot, name: def.name, icon: iconFor(def) };
+/**
+ * Mending at the workbench: one row for each piece you wear that has worn down and can be mended,
+ * with what it costs against what the stash holds. Its id is "mend:" and the slot.
+ */
+export function mendViews(gear: Gear, worn: Worn, stash: readonly BagSlot[], items: Items): RecipeView[] {
+  return SLOTS.flatMap(slot => {
+    const id = gear[slot], p: Piece | undefined = worn[slot], def = id ? items.get(id) : undefined;
+    const cost = mendCost(def, items.mend);
+    if (!def || !p || !cost || p.cond >= 0.995) return [];
+    const needs = cost.map(n => ({ name: items.get(n.item).name, icon: iconFor(items.get(n.item)), have: countOf(stash, n.item), need: n.count }));
+    return [{ id: `mend:${slot}`, name: `Mend your ${def.name.toLowerCase()}`, icon: iconFor(def), facts: `${p.cond <= 0 ? 'Worn out' : conditionText(p.cond)}. Whole again when mended.`, needs, can: needs.every(n => n.have >= n.need), act: 'Mend' }];
   });
 }
 
-/** "Cold 25%, wind 45%": what the gear worn resists, or null for nothing. */
-export function resistText(gear: Gear, items: Items): string | null {
-  const r = resistOf(gear, items.byId);
+/** What is worn in each slot, in SLOTS order (null: bare), with how worn down it is. */
+export function wornViews(gear: Gear, items: Items, worn: Worn = {}): Array<WornView | null> {
+  return SLOTS.map(slot => {
+    const id = gear[slot];
+    if (!id || !items.has(id)) return null;
+    const def = items.get(id), p = worn[slot];
+    const wears = wearSeconds(def, items.wear) !== undefined;
+    return { slot, name: def.name, icon: iconFor(def), ...(p && wears ? { cond: p.cond } : {}), ...(p?.quirk ? { quirk: items.quirk(p.quirk).name } : {}) };
+  });
+}
+
+/** "Cold 25%, wind 45%": what the gear worn resists (as worn down as it is), or null for nothing. */
+export function resistText(gear: Gear, items: Items, worn: Worn = {}): string | null {
+  const r = resistOf(gear, items.byId, worn);
   const parts = (Object.entries(r) as Array<[Element, number]>).filter(([, v]) => v > 0).map(([e, v]) => `${ELEMENT_WORDS[e]} ${Math.round(v * 100)}%`);
   return parts.length ? parts.join(', ') : null;
 }

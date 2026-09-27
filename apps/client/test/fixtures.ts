@@ -115,7 +115,7 @@ export interface Extras {
   progress?: ProgressView;
 }
 /** Dry, light and alone. */
-export const DRY: BodyView = { wet: 0, wetRate: 0, load: 0, hitched: false };
+export const DRY: BodyView = { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} };
 export const ASLEEP: StoneView = { charge: 0, need: 20, awake: false, left: 0 };
 /** Nothing stashed yet: level 1. */
 export const START: ProgressView = { xp: 0, level: 1, from: 0, to: 30, maxEnergy: 100 };

@@ -25,7 +25,7 @@ describe('exits', () => {
   it('takes a player into the woods and back: the step, then zone with the arrival tile and facing, then energy', async () => {
     const a = await enter({ map: 'town', x: 4, y: 1, dir: 'up' });
     a.c.send({ t: 'step', dir: 'up', seq: 1 });
-    const me = { id: a.id, name: a.welcome.name, color: colorFor(a.id), gear: {} };
+    const me = { id: a.id, name: a.welcome.name, color: colorFor(a.id), gear: {}, quirks: [] };
     expect(await a.c.settle()).toEqual([
       { t: 'step', id: a.id, x: 4, y: 0, dir: 'up', seq: 1 },
       { t: 'zone', map: { id: 'woods', version: 1 }, x: 3, y: 6, dir: 'up', players: [{ ...me, x: 3, y: 6, dir: 'up' }], finds: [], drops: [], ...SCENE, reason: 'exit' },
@@ -45,7 +45,7 @@ describe('exits', () => {
 
   it('takes a player into a house through its door and back out, in front of the door', async () => {
     const a = await enter({ map: 'town', x: 7, y: 3, dir: 'up', energy: 50 });
-    const me = { id: a.id, name: a.welcome.name, color: colorFor(a.id), gear: {} };
+    const me = { id: a.id, name: a.welcome.name, color: colorFor(a.id), gear: {}, quirks: [] };
     a.c.send({ t: 'step', dir: 'up', seq: 1 });
     expect(await a.c.settle()).toEqual([
       { t: 'step', id: a.id, x: 7, y: 2, dir: 'up', seq: 1 },
@@ -80,7 +80,7 @@ describe('exits', () => {
       { t: 'leave', id: a.id },
     ]);
     expect(await news(w.c)).toEqual([{ t: 'join', player: zone.players[1] }]);
-    expect(zone.players[1]).toEqual({ id: a.id, name: a.welcome.name, x: 3, y: 6, dir: 'up', color: colorFor(a.id), gear: {} });
+    expect(zone.players[1]).toEqual({ id: a.id, name: a.welcome.name, x: 3, y: 6, dir: 'up', color: colorFor(a.id), gear: {}, quirks: [] });
 
     a.c.send({ t: 'face', dir: 'left' });
     expect(await w.c.next('face')).toEqual({ t: 'face', id: a.id, dir: 'left' });
@@ -220,7 +220,7 @@ describe('energy', () => {
     vi.spyOn(process.stdout, 'write').mockImplementation(chunk => (logged.push(String(chunk)), true));
 
     now += 5000; // 1 energy lasts 4.1 s here
-    const me = { id: a.id, name: a.welcome.name, x: 1, y: 2, dir: 'down' as const, color: colorFor(a.id), gear: {} };
+    const me = { id: a.id, name: a.welcome.name, x: 1, y: 2, dir: 'down' as const, color: colorFor(a.id), gear: {}, quirks: [] };
     expect(await a.c.next('zone')).toEqual({
       t: 'zone', map: { id: 'town', version: 1 }, x: 1, y: 2, dir: 'down', players: [t.welcome.players[0], me], finds: [], drops: [], ...SCENE, reason: 'collapse',
     });

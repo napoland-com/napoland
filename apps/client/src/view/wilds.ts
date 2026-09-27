@@ -285,6 +285,53 @@ export class Flashes {
   }
 }
 
+/** Glowing footprints drawn at once, at most, and how long one glows (seconds). */
+const PRINTS = 80;
+export const PRINT_S = 30;
+const TURN_OF: Record<Dir, number> = { up: 0, down: Math.PI, left: Math.PI / 2, right: -Math.PI / 2 };
+
+/**
+ * Glowing footprints: where someone wearing a piece with that quirk walked out there. Each glows pale
+ * blue and fades over PRINT_S; the newest are kept when there are too many.
+ */
+export class Prints {
+  readonly root = new THREE.Group();
+  private readonly geo = new THREE.CircleGeometry(0.1, 10).scale(0.8, 1.4, 1).rotateX(-Math.PI / 2);
+  private readonly mats: THREE.MeshBasicMaterial[] = [];
+  private readonly feet: THREE.Mesh[] = [];
+
+  constructor() {
+    for (let i = 0; i < PRINTS; i++) {
+      const mat = new THREE.MeshBasicMaterial({ color: 0x9ef6ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+      const m = new THREE.Mesh(this.geo, mat);
+      m.visible = false;
+      this.mats.push(mat);
+      this.feet.push(m);
+      this.root.add(m);
+    }
+  }
+
+  /** The prints, newest last, each with its age in seconds; `ground` says how high the tile is. */
+  set(list: ReadonlyArray<{ x: number; y: number; dir: Dir; age: number }>, ground: (x: number, y: number) => number) {
+    const shown = list.slice(-PRINTS);
+    this.feet.forEach((m, i) => {
+      const p = shown[i];
+      m.visible = !!p && p.age < PRINT_S;
+      if (!p || !m.visible) return;
+      // Left and right foot by turns, side by side across the way they walked.
+      const side = i % 2 ? 0.12 : -0.12, a = TURN_OF[p.dir];
+      m.position.set(p.x + 0.5 + Math.cos(a) * side, ground(p.x + 0.5, p.y + 0.5) + 0.03, p.y + 0.5 - Math.sin(a) * side);
+      m.rotation.y = a;
+      this.mats[i]!.opacity = 0.75 * (1 - p.age / PRINT_S);
+    });
+  }
+
+  dispose() {
+    this.geo.dispose();
+    for (const m of this.mats) m.dispose();
+  }
+}
+
 /** Echoes walk only near you, and only a couple at once. */
 const ECHO_NEAR = 11;
 const ECHOES = 2;
