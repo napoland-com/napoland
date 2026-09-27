@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { STEP_MS, type ClientMsg, type MapData, type PlayerView } from '@napoland/shared';
 import { Game } from '../src/game';
 import { Maps } from '../src/maps';
-import { ref, tinyTown, tinyWoods, welcome } from './fixtures';
+import { cabin, houseTown, ref, shed, tinyTown, tinyWoods, welcome } from './fixtures';
 
 const stonebrook = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/maps/stonebrook.json'), 'utf8')) as MapData;
 const maps = new Maps([stonebrook]);
@@ -252,6 +252,54 @@ describe('moving between maps', () => {
     g.held = false;
     run(20, g);
     expect(steps()).toHaveLength(1);
+  });
+});
+
+describe('going into a house', () => {
+  const town = houseTown(), home = cabin();
+  const world = new Maps([town, home, shed()]);
+  const at = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ ...me, x, y, dir });
+  let g: Game;
+  beforeEach(() => {
+    g = new Game(world, m => sent.push(m));
+    g.handle(welcome(town, [at(2, 3)]), now);
+  });
+
+  it('walks into the open door and waits on it for the server to take it inside', () => {
+    g.padChange('up', now);
+    run(20, g);
+    expect(steps()).toHaveLength(1);
+    expect(g.me).toMatchObject({ tx: 2, ty: 2 });
+    g.handle({ t: 'step', id: 'me', x: 2, y: 2, dir: 'up', seq: 1 }, now);
+    run(1000, g);
+    expect(steps()).toHaveLength(1);
+    g.handle({ t: 'zone', map: ref(home), x: 4, y: 5, dir: 'up', players: [at(4, 5)], reason: 'exit' }, now);
+    expect(g.map.data.id).toBe('cabin');
+    expect(g.me).toMatchObject({ tx: 4, ty: 5, dir: 'up' });
+  });
+
+  it('walks up to a door that is tapped', () => {
+    g.handle(welcome(town, [at(5, 4)]), now);
+    g.tapTile(2, 2);
+    expect(g.marker).toMatchObject({ x: 2, y: 2 });
+  });
+
+  it('is stopped inside by the fire and the walls, and walks out through the doorway', () => {
+    g.handle(welcome(home, [at(4, 2)]), now);
+    g.padChange('up', now);
+    run(400, g);
+    g.padChange(null, now);
+    g.handle(welcome(home, [at(1, 4, 'left')]), now);
+    g.padChange('left', now);
+    run(400, g);
+    g.padChange(null, now);
+    expect(steps()).toHaveLength(0);
+    g.handle(welcome(home, [at(4, 5, 'down')]), now);
+    g.padChange('down', now);
+    run(20, g);
+    expect(steps()).toHaveLength(1);
+    expect(g.me).toMatchObject({ tx: 4, ty: 6 });
+    expect(g.map.exitAt(4, 6)?.to).toBe('hometown');
   });
 });
 

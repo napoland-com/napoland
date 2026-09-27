@@ -3,9 +3,10 @@
  * depends on time gets `now` (ms), and everything the players should hear is queued as Outgoing
  * messages for the network layer to drain and send.
  *
- * The world is several maps joined by exits; players see and hear only the players on their own
- * map. Everyone online has energy, which drains in the wilds and refills in town and under street
- * lights (the numbers are in shared/energy.ts). At zero a player collapses and wakes up at home.
+ * The world is several maps joined by exits (a house's door is one, into the house); players see
+ * and hear only the players on their own map. Everyone online has energy, which drains in the wilds,
+ * holds in town and inside buildings, and only comes back next to a fireplace (the rules and numbers
+ * are in shared/energy.ts). At zero a player collapses and wakes up at home.
  */
 import {
   ENERGY_MAX,
@@ -99,7 +100,7 @@ const energyView = (p: Online): EnergyView => ({
   max: ENERGY_MAX,
   rate: Math.round(p.rate * 1000) / 1000,
 });
-/** Draining and not empty yet, or refilling and not full yet. */
+/** Draining and not empty yet, or refilling and not full yet. Holding (rate 0) changes nothing. */
 const changing = (p: Online): boolean => (p.rate < 0 && p.rec.energy > 0) || (p.rate > 0 && p.rec.energy < ENERGY_MAX);
 
 export class World {
@@ -354,12 +355,12 @@ export class World {
   }
 
   /**
-   * A new rate for where the player stands now. They hear it when it turns from draining to
-   * refilling or back, or moves far from the rate they last heard; small changes wait for tick().
+   * A new rate for where the player stands now. They hear it when it turns between draining,
+   * holding and refilling, or moves far from the rate they last heard; small changes wait for tick().
    */
   private rerate(p: Online, now: number): void {
     p.rate = energyRate(p.map, p.rec.x, p.rec.y, this.sky);
-    const turned = (p.rate < 0) !== (p.heardRate < 0);
+    const turned = Math.sign(p.rate) !== Math.sign(p.heardRate);
     const moved = Math.abs(p.rate - p.heardRate) > ENERGY_RATE_CHANGE * Math.abs(p.heardRate);
     if (turned || moved) this.tell(p, now);
   }

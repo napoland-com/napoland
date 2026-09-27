@@ -17,10 +17,14 @@ The decisions so far, with the reason for each. Change this file when a decision
 ## The loop
 
 1. Wake up at home (your cabin). Equip gear. Equipment can be put on or taken off **only at home**, so choosing gear is part of planning a trip.
-2. Walk out through the town into the wilds. Energy drains outside town, faster the farther you are, at night and in the rain. Street lights and home refill it. Tuned so that standing at the edge of the Near Woods in the rain empties a full bar in about 11 minutes, and its deepest corner in under 4; trips of 5 to 15 minutes.
-3. Gather resources and power-ups. What you pick up goes in your bag (limited slots).
+2. Walk out through the town into the wilds. Energy drains in the wilds, faster the farther you are, at night and in the rain; in town and inside buildings it holds. The only way to get it back is **a fireplace**: shelters out in the wilds (and some buildings, your home among them) keep one burning, always. Sit near it and you recover. Tuned so that standing at the edge of the Near Woods in the rain empties a full bar in about 5.5 minutes, and its deepest corner in under 2.
+3. Gather resources and power-ups. What you pick up goes in your bag (limited slots). Finds are shared: when someone takes one, a new one of the same kind grows later somewhere else in the same kind of place (deep finds stay deep).
 4. Come home and stash what you carry. Stashing earns XP; levels and home upgrades let you go farther next time.
-5. **If your energy runs out** you wake up at home. Your whole bag drops where you fell, as a backpack anyone can take, you included if you go back for it. Equipment is kept.
+5. **If your energy runs out** you wake up at home. Your whole bag drops where you fell, as a backpack anyone can take, you included if you go back for it. It stays there until you collapse again: then the old backpack is gone for good and the new one drops. Equipment is kept.
+
+**Light is not energy.** Street lights, and later torches and gadgets, let you see where you walk; some areas will be almost dark without them. They do not refill energy.
+
+**Every building can be entered**, like in FireRed: walk into the door and you are inside a small room (a map of its own). Shelters and some houses have a fireplace; empty houses are dark.
 
 ## World structure
 
@@ -63,6 +67,64 @@ Ideas to build and test:
 ## Weather, seasons, day and night
 
 Each region has its own climate (rainforest, snowy ridge, marsh, burnt forest...), its own weather cycle and seasons, and there is day and night. Weather changes what you find (glowcaps after rain, shards at night, frozen lakes you can cross in winter) and how dangerous it is. The server owns all of it, so everyone sees the same sky.
+
+## Hazards, anomalies and resistances
+
+Like in Pacific Drive, the world itself wears you down, on top of the steady drain of being out there. Five elements, each with its own resistance:
+
+| Element | Comes from (examples) |
+|---|---|
+| **Heat** | the burnt forest, summer afternoons, fire anomalies |
+| **Cold** | night, winter, the snowy ridge, being wet in the wind |
+| **Wind** | storms, open ridges and clearings |
+| **Electricity** | electrical storms, flashes, broken power lines |
+| **Radiation** | glowing anomalies, shards, the deepest places |
+
+- **Anomalies are events**, shared by everyone on the map and announced before they hit so you can react: a **storm** rolls in over a region (wind, electricity, less to see); a **flash** marks a patch of ground that glows and then discharges; a **surge** near the Old Stone and the shards. Being caught costs energy, less with the right resistance. Some anomalies leave rare finds behind.
+- A shelter protects from everything outside. Resistance never makes you immune: it cuts the loss (a percentage per element).
+
+## Equipment and stats
+
+Six slots: **cap, shirt, gloves, pants, shoes, bag**. Better equipment means better resistances, so you can stay out longer and go where the weather or the anomalies would stop you.
+
+- Each piece gives resistances to some elements (a raincoat: wind and cold; rubber gloves and boots: electricity; a lead-lined cap: radiation). Some also give a little extra energy.
+- The **bag** decides how many slots you carry (a tote 6, a backpack 8, a hiking pack 12, an expedition pack 16).
+- Gear comes in tiers (worn, sturdy, rugged, expedition, anomalous). It comes from **crafting at the town's workbench** with what you bring home, from rare finds deep in, and from trading with friends.
+- Gear is put on and taken off **only at home**, so choosing it is part of planning a trip. It is kept when you collapse. Your character wears what you equip, so others see your gear.
+
+## Items
+
+Everything is data (`content/items.json`: name, what it is, stack size, stats, where it grows), so the list can grow and be tuned without code. A first set:
+
+- **Resources** (for crafting and XP): glowcaps, fir resin, scrap metal, copper wire, cloth scraps, anomaly shards (rare, deep in).
+- **Consumables** (used from the bag): a thermos (+30 energy), hand warmers (cold resistance for a while), rad tablets (radiation resistance for a while).
+- **Equipment**: a few pieces per slot and tier, starting with worn clothes everyone has.
+
+## Status
+
+A status tab (in the menu) shows your level and XP, energy (maximum, now, and what is draining it at the moment, element by element), your five resistances with where they come from (each piece of gear), and any effects running (a hand warmer, a storm you are in).
+
+## Together: chat and friends
+
+- **World chat** for everyone online, and **local chat** for whoever is near you: it shows as a speech bubble over your head (FireRed style) and in the chat log. Reached from the menu; the menu button shows a dot when there is something new.
+- **Friends**: send a request (tap a player, or by name), accept or decline; the friends list shows who is online and where they are. **Private messages** between friends, kept until read.
+- **Exchange, face to face only**: two friends on the same map, at most **10 tiles** apart, open a trade: each puts in items or gear, both confirm the final offer, and the server swaps them in one step (nothing can go missing halfway). Walking farther apart cancels it.
+- **Settings** (in the menu): anyone can turn off friend requests and trade requests.
+- Safety from day one: limits on length and speed, a word filter, block and report.
+- **Sign-in first**: chat, friends and items are worth keeping, so before these go to the public players sign in with **Google or Apple, through Supabase Auth**. The game server checks the Supabase login and keeps its own players and game data in its own database as now; a character made before sign-in can be claimed by signing in on the same browser. Today a character only lives in the browser that made it.
+
+## Roadmap
+
+Each step goes live when it is done, so it can be played and tuned.
+
+1. ✅ The Near Woods and energy.
+2. **Now:** buildings you can enter, fireplaces and shelters, the new energy rules.
+3. Finds and the bag (shared finds that grow back elsewhere), then backpacks dropped on collapse.
+4. Home: stash what you carry for XP, levels; the status tab.
+5. Equipment: the six slots, items as data, resistances, crafting at the workbench, gear shown on your character.
+6. Hazards and anomalies: the five elements, day and night, storms, flashes and surges, weather per region.
+7. Sign-in (Google and Apple, through Supabase), then world and local chat, friends, private messages, face-to-face exchange and the settings to turn requests off.
+8. Creatures, your own cabin, the group mechanics (shared light, rescue, heavy finds, camps) and deeper regions.
 
 ## Look and feel
 

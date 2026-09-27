@@ -1,0 +1,36 @@
+{
+  "id": "near-woods-ranger-hut",
+  "name": "The ranger's hut",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 7,
+  "height": 6,
+  "tiles": [
+    "xxxxxxx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xxxpxxx"
+  ],
+  "levels": [
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000"
+  ],
+  "spawn": {"x":3,"y":4,"dir":"up"},
+  "exits": [
+    {"x":3,"y":5,"w":1,"h":1,"to":"near-woods","tx":30,"ty":7,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"fireplace","x":3,"y":1},
+    {"kind":"shelf","x":1,"y":1},
+    {"kind":"bed","x":5,"y":1},
+    {"kind":"table","x":1,"y":3},
+    {"kind":"crate","x":5,"y":4}
+  ]
+}

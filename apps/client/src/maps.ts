@@ -22,6 +22,11 @@ export class Maps {
     return map;
   }
 
+  /** A bundled map's data by id, whatever its version: to see where an exit leads (does the room behind a door keep a fire?). */
+  find(id: string): MapData | undefined {
+    return this.data.get(id);
+  }
+
   /** What to show before the server says where you are: a town. */
   home(): TileMap {
     const all = [...this.data.values()];

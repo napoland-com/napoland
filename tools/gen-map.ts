@@ -2,10 +2,12 @@
  * Generates content/maps/stonebrook.json, the starting town, from a fixed seed.
  * The output is the canonical map: after generating it once, hand edits to the JSON are fine,
  * but re-running this script overwrites them. Usage: npm run gen:map
+ * Every house's door leads inside; the rooms are drawn in gen-interiors.ts.
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { MapData, MapObject } from '../packages/shared/src';
+import type { MapData, MapExit, MapObject } from '../packages/shared/src';
+import { doorInto } from './gen-interiors';
 
 const N = 44;
 function mulberry32(a: number) {
@@ -46,20 +48,35 @@ rect(0, 0, N - 1, N - 1, (x, y) => {
 });
 for (const [x0, y0, x1, y1] of [[21, 4, 27, 10], [32, 5, 39, 11], [33, 19, 40, 25]] as const) rect(x0, y0, x1, y1, (x, y) => { if (tile[y]![x] === 'g' && !level[y]![x]) tile[y]![x] = 'f'; });
 
-// Town.
-const houses = [{ x: 7, y: 19, roof: '#6b7075', lit: 1 }, { x: 14, y: 19, roof: '#7a4b33', lit: 0 }, { x: 7, y: 30, roof: '#4a5a44', lit: 1 }] as const;
-for (const h of houses) place({ kind: 'house', x: h.x, y: h.y, w: 3, h: 2, roof: h.roof, lit: h.lit });
+// Town. Every house can be entered: home (the spawn is at its door), the empty house next door, and
+// the lodge, where the town sits by the fire.
+const houses = [
+  { x: 7, y: 19, roof: '#6b7075', lit: 1, inside: 'stonebrook-home' },
+  { x: 14, y: 19, roof: '#7a4b33', lit: 0, inside: 'stonebrook-empty-house' },
+  { x: 7, y: 30, roof: '#4a5a44', lit: 1, inside: 'stonebrook-lodge' },
+] as const;
+const doors: MapExit[] = [];
+for (const h of houses) {
+  const house = { kind: 'house', x: h.x, y: h.y, w: 3, h: 2, roof: h.roof, lit: h.lit } as const;
+  place(house);
+  doors.push(doorInto(h.inside, 'stonebrook', house));
+}
 place({ kind: 'car', x: 13, y: 24, w: 2 });
 for (const [x, y] of [[15, 23], [15, 27], [9, 27]] as const) place({ kind: 'barrel', x, y });
 place({
   kind: 'npc', id: 'mira', name: 'Mira', x: 10, y: 24, dir: 'down',
-  lines: ['Heading out? The woods pay better the farther you go.', 'Watch your energy. If it runs out, you wake up at home and your backpack stays where you fell.', 'Street lights are safe spots. The wolves hate the light.'],
+  lines: [
+    'Heading out? The woods pay better the farther you go.',
+    'Watch your energy. If it runs out, you wake up at home and your backpack stays where you fell.',
+    'Only a fire brings your energy back. The shelters out there keep one burning, day and night.',
+    'The street lights just help you see. They won\'t warm you.',
+  ],
 });
 const STONE = { x: 15, y: 8 };
 place({ kind: 'stone', x: STONE.x, y: STONE.y });
 const signs = [
   { x: 13, y: 37, text: ['Stonebrook. Pop. 23', 'Most people left after the lights started showing up in the woods.'] },
-  { x: 28, y: 16, text: ['North: the Near Woods', 'Out there your energy drains, faster the deeper you go. Town and the street lights fill it up again.'] },
+  { x: 28, y: 16, text: ['North: the Near Woods', 'Out there your energy drains, faster the deeper you go.', 'Only a fire brings it back. The shelters in the woods keep one burning.'] },
   { x: 17, y: 10, text: ['The Old Stone', 'It hums at night, and shards break off it. Do not touch.'] },
 ];
 for (const s of signs) place({ kind: 'sign', ...s });
@@ -138,12 +155,12 @@ function round(v: number) { return Math.round(v * 1000) / 1000; }
 }
 
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 2, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 3, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
   // The north road leads into the Near Woods (its road enters at x 31-32 on the bottom row).
-  exits: [{ x: 29, y: 0, w: 2, h: 1, to: 'near-woods', tx: 31, ty: 78, dir: 'up' }],
+  exits: [{ x: 29, y: 0, w: 2, h: 1, to: 'near-woods', tx: 31, ty: 78, dir: 'up' }, ...doors],
   objects,
 };
 

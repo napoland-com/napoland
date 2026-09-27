@@ -1,9 +1,11 @@
 /**
  * Energy: the one thing a trip spends. It drains out in the wilds, faster the deeper you are and in
- * bad weather, and refills in town and under street lights. At zero you collapse and wake up at home.
+ * bad weather; in town and inside buildings it holds. It only comes back next to a fireplace (shelters
+ * out in the wilds keep one burning, and so do some houses, home among them). At zero you collapse and
+ * wake up at home. Street lights do not give energy: light is for seeing.
  * The server owns the numbers; the client only shows them (and counts between updates using `rate`).
- * Tuning targets: a trip lasts 5 to 15 minutes; standing at the woods' edge in the rain empties
- * a full bar in about 11 minutes, the deep end of the Near Woods in under 4.
+ * Tuning targets: standing at the woods' edge in the rain empties a full bar in about 5.5 minutes,
+ * the deep end of the Near Woods in under 2, so the shelters' fires matter.
  */
 import type { TileMap } from './map';
 import type { Weather } from './protocol';
@@ -11,10 +13,10 @@ import type { Weather } from './protocol';
 /** A full bar, before levels raise it. */
 export const ENERGY_MAX = 100;
 /** Energy per second lost at a depth-1 region's home exit, in overcast weather. */
-export const DRAIN_PER_SECOND = 0.12;
+export const DRAIN_PER_SECOND = 0.24;
 /** Every this many steps away from the home exit adds DRAIN_PER_SECOND again. */
 export const DRAIN_GROWTH_STEPS = 60;
-/** Energy per second gained in town and under street lights. */
+/** Energy per second gained next to a fireplace. */
 export const REFILL_PER_SECOND = 8;
 /** Bad weather drains faster. */
 export const WEATHER_DRAIN: Readonly<Record<Weather, number>> = { overcast: 1, rain: 1.25, night: 1.5 };
@@ -28,9 +30,10 @@ export interface EnergyView {
   rate: number;
 }
 
-/** Energy change per second on tile x,y of `map`: positive refills, negative drains. */
+/** Energy change per second on tile x,y of `map`: positive refills, negative drains, 0 holds. */
 export function energyRate(map: TileMap, x: number, y: number, weather: Weather): number {
-  if (map.data.kind === 'town' || map.lit(x, y)) return REFILL_PER_SECOND;
+  if (map.warm(x, y)) return REFILL_PER_SECOND;
+  if (map.data.kind !== 'wilds') return 0;
   // A tile with no way home (it should not exist; the validator warns) counts as far away.
   const steps = map.homeSteps(x, y);
   const far = steps < 0 ? 3 * DRAIN_GROWTH_STEPS : steps;

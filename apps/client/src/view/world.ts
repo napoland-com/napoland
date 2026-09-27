@@ -1,17 +1,26 @@
 /**
- * Draws one map with three.js: tile terrain with ledges, forest, town props, weather and the
- * characters. Everything comes from the map data; this file only decides how it looks.
+ * Draws one map with three.js: tile terrain with ledges, forest, town props, the insides of
+ * buildings, fires, weather and the characters. Everything comes from the map data; this file only
+ * decides how it looks.
  *
  * The WebGL renderer lives for the whole visit (createRenderer); a WorldView is built for one map
  * and disposed when you leave it, which frees what it put on the GPU. Big maps stay fast on
  * phones: trees and ferns are drawn in blocks the camera skips when they are off screen, the
- * props that never move (houses, cars, signs, lamps, poles, barrels, fences) are joined into a few
- * meshes, and only the few lamps nearest you carry a real light.
+ * props that never move (houses, cars, signs, lamps, poles, barrels, fences, furniture, hearths)
+ * are joined into a few meshes, and only the few lamps and fires nearest you carry a real light.
+ * Inside a building (a map of kind 'inside') there is no weather and no world around the room, only
+ * black: see interior.ts for the room, fire.ts for the fire and lighting.ts for the light.
  */
 import * as THREE from 'three';
-import { DIR_VEC, type Dir, type MapObject, type TileKind, type TileMap, type Weather } from '@napoland/shared';
+import { DIR_VEC, type Dir, type MapData, type MapObject, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { makeNpc, makePlayer, type Rig } from './characters';
-import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, hash2, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
+import { Fires, GLOW_Y, Smoke, campfireModel, flicker, hearthModel, type Puffs } from './fire';
+import {
+  doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomTone, wallShapes, wallTile, windowModel, windowSpots,
+  type QuadFn, type WallShape,
+} from './interior';
+import { ambience, assignLights, lightSources, type Ambience, type LightSource } from './lighting';
+import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
 
 export interface Avatar {
   id: string;
@@ -38,19 +47,31 @@ const FACE: Record<Dir, number> = { down: 0, up: Math.PI, right: Math.PI / 2, le
  */
 const CHUNK = 8;
 /**
- * How many lamps carry a real light at once: the ones nearest you. Every light costs on every
- * pixel, so the rest glow through their material alone. Keeping the number fixed also means
+ * How many real point lights the lamps and fires share: the ones nearest you. Every light costs on
+ * every pixel, so the rest glow through their material alone. Keeping the number fixed also means
  * switching maps never recompiles the shaders.
  */
-const LAMP_LIGHTS = 4;
-/** Seconds a lamp's light takes to come on when it becomes one of the nearest. */
-const LAMP_FADE_S = 0.35;
+const LIGHTS = 4;
+/** Seconds a light takes to come on when its lamp or fire becomes one of the nearest. */
+const LIGHT_FADE_S = 0.35;
+const LAMP_COLOR = 0xff9a3c;
+const LAMP_REACH = 7;
+/** A fire's light is redder than a lamp's, and as strong whatever the weather: it is always burning. */
+const FIRE_COLOR = 0xff8438;
+const FIRE_REACH = 10;
+const FIRE_LIGHT = 2.6;
 /** The forest goes on this many tiles outside the map, so its edge never shows. */
 const RING = 4;
 /** Poles farther apart than this belong to different lines: no wire between them. */
 const MAX_WIRE = 10;
 /** One patch of mist for about this many tiles. */
 const MIST_TILES = 190;
+/** Blob shadows and the tap marker lie just above rugs (whose tops are at most 0.026), which lie on the floor. */
+const BLOB_Y = 0.036;
+/** A house's doorway: its width and height, and how deep it goes in (the front wall's thickness). */
+const DOOR_W = 0.6;
+const DOOR_H = 0.84;
+const DOOR_BACK = 0.2;
 
 /** The one WebGL context for the whole visit: phones allow few, and making one is slow. Views for each map share it. */
 export function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
@@ -106,14 +127,6 @@ function blocks<T extends { x: number; y: number }>(items: T[]): T[][] {
   return [...out.values()];
 }
 
-interface Lamp {
-  /** Where its light hangs (world units). */
-  x: number;
-  z: number;
-  flicker: boolean;
-  ph: number;
-}
-
 export class WorldView {
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(30, 1, 0.1, 400);
@@ -122,6 +135,12 @@ export class WorldView {
   private height = 1;
   private dist = 24;
   private weather: Weather = 'rain';
+  /** A town or the wilds (weather, the forest around, mist); false inside a building. */
+  private readonly outdoors: boolean;
+  /** An inside with a fire: warm and dim. One without is dark and cold. */
+  private readonly warmRoom: boolean;
+  /** How this place looks in the current weather (lighting.ts). */
+  private amb: Ambience;
   private readonly pitch = THREE.MathUtils.degToRad(62);
   private rigs = new Map<string, { rig: Rig; color: string; shadow: THREE.Mesh }>();
   private animate: Array<(t: number, dt: number) => void> = [];
@@ -129,13 +148,20 @@ export class WorldView {
   private sun = new THREE.DirectionalLight(0xc9d4d8, 0.36 * L);
   private flash = new THREE.SpotLight(0xfff0d0, 0, 10, 0.5, 0.6, 1.3);
   private flashTarget = new THREE.Object3D();
-  private lamps: Lamp[] = [];
-  /** The real lamp lights, each on one of the nearest lamps (index into `lamps`, -1 for none). */
-  private lampSlots = Array.from({ length: LAMP_LIGHTS }, () => ({ light: new THREE.PointLight(0xff9a3c, 0, 7, 2), lamp: -1, on: 0 }));
-  /** The tile the lamp lights were last placed for. */
-  private lampTile = NaN;
+  /** Lamps and fires: what may carry one of the real lights. */
+  private sources: LightSource[] = [];
+  /** The real lights, each on one of the nearest sources (index into `sources`, -1 for none). */
+  private slots = Array.from({ length: LIGHTS }, () => ({ light: new THREE.PointLight(LAMP_COLOR, 0, LAMP_REACH, 2), source: -1, on: 0 }));
+  /** The tile the lights were last handed out for. */
+  private lightTile = NaN;
   private lampMat = ownToon('#ffcf8a', { emissive: 0x000000 });
   private warm = ownToon('#3a2f25', { emissive: 0x8a5524 });
+  /** Seen through an open door: the inside of a house whose fire is burning (a dark house has a plain black one). */
+  private doorGlow = ownToon('#3a2f25', { emissive: 0x8a5524, side: THREE.BackSide });
+  /** Window panes seen from inside: the light outside. */
+  private paneMat = ownToon('#1b2330', { emissive: 0x6a8393 });
+  /** The light from the windows and the doorway on an inside's floor. */
+  private skyLight: THREE.MeshBasicMaterial | null = null;
   private capMat = ownToon('#8ee8da', { emissive: 0x0e3b37 });
   private headMat = ownToon('#fff1c4', { emissive: 0x000000 });
   private tailMat = ownToon('#7a1c16', { emissive: 0x000000 });
@@ -143,35 +169,49 @@ export class WorldView {
   private hasCar = false;
   private stoneLight = new THREE.PointLight(0xa66cff, 0, 7, 2);
   private hasStone = false;
-  private rain!: THREE.LineSegments;
+  /** Rain, mist and wisps: only outdoors. */
+  private rain: THREE.LineSegments | null = null;
   private rainMat = new THREE.LineBasicMaterial({ color: 0xaebfcc, transparent: true, opacity: 0.38, depthWrite: false });
   private mistMat = new THREE.MeshBasicMaterial({ map: softTexture(0.5), color: 0xc9d6dc, transparent: true, opacity: 0.12, depthWrite: false });
   private wispMat = new THREE.SpriteMaterial({ map: softTexture(0.25), color: 0x9ef6ff, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending });
   private wisps: Array<{ s: THREE.Sprite; core: THREE.Mesh; x: number; y: number; ph: number; r: number }> = [];
+  /** Chimney smoke, and every set of puffs (smoke, sparks), which need the screen's scale. */
+  private smoke: Smoke | null = null;
+  private puffs: Puffs[] = [];
   private marker: THREE.Mesh;
   private shadowGeo = new THREE.CircleGeometry(1, 14).rotateX(-Math.PI / 2);
   private shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
   /** Tiles outside the map in front of an exit on its edge: no outer forest there, and the exit's ground goes on. */
   private openings = new Map<string, { kind: TileKind; k: number }>();
+  /** How each wall tile is drawn (interior.ts). */
+  private shapes: WallShape[] = [];
   private ray = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
   private tmp = new THREE.Vector3();
+  private tmp2 = new THREE.Vector2();
 
-  constructor(private readonly renderer: THREE.WebGLRenderer, readonly map: TileMap) {
+  /** `peek` finds another map's data by id: a house smokes when the room behind its door keeps a fire. */
+  constructor(private readonly renderer: THREE.WebGLRenderer, readonly map: TileMap, private readonly peek: (id: string) => MapData | undefined = () => undefined) {
+    this.outdoors = map.data.kind !== 'inside';
+    this.warmRoom = !this.outdoors && hasFire(map.data);
+    this.amb = ambience(map.data.kind, this.weather, this.warmRoom);
     this.scene.background = new THREE.Color('#4c5961');
+    // Inside too, only pushed out of reach: a scene with fog and one without would need different shaders.
     this.scene.fog = new THREE.Fog('#4c5961', 30, 50);
     this.sun.position.set(-4, 10, 6);
     this.scene.add(this.hemi, this.sun, this.flash, this.flashTarget, this.headLight, this.stoneLight);
-    for (const s of this.lampSlots) this.scene.add(s.light);
+    for (const s of this.slots) this.scene.add(s.light);
     this.flash.target = this.flashTarget;
-    this.findOpenings();
+    if (this.outdoors) this.findOpenings();
     // What never moves or changes is built from hundreds of little boxes; it is drawn as a few meshes (see bake).
     const still: THREE.Object3D[] = [];
     this.buildTerrain(still);
     this.buildNature();
     this.buildTown(still);
+    this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
-    this.buildEffects();
+    if (this.outdoors) this.buildEffects();
+    this.sources = lightSources(map);
     this.marker = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.66, 4, 1, Math.PI / 4).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xe9e6de, transparent: true, opacity: 0.9, depthWrite: false }));
     this.marker.visible = false;
     this.scene.add(this.marker);
@@ -182,11 +222,13 @@ export class WorldView {
 
   /** Frees everything this view put on the GPU. The renderer and the shared toon materials stay for the next map. */
   dispose() {
+    for (const p of this.puffs) p.dispose();
     disposeTree(this.scene);
     this.scene.clear();
     this.rigs.clear();
     this.animate = [];
     this.wisps = [];
+    this.puffs = [];
   }
 
   /** Height of the ground a character stands on. */
@@ -214,23 +256,32 @@ export class WorldView {
   private buildTerrain(still: THREE.Object3D[]) {
     const { map } = this;
     const pos: number[] = [], col: number[] = [];
-    const quad = (a: number[], b: number[], c: number[], d: number[], color: THREE.Color) => {
-      for (const p of [a, b, c, a, c, d]) { pos.push(p[0]!, p[1]!, p[2]!); col.push(color.r, color.g, color.b); }
+    const quad: QuadFn = (a, b, c, d, ca, cb = ca, cc = ca, cd = ca) => {
+      const corners = [a, b, c, a, c, d], colors = [ca, cb, cc, ca, cc, cd];
+      for (let i = 0; i < 6; i++) { const p = corners[i]!, k = colors[i]!; pos.push(p[0], p[1], p[2]); col.push(k.r, k.g, k.b); }
     };
     const colors: Record<TileKind, [string, string]> = {
       grass: ['#3f5b3a', '#3a5637'], ferns: ['#2c4430', '#29402d'], road: ['#4b4e53', '#46494e'],
       lot: ['#5c5b57', '#565551'], mud: ['#554b3c', '#554b3c'], water: ['#152229', '#152229'],
       // Dark ground under the trees: little light gets through.
       forest: ['#1f2c21', '#1c291e'],
+      // Floors and walls have their own look (interior.ts); these are only their ground.
+      floor: ['#6b4a31', '#6b4a31'], wall: ['#1d1510', '#1d1510'],
     };
     const ground = (kind: TileKind, tx: number, ty: number, raised: boolean) => {
       const chk = (tx + ty) & 1;
       const c = new THREE.Color(kind === 'grass' && raised ? (chk ? '#34503a' : '#314b36') : colors[kind][chk]);
       return c.offsetHSL(0, 0, (hash2(tx * 5, ty * 3) - 0.5) * 0.025);
     };
+    // Outdoors, a building's timbers are weathered; indoors the room is warm if a fire burns in it.
+    const tone = roomTone(this.warmRoom);
+    this.shapes = wallShapes(map);
     for (let ty = 0; ty < map.height; ty++) for (let tx = 0; tx < map.width; tx++) {
       const kind = map.kind(tx, ty)!, y0 = this.topY(tx, ty), raised = map.level(tx, ty) > 0;
-      quad([tx, y0, ty], [tx, y0, ty + 1], [tx + 1, y0, ty + 1], [tx + 1, y0, ty], ground(kind, tx, ty, raised));
+      // A wall is a block of its own; one buried in other walls is not drawn at all (the void is black).
+      if (kind === 'wall') { wallTile(quad, map, this.shapes, tx, ty, tone); continue; }
+      if (kind === 'floor') floorTile(quad, tx, ty, tone, y0);
+      else quad([tx, y0, ty], [tx, y0, ty + 1], [tx + 1, y0, ty + 1], [tx + 1, y0, ty], ground(kind, tx, ty, raised));
       for (const [ox, oy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
         const ny = map.inside(tx + ox, ty + oy) ? this.topY(tx + ox, ty + oy) : 0;
         if (ny >= y0 - 0.001) continue;
@@ -255,9 +306,12 @@ export class WorldView {
     g.computeVertexNormals();
     this.terrain = new THREE.Mesh(g, ownToon(0xffffff, { vertexColors: true, side: THREE.DoubleSide }));
     this.scene.add(this.terrain);
-    const outerMat = toon(outerColor);
-    for (const [x, z, w, d] of [[W / 2, -60, W + 260, 120], [W / 2, H + 60, W + 260, 120], [-60, H / 2, 120, H], [W + 60, H / 2, 120, H]] as const) {
-      still.push(part(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), outerMat, x, -0.01, z, false));
+    // The ground goes on under the forest around the map. Not around a room: that is black.
+    if (this.outdoors) {
+      const outerMat = toon(outerColor);
+      for (const [x, z, w, d] of [[W / 2, -60, W + 260, 120], [W / 2, H + 60, W + 260, 120], [-60, H / 2, 120, H], [W + 60, H / 2, 120, H]] as const) {
+        still.push(part(new THREE.PlaneGeometry(w, d).rotateX(-Math.PI / 2), outerMat, x, -0.01, z, false));
+      }
     }
     // Center lines on two-lane roads. Not baked: they lie a hair above the road, and their own
     // material (made after the terrain's) keeps them drawn after it, so they win where the depth
@@ -324,8 +378,9 @@ export class WorldView {
         v: hash2(tx * 5 + 11, ty * 11),
       });
     }
+    // The forest around the map, so its edge never shows. A room has none: it is black around.
     const rng = mulberry32(99);
-    for (let y = -RING; y < H + RING; y++) for (let x = -RING; x < W + RING; x++) {
+    for (let y = -RING; y < H + RING && this.outdoors; y++) for (let x = -RING; x < W + RING; x++) {
       if (map.inside(x, y) || rng() >= 0.92) continue;
       const t = { x: x + 0.5 + (rng() - 0.5) * 0.3, y: y + 0.5, z: 0, s: 1.1 + rng() * 0.5, v: rng() };
       if (!this.openings.has(`${x},${y}`)) trees.push(t);
@@ -392,7 +447,7 @@ export class WorldView {
   /** Set by buildNature: makes the ferns on a tile rustle. */
   private rustleAt: (x: number, y: number) => void = () => {};
 
-  /** Props that never move go into `still` (to be baked); what moves (the Old Stone's crystal and debris, people) goes straight into the scene. */
+  /** Props that never move go into `still` (to be baked); what moves (the Old Stone's crystal and debris, smoke, people) goes straight into the scene. */
   private buildTown(still: THREE.Object3D[]) {
     const postGeo = new THREE.BoxGeometry(0.09, 0.4, 0.09), railGeo = new THREE.BoxGeometry(1, 0.06, 0.05);
     const post = (x: number, z: number, v: number) => {
@@ -411,20 +466,45 @@ export class WorldView {
       }
     }
 
-    for (const h of this.objects('house')) {
-      const g = new THREE.Group();
-      g.position.set(h.x + h.w / 2, 0, h.y + h.h / 2);
-      g.add(box(2.8, 1.15, 1.7, '#5b4838', 0, 0.575, 0));
-      for (const y of [0.33, 0.6, 0.87]) g.add(box(2.82, 0.03, 1.72, '#46372b', 0, y, 0, false));
+    // Every house can be entered: its door stands open. Behind a burning fire the doorway glows and the chimney smokes.
+    const chimneys: THREE.Vector3[] = [];
+    for (const { house: h, x: doorX, fire } of houseDoors(this.map, this.peek)) {
+      const g = new THREE.Group(), cx = h.x + h.w / 2, cz = h.y + h.h / 2;
+      g.position.set(cx, 0, cz);
+      // The door's middle across the front: 0 for the usual three-tile house, whose door is its middle tile.
+      const dx = doorX + 0.5 - cx, wall = '#5b4838', board = '#46372b';
+      // The walls, open where the door is: the back of the house whole, the front wall around a
+      // doorway deep enough to walk into, since you stand on the door tile before going in.
+      g.add(box(2.8, 1.15, 0.85 + DOOR_BACK, wall, 0, 0.575, (DOOR_BACK - 0.85) / 2));
+      const fz = (DOOR_BACK + 0.85) / 2, fd = 0.85 - DOOR_BACK, left = dx - DOOR_W / 2 + 1.4, right = 1.4 - dx - DOOR_W / 2;
+      g.add(box(left, 1.15, fd, wall, -1.4 + left / 2, 0.575, fz), box(right, 1.15, fd, wall, 1.4 - right / 2, 0.575, fz));
+      g.add(box(DOOR_W, 1.15 - DOOR_H, fd, wall, dx, (1.15 + DOOR_H) / 2, fz));
+      // Boards across the siding: on both sides, and on the front beside the doorway (or over it).
+      for (const y of [0.33, 0.6, 0.87]) {
+        for (const sx of [-1.405, 1.405]) g.add(box(0.012, 0.03, 1.72, board, sx, y, 0, false));
+        if (y > DOOR_H) g.add(box(2.82, 0.03, 0.012, board, 0, y, 0.856, false));
+        else g.add(box(left + 0.01, 0.03, 0.012, board, -1.405 + left / 2, y, 0.856, false), box(right + 0.01, 0.03, 0.012, board, 1.405 - right / 2, y, 0.856, false));
+      }
       for (const [px, pz] of [[-1.38, -0.83], [1.38, -0.83], [-1.38, 0.83], [1.38, 0.83]] as const) g.add(box(0.12, 1.2, 0.12, '#34281f', px, 0.6, pz, false));
       g.add(box(3.34, 0.09, 2.36, new THREE.Color(h.roof).offsetHSL(0, 0, -0.1).getStyle(), 0, 1.19, 0));
       // One side is enough: the roof's open bottom rests on the slab, so its inside never shows.
       g.add(part(prism(3.3, 1.0, 2.3), h.roof, 0, 1.23, 0, 0.03));
-      g.add(box(0.5, 0.78, 0.06, '#2e241c', 0, 0.39, 0.86));
-      g.add(box(0.72, 0.08, 0.32, '#4f4a44', 0, 0.04, 1.02, false));
+      // The doorway: its inside seen from without (a box drawn from within), warm where a fire burns,
+      // black in an empty house; a frame around it, the door swung out, and a mat in front.
+      g.add(part(new THREE.BoxGeometry(DOOR_W - 0.02, DOOR_H - 0.02, fd), fire ? this.doorGlow : toon('#0a0807', { side: THREE.BackSide }), dx, DOOR_H / 2, fz + 0.005, false));
+      for (const s of [-1, 1]) g.add(box(0.07, DOOR_H + 0.05, 0.08, '#2e241c', dx + s * (DOOR_W / 2 + 0.035), (DOOR_H + 0.05) / 2, 0.86, 0.015));
+      g.add(box(DOOR_W + 0.2, 0.07, 0.09, '#2e241c', dx, DOOR_H + 0.05, 0.86, 0.015));
+      const hinge = new THREE.Group();
+      hinge.position.set(dx - DOOR_W / 2, 0, 0.87);
+      // Wide open where someone lives; hanging off to one side in an empty house.
+      hinge.rotation.y = h.lit ? -1.95 : -1.68;
+      hinge.add(box(DOOR_W - 0.04, DOOR_H - 0.04, 0.05, h.lit ? '#4a3526' : '#3d352d', (DOOR_W - 0.04) / 2, (DOOR_H - 0.04) / 2 + 0.01, 0, 0.018));
+      hinge.add(box(0.04, 0.04, 0.03, '#b09a62', DOOR_W - 0.12, 0.44, 0.04, false));
+      g.add(hinge);
+      g.add(box(0.66, 0.014, 0.36, '#6d4d35', dx, 0.007, 1.07, false), box(0.52, 0.02, 0.24, '#4a3024', dx, 0.01, 1.07, false));
       // Someone lives in a lit house: a lamp over the door and one warm window. An unlit one is
       // abandoned: dark, windows boarded up.
-      if (h.lit) g.add(part(new THREE.BoxGeometry(0.14, 0.1, 0.08), this.warm, 0, 0.95, 0.88, false));
+      if (h.lit) g.add(part(new THREE.BoxGeometry(0.14, 0.1, 0.08), this.warm, dx, 1.0, 0.9, false));
       [-0.85, 0.85].forEach((wx, k) => {
         g.add(box(0.58, 0.5, 0.04, '#2a221b', wx, 0.72, 0.855, false));
         const lit = !!h.lit && k === 0;
@@ -435,7 +515,14 @@ export class WorldView {
         }
       });
       g.add(box(0.28, 0.55, 0.28, '#58554f', 0.9, 1.95, -0.35));
+      if (fire) chimneys.push(new THREE.Vector3(cx + 0.9, 2.26, cz - 0.35));
       still.push(g);
+    }
+    if (chimneys.length) {
+      const smoke = (this.smoke = new Smoke(chimneys));
+      this.scene.add(smoke.puffs.points);
+      this.puffs.push(smoke.puffs);
+      this.animate.push(t => smoke.update(t));
     }
 
     const barrelGeo = flat(new THREE.CylinderGeometry(0.2, 0.2, 0.5, 8));
@@ -478,16 +565,14 @@ export class WorldView {
       g.add(box(0.4, 0.04, 0.01, '#2e241c', 0, 0.54, 0.04, false), box(0.3, 0.04, 0.01, '#2e241c', 0, 0.46, 0.04, false));
       still.push(g);
     }
-    this.objects('lamp').forEach((l, i) => {
+    for (const l of this.objects('lamp')) {
       const g = new THREE.Group();
       g.position.set(l.x + 0.5, 0, l.y + 0.5);
       g.add(part(flat(new THREE.CylinderGeometry(0.045, 0.06, 1.3, 6)), '#2f343c', 0, 0.65, 0, 0.02));
       // The head keeps its own glowing material: all the lamp heads become one mesh of their own.
       g.add(box(0.42, 0.05, 0.08, '#2f343c', 0.18, 1.3, 0), part(new THREE.BoxGeometry(0.2, 0.1, 0.16), this.lampMat, 0.34, 1.24, 0, 0.02));
       still.push(g);
-      // Every third lamp flickers, like the one by the lot in town always has.
-      this.lamps.push({ x: l.x + 0.84, z: l.y + 0.5, flicker: i % 3 === 1, ph: hash2(l.x, l.y) * 6 });
-    });
+    }
     // Utility poles with sagging wires, in the order the map lists them.
     const poles = this.objects('pole');
     const within = (p: (typeof poles)[number], q?: (typeof poles)[number]) => (q && Math.hypot(q.x - p.x, q.y - p.y) <= MAX_WIRE ? q : undefined);
@@ -548,6 +633,48 @@ export class WorldView {
     }
   }
 
+  /**
+   * What stands in a room: furniture, fireplaces (with their fire), soft shadows under the
+   * furniture and, inside, the windows, the doorway's mat and the cold light both let in.
+   * Fireplaces burn wherever a map has one, outdoors too.
+   */
+  private buildRoom(still: THREE.Object3D[]) {
+    const { map } = this;
+    for (const o of map.data.objects) {
+      const m = furnitureModel(o, map);
+      if (m) still.push(m);
+    }
+    const fireplaces = this.objects('fireplace');
+    if (fireplaces.length) {
+      const embers = new THREE.MeshBasicMaterial({ color: 0xff7a2a });
+      const spots = fireplaces.map(f => {
+        const { model, spot } = hearthAt(map, f.x, f.y) ? hearthModel(f.x, f.y, embers) : campfireModel(f.x, f.y, embers);
+        still.push(model);
+        return { ...spot, ph: hash2(f.x, f.y) * 6 };
+      });
+      const fires = new Fires(spots, embers);
+      this.scene.add(...fires.objects);
+      this.puffs.push(fires.sparks);
+      this.animate.push(t => fires.update(t));
+    }
+    this.instanced(this.shadowGeo, furnitureShadows(map), ([x, z, rx, rz], o) => { o.position.set(x, BLOB_Y, z); o.scale.set(rx, 1, rz); }, this.shadowMat);
+    if (this.outdoors) return;
+    const light: Array<readonly [number, number, number, number]> = [];
+    for (const w of windowSpots(map, this.shapes)) {
+      still.push(windowModel(w.x, w.y, this.paneMat, !this.warmRoom));
+      light.push([w.x + 0.5, w.y + 1.95, 1.5, 2.1]);
+    }
+    for (const d of doorways(map)) {
+      still.push(doorwayModel(d.x, d.y, d.dir));
+      const [dx, dy] = DIR_VEC[d.dir];
+      light.push([d.x + 0.5 - dx * 0.8, d.y + 0.5 - dy * 0.8, dx ? 2.4 : 1.6, dx ? 1.6 : 2.4]);
+    }
+    if (light.length) {
+      this.skyLight = new THREE.MeshBasicMaterial({ map: softTexture(0.4), color: 0xa9c2d6, transparent: true, opacity: 0.15, depthWrite: false, blending: THREE.AdditiveBlending });
+      this.scene.add(new THREE.Mesh(glowQuads(light, GLOW_Y), this.skyLight));
+    }
+  }
+
   private buildEffects() {
     const { map } = this;
     const rng = mulberry32(4242);
@@ -596,11 +723,11 @@ export class WorldView {
     const drops = Array.from({ length: RAIN }, () => ({ x: rng() * 30 - 15, y: rng() * 12, z: rng() * 30 - 15, s: 9 + rng() * 4 }));
     const rainGeo = new THREE.BufferGeometry();
     rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
-    this.rain = new THREE.LineSegments(rainGeo, this.rainMat);
-    this.rain.frustumCulled = false;
-    this.scene.add(this.rain);
+    const rain = (this.rain = new THREE.LineSegments(rainGeo, this.rainMat));
+    rain.frustumCulled = false;
+    this.scene.add(rain);
     this.animateRain = (focus, dt) => {
-      if (!this.rain.visible) return;
+      if (!rain.visible) return;
       for (let i = 0; i < RAIN; i++) {
         const d = drops[i]!;
         d.y -= d.s * dt;
@@ -617,41 +744,44 @@ export class WorldView {
   private blob(r: number, x: number, z: number): THREE.Mesh {
     const m = new THREE.Mesh(this.shadowGeo, this.shadowMat);
     m.scale.setScalar(r);
-    m.position.set(x, 0.012, z);
+    m.position.set(x, BLOB_Y, z);
     return m;
   }
 
+  /** The weather everyone shares. Inside, only the windows (and the light they let in) show it. */
   setWeather(w: Weather) {
     this.weather = w;
-    const night = w === 'night', wet = w !== 'overcast';
-    this.hemi.color.set(night ? '#2c3a58' : wet ? '#8494a0' : '#a3b3bb');
-    this.hemi.groundColor.set(night ? '#07090c' : '#1a221d');
-    this.hemi.intensity = (night ? 0.34 : wet ? 0.5 : 0.58) * L;
-    this.sun.color.set(night ? '#7088b8' : '#c9d4d8');
-    this.sun.intensity = (night ? 0.18 : wet ? 0.26 : 0.36) * L;
-    const fog = night ? '#0a0f15' : wet ? '#465259' : '#5a676d';
-    (this.scene.background as THREE.Color).set(fog);
-    (this.scene.fog as THREE.Fog).color.set(fog);
-    this.lampMat.emissive.set(night ? '#ffb266' : wet ? '#b3702e' : '#7a4f24');
-    this.warm.emissive.set(night ? '#ffb45a' : '#8a5524');
-    this.flash.intensity = night ? 1.6 * L : 0;
-    this.headLight.intensity = night && this.hasCar ? 1.3 * L : 0;
-    this.headMat.emissive.set(night ? '#fff1c4' : '#000000');
-    this.tailMat.emissive.set(night ? '#c8281c' : '#000000');
-    this.capMat.emissive.set(night ? '#2fb8a8' : '#0e3b37');
-    this.rain.visible = wet;
-    this.rainMat.color.set(night ? '#5f7fa0' : '#aebfcc');
-    this.rainMat.opacity = night ? 0.3 : 0.38;
-    this.mistMat.color.set(night ? '#4b5a66' : '#c9d6dc');
-    this.mistMat.opacity = night ? 0.1 : 0.13;
-    this.wispMat.opacity = night ? 0.95 : 0.55;
+    const a = (this.amb = ambience(this.map.data.kind, w, this.warmRoom));
+    this.hemi.color.set(a.hemi.sky);
+    this.hemi.groundColor.set(a.hemi.ground);
+    this.hemi.intensity = a.hemi.intensity * L;
+    this.sun.color.set(a.sun.color);
+    this.sun.intensity = a.sun.intensity * L;
+    (this.scene.background as THREE.Color).set(a.sky);
+    (this.scene.fog as THREE.Fog).color.set(a.sky);
+    this.lampMat.emissive.set(a.lampGlow);
+    this.warm.emissive.set(a.warmGlow);
+    this.doorGlow.emissive.set(a.warmGlow);
+    this.flash.intensity = a.flashlight ? 1.6 * L : 0;
+    this.headLight.intensity = a.carLights && this.hasCar ? 1.3 * L : 0;
+    this.headMat.emissive.set(a.carLights ? '#fff1c4' : '#000000');
+    this.tailMat.emissive.set(a.carLights ? '#c8281c' : '#000000');
+    this.capMat.emissive.set(a.capGlow);
+    if (this.rain) this.rain.visible = !!a.rain;
+    if (a.rain) { this.rainMat.color.set(a.rain.color); this.rainMat.opacity = a.rain.opacity; }
+    if (a.mist) { this.mistMat.color.set(a.mist.color); this.mistMat.opacity = a.mist.opacity; }
+    this.wispMat.opacity = a.wisps;
+    this.smoke?.puffs.color.set(a.smoke);
+    this.paneMat.emissive.set(a.window.glow);
+    if (this.skyLight) this.skyLight.opacity = a.window.light;
     this.updateFog();
   }
 
   private updateFog() {
-    const night = this.weather === 'night', wet = this.weather !== 'overcast', d = this.dist, fog = this.scene.fog as THREE.Fog;
+    const fog = this.scene.fog as THREE.Fog, f = this.amb.fog, d = this.dist;
+    if (!f) { fog.near = 1e4; fog.far = 2e4; return; }
     fog.near = Math.max(1, d - 1.5);
-    fog.far = d + (night ? Math.max(7, d * 0.25) : wet ? Math.max(10, d * 0.35) : Math.max(14, d * 0.45));
+    fog.far = d + Math.max(f.min, d * f.share);
   }
 
   /** Size in CSS pixels. The camera keeps the same circle of world around the player on every screen shape. */
@@ -665,6 +795,9 @@ export class WorldView {
     else this.camera.clearViewOffset();
     this.dist = Math.min(56, Math.max(12, 6.2 / (Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * Math.min(1, this.camera.aspect))));
     this.camera.updateProjectionMatrix();
+    // Smoke and sparks are sized in world units: the pixels one unit covers, one unit from the camera.
+    const perUnit = this.renderer.getDrawingBufferSize(this.tmp2).y / (2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)));
+    for (const p of this.puffs) p.resize(perUnit);
     this.updateFog();
   }
 
@@ -689,41 +822,43 @@ export class WorldView {
     for (const a of this.animate) a(t, dt);
     this.animateRain({ x: fx, y: fz }, dt);
     this.syncAvatars(avatars, meId);
-    this.lightLamps(fx, fz, t, dt);
+    this.light(fx, fz, t, dt);
     this.stoneLight.intensity = this.hasStone ? (this.weather === 'night' ? 2.4 : 1.2) * L * (0.85 + 0.15 * Math.sin(t * 3.1)) : 0;
     this.marker.visible = !!marker;
     if (marker) {
-      this.marker.position.set(marker.x + 0.5, this.groundAt(marker.x + 0.5, marker.y + 0.5) + 0.02, marker.y + 0.5);
+      this.marker.position.set(marker.x + 0.5, this.groundAt(marker.x + 0.5, marker.y + 0.5) + BLOB_Y + 0.006, marker.y + 0.5);
       (this.marker.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - marker.t / 0.8);
     }
     this.renderer.render(this.scene, this.camera);
   }
 
-  /** Puts the real lamp lights on the lamps nearest the player (again whenever the player reaches a new tile). */
-  private lightLamps(fx: number, fz: number, t: number, dt: number) {
+  /** Puts the real lights on the lamps and fires nearest the player (again whenever the player reaches a new tile). */
+  private light(fx: number, fz: number, t: number, dt: number) {
     const tile = Math.floor(fz) * 65536 + Math.floor(fx);
-    if (tile !== this.lampTile) {
-      this.lampTile = tile;
-      const d2 = (i: number) => (this.lamps[i]!.x - fx) ** 2 + (this.lamps[i]!.z - fz) ** 2;
-      const near = this.lamps.map((_, i) => i).sort((a, b) => d2(a) - d2(b)).slice(0, LAMP_LIGHTS);
-      // A light already on a lamp that is still near stays where it is, so it does not blink.
-      const free = this.lampSlots.filter(s => !near.includes(s.lamp));
-      for (const i of near) {
-        if (this.lampSlots.some(s => s.lamp === i)) continue;
-        const s = free.pop()!;
-        s.lamp = i;
+    if (tile !== this.lightTile) {
+      this.lightTile = tile;
+      const next = assignLights(this.slots.map(s => s.source), this.sources, fx, fz);
+      this.slots.forEach((s, k) => {
+        const i = next[k]!;
+        if (i === s.source) return;
+        s.source = i;
         s.on = 0;
-        s.light.position.set(this.lamps[i]!.x, 1.1, this.lamps[i]!.z);
-      }
-      for (const s of free) s.lamp = -1;
+        const src = this.sources[i];
+        if (!src) return;
+        // A light moved to another kind of source takes its color and reach (uniforms: no shader change).
+        s.light.position.set(src.x, src.y, src.z);
+        s.light.color.set(src.kind === 'fire' ? FIRE_COLOR : LAMP_COLOR);
+        s.light.distance = src.kind === 'fire' ? FIRE_REACH : LAMP_REACH;
+      });
     }
-    const base = (this.weather === 'night' ? 1.8 : this.weather === 'rain' ? 0.9 : 0.5) * L;
-    for (const s of this.lampSlots) {
-      const lamp = this.lamps[s.lamp];
-      if (!lamp) { s.light.intensity = 0; continue; }
-      s.on = Math.min(1, s.on + dt / LAMP_FADE_S);
-      const flicker = lamp.flicker && (Math.sin(t * 13 + lamp.ph) > 0.92 || Math.sin(t * 2.3 + lamp.ph) > 0.97) ? 0.15 : 1;
-      s.light.intensity = base * flicker * s.on;
+    const lamp = (this.weather === 'night' ? 1.8 : this.weather === 'rain' ? 0.9 : 0.5) * L;
+    for (const s of this.slots) {
+      const src = this.sources[s.source];
+      if (!src) { s.light.intensity = 0; continue; }
+      s.on = Math.min(1, s.on + dt / LIGHT_FADE_S);
+      if (src.kind === 'fire') { s.light.intensity = FIRE_LIGHT * L * flicker(t, src.ph) * s.on; continue; }
+      const off = src.flicker && (Math.sin(t * 13 + src.ph) > 0.92 || Math.sin(t * 2.3 + src.ph) > 0.97) ? 0.15 : 1;
+      s.light.intensity = lamp * off * s.on;
     }
   }
 
@@ -741,12 +876,12 @@ export class WorldView {
       const x = a.x + 0.5, z = a.y + 0.5, gy = this.groundAt(x, z), { rig } = e;
       rig.root.position.set(x, gy + (a.moving ? Math.abs(Math.sin(a.phase)) * 0.045 : 0), z);
       rig.root.rotation.y = FACE[a.dir];
-      e.shadow.position.set(x, gy + 0.012, z);
+      e.shadow.position.set(x, gy + BLOB_Y, z);
       const sw = a.moving ? Math.sin(a.phase) * 0.95 : a.turnT > 0 ? Math.sin((1 - a.turnT / 0.14) * Math.PI) * 0.45 : 0;
       rig.legL.rotation.x = sw; rig.legR.rotation.x = -sw;
       rig.armL.rotation.x = -sw * 0.7; rig.armR.rotation.x = sw * 0.7;
       if (a.moving) this.rustleAt(x, z);
-      if (a.id === meId && this.weather === 'night') {
+      if (a.id === meId && this.amb.flashlight) {
         const [dx, dy] = DIR_VEC[a.dir];
         this.flash.position.set(x + dx * 0.2, gy + 0.75, z + dy * 0.2);
         this.flashTarget.position.set(x + dx * 4, gy, z + dy * 4);

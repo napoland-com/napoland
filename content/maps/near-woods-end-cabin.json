@@ -1,0 +1,40 @@
+{
+  "id": "near-woods-end-cabin",
+  "name": "The cabin at the end",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 9,
+  "height": 7,
+  "tiles": [
+    "xxxxxxxxx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xxxxpxxxx"
+  ],
+  "levels": [
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000"
+  ],
+  "spawn": {"x":4,"y":5,"dir":"up"},
+  "exits": [
+    {"x":4,"y":6,"w":1,"h":1,"to":"near-woods","tx":55,"ty":5,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"fireplace","x":3,"y":1},
+    {"kind":"rug","x":2,"y":2,"w":3,"h":2},
+    {"kind":"shelf","x":6,"y":1},
+    {"kind":"shelf","x":7,"y":1},
+    {"kind":"table","x":6,"y":3},
+    {"kind":"bed","x":1,"y":4},
+    {"kind":"crate","x":7,"y":5}
+  ]
+}

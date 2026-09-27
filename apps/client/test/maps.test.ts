@@ -19,4 +19,9 @@ describe('bundled maps', () => {
   it('starts in a town', () => {
     expect(maps.home().data.id).toBe('town');
   });
+
+  it('shows another map\'s data by id, to see where an exit leads', () => {
+    expect(maps.find('woods')?.name).toBe('The Test Woods');
+    expect(maps.find('far-woods')).toBeUndefined();
+  });
 });

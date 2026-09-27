@@ -30,8 +30,10 @@ screen.appendChild(canvas);
 app.appendChild(screen);
 
 const renderer = createRenderer(canvas);
+/** A view sees other maps' data: a house whose room keeps a fire has smoke over its chimney. */
+const peek = (id: string) => maps.find(id);
 /** The view of the map you are on; replaced (and the old one freed) when you arrive somewhere else. */
-let view = new WorldView(renderer, maps.home());
+let view = new WorldView(renderer, maps.home(), peek);
 let weather: Weather = 'rain';
 /** The server accepts game messages only after its welcome on the current connection. */
 let welcomed = false;
@@ -65,7 +67,7 @@ const arrival = new Arrival(held => {
   hud.setOnline(game.players.size);
   if (view.map !== game.map) {
     view.dispose();
-    view = new WorldView(renderer, game.map);
+    view = new WorldView(renderer, game.map, peek);
     view.setWeather(weather);
     resize();
   }

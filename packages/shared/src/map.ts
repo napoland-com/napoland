@@ -3,8 +3,9 @@
  * reviewed and validated; TileMap turns it into fast lookups for the server and the client.
  *
  * The world is several maps joined by exits, like the towns and routes of FireRed: walking onto an
- * exit tile takes you to another map. A map is either a town (safe: energy refills) or part of the
- * wilds (energy drains, more the deeper you are). See energy.ts.
+ * exit tile takes you to another map. A map is a town, part of the wilds (energy drains there, more
+ * the deeper you are) or the inside of a building. Every house can be entered: its door is an exit
+ * to a small map of its own. Energy only comes back near a fireplace. See energy.ts.
  */
 import type { Dir } from './protocol';
 
@@ -18,12 +19,16 @@ export const TILE_CHARS = {
   f: 'ferns',
   /** Dense trees: nobody walks through. Drawn as one tree per tile, varied by position. */
   t: 'forest',
+  /** Wooden floor, inside buildings. */
+  p: 'floor',
+  /** A building's wall, inside: nobody walks through. */
+  x: 'wall',
 } as const;
 export type TileChar = keyof typeof TILE_CHARS;
 export type TileKind = (typeof TILE_CHARS)[TileChar];
 
-/** Towns are safe and refill energy; the wilds drain it. */
-export type MapKind = 'town' | 'wilds';
+/** The wilds drain energy; towns and the insides of buildings do not. */
+export type MapKind = 'town' | 'wilds' | 'inside';
 
 /**
  * Walking onto any tile of this rectangle takes you to map `to`. The rectangle's top-left tile
@@ -43,8 +48,10 @@ export interface MapExit {
   home?: boolean;
 }
 
-/** How far a street light reaches, from the lamp's tile center to a tile's center. */
+/** How far a street light reaches, from the lamp's tile center to a tile's center. Light is for seeing, not energy. */
 export const LAMP_RADIUS = 2.5;
+/** How close to a fireplace you must be to recover energy, center to center: the tiles around it. */
+export const FIRE_RADIUS = 1.5;
 
 export type MapObject =
   | { kind: 'tree'; x: number; y: number; s: number; v: number }
@@ -58,7 +65,15 @@ export type MapObject =
   | { kind: 'car'; x: number; y: number; w: number }
   | { kind: 'stone'; x: number; y: number }
   | { kind: 'npc'; x: number; y: number; id: string; name: string; dir: Dir; lines: string[] }
-  | { kind: 'shrooms'; x: number; y: number };
+  | { kind: 'shrooms'; x: number; y: number }
+  /** Always burning. Stand on a tile next to it to recover energy. */
+  | { kind: 'fireplace'; x: number; y: number }
+  /** Furniture, inside buildings. A bed is one tile wide and two long (head at y); a rug is only drawn. */
+  | { kind: 'bed'; x: number; y: number }
+  | { kind: 'table'; x: number; y: number }
+  | { kind: 'shelf'; x: number; y: number }
+  | { kind: 'crate'; x: number; y: number }
+  | { kind: 'rug'; x: number; y: number; w: number; h: number };
 
 export interface MapData {
   id: string;
@@ -89,16 +104,28 @@ export interface Arrival {
   dir: Dir;
 }
 
-/** Objects that stand on a tile and stop anyone from walking onto it. */
-const BLOCKING = new Set<MapObject['kind']>(['tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc']);
+/** Objects that stand on a tile and stop anyone from walking onto it (a house's door tile excepted). */
+const BLOCKING = new Set<MapObject['kind']>([
+  'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate',
+]);
+/** Objects that are only drawn: you walk over or through them. */
+export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug']);
 
-/** Tiles covered by an object (houses and cars are bigger than one tile). */
+/** Tiles covered by an object (houses, cars, beds and rugs are bigger than one tile). */
 export function objectTiles(o: MapObject): Array<[number, number]> {
-  const w = o.kind === 'house' || o.kind === 'car' ? o.w : 1;
-  const h = o.kind === 'house' ? o.h : 1;
+  const w = o.kind === 'house' || o.kind === 'car' || o.kind === 'rug' ? o.w : 1;
+  const h = o.kind === 'house' || o.kind === 'rug' ? o.h : o.kind === 'bed' ? 2 : 1;
   const out: Array<[number, number]> = [];
   for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) out.push([o.x + dx, o.y + dy]);
   return out;
+}
+
+/**
+ * A house's door: the middle of its front (bottom) row. The door tile is open, and it must be an
+ * exit to the house's inside (the validator checks), so every building can be entered.
+ */
+export function doorOf(house: Extract<MapObject, { kind: 'house' }>): { x: number; y: number } {
+  return { x: house.x + Math.floor(house.w / 2), y: house.y + house.h - 1 };
 }
 
 export class TileMap {
@@ -111,6 +138,8 @@ export class TileMap {
   private readonly exitIndex: Int16Array;
   /** 1 where a street light reaches. */
   private readonly litTiles: Uint8Array;
+  /** 1 next to a fireplace, where energy comes back. */
+  private readonly warmTiles: Uint8Array;
   /** Steps from each tile to the nearest home exit (-1: no way there); all 0 in towns. */
   private readonly stepsHome: Int32Array;
 
@@ -133,24 +162,25 @@ export class TileMap {
       }
     }
     for (const o of data.objects) if (BLOCKING.has(o.kind)) for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.blocked[y * W + x] = 1;
+    // Every house can be entered: its door tile stays open (it is an exit to the house's inside).
+    for (const o of data.objects) {
+      if (o.kind !== 'house') continue;
+      const d = doorOf(o);
+      if (this.inside(d.x, d.y)) this.blocked[d.y * W + d.x] = 0;
+    }
 
     this.exitIndex = new Int16Array(W * H).fill(-1);
     (data.exits ?? []).forEach((e, i) => {
       for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) if (this.inside(x, y)) this.exitIndex[y * W + x] = i;
     });
 
-    this.litTiles = new Uint8Array(W * H);
-    const r = Math.ceil(LAMP_RADIUS);
-    for (const o of data.objects) {
-      if (o.kind !== 'lamp') continue;
-      for (let y = o.y - r; y <= o.y + r; y++) for (let x = o.x - r; x <= o.x + r; x++) {
-        if (this.inside(x, y) && Math.hypot(x - o.x, y - o.y) <= LAMP_RADIUS) this.litTiles[y * W + x] = 1;
-      }
-    }
+    this.litTiles = this.around('lamp', LAMP_RADIUS);
+    this.warmTiles = this.around('fireplace', FIRE_RADIUS);
 
-    // Distance home, walking: breadth-first from every home exit tile at once.
-    this.stepsHome = new Int32Array(W * H).fill(data.kind === 'town' ? 0 : -1);
-    if (data.kind !== 'town') {
+    // Distance home, walking: breadth-first from every home exit tile at once. Only the wilds
+    // measure it; towns and the insides of buildings are safe, so every tile there counts as 0.
+    this.stepsHome = new Int32Array(W * H).fill(data.kind === 'wilds' ? -1 : 0);
+    if (data.kind === 'wilds') {
       const queue: number[] = [];
       (data.exits ?? []).forEach(e => {
         if (!e.home) return;
@@ -177,12 +207,29 @@ export class TileMap {
     return { to: e.to, x: e.tx + (x - e.x), y: e.ty + (y - e.y), dir: e.dir };
   }
 
-  /** Is this tile in the light of a street lamp? */
+  /** Is this tile in the light of a street lamp? (Light is for seeing; it does not give energy.) */
   lit(x: number, y: number): boolean {
     return this.inside(x, y) && this.litTiles[y * this.width + x] === 1;
   }
 
-  /** Walking steps from this tile to the nearest home exit; 0 in towns, -1 if there is no way. */
+  /** Is this tile next to a fireplace, where energy comes back? */
+  warm(x: number, y: number): boolean {
+    return this.inside(x, y) && this.warmTiles[y * this.width + x] === 1;
+  }
+
+  /** The tiles within `radius` of any object of `kind`, center to center. */
+  private around(kind: MapObject['kind'], radius: number): Uint8Array {
+    const out = new Uint8Array(this.width * this.height), r = Math.ceil(radius);
+    for (const o of this.data.objects) {
+      if (o.kind !== kind) continue;
+      for (let y = o.y - r; y <= o.y + r; y++) for (let x = o.x - r; x <= o.x + r; x++) {
+        if (this.inside(x, y) && Math.hypot(x - o.x, y - o.y) <= radius) out[y * this.width + x] = 1;
+      }
+    }
+    return out;
+  }
+
+  /** Walking steps from this tile to the nearest home exit; 0 in towns and insides, -1 if there is no way. */
   homeSteps(x: number, y: number): number {
     return this.inside(x, y) ? this.stepsHome[y * this.width + x]! : -1;
   }
@@ -204,6 +251,6 @@ export class TileMap {
     if (!Number.isInteger(x) || !Number.isInteger(y) || !this.inside(x, y)) return false;
     const i = y * this.width + x;
     const kind = this.kinds[i];
-    return this.blocked[i] === 0 && kind !== 'water' && kind !== 'forest' && this.levels[i] === 0;
+    return this.blocked[i] === 0 && kind !== 'water' && kind !== 'forest' && kind !== 'wall' && this.levels[i] === 0;
   }
 }

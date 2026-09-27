@@ -1,0 +1,40 @@
+{
+  "id": "stonebrook-empty-house",
+  "name": "The empty house",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 9,
+  "height": 7,
+  "tiles": [
+    "xxxxxxxxx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xxxxpxxxx"
+  ],
+  "levels": [
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000"
+  ],
+  "spawn": {"x":4,"y":5,"dir":"up"},
+  "exits": [
+    {"x":4,"y":6,"w":1,"h":1,"to":"stonebrook","tx":15,"ty":21,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"shelf","x":2,"y":1},
+    {"kind":"crate","x":6,"y":1},
+    {"kind":"crate","x":7,"y":1},
+    {"kind":"crate","x":7,"y":2},
+    {"kind":"crate","x":3,"y":3},
+    {"kind":"table","x":1,"y":4},
+    {"kind":"crate","x":6,"y":5}
+  ]
+}

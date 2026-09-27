@@ -4,19 +4,31 @@ import {
   findPath, parseClientMsg, stepTarget, validateMap, validateWorld, type MapData,
 } from '../src';
 
-/** A 6x5 town: water on the right, a house in the middle, a raised tile top-left. */
+/** A 6x5 town: water on the right, a house in the middle (its door at 2,1 leads inside), a raised tile top-left. */
 function tinyMap(): MapData {
   return {
     id: 'tiny', name: 'Tiny', version: 1, kind: 'town', depth: 0, width: 6, height: 5,
     tiles: ['ggggww', 'ggggww', 'grrrww', 'ggggww', 'ffggww'],
     levels: ['100000', '000000', '000000', '000000', '000000'],
     spawn: { x: 1, y: 3, dir: 'down' },
-    exits: [],
+    exits: [{ x: 2, y: 1, w: 1, h: 1, to: 'tiny-house', tx: 2, ty: 3, dir: 'up' }],
     objects: [
       { kind: 'house', x: 1, y: 0, w: 3, h: 2, roof: '#6b7075', lit: 1 },
       { kind: 'sign', x: 3, y: 3, text: ['Hello'] },
       { kind: 'shrooms', x: 0, y: 4 },
     ],
+  };
+}
+
+/** The inside of the tiny house: walls around a 3x3 floor, a fireplace at the back, the door at the bottom. */
+function tinyHouse(): MapData {
+  return {
+    id: 'tiny-house', name: 'Tiny house', version: 1, kind: 'inside', depth: 0, width: 5, height: 5,
+    tiles: ['xxxxx', 'xpppx', 'xpppx', 'xpppx', 'xxpxx'],
+    levels: Array<string>(5).fill('00000'),
+    spawn: { x: 2, y: 3, dir: 'up' },
+    exits: [{ x: 2, y: 4, w: 1, h: 1, to: 'tiny', tx: 2, ty: 2, dir: 'down' }],
+    objects: [{ kind: 'fireplace', x: 2, y: 1 }, { kind: 'rug', x: 1, y: 2, w: 3, h: 1 }],
   };
 }
 
@@ -35,10 +47,10 @@ function woodsMap(): MapData {
   };
 }
 
-/** The town with a way into the woods: two tiles of road that keep their offset. */
+/** The town with a way into the woods on its left edge: two tiles that keep their offset. */
 function townWithExit(): MapData {
   const m = tinyMap();
-  m.exits = [{ x: 1, y: 2, w: 2, h: 1, to: 'woods', tx: 2, ty: 4, dir: 'up' }];
+  m.exits.push({ x: 0, y: 2, w: 2, h: 1, to: 'woods', tx: 2, ty: 4, dir: 'up' });
   return m;
 }
 
@@ -47,7 +59,8 @@ describe('TileMap', () => {
   it('knows what can be walked on', () => {
     expect(map.walkable(0, 2)).toBe(true);
     expect(map.walkable(4, 2)).toBe(false); // water
-    expect(map.walkable(2, 1)).toBe(false); // house footprint
+    expect(map.walkable(1, 1)).toBe(false); // house footprint
+    expect(map.walkable(2, 1)).toBe(true); // the house's door: every building can be entered
     expect(map.walkable(3, 3)).toBe(false); // sign
     expect(map.walkable(0, 0)).toBe(false); // raised tile
     expect(map.walkable(0, 4)).toBe(true); // mushrooms are decoration
@@ -76,8 +89,9 @@ describe('exits, light and the way home', () => {
   it('says where an exit leads, keeping the offset within the exit', () => {
     expect(woods.exitAt(3, 5)).toEqual({ to: 'tiny', x: 1, y: 3, dir: 'down' });
     expect(woods.exitAt(3, 4)).toBeUndefined();
-    expect(town.exitAt(1, 2)).toEqual({ to: 'woods', x: 2, y: 4, dir: 'up' });
-    expect(town.exitAt(2, 2)).toEqual({ to: 'woods', x: 3, y: 4, dir: 'up' });
+    expect(town.exitAt(0, 2)).toEqual({ to: 'woods', x: 2, y: 4, dir: 'up' });
+    expect(town.exitAt(1, 2)).toEqual({ to: 'woods', x: 3, y: 4, dir: 'up' });
+    expect(town.exitAt(2, 1)).toEqual({ to: 'tiny-house', x: 2, y: 3, dir: 'up' });
     expect(town.exitAt(-1, 2)).toBeUndefined();
   });
   it('knows where the street lights reach', () => {
@@ -85,6 +99,16 @@ describe('exits, light and the way home', () => {
     expect(woods.lit(1, 3)).toBe(true);
     expect(woods.lit(1, 4)).toBe(false);
     expect(town.lit(0, 3)).toBe(false);
+  });
+  it('knows the warm tiles around a fireplace, and walls and furniture are solid', () => {
+    const house = new TileMap(tinyHouse());
+    expect(house.warm(1, 1)).toBe(true);
+    expect(house.warm(1, 2)).toBe(true); // diagonal
+    expect(house.warm(2, 3)).toBe(false);
+    expect(house.walkable(0, 2)).toBe(false); // wall
+    expect(house.walkable(2, 1)).toBe(false); // the fireplace
+    expect(house.walkable(2, 2)).toBe(true); // a rug is only drawn
+    expect(woods.warm(2, 1)).toBe(false); // a street light is not a fire
   });
   it('counts walking steps to the home exit', () => {
     expect(woods.homeSteps(3, 5)).toBe(0);
@@ -100,14 +124,20 @@ describe('exits, light and the way home', () => {
 describe('energy', () => {
   const woods = new TileMap(woodsMap());
   const town = new TileMap(tinyMap());
-  it('refills in town and under street lights', () => {
-    expect(energyRate(town, 0, 3, 'rain')).toBe(REFILL_PER_SECOND);
-    expect(energyRate(woods, 2, 1, 'night')).toBe(REFILL_PER_SECOND);
+  const house = new TileMap(tinyHouse());
+  it('comes back only next to a fireplace', () => {
+    expect(energyRate(house, 1, 1, 'rain')).toBe(REFILL_PER_SECOND);
+    const campfire = new TileMap({ ...woodsMap(), objects: [{ kind: 'fireplace', x: 5, y: 2 }] });
+    expect(energyRate(campfire, 5, 3, 'night')).toBe(REFILL_PER_SECOND);
   });
-  it('drains in the wilds, more the farther from home and in bad weather', () => {
+  it('holds in town and inside, away from the fire', () => {
+    expect(energyRate(town, 0, 3, 'rain')).toBe(0);
+    expect(energyRate(house, 2, 3, 'rain')).toBe(0);
+  });
+  it('drains in the wilds, even under a street light, more the farther from home and in bad weather', () => {
     const edge = energyRate(woods, 3, 4, 'overcast');
     expect(edge).toBeCloseTo(-DRAIN_PER_SECOND * (1 + 1 / DRAIN_GROWTH_STEPS));
-    // 4,1 is seven steps from home and just outside the lamp's light.
+    expect(energyRate(woods, 2, 1, 'overcast')).toBeCloseTo(-DRAIN_PER_SECOND * (1 + 9 / DRAIN_GROWTH_STEPS));
     expect(energyRate(woods, 4, 1, 'overcast')).toBeCloseTo(-DRAIN_PER_SECOND * (1 + 7 / DRAIN_GROWTH_STEPS));
     expect(energyRate(woods, 3, 4, 'rain')).toBeCloseTo(edge * WEATHER_DRAIN.rain);
     expect(energyRate(woods, 3, 4, 'night')).toBeLessThan(energyRate(woods, 3, 4, 'rain'));
@@ -198,14 +228,22 @@ describe('validateMap', () => {
     const deepTown = { ...tinyMap(), depth: 1 };
     expect(validateMap(deepTown).map(p => p.message).join('\n')).toMatch(/town has depth 0/);
     const intoWater = tinyMap();
-    intoWater.exits = [{ x: 4, y: 2, w: 1, h: 1, to: 'woods', tx: 3, ty: 4, dir: 'up' }];
+    intoWater.exits.push({ x: 4, y: 2, w: 1, h: 1, to: 'woods', tx: 3, ty: 4, dir: 'up' });
     expect(validateMap(intoWater).map(p => p.message).join('\n')).toMatch(/not walkable/);
+  });
+  it('wants every building to lead inside, and every inside to have a way out', () => {
+    const noDoor = tinyMap();
+    noDoor.exits = [];
+    expect(validateMap(noDoor).map(p => p.message).join('\n')).toMatch(/its door 2,1 is not an exit/);
+    expect(validateMap(tinyHouse())).toEqual([]);
+    const trapped = { ...tinyHouse(), exits: [] };
+    expect(validateMap(trapped).map(p => p.message).join('\n')).toMatch(/needs a way out/);
   });
 });
 
 describe('validateWorld', () => {
   it('passes maps that fit together', () => {
-    expect(validateWorld([townWithExit(), woodsMap()], 'tiny')).toEqual([]);
+    expect(validateWorld([townWithExit(), woodsMap(), tinyHouse()], 'tiny')).toEqual([]);
   });
   it('catches exits to nowhere, into walls or onto other exits', () => {
     const town = townWithExit();
@@ -216,9 +254,17 @@ describe('validateWorld', () => {
     expect(msgs).toMatch(/tiny: .*no map nowhere/);
     expect(msgs).toMatch(/woods: .*not walkable/);
     const bounce = townWithExit();
-    bounce.exits[0]!.tx = 3;
-    bounce.exits[0]!.ty = 5; // the first lane would land on the woods' own exit and bounce back
-    expect(validateWorld([bounce, woodsMap()], 'tiny').map(p => p.message).join('\n')).toMatch(/which is an exit itself/);
+    const intoWoods = bounce.exits.find(e => e.to === 'woods')!;
+    intoWoods.tx = 3;
+    intoWoods.ty = 5; // the first lane would land on the woods' own exit and bounce back
+    expect(validateWorld([bounce, woodsMap(), tinyHouse()], 'tiny').map(p => p.message).join('\n')).toMatch(/which is an exit itself/);
+  });
+  it('wants every door to lead into an inside', () => {
+    const town = townWithExit();
+    town.exits.find(e => e.to === 'tiny-house')!.to = 'woods';
+    const msgs = validateWorld([town, woodsMap(), tinyHouse()], 'tiny').map(p => p.message).join('\n');
+    expect(msgs).toMatch(/its door leads to woods, which is not an inside/);
+    expect(new TileMap(tinyHouse()).homeSteps(2, 3)).toBe(0); // safe inside, not "lost"
   });
   it('wants a town at home and every map reachable from it', () => {
     expect(validateWorld([woodsMap()], 'tiny').map(p => p.message).join('\n')).toMatch(/home map tiny does not exist/);

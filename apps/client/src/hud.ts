@@ -31,6 +31,30 @@ export interface HudHandlers {
   logout(): void;
 }
 
+/** What the energy bar and the screen's edges show for a player's energy. */
+export interface EnergyLook {
+  /** Share of the bar that is full, 0 to 1. */
+  fill: number;
+  level: 'ok' | 'low' | 'critical';
+  /**
+   * Energy is coming back (next to a fire): the bar gets a bright tip. Holding (rate 0, in town and
+   * inside) shows neither refilling nor draining, and a full bar has nothing left to refill.
+   */
+  refill: boolean;
+  /** How dark the screen's edges are, 0 to 1. */
+  vignette: number;
+}
+
+export function energyLook(e: EnergyView | null): EnergyLook {
+  const f = e && e.max > 0 ? Math.min(1, Math.max(0, e.value / e.max)) : 1;
+  return {
+    fill: Math.round(f * 1000) / 1000,
+    level: f < CRITICAL ? 'critical' : f < LOW ? 'low' : 'ok',
+    refill: !!e && e.rate > 0 && f < 1,
+    vignette: e ? Math.round(Math.min(1, Math.max(0, (VIGNETTE_FROM - f) / VIGNETTE_FROM)) * 200) / 200 : 0,
+  };
+}
+
 export interface TagView { id: string; name: string; x: number; y: number }
 export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number }
 export interface DialogView { who: string; text: string; done: boolean }
@@ -139,20 +163,16 @@ export class Hud {
   setEnergy(e: EnergyView | null) {
     const s = this.shown, bar = this.el.energy!, vignette = this.el.vignette!;
     if (bar.hidden !== !e) bar.hidden = !e;
-    const f = e && e.max > 0 ? Math.min(1, Math.max(0, e.value / e.max)) : 1;
-    const fill = Math.round(f * 1000) / 1000;
+    const { fill, level, refill, vignette: v } = energyLook(e);
     if (fill !== s.fill) {
       s.fill = fill;
       // Sliding a full-width fill (not resizing it) keeps the work off the layout.
       this.el.energyFill!.style.transform = `translateX(${((fill - 1) * 100).toFixed(1)}%)`;
     }
-    const level = f < CRITICAL ? 'critical' : f < LOW ? 'low' : 'ok';
     if (level !== s.level) bar.dataset.level = s.level = level;
-    const refill = !!e && e.rate > 0 && f < 1;
     if (refill !== s.refill) bar.toggleAttribute('data-refill', (s.refill = refill));
-    const pct = Math.round(f * 100);
+    const pct = Math.round(fill * 100);
     if (pct !== s.pct) this.el.energyBar!.setAttribute('aria-valuenow', String((s.pct = pct)));
-    const v = e ? Math.round(Math.min(1, Math.max(0, (VIGNETTE_FROM - f) / VIGNETTE_FROM)) * 200) / 200 : 0;
     if (v !== s.vignette) {
       s.vignette = v;
       vignette.style.visibility = v > 0 ? 'visible' : 'hidden';

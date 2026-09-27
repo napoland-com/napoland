@@ -4,13 +4,19 @@
  * players can share routes. Re-running it overwrites hand edits to the JSON. Usage: npm run gen:woods
  *
  * South to north: the old road comes in from town past the last street light and gives out at a
- * rusted car; a dirt track fords the creek to a lit crossroads, where the power line turns off to an
- * abandoned cabin. West lies the pond, north the rocks. Past them there is one lonely lamp nobody
- * wired, and beyond it the deepest spots: a ring of stones (west) and a cabin with a light on (east).
+ * rusted car; a dirt track fords the creek to a lit crossroads, where the power line turns off to the
+ * old cabin. West lies the pond, north the rocks. Past them there is one lonely lamp nobody wired,
+ * with a ranger's hut behind it, and beyond it the deepest spots: a ring of stones (west) and the
+ * cabin at the end (east).
+ *
+ * Energy only comes back by a fire, so the three buildings are shelters that keep one burning (their
+ * rooms are in gen-interiors.ts): the old cabin, the hut and the cabin at the end, each a stage deeper.
+ * The street lights only help you see.
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { LAMP_RADIUS, TileMap, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { doorInto } from './gen-interiors';
 
 const W = 64, H = 80, SEED = 20260927;
 type P = readonly [number, number];
@@ -170,8 +176,10 @@ trail([[12, 35], [11, 31], [13, 27], [16, 23], [19, 19], [22, 16], [26, 12]], 1,
 clearing(13, 26, 3.6, 3, 81);
 ferns(13, 26, 3.4, 2.8, 82);
 
-// Deep in: the lonely lamp's clearing, and the far trails out of it to the deepest spots.
+// Deep in: the lonely lamp's clearing, the ranger's hut in a yard behind the lamp, and the far trails
+// out of it to the deepest spots.
 clearing(29, 10, 3.4, 2.8, 90);
+clearing(30.5, 6.3, 3.3, 2.2, 96);
 trail([[26, 9], [22, 7], [18, 8], [14, 6], [10, 5]], 1, 0.35, 91);
 clearing(6, 5, 4, 3.4, 92);
 trail([[32, 9], [36, 6], [40, 4], [44, 6], [48, 8], [51, 7]], 1, 0.35, 93);
@@ -266,16 +274,27 @@ for (const [px, py] of [[33, 77], [33, 72], [33, 65], [34, 58], [31, 53], [31, 4
 }
 
 place({ kind: 'car', x: 32, y: 60, w: 2 });
-const cabins = [{ x: 46, y: 37, roof: '#5a4a3f', lit: 0 }, { x: 54, y: 3, roof: '#4a5347', lit: 1 }] as const;
-for (const c of cabins) place({ kind: 'house', x: c.x, y: c.y, w: 3, h: 2, roof: c.roof, lit: c.lit });
+// The shelters, each a stage deeper: the old cabin past the crossroads, the ranger's hut behind the
+// lonely lamp (the west loop's refuge, and the last fire before the deepest spots) and the cabin at the
+// end of the east trail. A fire burns in each, day and night, so their windows are lit.
+const cabins = [
+  { x: 46, y: 37, roof: '#5a4a3f', inside: 'near-woods-old-cabin' },
+  { x: 29, y: 5, roof: '#6b5b3e', inside: 'near-woods-ranger-hut' },
+  { x: 54, y: 3, roof: '#4a5347', inside: 'near-woods-end-cabin' },
+] as const;
+const shelters = cabins.map(c => ({ kind: 'house', x: c.x, y: c.y, w: 3, h: 2, roof: c.roof, lit: 1 }) as const);
+for (const s of shelters) place(s);
+const doors = shelters.map((s, i) => doorInto(cabins[i]!.inside, 'near-woods', s));
+/** The tile in front of each shelter's door, where you come out. */
+const fronts = shelters.map((s): P => { const d = doorOf(s); return [d.x, d.y + 1]; });
 for (const [x, y] of [[50, 38], [50, 39], [44, 37], [13, 56]] as const) must({ kind: 'barrel', x, y });
 // What is left of a fence in front of the old cabin.
 for (let x = 44; x <= 52; x++) if (x !== 47 && x !== 48 && x !== 50) must({ kind: 'fence', x, y: 43, dir: 'h' });
 
 const signs: Array<{ x: number; y: number; text: string[] }> = [
-  { x: 30, y: 74, text: ['The Near Woods', 'Stay near the lights. The deeper you go, the faster you tire.'] },
+  { x: 30, y: 74, text: ['The Near Woods', 'The deeper you go, the faster you tire. The lights only help you see.', 'The shelters keep a fire going, day and night.'] },
   { x: 28, y: 40, text: ['West: the pond. East: the old cabin.', 'North of here the lights stop. Mostly.'] },
-  { x: 27, y: 9, text: ['No wires run to this light.', 'It was on when we found it. Rest before you go on.'] },
+  { x: 27, y: 9, text: ['No wires run to this light.', 'It was on when we found it. It gives no warmth.', 'The hut behind it keeps a fire. Rest there before you go on.'] },
 ];
 for (const s of signs) place({ kind: 'sign', ...s });
 
@@ -317,7 +336,7 @@ for (const [cx, cy, r] of SHROOMS) {
 const keepOpen = new Set<number>();
 for (const [lx, ly] of lamps) for (let y = ly - 3; y <= ly + 3; y++) for (let x = lx - 3; x <= lx + 3; x++) if (Math.hypot(x - lx, y - ly) <= LAMP_RADIUS + 0.5) keepOpen.add(y * W + x);
 for (const s of signs) keepOpen.add((s.y + 1) * W + s.x);
-for (const c of cabins) keepOpen.add((c.y + 2) * W + c.x + 1);
+for (const [x, y] of fronts) keepOpen.add(y * W + x);
 function open(x: number, y: number): boolean {
   if (!walkable(x, y) || way[y * W + x] || keepOpen.has(y * W + x) || shroomAt.has(y * W + x)) return false;
   for (let yy = y - 1; yy <= y + 1; yy++) for (let xx = x - 1; xx <= x + 1; xx++) if (blocked[yy * W + xx]) return false;
@@ -334,9 +353,9 @@ for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
 // back into forest.
 const PLACES: Array<[string, P]> = [
   ['last light', lamps[0]!], ['first glade', [21, 64]], ['car', [32, 60]], ['headlight clearing', [45, 59]],
-  ['crossroads light', lamps[1]!], ['pond', [20, 41]], ['campsite', [11, 57]], ['old cabin door', [cabins[0].x + 1, cabins[0].y + 2]],
+  ['crossroads light', lamps[1]!], ['pond', [20, 41]], ['campsite', [11, 57]], ['old cabin door', fronts[0]!],
   ['fern meadow', [26, 31]], ['rocks', [35, 23]], ['bog', [57, 26]], ['fern hollow', [13, 26]], ['lonely light', lamps[2]!],
-  ['ring of stones', [Math.floor(RING.x), Math.floor(RING.y)]], ['lit cabin door', [cabins[1].x + 1, cabins[1].y + 2]],
+  ['ranger hut door', fronts[1]!], ['ring of stones', [Math.floor(RING.x), Math.floor(RING.y)]], ['end cabin door', fronts[2]!],
 ];
 const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES].map(([dx, dy]) => d[(y + dy) * W + x + dx]!).filter(v => v >= 0));
 {
@@ -355,11 +374,11 @@ const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 1, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 2, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
-  exits: [EXIT],
+  exits: [EXIT, ...doors],
   objects,
 };
 
@@ -382,9 +401,13 @@ writeFileSync(out, json);
 
 // A glance at the result, two map rows per line because a terminal character is about twice as tall
 // as it is wide. Of the two tiles in a character, the one listed first in ORDER wins.
-const ORDER = '*!HC@Svib-T^o~=",. ';
+const ORDER = '*!HC@SFvibBnLc-T^o~=",_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
-const GLYPH: Record<MapObject['kind'], string> = { lamp: '*', sign: '!', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',' };
+const GLYPH: Record<MapObject['kind'], string> = {
+  lamp: '*', sign: '!', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
+  // Furniture belongs inside (gen-interiors.ts), but a campfire could stand out here one day.
+  fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_',
+};
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();
 for (const o of objects) for (const [x, y] of objectTiles(o)) objGlyph.set(y * W + x, pick(GLYPH[o.kind], objGlyph.get(y * W + x) ?? ' '));
@@ -409,6 +432,11 @@ const count = (k: MapObject['kind']) => objects.filter(o => o.kind === k).length
 console.log(`wrote ${out}: ${W}x${H} tiles, ${objects.length} objects (${count('rock')} rocks, ${count('tree')} firs, ${count('pole')} poles, ${count('shrooms')} shrooms)`);
 console.log(`steps from the way home: ${PLACES.map(([name, p]) => `${name} ${stepsTo(steps, p)}`).join(', ')}`);
 console.log(`deepest: ${deepest} steps, at ${deepTiles.join(' ')}`);
+console.log(`shelter doors: ${shelters.map((s, i) => { const d = doorOf(s); return `${cabins[i]!.inside} ${tm.homeSteps(d.x, d.y)} steps`; }).join(', ')}`);
+// The tuning targets in energy.ts: how long a full bar lasts standing still in the rain.
+const lasts = (x: number, y: number) => (ENERGY_MAX / -energyRate(tm, x, y, 'rain') / 60).toFixed(1);
+const deep = steps.indexOf(deepest);
+console.log(`a full bar in the rain lasts ${lasts(EXIT.x, EXIT.y - 1)} minutes at the edge, ${lasts(deep % W, (deep / W) | 0)} at the deepest spot`);
 const problems = validateMap(map);
 for (const p of problems) console.log(`${p.level}: ${p.message}`);
 if (problems.some(p => p.level === 'error')) process.exit(1);

@@ -139,6 +139,23 @@ export function pivot(x: number, y: number, z: number): THREE.Group {
   return g;
 }
 
+/**
+ * Flat patches lying at height y, all in one geometry: [center x, center z, size x, size z] each.
+ * With softTexture() and an additive material, pools of light on the floor in one draw call.
+ */
+export function glowQuads(patches: ReadonlyArray<readonly [number, number, number, number]>, y: number): THREE.BufferGeometry {
+  const pos: number[] = [], uv: number[] = [];
+  for (const [cx, cz, sx, sz] of patches) {
+    const x0 = cx - sx / 2, x1 = cx + sx / 2, z0 = cz - sz / 2, z1 = cz + sz / 2;
+    pos.push(x0, y, z0, x0, y, z1, x1, y, z1, x0, y, z0, x1, y, z1, x1, y, z0);
+    uv.push(0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 1, 1);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  return g;
+}
+
 /** A soft round glow, used for wisps, mist and pickups. */
 export function softTexture(inner: number): THREE.CanvasTexture {
   const c = document.createElement('canvas');

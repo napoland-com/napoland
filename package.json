@@ -18,6 +18,7 @@
     "test": "vitest run",
     "gen:map": "tsx tools/gen-map.ts",
     "gen:woods": "tsx tools/gen-woods.ts",
+    "gen:interiors": "tsx tools/gen-interiors.ts",
     "validate": "tsx tools/validate-content.ts",
     "bot": "tsx tools/bot.ts",
     "check": "npm run typecheck && npm run validate && npm run test"

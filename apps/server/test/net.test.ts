@@ -3,7 +3,7 @@
  * talked to by real WebSocket clients. Maps, exits and energy: net-maps.test.ts.
  */
 import { describe, expect, it } from 'vitest';
-import { ENERGY_MAX, PROTOCOL_VERSION, REFILL_PER_SECOND, TileMap } from '@napoland/shared';
+import { ENERGY_MAX, PROTOCOL_VERSION, TileMap } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer } from '../src/server';
@@ -18,17 +18,17 @@ const town = new TileMap(townData());
 describe('connecting', () => {
   const { ctx, open, join, refused } = setup({ version: '1.2.3-test' });
 
-  it('welcomes a new player with a token, at the home spawn with full energy', async () => {
+  it('welcomes a new player with a token, at the home spawn with full energy that holds there', async () => {
     const c = await open();
     c.send({ t: 'hello', v: PROTOCOL_VERSION, name: 'Aldo' });
     await waitFor(() => c.inbox.length >= 2, 'the welcome and the energy');
     expect(c.inbox.map(m => m.t)).toEqual(['welcome', 'energy']);
     const welcome = await c.next('welcome');
     const id = welcome.you;
-    expect(await c.next('energy')).toEqual({ t: 'energy', energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: REFILL_PER_SECOND } });
+    expect(await c.next('energy')).toEqual({ t: 'energy', energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 } });
     expect(welcome).toMatchObject({
       t: 'welcome', v: PROTOCOL_VERSION, name: 'Aldo', stepMs: 200, map: { id: 'town', version: 1 }, weather: 'rain',
-      energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: REFILL_PER_SECOND },
+      energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 },
     });
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(welcome.token).toMatch(/^[A-Za-z0-9_-]{43}$/); // 32 random bytes

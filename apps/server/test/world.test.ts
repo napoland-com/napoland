@@ -4,7 +4,7 @@ import {
 } from '@napoland/shared';
 import type { PlayerRecord } from '../src/storage';
 import { JACKET_COLORS, STEP_QUEUE_MAX, STEP_TOLERANCE_MS, World, colorFor, type Outgoing } from '../src/world';
-import { fixtureMaps, woodsData } from './fixtures';
+import { fixtureMaps, houseData, woodsData } from './fixtures';
 
 /** 8x5 grass with water in the two right columns and rocks at 1,0 and 2,0: a town of its own. */
 function testMap(): TileMap {
@@ -38,7 +38,7 @@ function worldWith(...players: PlayerRecord[]): World {
   return w;
 }
 
-/** The town and the woods of fixtures.ts (home: the town), players joined at time 0, joins drained. */
+/** The town, the house and the woods of fixtures.ts (home: the town), players joined at time 0, joins drained. */
 function woodsWorld(weather: Weather, ...players: PlayerRecord[]): World {
   const w = new World(fixtureMaps(), 'town', weather);
   for (const p of players) w.join(p, 0);
@@ -46,10 +46,12 @@ function woodsWorld(weather: Weather, ...players: PlayerRecord[]): World {
   return w;
 }
 const woods = new TileMap(woodsData());
-/** Energy per second at 3,6 in the woods, where the road from town arrives: dark, one step from home. */
-const dark = energyRate(woods, 3, 6, 'overcast');
+const house = new TileMap(houseData());
+/** Energy per second at 3,6 in the woods, where the road from town arrives: one step from home. */
+const edge = energyRate(woods, 3, 6, 'overcast');
 const inTown = (id: string, x: number, y: number, dir: Dir = 'down', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'town', ...more });
 const inWoods = (id: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'woods', ...more });
+const inHouse = (id: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'house', ...more });
 const viewOf = (id: string, x: number, y: number, dir: Dir) => ({ id, name: id.toUpperCase(), x, y, dir, color: colorFor(id) });
 /** The energy a player is told: value to 1 decimal, rate to 3. */
 const told = (value: number, rate: number): EnergyView => ({ value: Math.round(value * 10) / 10, max: ENERGY_MAX, rate: Math.round(rate * 1000) / 1000 });
@@ -214,7 +216,8 @@ describe('World: turning, joining and leaving', () => {
       player: { id: 'a', name: 'A', x: 3, y: 3, dir: 'down', color: colorFor('a') },
       map: { id: 'test', version: 1 },
       players: [joined.player],
-      energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: REFILL_PER_SECOND },
+      // A town without a fireplace: energy holds.
+      energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 },
     });
     expect(w.drain()).toEqual([
       { to: '*', map: 'test', except: 'a', msg: { t: 'join', player: joined.player } },
@@ -291,8 +294,34 @@ describe('World: maps and exits', () => {
     expect(back.map(m => m.t)).toEqual(['step', 'zone', 'energy']);
     expect(back[0]).toEqual({ t: 'step', id: 'a', x: 4, y: 7, dir: 'down', seq: 2 });
     expect(back[1]).toEqual({ t: 'zone', map: { id: 'town', version: 1 }, x: 5, y: 1, dir: 'down', players: [viewOf('a', 5, 1, 'down')], reason: 'exit' });
-    expect(back[2]).toEqual({ t: 'energy', energy: told(ENERGY_MAX, REFILL_PER_SECOND) });
+    // What the woods took in the 200 ms there, and in town it holds.
+    expect(back[2]).toEqual({ t: 'energy', energy: told(ENERGY_MAX + 0.2 * energyRate(woods, 4, 6, 'overcast'), 0) });
     expect(w.get('a')).toMatchObject({ map: 'town', x: 5, y: 1, dir: 'down' });
+  });
+
+  it('walks into a house through its door and out again, in front of the door facing away from it', () => {
+    const w = woodsWorld('overcast', inTown('a', 7, 3, 'up', { energy: 50 }), inTown('b', 0, 5));
+    w.step('a', 'up', 1, 1000);
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'step', id: 'a', x: 7, y: 2, dir: 'up', seq: 1 } },
+      { to: '*', map: 'town', except: 'a', msg: { t: 'step', id: 'a', x: 7, y: 2, dir: 'up' } },
+      { to: '*', map: 'town', except: 'a', msg: { t: 'leave', id: 'a' } },
+      { to: '*', map: 'house', except: 'a', msg: { t: 'join', player: viewOf('a', 2, 3, 'up') } },
+      { to: 'a', msg: { t: 'zone', map: { id: 'house', version: 1 }, x: 2, y: 3, dir: 'up', players: [viewOf('a', 2, 3, 'up')], reason: 'exit' } },
+      { to: 'a', msg: { t: 'energy', energy: told(50, 0) } },
+    ]);
+    expect(w.views('house').map(v => v.id)).toEqual(['a']);
+
+    w.step('a', 'down', 2, 1200);
+    const out = answers(w.drain(), 'a');
+    expect(out.map(m => m.t)).toEqual(['step', 'zone', 'energy']);
+    expect(out[0]).toEqual({ t: 'step', id: 'a', x: 2, y: 4, dir: 'down', seq: 2 });
+    expect(out[1]).toEqual({
+      t: 'zone', map: { id: 'town', version: 1 }, x: 7, y: 3, dir: 'down', players: [viewOf('b', 0, 5, 'down'), viewOf('a', 7, 3, 'down')], reason: 'exit',
+    });
+    expect(out[2]).toEqual({ t: 'energy', energy: told(50, 0) });
+    expect(w.get('a')).toMatchObject({ map: 'town', x: 7, y: 3, dir: 'down', energy: 50 });
+    expect(w.views('house')).toEqual([]);
   });
 
   it('drops the steps queued on the old map, and changing maps never saves time', () => {
@@ -347,31 +376,73 @@ describe('World: maps and exits', () => {
 });
 
 describe('World: energy', () => {
-  it('drains in the wilds and refills in town and under street lights', () => {
-    expect(dark).toBeLessThan(0);
-    const w = woodsWorld('overcast', inWoods('a', 3, 6, 'up', { energy: 50 }), inTown('t', 1, 2, 'down', { energy: 50 }));
-    expect(w.join(inWoods('b', 3, 6, 'up', { energy: 50 }), 0).energy).toEqual(told(50, dark));
+  it('drains in the wilds, even under a street light', () => {
+    expect(edge).toBeLessThan(0);
+    // 3,5 is in the lamp's light and 4,5 is not; both are two steps from home.
+    expect([woods.lit(3, 5), woods.lit(4, 5)]).toEqual([true, false]);
+    const twoSteps = energyRate(woods, 4, 5, 'overcast');
+    const w = woodsWorld('overcast', inWoods('a', 3, 6, 'up', { energy: 50 }), inWoods('lit', 3, 5, 'up', { energy: 50 }), inWoods('dark', 4, 5, 'up', { energy: 50 }));
+    expect(w.join(inWoods('b', 3, 6, 'up', { energy: 50 }), 0).energy).toEqual(told(50, edge));
     w.tick(10_000);
-    expect(w.get('a')!.energy).toBeCloseTo(50 + 10 * dark);
-    expect(w.get('t')!.energy).toBe(ENERGY_MAX); // 8 a second: full after 6.25 s
-    w.step('a', 'left', 1, 10_000); // into the lamp's light
+    expect(w.get('a')!.energy).toBeCloseTo(50 + 10 * edge);
+    expect(w.get('lit')!.energy).toBeCloseTo(50 + 10 * twoSteps);
+    expect(w.get('lit')!.energy).toBe(w.get('dark')!.energy);
+    w.drain();
+    w.step('a', 'up', 1, 10_000); // into the light: it drains on, about as fast, so there is nothing new to tell
+    expect(energies(w.drain())).toEqual([]);
     w.tick(11_000);
-    expect(w.get('a')!.energy).toBeCloseTo(50 + 10 * dark + REFILL_PER_SECOND);
-    w.tick(30_000);
-    expect(w.get('a')!.energy).toBe(ENERGY_MAX);
+    expect(w.get('a')!.energy).toBeCloseTo(50 + 10 * edge + twoSteps);
   });
 
-  it('tells the player at once when the rate turns between draining and refilling', () => {
-    const w = woodsWorld('overcast', inWoods('a', 3, 6, 'up', { energy: 50 }));
-    w.step('a', 'left', 1, 1000); // into the light
-    expect(energies(w.drain())).toEqual([['a', told(50 + dark, REFILL_PER_SECOND)]]);
-    w.step('a', 'right', 2, 1200); // back into the dark
-    expect(energies(w.drain())).toEqual([['a', told(50 + dark + 0.2 * REFILL_PER_SECOND, dark)]]);
+  it('holds in town and inside a building away from the fire, whatever the weather, and says nothing while it holds', () => {
+    const w = woodsWorld('overcast', inTown('t', 0, 5, 'down', { energy: 50 }), inHouse('h', 2, 3, 'up', { energy: 50 }));
+    expect(w.join(inTown('u', 7, 3, 'up', { energy: 50 }), 0).energy).toEqual(told(50, 0));
+    expect(w.join(inHouse('i', 1, 3, 'up', { energy: 50 }), 0).energy).toEqual(told(50, 0));
+    w.drain();
+    for (let now = 1000; now <= 60_000; now += 1000) w.tick(now);
+    w.step('t', 'right', 1, 60_000);
+    w.step('i', 'right', 1, 60_000); // still away from the fire
+    w.setWeather('night', 61_000);
+    w.tick(120_000);
+    expect(energies(w.drain())).toEqual([]);
+    for (const id of ['t', 'h', 'u', 'i']) expect(w.get(id)!.energy).toBe(50);
+  });
+
+  it('refills next to the fireplace of a building reached through its door, until full', () => {
+    expect([house.warm(2, 3), house.warm(2, 2)]).toEqual([false, true]);
+    const w = woodsWorld('overcast', inTown('a', 7, 3, 'up', { energy: 50 }));
+    w.step('a', 'up', 1, 1000); // onto the door: inside, away from the fire
+    expect(w.get('a')).toMatchObject({ map: 'house', x: 2, y: 3 });
+    expect(energies(w.drain())).toEqual([['a', told(50, 0)]]);
+    w.step('a', 'up', 2, 1200); // next to the fire
+    expect(energies(w.drain())).toEqual([['a', told(50, REFILL_PER_SECOND)]]);
+    w.tick(1200 + ENERGY_SYNC_MS);
+    expect(energies(w.drain())).toEqual([['a', told(50 + (ENERGY_SYNC_MS / 1000) * REFILL_PER_SECOND, REFILL_PER_SECOND)]]);
+    w.tick(30_000);
+    expect(w.get('a')!.energy).toBe(ENERGY_MAX);
+    expect(energies(w.drain())).toEqual([]);
+  });
+
+  it('tells the player at once when the rate turns: next to a fire and away from it, in the woods and inside', () => {
+    const far = energyRate(woods, 6, 1, 'overcast'); // the end of the right side, 8 steps from home
+    const w = woodsWorld('overcast', inWoods('a', 6, 1, 'left', { energy: 50 }), inHouse('h', 2, 3, 'up', { energy: 50 }));
+    w.step('a', 'left', 1, 1000); // next to the campfire
+    w.step('h', 'up', 1, 1000); // next to the fireplace
+    expect(energies(w.drain())).toEqual([
+      ['a', told(50 + far, REFILL_PER_SECOND)],
+      ['h', told(50, REFILL_PER_SECOND)],
+    ]);
+    w.step('a', 'right', 2, 1200); // away from the campfire: it drains again
+    w.step('h', 'down', 2, 1200); // away from the fireplace: it holds
+    expect(energies(w.drain())).toEqual([
+      ['a', told(50 + far + 0.2 * REFILL_PER_SECOND, far)],
+      ['h', told(50 + 0.2 * REFILL_PER_SECOND, 0)],
+    ]);
   });
 
   it('tells the player when the rate moved more than 10% since they last heard it, not at every step', () => {
     const w = woodsWorld('overcast', inWoods('a', 3, 6, 'up', { energy: 50 }));
-    // Up the dark right side, one step farther from home each time (see fixtures.ts).
+    // Up the right side, one step farther from home each time (see fixtures.ts).
     const walk: Dir[] = ['right', 'right', 'right', 'up', 'up', 'up', 'up', 'up'];
     const heard: number[] = [];
     walk.forEach((dir, i) => {
@@ -381,19 +452,26 @@ describe('World: energy', () => {
     expect(w.get('a')).toMatchObject({ x: 6, y: 1 });
     // 8 steps from home instead of 1: 11.5% more drain; after 7 steps it was 9.8%.
     expect(heard).toEqual([8]);
-    expect(energyRate(woods, 6, 1, 'overcast') / dark).toBeGreaterThan(1.1);
-    expect(energyRate(woods, 6, 2, 'overcast') / dark).toBeLessThan(1.1);
+    expect(energyRate(woods, 6, 1, 'overcast') / edge).toBeGreaterThan(1.1);
+    expect(energyRate(woods, 6, 2, 'overcast') / edge).toBeLessThan(1.1);
   });
 
-  it('repeats the energy every ENERGY_SYNC_MS while it changes, but not while full and refilling', () => {
-    // 'low' needs 2.5 s to fill up.
-    const w = woodsWorld('overcast', inWoods('a', 3, 6, 'up', { energy: 50 }), inTown('full', 1, 2), inTown('low', 2, 2, 'down', { energy: 80 }));
+  it('repeats the energy every ENERGY_SYNC_MS while it changes, but not while it holds or is full', () => {
+    // 'low' needs 2.5 s next to the fire to fill up; 'in' and 'town' hold.
+    const w = woodsWorld(
+      'overcast',
+      inWoods('a', 3, 6, 'up', { energy: 50 }),
+      inHouse('full', 1, 2),
+      inHouse('low', 2, 2, 'up', { energy: 80 }),
+      inHouse('in', 2, 3, 'up', { energy: 50 }),
+      inTown('town', 1, 2, 'down', { energy: 50 }),
+    );
     w.tick(ENERGY_SYNC_MS - 1);
     expect(energies(w.drain())).toEqual([]);
     w.tick(ENERGY_SYNC_MS);
     const s = ENERGY_SYNC_MS / 1000;
     expect(energies(w.drain())).toEqual([
-      ['a', told(50 + s * dark, dark)],
+      ['a', told(50 + s * edge, edge)],
       ['low', told(80 + s * REFILL_PER_SECOND, REFILL_PER_SECOND)],
     ]);
     w.tick(2 * ENERGY_SYNC_MS); // 'low' is full now
@@ -411,10 +489,10 @@ describe('World: energy', () => {
     expect(w.drain()).toEqual([
       { to: '*', map: 'town', msg: { t: 'weather', weather: 'night' } },
       { to: '*', map: 'woods', msg: { t: 'weather', weather: 'night' } },
-      { to: 'a', msg: { t: 'energy', energy: told(50 + dark, energyRate(woods, 3, 6, 'night')) } },
+      { to: 'a', msg: { t: 'energy', energy: told(50 + edge, energyRate(woods, 3, 6, 'night')) } },
     ]);
     w.tick(2000);
-    expect(w.get('a')!.energy).toBeCloseTo(50 + dark + energyRate(woods, 3, 6, 'night'));
+    expect(w.get('a')!.energy).toBeCloseTo(50 + edge + energyRate(woods, 3, 6, 'night'));
     w.setWeather('night', 2000);
     expect(w.drain().filter(o => o.msg.t !== 'energy')).toEqual([]);
   });
@@ -432,7 +510,7 @@ describe('World: collapsing', () => {
 
   it('wakes a player whose energy runs out at home, full; both maps and the player hear it', () => {
     const { w, collapses } = collapsing(inWoods('a', 3, 6, 'up', { energy: 1 }), inWoods('c', 5, 5), inTown('t', 0, 5));
-    const empty = 1000 * (1 / -dark);
+    const empty = 1000 * (1 / -edge);
     w.tick(empty - 50);
     w.drain();
     expect(w.get('a')).toMatchObject({ map: 'woods', x: 3, y: 6 });
@@ -445,7 +523,8 @@ describe('World: collapsing', () => {
         to: 'a',
         msg: { t: 'zone', map: { id: 'town', version: 1 }, x: 1, y: 2, dir: 'down', players: [viewOf('t', 0, 5, 'down'), viewOf('a', 1, 2, 'down')], reason: 'collapse' },
       },
-      { to: 'a', msg: { t: 'energy', energy: told(ENERGY_MAX, REFILL_PER_SECOND) } },
+      // Full, and at the spawn in town it holds.
+      { to: 'a', msg: { t: 'energy', energy: told(ENERGY_MAX, 0) } },
     ]);
     expect(w.get('a')).toMatchObject({ map: 'town', x: 1, y: 2, dir: 'down', energy: ENERGY_MAX });
     expect(collapses).toEqual([['a', { map: 'woods', x: 3, y: 6 }]]);
@@ -460,7 +539,9 @@ describe('World: collapsing', () => {
   });
 
   it('keeps the step timer through a collapse', () => {
-    const { w } = collapsing(inWoods('a', 4, 5, 'up', { energy: 0.13 }));
+    // Enough for 1 s at 4,5 and 50 ms more at 4,6.
+    const energy = -(energyRate(woods, 4, 5, 'overcast') + 0.05 * energyRate(woods, 4, 6, 'overcast'));
+    const { w } = collapsing(inWoods('a', 4, 5, 'up', { energy }));
     w.step('a', 'down', 1, 1000); // 4,6 with a little energy left; readyAt 1200
     w.drain();
     w.tick(1100); // empty
@@ -484,8 +565,8 @@ describe('World: collapsing', () => {
     const { w, collapses } = collapsing(inWoods('a', 3, 6, 'up', { energy: 50 }));
     const saved = w.leave('a', 10_000)!;
     expect(saved).toMatchObject({ map: 'woods', x: 3, y: 6 });
-    expect(saved.energy).toBeCloseTo(50 + 10 * dark);
-    expect(w.join(saved, 60_000).energy).toEqual(told(saved.energy, dark));
+    expect(saved.energy).toBeCloseTo(50 + 10 * edge);
+    expect(w.join(saved, 60_000).energy).toEqual(told(saved.energy, edge));
     w.tick(60_000);
     expect(w.get('a')!.energy).toBe(saved.energy);
     expect(collapses).toEqual([]);

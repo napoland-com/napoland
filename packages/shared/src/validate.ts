@@ -2,7 +2,7 @@
  * Content checks for maps. Run on every change (npm run validate) so a broken map never ships.
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
-import { TILE_CHARS, TileMap, objectTiles, type MapData } from './map';
+import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData } from './map';
 import { DIRS, stepTarget } from './movement';
 import { Dir } from './protocol';
 
@@ -25,9 +25,9 @@ export function validateMap(data: MapData): Problem[] {
     if (row.length !== data.width) err(`levels row ${y} has ${row.length} values, expected ${data.width}`);
     if (!/^[0-9]*$/.test(row)) err(`levels row ${y}: only digits allowed`);
   });
-  if (data.kind !== 'town' && data.kind !== 'wilds') err(`kind must be "town" or "wilds", got ${JSON.stringify(data.kind)}`);
+  if (data.kind !== 'town' && data.kind !== 'wilds' && data.kind !== 'inside') err(`kind must be "town", "wilds" or "inside", got ${JSON.stringify(data.kind)}`);
   if (!Number.isInteger(data.depth) || data.depth < 0) err(`depth must be a whole number from 0, got ${JSON.stringify(data.depth)}`);
-  else if (data.kind === 'town' && data.depth !== 0) err('a town has depth 0');
+  else if (data.kind !== 'wilds' && data.depth !== 0) err(`${data.kind === 'town' ? 'a town' : 'an inside'} has depth 0`);
   else if (data.kind === 'wilds' && data.depth < 1) err('the wilds have depth 1 or more');
   if (!Array.isArray(data.exits)) err('exits must be a list (it may be empty)');
   if (out.some(p => p.level === 'error')) return out;
@@ -46,12 +46,19 @@ export function validateMap(data: MapData): Problem[] {
     }
   });
   if (data.kind === 'wilds' && !data.exits.some(e => e.home)) err('the wilds need an exit marked home: danger is measured from it');
+  if (data.kind === 'inside' && !data.exits.length) err('an inside needs a way out (an exit)');
   if (exitTiles.has(`${data.spawn.x},${data.spawn.y}`)) err('the spawn is on an exit');
   const used = new Map<string, string>();
   for (const o of data.objects) {
+    if (o.kind === 'house') {
+      // Every building can be entered: its door leads inside, and someone must be able to reach it.
+      const d = doorOf(o);
+      if (!exitTiles.has(`${d.x},${d.y}`)) err(`house at ${o.x},${o.y}: its door ${d.x},${d.y} is not an exit, but every building must lead inside`);
+      if (!map.walkable(d.x, d.y + 1)) err(`house at ${o.x},${o.y}: the tile in front of its door (${d.x},${d.y + 1}) is not walkable`);
+    }
     for (const [x, y] of objectTiles(o)) {
       if (!map.inside(x, y)) err(`${o.kind} at ${o.x},${o.y} reaches outside the map`);
-      if (o.kind === 'shrooms') continue;
+      if (DECOR.has(o.kind)) continue;
       const key = `${x},${y}`;
       const other = used.get(key);
       if (other) err(`${o.kind} at ${o.x},${o.y} overlaps ${other} on tile ${key}`);
@@ -110,6 +117,12 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   if (home.data.kind !== 'town') out.push({ level: 'error', map: homeId, message: 'the home map must be a town (collapsed players wake up there)' });
 
   for (const map of byId.values()) {
+    // A door leads into a building: its exit must go to an inside, not to another town or the wilds.
+    for (const o of map.data.objects) {
+      if (o.kind !== 'house') continue;
+      const d = doorOf(o), into = map.exitAt(d.x, d.y), target = into && byId.get(into.to);
+      if (target && target.data.kind !== 'inside') out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: its door leads to ${into!.to}, which is not an inside` });
+    }
     map.data.exits.forEach((e, i) => {
       const where = `exit ${i} (to ${e.to})`;
       const target = byId.get(e.to);
