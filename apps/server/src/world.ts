@@ -300,6 +300,8 @@ interface Online {
   /** When the current step is over and the next one may start. */
   readyAt: number;
   queue: Array<{ dir: Dir; seq: number }>;
+  /** A talk that came in while steps sent before it still waited in the queue: heard once they are walked (talk). */
+  talkAfter?: { x: number; y: number };
   /** Energy and wetness per second on the player's tile. rec.energy and rec.wet are up to date as of energyAt. */
   rate: number;
   wetRate: number;
@@ -1084,12 +1086,21 @@ export class World {
 
   /**
    * The player talked to the person, or read the desk, on tile x,y next to them (the client talks and
-   * reads by itself; this only tells the story): their story may move on.
+   * reads by itself; this only tells the story): their story may move on. The client sends it the moment
+   * its own last step is over, so on a slow network the steps before it can arrive bunched up and still
+   * wait in the queue: then it is heard once they are walked, or the player would hear what comes next
+   * while the story stays where it was.
    */
   talk(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
+    if (p.queue.length) p.talkAfter = { x, y };
+    else this.heard(p, x, y);
+  }
+
+  /** Whom the player talked to, or what they read, on tile x,y: only from next to it. */
+  private heard(p: Online, x: number, y: number): void {
     if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
     const o = p.map.data.objects.find(o => o.x === x && o.y === y && (o.kind === 'npc' || o.kind === 'console'));
     if (o?.kind === 'npc') this.moveStory(p, { talk: o.id });
@@ -1188,6 +1199,12 @@ export class World {
       const s = p.queue.shift()!;
       this.move(p, s.dir, s.seq, now);
     }
+    // Walked (or refused, which empties the queue too): the talk behind the steps is heard from where they left the player.
+    if (p.talkAfter && !p.queue.length) {
+      const { x, y } = p.talkAfter;
+      p.talkAfter = undefined;
+      this.heard(p, x, y);
+    }
   }
 
   private move(p: Online, dir: Dir, seq: number, now: number): void {
@@ -1279,7 +1296,10 @@ export class World {
     this.saveNow.set(id, p.rec);
   }
 
-  /** Puts a player on a tile of a map. Queued steps go: they were planned on the old map, and so does the trail. */
+  /**
+   * Puts a player on a tile of a map. Queued steps go: they were planned on the old map, and so do the
+   * talk waiting behind them (it was about someone there) and the trail.
+   */
   private place(p: Online, map: TileMap, x: number, y: number, dir: Dir): void {
     this.onMap.get(p.map.data.id)!.delete(p);
     this.onMap.get(map.data.id)!.add(p);
@@ -1289,6 +1309,7 @@ export class World {
     p.rec.y = y;
     p.rec.dir = dir;
     p.queue.length = 0;
+    p.talkAfter = undefined;
     p.trail = [];
   }
 

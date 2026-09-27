@@ -136,6 +136,19 @@ describe('the story', () => {
     expect(saved(w)).toEqual([['a', 'mira'], ['b', 'the-log']]);
   });
 
+  it('hears a talk that came in behind steps still waiting in the queue once they are walked, from where they took you', () => {
+    // A slow network bunched up the two steps that bring A next to Mira: the second still waits in the
+    // queue when the talk comes in, and from two tiles away it would move nothing.
+    const w = world({}, rec('a', 'town', 3, 4, 'fed', {}, 'left'));
+    w.step('a', 'left', 1, 350);
+    w.step('a', 'left', 2, 351);
+    w.talk('a', 0, 4, 450);
+    expect(chapters(w.drain(), 'a')).toEqual([]);
+    w.tick(1000);
+    expect(chapters(w.drain(), 'a')).toEqual([{ t: 'chapter', id: 'mira' }]);
+    expect(saved(w)).toEqual([['a', 'mira']]);
+  });
+
   it('moves on when you give the Old Stone a shard; at the latest chapter written, nothing moves you on', () => {
     const w = world({}, rec('a', 'town', 3, 4, 'the-log', { bag: [{ item: 'shard', count: 2 }] }));
     w.feed('a', 3, 3, 0, 1000);
