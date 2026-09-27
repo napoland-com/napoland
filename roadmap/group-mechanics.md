@@ -15,7 +15,7 @@ Ways for a group to reach what nobody reaches alone, to build and test one by on
 - **Heavy finds:** the best finds need two people to carry.
 - **Camps:** a group can build a shared camp that works as a temporary home out in the woods.
 
-Solo players still progress: better gear lets them go a bit deeper, just more slowly.
+Solo players still progress: better gear lets them go a bit deeper, just more slowly. No gate opens the South Road's checkpoint: what lies past the quarantine line stays open in the story.
 
 Why: together you go farther, and other players are only ever help.
 

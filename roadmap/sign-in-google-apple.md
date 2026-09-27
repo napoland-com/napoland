@@ -7,7 +7,7 @@ area: tech
 depends: [sign-in]
 ---
 
-Next to the email code, players can sign in with their Google or Apple account, through the same Supabase sign-in.
+Next to the email code, players can sign in with their Google or Apple account, through the same Supabase sign-in. A guest ([play-first](play-first.md)) who signs in this way keeps their character, as with the email code.
 
 Why: on a phone, one tap is easier than typing a code from an email, and the design chose Google and Apple for sign-in.
 
