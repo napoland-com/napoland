@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in the game or in the code does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time! One bug per issue, please.
+        A security problem does not belong here: report it privately, as [SECURITY.md](https://github.com/napoland-com/napoland/blob/main/SECURITY.md) explains.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: And what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      placeholder: |
+        1. Walk out of Stonebrook by the north road
+        2. Stand by the first street light in the rain
+        3. ...
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - www.napoland.com
+        - My own copy (npm run dev or Docker)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: On www.napoland.com, the `version` shown at https://www.napoland.com/health. On your own copy, the commit (`git rev-parse --short HEAD`).
+  - type: input
+    id: device
+    attributes:
+      label: Device, browser and screen
+      placeholder: Pixel 8, Chrome, portrait
+  - type: input
+    id: when
+    attributes:
+      label: When
+      description: Date, time and time zone, if it happened on www.napoland.com. It helps to find it in the server's log.
+  - type: textarea
+    id: more
+    attributes:
+      label: Screenshots, errors from the browser console, anything else

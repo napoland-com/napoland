@@ -1,7 +1,7 @@
 /**
  * Generates content/maps/stonebrook.json, the starting town, from a fixed seed.
- * The output is the canonical map: after generating it once, hand edits to the JSON are fine,
- * but re-running this script overwrites them. Usage: npm run gen:map
+ * This script is the source of the map: change it, not the JSON (CI regenerates the JSON and
+ * fails if it differs, so hand edits would be caught). Usage: npm run gen:map, or npm run gen for all.
  * Every house's door leads inside; the rooms are drawn in gen-interiors.ts.
  */
 import { writeFileSync } from 'node:fs';

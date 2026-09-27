@@ -4,8 +4,22 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { Weather } from '@napoland/shared';
+import { AUTH_MODES, Weather } from '@napoland/shared';
 import { LOG_LEVELS, type LogLevel } from './log';
+
+/** How players sign in (auth.ts has what each mode means). */
+export type AuthSettings =
+  | { mode: 'legacy' }
+  | { mode: 'dev' }
+  | {
+      mode: 'supabase';
+      /** The project's address, like https://abcd.supabase.co (no trailing slash). */
+      url: string;
+      /** The project's publishable key (or its legacy anon key). Public: every browser gets it from /auth-config. */
+      publishableKey: string;
+      /** Only for projects that still sign access tokens with a shared secret (HS256). */
+      jwtSecret: string | undefined;
+    };
 
 export interface Config {
   port: number;
@@ -35,6 +49,7 @@ export interface Config {
   newPlayersPerIpPerHour: number;
   /** Reported on /health, so a deploy can be checked from outside. */
   version: string;
+  auth: AuthSettings;
 }
 
 type Env = Record<string, string | undefined>;
@@ -109,11 +124,77 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   const newPlayersPerIpPerHour = int('NEW_PLAYERS_PER_IP_PER_HOUR', 10, 1, 100_000);
   const version = get('APP_VERSION') ?? 'dev';
 
+  let auth: AuthSettings = { mode: 'legacy' };
+  const authMode = oneOf('AUTH_MODE', AUTH_MODES, 'legacy');
+  const allowDevAuth = bool('ALLOW_DEV_AUTH', false);
+  if (authMode === 'dev') {
+    // Anyone can be anyone in dev mode: a production server must not end up in it by a slip.
+    if (get('NODE_ENV') === 'production' && !allowDevAuth) {
+      errors.push('AUTH_MODE=dev lets anyone sign in as anyone with just an email, so it is refused when NODE_ENV=production; set ALLOW_DEV_AUTH=1 only on a test server');
+    }
+    auth = { mode: 'dev' };
+  } else if (authMode === 'supabase') {
+    const rawUrl = get('SUPABASE_URL');
+    const url = rawUrl === undefined ? undefined : projectUrl(rawUrl);
+    if (rawUrl === undefined) errors.push('SUPABASE_URL is required with AUTH_MODE=supabase (the project\'s address, like https://abcd.supabase.co)');
+    else if (url === undefined) errors.push(`SUPABASE_URL must be the project's address, like https://abcd.supabase.co (http only for a Supabase on this machine), got "${rawUrl}"`);
+    // SUPABASE_ANON_KEY is the older name, from before Supabase's publishable keys replaced anon keys.
+    const publishable = get('SUPABASE_PUBLISHABLE_KEY');
+    const anon = get('SUPABASE_ANON_KEY');
+    const key = publishable ?? anon;
+    // Never echo a key: if it is a secret one, the log must not spread it further.
+    if (publishable !== undefined && anon !== undefined && publishable !== anon) {
+      errors.push('SUPABASE_PUBLISHABLE_KEY and SUPABASE_ANON_KEY are both set, to different keys: set only SUPABASE_PUBLISHABLE_KEY');
+    } else if (key === undefined) {
+      errors.push('SUPABASE_PUBLISHABLE_KEY is required with AUTH_MODE=supabase (the project\'s publishable key, sb_publishable_...)');
+    } else {
+      const problem = publicKeyProblem(key);
+      if (problem) errors.push(`${publishable !== undefined ? 'SUPABASE_PUBLISHABLE_KEY' : 'SUPABASE_ANON_KEY'} ${problem}`);
+    }
+    const jwtSecret = get('SUPABASE_JWT_SECRET');
+    if (jwtSecret !== undefined && jwtSecret.length < 32) errors.push('SUPABASE_JWT_SECRET must be the project\'s JWT secret (at least 32 characters)');
+    auth = { mode: 'supabase', url: url ?? '', publishableKey: key ?? '', jwtSecret };
+  }
+
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
     port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
-    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version,
+    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, auth,
   };
+}
+
+/** A Supabase project's address as clients and tokens name it (the origin), or undefined if it is not one. */
+function projectUrl(raw: string): string | undefined {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  // Plain http would let anyone on the way swap the keys; only a Supabase running on this machine may use it.
+  const local = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]';
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) return undefined;
+  if (u.username || u.password || u.search || u.hash || u.pathname.replace(/\/+$/, '') !== '') return undefined;
+  return u.origin;
+}
+
+/**
+ * Why `key` must not be handed to every browser as the project's public key, or undefined if it
+ * may. Supabase's secret keys (sb_secret_..., or the legacy service_role JWT) bypass all its rules.
+ */
+function publicKeyProblem(key: string): string | undefined {
+  if (/\s/.test(key)) return 'must be one line without spaces';
+  if (key.startsWith('sb_secret_')) return 'is a secret key: use the project\'s publishable key (sb_publishable_...), since every browser gets it';
+  const parts = key.split('.');
+  if (parts.length !== 3) return undefined; // a publishable key (sb_publishable_...)
+  // A legacy key is a JWT whose role says what it may do.
+  let role: unknown;
+  try {
+    role = (JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8')) as { role?: unknown }).role;
+  } catch {
+    return 'is not a key Supabase made (it looks like a JWT but cannot be read)';
+  }
+  return role === 'anon' ? undefined : 'is not a public key: use the project\'s publishable key (sb_publishable_...), since every browser gets it';
 }
 
 /** The first `rel` that exists in `from` or one of its parents. */

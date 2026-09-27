@@ -35,7 +35,7 @@ describe('connecting', () => {
     expect(welcome.players).toEqual([{ id, name: 'Aldo', x: 1, y: 2, dir: 'down', color: colorFor(id) }]);
     expect(Math.abs(welcome.serverTime - Date.now())).toBeLessThan(5000);
     // Only the token's hash is kept.
-    expect(ctx.storage.get(id)).toMatchObject({ name: 'Aldo', tokenHash: hashToken(welcome.token), map: 'town', x: 1, y: 2, energy: ENERGY_MAX });
+    expect(ctx.storage.get(id)).toMatchObject({ name: 'Aldo', tokenHash: hashToken(welcome.token!), map: 'town', x: 1, y: 2, energy: ENERGY_MAX });
     expect(JSON.stringify(ctx.storage.get(id))).not.toContain(welcome.token);
   });
 

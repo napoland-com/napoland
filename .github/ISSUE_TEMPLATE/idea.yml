@@ -1,0 +1,39 @@
+name: Idea
+description: Something new for the game, or a change to an item on the roadmap.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The roadmap is one file per item in [roadmap/](https://github.com/napoland-com/napoland/tree/main/roadmap). If your idea is already there, name its file below and say what you would change.
+        Sure about an idea? You can skip this issue and open a pull request that adds `roadmap/<id>.md` with `status: idea`: [roadmap/README.md](https://github.com/napoland-com/napoland/blob/main/roadmap/README.md) explains how.
+        Before you write, read the [pillars](https://github.com/napoland-com/napoland/blob/main/docs/DESIGN.md#pillars): no fights, no PvP, no missions; leave home and come back; farther is harder and richer; together you go farther; one fixed world you learn.
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: What players would see and do.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+      description: What it adds to the game, and which pillar it serves.
+    validations:
+      required: true
+  - type: input
+    id: roadmap
+    attributes:
+      label: Roadmap item
+      description: The roadmap file this changes or builds on, if any.
+      placeholder: roadmap/group-mechanics.md
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: Before you send it
+      options:
+        - label: I looked through roadmap/, and it is not there yet (or I named its file above).
+          required: true
+        - label: It fits the pillars (no fights, no PvP, no missions).
+          required: true

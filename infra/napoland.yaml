@@ -12,16 +12,19 @@ Parameters:
   HostedZoneId:
     Type: AWS::Route53::HostedZone::Id
     Description: The existing Route 53 zone of DomainName.
-  GitHubRepo:
-    Type: String
-    Default: angelolamonaca/napoland
-    Description: Only pushes to main of this repository may deploy.
-  GitHubRepoWithIds:
-    Type: String
-    Default: angelolamonaca@69331077/napoland@1389470317
+  GitHubSubjects:
+    Type: CommaDelimitedList
+    # The repository moved from angelolamonaca to the napoland-com organization (same repository id).
+    # Both are trusted during the move; drop the old two once releases work from the organization.
+    Default: >-
+      repo:napoland-com@334462898/napoland@1389470317:ref:refs/heads/main,
+      repo:napoland-com/napoland:ref:refs/heads/main,
+      repo:angelolamonaca@69331077/napoland@1389470317:ref:refs/heads/main,
+      repo:angelolamonaca/napoland:ref:refs/heads/main
     Description: >-
-      The same repository as GitHub now names it in deploy tokens: owner and repository with their
-      numeric ids, which never change (a deleted and re-created repository gets a new id).
+      Which GitHub Actions runs may deploy: pushes to main of the napoland repository. GitHub names
+      it in deploy tokens with the owner's and the repository's numeric ids (they never change, and a
+      deleted and re-created repository gets a new id); the plain form is the older one.
   GitHubOidcProviderArn:
     Type: String
     Description: The account's existing token.actions.githubusercontent.com provider (there can be only one).
@@ -427,10 +430,7 @@ Resources:
             Condition:
               StringEquals:
                 'token.actions.githubusercontent.com:aud': sts.amazonaws.com
-                # GitHub's current subject names the repository with ids; the plain form is the older one.
-                'token.actions.githubusercontent.com:sub':
-                  - !Sub 'repo:${GitHubRepoWithIds}:ref:refs/heads/main'
-                  - !Sub 'repo:${GitHubRepo}:ref:refs/heads/main'
+                'token.actions.githubusercontent.com:sub': !Ref GitHubSubjects
       Policies:
         - PolicyName: napoland-deploy
           PolicyDocument:

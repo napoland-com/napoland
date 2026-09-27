@@ -6,6 +6,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
 import { DROP_LIFETIME_MS, ENERGY_MAX, PROTOCOL_VERSION, type BagSlot, type ClientMsg, type DropView, type ServerMsg } from '@napoland/shared';
+import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
@@ -109,7 +110,7 @@ export async function savedPlayer(storage: Storage, where: Partial<PlayerRecord>
   const id = randomUUID();
   const name = newName();
   await storage.create({
-    id, name, tokenHash: hashToken(token), map: 'town', x: 1, y: 2, dir: 'down', color: colorFor(id), energy: ENERGY_MAX, bag: [],
+    id, name, tokenHash: hashToken(token), authSub: null, map: 'town', x: 1, y: 2, dir: 'down', color: colorFor(id), energy: ENERGY_MAX, bag: [],
     createdAt: 1, lastSeenAt: 1, ...where,
   });
   return { id, name, token };
@@ -175,20 +176,72 @@ export async function restartKeepsBagsAndPiles(first: Storage, second: Storage, 
   }
 }
 
+/**
+ * Signing in with an identity (dev mode here, so on any storage): a character made before sign-in
+ * is claimed with its token by the first identity that brings it, and is theirs from then on, with
+ * or without the token; for anyone else the token claims nothing, and they make their own. Runs on
+ * `storage` (in memory, or a real database).
+ */
+export async function signInAndClaim(storage: Storage): Promise<void> {
+  setLogLevel('silent');
+  const server = await startServer({ ...serverDefaults(), storage, items: itemsData(), auth: devAuth() });
+  const clients: Client[] = [];
+  const say = async (hello: Partial<Extract<ClientMsg, { t: 'hello' }>>) => {
+    const c = await Client.open(server.port);
+    clients.push(c);
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, ...hello });
+    return c;
+  };
+  try {
+    const old = await savedPlayer(storage, { map: 'town', x: 0, y: 5, bag: [{ item: 'nail', count: 3 }] });
+    const ann = await (await say({ auth: 'ann@example.test', token: old.token })).next('welcome');
+    expect(ann).toMatchObject({ you: old.id, name: old.name, claimed: true, bag: [{ item: 'nail', count: 3 }] });
+    expect(ann.token).toBeUndefined();
+    expect(ann.players.find(p => p.id === old.id)).toMatchObject({ x: 0, y: 5 });
+
+    // Theirs from now on, even without the token (and a new sign-in replaces the old connection).
+    const again = await (await say({ auth: 'ANN@example.test' })).next('welcome');
+    expect(again).toMatchObject({ you: old.id, name: old.name });
+    expect(again.claimed).toBeUndefined();
+
+    // The token claims nothing for anyone else: they are asked for a name, and make their own character.
+    const bobAsked = await say({ auth: 'bob@example.test', token: old.token });
+    expect(await bobAsked.next('error')).toMatchObject({ code: 'need_name' });
+    expect((await bobAsked.closed).code).toBe(1000);
+    const name = newName();
+    const bob = await (await say({ auth: 'bob@example.test', token: old.token, name })).next('welcome');
+    expect(bob).toMatchObject({ name });
+    expect(bob.you).not.toBe(old.id);
+    expect(bob.token).toBeUndefined();
+    expect(bob.claimed).toBeUndefined();
+
+    expect(await storage.findByAuthSub('dev:ann@example.test')).toMatchObject({ id: old.id, tokenHash: hashToken(old.token), authSub: 'dev:ann@example.test' });
+    expect(await storage.findByAuthSub('dev:bob@example.test')).toMatchObject({ id: bob.you, name, tokenHash: null });
+    expect(await storage.findByTokenHash(hashToken(old.token))).toMatchObject({ id: old.id, authSub: 'dev:ann@example.test' });
+  } finally {
+    for (const c of clients) c.ws.terminate();
+    await server.stop();
+  }
+}
+
 /** What every test server gets unless the test says otherwise: the fixture maps, home in the town. */
 export const serverDefaults = (): ServerOptions => ({
   host: '127.0.0.1', port: 0, storage: new MemoryStorage(), maps: fixtureMaps(), homeMap: 'town',
   weather: 'rain', maxPlayers: 50, tickMs: 20, saveEveryMs: 60_000, helloTimeoutMs: 500,
 });
 
-/** Starts a server for one describe block and cleans up its clients after every test. */
-export function setup(options: Partial<ServerOptions> = {}) {
+/**
+ * Starts a server for one describe block and cleans up its clients after every test. `options` may
+ * be a function, read when the server starts (after earlier beforeAll hooks, say one that starts a
+ * stand-in Supabase project).
+ */
+export function setup(options: Partial<ServerOptions> | (() => Partial<ServerOptions>) = {}) {
   const ctx = { server: undefined as unknown as RunningServer, storage: new MemoryStorage() };
   const clients: Client[] = [];
 
   beforeAll(async () => {
     setLogLevel('silent');
-    ctx.server = await startServer({ ...serverDefaults(), storage: ctx.storage, ...options });
+    ctx.server = await startServer({ ...serverDefaults(), storage: ctx.storage, ...(typeof options === 'function' ? options() : options) });
   });
   afterEach(async () => {
     for (const c of clients.splice(0)) c.ws.terminate();
@@ -232,5 +285,5 @@ export function setup(options: Partial<ServerOptions> = {}) {
     expect((await c.closed).code).toBe(closeCode);
     return c;
   };
-  return { ctx, open, join, login, enter, refused };
+  return { ctx, open, join, login, enter, refused, welcomed };
 }

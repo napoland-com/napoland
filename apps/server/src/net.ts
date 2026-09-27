@@ -1,8 +1,9 @@
 /**
  * The WebSocket side: one connection per player. Holds each address to its limits, checks the
- * hello, feeds client messages to the World and sends out what the World has to say, each message
- * to the players it is for: one player, or everyone on one map. Nothing a client sends is trusted.
- * It also stores players (now and then, and when they leave) and piles (whenever one changes).
+ * hello (and with it who is signing in, see auth.ts), feeds client messages to the World and sends
+ * out what the World has to say, each message to the players it is for: one player, or everyone on
+ * one map. Nothing a client sends is trusted. It also stores players (now and then, and when they
+ * leave) and piles (whenever one changes).
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
@@ -10,6 +11,7 @@ import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
 import {
   ENERGY_MAX,
+  MAX_HELLO_BYTES,
   MAX_MESSAGE_BYTES,
   PROTOCOL_VERSION,
   PlayerName,
@@ -19,6 +21,7 @@ import {
   type ErrorCode,
   type ServerMsg,
 } from '@napoland/shared';
+import { legacyAuth, type Auth } from './auth';
 import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
 import type { DropRecord, PlayerRecord, Storage } from './storage';
@@ -43,11 +46,14 @@ const CLOSE_CODES: Record<ErrorCode, number> = {
   bad_name: 1000,
   unknown_token: 1000,
   replaced: 1000,
+  need_name: 1000,
+  sign_in_required: 1000,
   server_full: 1013,
 };
 const VERSION_TEXT = `This server speaks protocol version ${PROTOCOL_VERSION}; reload to update`;
 const NAME_TEXT = 'Names are 2 to 16 letters, digits, spaces, - or _';
 const TOO_MANY_NEW_TEXT = 'Too many new players from your network. Try again later.';
+const FULL_TEXT = 'The server is full, try again soon';
 
 export interface NetOptions {
   server: Server;
@@ -64,6 +70,8 @@ export interface NetOptions {
   maxConnectionsPerIp?: number;
   /** New players one address may create in any hour. Unset means no limit. */
   newPlayersPerIpPerHour?: number;
+  /** How players sign in. Unset means without sign-in (legacy). */
+  auth?: Auth;
 }
 
 export interface Net {
@@ -93,13 +101,26 @@ interface Session {
   helloTimer: ReturnType<typeof setTimeout>;
 }
 
+type Hello = Extract<ClientMsg, { t: 'hello' }>;
+
+/** Who a hello turned out to be, and what their welcome says about how they got in. */
+interface Entry {
+  rec: PlayerRecord;
+  /** Without sign-in: the token they logged in with, or the new player's new one. */
+  token?: string;
+  /** This sign-in just claimed the character of the hello's token. */
+  claimed?: true;
+}
+
 export const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
 
 export function attachNet(o: NetOptions): Net {
   const { world, storage } = o;
+  const auth = o.auth ?? legacyAuth();
   const clock = o.clock ?? (() => performance.now());
-  // noServer: upgrade requests come through onUpgrade first, which can refuse them.
-  const wss = new WebSocketServer({ noServer: true, path: '/ws', maxPayload: MAX_MESSAGE_BYTES });
+  // noServer: upgrade requests come through onUpgrade first, which can refuse them. Frames may be
+  // as long as a hello (it carries the sign-in); onMessage holds every later message to less.
+  const wss = new WebSocketServer({ noServer: true, path: '/ws', maxPayload: MAX_HELLO_BYTES });
   const conns = new Set<Session>();
   /** Sessions whose player is in the world, by player id. */
   const playing = new Map<string, Session>();
@@ -117,8 +138,9 @@ export function attachNet(o: NetOptions): Net {
   const openPerIp = new Map<string, number>();
   const maxPerIp = o.maxConnectionsPerIp ?? Infinity;
   const newPlayers = new RollingLimit(o.newPlayersPerIpPerHour ?? Infinity, HOUR_MS, clock);
-  const warnConnections = throttledWarn('too many connections from one address', clock);
-  const warnNewPlayers = throttledWarn('too many new players from one address', clock);
+  const warnConnections = throttledLog('warn', 'too many connections from one address', clock);
+  const warnNewPlayers = throttledLog('warn', 'too many new players from one address', clock);
+  const warnCannotCheck = throttledLog('error', 'cannot check sign-ins (are Supabase\'s keys reachable?)', clock);
 
   o.server.on('upgrade', onUpgrade);
 
@@ -185,8 +207,10 @@ export function attachNet(o: NetOptions): Net {
     s.tokens -= 1;
 
     const raw = isBinary ? '' : text(data);
+    if (s.state === 'hello') return onFirstMessage(s, raw, isBinary ? null : parseClientMsg(raw, MAX_HELLO_BYTES));
+    // Only the hello may be that long; later messages get what ws gives frames over its limit.
+    if (byteLength(data) > MAX_MESSAGE_BYTES) return void disconnect(s, 1009, 'message too big');
     const msg = isBinary ? null : parseClientMsg(raw);
-    if (s.state === 'hello') return onFirstMessage(s, raw, msg);
     if (!msg) return fail(s, 'bad_message', 'Bad message');
     if (msg.t === 'ping') return send(s, { t: 'pong', at: msg.at, serverTime: Date.now() });
     if (s.state === 'auth') return fail(s, 'bad_message', 'Wait for welcome');
@@ -227,72 +251,133 @@ export function attachNet(o: NetOptions): Net {
     });
   }
 
-  async function hello(s: Session, msg: Extract<ClientMsg, { t: 'hello' }>): Promise<void> {
-    let found: { rec: PlayerRecord; token: string } | undefined;
-    if (msg.token !== undefined) {
-      const rec = await storage.findByTokenHash(hashToken(msg.token));
-      if (s.state !== 'auth') return;
-      if (!rec) return fail(s, 'unknown_token', 'Unknown token: choose a name');
-      // Someone already online who signs in again does not need a new place.
-      if (!world.has(rec.id) && isFull()) return fail(s, 'server_full', 'The server is full, try again soon');
-      found = { rec, token: msg.token };
-    } else if (msg.name !== undefined) {
-      if (isFull()) return fail(s, 'server_full', 'The server is full, try again soon');
-      // Every new player is a database row: one address must not make them without end.
-      if (!newPlayers.start(s.ip)) {
-        warnNewPlayers();
-        return fail(s, 'bad_name', TOO_MANY_NEW_TEXT);
-      }
-      joining++;
-      try {
-        found = await newPlayer(s, msg.name);
-      } finally {
-        joining--;
-        // Only a player that was really created counts; a taken name or an error does not.
-        newPlayers.finish(s.ip, found !== undefined);
-      }
-    } else {
-      return fail(s, 'bad_name', 'Choose a name');
-    }
-    if (!found || s.state !== 'auth') return;
-    let { rec } = found;
+  async function hello(s: Session, msg: Hello): Promise<void> {
+    const entry = auth.mode === 'legacy' ? await legacyHello(s, msg) : await signedInHello(s, msg);
+    if (!entry || s.state !== 'auth') return;
     // Signed in again while still online (another tab, or a reconnect before the old socket
     // timed out): the old connection goes, and the freshest position comes with the player.
-    const old = playing.get(rec.id);
+    const old = playing.get(entry.rec.id);
     if (old) {
       send(old, { t: 'error', code: 'replaced', message: 'You are playing somewhere else' });
-      rec = disconnect(old, CLOSE_CODES.replaced, 'replaced', false) ?? rec;
+      entry.rec = disconnect(old, CLOSE_CODES.replaced, 'replaced', false) ?? entry.rec;
     }
-    enter(s, rec, found.token);
+    enter(s, entry);
   }
 
-  /** Creates a player with a new token at the home map's spawn. Undefined if that failed the session. */
-  async function newPlayer(s: Session, name: string): Promise<{ rec: PlayerRecord; token: string } | undefined> {
-    // parseClientMsg has already trimmed the name and checked it with PlayerName.
-    const taken = await storage.nameTaken(name);
+  /** Without sign-in: a saved token logs back in; a name makes a new player, with a new token. */
+  async function legacyHello(s: Session, msg: Hello): Promise<Entry | undefined> {
+    if (msg.token !== undefined) {
+      const rec = await storage.findByTokenHash(hashToken(msg.token));
+      if (s.state !== 'auth') return undefined;
+      if (!rec) return void fail(s, 'unknown_token', 'Unknown token: choose a name');
+      return room(s, rec) ? { rec, token: msg.token } : undefined;
+    }
+    if (msg.name !== undefined) return newPlayer(s, msg.name, null);
+    return void fail(s, 'bad_name', 'Choose a name');
+  }
+
+  /**
+   * With sign-in: `auth` must prove who this is. They get their character; without one, the
+   * character of the hello's token if nobody has claimed it yet (made before sign-in, on this
+   * browser); without that, a new one with the hello's name; without a name, need_name.
+   */
+  async function signedInHello(s: Session, msg: Hello): Promise<Entry | undefined> {
+    const sub = await identify(s, msg.auth);
     if (s.state !== 'auth') return undefined;
-    if (taken) {
-      fail(s, 'bad_name', 'That name is taken');
-      return undefined;
+    if (sub === undefined) return void fail(s, 'sign_in_required', 'Sign in to play');
+    const mine = await storage.findByAuthSub(sub);
+    if (s.state !== 'auth') return undefined;
+    if (mine) return room(s, mine) ? { rec: mine } : undefined;
+    if (msg.token !== undefined) {
+      const claimed = await claim(s, sub, msg.token);
+      if (claimed || s.state !== 'auth') return claimed;
     }
-    const token = randomBytes(32).toString('base64url');
-    const id = randomUUID();
-    const now = Date.now();
-    const { id: map, spawn } = world.home.data;
-    const rec: PlayerRecord = {
-      id, name, tokenHash: hashToken(token), map, x: spawn.x, y: spawn.y, dir: spawn.dir, color: colorFor(id), energy: ENERGY_MAX, bag: [],
-      createdAt: now, lastSeenAt: now,
-    };
-    // create() also refuses the name if another player took it since nameTaken().
-    if (!(await storage.create(rec))) {
-      fail(s, 'bad_name', 'That name is taken');
-      return undefined;
-    }
-    log.info('player created', { id, name });
-    return { rec, token };
+    if (msg.name === undefined) return void fail(s, 'need_name', 'Choose a name for your character');
+    return newPlayer(s, msg.name, sub);
   }
 
-  function enter(s: Session, rec: PlayerRecord, token: string): void {
+  /**
+   * The identity a hello's `auth` proves, or undefined. When it cannot be checked right now, the
+   * session ends with 1011, so the client tries again later instead of asking to sign in again.
+   */
+  async function identify(s: Session, proof: string | undefined): Promise<string | undefined> {
+    if (proof === undefined) return undefined;
+    try {
+      return await auth.identify(proof);
+    } catch (err) {
+      warnCannotCheck({ err: err instanceof Error ? err.message : String(err) });
+      if (s.state === 'auth') disconnect(s, 1011, 'cannot check sign-in');
+      return undefined;
+    }
+  }
+
+  /** The character of a token saved before sign-in, now `sub`'s, if nobody had claimed it yet. */
+  async function claim(s: Session, sub: string, token: string): Promise<Entry | undefined> {
+    const rec = await storage.findByTokenHash(hashToken(token));
+    if (!rec || rec.authSub !== null || s.state !== 'auth' || !room(s, rec)) return undefined;
+    if (await storage.claim(rec.id, sub)) {
+      log.info('character claimed', { id: rec.id });
+      return { rec: { ...rec, authSub: sub }, claimed: true };
+    }
+    // Lost a race: someone claimed it first, or this identity got a character meanwhile (another tab).
+    const mine = await storage.findByAuthSub(sub);
+    return mine && s.state === 'auth' && room(s, mine) ? { rec: mine } : undefined;
+  }
+
+  /** Someone already online who signs in again needs no new place; anyone else does. False if the session failed for it. */
+  function room(s: Session, rec: PlayerRecord): boolean {
+    if (world.has(rec.id) || !isFull()) return true;
+    fail(s, 'server_full', FULL_TEXT);
+    return false;
+  }
+
+  /**
+   * A new player at the home map's spawn: with a new token without sign-in (`sub` null), or
+   * belonging to `sub`. Undefined if that failed the session.
+   */
+  async function newPlayer(s: Session, name: string, sub: string | null): Promise<Entry | undefined> {
+    if (isFull()) return void fail(s, 'server_full', FULL_TEXT);
+    // Every new player is a database row: one address must not make them without end.
+    if (!newPlayers.start(s.ip)) {
+      warnNewPlayers();
+      return void fail(s, 'bad_name', TOO_MANY_NEW_TEXT);
+    }
+    joining++;
+    let made = false;
+    let entry: Entry | undefined;
+    try {
+      // parseClientMsg has already trimmed the name and checked it with PlayerName.
+      const taken = await storage.nameTaken(name);
+      if (s.state !== 'auth') return undefined;
+      if (taken) return void fail(s, 'bad_name', 'That name is taken');
+      const token = sub === null ? randomBytes(32).toString('base64url') : undefined;
+      const id = randomUUID();
+      const now = Date.now();
+      const { id: map, spawn } = world.home.data;
+      const rec: PlayerRecord = {
+        id, name, tokenHash: token === undefined ? null : hashToken(token), authSub: sub, map, x: spawn.x, y: spawn.y, dir: spawn.dir,
+        color: colorFor(id), energy: ENERGY_MAX, bag: [], createdAt: now, lastSeenAt: now,
+      };
+      // create() also refuses the name if another player took it since nameTaken().
+      made = await storage.create(rec);
+      if (made) {
+        log.info('player created', { id, name });
+        entry = token === undefined ? { rec } : { rec, token };
+      } else if (sub !== null) {
+        // Or this identity got a character meanwhile (two tabs at once): then it plays that one.
+        const mine = await storage.findByAuthSub(sub);
+        if (mine) entry = { rec: mine };
+      }
+      if (!entry) fail(s, 'bad_name', 'That name is taken');
+    } finally {
+      joining--;
+      // Only a player that was really created counts; a taken name or an error does not.
+      newPlayers.finish(s.ip, made);
+    }
+    return s.state === 'auth' ? entry : undefined;
+  }
+
+  function enter(s: Session, { rec, token, claimed }: Entry): void {
     const joined = world.join(rec, clock());
     s.state = 'play';
     s.id = rec.id;
@@ -303,7 +388,8 @@ export function attachNet(o: NetOptions): Net {
       v: PROTOCOL_VERSION,
       you: rec.id,
       name: rec.name,
-      token,
+      ...(token !== undefined && { token }),
+      ...(claimed && { claimed }),
       map: joined.map,
       players: joined.players,
       finds: joined.finds,
@@ -495,6 +581,10 @@ function text(data: RawData): string {
   return Buffer.isBuffer(data) ? data.toString('utf8') : Buffer.from(data).toString('utf8');
 }
 
+function byteLength(data: RawData): number {
+  return Array.isArray(data) ? data.reduce((n, b) => n + b.byteLength, 0) : data.byteLength;
+}
+
 /** Answers an upgrade request with an HTTP error instead of a WebSocket, and closes the socket. */
 function refuseUpgrade(socket: Duplex, status: number, message: string): void {
   // Nobody else listens for errors on this socket, and an unhandled one would stop the process.
@@ -508,17 +598,17 @@ function refuseUpgrade(socket: Duplex, status: number, message: string): void {
 }
 
 /**
- * A warning about something clients can repeat at will: logged at most once a minute, with how many
- * times it happened since the last line, so a flood cannot fill the disk with log lines.
+ * A problem clients can repeat at will: logged at most once a minute, with how many times it
+ * happened since the last line, so a flood cannot fill the disk with log lines.
  */
-function throttledWarn(msg: string, clock: () => number): () => void {
+function throttledLog(level: 'warn' | 'error', msg: string, clock: () => number): (fields?: Record<string, unknown>) => void {
   let loggedAt = -Infinity;
   let times = 0;
-  return () => {
+  return fields => {
     times++;
     const now = clock();
     if (now - loggedAt < WARN_EVERY_MS) return;
-    log.warn(msg, { times });
+    log[level](msg, { times, ...fields });
     loggedAt = now;
     times = 0;
   };

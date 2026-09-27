@@ -4,6 +4,7 @@
  */
 import type { AddressInfo } from 'node:net';
 import { DROP_LIFETIME_MS, type ItemsData, type TileMap, type Weather } from '@napoland/shared';
+import { legacyAuth, type Auth } from './auth';
 import { createHttpServer } from './http';
 import { log } from './log';
 import { attachNet } from './net';
@@ -40,6 +41,8 @@ export interface ServerOptions {
   maxConnectionsPerIp?: number;
   /** New players one address may create in any hour; unset means no limit. */
   newPlayersPerIpPerHour?: number;
+  /** How players sign in (auth.ts); unset means without sign-in (legacy). */
+  auth?: Auth;
 }
 
 export interface RunningServer {
@@ -63,8 +66,10 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     // Game time never goes backwards; piles keep wall clock time, which is this far ahead of it.
     epochOffset: Date.now() - clock(),
   });
-  const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version });
+  const auth = o.auth ?? legacyAuth();
+  const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version, auth: auth.config });
   const net = attachNet({
+    auth,
     server: http,
     world,
     storage: o.storage,

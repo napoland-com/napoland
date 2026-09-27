@@ -10,6 +10,7 @@ export default defineConfig({
     proxy: {
       '/ws': { target: `ws://${server}`, ws: true },
       '/health': `http://${server}`,
+      '/auth-config': `http://${server}`,
     },
   },
   build: {

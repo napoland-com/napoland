@@ -166,12 +166,38 @@ describe('without a client folder', () => {
   });
   afterAll(() => new Promise<void>(resolve => server.close(() => resolve())));
 
-  it('only has /health', async () => {
+  it('only has /health and /auth-config', async () => {
     const health = await get(port, '/health');
     expect(health.status).toBe(200);
     expect(health.headers['content-type']).toBe('application/json; charset=utf-8');
     expect(health.headers['x-content-type-options']).toBe('nosniff');
     expect(JSON.parse(health.body)).toEqual({ ok: true, players: 3, uptimeSeconds: expect.any(Number), version: 'dev' });
     for (const path of ['/', '/index.html', '/play']) expect((await get(port, path)).status).toBe(404);
+  });
+
+  it('says on /auth-config that players need no sign-in, unless told otherwise, and never lets it be cached', async () => {
+    const res = await get(port, '/auth-config');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('application/json; charset=utf-8');
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(JSON.parse(res.body)).toEqual({ mode: 'legacy' });
+  });
+});
+
+describe('/auth-config with Supabase', () => {
+  let server: Server;
+  let port: number;
+  const auth = { mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_abc' } as const;
+  beforeAll(async () => {
+    server = createHttpServer({ players: () => 0, auth });
+    port = await listen(server);
+  });
+  afterAll(() => new Promise<void>(resolve => server.close(() => resolve())));
+
+  it('hands the client the project and its publishable key, even next to a built client', async () => {
+    const res = await get(port, '/auth-config');
+    expect([res.status, res.headers['cache-control']]).toEqual([200, 'no-store']);
+    expect(JSON.parse(res.body)).toEqual(auth);
+    expect((await get(port, '/auth-config', {}, 'HEAD')).body).toBe('');
   });
 });

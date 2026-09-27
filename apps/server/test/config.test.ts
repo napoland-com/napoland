@@ -12,7 +12,7 @@ describe('loadConfig', () => {
     expect(cfg).toMatchObject({
       port: 8080, host: '0.0.0.0', databaseUrl: undefined, weather: 'rain',
       maxPlayers: 500, tickMs: 50, saveEveryMs: 15_000, logLevel: 'info',
-      trustProxy: false, maxConnectionsPerIp: 20, newPlayersPerIpPerHour: 10, version: 'dev',
+      trustProxy: false, maxConnectionsPerIp: 20, newPlayersPerIpPerHour: 10, version: 'dev', auth: { mode: 'legacy' },
     });
     expect(cfg.mapsDir).toBe(join(REPO, 'content', 'maps'));
     expect(cfg.itemsFile).toBe(join(REPO, 'content', 'items.json'));
@@ -78,5 +78,81 @@ describe('loadConfig', () => {
 
   it('refuses the old MAP_FILE, which would quietly be ignored', () => {
     expect(() => loadConfig({ MAP_FILE: 'content/maps/stonebrook.json' }, REPO)).toThrow(/MAP_FILE is no longer used: set MAPS_DIR/);
+  });
+});
+
+describe('loadConfig: signing in', () => {
+  const PUBLISHABLE = 'sb_publishable_MjuYAHlcbXjup4pBciyVGw_QRMps_UU';
+  const supabase = { AUTH_MODE: 'supabase', SUPABASE_URL: 'https://abcd.supabase.co', SUPABASE_PUBLISHABLE_KEY: PUBLISHABLE };
+  /** A legacy Supabase key: a JWT whose role says what it may do (the signature does not matter here). */
+  const legacyKey = (role: string) => `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.${Buffer.from(JSON.stringify({ iss: 'supabase', ref: 'abcd', role })).toString('base64url')}.c2lnbmF0dXJl`;
+  const problem = (env: Record<string, string>) => {
+    try {
+      loadConfig(env, REPO);
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return '';
+  };
+
+  it('runs without sign-in unless AUTH_MODE says otherwise', () => {
+    expect(loadConfig({}, REPO).auth).toEqual({ mode: 'legacy' });
+    expect(loadConfig({ AUTH_MODE: 'legacy', SUPABASE_URL: 'https://abcd.supabase.co' }, REPO).auth).toEqual({ mode: 'legacy' });
+    expect(problem({ AUTH_MODE: 'google' })).toMatch(/AUTH_MODE must be one of legacy, dev, supabase/);
+  });
+
+  it('takes dev sign-in, but refuses it in production unless ALLOW_DEV_AUTH=1', () => {
+    expect(loadConfig({ AUTH_MODE: 'dev' }, REPO).auth).toEqual({ mode: 'dev' });
+    expect(loadConfig({ AUTH_MODE: 'dev', NODE_ENV: 'development' }, REPO).auth).toEqual({ mode: 'dev' });
+    expect(problem({ AUTH_MODE: 'dev', NODE_ENV: 'production' })).toMatch(/AUTH_MODE=dev lets anyone sign in as anyone.*ALLOW_DEV_AUTH=1/);
+    expect(problem({ AUTH_MODE: 'dev', NODE_ENV: 'production', ALLOW_DEV_AUTH: '0' })).toMatch(/AUTH_MODE=dev/);
+    expect(loadConfig({ AUTH_MODE: 'dev', NODE_ENV: 'production', ALLOW_DEV_AUTH: '1' }, REPO).auth).toEqual({ mode: 'dev' });
+    // A misspelt "on" must not quietly mean off (or on).
+    expect(problem({ AUTH_MODE: 'dev', ALLOW_DEV_AUTH: 'yes' })).toMatch(/ALLOW_DEV_AUTH must be 1, true, 0 or false/);
+    // Production without dev sign-in is fine.
+    expect(loadConfig({ NODE_ENV: 'production' }, REPO).auth).toEqual({ mode: 'legacy' });
+  });
+
+  it('takes a Supabase project: its address (as an origin) and its publishable key', () => {
+    expect(loadConfig(supabase, REPO).auth).toEqual({ mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: PUBLISHABLE, jwtSecret: undefined });
+    expect(loadConfig({ ...supabase, SUPABASE_URL: 'https://abcd.supabase.co/' }, REPO).auth).toMatchObject({ url: 'https://abcd.supabase.co' });
+    // A Supabase running on this machine may use plain http.
+    expect(loadConfig({ ...supabase, SUPABASE_URL: 'http://127.0.0.1:54321' }, REPO).auth).toMatchObject({ url: 'http://127.0.0.1:54321' });
+    const secret = 'x'.repeat(40);
+    expect(loadConfig({ ...supabase, SUPABASE_JWT_SECRET: secret }, REPO).auth).toMatchObject({ jwtSecret: secret });
+  });
+
+  it('takes SUPABASE_ANON_KEY, the older name, and a legacy anon key', () => {
+    const { SUPABASE_PUBLISHABLE_KEY: _, ...withoutKey } = supabase;
+    expect(loadConfig({ ...withoutKey, SUPABASE_ANON_KEY: PUBLISHABLE }, REPO).auth).toMatchObject({ publishableKey: PUBLISHABLE });
+    expect(loadConfig({ ...supabase, SUPABASE_ANON_KEY: PUBLISHABLE }, REPO).auth).toMatchObject({ publishableKey: PUBLISHABLE });
+    expect(loadConfig({ ...withoutKey, SUPABASE_ANON_KEY: legacyKey('anon') }, REPO).auth).toMatchObject({ publishableKey: legacyKey('anon') });
+    expect(problem({ ...supabase, SUPABASE_ANON_KEY: 'sb_publishable_another' })).toMatch(/set only SUPABASE_PUBLISHABLE_KEY/);
+  });
+
+  it('needs the address and the key with AUTH_MODE=supabase', () => {
+    expect(problem({ AUTH_MODE: 'supabase' })).toMatch(/SUPABASE_URL is required with AUTH_MODE=supabase/);
+    expect(problem({ AUTH_MODE: 'supabase' })).toMatch(/SUPABASE_PUBLISHABLE_KEY is required with AUTH_MODE=supabase/);
+  });
+
+  it('refuses an address that is not a project\'s: plain http on the internet, a path, credentials', () => {
+    for (const url of ['abcd.supabase.co', 'http://abcd.supabase.co', 'https://abcd.supabase.co/auth/v1', 'https://user:pass@abcd.supabase.co', 'ftp://abcd.supabase.co']) {
+      expect([url, problem({ ...supabase, SUPABASE_URL: url })]).toEqual([url, expect.stringMatching(/SUPABASE_URL must be the project's address/)]);
+    }
+  });
+
+  it('never hands a secret key to browsers, and never repeats one', () => {
+    const secretKey = 'sb_secret_abcdefghijklmnop';
+    expect(problem({ ...supabase, SUPABASE_PUBLISHABLE_KEY: secretKey })).toMatch(/SUPABASE_PUBLISHABLE_KEY is a secret key/);
+    expect(problem({ ...supabase, SUPABASE_PUBLISHABLE_KEY: secretKey })).not.toContain(secretKey);
+    const serviceRole = legacyKey('service_role');
+    expect(problem({ ...supabase, SUPABASE_PUBLISHABLE_KEY: serviceRole })).toMatch(/SUPABASE_PUBLISHABLE_KEY is not a public key/);
+    expect(problem({ ...supabase, SUPABASE_PUBLISHABLE_KEY: serviceRole })).not.toContain(serviceRole);
+    expect(problem({ ...supabase, SUPABASE_PUBLISHABLE_KEY: 'eyJ.not-json.x' })).toMatch(/cannot be read/);
+  });
+
+  it('refuses a JWT secret too short to be the project\'s, without repeating it', () => {
+    expect(problem({ ...supabase, SUPABASE_JWT_SECRET: 'hunter2' })).toMatch(/SUPABASE_JWT_SECRET must be the project's JWT secret/);
+    expect(problem({ ...supabase, SUPABASE_JWT_SECRET: 'hunter2' })).not.toContain('hunter2');
   });
 });

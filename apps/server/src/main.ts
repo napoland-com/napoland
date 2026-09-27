@@ -2,6 +2,7 @@
  * Entry point: reads the configuration, loads the maps and the items, opens storage and runs the
  * server until SIGINT or SIGTERM, then saves everyone and exits.
  */
+import { createAuth } from './auth';
 import { loadConfig } from './config';
 import { loadItems, loadMaps } from './content';
 import { flushLogs, log, setLogLevel } from './log';
@@ -32,6 +33,8 @@ async function main(): Promise<void> {
 
   const storage: Storage = cfg.databaseUrl ? new PgStorage(cfg.databaseUrl, cfg.migrationsDir!) : new MemoryStorage();
   await storage.init();
+  const auth = createAuth(cfg.auth);
+  if (auth.mode === 'dev') log.warn('dev sign-in: anyone can sign in as anyone with just an email (development and tests only)');
   const server = await startServer({
     host: cfg.host,
     port: cfg.port,
@@ -48,6 +51,7 @@ async function main(): Promise<void> {
     trustProxy: cfg.trustProxy,
     maxConnectionsPerIp: cfg.maxConnectionsPerIp,
     newPlayersPerIpPerHour: cfg.newPlayersPerIpPerHour,
+    auth,
   });
   log.info('server started', {
     version: cfg.version,
@@ -64,6 +68,9 @@ async function main(): Promise<void> {
     trustProxy: cfg.trustProxy,
     maxConnectionsPerIp: cfg.maxConnectionsPerIp,
     newPlayersPerIpPerHour: cfg.newPlayersPerIpPerHour,
+    // The mode and, with Supabase, the project's address (both public); never a key.
+    signIn: cfg.auth.mode,
+    supabase: cfg.auth.mode === 'supabase' ? cfg.auth.url : undefined,
   });
 
   let stopping = false;

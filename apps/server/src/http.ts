@@ -1,12 +1,13 @@
 /**
- * The HTTP side: /health for load balancers and, when the client has been built, its static
- * files, so one process can serve the whole game.
+ * The HTTP side: /health for load balancers, /auth-config for the client's sign-in screen and,
+ * when the client has been built, its static files, so one process can serve the whole game.
  */
 import { createReadStream, type Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream';
+import type { AuthConfig } from '@napoland/shared';
 import { log } from './log';
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -41,6 +42,8 @@ export interface HttpOptions {
   players: () => number;
   /** The running version, for /health, so a deploy can be checked from outside. Default 'dev'. */
   version?: string;
+  /** How players sign in, for /auth-config. Default: without sign-in (legacy). */
+  auth?: AuthConfig;
 }
 
 export function createHttpServer(opts: HttpOptions): Server {
@@ -48,6 +51,7 @@ export function createHttpServer(opts: HttpOptions): Server {
   const index = root && join(root, 'index.html');
   const startedAt = Date.now();
   const version = opts.version ?? 'dev';
+  const authConfig = JSON.stringify(opts.auth ?? { mode: 'legacy' });
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
@@ -61,6 +65,8 @@ export function createHttpServer(opts: HttpOptions): Server {
       const body = JSON.stringify({ ok: true, players: opts.players(), uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000), version });
       return reply(res, 200, body, { 'Content-Type': 'application/json; charset=utf-8' });
     }
+    // Never cached (reply() says no-store): after a release that changes the mode, the next page load must see it.
+    if (pathname === '/auth-config') return reply(res, 200, authConfig, { 'Content-Type': 'application/json; charset=utf-8' });
     if (pathname === '/ws') return reply(res, 426, 'This is the WebSocket endpoint', { Upgrade: 'websocket' });
 
     const found = root && (await findFile(root, pathname));

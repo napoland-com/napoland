@@ -7,7 +7,7 @@ import type { EnergyView } from './energy';
 import type { BagSlot } from './items';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -19,9 +19,42 @@ export type Weather = z.infer<typeof Weather>;
 export const NAME_RE = /^[A-Za-z0-9 _-]{2,16}$/;
 export const PlayerName = z.string().trim().regex(NAME_RE);
 
+/**
+ * How the server wants players to sign in, as GET /auth-config tells the client:
+ * - legacy: no sign-in. A name makes a character, and a token saved in the browser logs back in.
+ * - dev: an email, believed without any code. Only for development and tests: anyone can be anyone.
+ * - supabase: Supabase Auth proves who you are (an email and a 6-digit code, later Google and Apple).
+ *   `url` and `publishableKey` are the project's public values the client needs to talk to it.
+ */
+export const AuthConfig = z.discriminatedUnion('mode', [
+  z.object({ mode: z.literal('legacy') }),
+  z.object({ mode: z.literal('dev') }),
+  z.object({ mode: z.literal('supabase'), url: z.url({ protocol: /^https?$/ }), publishableKey: z.string().min(1) }),
+]);
+export type AuthConfig = z.infer<typeof AuthConfig>;
+export type AuthMode = AuthConfig['mode'];
+export const AUTH_MODES: readonly AuthMode[] = ['legacy', 'dev', 'supabase'];
+
+/**
+ * The longest sign-in a hello may carry: a Supabase access token (a JWT) grows with the profile a
+ * provider such as Google puts in it, and is usually 1 to 2 KB.
+ */
+export const MAX_AUTH_CHARS = 8192;
+
 export const ClientMsg = z.discriminatedUnion('t', [
-  /** First message on a connection. A saved token logs back in; otherwise a name creates a new player. */
-  z.object({ t: z.literal('hello'), v: z.number().int(), token: z.string().min(16).max(128).optional(), name: PlayerName.optional() }),
+  /**
+   * First message on a connection. Without sign-in (legacy), a saved token logs back in; otherwise
+   * a name creates a new player. With sign-in, `auth` says who you are (Supabase's access token, or
+   * the email in dev mode): you get your character; a `token` saved before sign-in claims its
+   * character if nobody has yet; `name` makes a new one.
+   */
+  z.object({
+    t: z.literal('hello'),
+    v: z.number().int(),
+    auth: z.string().min(1).max(MAX_AUTH_CHARS).optional(),
+    token: z.string().min(16).max(128).optional(),
+    name: PlayerName.optional(),
+  }),
   /** Walk one tile. seq lets the client match the server's answer to its prediction. */
   z.object({ t: z.literal('step'), dir: Dir, seq: z.number().int().nonnegative() }),
   /** Turn in place. */
@@ -80,8 +113,10 @@ export type ServerMsg =
       v: number;
       you: string;
       name: string;
-      /** Keep this to log in again later (it is the only credential for now). */
-      token: string;
+      /** Only without sign-in (legacy): keep it to log in again later, it is the only credential. */
+      token?: string;
+      /** Set when this sign-in just claimed the character of the hello's token (made before sign-in). */
+      claimed?: true;
       /** The map you are on. */
       map: MapRef;
       /** Everyone on your map, you included. */
@@ -129,13 +164,22 @@ export type ServerMsg =
   | { t: 'pong'; at: number; serverTime: number }
   | { t: 'error'; code: ErrorCode; message: string };
 
-export type ErrorCode = 'bad_message' | 'bad_version' | 'bad_name' | 'unknown_token' | 'too_fast' | 'replaced' | 'server_full';
+/**
+ * need_name: signed in, but there is no character yet; say hello again with a name.
+ * sign_in_required: the server wants sign-in, and the hello proved nobody (no auth, or it is
+ * malformed, expired or not from our Supabase project).
+ */
+export type ErrorCode =
+  | 'bad_message' | 'bad_version' | 'bad_name' | 'unknown_token' | 'too_fast' | 'replaced' | 'server_full' | 'need_name' | 'sign_in_required';
 
+/** Every message but the hello. */
 export const MAX_MESSAGE_BYTES = 1024;
+/** The hello may be longer: it carries the sign-in. */
+export const MAX_HELLO_BYTES = MAX_AUTH_CHARS + 1024;
 
-/** Parse and validate one message from a client; null if it is not valid. */
-export function parseClientMsg(raw: string): ClientMsg | null {
-  if (raw.length > MAX_MESSAGE_BYTES) return null;
+/** Parse and validate one message from a client; null if it is not valid (or longer than `maxBytes`). */
+export function parseClientMsg(raw: string, maxBytes = MAX_MESSAGE_BYTES): ClientMsg | null {
+  if (raw.length > maxBytes) return null;
   let json: unknown;
   try {
     json = JSON.parse(raw);

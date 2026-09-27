@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DROP_LIFETIME_MS } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type DropRecord, type PlayerRecord } from '../src/storage';
-import { restartKeepsBagsAndPiles } from './helpers';
+import { restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -33,8 +33,8 @@ describe.skipIf(!url)('PgStorage', () => {
     return { schema, url: u.toString() };
   }
 
-  const player = (name: string): PlayerRecord => ({
-    id: randomUUID(), name, tokenHash: randomBytes(32).toString('hex'), map: 'stonebrook',
+  const player = (name: string): PlayerRecord & { tokenHash: string } => ({
+    id: randomUUID(), name, tokenHash: randomBytes(32).toString('hex'), authSub: null, map: 'stonebrook',
     x: 8, y: 21, dir: 'down', color: '#3a86ff', energy: 100, bag: [], createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   });
 
@@ -55,10 +55,11 @@ describe.skipIf(!url)('PgStorage', () => {
   });
 
   it('applies each migration once', async () => {
+    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql'];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
-    expect(await names()).toEqual(['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql']);
+    expect(await names()).toEqual(all);
     await storage.init();
-    expect(await names()).toEqual(['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql']);
+    expect(await names()).toEqual(all);
   });
 
   it('rolls back a migration that fails, and does not record it', async () => {
@@ -180,6 +181,49 @@ describe.skipIf(!url)('PgStorage', () => {
     } finally {
       await first.close();
       await second.close();
+    }
+  });
+
+  it('finds a character by who signed in with it, and lets each be claimed once, by an identity without one', async () => {
+    const old = player('Pg Before Sign-in');
+    const other = player('Pg Also Before');
+    expect(await storage.create(old)).toBe(true);
+    expect(await storage.create(other)).toBe(true);
+    expect(await storage.findByAuthSub('user-a')).toBeNull();
+
+    expect(await storage.claim(old.id, 'user-a')).toBe(true);
+    expect(await storage.findByAuthSub('user-a')).toEqual({ ...old, authSub: 'user-a' });
+    expect(await storage.findByTokenHash(old.tokenHash)).toEqual({ ...old, authSub: 'user-a' });
+    // Claimed already: not again, by anyone.
+    expect(await storage.claim(old.id, 'user-b')).toBe(false);
+    expect(await storage.claim(old.id, 'user-a')).toBe(false);
+    // user-a has a character: not a second one, claimed or new.
+    expect(await storage.claim(other.id, 'user-a')).toBe(false);
+    expect(await storage.create({ ...player('Pg Second'), tokenHash: null, authSub: 'user-a' })).toBe(false);
+    expect((await storage.findByTokenHash(other.tokenHash))!.authSub).toBeNull();
+    expect(await storage.claim(randomUUID(), 'user-c')).toBe(false);
+  });
+
+  it('makes characters after sign-in without a token, as many as there are identities', async () => {
+    const one = { ...player('Pg Signed One'), tokenHash: null, authSub: 'user-one' };
+    const two = { ...player('Pg Signed Two'), tokenHash: null, authSub: 'user-two' };
+    expect(await storage.create(one)).toBe(true);
+    expect(await storage.create(two)).toBe(true);
+    expect(await storage.findByAuthSub('user-one')).toEqual(one);
+    expect(await storage.findByAuthSub('user-two')).toEqual(two);
+    const moved = { ...two, x: 3, y: 4, lastSeenAt: 1_800_000_000_002 };
+    await storage.save(moved);
+    expect(await storage.findByAuthSub('user-two')).toEqual(moved);
+  });
+
+  it('signs in and claims over the network', async () => {
+    const fresh = await freshSchema();
+    const pgStorage = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await pgStorage.init();
+      await signInAndClaim(pgStorage);
+    } finally {
+      await pgStorage.close();
     }
   });
 

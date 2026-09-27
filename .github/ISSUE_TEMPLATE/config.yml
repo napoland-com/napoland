@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: The roadmap
+    url: https://github.com/napoland-com/napoland/tree/main/roadmap
+    about: What is done, being built and planned, one file per item. Changes to it are pull requests.
+  - name: Report a security problem
+    url: https://github.com/napoland-com/napoland/security/advisories/new
+    about: Privately, never in a public issue. SECURITY.md explains what is in scope.
+  - name: How to contribute
+    url: https://github.com/napoland-com/napoland/blob/main/CONTRIBUTING.md
+    about: Setting up, the checks, and how pull requests are reviewed and merged.

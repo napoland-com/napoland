@@ -1,10 +1,11 @@
 /**
  * The interface over the world: status and energy, the menu, the joystick and A/B, name tags,
- * the text box, the bag, and the fade and name banner when you arrive somewhere.
+ * the text box, the bag, the About panel, and the fade and name banner when you arrive somewhere.
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
 import { BAG_SLOTS, type Dir, type EnergyView } from '@napoland/shared';
+import { aboutBody, versionView } from './about';
 import { itemIcon } from './icons';
 import type { SlotView } from './items';
 
@@ -36,6 +37,8 @@ export interface HudHandlers {
   use(slot: number): void;
   /** Throw away everything in bag slot `slot` (asked once first). */
   discard(slot: number): void;
+  /** The version the server runs, for the About panel (null: none shown). Asked once, when the panel first opens. */
+  version(): Promise<string | null>;
 }
 
 /** What the bag asks before throwing a slot away. */
@@ -94,6 +97,7 @@ export class Hud {
   private bag: SlotView[] = [];
   private picked: { slot: number; item: string } | null = null;
   private asking = false;
+  private versionAsked = false;
 
   constructor(parent: HTMLElement, private h: HudHandlers) {
     this.root = document.createElement('div');
@@ -112,6 +116,7 @@ export class Hud {
       <button type="button" class="menu-btn" data-el="menuBtn" aria-label="Menu" aria-expanded="false">${ICON.menu}</button>
       <div class="menu-panel panel" data-el="menu" hidden>
         <button type="button" data-el="menuBag">Bag</button>
+        <button type="button" data-el="menuAbout">About</button>
         <button type="button" data-el="menuLogout">Log out</button>
       </div>
       <div class="stick" data-el="stick" role="group" aria-label="Movement stick"><div class="knob" data-el="knob"></div></div>
@@ -127,6 +132,10 @@ export class Hud {
           <div class="acts" data-el="acts" hidden><button type="button" class="act go" data-el="use">Use</button><button type="button" class="act toss" data-el="toss">Throw away</button></div>
           <div class="acts" data-el="ask" hidden><span class="ask" data-el="askText"></span><button type="button" class="act toss sure" data-el="tossYes">Throw away</button><button type="button" class="act" data-el="tossNo">Keep</button></div>
         </div>
+      </div>
+      <div class="sheet panel about-sheet" data-el="aboutSheet" data-open="false" role="dialog" aria-label="About napoland">
+        <div class="sheet-head"><b>About</b><button type="button" class="close" data-el="aboutClose" aria-label="Close About">${ICON.x}</button></div>
+        ${aboutBody()}
       </div>`;
     parent.appendChild(this.root);
     this.el = {};
@@ -172,6 +181,8 @@ export class Hud {
     this.el.close!.addEventListener('click', () => this.toggleBag(false));
     this.el.menuBtn!.addEventListener('click', () => this.toggleMenu());
     this.el.menuBag!.addEventListener('click', () => { this.toggleMenu(false); this.toggleBag(true); });
+    this.el.menuAbout!.addEventListener('click', () => { this.toggleMenu(false); this.toggleAbout(true); });
+    this.el.aboutClose!.addEventListener('click', () => this.toggleAbout(false));
     this.el.menuLogout!.addEventListener('click', () => { this.toggleMenu(false); this.h.logout(); });
     this.el.grid!.addEventListener('click', e => {
       const slot = (e.target as Element).closest<HTMLElement>('[data-slot]');
@@ -194,9 +205,41 @@ export class Hud {
     return this.el.sheet!.dataset.open === 'true';
   }
   toggleBag(open = !this.bagOpen) {
+    // The bag and the About panel open in the same place: one at a time.
+    if (open) this.toggleAbout(false);
     this.el.sheet!.dataset.open = String(open);
     // It opens on the whole bag, never on the details left from last time.
     this.choose(null);
+  }
+
+  get aboutOpen(): boolean {
+    return this.el.aboutSheet!.dataset.open === 'true';
+  }
+  toggleAbout(open = !this.aboutOpen) {
+    if (open && this.bagOpen) this.toggleBag(false);
+    this.el.aboutSheet!.dataset.open = String(open);
+    if (open && !this.versionAsked) {
+      this.versionAsked = true;
+      this.h.version().then(v => this.showVersion(v), () => { /* the panel then shows no version */ });
+    }
+  }
+
+  /** The version under the About panel's small print; a release links to exactly its code. */
+  private showVersion(version: string | null) {
+    if (!version) return;
+    const { text, href } = versionView(version);
+    const line = this.el.version!;
+    if (href) {
+      const a = document.createElement('a');
+      a.href = href;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = text;
+      line.replaceChildren(a);
+    } else {
+      line.textContent = text;
+    }
+    line.hidden = false;
   }
 
   /** B in the bag: out of the question, then out of the details. False when there is nothing to back out of (B closes the bag). */
@@ -262,6 +305,8 @@ export class Hud {
   }
 
   setName(name: string) { this.el.name!.textContent = name; }
+  /** "Sign out" with sign-in; "Log out" without, where it forgets the character's token. */
+  setLogoutLabel(label: string) { this.el.menuLogout!.textContent = label; }
   /** Players on your map, you included (the server only tells us about the map you are on). */
   setOnline(n: number) { this.el.online!.textContent = n > 1 ? `${n} here` : ''; }
 

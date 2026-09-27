@@ -10,15 +10,22 @@ How the game is built, and why it is built that way. The main constraint: Claude
  | apps/client               |  /ws (JSON)    | apps/server                   |     | PostgreSQL |
  |  three.js world  (view/)  | <------------> |  net.ts    sessions, limits   | --> | players    |
  |  HUD + controls  (hud.ts) |                |  world.ts  rules, no I/O      |     +------------+
- |  prediction      (game.ts)|   HTTP         |  http.ts   /health, client    |
- +---------------------------+ <------------> |  storage.ts memory | postgres |
-                                              +-------------------------------+
+ |  prediction      (game.ts)|   HTTP         |  http.ts   /health, client,   |
+ |  sign-in      (signin.ts) | <------------> |            /auth-config       |
+ +---------------------------+                |  auth.ts   who is signing in  |
+               |                              |  storage.ts memory | postgres |
+               | email and code               +-------------------------------+
+               v                                              |
+ +---------------------------+   its public keys (JWKS)       |
+ | Supabase Auth             | <------------------------------+
+ +---------------------------+
             both import packages/shared: maps, movement and energy rules, protocol
 ```
 
-- **packages/shared** is the contract: `TileMap` (walkable tiles, exits, lamp light and the distance home, from the map data), movement (`STEP_MS`, `findPath`), energy (`energyRate`), the protocol (zod schemas for every client message, types for every server message) and content validation. Client and server can never disagree about the rules because they run the same code.
-- **apps/server** owns the world. `world.ts` holds the rules as plain functions of state and time (easy to test, replayable); `net.ts` turns WebSocket messages into world calls and world events into messages; `storage.ts` keeps players in PostgreSQL (or in memory for tests and quick development).
+- **packages/shared** is the contract: `TileMap` (walkable tiles, exits, lamp light and the distance home, from the map data), movement (`STEP_MS`, `findPath`), energy (`energyRate`), the protocol (zod schemas for every client message, types for every server message, how to sign in) and content validation. Client and server can never disagree about the rules because they run the same code.
+- **apps/server** owns the world. `world.ts` holds the rules as plain functions of state and time (easy to test, replayable); `net.ts` turns WebSocket messages into world calls and world events into messages; `auth.ts` checks who is signing in; `storage.ts` keeps players in PostgreSQL (or in memory for tests and quick development).
 - **apps/client** draws the world and sends intentions. It predicts your own steps so walking feels instant, and animates everyone else from the server's reports.
+- **Supabase Auth** only proves who someone is (an email and a code, later Google and Apple). The game keeps its own players and everything they own in its own database.
 
 ## Movement: authoritative server, predicted client
 
@@ -42,24 +49,37 @@ How the game is built, and why it is built that way. The main constraint: Claude
 - Your bag (8 slots, stacks) is the server's too; you hear it whole after any change (`bag`), plus `got` for the "+1 Glowcap" and `refused` with a reason when something did not happen. `use` (a thermos: +30 energy) and `discard` work on a slot.
 - Collapsing turns what you carried into a pile where you fell (one per player, a new collapse replaces it). Its owner gets everything back; anyone else gets a random half (`halfOf`) and the rest is lost; it fades an hour after the collapse (`DROP_LIFETIME_MS`). Bags are saved with the player (`players.bag`) and piles in their own table (`drops`), so both survive a restart.
 
-## Connecting
+## Connecting and signing in
 
-1. The client opens `/ws` and sends `hello` with `v` (protocol version, now 3) and either a saved `token` or a new `name`.
-2. The server answers `welcome`: your id, name and token (kept in localStorage; only its SHA-256 is stored), the map you are on (id and version; a client with another version reloads) with everyone, every find and every pile on it, `stepMs`, the weather, your energy, your bag and the version of `content/items.json` (another version also makes the client reload). Everyone on your map gets `join`.
-3. Errors are explicit: `bad_version` makes the client reload, `unknown_token` shows the name screen, `bad_name` explains the problem, `replaced` means the same player connected from another screen.
-4. Phones drop connections often; the client reconnects with backoff and logs back in with its token.
+The server runs in one of three sign-in modes (`AUTH_MODE`, `apps/server/src/auth.ts`), and `GET /auth-config` tells the client which. It is never cached, so the page loaded after a release that changes the mode sees it.
+
+| Mode | `/auth-config` | Who you are |
+|---|---|---|
+| `legacy` (the default) | `{mode:'legacy'}` | No sign-in: a name makes a character, and its token (kept in the browser's localStorage; only its SHA-256 is stored) logs back in. |
+| `dev` | `{mode:'dev'}` | An email, believed without a code, so each tab can be someone else. For development and tests (`npm run dev` and the local `compose.yaml` set it); refused when `NODE_ENV=production` unless `ALLOW_DEV_AUTH=1`. The identity is `dev:` and the email in lower case. |
+| `supabase` | `{mode:'supabase', url, publishableKey}` | Supabase Auth: the client (`supabase.ts`, supabase-js) has a 6-digit code emailed and checks it, and Supabase keeps the session in the browser and refreshes it. The server checks the access token (a JWT) with jose against the project's public keys (`<url>/auth/v1/.well-known/jwks.json`, kept 10 minutes and fetched again early for a key it has not seen; HS256 with `SUPABASE_JWT_SECRET` only for projects that still sign with a shared secret): issuer `<url>/auth/v1`, audience `authenticated`, not expired (30 s of clock difference allowed), not an anonymous user. The identity is the token's `sub`, Supabase's user id. |
+
+1. The client asks `/auth-config`, shows the matching card (`signin.ts`, a small state machine tested without a page: email, code, name), then opens `/ws` and sends `hello` with `v` (protocol version, now 4) and:
+   - legacy: a saved `token`, or a `name` for a new character;
+   - dev and supabase: `auth` (the email, or Supabase's access token, asked for afresh before every connection), the `token` kept in this browser from before sign-in if there is one, and a `name` once the server has asked for one.
+2. With sign-in, the server gives the identity its character (`players.auth_sub`: one per identity). Without one, the character of the hello's `token`, if nobody has claimed it yet, becomes theirs: that is how a character made before sign-in carries over, by signing in on the browser that made it. Without that, a new character with the `name` (the name rules and the limit of new players per address apply); without a name, `need_name`, and the client asks "Choose a name for your character". No `auth`, or one that proves nothing (malformed, expired, forged, for another project), gets `sign_in_required`: the client refreshes its session once and reconnects, and after that asks to sign in again. If Supabase's keys cannot be fetched, the connection closes with 1011 and the client tries again later.
+3. The server answers `welcome`: your id and name, the map you are on (id and version; a client with another version reloads) with everyone, every find and every pile on it, `stepMs`, the weather, your energy, your bag and the version of `content/items.json` (another version also makes the client reload). Only in legacy mode it has your `token`; `claimed: true` says this sign-in just made a character from before sign-in yours. Everyone on your map gets `join`.
+4. Errors are explicit: `bad_version` makes the client reload, `unknown_token` (legacy) shows the name card, `bad_name` explains the problem, `need_name` and `sign_in_required` as above, `replaced` means the same player connected from another screen, `server_full` means try again soon.
+5. Phones drop connections often; the client reconnects with backoff and says hello again (with a refreshed access token when it signs in).
+
+The hello may be up to 9 KiB, since a Supabase token grows with the profile a provider such as Google adds; every other message stays under 1 KiB. The client prepares its hello before it opens the socket, so a token refresh never eats into the 5 s the server waits for it. Tokens and emails are never logged.
 
 ## Limits
 
 No single client can wear the server down (`net.ts`, `limits.ts`):
 
-- Each connection: messages of at most 1 KiB, 30 a second (bursts of 60), `hello` within 5 s, an answer to the heartbeat ping every 30 s. At most `MAX_PLAYERS` (500) online.
-- Each address: `MAX_CONNECTIONS_PER_IP` (20) open connections; one more gets HTTP 429 before a WebSocket exists. `NEW_PLAYERS_PER_IP_PER_HOUR` (10) new players in any hour, counted in memory; one more gets `bad_name` ("Too many new players from your network"). Signing in with a token is never limited.
+- Each connection: messages of at most 1 KiB (the hello 9 KiB), 30 a second (bursts of 60), `hello` within 5 s, an answer to the heartbeat ping every 30 s. At most `MAX_PLAYERS` (500) online.
+- Each address: `MAX_CONNECTIONS_PER_IP` (20) open connections; one more gets HTTP 429 before a WebSocket exists. `NEW_PLAYERS_PER_IP_PER_HOUR` (10) new players in any hour, counted in memory; one more gets `bad_name` ("Too many new players from your network"). Coming back to a character (with a token, with sign-in, or claiming one) is never limited.
 - The address is the socket's. Behind our own proxy (Caddy), `TRUST_PROXY=1` makes it the last `X-Forwarded-For` entry, the one the proxy added; the game port must then only be reachable through the proxy, or clients could claim any address. Addresses are never logged.
 
 ## Saving
 
-Players (position, map, energy, bag) live in memory while online and are written to PostgreSQL every 15 s, when they leave and on shutdown, and at once whenever items move between a bag and a pile. Piles are written on every change and loaded at start (the last hour's; older ones are deleted); finds live in memory only. Schema changes are SQL files in `apps/server/migrations`, applied in order at start-up and recorded in `schema_migrations`; they only add, so the previous release still runs if a new one rolls back.
+Players (position, map, energy, bag) live in memory while online and are written to PostgreSQL every 15 s, when they leave and on shutdown, and at once whenever items move between a bag and a pile. A player's row also says whose it is (`auth_sub`, empty for a character made before sign-in until someone claims it) and, for characters made without sign-in, holds the hash of their token. Piles are written on every change and loaded at start (the last hour's; older ones are deleted); finds live in memory only. Schema changes are SQL files in `apps/server/migrations`, applied in order at start-up and recorded in `schema_migrations`; they only add, so the previous release still runs if a new one rolls back.
 
 ## Rendering
 
@@ -69,7 +89,7 @@ The camera keeps the same circle of world (radius 6.2 tiles) around you on every
 
 ## Interface
 
-HTML over the canvas, sized with container query units from the screen's short side, so it scales from small phones to desktops and works in any orientation: joystick bottom left (four directions with a dead zone), A and B bottom right, status top left (your name, the players here, the connection and a slim energy bar: red below 25%, pulsing below 10%, a bright tip while refilling), one menu button top right (no map: the game is mapless), the text box and the bag where they never cover A and B. The bag shows eight slots with an icon per item (`icons.ts`, inline SVG) and a count; a slot opens its details with Use and Throw away, and B backs out one step at a time. A picks up what lies on your tile or the one you face before it talks; tapping a find walks there and picks it up. Below 20% energy the screen's edges darken. Arriving on a map (logging in, an exit, a collapse) fades in from black under a banner with the map's name, or with what happened.
+HTML over the canvas, sized with container query units from the screen's short side, so it scales from small phones to desktops and works in any orientation: joystick bottom left (four directions with a dead zone), A and B bottom right, status top left (your name, the players here, the connection and a slim energy bar: red below 25%, pulsing below 10%, a bright tip while refilling), one menu button top right (no map: the game is mapless), the text box and the bag where they never cover A and B. The bag shows eight slots with an icon per item (`icons.ts`, inline SVG) and a count; a slot opens its details with Use and Throw away, and B backs out one step at a time. A picks up what lies on your tile or the one you face before it talks; tapping a find walks there and picks it up. Below 20% energy the screen's edges darken. Arriving on a map (logging in, an exit, a collapse) fades in from black under a banner with the map's name, or with what happened. The menu's About (`about.ts`) opens where the bag does: who makes and publishes the game, the source code first (the AGPL offers it to everyone who plays), the privacy policy, the legal notice, the licenses and the version the server runs; every sign-in card ends with the same links in small print. The fonts (Fredoka and Nunito, from `@fontsource-variable`) are bundled with the client, so the page loads nothing from other sites.
 
 ## Content
 
@@ -87,9 +107,10 @@ The world is data in `content/maps/*.json`: what the map is (town or wilds, dept
 
 ## Running it
 
-- **Development:** `npm run dev` (server in memory on :8080, Vite on :5173 with hot reload, reachable from phones on the same Wi-Fi).
-- **Docker:** `docker compose up -d --build` builds one small image (Node + bundled server + built client + content + migrations) next to PostgreSQL 17. Settings in `.env`.
-- **Checking a server:** `/health` answers `ok`, the players online, the uptime and `version` (from `APP_VERSION`, default `dev`), so a deploy can be checked from outside.
+- **Development:** `npm run dev` (server in memory on :8080, Vite on :5173 with hot reload, reachable from phones on the same Wi-Fi). Sign-in is dev mode: any email, no code.
+- **Docker:** `docker compose up -d --build` builds one small image (Node + bundled server + built client + content + migrations) next to PostgreSQL 17. Settings in `.env`. Sign-in is dev mode here too (`AUTH_MODE` in `.env` changes it).
+- **Sign-in:** `AUTH_MODE` is `legacy` (the default), `dev`, or `supabase` with `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` (both public; `SUPABASE_ANON_KEY` is the older name). Production runs `supabase`; what the Supabase project needs is in [OPERATIONS.md](OPERATIONS.md).
+- **Checking a server:** `/health` answers `ok`, the players online, the uptime and `version` (from `APP_VERSION`, default `dev`), so a deploy can be checked from outside. The About panel shows that `version` too, linked to exactly that commit's code when it is one.
 - **Maps:** the server loads every map in `MAPS_DIR` (default `content/maps`) and refuses to start if any fails validation; `HOME_MAP` (default `stonebrook`) is where new players start and collapsed players wake up; `ITEMS_FILE` (default `content/items.json`) holds the items and find rules, checked against the maps at start.
 
 ## Growing later

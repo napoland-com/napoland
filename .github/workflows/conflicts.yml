@@ -1,0 +1,112 @@
+# Labels open pull requests into main "conflicts" when they stop merging cleanly (usually because main
+# moved on), comments once with how to update the branch, and takes the label off once they merge
+# cleanly again. A pull request that conflicts again later gets the label and one comment again.
+#
+# Why pull_request_target is safe here: it runs this file as it is on main, with a token that can write
+# to pull requests even when a pull request comes from a fork. That is needed to take the label off a
+# fork's pull request once its author has fixed it (a pull_request run gets a read-only token for
+# forks). It is safe because this workflow never checks out, builds or runs anything from a pull
+# request: there is no checkout step, no secret, no cache, and no text from a pull request (title,
+# body, branch name) ever reaches a script. It only reads each pull request's number, labels and
+# mergeable state from the API and writes a fixed label and a fixed comment. Keep it that way: never
+# add actions/checkout of the pull request's code, or any input from the pull request, to this file.
+name: Conflicts
+
+on:
+  push:
+    branches: [main]
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+
+# Labels and comments only: this token cannot touch the code, releases or settings.
+permissions:
+  pull-requests: write
+
+# Every run looks at every open pull request, so a newer run can replace a waiting one, and two runs
+# never race to comment on the same pull request.
+concurrency:
+  group: conflicts
+  cancel-in-progress: false
+
+jobs:
+  label:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Pinned to a commit because it runs with a write token on pull requests from forks.
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const LABEL = 'conflicts';
+            const { owner, repo } = context.repo;
+            const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: LABEL });
+            } catch (err) {
+              if (err.status !== 404) throw err;
+              try {
+                await github.rest.issues.createLabel({ owner, repo, name: LABEL, color: 'd93f0b', description: 'Does not merge cleanly: update the branch from main' });
+              } catch (err) {
+                core.warning(`Could not create the "${LABEL}" label (${err.message}); adding it to a pull request may still create it.`);
+              }
+            }
+
+            const open = await github.paginate(github.rest.pulls.list, { owner, repo, state: 'open', base: 'main', per_page: 100 });
+            core.info(`${open.length} open pull request(s) into main`);
+
+            // GitHub works out whether a pull request merges in the background after its branch or
+            // main moves; until then mergeable is null. Asking starts the work, so ask again a few times.
+            const known = new Map();
+            let waiting = open.map(pr => pr.number);
+            for (let round = 0; round < 6 && waiting.length; round++) {
+              if (round) await sleep(10_000);
+              const still = [];
+              for (const number of waiting) {
+                const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+                if (pr.state !== 'open') continue;
+                if (pr.mergeable === null) still.push(number);
+                else known.set(number, pr);
+              }
+              waiting = still;
+            }
+            for (const number of waiting) core.info(`#${number}: GitHub has not worked out yet whether it merges; the next run will look again`);
+
+            const guide = `https://github.com/${owner}/${repo}/blob/main/CONTRIBUTING.md#pull-requests-and-conflicts`;
+            const comment = [
+              `Thanks for this pull request! \`main\` has changed in some of the same places as this branch, so the two no longer merge cleanly. It now has the **${LABEL}** label, which comes off by itself once the branch merges cleanly again.`,
+              '',
+              `To update the branch, merge \`main\` into it (or rebase, if you prefer: see [Pull requests and conflicts](${guide})):`,
+              '',
+              '```bash',
+              `git fetch https://github.com/${owner}/${repo}.git main`,
+              'git merge FETCH_HEAD',
+              '# fix the conflicts, then: git add <files> && git commit',
+              'npm run check',
+              'git push',
+              '```',
+              '',
+              "Generated files are never merged by hand. If maps in `content/maps` conflict, take main's version (`git checkout FETCH_HEAD -- content/maps`) and run `npm run gen`; if `package-lock.json` conflicts, take main's version and run `npm install`. Then commit what changed.",
+              '',
+              'Stuck, or short on time? Say so here: when "Allow edits by maintainers" is on, a maintainer can update the branch for you.',
+            ].join('\n');
+
+            for (const [number, pr] of known) {
+              const labeled = pr.labels.some(label => label.name === LABEL);
+              if (pr.mergeable === false && !labeled) {
+                // Label first: if the comment then fails, the next run will not comment a second time.
+                await github.rest.issues.addLabels({ owner, repo, issue_number: number, labels: [LABEL] });
+                await github.rest.issues.createComment({ owner, repo, issue_number: number, body: comment });
+                core.info(`#${number}: conflicts; labeled, with a comment`);
+              } else if (pr.mergeable === true && labeled) {
+                try {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number: number, name: LABEL });
+                } catch (err) {
+                  if (err.status !== 404) throw err; // someone took it off already
+                }
+                core.info(`#${number}: merges cleanly again; label removed`);
+              } else {
+                core.info(`#${number}: ${pr.mergeable ? 'merges cleanly' : 'still has conflicts (already labeled)'}`);
+              }
+            }
