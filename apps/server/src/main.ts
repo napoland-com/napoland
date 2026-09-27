@@ -57,6 +57,7 @@ async function main(): Promise<void> {
     trustProxy: cfg.trustProxy,
     maxConnectionsPerIp: cfg.maxConnectionsPerIp,
     newPlayersPerIpPerHour: cfg.newPlayersPerIpPerHour,
+    clockShiftMs: cfg.clockShiftMs,
     auth,
   });
   log.info('server started', {

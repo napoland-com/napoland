@@ -48,11 +48,16 @@ import {
   SURGE_DRAIN,
   FLASH_BURST_S,
   FLASH_GLOW_S,
+  activeConditions,
   addAllToBag,
   addToBag,
   bagLoad,
   bagSlotsOf,
   canMake,
+  conditionsAt,
+  dayIndex,
+  weekIndex,
+  seeded,
   charmsIn,
   energyRate,
   featsOf,
@@ -88,6 +93,8 @@ import {
   type Arrival,
   type BagSlot,
   type BodyView,
+  type ConditionsData,
+  type ConditionsView,
   type CreatureView,
   type Dir,
   type DropView,
@@ -216,6 +223,7 @@ export interface Joined extends Scene {
   body: BodyView;
   bag: BagSlot[];
   stone: StoneView;
+  conditions: ConditionsView;
   stats: Stats;
   progress: ProgressView;
   /** Every tool the player carries (for now, the starter tools that exist). */
@@ -298,6 +306,8 @@ interface Rule {
   respawn: [number, number];
   /** Only then; and whether it is now. Rules without `when` are always open. */
   when?: FindWhen;
+  /** Only while this condition is on (sky.ts). */
+  condition?: string;
   open: boolean;
 }
 
@@ -475,6 +485,16 @@ export class World {
   private stoneAwake = false;
   private stoneAt = 0;
   private stoneWrite: StoneRecord | undefined;
+  /** What the woods are like today and this week (sky.ts), and the day and week drawn; both undefined until the first tick. */
+  private readonly conditionsData: ConditionsData | undefined;
+  private conditions: ConditionsView = { today: [], week: null, next: null };
+  private day: number | undefined;
+  private week: number | undefined;
+  /** Where each map's watchers wake as a rule, and where while a condition moves them (by condition id). */
+  private readonly baseLairs = new Map<string, number[]>();
+  private readonly conditionLairs = new Map<string, number[]>();
+  /** Maps whose watchers sleep (a condition). */
+  private readonly asleep = new Set<string>();
   /** Collapses in the last hour, for the notice board. */
   private collapses: Array<{ map: string; at: number }> = [];
 
@@ -522,7 +542,7 @@ export class World {
       if (!item) throw new Error(`a find rule on map ${f.map} grows ${f.item}, which is not an item`);
       const tiles = findTiles(map, f).map(t => t.y * map.width + t.x);
       // Finds that only grow at certain times wait for the first tick to tell whether it is one.
-      this.rules.push({ item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, open: !f.when });
+      this.rules.push({ item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, condition: f.condition, open: !f.when && !f.condition });
     }
     // The piles first: finds never grow on a tile that has one.
     for (const d of options.drops ?? []) this.restore(d);
@@ -532,14 +552,18 @@ export class World {
     for (const m of this.maps.values()) {
       const w = m.data.watchers;
       if (m.data.kind !== 'wilds' || !w) continue;
-      const lairs: number[] = [];
-      for (let y = 0; y < m.height; y++) for (let x = 0; x < m.width; x++) {
-        const s = m.homeSteps(x, y);
-        if (this.watcherMayStand(m, x, y) && s >= w.steps[0] && s <= w.steps[1]) lairs.push(y * m.width + x);
-      }
+      const lairs = m.lairs(w.steps);
       if (!lairs.length) continue;
+      this.baseLairs.set(m.data.id, lairs);
       // They all wake on the first tick, each where nobody is.
       this.watchers.set(m.data.id, Array.from({ length: w.count }, () => ({ id: this.nextCreatureId++, map: m, x: 0, y: 0, dir: 'down', awake: false, wakeAt: -Infinity, readyAt: 0, lairs })));
+    }
+
+    this.conditionsData = items.conditions;
+    for (const c of [...items.conditions?.daily ?? [], ...items.conditions?.weekly ?? []]) {
+      const steps = c.watchers?.steps;
+      const m = this.maps.get(c.map);
+      if (steps && m && this.baseLairs.has(c.map)) this.conditionLairs.set(c.id, m.lairs(steps));
     }
 
     const stone = [...this.maps.values()].flatMap(m => m.data.objects.filter(o => o.kind === 'stone').map(o => ({ map: m, x: o.x, y: o.y })))[0];
@@ -651,7 +675,7 @@ export class World {
     const here = map.data.id;
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: copyBag(r.bag),
-      stone: this.stoneView(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
+      stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
       tools: STARTER_TOOLS.filter(t => this.items.get(t)?.kind === 'tool'),
     };
   }
@@ -1001,6 +1025,7 @@ export class World {
     if (this.cycle) this.setWeather(weatherAt(wall).weather, now);
     this.moveSurges(now);
     this.moveStorms(now);
+    this.moveConditions(now);
     this.startFlashes(now);
     const wasAwake = this.stoneAwake;
     this.burnStone(now);
@@ -1324,6 +1349,63 @@ export class World {
     }
   }
 
+  /** Today's and this week's conditions, as drawn at the last dawn (or for now, before the first tick). */
+  private conditionsNow(now: number): ConditionsView {
+    const c = this.day === undefined ? conditionsAt(this.conditionsData, now + this.epochOffset) : this.conditions;
+    return { today: [...c.today], week: c.week, next: c.next };
+  }
+
+  /**
+   * At dawn, and when the week turns, the conditions change: everyone online hears them, their finds
+   * grow (or go), the watchers move or sleep, and a fire may go out overnight. The first tick after
+   * start-up sets it all up but puts no fire out: a restart mid-day must not put one out again.
+   */
+  private moveConditions(now: number): void {
+    const data = this.conditionsData;
+    if (!data) return;
+    const wall = now + this.epochOffset, day = dayIndex(wall), week = weekIndex(wall);
+    if (day === this.day && week === this.week) return;
+    const first = this.day === undefined, newDay = day !== this.day;
+    this.day = day;
+    this.week = week;
+    this.conditions = conditionsAt(data, wall);
+    if (!first) this.outbox.push({ to: 'all', msg: { t: 'conditions', conditions: this.conditionsNow(now) } });
+    const on = activeConditions(data, this.conditions);
+    const ids = new Set(on.map(c => c.id));
+    const daily = new Set(data.daily.map(c => c.id));
+    for (const rule of this.rules) {
+      if (rule.condition === undefined) continue;
+      // Each day is drawn afresh: a daily condition on two days running brings a fresh lot.
+      if (newDay && daily.has(rule.condition)) this.openRule(rule, false, now);
+      this.openRule(rule, ids.has(rule.condition), now);
+    }
+    for (const [mapId, list] of this.watchers) {
+      const here = on.filter(c => c.map === mapId && c.watchers);
+      const asleep = here.some(c => c.watchers!.asleep);
+      const moved = here.find(c => this.conditionLairs.has(c.id));
+      const lairs = moved ? this.conditionLairs.get(moved.id)! : this.baseLairs.get(mapId)!;
+      if (asleep) this.asleep.add(mapId);
+      else this.asleep.delete(mapId);
+      const allowed = new Set(lairs);
+      for (const w of list) {
+        w.lairs = lairs;
+        if (w.awake && (asleep || !allowed.has(w.y * w.map.width + w.x))) this.sendAway(w, now);
+      }
+    }
+    if (!first && newDay) for (const c of on) if (c.fireOut && daily.has(c.id)) this.fireOut(c.map, day, now);
+  }
+
+  /** One untended fire on the map (or in its shelters) goes out, the same one for everyone that day. */
+  private fireOut(mapId: string, day: number, now: number): void {
+    const fires = this.fires.all()
+      .filter(f => !f.tended && (f.map.data.id === mapId || this.around.get(f.map.data.id)?.data.id === mapId))
+      .sort((a, b) => a.map.data.id.localeCompare(b.map.data.id) || a.x - b.x || a.y - b.y);
+    const f = fires[Math.floor(seeded(day)() * fires.length)];
+    if (!f) return;
+    this.fires.douse(f, now);
+    this.toMap(f.map.data.id, { t: 'fire', fire: this.fires.view(f, now) });
+  }
+
   /**
    * Every so often on each map with flashes, a patch of ground starts to glow near someone out in the
    * open at the rule's distance from home, often right under them: they have FLASH_GLOW_S to step out.
@@ -1475,6 +1557,7 @@ export class World {
   private walkWatchers(now: number): void {
     const every = this.sky === 'aurora' ? AURORA_WATCHER_STEP_MS : WATCHER_STEP_MS;
     for (const [mapId, list] of this.watchers) {
+      if (this.asleep.has(mapId)) continue;
       for (const w of list) {
         // Asked again for each watcher: another one's touch may have just sent someone home.
         const here = [...this.onMap.get(mapId)!];
@@ -1577,6 +1660,7 @@ export class World {
       const next = weatherAt(wall + w.left * 1000 + 1000).weather;
       lines.push(`${WEATHER_WORDS[this.sky]} now. ${capital(WEATHER_WORDS[next])} ${about(w.left)}.`);
     } else lines.push(`${WEATHER_WORDS[this.sky]}.`);
+    lines.push(...this.conditionLines(now));
     for (const map of this.maps.values()) {
       const s = this.surgeOf(map, now), rule = map.data.surge;
       if (!s || !rule) continue;
@@ -1611,6 +1695,23 @@ export class World {
       const st = this.stoneView(now);
       lines.push(st.awake ? `The Old Stone is awake: surges are gentler for ${about(st.left, true)}.` : `The Old Stone sleeps. ${st.charge} of ${st.need} shards fed.`);
     }
+    return lines;
+  }
+
+  /** The notice board on the conditions: "Today in the Near Woods: thick fog.", what each means, and the weeks. */
+  private conditionLines(now: number): string[] {
+    const data = this.conditionsData;
+    if (!data) return [];
+    const view = this.conditionsNow(now);
+    const byId = new Map([...data.daily, ...data.weekly].map(c => [c.id, c]));
+    const today = view.today.flatMap(id => byId.get(id) ?? []);
+    const lines: string[] = [];
+    for (const map of new Set(today.map(c => c.map))) {
+      const here = today.filter(c => c.map === map);
+      lines.push(`Today in ${(this.maps.get(map)?.data.name ?? map).replace(/^The /, 'the ')}: ${listOf(here.map(c => lower(c.name)))}.`, ...here.map(c => c.text));
+    }
+    const week = view.week ? byId.get(view.week) : undefined, next = view.next ? byId.get(view.next) : undefined;
+    if (week) lines.push(`This week: ${lower(week.name)}. ${week.text}${next && next !== week ? ` Next week: ${lower(next.name)}.` : ''}`);
     return lines;
   }
 
@@ -1950,6 +2051,7 @@ export function pathStep(map: TileMap, x: number, y: number, tx: number, ty: num
 
 const WEATHER_WORDS: Record<Weather, string> = { overcast: 'Overcast', rain: 'Rain', night: 'Night', aurora: 'An aurora night' };
 const capital = (s: string) => s[0]!.toUpperCase() + s.slice(1);
+const lower = (s: string) => s[0]!.toLowerCase() + s.slice(1);
 
 /** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours"). */
 function about(seconds: number, plain = false): string {

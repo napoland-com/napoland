@@ -276,6 +276,16 @@ export class TileMap {
     return this.inside(x, y) ? this.levels[y * this.width + x]! : 0;
   }
 
+  /** Where a watcher may wake, as y * width + x: open ground out of the light, away from fires and exits, `steps` from home. */
+  lairs(steps: readonly [number, number]): number[] {
+    const out: number[] = [];
+    for (let y = 0; y < this.height; y++) for (let x = 0; x < this.width; x++) {
+      const s = this.homeSteps(x, y);
+      if (this.walkable(x, y) && !this.exitAt(x, y) && !this.lit(x, y) && !this.warm(x, y) && s >= steps[0] && s <= steps[1]) out.push(y * this.width + x);
+    }
+    return out;
+  }
+
   /** Can a character stand on this tile? */
   walkable(x: number, y: number): boolean {
     if (!Number.isInteger(x) || !Number.isInteger(y) || !this.inside(x, y)) return false;

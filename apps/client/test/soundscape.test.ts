@@ -79,6 +79,11 @@ describe('soundscape', () => {
     const shots = soundscape(scene({ news: [{ kind: 'surge', view: { phase: 'unstable', left: 60, into: 0 } }, { kind: 'storm', view: { phase: 'coming', left: 60 } }] })).shots;
     expect(shots).toEqual([{ kind: 'bell' }, { kind: 'rise' }]);
   });
+
+  it('chimes softly when a new day brings its conditions', () => {
+    expect(soundscape(scene({ news: [{ kind: 'conditions', names: ['Thick fog'] }] })).shots).toEqual([{ kind: 'dawn' }]);
+    expect(soundscape(scene({ news: [{ kind: 'conditions', names: [] }] })).shots).toEqual([]);
+  });
 });
 
 describe('stepSurface', () => {

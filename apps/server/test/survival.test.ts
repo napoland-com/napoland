@@ -7,11 +7,14 @@
  * Most tests use a field: open grass in the wilds, walled in by forest, with the way home in the
  * middle of its bottom row. Steps from home are simple there: |x - 4| + (bottom row - y).
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, weatherAt,
-  type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather,
+  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, weatherAt,
+  type ConditionDef, type ConditionsData, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather,
 } from '@napoland/shared';
+import { loadMaps } from '../src/content';
 import { EMBERS, FIRE_LOW_S, FIRE_MAX_S } from '../src/fires';
 import type { MarkRecord, PlayerRecord } from '../src/storage';
 import {
@@ -511,5 +514,141 @@ describe('the day', () => {
     // Hours went by: the player collapsed long ago and is at home, where the sky is the same.
     expect(onMap(heard, 'town')).toContainEqual({ t: 'weather', weather: 'aurora' });
     expect(w.findViews('field')).toHaveLength(1);
+  });
+});
+
+describe('what the woods are like today', () => {
+  const DAY_MS = DAY_S * 1000;
+  const day = (id: string, more: Partial<ConditionDef> = {}): ConditionDef => ({ id, name: `The ${id}`, text: `The ${id} today.`, weight: 1, map: 'field', ...more });
+  /** The first dawn from day 20000 on whose day before, day and day after draw as asked. */
+  const dawnWhere = (data: ConditionsData, ok: (before: string[], today: string[], after: string[]) => boolean): number => {
+    for (let d = 20_000; ; d++) {
+      const at = d * DAY_MS;
+      if (ok(conditionsAt(data, at - 1).today, conditionsAt(data, at).today, conditionsAt(data, at + DAY_MS).today)) return at;
+    }
+  };
+  /** Rooms off the field: a hut whose fire burns down, and the old cabin, whose fire is tended. */
+  const room = (id: string, x: number, tended: boolean): MapData => ({
+    ...houseData(), id, name: id === 'hut' ? 'The hut' : 'The old cabin',
+    exits: [{ x: 2, y: 4, w: 1, h: 1, to: 'field', tx: x, ty: 2, dir: 'down' }],
+    objects: [{ kind: 'fireplace', x: 2, y: 1, ...(tended && { tended: true }) }],
+  });
+  const withShelters = () => fieldData(12, {
+    exits: [
+      { x: 4, y: 11, w: 1, h: 1, to: 'town', tx: 4, ty: 1, dir: 'down', home: true },
+      { x: 1, y: 1, w: 1, h: 1, to: 'hut', tx: 2, ty: 3, dir: 'up' },
+      { x: 7, y: 1, w: 1, h: 1, to: 'cabin', tx: 2, ty: 3, dir: 'up' },
+    ],
+    objects: [{ kind: 'fireplace', x: 4, y: 4 }, { kind: 'fireplace', x: 6, y: 6, tended: true }],
+  });
+  const shelterWorld = (conditions: ConditionsData, epochOffset: number) => new World(
+    [new TileMap(townWithStone()), new TileMap(withShelters()), new TileMap(room('hut', 1, false)), new TileMap(room('cabin', 7, true)), ...fixtureMaps().filter(m => m.data.id !== 'town')],
+    'town', 'overcast', { items: { ...ITEMS, conditions }, rng: () => 0, epochOffset },
+  );
+  const fires = (w: World, now: number) => ['field', 'hut', 'cabin'].flatMap(m => w.scene(m, now).fires.map(f => ({ map: m, ...f })));
+
+  it('condition finds grow at dawn, are first come first served all day, and go at the next dawn', () => {
+    const conditions: ConditionsData = { seed: 3, second: 0, daily: [day('drop'), day('calm')], weekly: [] };
+    const items: ItemsData = { ...ITEMS, finds: [{ item: 'rock', map: 'field', around: { x: 4, y: 5, r: 1 }, count: 3, respawn: [86_400, 86_400], condition: 'drop' }], conditions };
+    const dawn = dawnWhere(conditions, (b, t, a) => b[0] === 'calm' && t[0] === 'drop' && a[0] === 'calm');
+    const w = world(fieldData(12), 'overcast', { items, epochOffset: dawn - 1000 }, rec('a', 'field', 4, 5));
+    w.tick(0);
+    expect(w.scene('field', 0).finds).toEqual([]);
+    // The first tick after start-up tells nobody: the welcome said it.
+    expect(of(to(w.drain(), 'a'), 'conditions')).toEqual([]);
+    w.tick(1000);
+    const out = w.drain();
+    expect(of(to(out, 'a'), 'conditions')).toEqual([{ t: 'conditions', conditions: { today: ['drop'], week: null, next: null } }]);
+    expect(of(onMap(out, 'field'), 'find')).toHaveLength(3);
+    const first = w.scene('field', 1000).finds[0]!;
+    w.pick('a', first.x, first.y, 2000);
+    expect(w.get('a')!.bag).toEqual([{ item: 'rock', count: 1 }]);
+    w.leave('a', 2000);
+    w.drain();
+    // Taken is taken: nothing grows back that day.
+    for (let t = 60_000; t < DAY_MS; t += 60_000) w.tick(t);
+    expect(w.scene('field', DAY_MS).finds).toHaveLength(2);
+    w.tick(DAY_MS + 1000);
+    expect(w.scene('field', DAY_MS + 1000).finds).toEqual([]);
+    expect(of(onMap(w.drain(), 'field'), 'findGone')).toHaveLength(2);
+  });
+
+  it('a fire goes out overnight: exactly one that burns down, never the old cabin\'s, and not when a world starts mid-day', () => {
+    const conditions: ConditionsData = { seed: 1, second: 0, daily: [day('out', { fireOut: true })], weekly: [] };
+    const dawn = 20_000 * DAY_MS;
+    const w = shelterWorld(conditions, dawn - 1000);
+    w.tick(0);
+    expect(fires(w, 0).filter(f => f.left === 0)).toEqual([]);
+    w.tick(1000);
+    const out = fires(w, 1000).filter(f => f.left === 0);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.map).not.toBe('cabin');
+    expect(fires(w, 1000).filter(f => f.left === null)).toEqual([{ map: 'field', x: 6, y: 6, left: null }, { map: 'cabin', x: 2, y: 1, left: null }]);
+    expect(onMap(w.drain(), out[0]!.map)).toContainEqual({ t: 'fire', fire: { x: out[0]!.x, y: out[0]!.y, left: 0 } });
+    // A restart in the middle of that day puts no fire out again.
+    const again = shelterWorld(conditions, dawn + 10 * 60_000);
+    again.tick(0);
+    again.tick(60_000);
+    expect(fires(again, 60_000).filter(f => f.left === 0)).toEqual([]);
+  });
+
+  it('quiet woods keep the watchers asleep all week, and send away one that was out', () => {
+    const conditions: ConditionsData = { seed: 1, second: 0, daily: [day('calm')], weekly: [day('loud'), day('quiet', { watchers: { asleep: true } })] };
+    let monday = Date.UTC(2026, 8, 28);
+    while (conditionsAt(conditions, monday).week !== 'quiet') monday += 7 * 86_400_000;
+    const w = world(fieldData(12, { watchers: { count: 1, steps: [8, 99] } }), 'overcast', { items: { ...ITEMS, conditions }, epochOffset: monday - 1000 }, rec('a', 'field', 7, 10, 'down'));
+    w.tick(0);
+    expect(w.scene('field', 0).creatures).toHaveLength(1);
+    w.drain();
+    w.tick(1000);
+    expect(of(onMap(w.drain(), 'field'), 'creatureGone')).toHaveLength(1);
+    for (let t = 2000; t < 600_000; t += WATCHER_STEP_MS) w.tick(t);
+    expect(of(onMap(w.drain(), 'field'), 'creature')).toEqual([]);
+    expect(w.scene('field', 600_000).creatures).toEqual([]);
+  });
+
+  it('the watchers moved north: they wake only 80 or more steps from home', () => {
+    const { maps } = loadMaps(resolve(import.meta.dirname, '../../../content/maps'), 'stonebrook');
+    const content = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData;
+    const north = content.conditions!.daily.find(c => c.id === 'watchers-north')!;
+    const conditions: ConditionsData = { seed: 5, second: 0, daily: [{ ...north, id: 'calm', watchers: undefined }, north], weekly: [] };
+    const dawn = dawnWhere(conditions, (b, t) => b[0] === 'calm' && t[0] === 'watchers-north');
+    const woods = maps.get('near-woods')!;
+    expect(woods.lairs([55, 79]).length).toBeGreaterThan(0);
+    const w = new World(maps.values(), 'stonebrook', 'overcast', { items: { ...content, conditions }, rng: seeded(11), epochOffset: dawn - 1000 });
+    const steps = (now: number) => w.scene('near-woods', now).creatures.map(c => woods.homeSteps(c.x, c.y));
+    w.tick(0);
+    expect(steps(0)).toHaveLength(3);
+    w.drain();
+    // After dawn, wherever they wake, it is far in.
+    const seen: number[] = [];
+    for (let t = 1000; t < 1000 + 30 * 60_000; t += 10_000) {
+      w.tick(t);
+      for (const m of of(onMap(w.drain(), 'near-woods'), 'creature')) seen.push(woods.homeSteps(m.creature.x, m.creature.y));
+      seen.push(...steps(t));
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    expect(Math.min(...seen)).toBeGreaterThanOrEqual(80);
+  });
+
+  it('the notice board says today\'s, this week\'s and next week\'s', () => {
+    const conditions: ConditionsData = {
+      seed: 1, second: 0,
+      daily: [day('fog', { name: 'Thick fog', text: 'You will not see far.', fog: 5 })],
+      weekly: [day('copper', { name: 'Copper week', text: 'Wire by every pole, all week.' }), day('quiet', { name: 'Quiet woods', text: 'The watchers sleep all week.' })],
+    };
+    const now = 20_000 * DAY_MS;
+    const view = conditionsAt(conditions, now);
+    const [week, next] = view.week === 'copper' ? ['copper week. Wire by every pole, all week.', 'quiet woods'] : ['quiet woods. The watchers sleep all week.', 'copper week'];
+    const w = world(fieldData(12), 'rain', { items: { ...ITEMS, conditions }, epochOffset: now }, rec('a', 'town', 0, 5));
+    w.board('a', 0, 4, 0);
+    expect(of(to(w.drain(), 'a'), 'board')[0]!.lines.slice(0, 4)).toEqual([
+      'Rain.',
+      'Today in the Field: thick fog.',
+      'You will not see far.',
+      `This week: ${week} Next week: ${next}.`,
+    ]);
+    // And the welcome carries them.
+    expect(w.join(rec('b', 'town', 1, 5), 0).conditions).toEqual(view);
   });
 });

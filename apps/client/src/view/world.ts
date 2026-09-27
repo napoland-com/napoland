@@ -229,6 +229,8 @@ export class WorldView {
   private surgeK = 0;
   /** A storm blows over this map (outdoors). */
   private storm = false;
+  /** A condition's fog: tiles you see past yourself. */
+  private fogCap: number | undefined;
   private marker: THREE.Mesh;
   private shadowGeo = new THREE.CircleGeometry(1, 14).rotateX(-Math.PI / 2);
   private shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.3, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
@@ -930,6 +932,13 @@ export class WorldView {
     this.loot.set(finds, drops, me, color, (x, y) => this.groundAt(x + 0.5, y + 0.5));
   }
 
+  /** Tiles you see past yourself while a condition brings fog to this map (undefined: none). */
+  setFogCap(tiles: number | undefined) {
+    if (tiles === this.fogCap) return;
+    this.fogCap = tiles;
+    this.updateFog();
+  }
+
   private updateFog() {
     const fog = this.scene.fog as THREE.Fog, f = this.amb.fog, d = this.dist;
     if (!f) { fog.near = 1e4; fog.far = 2e4; return; }
@@ -937,6 +946,8 @@ export class WorldView {
     const storm = this.storm && this.outdoors ? 0.6 : 1;
     fog.near = Math.max(1, d - 1.5);
     fog.far = d + Math.max(f.min, d * f.share) * storm;
+    // Thick fog (a condition) closes in whatever the weather.
+    if (this.fogCap !== undefined && this.outdoors) fog.far = Math.min(fog.far, d + this.fogCap);
   }
 
   /** Size in CSS pixels. The camera keeps the same circle of world around the player on every screen shape. */

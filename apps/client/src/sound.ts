@@ -176,6 +176,8 @@ export class Sound {
       case 'pop': this.burst(now, 'lowpass', 900, 0.3, 0.9); return this.tone(now, 'sine', 160, 50, 0.3, 0.6);
       case 'bell': for (const [k, g] of [[1, 0.5], [2.76, 0.2], [5.4, 0.1]] as const) this.tone(now, 'sine', 147 * k, 147 * k, 3, g); return;
       case 'rise': return this.tone(now, 'triangle', 180, 520, 0.9, 0.25);
+      // A new day: two soft notes, a fifth apart.
+      case 'dawn': this.tone(now, 'sine', 392, 392, 1.6, 0.12); return this.tone(now + 0.3, 'sine', 587, 587, 2, 0.1);
     }
   }
 
