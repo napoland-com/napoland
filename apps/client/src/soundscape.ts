@@ -2,7 +2,7 @@
  * What the game should sound like now: how loud each loop plays, and the sounds to fire once. Plain
  * data in, plain data out, so it is tested without a page; sound.ts makes the noise.
  */
-import { FLASH_BURST_S, type FlashView, type MapKind, type SurgePhase, type TileKind, type Weather } from '@napoland/shared';
+import { FLASH_BURST_S, type CreatureView, type FlashView, type MapKind, type SurgePhase, type TileKind, type Weather } from '@napoland/shared';
 import type { News } from './game';
 import { fireLevel } from './view/fire';
 
@@ -10,12 +10,14 @@ import { fireLevel } from './view/fire';
 const FIRE_HEARD = 4;
 const WIRES_HEARD = 5;
 const WATCHER_HEARD = 9;
+/** A skulker on a chase is heard this many tiles away: a little farther than it hears you walking (the server's SKULKER_HEAR). */
+const SKULKER_HEARD = 8;
 /** A flash crackles and pops this close to you. */
 const FLASH_HEARD = 6;
 
 export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water';
-export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher';
-export type Shot = { kind: 'step'; surface: Surface } | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'dawn' };
+export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'skulker';
+export type Shot = { kind: 'step'; surface: Surface } | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'cry' | 'dawn' };
 
 export interface Mix {
   /** How loud each loop should play, 0 to 1. */
@@ -31,15 +33,16 @@ export interface Scene {
   storm: boolean;
   /** The lightning blink (lightningAt); it only strikes in a storm, outdoors. */
   lightning: boolean;
-  /** You: where you are drawn, and the tile you are on or stepping onto, and its kind. */
-  me: { x: number; y: number; tx: number; ty: number; ground: TileKind | undefined } | null;
+  /** You: your id, where you are drawn, and the tile you are on or stepping onto, and its kind. */
+  me: { id: string; x: number; y: number; tx: number; ty: number; ground: TileKind | undefined } | null;
   /** The fireplaces on this map, with the fuel they have left (null: tended; see Game.fireLeft). */
   fires: Array<{ x: number; y: number; left: number | null | undefined }>;
   poles: Array<{ x: number; y: number }>;
   /** The surge's phase here, and during one how far its front still is from you, as a share of its sweep (1 far off, 0 on you). */
   surge: { phase: SurgePhase; gap: number } | null;
   caught: boolean;
-  watchers: Array<{ x: number; y: number; moving: boolean }>;
+  /** The creatures on this map, and whom each one chases (a player's id). */
+  creatures: Array<{ id: string; kind: CreatureView['kind']; x: number; y: number; moving: boolean; chasing: string | undefined }>;
   flashes: FlashView[];
   /** News that came this frame. */
   news: News[];
@@ -74,7 +77,9 @@ export function soundscape(s: Scene, was?: Scene): Mix {
     fire: loudest(s.fires, FIRE_HEARD, i => fireLevel(s.fires[i]!.left)),
     wires: s.weather === 'aurora' ? loudest(s.poles, WIRES_HEARD) : 0,
     surge,
-    watcher: loudest(s.watchers.filter(w => w.moving), WATCHER_HEARD),
+    watcher: loudest(s.creatures.filter(c => c.kind === 'watcher' && c.moving), WATCHER_HEARD),
+    // Something rushing through the ferns: the nearest skulker on a chase, whoever it is after.
+    skulker: loudest(s.creatures.filter(c => c.chasing !== undefined), SKULKER_HEARD),
   };
 
   const shots: Shot[] = [];
@@ -88,6 +93,8 @@ export function soundscape(s: Scene, was?: Scene): Mix {
     if (!before) shots.push({ kind: 'crackle' });
     else if (before.left > FLASH_BURST_S && f.left <= FLASH_BURST_S) shots.push({ kind: 'pop' });
   }
+  // The moment one goes after you: a sharp cry, wherever it is.
+  if (me && same) for (const c of s.creatures) if (c.chasing === me.id && was.creatures.find(o => o.id === c.id)?.chasing !== me.id) shots.push({ kind: 'cry' });
   for (const n of s.news) {
     if (n.kind === 'surge' && n.view.phase === 'unstable') shots.push({ kind: 'bell' });
     if (n.kind === 'storm' && n.view.phase === 'coming') shots.push({ kind: 'rise' });

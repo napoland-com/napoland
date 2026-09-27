@@ -15,7 +15,7 @@ export interface SoundSetting {
 }
 
 /** How loud each loop is at level 1, against the others. */
-const LOOP_GAIN: Record<Loop, number> = { rain: 0.35, wind: 0.5, fire: 0.6, wires: 0.12, surge: 0.4, watcher: 0.45 };
+const LOOP_GAIN: Record<Loop, number> = { rain: 0.35, wind: 0.5, fire: 0.6, wires: 0.12, surge: 0.4, watcher: 0.45, skulker: 0.55 };
 /** Loops ease to a new level with this time constant: most of the way in 0.3 s. */
 const EASE_S = 0.1;
 
@@ -100,6 +100,12 @@ export class Sound {
     drag.connect(scrape);
     this.wobble(scrape.gain, 2.2, 0.5, 0.5);
     this.loop('watcher', scrape);
+    // A skulker on a chase: ferns thrashing, fast and light, many times a second.
+    const leaves = this.filtered(this.hiss(1.3), 'bandpass', 2600, 1.2);
+    const thrash = ctx.createGain();
+    leaves.connect(thrash);
+    this.wobble(thrash.gain, 7, 0.5, 0.5);
+    this.loop('skulker', thrash);
   }
 
   /** A loop: `chain` wired in order, into its gain (silent to start), into the master. */
@@ -178,6 +184,8 @@ export class Sound {
       case 'rise': return this.tone(now, 'triangle', 180, 520, 0.9, 0.25);
       // A new day: two soft notes, a fifth apart.
       case 'dawn': this.tone(now, 'sine', 392, 392, 1.6, 0.12); return this.tone(now + 0.3, 'sine', 587, 587, 2, 0.1);
+      // Something bursting out of the ferns: a sharp rustle and a short cry falling away.
+      case 'cry': this.burst(now, 'highpass', 1800, 0.35, 0.6); return this.tone(now + 0.05, 'sawtooth', 1300, 420, 0.4, 0.18);
     }
   }
 

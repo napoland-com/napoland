@@ -160,13 +160,17 @@ export interface MarkView {
   until: number;
 }
 
-/** A creature on your map. Watchers only come closer while nobody looks their way. */
+/**
+ * A creature on your map. Watchers only come closer while nobody looks their way; skulkers lie in the
+ * ferns and chase whoever they hear or see (`chasing`: that player's id).
+ */
 export interface CreatureView {
   id: number;
-  kind: 'watcher';
+  kind: 'watcher' | 'skulker';
   x: number;
   y: number;
   dir: Dir;
+  chasing?: string;
 }
 
 /** A flare burning on tile x,y for `left` more seconds. */
@@ -350,8 +354,11 @@ export type ServerMsg =
   /** On your map: a creature appeared or moved, or went. */
   | { t: 'creature'; creature: CreatureView }
   | { t: 'creatureGone'; id: number }
-  /** A creature reached you: you lost energy, and it took one of what you carried (if anything). */
-  | { t: 'touched'; by: 'watcher'; lost: string | null }
+  /**
+   * A creature reached you: you lost energy, and one of what you carried (if anything) went: a watcher
+   * takes it, a skulker makes you drop a whole bag slot of it into your pile where you stand.
+   */
+  | { t: 'touched'; by: CreatureView['kind']; lost: string | null }
   /** Something clung to your back, or let go of it. */
   | { t: 'hitch'; on: boolean }
   /** On your map: someone lit a flare. */

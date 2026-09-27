@@ -15,7 +15,9 @@
  * out of it), a hitchhiker clinging to you at night. Fires in the
  * wilds burn down unless fed (fires.ts). Watchers roam some regions: they come closer only while
  * nobody on the map looks their way, and one that reaches you takes energy and something you carry.
- * A flare keeps them off and shakes off a hitchhiker. Anyone can paint arrows on the ground with a
+ * Skulkers lie in the deep ferns at night and in storms: one that hears or sees you chases you, a
+ * little slower than you walk, and one that catches you costs energy and a bag slot, dropped where
+ * you stand. A flare keeps them all off and shakes off a hitchhiker. Anyone can paint arrows on the ground with a
  * glowcap; they last a day. The Old Stone in town wakes when enough shards are fed to it, and while
  * awake it calms every surge. Strange objects found deep in turn into something when looked at in
  * town. Feats, earned by what you do out there, make it a little easier for good (feats.ts).
@@ -127,6 +129,7 @@ import {
   type SurgePhase,
   type SurgeView,
   type Slot,
+  type SkulkerRule,
   type TileMap,
   type Weather,
 } from '@napoland/shared';
@@ -160,6 +163,18 @@ export const WATCHER_AWAY_S: [number, number] = [60, 150];
 export const WATCHER_WAKE_AWAY = 8;
 /** Watchers look this many tiles ahead for a way to you. */
 const WATCHER_PATH_NODES = 600;
+/** A skulker takes a step this often: a quarter slower than a walking player (STEP_MS), so moving away in time escapes it. */
+export const SKULKER_STEP_MS = 250;
+/** A skulker notices a player out in the open this close (as the crow walks): farther if they are walking (it hears them). */
+export const SKULKER_HEAR = 6;
+export const SKULKER_SEE = 3;
+/** A player whose last step ended less than this long ago is walking, as far as a skulker can hear. */
+export const SKULKER_HEAR_MS = 300;
+/** A skulker gives up a chase after this long, then notices nobody for SKULKER_CALM_MS while it goes back to its lair. */
+export const SKULKER_CHASE_MS = 20_000;
+export const SKULKER_CALM_MS = 15_000;
+/** What a skulker's catch costs (and a bag slot, dropped where you stand). */
+export const SKULKER_CATCH = 20;
 /** In the dark, this many steps or more from home, something may cling to your back: on average once in HITCH_EVERY_S. */
 export const HITCH_STEPS = 25;
 export const HITCH_EVERY_S = 150;
@@ -327,6 +342,7 @@ interface Growing {
 
 interface Watcher {
   id: number;
+  kind: CreatureView['kind'];
   map: TileMap;
   x: number;
   y: number;
@@ -338,6 +354,18 @@ interface Watcher {
   readyAt: number;
   /** Where it may wake up (y * width + x). */
   lairs: number[];
+  /** The id of the player it chases (skulkers only). */
+  chasing?: string;
+}
+
+/** A skulker: a creature that wakes like a watcher, but lies still in the ferns until it hears or sees someone. */
+interface Skulker extends Watcher {
+  rule: SkulkerRule;
+  /** Where it woke up, and goes back to after a chase (y * width + x). */
+  lair: number;
+  /** When it gives up the chase; until calmUntil after one, it notices nobody. */
+  chaseUntil: number;
+  calmUntil: number;
 }
 
 interface Flash {
@@ -376,7 +404,7 @@ const dropView = (d: DropRecord): DropView => ({
   id: d.owner, x: d.x, y: d.y, owner: d.owner, name: d.name, until: d.droppedAt + DROP_LIFETIME_MS, trail: (d.trail ?? []).map(([x, y]) => [x, y]),
 });
 const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, name: m.name, until: m.placedAt + MARK_LIFETIME_MS });
-const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: 'watcher', x: w.x, y: w.y, dir: w.dir });
+const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: w.kind, x: w.x, y: w.y, dir: w.dir, ...(w.chasing !== undefined && { chasing: w.chasing }) });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count }));
 const copyStash = (s: Stash): Stash => ({
   items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: Object.fromEntries(Object.entries(s.pieces).map(([id, l]) => [id, l.map(p => ({ ...p }))])) } : {}),
@@ -477,6 +505,7 @@ export class World {
   /** When each map with flashes starts its next one (game time). */
   private readonly nextFlash = new Map<string, number>();
   private readonly watchers = new Map<string, Watcher[]>();
+  private readonly skulkers = new Map<string, Skulker[]>();
   private nextCreatureId = 1;
   private flares: Flare[] = [];
   /** The Old Stone: where it stands (if anywhere), its charge in shards, and when that charge was so (game time). */
@@ -556,7 +585,17 @@ export class World {
       if (!lairs.length) continue;
       this.baseLairs.set(m.data.id, lairs);
       // They all wake on the first tick, each where nobody is.
-      this.watchers.set(m.data.id, Array.from({ length: w.count }, () => ({ id: this.nextCreatureId++, map: m, x: 0, y: 0, dir: 'down', awake: false, wakeAt: -Infinity, readyAt: 0, lairs })));
+      this.watchers.set(m.data.id, Array.from({ length: w.count }, () => ({ id: this.nextCreatureId++, kind: 'watcher', map: m, x: 0, y: 0, dir: 'down', awake: false, wakeAt: -Infinity, readyAt: 0, lairs })));
+    }
+    for (const m of this.maps.values()) {
+      const rule = m.data.skulkers;
+      if (m.data.kind !== 'wilds' || !rule) continue;
+      const lairs: number[] = [];
+      for (let y = 0; y < m.height; y++) for (let x = 0; x < m.width; x++) if (m.kind(x, y) === 'ferns' && this.skulkerMayStand(m, rule, x, y)) lairs.push(y * m.width + x);
+      if (!lairs.length) continue;
+      this.skulkers.set(m.data.id, Array.from({ length: rule.count }, () => ({
+        id: this.nextCreatureId++, kind: 'skulker', rule, map: m, x: 0, y: 0, dir: 'down', awake: false, wakeAt: -Infinity, readyAt: 0, lairs, lair: 0, chaseUntil: 0, calmUntil: 0,
+      })));
     }
 
     this.conditionsData = items.conditions;
@@ -622,7 +661,7 @@ export class World {
       drops: this.dropViews(mapId),
       fires: this.fires.views(mapId, now),
       marks: [...(this.markTiles.get(mapId)?.values() ?? [])].map(markView),
-      creatures: (this.watchers.get(mapId) ?? []).filter(w => w.awake).map(creatureView),
+      creatures: [...(this.watchers.get(mapId) ?? []), ...(this.skulkers.get(mapId) ?? [])].filter(w => w.awake).map(creatureView),
       flares: this.flares.filter(f => f.map === mapId && f.until > now).map(f => ({ x: f.x, y: f.y, left: round((f.until - now) / 1000, 1) })),
       flashes: this.flashes.filter(f => f.map === mapId && f.until > now).map(f => flashView(f, now)),
       surge: map ? this.surgeOf(map, now) : null,
@@ -1042,6 +1081,7 @@ export class World {
       if (now - p.heardAt >= ENERGY_SYNC_MS && changing(p)) this.tell(p, now);
     }
     this.walkWatchers(now);
+    this.walkSkulkers(now);
     if (this.flares.length) this.flares = this.flares.filter(f => f.until > now);
     if (this.flashes.length) this.flashes = this.flashes.filter(f => f.until > now);
     for (const [id, readyAt] of this.resting) if (readyAt <= now) this.resting.delete(id);
@@ -1163,20 +1203,22 @@ export class World {
   }
 
   /**
-   * The player's bag becomes their pile on the tile where they stand, and their old pile is gone:
-   * each player has at most one. With nothing in the bag, only the old pile goes.
+   * The player's bag (or only its slot `slot`, when a skulker catches them) becomes their pile on the
+   * tile where they stand, and their old pile is gone: each player has at most one. With nothing in
+   * the bag, only the old pile goes. Only a collapse leaves an echo.
    */
-  private dropBag(p: Online, now: number): void {
+  private dropBag(p: Online, now: number, slot?: number): void {
     const { id, name, map, x, y, bag } = p.rec;
     const old = this.piles.get(id);
     if (old) this.removePile(old);
     if (!bag.length) return;
-    const trail = p.map.data.kind === 'wilds' ? p.trail.map(([tx, ty]) => [tx, ty] as [number, number]) : [];
-    const pile: DropRecord = { owner: id, name, map, x, y, items: merge(bag), droppedAt: Math.floor(now + this.epochOffset), trail };
+    const trail = p.map.data.kind === 'wilds' && slot === undefined ? p.trail.map(([tx, ty]) => [tx, ty] as [number, number]) : [];
+    const falls = slot === undefined ? bag : [bag[slot]!];
+    const pile: DropRecord = { owner: id, name, map, x, y, items: merge(falls), droppedAt: Math.floor(now + this.epochOffset), trail };
     this.addPile(pile);
     this.pileWrites.set(id, pile);
     this.toMap(map, { t: 'drop', drop: dropView(pile) });
-    p.rec.bag = [];
+    p.rec.bag = slot === undefined ? [] : bag.filter((_, i) => i !== slot);
     this.sendBag(p);
     this.saveNow.set(id, p.rec);
   }
@@ -1501,7 +1543,7 @@ export class World {
     this.flares.push({ map, x, y, until: now + seconds * 1000 });
     this.toMap(map, { t: 'flare', flare: { x, y, left: seconds } });
     if (p.hitched) this.unhitch(p);
-    for (const w of this.watchers.get(map) ?? []) if (w.awake && Math.hypot(w.x - x, w.y - y) <= FLARE_RADIUS + 3) this.sendAway(w, now);
+    for (const w of [...(this.watchers.get(map) ?? []), ...(this.skulkers.get(map) ?? [])]) if (w.awake && Math.hypot(w.x - x, w.y - y) <= FLARE_RADIUS + 3) this.sendAway(w, now);
   }
 
   /** An arrow on the player's tile, pointing where they face. Their oldest goes when they have too many. */
@@ -1578,7 +1620,7 @@ export class World {
           .filter(p => p.rec.energy > 0 && this.exposed(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_HUNT)
           .sort((a, b) => manhattan(a.rec.x, a.rec.y, w.x, w.y) - manhattan(b.rec.x, b.rec.y, w.x, w.y))[0];
         if (!prey) continue;
-        const next = pathStep(map, w.x, w.y, prey.rec.x, prey.rec.y, (x, y) => this.watcherMayStand(map, x, y) && !this.nearFlare(mapId, x, y, now) && !list.some(o => o !== w && o.awake && o.x === x && o.y === y));
+        const next = pathStep(map, w.x, w.y, prey.rec.x, prey.rec.y, (x, y) => this.watcherMayStand(map, x, y) && !this.nearFlare(mapId, x, y, now) && !this.creatureAt(mapId, x, y));
         if (next) {
           w.dir = dirTo(next.x - w.x, next.y - w.y) ?? w.dir;
           w.x = next.x;
@@ -1598,7 +1640,8 @@ export class World {
   }
 
   private wake(w: Watcher, here: Online[], now: number): void {
-    const far = w.lairs.filter(t => here.every(p => manhattan(p.rec.x, p.rec.y, t % w.map.width, Math.floor(t / w.map.width)) >= WATCHER_WAKE_AWAY));
+    const W = w.map.width;
+    const far = w.lairs.filter(t => !this.creatureAt(w.map.data.id, t % W, Math.floor(t / W)) && here.every(p => manhattan(p.rec.x, p.rec.y, t % W, Math.floor(t / W)) >= WATCHER_WAKE_AWAY));
     if (!far.length) {
       w.wakeAt = now + 10_000;
       return;
@@ -1614,6 +1657,7 @@ export class World {
   private sendAway(w: Watcher, now: number): void {
     const [soonest, latest] = WATCHER_AWAY_S;
     w.awake = false;
+    w.chasing = undefined;
     w.wakeAt = now + (soonest + this.rng() * (latest - soonest)) * 1000;
     this.toMap(w.map.data.id, { t: 'creatureGone', id: w.id });
   }
@@ -1635,6 +1679,131 @@ export class World {
     p.rec.energy = Math.max(0, p.rec.energy - WATCHER_TOUCH);
     this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'watcher', lost } });
     if (p.rec.energy <= 0) return this.collapse(p, now);
+    this.refresh(p, now);
+    this.tell(p, now);
+  }
+
+  // ---------- skulkers ----------
+
+  /** Where a skulker may go: like a watcher, and only as far from home as its rule says. */
+  private skulkerMayStand(map: TileMap, rule: SkulkerRule, x: number, y: number): boolean {
+    const d = map.homeSteps(x, y);
+    return this.watcherMayStand(map, x, y) && d >= rule.steps[0] && d <= rule.steps[1];
+  }
+
+  /** Skulkers are out at night (aurora nights too) or in a storm, as their region's rule says. */
+  private skulkersOut(map: TileMap, rule: SkulkerRule, now: number): boolean {
+    if (rule.when.includes('night') && (this.sky === 'night' || this.sky === 'aurora')) return true;
+    return rule.when.includes('storm') && this.stormOf(map, now)?.phase === 'storm';
+  }
+
+  /**
+   * Each skulker that may step: out of its time it sinks into the ferns; awake, it lies still in its
+   * lair until it hears someone walking or sees someone standing near, out in the open; then it chases
+   * them until it catches them or gives up (the time is over, they reached light or a fire, or its
+   * range ends), and goes back to its lair.
+   */
+  private walkSkulkers(now: number): void {
+    for (const [mapId, list] of this.skulkers) {
+      for (const s of list) {
+        const map = s.map;
+        if (!this.skulkersOut(map, s.rule, now)) {
+          if (s.awake) this.sendAway(s, now);
+          continue;
+        }
+        // Asked again for each skulker: another one's catch may have just sent someone home.
+        const here = [...this.onMap.get(mapId)!];
+        if (!s.awake) {
+          if (now >= s.wakeAt) this.wake(s, here, now);
+          if (s.awake) s.lair = s.y * map.width + s.x;
+          continue;
+        }
+        if (now < s.readyAt) continue;
+        s.readyAt = now + SKULKER_STEP_MS;
+        if (this.nearFlare(mapId, s.x, s.y, now)) {
+          this.sendAway(s, now);
+          continue;
+        }
+        const may = (x: number, y: number) => this.skulkerMayStand(map, s.rule, x, y) && !this.nearFlare(mapId, x, y, now) && !this.creatureAt(mapId, x, y);
+        let prey = s.chasing === undefined ? undefined : here.find(p => p.rec.id === s.chasing);
+        if (s.chasing !== undefined && (!prey || prey.rec.energy <= 0 || now >= s.chaseUntil || !this.exposed(prey, now))) {
+          this.giveUp(s, now);
+          prey = undefined;
+        }
+        if (s.chasing === undefined && now >= s.calmUntil) {
+          prey = here
+            .filter(p => p.rec.energy > 0 && this.exposed(p, now) && manhattan(p.rec.x, p.rec.y, s.x, s.y) <= (now - p.readyAt < SKULKER_HEAR_MS ? SKULKER_HEAR : SKULKER_SEE))
+            .sort((a, b) => manhattan(a.rec.x, a.rec.y, s.x, s.y) - manhattan(b.rec.x, b.rec.y, s.x, s.y))[0];
+        }
+        if (prey) {
+          const next = pathStep(map, s.x, s.y, prey.rec.x, prey.rec.y, may);
+          // No way to them inside its range: it never starts, or it gives up.
+          if (!next && manhattan(prey.rec.x, prey.rec.y, s.x, s.y) > 1) {
+            if (s.chasing !== undefined) this.giveUp(s, now);
+            continue;
+          }
+          if (s.chasing === undefined) {
+            s.chasing = prey.rec.id;
+            s.chaseUntil = now + SKULKER_CHASE_MS;
+          }
+          if (next) this.creatureTo(s, next.x, next.y);
+          else this.toMap(mapId, { t: 'creature', creature: creatureView(s) });
+          if (manhattan(prey.rec.x, prey.rec.y, s.x, s.y) <= 1) this.caught(s, prey, now);
+          continue;
+        }
+        // Back to its lair, and still there.
+        const lx = s.lair % map.width, ly = Math.floor(s.lair / map.width);
+        if (s.x === lx && s.y === ly) continue;
+        if (manhattan(s.x, s.y, lx, ly) === 1) {
+          if (may(lx, ly)) this.creatureTo(s, lx, ly);
+          continue;
+        }
+        // However far the chase took it, it finds its way back.
+        const next = pathStep(map, s.x, s.y, lx, ly, may, map.width * map.height);
+        // No way back (someone lies in its lair, a flare burns there): it slips through the ferns out of sight.
+        this.creatureTo(s, next?.x ?? lx, next?.y ?? ly);
+      }
+    }
+  }
+
+  /** Is an awake creature on this tile? */
+  private creatureAt(mapId: string, x: number, y: number): boolean {
+    return [...(this.watchers.get(mapId) ?? []), ...(this.skulkers.get(mapId) ?? [])].some(c => c.awake && c.x === x && c.y === y);
+  }
+
+  /** A creature moves to x,y (a step, or a jump the clients show at once). */
+  private creatureTo(c: Watcher, x: number, y: number): void {
+    c.dir = dirTo(x - c.x, y - c.y) ?? c.dir;
+    c.x = x;
+    c.y = y;
+    this.toMap(c.map.data.id, { t: 'creature', creature: creatureView(c) });
+  }
+
+  private giveUp(s: Skulker, now: number): void {
+    s.chasing = undefined;
+    s.calmUntil = now + SKULKER_CALM_MS;
+    this.toMap(s.map.data.id, { t: 'creature', creature: creatureView(s) });
+  }
+
+  /**
+   * A skulker caught a player: energy lost, and one bag slot (at random) falls out as their pile where
+   * they stand, to be picked up again; it goes away for a while. Emptied, they collapse as ever.
+   */
+  private caught(s: Skulker, p: Online, now: number): void {
+    this.sendAway(s, now);
+    this.advance(p, now);
+    p.rec.energy = Math.max(0, p.rec.energy - SKULKER_CATCH);
+    if (p.rec.energy <= 0) {
+      this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'skulker', lost: null } });
+      return this.collapse(p, now);
+    }
+    let lost: string | null = null;
+    if (p.rec.bag.length) {
+      const slot = this.roll(p.rec.bag.length);
+      lost = p.rec.bag[slot]!.item;
+      this.dropBag(p, now, slot);
+    }
+    this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'skulker', lost } });
     this.refresh(p, now);
     this.tell(p, now);
   }
@@ -2025,14 +2194,16 @@ function dirTo(dx: number, dy: number): Dir | undefined {
 
 /**
  * The first step from x,y on a shortest way next to tx,ty over tiles where `may` allows standing (the
- * target's own tile excepted: it is where the prey stands). Null if there is no way within a few hundred tiles.
+ * target's own tile excepted: it is where the prey stands). Null if there is no way within `nodes` tiles (a few hundred unless asked).
  */
-export function pathStep(map: TileMap, x: number, y: number, tx: number, ty: number, may: (x: number, y: number) => boolean): { x: number; y: number } | null {
+export function pathStep(
+  map: TileMap, x: number, y: number, tx: number, ty: number, may: (x: number, y: number) => boolean, nodes = WATCHER_PATH_NODES,
+): { x: number; y: number } | null {
   if (manhattan(x, y, tx, ty) <= 1) return null;
   const W = map.width, start = y * W + x;
   const prev = new Map<number, number>([[start, -1]]);
   const queue = [start];
-  for (let head = 0; head < queue.length && head < WATCHER_PATH_NODES; head++) {
+  for (let head = 0; head < queue.length && head < nodes; head++) {
     const i = queue[head]!, cx = i % W, cy = Math.floor(i / W);
     if (manhattan(cx, cy, tx, ty) <= 1 && i !== start) {
       let at = i;

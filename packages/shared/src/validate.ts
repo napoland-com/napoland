@@ -124,6 +124,22 @@ export function validateMap(data: MapData): Problem[] {
     if (!Number.isInteger(w.count) || w.count < 1) err('watchers: count must be a whole number from 1');
     if (!(w.steps?.length === 2 && w.steps[0] >= 0 && w.steps[0] <= w.steps[1])) err('watchers: steps is [nearest, farthest], from 0');
   }
+  if (data.skulkers) {
+    const s = data.skulkers;
+    if (data.kind !== 'wilds') err('skulkers live only in the wilds');
+    if (!Number.isInteger(s.count) || s.count < 1) err('skulkers: count must be a whole number from 1');
+    if (!(s.steps?.length === 2 && s.steps[0] >= 0 && s.steps[0] <= s.steps[1])) err('skulkers: steps is [nearest, farthest], from 0');
+    else {
+      let lairs = 0;
+      for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
+        const d = map.homeSteps(x, y);
+        if (map.kind(x, y) === 'ferns' && map.walkable(x, y) && !map.lit(x, y) && !map.warm(x, y) && d >= s.steps[0] && d <= s.steps[1]) lairs++;
+      }
+      if (!lairs) err('skulkers: no ferns to lie in that far from home, out of the light and away from fires');
+    }
+    if (!(Array.isArray(s.when) && s.when.length && s.when.every(w => w === 'night' || w === 'storm'))) err('skulkers: when lists night, storm or both');
+    else if (s.when.includes('storm') && !data.storm) warn('skulkers: out in a storm, but this region never storms');
+  }
   if (data.kind === 'wilds') {
     let lost = 0;
     for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (map.walkable(x, y) && map.homeSteps(x, y) < 0) lost++;
