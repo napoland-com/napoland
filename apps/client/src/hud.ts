@@ -18,6 +18,7 @@ const ICON = {
   back: svg('<path d="M15 5l-7 7 7 7"/>'),
   // The waves show while the sound is on, the cross while it is off (style.css).
   speaker: svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path class="on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="off" d="M17 9.5l5 5M22 9.5l-5 5"/>'),
+  chat: svg('<path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-5 4v-4H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>'),
   bolt: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.5 2 4 13.5h6.5L9 22l10-12h-6.6z"/></svg>`,
   drop: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5C9 7 5.5 10.6 5.5 14.6a6.5 6.5 0 0 0 13 0c0-4-3.5-7.6-6.5-12.1z"/></svg>`,
   cling: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3c-4.4 0-7 3.3-7 7.6V21l2.3-1.8L9.6 21l2.4-1.8 2.4 1.8 2.3-1.8L19 21V10.6C19 6.3 16.4 3 12 3zm-3 8.2a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8zm6 0a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8z"/></svg>`,
@@ -33,6 +34,18 @@ const VIGNETTE_FROM = 0.2;
 /** How long the name of a place stays up after you arrive; longer news stays longer, to be read. */
 const BANNER_MS = 2500;
 const BANNER_MS_PER_CHAR = 45;
+
+/**
+ * What a key does in the chat's line, as in Metin2: Enter with words in it sends them (the form does,
+ * and the line stays open for more), Enter on an empty line and Escape close the chat. Keys that pick
+ * a word (an input method still composing) do nothing here.
+ */
+export function chatKey(key: string, text: string, composing = false): 'send' | 'close' | null {
+  if (composing) return null;
+  if (key === 'Escape') return 'close';
+  if (key === 'Enter') return text.trim() ? 'send' : 'close';
+  return null;
+}
 
 export interface HudHandlers {
   pad(dir: Dir | null): void;
@@ -221,10 +234,10 @@ export class Hud {
         <div class="sub"><span class="conn" data-el="conn" data-state="connecting"><i></i><span data-el="connText">Connecting</span></span><span data-el="ping"></span></div></div>
       <div class="surge-glow" data-el="surgeGlow"></div>
       <button type="button" class="menu-btn" data-el="menuBtn" aria-label="Menu" aria-expanded="false">${ICON.menu}</button>
+      <button type="button" class="menu-btn chat-btn" data-el="chatBtn" aria-label="Chat" aria-expanded="false">${ICON.chat}</button>
       <div class="menu-panel panel" data-el="menu" hidden>
         <button type="button" data-el="menuBag">Bag</button>
         <button type="button" data-el="menuStatus">Status</button>
-        <button type="button" data-el="menuChat">Chat</button>
         <button type="button" data-el="menuFriends">Friends</button>
         <button type="button" data-el="menuAbout">About</button>
         <div class="sound-row"><button type="button" data-el="soundMute" aria-pressed="true">${ICON.speaker}<span data-el="soundLabel">Sound on</span></button><input type="range" min="0" max="100" value="70" data-el="soundVolume" aria-label="Volume" /></div>
@@ -340,12 +353,18 @@ export class Hud {
     this.el.menuBag!.addEventListener('click', () => { this.toggleMenu(false); this.toggleBag(true); });
     this.el.menuStatus!.addEventListener('click', () => { this.toggleMenu(false); this.toggleStatus(true); });
     this.el.menuFriends!.addEventListener('click', () => { this.toggleMenu(false); this.toggleFriends(true); });
-    this.el.menuChat!.addEventListener('click', () => { this.toggleMenu(false); this.toggleChat(true); });
+    this.el.chatBtn!.addEventListener('click', () => { this.toggleMenu(false); this.toggleChat(); });
     this.el.chatClose!.addEventListener('click', () => this.toggleChat(false));
     this.el.chatForm!.addEventListener('submit', e => {
       e.preventDefault();
       const input = this.el.chatText as HTMLInputElement, text = input.value.trim();
       if (text) { this.h.chat?.({ a: 'say', to: this.chatTab, text }); input.value = ''; }
+    });
+    // As in Metin2: Enter on an empty line (or Escape) closes the chat; with words in it, the form sends them and the line stays open.
+    this.el.chatText!.addEventListener('keydown', e => {
+      const k = e as KeyboardEvent;
+      // The key ends here: the game must not take the same Escape for B, or the same Enter for opening the chat again.
+      if (chatKey(k.key, (this.el.chatText as HTMLInputElement).value, k.isComposing) === 'close') { k.preventDefault(); k.stopPropagation(); this.toggleChat(false); }
     });
     this.el.chatSheet!.addEventListener('click', e => {
       const t = (e.target as Element).closest<HTMLElement>('[data-tab], [data-who]');
@@ -464,10 +483,15 @@ export class Hud {
   get chatOpen(): boolean {
     return this.el.chatSheet!.dataset.open === 'true';
   }
-  toggleChat(open = !this.chatOpen) {
+  /** Opens or closes the chat; with `type`, its line takes the keys (Enter on a keyboard). */
+  toggleChat(open = !this.chatOpen, type = false) {
     if (open) { this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleFriends(false); this.el.statusSheet!.dataset.open = 'false'; }
-    const was = this.chatOpen;
+    const was = this.chatOpen, line = this.el.chatText as HTMLInputElement;
     this.el.chatSheet!.dataset.open = String(open);
+    this.el.chatBtn!.setAttribute('aria-expanded', String(open));
+    if (open && type) line.focus({ preventScroll: true });
+    // Closed, its line lets go of the keys, so they walk again.
+    else if (!open && document.activeElement === line) line.blur();
     if (open && !was) this.h.chat?.({ a: 'opened' });
   }
 
@@ -556,11 +580,11 @@ export class Hud {
     this.el.sayForm!.hidden = p.standing !== 'friend';
   }
 
-  /** Dots for something new: on Friends (a request or an unread message), on Chat (something said), and on the menu button for either. */
+  /** Dots for something new: on Friends and the menu button (a request or an unread message), and on the chat button (something said). */
   setNews(friends: boolean, chat: boolean) {
-    this.el.menuBtn!.toggleAttribute('data-news', friends || chat);
+    this.el.menuBtn!.toggleAttribute('data-news', friends);
     this.el.menuFriends!.toggleAttribute('data-news', friends);
-    this.el.menuChat!.toggleAttribute('data-news', chat);
+    this.el.chatBtn!.toggleAttribute('data-news', chat);
   }
 
   get stashOpen(): boolean {
