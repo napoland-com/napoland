@@ -112,7 +112,7 @@ export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 export interface Extras {
   finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; items?: number;
   fires?: FireView[]; marks?: MarkView[]; creatures?: CreatureView[]; flares?: FlareView[]; flashes?: FlashView[]; surge?: SurgeView | null; storm?: StormView | null; body?: BodyView; stone?: StoneView;
-  progress?: ProgressView;
+  progress?: ProgressView; tools?: string[];
 }
 /** Dry, light and alone. */
 export const DRY: BodyView = { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} };
@@ -125,7 +125,7 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
     t: 'welcome', v: PROTOCOL_VERSION, you: 'me', name: 'Aldo', token: 'x'.repeat(20), map: ref(map), players, stepMs: STEP_MS, weather: 'rain', energy, serverTime: 0,
     finds: extras.finds ?? [], drops: extras.drops ?? [], bag: extras.bag ?? [], items: extras.items ?? ITEMS.version,
     fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], flashes: extras.flashes ?? [], surge: extras.surge ?? null, storm: extras.storm ?? null,
-    body: extras.body ?? DRY, stone: extras.stone ?? ASLEEP, stats: {}, progress: extras.progress ?? START,
+    body: extras.body ?? DRY, stone: extras.stone ?? ASLEEP, stats: {}, progress: extras.progress ?? START, tools: extras.tools ?? [],
   };
 }
 

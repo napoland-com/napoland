@@ -254,6 +254,8 @@ describe('World: turning, joining and leaving', () => {
       stats: {},
       // Nothing stashed yet: level 1, and the next level at 30 XP.
       progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: ENERGY_MAX },
+      // No items, so no paper map to carry.
+      tools: [],
     });
     expect(w.drain()).toEqual([
       { to: '*', map: 'test', except: 'a', msg: { t: 'join', player: joined.player } },
@@ -271,6 +273,14 @@ describe('World: turning, joining and leaving', () => {
     expect(w.has('a')).toBe(false);
     expect(w.leave('a', 1000)).toBeUndefined();
     expect(w.drain()).toEqual([]);
+  });
+
+  it('gives everyone, new or not, the paper map of the Near Woods, apart from the bag', () => {
+    const items = { version: 1, items: [{ id: 'near-woods-map', name: 'Map', kind: 'tool' as const, stack: 1, text: 'Old.' }], finds: [] };
+    const w = new World([testMap()], 'test', 'rain', { items });
+    const joined = w.join(rec('a', 3, 3, 'down', { bag: [] }), 0);
+    expect(joined.tools).toEqual(['near-woods-map']);
+    expect(joined.bag).toEqual([]);
   });
 
   it('puts a player whose saved tile is no longer walkable at the spawn', () => {

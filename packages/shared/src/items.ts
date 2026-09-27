@@ -12,8 +12,12 @@ import type { Mods } from './feats';
 import type { Element, Piece, Quirk, Recipe, Slot, Tier } from './gear';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 
-/** A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn (gear.ts). */
-export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear';
+/**
+ * A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn
+ * (gear.ts). A tool is yours for good: never used up, never in a pile, weighing nothing, and it takes
+ * no bag slot (players carry their tools apart from the bag, like what they wear).
+ */
+export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool';
 
 /** What using an item does. A mark costs the item; so does everything else here. */
 export interface ItemUse {
@@ -59,6 +63,8 @@ export interface ItemDef {
   bag?: number;
   /** Gear: its color on your character. */
   color?: string;
+  /** A paper map (a tool): the id of the map it is a drawing of. */
+  chart?: string;
 }
 
 /** Where one kind of find grows, and how many are out there at once. */
@@ -105,6 +111,9 @@ export interface BagSlot {
   count: number;
   piece?: Piece;
 }
+
+/** The tools everyone carries: the old paper map of the Near Woods. */
+export const STARTER_TOOLS: readonly string[] = ['near-woods-map'];
 
 /** Slots in the bag until the bag becomes equipment (a tote 6, a backpack 8, a hiking pack 12...). */
 export const BAG_SLOTS = 8;

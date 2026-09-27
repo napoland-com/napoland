@@ -131,6 +131,17 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .sheet-head b { font-weight: inherit; flex: 1; color: #ffcf5a; }
 .sheet-head .room { font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.1); color: #b9b2a2; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hud .close { width: var(--btn); height: var(--btn); flex: none; }
+/* Tools ride in the bag's header, as big as its close button. */
+.sheet-head .tools { display: flex; gap: calc(var(--u) * .5); }
+.sheet-head .tools .slot { width: var(--btn); height: var(--btn); }
+/* A paper map over everything, as big as the screen allows in either orientation; B or the X puts it away. */
+.paper-view { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; pointer-events: auto; background: rgba(6, 8, 11, .9);
+  padding: calc(var(--pad) + var(--safe-t)) calc(var(--pad) + var(--safe-r)) calc(var(--pad) + var(--safe-b)) calc(var(--pad) + var(--safe-l)); }
+.paper-view[hidden] { display: none; }
+.paper-view canvas { max-width: 100%; max-height: 100%; min-height: 0; border-radius: 4px; box-shadow: 0 6px 30px rgba(0, 0, 0, .6); cursor: zoom-in; }
+.paper-view[data-zoom] { overflow: auto; place-items: start; }
+.paper-view[data-zoom] canvas { max-width: none; max-height: none; margin: auto; cursor: zoom-out; }
+.paper-view .close { position: fixed; z-index: 1; top: calc(var(--pad) + var(--safe-t)); right: calc(var(--pad) + var(--safe-r)); }
 /* Four slots a row, two rows. */
 .sheet .grid { flex: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--g); width: 100%; max-width: var(--col); margin-inline: auto; }
 .hud .slot { aspect-ratio: 1; position: relative; display: grid; place-items: center; border-radius: 10px; border: 0; background: #1c222c; box-shadow: inset 0 0 0 2px #3a4356; }

@@ -42,6 +42,8 @@ export interface HudHandlers {
   unequip?(slot: Slot): void;
   craft?(recipe: string): void;
   benchClosed?(): void;
+  /** A tool in the bag's header was tapped (a paper map: open it). */
+  tool?(item: string): void;
   a(): void;
   b(): void;
   dialogTap(): void;
@@ -176,7 +178,7 @@ export class Hud {
       <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back">B</button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button></div>
       <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div data-el="text"></div><div class="more" data-el="more" aria-hidden="true">&#9660;</div></div>
       <div class="sheet panel" data-el="sheet" data-open="false" role="dialog" aria-label="Bag">
-        <div class="sheet-head"><b>Bag</b><span class="room" data-el="room"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
+        <div class="sheet-head"><b>Bag</b><span class="room" data-el="room"></span><span class="tools" data-el="tools"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
         <div class="grid" data-el="grid">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-slot="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
         <div class="detail" data-el="detail" aria-live="polite">
           <p class="hint" data-el="hint">${EMPTY_BAG}</p>
@@ -186,6 +188,7 @@ export class Hud {
           <div class="acts" data-el="ask" hidden><span class="ask" data-el="askText"></span><button type="button" class="act toss sure" data-el="tossYes">Throw away</button><button type="button" class="act" data-el="tossNo">Keep</button></div>
         </div>
       </div>
+      <div class="paper-view" data-el="paper" hidden role="dialog" aria-label="Map"><button type="button" class="close" data-el="paperClose" aria-label="Put the map away">${ICON.x}</button></div>
       <div class="sheet panel stash-sheet" data-el="stashSheet" data-open="false" role="dialog" aria-label="Stash">
         <div class="sheet-head"><b>Stash</b><span class="room" data-el="stashXp"></span><button type="button" class="close" data-el="stashClose" aria-label="Close the stash">${ICON.x}</button></div>
         <p class="hint">Tap something in your bag to put it away. What you bring home earns XP.</p>
@@ -275,6 +278,18 @@ export class Hud {
       if (it && it.dataset.empty !== 'true') this.h.unequip?.(it.dataset.wear as Slot);
     });
     this.el.benchClose!.addEventListener('click', () => this.toggleBench(false));
+    this.el.tools!.addEventListener('click', e => {
+      const it = (e.target as Element).closest<HTMLElement>('[data-tool]');
+      if (it) this.h.tool?.(it.dataset.tool!);
+    });
+    this.el.paperClose!.addEventListener('click', () => this.showPaper(null));
+    // On a phone the whole map is small: a tap shows it at full size, to pan around with a finger.
+    this.el.paper!.addEventListener('click', e => {
+      if (!(e.target instanceof HTMLCanvasElement)) return;
+      const p = this.el.paper!;
+      p.toggleAttribute('data-zoom');
+      e.target.scrollIntoView({ block: 'center', inline: 'center' });
+    });
     this.el.benchList!.addEventListener('click', e => {
       const it = (e.target as Element).closest<HTMLButtonElement>('[data-make]');
       if (it && !it.disabled) this.h.craft?.(it.dataset.make!);
@@ -417,6 +432,24 @@ export class Hud {
       line.textContent = text;
     }
     line.hidden = false;
+  }
+
+  /** Your tools, as buttons in the bag's header. */
+  setTools(tools: Array<{ item: string; name: string; icon: string }>) {
+    const html = tools.map(t => `<button type="button" class="slot" data-tool="${esc(t.item)}" aria-label="${esc(`Open the ${t.name.toLowerCase()}`)}">${t.icon}</button>`).join('');
+    if (this.el.tools!.innerHTML !== html) this.el.tools!.innerHTML = html;
+  }
+
+  get paperOpen(): boolean {
+    return !this.el.paper!.hidden;
+  }
+  /** A paper map over everything (null puts it away). The drawing is made elsewhere; this only shows it. */
+  showPaper(drawing: HTMLCanvasElement | null) {
+    const el = this.el.paper!;
+    el.querySelector('canvas')?.remove();
+    if (drawing) el.prepend(drawing);
+    el.hidden = !drawing;
+    el.removeAttribute('data-zoom');
   }
 
   /** B in the bag: out of the question, then out of the details. False when there is nothing to back out of (B closes the bag). */

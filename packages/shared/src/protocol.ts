@@ -11,7 +11,7 @@ import type { ProgressView } from './progress';
 import type { FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -252,6 +252,8 @@ export type ServerMsg =
       stats: Stats;
       /** Your XP and level (progress.ts). */
       progress: ProgressView;
+      /** Your tools (item ids, items.ts): kept for good, apart from the bag. */
+      tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
       items: number;
       serverTime: number;
