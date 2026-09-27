@@ -39,7 +39,7 @@ services:
       DATABASE_URL: postgres://napoland:${POSTGRES_PASSWORD:?}@db:5432/napoland
       # Caddy is the only way in, so X-Forwarded-For carries the real player address.
       TRUST_PROXY: "1"
-      WEATHER: rain
+      WEATHER: cycle
     depends_on:
       db:
         condition: service_healthy

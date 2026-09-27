@@ -12,7 +12,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DROP_LIFETIME_MS } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
-import { PgStorage, type DropRecord, type PlayerRecord } from '../src/storage';
+import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord } from '../src/storage';
 import { restartKeepsBagsAndPiles } from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
@@ -35,7 +35,7 @@ describe.skipIf(!url)('PgStorage', () => {
 
   const player = (name: string): PlayerRecord => ({
     id: randomUUID(), name, tokenHash: randomBytes(32).toString('hex'), map: 'stonebrook',
-    x: 8, y: 21, dir: 'down', color: '#3a86ff', energy: 100, bag: [], createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
+    x: 8, y: 21, dir: 'down', color: '#3a86ff', energy: 100, bag: [], wet: 0, stats: {}, createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   });
 
   let schema: string;
@@ -56,9 +56,10 @@ describe.skipIf(!url)('PgStorage', () => {
 
   it('applies each migration once', async () => {
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
-    expect(await names()).toEqual(['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql']);
+    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_survival.sql'];
+    expect(await names()).toEqual(all);
     await storage.init();
-    expect(await names()).toEqual(['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql']);
+    expect(await names()).toEqual(all);
   });
 
   it('rolls back a migration that fails, and does not record it', async () => {
@@ -108,13 +109,13 @@ describe.skipIf(!url)('PgStorage', () => {
       `INSERT INTO ${schema}.players (id, name, token_hash, x, y, dir, color, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
       [old.id, old.name, old.tokenHash, old.x, old.y, old.dir, old.color, new Date(old.createdAt), new Date(old.lastSeenAt)],
     );
-    expect(await storage.findByTokenHash(old.tokenHash)).toEqual({ ...old, map: 'stonebrook', energy: 100, bag: [] });
+    expect(await storage.findByTokenHash(old.tokenHash)).toEqual({ ...old, map: 'stonebrook', energy: 100, bag: [], wet: 0, stats: {} });
     const before = { ...player('Pg Before'), map: 'near-woods', energy: 55 };
     await admin.query(
       `INSERT INTO ${schema}.players (id, name, token_hash, map, x, y, dir, color, energy, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [before.id, before.name, before.tokenHash, before.map, before.x, before.y, before.dir, before.color, before.energy, new Date(before.createdAt), new Date(before.lastSeenAt)],
     );
-    expect(await storage.findByTokenHash(before.tokenHash)).toEqual({ ...before, bag: [] });
+    expect(await storage.findByTokenHash(before.tokenHash)).toEqual({ ...before, bag: [], wet: 0, stats: {} });
     // Its save leaves the bag alone.
     await storage.save({ ...before, bag: [{ item: 'resin', count: 4 }] });
     await admin.query(`UPDATE ${schema}.players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, last_seen_at = $8 WHERE id = $1`, [
@@ -143,12 +144,15 @@ describe.skipIf(!url)('PgStorage', () => {
     await storage.create(owner);
     await storage.create(other);
     const now = Date.now();
-    const pile: DropRecord = { owner: owner.id, name: owner.name, map: 'near-woods', x: 31, y: 70, items: [{ item: 'glowcap', count: 5 }, { item: 'scrap', count: 2 }], droppedAt: now - 1000 };
+    const pile: DropRecord = {
+      owner: owner.id, name: owner.name, map: 'near-woods', x: 31, y: 70, items: [{ item: 'glowcap', count: 5 }, { item: 'scrap', count: 2 }], droppedAt: now - 1000,
+      trail: [[31, 72], [31, 71], [31, 70]],
+    };
     await storage.saveDrop(pile);
     const mine = async () => (await storage.loadDrops(now - DROP_LIFETIME_MS)).filter(d => d.owner === owner.id);
     expect(await mine()).toEqual([pile]);
     // A new collapse replaces it.
-    const again = { ...pile, map: 'stonebrook-lodge', x: 2, y: 3, items: [{ item: 'thermos', count: 1 }], droppedAt: now };
+    const again = { ...pile, map: 'stonebrook-lodge', x: 2, y: 3, items: [{ item: 'thermos', count: 1 }], droppedAt: now, trail: [] };
     await storage.saveDrop(again);
     expect(await mine()).toEqual([again]);
     // The name comes from the player, whatever the pile says.
@@ -180,6 +184,52 @@ describe.skipIf(!url)('PgStorage', () => {
     } finally {
       await first.close();
       await second.close();
+    }
+  });
+
+  it('keeps how wet a player is and what counts toward their feats', async () => {
+    const rec = { ...player('Pg Soaked'), wet: 0.75, stats: { rainSteps: 120, fed: 3 } };
+    expect(await storage.create(rec)).toBe(true);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(rec);
+    const drier = { ...rec, wet: 0.25, stats: { rainSteps: 121, fed: 3, nightSteps: 9 } };
+    await storage.save(drier);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(drier);
+    // Whatever else the column holds reads as no counts (the World checks each one too).
+    await admin.query(`UPDATE ${schema}.players SET stats = '[1, 2]' WHERE id = $1`, [rec.id]);
+    expect((await storage.findByTokenHash(rec.tokenHash))!.stats).toEqual({});
+  });
+
+  it('keeps marks with their painter\'s name and color, and forgets the ones older than asked', async () => {
+    const painter = player('Pg Painter');
+    await storage.create(painter);
+    const now = Date.now();
+    const mark: MarkRecord = { id: 7, owner: painter.id, name: 'ignored', color: 'ignored', map: 'near-woods', x: 30, y: 60, dir: 'up', placedAt: now - 1000 };
+    await storage.saveMark(mark);
+    await storage.saveMark({ ...mark, id: 8, x: 31, placedAt: now - 10_000 });
+    const mine = async (after: number) => (await storage.loadMarks(after)).filter(m => m.owner === painter.id);
+    expect(await mine(now - 60_000)).toEqual([
+      { ...mark, id: 8, x: 31, placedAt: now - 10_000, name: painter.name, color: painter.color },
+      { ...mark, name: painter.name, color: painter.color },
+    ]);
+    // Older than asked: not loaded, and gone from the table.
+    expect((await mine(now - 5000)).map(m => m.id)).toEqual([7]);
+    expect((await mine(now - 60_000)).map(m => m.id)).toEqual([7]);
+    await storage.removeMark(7);
+    expect(await mine(0)).toEqual([]);
+    await expect(storage.saveMark({ ...mark, id: 9, owner: randomUUID() })).rejects.toThrow(/foreign key/);
+  });
+
+  it('keeps the Old Stone', async () => {
+    const fresh = await freshSchema();
+    const s = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await s.init();
+      expect(await s.loadStone()).toBeNull();
+      await s.saveStone({ charge: 12.5, awake: true, at: 1_800_000_000_000 });
+      await s.saveStone({ charge: 11.25, awake: true, at: 1_800_000_060_000 });
+      expect(await s.loadStone()).toEqual({ charge: 11.25, awake: true, at: 1_800_000_060_000 });
+    } finally {
+      await s.close();
     }
   });
 

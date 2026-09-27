@@ -53,6 +53,29 @@ const ICONS: Record<string, string> = {
     <path d="M10.5 17h11v3.4h-11z" fill="#c8453a"/>
     <rect x="9.5" y="4" width="13" height="6" rx="1.6" fill="#4d5963"/>
     <path d="M13.5 12v3.2M13.5 22.4v3.4" stroke="#eef4f6" stroke-width="1.3"/>`),
+  // A red road flare with a black cap and a spark at its tip.
+  flare: icon(`${halo(24, 8, 8, '#ff6a50')}
+    <path d="M6.5 24.5l14-14 3.5 3.5-14 14z" fill="#c8362c"/>
+    <path d="M4.2 26.8l2.3-2.3 3.5 3.5-2.3 2.3z" fill="#2c2c30"/>
+    <path d="M22.3 8.9l2.2-2.2M24.9 11.5l2.5-.8M20.5 6.5l.8-2.5" stroke="#ffd08a" stroke-width="1.6"/>`),
+  // A dark knot with light in its seams: nobody knows what it is yet.
+  strange: icon(`${halo(16, 16, 13, '#b39bff')}
+    <path d="M16 4.5c6 0 9.5 4.4 9.5 9.2 0 6.7-5.4 13.8-9.5 13.8S6.5 20.4 6.5 13.7c0-4.8 3.5-9.2 9.5-9.2z" fill="#3a3448"/>
+    <path d="M11 11.5c2.4 2 7.6 2 10 0M12 19c1.5-3.2 6.5-3.2 8 0M16 7.5v4" stroke="#d9ccff" stroke-width="1.4"/>
+    <path d="M13.6 23.5h4.8" stroke="#d9ccff" stroke-width="1.4"/>`),
+  // A smooth black pebble with a warm glow inside.
+  'warm-pebble': icon(`${halo(16, 18, 12, '#ff9a4a')}
+    <path d="M5 19.5c0-5 5-8.5 11.5-8.5S28 14.2 28 19c0 4.6-5 7.5-11.5 7.5S5 24 5 19.5z" fill="#2c2623"/>
+    <path d="M11 16.8c2.5-1.8 6.4-2.2 9.6-1" stroke="#ff9a4a" stroke-width="1.6"/>`),
+  // A long grey feather, lying across.
+  'hollow-feather': icon(`<path d="M5.5 26.5L26 6" stroke-width="1.6"/>
+    <path d="M9 23c-1.6-6.5 3.3-13.3 14.8-15-1 8.7-6.9 15-14.8 15z" fill="#a9a6a0"/>
+    <path d="M12.5 20.2l6-2.2M14.8 16.8l5.5-2.4M17.6 13.3l4-2" stroke="#6f6c67" stroke-width="1.1"/>`),
+  // A glass bead ringed with a faint hum.
+  'humming-bead': icon(`${halo(16, 16, 13, '#5ff0e0')}
+    <circle cx="16" cy="16" r="6.5" fill="#7ff3e6"/>
+    <path d="M13.2 13.6c.9-1.2 2.2-1.8 3.6-1.8" stroke="#effffd" stroke-width="1.4"/>
+    <path d="M5.5 11.5c-1.4 3-1.4 6 0 9M26.5 11.5c1.4 3 1.4 6 0 9M8.8 13.4c-.6 1.7-.6 3.5 0 5.2M23.2 13.4c.6 1.7.6 3.5 0 5.2" stroke="#9ff5ec" stroke-width="1.3"/>`),
 };
 
 /** Anything else: a small sack tied at the top. */

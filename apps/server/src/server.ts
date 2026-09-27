@@ -3,12 +3,12 @@
  * restart), its tick and periodic saves. main.ts builds it from the environment; tests start it directly.
  */
 import type { AddressInfo } from 'node:net';
-import { DROP_LIFETIME_MS, type ItemsData, type TileMap, type Weather } from '@napoland/shared';
+import { DROP_LIFETIME_MS, weatherAt, type ItemsData, type TileMap, type Weather } from '@napoland/shared';
 import { createHttpServer } from './http';
 import { log } from './log';
 import { attachNet } from './net';
 import type { Storage } from './storage';
-import { World } from './world';
+import { MARK_LIFETIME_MS, World } from './world';
 
 export interface ServerOptions {
   host: string;
@@ -23,7 +23,8 @@ export interface ServerOptions {
   rng?: () => number;
   /** The id of the town where new players start and collapsed players wake up. */
   homeMap: string;
-  weather: Weather;
+  /** A fixed weather, or 'cycle': it follows the day (sky.ts). */
+  weather: Weather | 'cycle';
   maxPlayers: number;
   tickMs: number;
   saveEveryMs: number;
@@ -54,7 +55,16 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // Piles fade an hour after the collapse, restart or not; older ones are forgotten.
   const drops = await o.storage.loadDrops(Date.now() - DROP_LIFETIME_MS);
   if (drops.length) log.info('piles loaded', { piles: drops.length });
-  const world = new World(o.maps, o.homeMap, o.weather, {
+  // Marks fade a day after they were painted, restart or not.
+  const marks = await o.storage.loadMarks(Date.now() - MARK_LIFETIME_MS);
+  if (marks.length) log.info('marks loaded', { marks: marks.length });
+  const stone = await o.storage.loadStone();
+  const cycle = o.weather === 'cycle';
+  const world = new World(o.maps, o.homeMap, cycle ? weatherAt(Date.now()).weather : (o.weather as Weather), {
+    cycle,
+    marks,
+    stone,
+    now: clock(),
     // Where players run out tells how hard each part of the world really is.
     onCollapse: (id, where) => log.info('player collapsed', { id, ...where }),
     items: o.items,

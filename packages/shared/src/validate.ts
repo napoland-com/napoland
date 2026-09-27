@@ -67,7 +67,7 @@ export function validateMap(data: MapData): Problem[] {
     }
     if (o.kind === 'sign' && (!o.text.length || o.text.some(t => !t.trim()))) err(`sign at ${o.x},${o.y} has no text`);
     if (o.kind === 'npc' && !o.lines.length) err(`npc ${o.id} has nothing to say`);
-    if (o.kind === 'sign' || o.kind === 'npc') {
+    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board') {
       const front = stepTarget(o.x, o.y, 'down');
       if (!map.walkable(front.x, front.y)) err(`${o.kind} at ${o.x},${o.y}: the tile in front (below) is not walkable, so nobody can talk to it`);
     }
@@ -92,6 +92,21 @@ export function validateMap(data: MapData): Problem[] {
     let islands = 0;
     for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (map.walkable(x, y) && !seen[y * map.width + x]) islands++;
     if (islands) warn(`${islands} walkable tiles cannot be reached from the spawn`);
+  }
+  if (data.surge) {
+    const r = data.surge;
+    if (data.kind !== 'wilds') err('only the wilds surge');
+    const whole = (v: unknown) => Number.isInteger(v) && (v as number) > 0;
+    if (![r.every, r.unstable, r.surge, r.sweep].every(whole)) err('surge: every, unstable, surge and sweep are whole seconds above 0');
+    else if (r.unstable + r.surge >= r.every) err('surge: unstable and surge must leave calm time in every round');
+    else if (r.sweep > r.surge) err('surge: the front must reach home (sweep) before the surge is over');
+    if (r.offset !== undefined && !Number.isFinite(r.offset)) err('surge: offset is a number of seconds');
+  }
+  if (data.watchers) {
+    const w = data.watchers;
+    if (data.kind !== 'wilds') err('watchers live only in the wilds');
+    if (!Number.isInteger(w.count) || w.count < 1) err('watchers: count must be a whole number from 1');
+    if (!(w.steps?.length === 2 && w.steps[0] >= 0 && w.steps[0] <= w.steps[1])) err('watchers: steps is [nearest, farthest], from 0');
   }
   if (data.kind === 'wilds') {
     let lost = 0;
@@ -165,11 +180,25 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     ids.add(i.id);
     if (!i.name?.trim()) err(`${name} has no name`);
     if (!i.text?.trim()) err(`${name} has no text`);
-    if (i.kind !== 'resource' && i.kind !== 'consumable') err(`${name}: kind must be resource or consumable`);
+    if (i.kind !== 'resource' && i.kind !== 'consumable' && i.kind !== 'charm') err(`${name}: kind must be resource, consumable or charm`);
     if (!Number.isInteger(i.stack) || i.stack < 1) err(`${name}: stack must be a whole number from 1`);
-    const effects = Object.values(i.use ?? {}).filter(v => typeof v === 'number' && v !== 0).length;
+    const effects = Object.values(i.use ?? {}).filter(v => (typeof v === 'number' && v !== 0) || v === true).length;
     if (i.kind === 'consumable' && !effects) err(`${name} is a consumable that does nothing when used`);
-    if (i.kind === 'resource' && i.use) err(`${name} is a resource and cannot be used`);
+    if (i.use && !effects) err(`${name}: use does nothing`);
+    if (i.kind === 'charm' && !Object.values(i.charm ?? {}).some(v => typeof v === 'number' && v > 0 && v !== 1)) err(`${name} is a charm that does nothing`);
+    if (i.kind !== 'charm' && i.charm) err(`${name}: only charms have a charm`);
+    for (const k of Object.keys(i.charm ?? {})) if (!['wetting', 'load', 'hitch', 'warmth'].includes(k)) err(`${name}: a charm changes wetting, load, hitch or warmth, not ${k}`);
+    for (const [field, v] of [['weight', i.weight], ['fuel', i.fuel], ['charge', i.charge]] as const) {
+      if (v !== undefined && !(typeof v === 'number' && v > 0)) err(`${name}: ${field} must be a number above 0`);
+    }
+    if (i.use?.flare !== undefined && !(i.use.flare > 0)) err(`${name}: a flare burns for some seconds above 0`);
+    if (i.use?.identify && !i.reveals?.length) err(`${name} can be identified but reveals nothing`);
+    if (i.reveals && !i.use?.identify) err(`${name} reveals things but cannot be identified`);
+  }
+  for (const i of data.items) for (const r of i.reveals ?? []) {
+    if (!ids.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, which is not an item`);
+    if (r.item === i.id) err(`item ${JSON.stringify(i.id)} reveals itself`);
+    if (!Number.isInteger(r.count) || r.count < 1 || !(r.weight > 0)) err(`item ${JSON.stringify(i.id)}: a reveal needs a count from 1 and a weight above 0`);
   }
   const byId = new Map(maps.map(m => [m.id, m]));
   const tileKinds = new Set<string>(Object.values(TILE_CHARS));
@@ -183,6 +212,8 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (f.steps && !(f.steps.length === 2 && f.steps[0] >= 0 && f.steps[0] <= f.steps[1])) err(`${name}: steps is [nearest, farthest], from 0`);
     for (const k of f.on ?? []) if (!tileKinds.has(k)) err(`${name}: unknown tile kind ${k as TileKind}`);
     if (f.near && !(f.near.radius > 0 && f.near.kinds.length)) err(`${name}: near needs kinds and a radius above 0`);
+    if (f.when !== undefined && f.when !== 'unstable' && f.when !== 'aurora') err(`${name}: when is unstable or aurora`);
+    if (f.when === 'unstable' && !mapData.surge) err(`${name}: grows while the map is restless, but ${f.map} never surges`);
     if (out.some(p => p.level === 'error' && p.message.startsWith(name))) return undefined;
     const room = findTiles(new TileMap(mapData), f).length;
     if (room < f.count) err(`${name}: only ${room} tiles fit the rule, fewer than count ${f.count}`);

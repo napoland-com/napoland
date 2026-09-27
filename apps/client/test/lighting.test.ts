@@ -14,7 +14,9 @@ describe('the weather, outside and in', () => {
     expect(rain.mist).not.toBeNull();
     expect(rain.fog).not.toBeNull();
     expect(rain.wisps).toBeGreaterThan(0);
-    expect(ambience('wilds', 'night', false).rain).not.toBeNull();
+    // Rain soaks you (energy.ts), so it only falls when it rains: never at night, nor on an aurora.
+    expect(ambience('wilds', 'night', false).rain).toBeNull();
+    expect(ambience('wilds', 'aurora', false).rain).toBeNull();
     expect(ambience('wilds', 'overcast', false).rain).toBeNull();
   });
 

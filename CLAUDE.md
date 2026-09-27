@@ -33,9 +33,9 @@ napoland is a mobile-first online exploration game (web client + authoritative N
 
 | Path | What |
 |---|---|
-| `packages/shared` | Map (`TileMap`), movement (`STEP_MS`, `findPath`), protocol (messages + validation), map validation |
-| `apps/server` | Game server: `world.ts` (rules, no I/O), `net.ts` (WebSocket sessions), `http.ts` (health + static client), `storage.ts` (memory or Postgres), `migrations/` |
-| `apps/client` | Web client: `game.ts` (prediction and state), `hud.ts` (interface), `view/` (three.js world), `net.ts` |
+| `packages/shared` | Map (`TileMap`), movement (`STEP_MS`, `findPath`), energy and what wears you down (`energy.ts`), the day and surges (`sky.ts`), feats (`feats.ts`), protocol (messages + validation), content validation |
+| `apps/server` | Game server: `world.ts` (rules, no I/O), `fires.ts` (fires burning down), `net.ts` (WebSocket sessions), `http.ts` (health + static client), `storage.ts` (memory or Postgres), `migrations/` |
+| `apps/client` | Web client: `game.ts` (prediction and state), `hud.ts` (interface), `status.ts` (status panel and banners), `view/` (three.js world; `wilds.ts` for marks, watchers, flares, echoes), `net.ts` |
 | `content/maps` | The world as data |
 | `content/items.json` | Items and where finds grow (checked with the maps by `npm run validate`) |
 | `tools` | Map generator, content validator, test bots, dev runner, `deploy.mjs` |

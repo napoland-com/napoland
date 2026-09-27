@@ -5,14 +5,18 @@
  * - D-pad: a quick tap on a new direction turns in place, holding walks (like FireRed);
  * - tapping the ground walks there; tapping a person or a sign walks up and talks, tapping a find or a
  *   pile walks onto it and picks it up;
- * - A picks up what lies on your tile or the one you face, else talks to people and reads signs;
- * - finds and piles on your map, and your bag, are the server's: it tells us, we show them;
+ * - A picks up what lies on your tile or the one you face, else feeds the fire or the Old Stone you
+ *   face (with the best you carry for it), reads the notice board, talks to people and reads signs;
+ * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
+ *   it tells us, we show them;
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
- * - energy is counted forward between the server's reports, so the bar moves smoothly.
+ * - energy, wetness, fires and the surge clock are counted forward between the server's reports, so
+ *   everything moves smoothly.
  */
 import {
-  STEP_MS, dirOf, dirToward, energyAfter, findPath, stepTarget, DIR_VEC,
-  type BagSlot, type ClientMsg, type Dir, type DropView, type EnergyView, type FindView, type MapObject, type PlayerView, type ServerMsg, type TileMap,
+  STEP_MS, dirOf, dirToward, energyAfter, findPath, inSurge, stepTarget, surgeFront, DIR_VEC,
+  type BagSlot, type BodyView, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
+  type MarkView, type PlayerView, type ServerMsg, type Stats, type StoneView, type SurgeView, type TileMap,
 } from '@napoland/shared';
 import { countOf, refusalText, useText, type Items } from './items';
 import type { Maps } from './maps';
@@ -34,7 +38,11 @@ interface Mover {
   turnT: number;
 }
 
-export type Talker = { x: number; y: number; who: string; lines: string[] };
+/**
+ * Something you face and press A at: a person or a sign (talk), the notice board (the server writes
+ * it), a fire or the Old Stone (you feed them).
+ */
+export type Talker = { x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' };
 
 /** Something lying on a tile to pick up: a pile someone left when they collapsed, or a find. */
 export type Thing = { kind: 'drop'; drop: DropView } | { kind: 'find'; find: FindView };
@@ -74,13 +82,27 @@ const GAIN = '#ffe3a1';
 const ENERGY = '#ffcf5a';
 const NO = '#ffae98';
 const GREY = '#c9c2b0';
+const FIRE = '#ffb36b';
+const EERIE = '#c7a6ff';
+/** How long a watcher takes to walk a tile, as drawn (the server moves them a little slower than this). */
+const CREATURE_STEP_MS = 420;
 
 function talkersOf(map: TileMap): Talker[] {
   return map.data.objects.flatMap((o: MapObject): Talker[] => {
-    if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines }];
-    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: 'Sign', lines: o.text }];
+    if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines, kind: 'talk' }];
+    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: 'Sign', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
+    if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
+    if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
     return [];
   });
+}
+
+/** "12 minutes", "under a minute". */
+export function minutes(seconds: number): string {
+  if (seconds < 60) return 'under a minute';
+  const m = Math.round(seconds / 60);
+  return `${m} minute${m === 1 ? '' : 's'}`;
 }
 
 export class Game {
@@ -103,6 +125,24 @@ export class Game {
   lootChanges = 0;
   /** Your bag as the server last told it; replaced whole, never changed in place. */
   bag: BagSlot[] = [];
+  /** The fires on this map by "x,y": fuel left as told, and when (null: tended, it never goes out). */
+  fires = new Map<string, { left: number | null; at: number }>();
+  /** Marks painted on this map, by id; `markChanges` counts changes, like lootChanges. */
+  marks = new Map<number, MarkView>();
+  markChanges = 0;
+  /** Creatures on this map (watchers), animated like players. */
+  creatures = new Map<number, Mover>();
+  /** Flares burning on this map, until when (our clock). */
+  flares: Array<{ x: number; y: number; until: number }> = [];
+  /** This map's surge clock as told, and when (null: it never surges). */
+  surge: { view: SurgeView; at: number } | null = null;
+  /** How wet you are, your load and whether something clings to you, as told and when. */
+  body: { view: BodyView; at: number } = { view: { wet: 0, wetRate: 0, load: 0, hitched: false }, at: 0 };
+  /** The Old Stone in town, and your counts toward feats. */
+  stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
+  stats: Stats = {};
+  /** Feats just earned, for the interface to announce (it empties the list). */
+  news: Array<{ kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'stone'; view: StoneView }> = [];
   private fid = 0;
   private seq = 0;
   private pending: Array<{ seq: number; x: number; y: number }> = [];
@@ -122,6 +162,8 @@ export class Game {
   private picking: { at: number } | null = null;
   /** A use asked for: the item and how many the bag held, to tell when it went through. */
   private using: { item: string; had: number; at: number } | null = null;
+  /** A fire fed and not answered yet, to say how it took it. */
+  private feeding: { x: number; y: number; at: number } | null = null;
   /** When the server last emptied a bag that held something. */
   private emptiedAt = -Infinity;
 
@@ -146,6 +188,40 @@ export class Game {
     return { value: energyAfter(e.view, Math.max(0, now - e.at) / 1000), max: e.view.max, rate: e.view.rate };
   }
 
+  /** Your body right now: wetness counted forward at its rate. */
+  bodyNow(now: number): BodyView {
+    const b = this.body.view;
+    if (!this.online) return b;
+    return { ...b, wet: Math.min(1, Math.max(0, b.wet + (b.wetRate * Math.max(0, now - this.body.at)) / 1000)) };
+  }
+
+  /** Seconds of fuel the fire on tile x,y has left now; null for a tended fire, undefined where there is none. */
+  fireLeft(x: number, y: number, now: number): number | null | undefined {
+    const f = this.fires.get(`${x},${y}`);
+    if (!f) return undefined;
+    return f.left === null ? null : Math.max(0, f.left - Math.max(0, now - f.at) / 1000);
+  }
+
+  /** The surge clock right now, counted on from the last report (it stays at 0 left until the next phase is told). */
+  surgeNow(now: number): SurgeView | null {
+    const s = this.surge;
+    if (!s) return null;
+    const dt = Math.max(0, now - s.at) / 1000;
+    return { phase: s.view.phase, left: Math.max(0, s.view.left - dt), into: s.view.into + dt };
+  }
+
+  /** Is the surge's front over the tile you stand on (and no street light shelters you)? */
+  caught(now: number): boolean {
+    const me = this.me, rule = this.current.data.surge, s = this.surgeNow(now);
+    if (!me || !rule || !s) return false;
+    return inSurge(this.current, me.tx, me.ty, surgeFront(rule, this.current.deepest, s));
+  }
+
+  /** Flares still burning. */
+  flaresNow(now: number): Array<{ x: number; y: number; left: number }> {
+    return this.flares.filter(f => f.until > now).map(f => ({ x: f.x, y: f.y, left: (f.until - now) / 1000 }));
+  }
+
   // ---------- messages from the server ----------
 
   handle(msg: ServerMsg, now: number) {
@@ -160,8 +236,12 @@ export class Game {
         this.online = true;
         this.stepMs = msg.stepMs;
         this.enter(map, msg.players, msg.finds, msg.drops);
+        this.scene(msg, now);
         this.bag = msg.bag;
         this.lastEnergy = { view: msg.energy, at: now };
+        this.body = { view: msg.body, at: now };
+        this.stone = msg.stone;
+        this.stats = msg.stats;
         break;
       }
       case 'zone': {
@@ -169,6 +249,8 @@ export class Game {
         if (!map) { this.disconnected(now); break; }
         const old = this.me;
         this.enter(map, msg.players, msg.finds, msg.drops);
+        this.scene(msg, now);
+        this.stats = msg.stats;
         this.dialog = null; this.marker = null; this.floats = [];
         // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
         const me = this.me ?? (old ? { ...old } : undefined);
@@ -180,6 +262,64 @@ export class Game {
       }
       case 'energy':
         this.lastEnergy = { view: msg.energy, at: now };
+        this.body = { view: msg.body, at: now };
+        break;
+      case 'fire': {
+        this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now });
+        const f = this.feeding;
+        if (f && f.x === msg.fire.x && f.y === msg.fire.y && now - f.at < ANSWER_WAIT_MS) {
+          this.feeding = null;
+          this.floatOverMe(msg.fire.left === null ? 'It burns on its own' : `It burns ${minutes(msg.fire.left)}`, FIRE);
+        }
+        break;
+      }
+      case 'mark':
+        this.marks.set(msg.mark.id, msg.mark);
+        this.markChanges++;
+        break;
+      case 'markGone':
+        if (this.marks.delete(msg.id)) this.markChanges++;
+        break;
+      case 'creature': {
+        const c = this.creatures.get(msg.creature.id);
+        if (!c) this.creatures.set(msg.creature.id, this.creatureMover(msg.creature));
+        // One that jumped (it woke somewhere else) is put there at once; a step is walked.
+        else if (Math.abs(c.tx - msg.creature.x) + Math.abs(c.ty - msg.creature.y) > 1) this.snapMover(c, msg.creature);
+        else {
+          c.anim = { fx: c.x, fy: c.y, t0: now, dur: CREATURE_STEP_MS };
+          c.tx = msg.creature.x; c.ty = msg.creature.y; c.dir = msg.creature.dir;
+        }
+        break;
+      }
+      case 'creatureGone':
+        this.creatures.delete(msg.id);
+        break;
+      case 'touched': {
+        const lost = msg.lost && this.items.get(msg.lost).name;
+        this.floatOverMe(lost ? `It took your ${lost.toLowerCase()}` : 'It touched you', EERIE, 1);
+        this.floatOverMe('The cold goes right through you', NO);
+        break;
+      }
+      case 'hitch':
+        this.floatOverMe(msg.on ? 'Something clings to your back' : 'It let go of you', msg.on ? EERIE : GAIN);
+        break;
+      case 'flare':
+        this.flares.push({ x: msg.flare.x, y: msg.flare.y, until: now + msg.flare.left * 1000 });
+        break;
+      case 'surge':
+        this.surge = { view: msg.surge, at: now };
+        this.news.push({ kind: 'surge', view: msg.surge });
+        break;
+      case 'stone':
+        if (msg.stone.awake !== this.stone.awake) this.news.push({ kind: 'stone', view: msg.stone });
+        this.stone = msg.stone;
+        break;
+      case 'board':
+        this.openDialog({ x: 0, y: 0, who: 'Notice board', lines: msg.lines, kind: 'board' });
+        break;
+      case 'feat':
+        this.stats = msg.stats;
+        this.news.push({ kind: 'feat', id: msg.id });
         break;
       case 'join':
         this.players.set(msg.player.id, this.mover(msg.player));
@@ -251,6 +391,7 @@ export class Game {
       case 'refused':
         if (msg.action === 'pick') this.picking = null;
         if (msg.action === 'use') this.using = null;
+        if (msg.action === 'feed') this.feeding = null;
         this.floatOverMe(refusalText(msg.reason), NO);
         break;
       default:
@@ -263,7 +404,7 @@ export class Game {
     this.online = false;
     this.pending = []; this.path = []; this.goal = null;
     // Answers to what we asked went with the connection.
-    this.picking = null; this.using = null;
+    this.picking = null; this.using = null; this.feeding = null;
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
     if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
@@ -290,6 +431,24 @@ export class Game {
 
   private mover(p: PlayerView): Mover {
     return { id: p.id, name: p.name, color: p.color, tx: p.x, ty: p.y, x: p.x, y: p.y, dir: p.dir, anim: null, phase: 0, turnT: 0 };
+  }
+
+  private creatureMover(c: CreatureView): Mover {
+    return { id: String(c.id), name: '', color: '', tx: c.x, ty: c.y, x: c.x, y: c.y, dir: c.dir, anim: null, phase: 0, turnT: 0 };
+  }
+
+  private snapMover(m: Mover, c: CreatureView) {
+    m.tx = m.x = c.x; m.ty = m.y = c.y; m.dir = c.dir; m.anim = null;
+  }
+
+  /** The fires, marks, creatures, flares and surge clock of the map a welcome or zone put us on. */
+  private scene(msg: { fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: Array<{ x: number; y: number; left: number }>; surge: SurgeView | null }, now: number) {
+    this.fires = new Map(msg.fires.map(f => [`${f.x},${f.y}`, { left: f.left, at: now }]));
+    this.marks = new Map(msg.marks.map(m => [m.id, m]));
+    this.markChanges++;
+    this.creatures = new Map(msg.creatures.map(c => [c.id, this.creatureMover(c)]));
+    this.flares = msg.flares.map(f => ({ x: f.x, y: f.y, until: now + f.left * 1000 }));
+    this.surge = msg.surge && { view: msg.surge, at: now };
   }
 
   private walk(p: Mover, x: number, y: number, dir: Dir, now: number) {
@@ -319,8 +478,51 @@ export class Game {
     if (!me || me.anim) return;
     const act = this.action();
     if (!act) this.float('Nothing here', GREY, me.tx, me.ty);
-    else if (act.kind === 'talk') this.openDialog(act.talker);
+    else if (act.kind === 'talk') this.meet(act.talker);
     else this.pick(act.x, act.y);
+  }
+
+  /** What A does at someone or something you face: talk, read the board, feed a fire or the Old Stone. */
+  private meet(t: Talker) {
+    if (t.kind === 'talk') return this.openDialog(t);
+    if (t.kind === 'board') {
+      if (this.online) this.send({ t: 'board', x: t.x, y: t.y });
+      return;
+    }
+    if (t.kind === 'fire') return this.tend(t.x, t.y);
+    return this.offer(t.x, t.y);
+  }
+
+  /**
+   * Feeds the fire on tile x,y with what burns longest of what you carry; with nothing to burn, says
+   * how long it has left. A tended fire needs nothing.
+   */
+  private tend(x: number, y: number) {
+    const left = this.fireLeft(x, y, this.clock);
+    if (left === null) return this.floatOverMe('Someone keeps this fire going', GREY);
+    const slot = this.bestSlot(def => def.fuel ?? 0);
+    if (slot < 0) return this.floatOverMe(left ? `It burns ${minutes(left)} more. Nothing to feed it` : 'It went out. Bring something that burns', left ? GREY : NO);
+    if (!this.online) return;
+    this.feeding = { x, y, at: this.clock };
+    this.send({ t: 'feed', x, y, slot });
+  }
+
+  /** Gives the Old Stone a shard, if you carry one; else says how far it is from waking. */
+  private offer(x: number, y: number) {
+    const slot = this.bestSlot(def => def.charge ?? 0);
+    const st = this.stone;
+    if (slot < 0) return this.floatOverMe(st.awake ? `It is awake for ${minutes(st.left)}` : `${st.charge} of ${st.need} shards. It wants more`, EERIE);
+    if (this.online) this.send({ t: 'feed', x, y, slot });
+  }
+
+  /** The bag slot whose item scores highest (above 0), or -1. */
+  private bestSlot(score: (def: ReturnType<Items['get']>) => number): number {
+    let best = -1, top = 0;
+    this.bag.forEach((s, i) => {
+      const v = score(this.items.get(s.item));
+      if (v > top) { top = v; best = i; }
+    });
+    return best;
   }
 
   /**
@@ -455,6 +657,11 @@ export class Game {
     if (this.marker) { this.marker.t += dt; if (this.marker.t > 0.8) this.marker = null; }
     if (this.dialog) { const line = this.dialog.lines[this.dialog.i] ?? ''; this.dialog.shown = Math.min(line.length, this.dialog.shown + dt * 48); }
 
+    for (const c of this.creatures.values()) {
+      if (!c.anim) continue;
+      const k = (now - c.anim.t0) / c.anim.dur;
+      if (k >= 1) { c.x = c.tx; c.y = c.ty; c.anim = null; } else { c.x = c.anim.fx + (c.tx - c.anim.fx) * k; c.y = c.anim.fy + (c.ty - c.anim.fy) * k; }
+    }
     for (const p of this.players.values()) {
       p.turnT = Math.max(0, p.turnT - dt);
       if (!p.anim) continue;
@@ -527,11 +734,19 @@ export class Game {
       const face = dirToward(at.x - me.tx, at.y - me.ty);
       if (face !== me.dir) { me.dir = face; this.send({ t: 'face', dir: face }); }
     }
-    if ('talk' in goal) this.openDialog(goal.talk);
+    if ('talk' in goal) this.meet(goal.talk);
     else this.pick(at.x, at.y);
   }
 
   avatars(): Avatar[] {
-    return [...this.players.values()].map(p => ({ id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT }));
+    const hitched = this.body.view.hitched;
+    return [...this.players.values()].map(p => ({
+      id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId,
+    }));
+  }
+
+  /** The creatures on this map, where they are drawn now. */
+  creatureViews(): Array<{ id: string; x: number; y: number; dir: Dir; moving: boolean }> {
+    return [...this.creatures.values()].map(c => ({ id: c.id, x: c.x, y: c.y, dir: c.dir, moving: !!c.anim }));
   }
 }

@@ -9,6 +9,8 @@ import { Hud, type TagView } from './hud';
 import { Items, slotViews } from './items';
 import { Maps } from './maps';
 import { Connection, serverUrl } from './net';
+import { newsBanner, statusView } from './status';
+import { fireLevel } from './view/fire';
 import { WorldView, createRenderer } from './view/world';
 
 const TOKEN_KEY = 'napoland.token';
@@ -38,6 +40,8 @@ const renderer = createRenderer(canvas);
 const peek = (id: string) => maps.find(id);
 /** The view of the map you are on; replaced (and the old one freed) when you arrive somewhere else. */
 let view = new WorldView(renderer, maps.home(), peek);
+/** Every view asks the game how big each fire burns, as it draws. */
+const watchFires = (v: WorldView) => v.setFires((x, y) => fireLevel(game.fireLeft(x, y, performance.now())));
 let weather: Weather = 'rain';
 /** The server accepts game messages only after its welcome on the current connection. */
 let welcomed = false;
@@ -46,13 +50,20 @@ let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items);
 /** Close the bag and the menu; true when one was open. */
 const closePanels = () => {
-  const open = hud.bagOpen || hud.menuOpen;
-  hud.toggleBag(false); hud.toggleMenu(false);
+  const open = hud.bagOpen || hud.menuOpen || hud.statusOpen;
+  hud.toggleBag(false); hud.toggleMenu(false); hud.toggleStatus(false);
   return open;
+};
+/** The status panel, as the game stands now. */
+const showStatus = () => {
+  const now = performance.now();
+  hud.setStatus(statusView({
+    energy: game.energy(now), body: game.bodyNow(now), surge: game.surgeNow(now), caught: game.caught(now), stone: game.stone, stats: game.stats, bag: game.bag, items,
+  }));
 };
 const hud = new Hud(screen, {
   pad: dir => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
-  a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (hud.bagOpen) hud.toggleBag(false); else if (hud.statusOpen) hud.toggleStatus(false); else game.pressA(); },
   // Back out of the text box, then out of the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.menuOpen) hud.toggleMenu(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
   dialogTap: () => game.advanceDialog(),
@@ -60,7 +71,9 @@ const hud = new Hud(screen, {
   // Using something shows what it did over your head (and on the energy bar), so the bag closes.
   use: slot => { game.use(slot); hud.toggleBag(false); },
   discard: slot => game.discard(slot),
+  status: showStatus,
 });
+watchFires(view);
 
 // ---------- arriving on another map ----------
 /** Set when a collapse arrives: you were carrying something, which now lies where you fell. */
@@ -79,6 +92,7 @@ const arrival = new Arrival(held => {
     view.dispose();
     view = new WorldView(renderer, game.map, peek);
     view.setWeather(weather);
+    watchFires(view);
     resize();
   }
   if (collapsed) hud.showBanner('You collapsed from exhaustion', leftPile ? 'You woke up at home.\nWhat you carried lies where you fell. It fades in an hour.' : 'You woke up at home');
@@ -178,6 +192,7 @@ conn.onMessage = (msg: ServerMsg) => {
       if (msg.reason === 'collapse') leftPile = game.carrying(now);
       break;
     case 'weather':
+      if (msg.weather === 'aurora' && weather !== 'aurora') hud.showBanner('Lights in the sky', 'An aurora: the old wires hum,\nand copper turns up by the poles.');
       weather = msg.weather;
       view.setWeather(weather);
       return;
@@ -231,6 +246,10 @@ const start = last;
 /** What the bag and the ground show now: they are redrawn only when the game's lists change (or the map's view is new). */
 let bagShown: BagSlot[] | null = null;
 let lootShown = { changes: -1, view: null as WorldView | null };
+let marksShown = { changes: -1, view: null as WorldView | null };
+/** Echoes are chosen again when the piles change or you reach another tile. */
+let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
+let statusAt = 0;
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
   requestAnimationFrame(frame);
@@ -245,6 +264,29 @@ function frame(now: number) {
     view.setLoot(game.finds.values(), game.drops.values(), game.meId, me?.color ?? null);
   }
   if (game.bag !== bagShown) hud.setBag(slotViews((bagShown = game.bag), items));
+  if (game.markChanges !== marksShown.changes || view !== marksShown.view) {
+    marksShown = { changes: game.markChanges, view };
+    view.setMarks(game.marks.values());
+  }
+  const focus = me ?? view.map.data.spawn, tile = `${Math.round(focus.x)},${Math.round(focus.y)}`;
+  if (game.lootChanges !== echoesShown.changes || view !== echoesShown.view || tile !== echoesShown.tile) {
+    echoesShown = { changes: game.lootChanges, view, tile };
+    view.setEchoes(game.drops.values(), focus);
+  }
+  view.setCreatures(game.creatureViews());
+  view.setFlares(game.flaresNow(now), focus);
+  view.setStone(game.stone.awake);
+  const surge = game.surgeNow(now), caught = game.caught(now);
+  view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
+  hud.setSurge(surge, caught);
+  const body = game.online ? game.bodyNow(now) : null;
+  hud.setBody(body);
+  if (body) hud.setLoad(body.load);
+  for (const n of game.news.splice(0)) {
+    const b = newsBanner(n, game.map.data.name);
+    if (b) hud.showBanner(b.title, b.sub);
+  }
+  if (hud.statusOpen && now - statusAt > 500) { statusAt = now; showStatus(); }
   view.render((now - start) / 1000, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const tags: TagView[] = [...game.players.values()].filter(p => p.id !== game.meId).map(p => { const s = view.project(p.x, p.y, 1.25); return { id: p.id, name: p.name, x: s.x, y: s.y }; });
   // Whose pile it is, while you are near. Its id is its owner's, so it gets a key of its own.

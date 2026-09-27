@@ -8,6 +8,7 @@
  * to a small map of its own. Energy only comes back near a fireplace. See energy.ts.
  */
 import type { Dir } from './protocol';
+import type { SurgeRule } from './sky';
 
 /** One character per tile in MapData.tiles. */
 export const TILE_CHARS = {
@@ -66,8 +67,14 @@ export type MapObject =
   | { kind: 'stone'; x: number; y: number }
   | { kind: 'npc'; x: number; y: number; id: string; name: string; dir: Dir; lines: string[] }
   | { kind: 'shrooms'; x: number; y: number }
-  /** Always burning. Stand on a tile next to it to recover energy. */
-  | { kind: 'fireplace'; x: number; y: number }
+  /**
+   * Stand on a tile next to it to recover energy while it burns. In town it is always tended; out in
+   * the wilds (and in their shelters) it burns down unless someone feeds it, or `tended` says someone
+   * out there keeps it going.
+   */
+  | { kind: 'fireplace'; x: number; y: number; tended?: boolean }
+  /** A notice board: reading it tells how things stand out there (the server writes it). */
+  | { kind: 'board'; x: number; y: number }
   /** Furniture, inside buildings. A bed is one tile wide and two long (head at y); a rug is only drawn. */
   | { kind: 'bed'; x: number; y: number }
   | { kind: 'table'; x: number; y: number }
@@ -94,6 +101,16 @@ export interface MapData {
   spawn: { x: number; y: number; dir: Dir };
   exits: MapExit[];
   objects: MapObject[];
+  /** The wilds only: how this region surges (sky.ts). None: it never does. */
+  surge?: SurgeRule;
+  /** The wilds only: watchers, creatures that come closer while nobody looks at them. */
+  watchers?: WatcherRule;
+}
+
+/** How many watchers roam a region at once, and how far from home (in steps) they wake up. */
+export interface WatcherRule {
+  count: number;
+  steps: [number, number];
 }
 
 /** Where an exit tile leads: the map, the tile you arrive on and your facing. */
@@ -106,7 +123,7 @@ export interface Arrival {
 
 /** Objects that stand on a tile and stop anyone from walking onto it (a house's door tile excepted). */
 const BLOCKING = new Set<MapObject['kind']>([
-  'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate',
+  'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board',
 ]);
 /** Objects that are only drawn: you walk over or through them. */
 export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug']);
@@ -142,6 +159,8 @@ export class TileMap {
   private readonly warmTiles: Uint8Array;
   /** Steps from each tile to the nearest home exit (-1: no way there); all 0 in towns. */
   private readonly stepsHome: Int32Array;
+  /** The most steps any tile is from home: where a surge starts. 0 in towns and insides. */
+  readonly deepest: number;
 
   constructor(readonly data: MapData) {
     const W = data.width, H = data.height;
@@ -197,6 +216,9 @@ export class TileMap {
         }
       }
     }
+    let deepest = 0;
+    for (const v of this.stepsHome) if (v > deepest) deepest = v;
+    this.deepest = deepest;
   }
 
   /** Where walking onto this tile takes you, if it is an exit. */

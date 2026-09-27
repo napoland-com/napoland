@@ -31,7 +31,7 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://napoland:${POSTGRES_PASSWORD}@db:5432/napoland
-      WEATHER: ${WEATHER:-rain}
+      WEATHER: ${WEATHER:-cycle}
       # For testing on this PC, where every tab and test bot shares one address (production keeps 20 and 10).
       MAX_CONNECTIONS_PER_IP: ${MAX_CONNECTIONS_PER_IP:-1000}
       NEW_PLAYERS_PER_IP_PER_HOUR: ${NEW_PLAYERS_PER_IP_PER_HOUR:-1000}

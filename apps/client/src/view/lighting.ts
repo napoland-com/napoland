@@ -53,12 +53,21 @@ const OUTSIDE: Readonly<Record<Weather, Ambience>> = {
     lampGlow: '#b3702e', warmGlow: '#8a5524', carLights: false, capGlow: '#0e3b37', smoke: '#737a80',
     flashlight: false, window: { glow: '#4b5f6e', light: 0.11 },
   },
+  // A dry night: rain soaks you (energy.ts), so it only falls when it is raining.
   night: {
     sky: '#0a0f15', fog: { min: 7, share: 0.25 },
     hemi: { sky: '#2c3a58', ground: '#07090c', intensity: 0.34 }, sun: { color: '#7088b8', intensity: 0.18 },
-    rain: { color: '#5f7fa0', opacity: 0.3 }, mist: { color: '#4b5a66', opacity: 0.1 }, wisps: 0.95,
+    rain: null, mist: { color: '#4b5a66', opacity: 0.12 }, wisps: 0.95,
     lampGlow: '#ffb266', warmGlow: '#ffb45a', carLights: true, capGlow: '#2fb8a8', smoke: '#353c45',
     flashlight: true, window: { glow: '#141d2b', light: 0.045 },
+  },
+  // Lights in the sky: a night washed green, glowing mushrooms brighter, the old wires humming (world.ts).
+  aurora: {
+    sky: '#06161a', fog: { min: 8, share: 0.28 },
+    hemi: { sky: '#2f7f70', ground: '#060b0b', intensity: 0.44 }, sun: { color: '#6fe0b8', intensity: 0.26 },
+    rain: null, mist: { color: '#3f8f7a', opacity: 0.13 }, wisps: 1,
+    lampGlow: '#ffb266', warmGlow: '#ffb45a', carLights: true, capGlow: '#3fe6c8', smoke: '#2c4a45',
+    flashlight: true, window: { glow: '#12382f', light: 0.07 },
   },
 };
 
@@ -66,7 +75,7 @@ const OUTSIDE: Readonly<Record<Weather, Ambience>> = {
 export function ambience(kind: MapKind, weather: Weather, fire: boolean): Ambience {
   const out = OUTSIDE[weather];
   if (kind !== 'inside') return out;
-  const night = weather === 'night', wet = weather === 'rain';
+  const night = weather === 'night' || weather === 'aurora', wet = weather === 'rain';
   return {
     ...out,
     sky: '#000000', fog: null, rain: null, mist: null, wisps: 0,
@@ -82,7 +91,7 @@ export function ambience(kind: MapKind, weather: Weather, fire: boolean): Ambien
   };
 }
 
-/** Something that gives light: a street lamp, or a fireplace (always burning). */
+/** Something that gives light: a street lamp, or a fireplace (as bright as it burns). */
 export interface LightSource {
   kind: 'lamp' | 'fire';
   /** Where its light hangs, in world units (y up). */
@@ -93,6 +102,9 @@ export interface LightSource {
   flicker: boolean;
   /** Phase, so no two flicker together. */
   ph: number;
+  /** The tile of the lamp or fireplace: a fire's light follows how big it burns. */
+  tx: number;
+  ty: number;
 }
 
 /** A map's lamps and fires, in the order of its objects. */
@@ -102,9 +114,9 @@ export function lightSources(map: TileMap): LightSource[] {
   for (const o of map.data.objects) {
     const ph = hash2(o.x, o.y) * 6;
     // Every third lamp flickers.
-    if (o.kind === 'lamp') out.push({ kind: 'lamp', x: o.x + 0.84, y: 1.1, z: o.y + 0.5, flicker: lamps++ % 3 === 1, ph });
+    if (o.kind === 'lamp') out.push({ kind: 'lamp', x: o.x + 0.84, y: 1.1, z: o.y + 0.5, flicker: lamps++ % 3 === 1, ph, tx: o.x, ty: o.y });
     // In front of a hearth's mouth, so it lights the room; over a campfire's middle.
-    else if (o.kind === 'fireplace') out.push({ kind: 'fire', x: o.x + 0.5, y: 0.5, z: o.y + (hearthAt(map, o.x, o.y) ? 0.62 : 0.5), flicker: true, ph });
+    else if (o.kind === 'fireplace') out.push({ kind: 'fire', x: o.x + 0.5, y: 0.5, z: o.y + (hearthAt(map, o.x, o.y) ? 0.62 : 0.5), flicker: true, ph, tx: o.x, ty: o.y });
   }
   return out;
 }

@@ -7,7 +7,7 @@
  *     0123456789                         01234567
  *   0 ggggrrgggw  <- exit to the woods   tttttttt
  *   1 gRggrrHHHw     (4,0) -> (3,6)      tggggggt
- *   2 gSggrrHDHw     (5,0) -> (4,6)      tgttFtgt   F: campfire (4,2)
+ *   2 gSggrrHDHw     (5,0) -> (4,6)      tgttFtgt   F: campfire (4,2), tended: it never goes out
  *   3 ggggrrgggw                         tgttttgt
  *   4 ggggrrgggw                         tLgggggt   L: street lamp (1,4)
  *   5 ggggrrgggw                         tggggggt
@@ -76,7 +76,8 @@ export function woodsData(): MapData {
     exits: [{ x: 3, y: 7, w: 2, h: 1, to: 'town', tx: 4, ty: 1, dir: 'down', home: true }],
     objects: [
       { kind: 'lamp', x: 1, y: 4 },
-      { kind: 'fireplace', x: 4, y: 2 },
+      // Tended: the tests of energy need a campfire that never goes out. Fires that burn down have tests of their own.
+      { kind: 'fireplace', x: 4, y: 2, tended: true },
     ],
   };
 }

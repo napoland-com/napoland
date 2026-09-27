@@ -2,7 +2,8 @@
  * The WebSocket side: one connection per player. Holds each address to its limits, checks the
  * hello, feeds client messages to the World and sends out what the World has to say, each message
  * to the players it is for: one player, or everyone on one map. Nothing a client sends is trusted.
- * It also stores players (now and then, and when they leave) and piles (whenever one changes).
+ * It also stores players (now and then, and when they leave), piles and marks (whenever one changes)
+ * and the Old Stone (whenever it is fed or falls asleep).
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
@@ -21,7 +22,7 @@ import {
 } from '@napoland/shared';
 import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
-import type { DropRecord, PlayerRecord, Storage } from './storage';
+import type { DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord } from './storage';
 import { colorFor, type World } from './world';
 
 const HELLO_TIMEOUT_MS = 5000;
@@ -109,8 +110,10 @@ export function attachNet(o: NetOptions): Net {
   let joining = 0;
   /** The last save started for each player, while it runs. */
   const pendingSaves = new Map<string, Promise<void>>();
-  /** The same for each player's pile. */
+  /** The same for each player's pile, each mark and the Old Stone. */
   const pendingDrops = new Map<string, Promise<void>>();
+  const pendingMarks = new Map<number, Promise<void>>();
+  let pendingStone: Promise<void> = Promise.resolve();
   let saving = false;
   let closing = false;
   /** Open sockets per client address. */
@@ -206,6 +209,12 @@ export function attachNet(o: NetOptions): Net {
       case 'discard':
         world.discard(s.id, msg.slot, now);
         return flush();
+      case 'feed':
+        world.feed(s.id, msg.x, msg.y, msg.slot, now);
+        return flush();
+      case 'board':
+        world.board(s.id, msg.x, msg.y, now);
+        return flush();
       case 'hello':
         return fail(s, 'bad_message', 'Already said hello');
     }
@@ -280,7 +289,7 @@ export function attachNet(o: NetOptions): Net {
     const now = Date.now();
     const { id: map, spawn } = world.home.data;
     const rec: PlayerRecord = {
-      id, name, tokenHash: hashToken(token), map, x: spawn.x, y: spawn.y, dir: spawn.dir, color: colorFor(id), energy: ENERGY_MAX, bag: [],
+      id, name, tokenHash: hashToken(token), map, x: spawn.x, y: spawn.y, dir: spawn.dir, color: colorFor(id), energy: ENERGY_MAX, bag: [], wet: 0, stats: {},
       createdAt: now, lastSeenAt: now,
     };
     // create() also refuses the name if another player took it since nameTaken().
@@ -312,6 +321,14 @@ export function attachNet(o: NetOptions): Net {
       weather: world.weather,
       energy: joined.energy,
       bag: joined.bag,
+      fires: joined.fires,
+      marks: joined.marks,
+      creatures: joined.creatures,
+      flares: joined.flares,
+      surge: joined.surge,
+      body: joined.body,
+      stone: joined.stone,
+      stats: joined.stats,
       items: world.itemsVersion,
       serverTime: Date.now(),
     });
@@ -382,11 +399,31 @@ export function attachNet(o: NetOptions): Net {
     return done;
   }
 
-  /** Starts the writes the World asked for: every pile that changed, and the players whose bag changed with one. */
+  /** Stores a mark as it is now, or forgets it. One mark's writes run in order, like persist(). */
+  function persistMark(id: number, mark: MarkRecord | undefined): Promise<void> {
+    const done = (pendingMarks.get(id) ?? Promise.resolve())
+      .then(() => (mark ? storage.saveMark(mark) : storage.removeMark(id)))
+      .catch((err: unknown) => log.error('saving a mark failed', { id, err }))
+      .finally(() => {
+        if (pendingMarks.get(id) === done) pendingMarks.delete(id);
+      });
+    pendingMarks.set(id, done);
+    return done;
+  }
+
+  function persistStone(stone: StoneRecord): Promise<void> {
+    pendingStone = pendingStone.then(() => storage.saveStone(stone)).catch((err: unknown) => log.error('saving the Old Stone failed', { err }));
+    return pendingStone;
+  }
+
+  /** Starts the writes the World asked for: every pile and mark that changed, the players whose bag changed with one, the Old Stone. */
   function store(): void {
-    const { drops, players } = world.takeWrites();
-    for (const { owner, drop } of drops) void persistDrop(owner, drop);
+    const { drops, players, marks, stone } = world.takeWrites();
+    // Players first: a pile or a mark belongs to a player who must exist in the database.
     for (const rec of players) void persist(rec);
+    for (const { owner, drop } of drops) void persistDrop(owner, drop);
+    for (const { id, mark } of marks) void persistMark(id, mark);
+    if (stone) void persistStone(stone);
   }
 
   /**
@@ -398,6 +435,10 @@ export function attachNet(o: NetOptions): Net {
   function flush(): void {
     for (const out of world.drain()) {
       const data = encode(out.msg);
+      if (out.to === 'all') {
+        for (const p of playing.values()) sendRaw(p, data);
+        continue;
+      }
       if ('map' in out) {
         for (const s of audiences.get(out.map) ?? []) if (s.id !== out.except) sendRaw(s, data);
         continue;
@@ -478,7 +519,7 @@ export function attachNet(o: NetOptions): Net {
       store();
       for (const rec of recs) void persist(rec);
       // Includes writes for players who left just before, so storage can be closed after this.
-      await Promise.all([...pendingSaves.values(), ...pendingDrops.values()]);
+      await Promise.all([...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), pendingStone]);
       // Clients get a moment to answer the close; then their sockets are cut.
       const force = setTimeout(() => {
         for (const ws of wss.clients) ws.terminate();

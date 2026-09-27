@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ServerMsg } from '@napoland/shared';
 import { Arrival, FADE_IN_S, FADE_OUT_S } from '../src/arrival';
-import { FULL, tinyWoods, zone as zoneTo } from './fixtures';
+import { DRY, FULL, tinyWoods, zone as zoneTo } from './fixtures';
 
 const zone: ServerMsg = zoneTo(tinyWoods(), 2, 4, []);
-const energy: ServerMsg = { t: 'energy', energy: FULL };
+const energy: ServerMsg = { t: 'energy', energy: FULL, body: DRY };
 const leave: ServerMsg = { t: 'leave', id: 'o1' };
 
 let swaps: ServerMsg[][];

@@ -9,7 +9,7 @@ const town = tinyTown(), woods = tinyWoods();
 const maps = new Maps([town, woods]);
 const me = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir, color: '#f29e4c' });
 const glowcap = (id: number, x: number, y: number): FindView => ({ id, item: 'glowcap', x, y });
-const pile = (owner: string, x: number, y: number): DropView => ({ id: owner, x, y, owner, name: owner === 'me' ? 'Aldo' : 'Bea', until: 1e13 });
+const pile = (owner: string, x: number, y: number): DropView => ({ id: owner, x, y, owner, name: owner === 'me' ? 'Aldo' : 'Bea', until: 1e13, trail: [] });
 
 let sent: ClientMsg[];
 let g: Game;

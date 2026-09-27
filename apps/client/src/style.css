@@ -38,7 +38,26 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 .energy[data-level="low"], .energy[data-level="critical"] { color: #ff7a5c; }
 .energy[data-level="low"] .fill, .energy[data-level="critical"] .fill { background: linear-gradient(#ff8d70, #cf3326); }
 .energy[data-refill] .fill::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: max(6px, calc(var(--u) * .9)); border-radius: inherit; background: linear-gradient(90deg, rgba(255, 248, 222, 0), #fff8de); }
+/* How wet you are: a thin blue bar under the energy; a pale face beside it while something clings to you. */
+.wet { display: flex; align-items: center; gap: calc(var(--u) * .4); color: #8cc8ff; }
+.wet[hidden] { display: none; }
+.wet svg { width: calc(var(--u) * .9); height: calc(var(--u) * .9); flex: none; filter: drop-shadow(0 1px 0 #0c0f15); }
+.wet .bar { position: relative; flex: 1; height: max(4px, calc(var(--u) * .42)); border-radius: 99px; overflow: hidden; background: #1c222c; box-shadow: inset 0 0 0 1px #0c0f15, 0 0 0 1px #3e4658; }
+.wet .fill { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(#bfe2ff, #3f86d8); will-change: transform; }
+.wet .cling { display: inline-grid; color: #d9c8ff; }
+.wet .cling[hidden] { display: none; }
+.wet .cling svg { width: calc(var(--u) * 1.15); height: calc(var(--u) * 1.15); }
+/* The surge clock: a strip in the status panel, so it never covers anything else. */
+.surge-pill { margin-top: calc(var(--u) * .15); padding: .25em .6em; border-radius: 7px; max-width: calc(var(--u) * 16); font-size: calc(var(--u) * .95); font-weight: 600; line-height: 1.25;
+  color: #e3d4ff; background: rgba(60, 34, 100, .75); box-shadow: inset 0 0 0 1px #8a6cd0; font-variant-numeric: tabular-nums; }
+.surge-pill[hidden] { display: none; }
+.surge-pill[data-level="surge"] { color: #f1e6ff; background: rgba(76, 32, 128, .9); }
+.surge-pill[data-level="caught"] { color: #fff; background: rgba(118, 30, 150, .95); box-shadow: inset 0 0 0 1px #f0c6ff; }
+/* Caught in a surge, the edges of the screen glow violet. */
+.surge-glow { position: absolute; inset: 0; pointer-events: none; visibility: hidden; opacity: 0; transition: opacity .6s ease;
+  background: radial-gradient(ellipse at 50% 45%, rgba(120, 60, 220, 0) 38%, rgba(120, 60, 220, .35) 70%, rgba(170, 90, 255, .65) 100%); }
 @media (prefers-reduced-motion: no-preference) {
+  .surge-pill[data-level="caught"] { animation: energy-pulse 1.2s ease-in-out infinite; }
   .energy[data-level="critical"] .fill { animation: energy-pulse 1s ease-in-out infinite; }
   .energy[data-refill] .fill::after { animation: energy-glint 1.1s ease-in-out infinite; }
 }
@@ -122,6 +141,26 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 .hud .act.go { background: #e0873a; border-color: #f3b27a; color: #1a0f04; }
 .hud .act.toss { color: #ffb4a0; }
 .hud .act.toss.sure { background: #9c2b3a; border-color: #f3a6b0; color: #fff4f4; }
+
+.detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
+.detail .words p.facts[hidden] { display: none; }
+/* The status panel: rows about you, then the feats. It sits where the bag does. */
+.status-body { display: grid; gap: calc(var(--u) * .55); font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.15); }
+.status-body h3 { margin: calc(var(--u) * .5) 0 0; font-family: "Fredoka", system-ui, sans-serif; font-weight: 600; font-size: calc(var(--u) * 1.25); color: #ffcf5a; }
+.srow { display: grid; grid-template-columns: minmax(5.5em, auto) 1fr; gap: .15em .8em; align-items: baseline; }
+.srow .k { color: #b9b2a2; }
+.srow .v { color: #e6dfcf; }
+.srow[data-tone="bad"] .v { color: #ffae98; }
+.srow[data-tone="good"] .v { color: #b8f0a8; }
+.srow .sbar { grid-column: 2; }
+.sbar { position: relative; display: block; height: max(4px, calc(var(--u) * .4)); border-radius: 99px; overflow: hidden; background: #1c222c; box-shadow: inset 0 0 0 1px #0c0f15, 0 0 0 1px #3e4658; }
+.sbar i { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(#ffe0a0, #e0873a); }
+.feat { display: grid; grid-template-columns: minmax(0, 1fr); gap: .2em; padding: .5em .7em; border-radius: 9px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.feat b { font-family: "Fredoka", system-ui, sans-serif; font-weight: 600; color: #d3ccbb; }
+.feat span { color: #b9b2a2; font-size: .92em; }
+.feat[data-done] { box-shadow: inset 0 0 0 1px #8a7440; }
+.feat[data-done] b { color: #ffcf5a; }
+.feat[data-done] b::after { content: " ✓"; }
 
 @container scr (max-width: 330px) {
   .hud { --dp: clamp(84px, calc(var(--u) * 9.5), 112px); --ab: clamp(40px, calc(var(--u) * 4.4), 54px); --btn: clamp(32px, calc(var(--u) * 3), 40px); }

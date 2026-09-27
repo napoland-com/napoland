@@ -1,0 +1,222 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { FEATS, FIRE_LOW_S, FIRE_MAX_S, type ClientMsg, type MapData, type PlayerView } from '@napoland/shared';
+import { Game, minutes } from '../src/game';
+import { clock, roomText, surgeLook } from '../src/hud';
+import { Items, factsOf, refusalText, slotViews, useLabel } from '../src/items';
+import { Maps } from '../src/maps';
+import { newsBanner, statusView } from '../src/status';
+import { fireLevel } from '../src/view/fire';
+import { ASLEEP, DRY, FULL, itemsData, tinyTown, welcome, zone } from './fixtures';
+
+/**
+ * A 7x7 patch of wilds that surges: a campfire at 3,1, the Old Stone at 5,3, a notice board at 1,3,
+ * the way home at the bottom (3,6). Steps from home: |x - 3| + (6 - y).
+ */
+function camp(): MapData {
+  return {
+    id: 'camp', name: 'The Camp', version: 1, kind: 'wilds', depth: 1, width: 7, height: 7,
+    tiles: ['ggggggg', 'ggggggg', 'ggggggg', 'ggggggg', 'ggggggg', 'ggggggg', 'tttgttt'],
+    levels: Array<string>(7).fill('0000000'),
+    spawn: { x: 3, y: 5, dir: 'up' },
+    exits: [{ x: 3, y: 6, w: 1, h: 1, to: 'town', tx: 3, ty: 1, dir: 'down', home: true }],
+    objects: [{ kind: 'fireplace', x: 3, y: 1 }, { kind: 'stone', x: 5, y: 3 }, { kind: 'board', x: 1, y: 3 }],
+    surge: { every: 100, unstable: 20, surge: 20, sweep: 10 },
+  };
+}
+
+const items = new Items({
+  ...itemsData(),
+  items: [
+    ...itemsData().items,
+    { id: 'resin', name: 'Fir resin', kind: 'resource', stack: 20, text: 'Sticky.', fuel: 300, weight: 0.2 },
+    { id: 'cloth', name: 'Cloth scraps', kind: 'resource', stack: 10, text: 'Dry.', fuel: 90 },
+    { id: 'ore', name: 'Shard', kind: 'resource', stack: 5, text: 'Warm.', charge: 1 },
+    { id: 'cap', name: 'Glowcap', kind: 'resource', stack: 20, text: 'Glows.', use: { mark: true } },
+    { id: 'pebble', name: 'Warm pebble', kind: 'charm', stack: 1, text: 'Warm.', charm: { wetting: 0.6 } },
+  ],
+});
+const maps = new Maps([tinyTown(), camp()]);
+const me = (x: number, y: number, dir: PlayerView['dir'] = 'up'): PlayerView => ({ id: 'me', name: 'Aldo', x, y, dir, color: '#f29e4c' });
+
+let sent: ClientMsg[];
+let g: Game;
+let now: number;
+const texts = () => g.floats.map(f => f.text);
+
+beforeEach(() => {
+  sent = [];
+  now = 1000;
+  g = new Game(maps, m => sent.push(m), items);
+});
+
+describe('A at a fire, the Old Stone and the notice board', () => {
+  it('feeds a wild fire with what burns longest, and says how it took it', () => {
+    g.handle(welcome(camp(), [me(3, 2)], FULL, { fires: [{ x: 3, y: 1, left: 100 }], bag: [{ item: 'cloth', count: 2 }, { item: 'resin', count: 1 }] }), now);
+    g.pressA();
+    expect(sent).toEqual([{ t: 'feed', x: 3, y: 1, slot: 1 }]);
+    g.handle({ t: 'fire', fire: { x: 3, y: 1, left: 400 } }, now);
+    expect(texts()).toEqual(['It burns 7 minutes']);
+    expect(g.fireLeft(3, 1, now + 100_000)).toBe(300);
+  });
+
+  it('says how long a fire has left when you carry nothing that burns, and leaves a tended one alone', () => {
+    g.handle(welcome(camp(), [me(3, 2)], FULL, { fires: [{ x: 3, y: 1, left: 600 }] }), now);
+    g.pressA();
+    expect(sent).toEqual([]);
+    expect(texts()).toEqual(['It burns 10 minutes more. Nothing to feed it']);
+    g.handle({ t: 'fire', fire: { x: 3, y: 1, left: null } }, now);
+    g.floats = [];
+    g.pressA();
+    expect(texts()).toEqual(['Someone keeps this fire going']);
+  });
+
+  it('gives the Old Stone a shard, or says how far it is from waking', () => {
+    g.handle(welcome(camp(), [me(5, 4)], FULL, { stone: { ...ASLEEP, charge: 7 } }), now);
+    g.pressA();
+    expect(texts()).toEqual(['7 of 20 shards. It wants more']);
+    g.handle({ t: 'bag', bag: [{ item: 'ore', count: 2 }] }, now);
+    g.pressA();
+    expect(sent).toEqual([{ t: 'feed', x: 5, y: 3, slot: 0 }]);
+  });
+
+  it('asks the server for the notice board, and shows what it says', () => {
+    g.handle(welcome(camp(), [me(1, 4)]), now);
+    g.pressA();
+    expect(sent).toEqual([{ t: 'board', x: 1, y: 3 }]);
+    g.handle({ t: 'board', lines: ['Rain.', 'Nobody collapsed in the last hour.'] }, now);
+    expect(g.dialog).toMatchObject({ who: 'Notice board', lines: ['Rain.', 'Nobody collapsed in the last hour.'] });
+  });
+
+  it('walks up to a fire that is tapped, and feeds it', () => {
+    g.handle(welcome(camp(), [me(3, 4)], FULL, { fires: [{ x: 3, y: 1, left: 10 }], bag: [{ item: 'resin', count: 1 }] }), now);
+    g.tapTile(3, 1);
+    let confirmed = 0;
+    for (let i = 0; i < 60; i++) {
+      now += 1000 / 60;
+      g.update(1 / 60, now);
+      // The server confirms each step once.
+      const last = sent.at(-1);
+      if (last?.t === 'step' && last.seq > confirmed) { confirmed = last.seq; g.handle({ t: 'step', id: 'me', x: g.me!.tx, y: g.me!.ty, dir: last.dir, seq: last.seq }, now); }
+    }
+    // Two steps up, to 3,2 next to the fire, and then it is fed.
+    expect(sent.filter(m => m.t === 'step')).toHaveLength(2);
+    expect(sent.at(-1)).toEqual({ t: 'feed', x: 3, y: 1, slot: 0 });
+  });
+});
+
+describe('what the server says about the world out there', () => {
+  it('counts wetness on between reports, and keeps the fires, marks, creatures and flares of the map', () => {
+    g.handle(welcome(camp(), [me(3, 3)], FULL, {
+      body: { ...DRY, wetRate: 0.01 },
+      marks: [{ id: 1, x: 2, y: 2, dir: 'up', color: '#fff', name: 'Bea', until: 1e13 }],
+      creatures: [{ id: 4, kind: 'watcher', x: 0, y: 0, dir: 'down' }],
+      flares: [{ x: 1, y: 1, left: 10 }],
+    }), now);
+    expect(g.bodyNow(now + 20_000).wet).toBeCloseTo(0.2, 5);
+    expect([...g.marks.keys()]).toEqual([1]);
+    expect(g.creatureViews()).toEqual([{ id: '4', x: 0, y: 0, dir: 'down', moving: false }]);
+    expect(g.flaresNow(now + 5000)).toEqual([{ x: 1, y: 1, left: 5 }]);
+    expect(g.flaresNow(now + 11_000)).toEqual([]);
+    // A zone brings the new map's.
+    g.handle(zone(tinyTown(), 3, 3, [me(3, 3)]), now);
+    expect(g.marks.size).toBe(0);
+    expect(g.creatureViews()).toEqual([]);
+  });
+
+  it('walks a creature to its next tile, and puts one that jumped where it is at once', () => {
+    g.handle(welcome(camp(), [me(3, 3)], FULL, { creatures: [{ id: 4, kind: 'watcher', x: 0, y: 0, dir: 'down' }] }), now);
+    g.handle({ t: 'creature', creature: { id: 4, kind: 'watcher', x: 0, y: 1, dir: 'down' } }, now);
+    g.update(0.1, now + 100);
+    const mid = g.creatureViews()[0]!;
+    expect(mid.moving).toBe(true);
+    expect(mid.y).toBeGreaterThan(0);
+    expect(mid.y).toBeLessThan(1);
+    g.handle({ t: 'creature', creature: { id: 4, kind: 'watcher', x: 5, y: 5, dir: 'up' } }, now + 200);
+    expect(g.creatureViews()[0]).toEqual({ id: '4', x: 5, y: 5, dir: 'up', moving: false });
+    g.handle({ t: 'creatureGone', id: 4 }, now);
+    expect(g.creatureViews()).toEqual([]);
+  });
+
+  it('knows when the surge has you: its front over your tile', () => {
+    g.handle(welcome(camp(), [me(0, 0)], FULL, { surge: { phase: 'surge', left: 20, into: 0 } }), now);
+    // The front starts at the deepest tile, 3 + 6 = 9 steps: the corners, where you stand.
+    expect(g.caught(now)).toBe(true);
+    g.handle(welcome(camp(), [me(3, 5)], FULL, { surge: { phase: 'surge', left: 20, into: 0 } }), now);
+    expect(g.caught(now)).toBe(false);
+    // 9 seconds in, it is 0.9 steps from home: it has you there too.
+    expect(g.caught(now + 9000)).toBe(true);
+    expect(g.surgeNow(now + 9000)).toEqual({ phase: 'surge', left: 11, into: 9 });
+  });
+
+  it('says what a watcher took and what clings to you, and queues news for banners', () => {
+    g.handle(welcome(camp(), [me(3, 3)]), now);
+    g.handle({ t: 'touched', by: 'watcher', lost: 'resin' }, now);
+    g.handle({ t: 'hitch', on: true }, now);
+    expect(texts()).toEqual(['It took your fir resin', 'The cold goes right through you', 'Something clings to your back']);
+    g.handle({ t: 'surge', surge: { phase: 'unstable', left: 20, into: 0 } }, now);
+    g.handle({ t: 'stone', stone: { ...ASLEEP, charge: 20, awake: true, left: 3600 } }, now);
+    g.handle({ t: 'feat', id: 'rain-walker', stats: { rainSteps: 1500 } }, now);
+    expect(g.news.map(n => n.kind)).toEqual(['surge', 'stone', 'feat']);
+    expect(g.stats).toEqual({ rainSteps: 1500 });
+  });
+});
+
+describe('what the interface says', () => {
+  it('shows the surge clock only when it matters', () => {
+    expect(clock(185.2)).toBe('3:06');
+    expect(surgeLook(null, false)).toBeNull();
+    expect(surgeLook({ phase: 'calm', left: 100, into: 0 }, false)).toBeNull();
+    expect(surgeLook({ phase: 'unstable', left: 61, into: 0 }, false)).toEqual({ text: 'Restless. A surge in 1:01', level: 'restless' });
+    expect(surgeLook({ phase: 'surge', left: 20, into: 0 }, true)?.level).toBe('caught');
+  });
+
+  it('puts the load in the bag\'s header once there is some', () => {
+    expect(roomText(3, 0.02)).toBe('3 of 8');
+    expect(roomText(3, 0.42)).toBe('3 of 8 · load 42%');
+    expect(roomText(8, 1.3)).toBe('8 of 8 · heavy');
+  });
+
+  it('names what using a thing does, and what is worth knowing about it', () => {
+    expect(useLabel(items.get('cap'))).toBe('Mark the way');
+    expect(useLabel(items.get('thermos'))).toBe('Drink');
+    expect(factsOf(items.get('resin'))).toEqual(['200 g', 'Burns 5 min']);
+    expect(factsOf(items.get('pebble'))).toEqual(['Works while in your bag']);
+    expect(slotViews([{ item: 'cap', count: 3 }], items)[0]).toMatchObject({ usable: true, useLabel: 'Mark the way' });
+    expect(refusalText('fire_full')).toBe('The fire is as big as it gets');
+  });
+
+  it('draws fires by how much fuel they have left', () => {
+    expect(fireLevel(null)).toBe(1);
+    expect(fireLevel(0)).toBe(0);
+    expect(fireLevel(FIRE_LOW_S / 2)).toBeCloseTo(0.45, 5);
+    expect(fireLevel(FIRE_MAX_S)).toBeCloseTo(1.1, 5);
+    expect(minutes(30)).toBe('under a minute');
+    expect(minutes(61)).toBe('1 minute');
+  });
+
+  it('fills the status panel with how you are, the Old Stone and the feats', () => {
+    const v = statusView({
+      energy: { value: 40, max: 100, rate: -0.5 }, body: { wet: 0.5, wetRate: 0.01, load: 0.8, hitched: true },
+      surge: { phase: 'surge', left: 30, into: 0 }, caught: true, stone: { charge: 3, need: 20, awake: false, left: 0 },
+      stats: { rainSteps: 1500, fed: 5 }, bag: [{ item: 'pebble', count: 1 }], items,
+    });
+    expect(v.rows.map(r => [r.label, r.text])).toEqual([
+      ['Energy', '40 of 100, draining'],
+      ['Wet', '50%, getting wetter'],
+      ['Load', '80% of what you carry easily'],
+      ['On you', 'Something clings to your back. Find a light, a fire or a roof.'],
+      ['Charms', 'Warm pebble'],
+      ['Surge', 'It has you. Get to a light!'],
+      ['Old Stone', 'Asleep. 3 of 20 shards.'],
+    ]);
+    expect(v.feats.map(f => [f.name, f.done])).toEqual(FEATS.map(f => [f.name, f.id === 'rain-walker']));
+    expect(v.feats.find(f => f.name === 'Fire keeper')!.progress).toBe(0.25);
+  });
+
+  it('announces surges, the Old Stone and feats with a banner', () => {
+    expect(newsBanner({ kind: 'surge', view: { phase: 'unstable', left: 360, into: 0 } }, 'The Near Woods')?.title).toBe('The Near Woods grows restless');
+    expect(newsBanner({ kind: 'stone', view: { ...ASLEEP, awake: true } }, '')?.title).toBe('The Old Stone woke up');
+    expect(newsBanner({ kind: 'feat', id: 'night-owl' }, '')?.title).toBe('Feat: Night owl');
+    expect(newsBanner({ kind: 'feat', id: 'nope' }, '')).toBeNull();
+  });
+});

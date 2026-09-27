@@ -8,9 +8,23 @@
  * When you collapse, what you carry falls out as a pile where you fell: you get it all back, anyone
  * else gets a random half (the rest is lost), and it fades an hour after the collapse.
  */
+import type { Mods } from './feats';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 
-export type ItemKind = 'resource' | 'consumable';
+/** A resource is gathered, a consumable used up, a charm works while it is in your bag. */
+export type ItemKind = 'resource' | 'consumable' | 'charm';
+
+/** What using an item does. A mark costs the item; so does everything else here. */
+export interface ItemUse {
+  /** Energy back (or lost, below 0). */
+  energy?: number;
+  /** Paint a glowing arrow on the ground where you stand, pointing where you face. Everyone sees it for a day. */
+  mark?: boolean;
+  /** Light a flare for this many seconds: creatures keep away from it, and whatever clings to you lets go. */
+  flare?: number;
+  /** Look at it closely, which needs a roof and light in town: it turns into one of its `reveals`. */
+  identify?: boolean;
+}
 
 export interface ItemDef {
   /** Stable id, e.g. "glowcap"; bags and saves refer to it. */
@@ -21,8 +35,18 @@ export interface ItemDef {
   stack: number;
   /** One or two plain sentences, shown in the bag. */
   text: string;
-  /** What using it does; only consumables can be used. */
-  use?: { energy?: number };
+  /** What using it does. Consumables must do something; a resource may (a glowcap paints a mark). */
+  use?: ItemUse;
+  /** Kilograms. A bag heavier than CARRY_KG drains energy faster. None: it weighs nothing to speak of. */
+  weight?: number;
+  /** Seconds a fire burns longer when you feed it one. */
+  fuel?: number;
+  /** How much one wakes the Old Stone (a shard: 1). */
+  charge?: number;
+  /** What it may turn out to be when identified: the chance of each is its weight over the sum. */
+  reveals?: Array<{ item: string; count: number; weight: number }>;
+  /** What a charm does while it is in your bag, as factors (feats.ts). */
+  charm?: Partial<Mods>;
 }
 
 /** Where one kind of find grows, and how many are out there at once. */
@@ -39,7 +63,14 @@ export interface FindRule {
   count: number;
   /** Seconds before a picked one grows back somewhere else: a random time in this range. */
   respawn: [number, number];
+  /**
+   * Only then, and gone as soon as it is over: while the region is restless before a surge (and
+   * during it), or during an aurora night. Left out: always.
+   */
+  when?: FindWhen;
 }
+
+export type FindWhen = 'unstable' | 'aurora';
 
 export interface ItemsData {
   /** Bump when items or finds change; a client with another version reloads. */
@@ -58,6 +89,39 @@ export interface BagSlot {
 export const BAG_SLOTS = 8;
 /** A pile dropped on collapse fades this long after the collapse. */
 export const DROP_LIFETIME_MS = 60 * 60 * 1000;
+/** What you carry easily. A heavier bag drains energy faster (energy.ts, LOAD_DRAIN). */
+export const CARRY_KG = 10;
+
+/** What a bag weighs over what you carry easily: 0 empty, 1 at CARRY_KG, more beyond. `lighter` scales it (a feat, a charm). */
+export function bagLoad(bag: readonly BagSlot[], items: Map<string, ItemDef>, lighter = 1): number {
+  const kg = bag.reduce((sum, s) => sum + s.count * (items.get(s.item)?.weight ?? 0), 0);
+  return Math.round((kg * lighter / CARRY_KG) * 1000) / 1000;
+}
+
+/** The charms in a bag, one of each kind (two of the same do not work twice). */
+export function charmsIn(bag: readonly BagSlot[], items: Map<string, ItemDef>): Array<Partial<Mods>> {
+  const seen = new Set<string>();
+  const out: Array<Partial<Mods>> = [];
+  for (const s of bag) {
+    const def = items.get(s.item);
+    if (def?.kind !== 'charm' || !def.charm || seen.has(def.id)) continue;
+    seen.add(def.id);
+    out.push(def.charm);
+  }
+  return out;
+}
+
+/** One of `reveals`, by weight; undefined for an empty list. */
+export function reveal(list: NonNullable<ItemDef['reveals']>, rng: () => number): { item: string; count: number } | undefined {
+  const total = list.reduce((n, r) => n + Math.max(0, r.weight), 0);
+  let roll = rng() * total;
+  for (const r of list) {
+    roll -= Math.max(0, r.weight);
+    if (roll < 0) return { item: r.item, count: r.count };
+  }
+  const last = list.at(-1);
+  return last && { item: last.item, count: last.count };
+}
 
 /** Items by id. */
 export function itemIndex(data: ItemsData): Map<string, ItemDef> {
