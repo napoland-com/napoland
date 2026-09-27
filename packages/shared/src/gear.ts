@@ -2,12 +2,12 @@
  * Equipment: six slots, what each piece resists, how big the bag is. Gear is put on and taken off
  * only at home (at the chest), it stays with you when you collapse, and others see what you wear.
  *
- * Five elements, each with its own resistance (DESIGN.md, Hazards). So far four of them have
- * something to resist, all in energy.ts:
- * - cold: the extra drain of rain, night and aurora, and of being wet;
- * - wind: how fast rain soaks you;
- * - electricity and radiation: a surge is both, and each cuts half of its extra drain;
- * - heat: nothing yet (the burnt forest will be the first).
+ * Five elements, each with its own resistance (DESIGN.md, Hazards), all applied in energy.ts:
+ * - cold: the extra drain of rain, night and aurora, and of being wet (more in a storm);
+ * - wind: how fast rain soaks you, and half of a storm's extra drain;
+ * - electricity: half of a surge's and of a storm's extra drain, and all of a spark's;
+ * - radiation: half of a surge's extra drain;
+ * - heat: a fire flash's extra drain.
  * Resistances add up over the pieces worn and never make you immune: each stops at RESIST_MAX.
  */
 import { BAG_SLOTS, type BagSlot, type ItemDef } from './items';

@@ -2,8 +2,10 @@
  * What the status panel and the banners say, from the game's state. Plain words, no drawing, so it
  * can be tested; hud.ts shows it and main.ts asks for it.
  */
-import { FEATS, type BagSlot, type BodyView, type EnergyView, type ProgressView, type Stats, type StoneView, type SurgeView } from '@napoland/shared';
-import { minutes } from './game';
+import {
+  ELEMENTS, FEATS, type BagSlot, type BodyView, type Element, type EnergyView, type FlashKind, type ProgressView, type Stats, type StoneView, type StormView, type SurgeView, type Weather,
+} from '@napoland/shared';
+import { minutes, type News } from './game';
 import type { StatusView } from './hud';
 import type { Items } from './items';
 
@@ -13,6 +15,12 @@ export interface StatusInput {
   surge: SurgeView | null;
   /** The front of a surge is over you. */
   caught: boolean;
+  storm: StormView | null;
+  /** A flash discharging where you stand. */
+  flash: FlashKind | null;
+  weather: Weather;
+  /** Out in the wilds, where the world wears you down. */
+  wilds: boolean;
   stone: StoneView;
   stats: Stats;
   bag: readonly BagSlot[];
@@ -27,6 +35,18 @@ export function levelText(p: ProgressView): string {
   return p.to === null ? `Level ${p.level} · ${p.xp} XP, the top` : `Level ${p.level} · ${p.xp} XP, ${p.to - p.xp} to go`;
 }
 
+/** What wears you down out there now, element by element ("Cold: rain, wet · Wind: the storm"); null for nothing. */
+export function drainText(s: { weather: Weather; wet: number; storm: boolean; caught: boolean; flash: FlashKind | null }): string | null {
+  const by: Record<Element, string[]> = { heat: [], cold: [], wind: [], electricity: [], radiation: [] };
+  if (s.weather !== 'overcast') by.cold.push(s.weather === 'rain' ? 'rain' : 'night');
+  if (s.wet > 0.05) by.cold.push('wet');
+  if (s.storm) { by.wind.push('the storm'); by.electricity.push('the storm'); }
+  if (s.caught) { by.electricity.push('the surge'); by.radiation.push('the surge'); }
+  if (s.flash) by[s.flash === 'fire' ? 'heat' : 'electricity'].push('a flash');
+  const parts = ELEMENTS.filter(e => by[e].length).map(e => `${e[0]!.toUpperCase()}${e.slice(1)}: ${by[e].join(', ')}`);
+  return parts.length ? parts.join(' · ') : null;
+}
+
 export function statusView(s: StatusInput): StatusView {
   const rows: StatusView['rows'] = [];
   const p = s.progress;
@@ -39,12 +59,17 @@ export function statusView(s: StatusInput): StatusView {
   rows.push({ label: 'Wet', text: wet > 0.005 ? `${Math.round(wet * 100)}%, ${how}` : 'Dry', bar: wet, tone: s.body.wetRate > 0 ? 'bad' : 'plain' });
   rows.push({ label: 'Load', text: s.body.load >= 1 ? 'Heavy: it tires you out' : `${Math.round(s.body.load * 100)}% of what you carry easily`, bar: Math.min(1, s.body.load), tone: s.body.load >= 0.75 ? 'bad' : 'plain' });
   rows.push({ label: 'Resists', text: s.resists ?? 'Nothing yet. Make gear at the workbench in the lodge.', tone: s.resists ? 'good' : 'plain' });
+  if (s.wilds) rows.push({ label: 'Draining', text: drainText({ ...s, wet: s.body.wet, storm: s.storm?.phase === 'storm' }) ?? 'Just being out here', tone: 'bad' });
   if (s.body.hitched) rows.push({ label: 'On you', text: 'Something clings to your back. Find a light, a fire or a roof.', tone: 'bad' });
   const charms = [...new Set(s.bag.map(b => s.items.get(b.item)).filter(d => d.kind === 'charm').map(d => d.name))];
   if (charms.length) rows.push({ label: 'Charms', text: charms.join(', '), tone: 'good' });
   if (s.surge && s.surge.phase !== 'calm') {
     rows.push({ label: 'Surge', text: s.surge.phase === 'unstable' ? `Coming in ${minutes(s.surge.left)}` : s.caught ? 'It has you. Get to a light!' : `On for ${minutes(s.surge.left)} more`, tone: 'bad' });
   }
+  if (s.storm && s.storm.phase !== 'clear') {
+    rows.push({ label: 'Storm', text: s.storm.phase === 'coming' ? `Coming in ${minutes(s.storm.left)}` : `Blowing for ${minutes(s.storm.left)} more. A roof keeps it off.`, tone: 'bad' });
+  }
+  if (s.flash) rows.push({ label: 'Flash', text: 'The ground under you is discharging. Step off it!', tone: 'bad' });
   const st = s.stone;
   if (st.need) rows.push({ label: 'Old Stone', text: st.awake ? `Awake for ${minutes(st.left)}. Surges are gentler.` : `Asleep. ${st.charge} of ${st.need} shards.`, tone: st.awake ? 'good' : 'plain' });
   const feats = FEATS.map(f => {
@@ -54,11 +79,8 @@ export function statusView(s: StatusInput): StatusView {
   return { rows, feats };
 }
 
-/** The banner for news from the world: a surge's new phase, the Old Stone waking or sleeping, a feat. Null: nothing to say. */
-export function newsBanner(
-  n: { kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView },
-  place: string,
-): { title: string; sub: string } | null {
+/** The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a feat. Null: nothing to say. */
+export function newsBanner(n: News, place: string): { title: string; sub: string } | null {
   if (n.kind === 'level') return { title: `Level ${n.progress.level}`, sub: `Your energy bar grows to ${n.progress.maxEnergy}.\nYou can go a little farther now.` };
   if (n.kind === 'feat') {
     const f = FEATS.find(x => x.id === n.id);
@@ -68,6 +90,13 @@ export function newsBanner(
     return n.view.awake
       ? { title: 'The Old Stone woke up', sub: 'Surges are gentler while it is awake.' }
       : { title: 'The Old Stone fell asleep', sub: `Bring it shards to wake it again (${n.view.need}).` };
+  }
+  if (n.kind === 'storm') {
+    switch (n.view.phase) {
+      case 'coming': return { title: 'A storm is coming', sub: `It reaches ${place} in ${minutes(n.view.left)}.\nGet under a roof, or wear something against wind and lightning.` };
+      case 'storm': return { title: 'Storm!', sub: 'Wind and lightning wear you down, and it soaks you.\nA roof keeps it all off.' };
+      case 'clear': return { title: 'The storm has passed', sub: `${place} is clear again.` };
+    }
   }
   switch (n.view.phase) {
     case 'unstable': return { title: `${place} grows restless`, sub: `A surge is coming in ${minutes(n.view.left)}.\nRare things show up deep in until it passes.` };

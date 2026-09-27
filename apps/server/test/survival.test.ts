@@ -1,6 +1,6 @@
 /**
  * What wears you down out there, and what helps: fires that burn down and are fed, a heavy bag,
- * rain, surges, watchers, hitchhikers, flares, marks, the Old Stone, strange objects, feats, the
+ * rain, surges, storms, flashes, watchers, hitchhikers, flares, marks, the Old Stone, strange objects, feats, the
  * echo a pile keeps, the notice board and the weather's day. World rules only; over real
  * WebSockets they go through the same calls as the rest (net.ts).
  *
@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  ENERGY_MAX, FEATS, REFILL_PER_SECOND, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, weatherAt,
+  ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, weatherAt,
   type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather,
 } from '@napoland/shared';
 import { EMBERS, FIRE_LOW_S, FIRE_MAX_S } from '../src/fires';
@@ -18,7 +18,7 @@ import {
   HITCH_STEPS, MARKS_PER_PLAYER, MARK_LIFETIME_MS, STONE_NEED, STONE_SHARD_S, TRAIL_STEPS, WATCHER_STEP_MS, WATCHER_TOUCH, World, colorFor, faces,
   type Outgoing, type WorldOptions,
 } from '../src/world';
-import { fixtureMaps, townData } from './fixtures';
+import { fixtureMaps, houseData, townData } from './fixtures';
 
 /** A field `h` tiles tall (8 wide inside the forest), its way home at (4, h - 1). */
 function fieldData(h = 12, more: Partial<MapData> = {}): MapData {
@@ -235,6 +235,79 @@ describe('surges', () => {
     // Nobody feeds it: it sleeps once every shard burned away, and everyone hears it.
     w.tick(1000 + STONE_NEED * STONE_SHARD_S * 1000);
     expect(of(to(w.drain(), 'd'), 'stone')).toEqual([{ t: 'stone', stone: { charge: 0, need: 20, awake: false, left: 0 } }]);
+  });
+});
+
+describe('storms', () => {
+  // A round of 100 s: clear 70, a warning of 10, then 20 of storm. A hut's door opens off the field.
+  const storm = { every: 100, warn: 10, length: 20 };
+  const data = () => fieldData(12, { storm, exits: [...fieldData().exits, { x: 1, y: 1, w: 1, h: 1, to: 'hut', tx: 2, ty: 3, dir: 'up' }] });
+  const hut = (): MapData => ({ ...houseData(), id: 'hut', name: 'Hut', exits: [{ x: 2, y: 4, w: 1, h: 1, to: 'field', tx: 1, ty: 2, dir: 'down' }] });
+  const items: ItemsData = { ...ITEMS, finds: [{ item: 'shard', map: 'field', count: 1, respawn: [5, 5], when: 'storm' }] };
+
+  it('announce each phase to the map and the rooms off it, drain and soak whoever is out in one, and leave finds while they blow', () => {
+    const maps = [new TileMap(townWithStone()), new TileMap(data()), new TileMap(hut()), ...fixtureMaps().filter(m => m.data.id !== 'town')];
+    const w = new World(maps, 'town', 'overcast', { items, rng: () => 0 });
+    w.join(rec('a', 'field', 4, 5), 0);
+    w.join(rec('b', 'hut', 2, 2), 0);
+    w.tick(0);
+    w.drain();
+    expect(w.scene('field', 0).storm).toEqual({ phase: 'clear', left: 70 });
+    expect(w.scene('hut', 0).storm).toEqual({ phase: 'clear', left: 70 });
+    w.tick(70_000);
+    const coming = w.drain();
+    expect(onMap(coming, 'field')).toContainEqual({ t: 'storm', storm: { phase: 'coming', left: 10 } });
+    expect(onMap(coming, 'hut')).toContainEqual({ t: 'storm', storm: { phase: 'coming', left: 10 } });
+    expect(w.findViews('field')).toEqual([]);
+    w.tick(80_000);
+    const blowing = w.drain();
+    expect(onMap(blowing, 'field')).toContainEqual({ t: 'storm', storm: { phase: 'storm', left: 20 } });
+    expect(w.findViews('field')).toHaveLength(1);
+    const a = lastEnergy(blowing, 'a')!;
+    expect(a.energy.rate).toBeCloseTo(energyRate(new TileMap(data()), 4, 5, 'overcast', { storm: true }), 3);
+    expect(a.body.wetRate).toBeCloseTo(1 / WET_SECONDS, 5);
+    // Under the hut's roof nothing drains, and you dry off.
+    expect(w.get('b')!.energy).toBe(ENERGY_MAX);
+    w.tick(100_000);
+    const clear = onMap(w.drain(), 'field');
+    expect(clear).toContainEqual({ t: 'storm', storm: { phase: 'clear', left: 70 } });
+    expect(of(clear, 'findGone')).toHaveLength(1);
+  });
+});
+
+describe('flashes', () => {
+  // A flash every 30 s near someone 3 or more steps from home.
+  const data = () => fieldData(12, { flashes: { every: 30, steps: [3, 99] } });
+
+  it('start near someone out there, glow first, then drain whoever stands in them by their kind', () => {
+    // rng 0: a is picked, the flash goes on the first free tile around a (2,3), and it is a spark.
+    const w = world(data(), 'overcast', {}, rec('a', 'field', 4, 5), rec('b', 'field', 2, 4));
+    const T = 30_000;
+    w.tick(0);
+    w.tick(T - 1000);
+    expect(w.drain().filter(o => o.msg.t === 'flash')).toEqual([]);
+    w.tick(T);
+    const started = w.drain();
+    expect(onMap(started, 'field')).toContainEqual({ t: 'flash', flash: { x: 2, y: 3, kind: 'spark', left: FLASH_GLOW_S + FLASH_BURST_S } });
+    expect(w.scene('field', T).flashes).toHaveLength(1);
+    const field = new TileMap(data()), plainB = energyRate(field, 2, 4, 'overcast'), plainA = energyRate(field, 4, 5, 'overcast');
+    // Glowing: nobody loses more yet.
+    w.tick(T + 5000);
+    expect(lastEnergy(w.drain(), 'b')?.energy.rate ?? plainB).toBeCloseTo(plainB, 3);
+    // Discharging: b stands in it, a does not.
+    w.tick(T + FLASH_GLOW_S * 1000 + 1);
+    const burst = w.drain();
+    expect(lastEnergy(burst, 'b')!.energy.rate).toBeCloseTo(energyRate(field, 2, 4, 'overcast', { flash: 'spark' }), 3);
+    expect(lastEnergy(burst, 'a')?.energy.rate ?? plainA).toBeCloseTo(plainA, 3);
+    w.tick(T + (FLASH_GLOW_S + FLASH_BURST_S) * 1000 + 1);
+    expect(w.scene('field', T + 13_000).flashes).toEqual([]);
+  });
+
+  it('leave alone whoever is close to home or under a street light', () => {
+    const w = world(fieldData(12, { flashes: { every: 30, steps: [3, 99] }, objects: [{ kind: 'lamp', x: 1, y: 5 }] }), 'overcast', {}, rec('a', 'field', 4, 9), rec('b', 'field', 2, 5));
+    w.tick(0);
+    w.tick(30_000);
+    expect(w.drain().filter(o => o.msg.t === 'flash')).toEqual([]);
   });
 });
 

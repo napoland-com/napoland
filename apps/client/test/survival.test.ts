@@ -4,7 +4,7 @@ import { Game, minutes } from '../src/game';
 import { clock, roomText, surgeLook } from '../src/hud';
 import { Items, factsOf, refusalText, slotViews, useLabel } from '../src/items';
 import { Maps } from '../src/maps';
-import { newsBanner, statusView } from '../src/status';
+import { drainText, newsBanner, statusView } from '../src/status';
 import { fireLevel } from '../src/view/fire';
 import { ASLEEP, DRY, FULL, itemsData, tinyTown, welcome, zone } from './fixtures';
 
@@ -137,6 +137,20 @@ describe('what the server says about the world out there', () => {
     expect(g.creatureViews()).toEqual([]);
   });
 
+  it('counts the storm on, and knows when a flash discharges under you', () => {
+    g.handle(welcome(camp(), [me(3, 3)], FULL, { storm: { phase: 'coming', left: 10 }, flashes: [{ x: 3, y: 2, kind: 'fire', left: 10 }] }), now);
+    expect(g.stormNow(now + 4000)).toEqual({ phase: 'coming', left: 6 });
+    // Glowing for 6 more seconds: it has not discharged yet.
+    expect(g.flashed(now)).toBeNull();
+    expect(g.flashed(now + 7000)).toBe('fire');
+    expect(g.flashed(now + 11_000)).toBeNull();
+    g.handle({ t: 'flash', flash: { x: 0, y: 0, kind: 'spark', left: 12 } }, now);
+    expect(g.flashesNow(now + 1000).map(f => f.kind)).toEqual(['fire', 'spark']);
+    g.handle({ t: 'storm', storm: { phase: 'storm', left: 180 } }, now);
+    expect(g.stormNow(now)).toEqual({ phase: 'storm', left: 180 });
+    expect(g.news).toContainEqual({ kind: 'storm', view: { phase: 'storm', left: 180 } });
+  });
+
   it('knows when the surge has you: its front over your tile', () => {
     g.handle(welcome(camp(), [me(0, 0)], FULL, { surge: { phase: 'surge', left: 20, into: 0 } }), now);
     // The front starts at the deepest tile, 3 + 6 = 9 steps: the corners, where you stand.
@@ -199,7 +213,7 @@ describe('what the interface says', () => {
       energy: { value: 40, max: 100, rate: -0.5 }, body: { wet: 0.5, wetRate: 0.01, load: 0.8, hitched: true },
       surge: { phase: 'surge', left: 30, into: 0 }, caught: true, stone: { charge: 3, need: 20, awake: false, left: 0 },
       stats: { rainSteps: 1500, fed: 5 }, bag: [{ item: 'pebble', count: 1 }], items, progress: { xp: 40, level: 2, from: 30, to: 120, maxEnergy: 105 },
-      resists: 'Cold 25%',
+      resists: 'Cold 25%', storm: null, flash: null, weather: 'rain', wilds: false,
     });
     expect(v.rows[0]).toEqual({ label: 'Level', text: 'Level 2 · 40 XP, 80 to go', bar: 10 / 90, tone: 'good' });
     expect(v.rows.slice(1).map(r => [r.label, r.text])).toEqual([
@@ -216,7 +230,25 @@ describe('what the interface says', () => {
     expect(v.feats.find(f => f.name === 'Fire keeper')!.progress).toBe(0.25);
   });
 
-  it('announces surges, the Old Stone and feats with a banner', () => {
+  it('says what drains you, element by element, and the storm and a flash in the status panel', () => {
+    expect(drainText({ weather: 'overcast', wet: 0, storm: false, caught: false, flash: null })).toBeNull();
+    expect(drainText({ weather: 'night', wet: 0.5, storm: true, caught: true, flash: 'fire' })).toBe(
+      'Heat: a flash · Cold: night, wet · Wind: the storm · Electricity: the storm, the surge · Radiation: the surge',
+    );
+    const v = statusView({
+      energy: { value: 40, max: 100, rate: -0.5 }, body: DRY, surge: null, caught: false, stone: ASLEEP, stats: {}, bag: [], items,
+      progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: 100 }, resists: null, storm: { phase: 'storm', left: 90 }, flash: 'spark', weather: 'rain', wilds: true,
+    });
+    expect(v.rows.filter(r => ['Draining', 'Storm', 'Flash'].includes(r.label)).map(r => [r.label, r.text])).toEqual([
+      ['Draining', 'Cold: rain · Wind: the storm · Electricity: the storm, a flash'],
+      ['Storm', 'Blowing for 2 minutes more. A roof keeps it off.'],
+      ['Flash', 'The ground under you is discharging. Step off it!'],
+    ]);
+  });
+
+  it('announces surges, storms, the Old Stone and feats with a banner', () => {
+    expect(newsBanner({ kind: 'storm', view: { phase: 'coming', left: 60 } }, 'The Near Woods')?.title).toBe('A storm is coming');
+    expect(newsBanner({ kind: 'storm', view: { phase: 'clear', left: 2000 } }, 'The Near Woods')?.sub).toBe('The Near Woods is clear again.');
     expect(newsBanner({ kind: 'surge', view: { phase: 'unstable', left: 360, into: 0 } }, 'The Near Woods')?.title).toBe('The Near Woods grows restless');
     expect(newsBanner({ kind: 'stone', view: { ...ASLEEP, awake: true } }, '')?.title).toBe('The Old Stone woke up');
     expect(newsBanner({ kind: 'feat', id: 'night-owl' }, '')?.title).toBe('Feat: Night owl');

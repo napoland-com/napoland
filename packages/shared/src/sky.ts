@@ -9,6 +9,8 @@
  * A surge: a region is calm most of the time, then restless for a few minutes (rare finds show up,
  * and it is announced), then a surge sweeps it from its deepest tile toward the way home. Caught in it,
  * away from a street light, energy drains several times faster (energy.ts). Then it is calm again.
+ *
+ * Storms keep a clock like a surge's; flashes are the server's own dice, near whoever is out.
  */
 import type { Weather } from './protocol';
 
@@ -70,4 +72,61 @@ export function surgeFront(rule: SurgeRule, deepest: number, s: SurgeView): numb
 export function untilSurge(rule: SurgeRule, s: SurgeView): number {
   if (s.phase === 'surge') return 0;
   return s.phase === 'unstable' ? s.left : s.left + rule.unstable;
+}
+
+/**
+ * A storm: a region is clear most of the time, then a storm rolls in, announced `warn` seconds
+ * before, and blows for `length`. Out in it, it soaks you like rain and the wind and the lightning wear
+ * you down (energy.ts); a roof keeps all of it off. Fixed to the wall clock, like a surge.
+ */
+export interface StormRule {
+  every: number;
+  warn: number;
+  length: number;
+  offset?: number;
+}
+
+export type StormPhase = 'clear' | 'coming' | 'storm';
+
+/** Where a region is in its storm round: the phase and seconds left of it. */
+export interface StormView {
+  phase: StormPhase;
+  left: number;
+}
+
+const STORM_PHASE: Record<SurgePhase, StormPhase> = { calm: 'clear', unstable: 'coming', surge: 'storm' };
+
+/** A storm round has the same shape as a surge's: clear, then the warning, then the storm. */
+export function stormAt(rule: StormRule, wallMs: number): StormView {
+  const s = surgeAt({ every: rule.every, unstable: rule.warn, surge: rule.length, sweep: rule.length, offset: rule.offset }, wallMs);
+  return { phase: STORM_PHASE[s.phase], left: s.left };
+}
+
+/**
+ * Flashes: every `every` seconds a patch of ground near someone out between `steps` from home glows
+ * for FLASH_GLOW_S, then discharges for FLASH_BURST_S. A spark is electric, a fire flash hot; standing
+ * in one while it discharges drains energy fast (energy.ts). The glow is the warning: step out of it.
+ */
+export interface FlashRule {
+  every: number;
+  steps: [number, number];
+}
+
+export type FlashKind = 'spark' | 'fire';
+export const FLASH_GLOW_S = 8;
+export const FLASH_BURST_S = 4;
+/** Tiles, center to center, that a flash covers. */
+export const FLASH_RADIUS = 1.5;
+
+/** A flash on tile x,y, over in `left` seconds; it discharges in its last FLASH_BURST_S. */
+export interface FlashView {
+  x: number;
+  y: number;
+  kind: FlashKind;
+  left: number;
+}
+
+/** Does this flash discharge on tile x,y now? */
+export function flashHits(f: FlashView, x: number, y: number): boolean {
+  return f.left > 0 && f.left <= FLASH_BURST_S && Math.hypot(f.x - x, f.y - y) <= FLASH_RADIUS;
 }
