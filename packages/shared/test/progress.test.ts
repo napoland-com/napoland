@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ENERGY_MAX, ENERGY_PER_LEVEL, LEVEL_MAX, XP_CURVE, emptyStash, itemIndex, levelOf, maxEnergy, progressOf, stashList, store, takeOut, usedUp, type ItemsData,
+  ENERGY_MAX, ENERGY_PER_LEVEL, LEVEL_MAX, XP_CURVE, emptyStash, itemIndex, levelOf, maxEnergy, progressOf, stashList, store, storeLive, takeOut, usedUp, type ItemsData,
 } from '../src';
 
 const data: ItemsData = {
@@ -36,6 +36,12 @@ describe('levels', () => {
 });
 
 describe('the stash', () => {
+  it('takes a live find in as the plain item it becomes, with its XP, and leaves what was taken out alone', () => {
+    const before = { items: { shard: 1 }, out: { shard: 2 } };
+    expect(storeLive(before, 'shard', 35)).toEqual({ stash: { items: { shard: 2 }, out: { shard: 2 } }, xp: 35 });
+    expect(before).toEqual({ items: { shard: 1 }, out: { shard: 2 } });
+  });
+
   it('earns the XP of what goes in', () => {
     const r = store(emptyStash(), [{ item: 'cap', count: 10 }, { item: 'shard', count: 2 }, { item: 'pebble', count: 3 }], items);
     expect(r.xp).toBe(10 + 24);

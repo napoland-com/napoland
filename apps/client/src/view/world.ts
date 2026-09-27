@@ -13,7 +13,7 @@
  */
 import * as THREE from 'three';
 import { DIR_VEC, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
-import { makeNpc, makePlayer, type Look, type Rig } from './characters';
+import { LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, flicker, hearthModel, type Puffs } from './fire';
 import { Echoes, Flares, Flashes, Marks, Prints, Watchers, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
@@ -38,6 +38,8 @@ export interface Avatar {
   turnT: number;
   /** Something clings to their back (only ever told about yourself). */
   hitched?: boolean;
+  /** They carry a live find: a column of light over them. */
+  live?: boolean;
   /** What they wear (characters.ts). */
   look?: Look;
 }
@@ -209,6 +211,7 @@ export class WorldView {
   private marks = new Marks();
   private watchers: Watchers;
   private flares = new Flares();
+  private liveGlows = new LiveGlows();
   private prints = new Prints();
   /** Where someone walks whose gear makes street lights flicker (tiles). */
   private flickerAt: Array<{ x: number; y: number }> = [];
@@ -263,7 +266,7 @@ export class WorldView {
     this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
-    this.scene.add(this.loot.root, this.marks.root, this.watchers.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
+    this.scene.add(this.liveGlows.root, this.loot.root, this.marks.root, this.watchers.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
     this.puffs.push(this.flares.sparks);
     this.animate.push(t => this.loot.update(t));
     this.animate.push(t => { this.marks.update(t); this.flares.update(t); this.flashes.update(t); });
@@ -285,6 +288,7 @@ export class WorldView {
     this.marks.dispose();
     this.watchers.dispose();
     this.flares.dispose();
+    this.liveGlows.dispose();
     this.prints.dispose();
     this.flashes.dispose();
     this.echoes.dispose();
@@ -978,6 +982,8 @@ export class WorldView {
     for (const a of this.animate) a(t, dt);
     this.animateRain({ x: fx, y: fz }, dt);
     this.syncAvatars(avatars, meId);
+    const carriers = avatars.filter(a => a.live).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
+    this.liveGlows.set(carriers.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
     this.watchers.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
     this.echoes.update(t, (x, z) => this.groundAt(x, z));
     this.light(fx, fz, t, dt);

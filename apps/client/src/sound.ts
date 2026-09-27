@@ -15,7 +15,7 @@ export interface SoundSetting {
 }
 
 /** How loud each loop is at level 1, against the others. */
-const LOOP_GAIN: Record<Loop, number> = { rain: 0.35, wind: 0.5, fire: 0.6, wires: 0.12, surge: 0.4, watcher: 0.45 };
+const LOOP_GAIN: Record<Loop, number> = { rain: 0.35, wind: 0.5, fire: 0.6, wires: 0.12, surge: 0.4, watcher: 0.45, shimmer: 0.08 };
 /** Loops ease to a new level with this time constant: most of the way in 0.3 s. */
 const EASE_S = 0.1;
 
@@ -100,6 +100,11 @@ export class Sound {
     drag.connect(scrape);
     this.wobble(scrape.gain, 2.2, 0.5, 0.5);
     this.loop('watcher', scrape);
+    // A live find: two high glassy tones, slowly swelling.
+    const shimmer = ctx.createGain();
+    for (const f of [1318, 1976.5]) this.osc('sine', f).connect(shimmer);
+    this.wobble(shimmer.gain, 0.6, 0.4, 0.6);
+    this.loop('shimmer', shimmer);
   }
 
   /** A loop: `chain` wired in order, into its gain (silent to start), into the master. */

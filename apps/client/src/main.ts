@@ -500,7 +500,8 @@ function frame(now: number) {
     view.setLoot(game.finds.values(), game.drops.values(), game.meId, me?.color ?? null);
   }
   const capacity = bagSlotsOf(game.myGear, items.byId);
-  if (game.bag !== bagShown || capacity !== capacityShown) hud.setBag(slotViews((bagShown = game.bag), items), (capacityShown = capacity));
+  if (game.bag !== bagShown || capacity !== capacityShown) hud.setBag(slotViews((bagShown = game.bag), items), (capacityShown = capacity), game.bagAt);
+  hud.tickLive(now);
   if (game.markChanges !== marksShown.changes || view !== marksShown.view) {
     marksShown = { changes: game.markChanges, view };
     view.setMarks(game.marks.values());
@@ -594,7 +595,7 @@ function frame(now: number) {
     poles: map.data.objects.filter(o => o.kind === 'pole'),
     // How far the front still has to come to reach your tile, as a share of its sweep.
     surge: surge && { phase: surge.phase, gap: rule && me && map.deepest ? ((surgeFront(rule, map.deepest, surge) ?? map.deepest) - map.homeSteps(me.tx, me.ty)) / map.deepest : 1 },
-    caught, watchers: game.creatureViews(), flashes: game.flashesNow(now), news: worldNews,
+    caught, watchers: game.creatureViews(), flashes: game.flashesNow(now), live: !!game.meId && game.live.has(game.meId), news: worldNews,
   };
   sound.update(soundscape(scene, heard));
   heard = scene;

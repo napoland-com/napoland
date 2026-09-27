@@ -14,7 +14,7 @@ const WATCHER_HEARD = 9;
 const FLASH_HEARD = 6;
 
 export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water';
-export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher';
+export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'shimmer';
 export type Shot = { kind: 'step'; surface: Surface } | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' };
 
 export interface Mix {
@@ -41,6 +41,8 @@ export interface Scene {
   caught: boolean;
   watchers: Array<{ x: number; y: number; moving: boolean }>;
   flashes: FlashView[];
+  /** You carry a live find: it shimmers faintly. */
+  live: boolean;
   /** News that came this frame. */
   news: News[];
 }
@@ -75,6 +77,7 @@ export function soundscape(s: Scene, was?: Scene): Mix {
     wires: s.weather === 'aurora' ? loudest(s.poles, WIRES_HEARD) : 0,
     surge,
     watcher: loudest(s.watchers.filter(w => w.moving), WATCHER_HEARD),
+    shimmer: s.live ? 0.3 : 0,
   };
 
   const shots: Shot[] = [];

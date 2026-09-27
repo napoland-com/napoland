@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 9,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -7,6 +7,7 @@
     {"id":"wire","name":"Copper wire","kind":"resource","stack":10,"xp":4,"weight":0.4,"text":"Copper wire from where the old power line came down. Sometimes it still hums, and on aurora nights more of it turns up by the poles."},
     {"id":"cloth","name":"Cloth scraps","kind":"resource","stack":10,"xp":2,"weight":0.1,"fuel":90,"text":"Strips of curtain and blanket from rooms nobody lives in anymore. Still dry, so they catch fast in a fire."},
     {"id":"shard","name":"Anomaly shard","kind":"resource","stack":5,"xp":12,"weight":0.3,"charge":1,"text":"A sliver of something like glass, warm even in the cold. It gives off a light of its own. The Old Stone in town wants them back."},
+    {"id":"live-shard","name":"Live shard","kind":"resource","stack":1,"xp":12,"weight":0.3,"charge":1,"live":{"xp":40,"fresh":240,"fade":5,"into":"shard"},"text":"A shard still burning with the surge that made it. Stash it soon: it is worth much more while it glows, and everyone can see you carry it."},
     {"id":"thermos","name":"Thermos","kind":"consumable","stack":2,"xp":3,"weight":0.6,"text":"Hot coffee someone left by the fire for whoever comes next. Drink it to get some energy back.","use":{"energy":30}},
     {"id":"flare","name":"Road flare","kind":"consumable","stack":3,"xp":3,"weight":0.3,"text":"A red road flare from a glovebox. Light it and nothing comes near you while it burns, and whatever clings to your back lets go.","use":{"flare":45}},
     {"id":"strange","name":"Strange object","kind":"resource","stack":1,"xp":15,"weight":0.8,"text":"Something that was not here yesterday. It is too dark out here to tell what it is: look at it in town, in the light.","use":{"identify":true},
@@ -47,7 +48,7 @@
     {"item":"cloth","map":"near-woods-old-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1800,3600]},
     {"item":"cloth","map":"near-woods-end-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]},
     {"item":"shard","map":"near-woods","steps":[95,999],"count":2,"respawn":[1800,3600]},
-    {"item":"shard","map":"near-woods","steps":[70,999],"count":3,"respawn":[60,120],"when":"unstable"},
+    {"item":"live-shard","map":"near-woods","steps":[70,999],"count":3,"respawn":[60,120],"when":"unstable"},
     {"item":"shard","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"steps":[30,999],"count":2,"respawn":[60,120],"when":"storm"},
     {"item":"strange","map":"near-woods","steps":[80,999],"count":1,"respawn":[1800,3600]},
     {"item":"strange","map":"near-woods","steps":[60,999],"count":2,"respawn":[120,240],"when":"unstable"},

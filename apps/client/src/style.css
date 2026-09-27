@@ -161,6 +161,11 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 /* In the Wearing row the slot's name is along the bottom: the bar goes along the top, clear of a quirk's star. */
 .grid.wear .slot .cond { top: 7%; bottom: auto; right: 32%; }
 .slot .quirk { position: absolute; right: 8%; top: 5%; font-style: normal; font-size: calc(var(--u) * 1.05); color: #c79bff; text-shadow: 0 0 6px rgba(199, 155, 255, .8); }
+/* A live find's countdown: a ring around the slot that empties as it fades (--left, from tickLive). */
+.slot .ring { position: absolute; inset: 6%; border-radius: 50%; pointer-events: none; --left: 1;
+  background: conic-gradient(#efe2ff calc(var(--left) * 360deg), rgba(255, 255, 255, .08) 0);
+  -webkit-mask: radial-gradient(closest-side, transparent 84%, #000 86%); mask: radial-gradient(closest-side, transparent 84%, #000 86%); }
+.slot .ring[data-fading] { background: conic-gradient(#b48cff calc(var(--left) * 360deg), rgba(255, 255, 255, .08) 0); }
 .slot .n { position: absolute; right: 8%; bottom: 5%; font-size: calc(var(--u) * 1.1); font-weight: 700; line-height: 1; color: #f1ece0; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; font-variant-numeric: tabular-nums; }
 /* Under the slots: what the chosen one holds and what can be done with it, or a hint. */
 .sheet .detail { flex: none; min-height: var(--detail-h); display: flex; flex-direction: column; gap: calc(var(--u) * .7); }

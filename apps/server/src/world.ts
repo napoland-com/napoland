@@ -67,6 +67,8 @@ import {
   emptyStash,
   itemIndex,
   levelOf,
+  liveEnds,
+  liveXp,
   maxEnergy,
   merge,
   modsOf,
@@ -74,6 +76,7 @@ import {
   resistOf,
   stashList,
   store,
+  storeLive,
   takeOut,
   usedUp,
   reveal,
@@ -145,6 +148,8 @@ export const WATCHER_STEP_MS = 520;
 export const AURORA_WATCHER_STEP_MS = 400;
 /** A watcher goes after players at most this many steps away (as the crow walks), and freezes while any player this close faces it. */
 export const WATCHER_HUNT = 9;
+/** Someone carrying a live find glows: watchers come for them from this far. */
+export const WATCHER_HUNT_LIVE = 12;
 export const WATCHER_SEE = 12;
 /** What a watcher's touch costs, and how long it stays away after (seconds, a random time in the range). */
 export const WATCHER_TOUCH = 15;
@@ -285,6 +290,8 @@ interface Online {
   heardWetRate: number;
   heardLoad: number;
   heardAt: number;
+  /** Live finds in the bag (sendBag keeps it up to date), so only their carriers are looked at for fading. */
+  live: number;
 }
 
 /** A find rule of items.json, ready to use. */
@@ -348,7 +355,9 @@ interface Flare {
 }
 
 const quirksOf = (w: Worn | undefined): Quirk[] => SLOTS.flatMap(s => (w?.[s]?.quirk ? [w[s]!.quirk!] : []));
-const view = (r: PlayerRecord): PlayerView => ({ id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn) });
+const view = (r: PlayerRecord, live = false): PlayerView => ({
+  id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn), ...(live ? { live: true as const } : {}),
+});
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -367,7 +376,10 @@ const dropView = (d: DropRecord): DropView => ({
 });
 const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, name: m.name, until: m.placedAt + MARK_LIFETIME_MS });
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: 'watcher', x: w.x, y: w.y, dir: w.dir });
-const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count }));
+const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}) }));
+/** The bag as its owner hears it: a live item's `since` (the server's wall clock) as its age in seconds. */
+const bagView = (bag: readonly BagSlot[], wall: number): BagSlot[] =>
+  bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { age: round(Math.max(0, wall - s.since) / 1000, 1) } : {}) }));
 const copyStash = (s: Stash): Stash => ({
   items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: Object.fromEntries(Object.entries(s.pieces).map(([id, l]) => [id, l.map(p => ({ ...p }))])) } : {}),
 });
@@ -382,8 +394,8 @@ const isPiece = (p: unknown): p is Piece => {
 };
 /** A bag slot as the server writes them; saved data is checked with this before it is trusted. */
 const isSlot = (s: unknown): s is BagSlot => {
-  const { item, count } = (typeof s === 'object' && s !== null ? s : {}) as Partial<BagSlot>;
-  return typeof item === 'string' && Number.isInteger(count) && count! > 0;
+  const { item, count, since } = (typeof s === 'object' && s !== null ? s : {}) as Partial<BagSlot>;
+  return typeof item === 'string' && Number.isInteger(count) && count! > 0 && (since === undefined || Number.isFinite(since));
 };
 /** Saved counts, trusted only where they are whole numbers from 0. */
 const cleanStats = (s: unknown): Stats => {
@@ -577,7 +589,7 @@ export class World {
 
   /** Everyone on a map. */
   views(mapId: string): PlayerView[] {
-    return [...(this.onMap.get(mapId) ?? [])].map(p => view(p.rec));
+    return [...(this.onMap.get(mapId) ?? [])].map(p => view(p.rec, p.live > 0));
   }
 
   /** What lies on a map to pick up. */
@@ -639,18 +651,18 @@ export class World {
     this.resting.delete(r.id);
     const p: Online = {
       rec: r, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false, hitchAt: now, trail: [],
-      heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now,
+      heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag),
     };
     this.refresh(p, now);
     this.players.set(r.id, p);
     this.onMap.get(map.data.id)!.add(p);
-    const player = view(r);
+    const player = view(r, p.live > 0);
     this.toMap(map.data.id, { t: 'join', player }, r.id);
     // The welcome has the energy too; the message after it is what a client listens to from then on.
     this.tell(p, now);
     const here = map.data.id;
     return {
-      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: copyBag(r.bag),
+      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
       stone: this.stoneView(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
       tools: STARTER_TOOLS.filter(t => this.items.get(t)?.kind === 'tool'),
     };
@@ -763,7 +775,7 @@ export class World {
     this.refresh(p, now);
     this.tell(p, now);
     if (got) this.outbox.push({ to: id, msg: { t: 'got', items: [got], from: 'identify' } });
-    this.sendBag(p);
+    this.sendBag(p, now);
     // Something that takes energy could empty the bar.
     if (p.rec.energy <= 0) this.collapse(p, now);
   }
@@ -781,7 +793,7 @@ export class World {
     if (!thrown) return this.refuse(p, 'discard', 'empty_slot');
     p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), thrown.item, thrown.count);
     p.rec.bag = takeFromBag(p.rec.bag, slot);
-    this.sendBag(p);
+    this.sendBag(p, now);
     this.rerate(p, now);
   }
 
@@ -808,7 +820,7 @@ export class World {
       p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
       p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
       this.chargeStone(def.charge, now);
-      this.sendBag(p);
+      this.sendBag(p, now);
       this.saveNow.set(id, p.rec);
       return this.rerate(p, now);
     }
@@ -819,7 +831,7 @@ export class World {
     if (!this.fires.feed(fire, def.fuel, now)) return this.refuse(p, 'feed', 'fire_full');
     p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
     p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
-    this.sendBag(p);
+    this.sendBag(p, now);
     this.toMap(p.map.data.id, { t: 'fire', fire: this.fires.view(fire, now) });
     this.count(p, 'fed', now);
     // A dead fire lit again warms whoever stands by it.
@@ -846,14 +858,23 @@ export class World {
     if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'store', 'too_far');
     const going = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
     if (!going.length) return this.refuse(p, 'store', 'empty_slot');
-    const r = store(p.rec.stash ?? emptyStash(), merge(going), this.items);
+    // Live finds apart: merge would forget when each was picked, and each is worth what its age says.
+    const wall = now + this.epochOffset;
+    const r = store(p.rec.stash ?? emptyStash(), merge(going.filter(s => !this.items.get(s.item)?.live)), this.items);
+    for (const s of going) {
+      const l = this.liveNow(s, wall);
+      if (!l?.into) continue;
+      const lr = storeLive(r.stash, l.into.id, liveXp(l.def, l.age, l.into));
+      r.stash = lr.stash;
+      r.xp += lr.xp;
+    }
     // Gear brought home (an identified strange object) gets its piece, and its quirk if anomalous.
     p.rec.stash = fitPieces(r.stash, this.items, this.rng);
     p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
     const before = levelOf(p.rec.xp ?? 0);
     p.rec.xp = (p.rec.xp ?? 0) + r.xp;
     this.saveNow.set(id, p.rec);
-    this.sendBag(p);
+    this.sendBag(p, now);
     this.sendStash(p);
     this.outbox.push({ to: id, msg: { t: 'progress', progress: progressOf(p.rec.xp), gained: r.xp } });
     // A bigger bar: the player hears it (and at home, by the fire, it fills up).
@@ -976,7 +997,7 @@ export class World {
     p.rec.bag = r.bag;
     p.rec.stash = takeOut(stash, item, taken).stash;
     this.saveNow.set(id, p.rec);
-    this.sendBag(p);
+    this.sendBag(p, now);
     this.sendStash(p);
     this.rerate(p, now);
   }
@@ -1011,6 +1032,7 @@ export class World {
         continue;
       }
       if (p.queue.length) this.runQueue(p, now);
+      if (p.live) this.fadeLive(p, now);
       this.hitch(p, now);
       this.rerate(p, now);
       // The client counts on with the rates it heard; repeating the values keeps it from drifting.
@@ -1147,12 +1169,14 @@ export class World {
     if (old) this.removePile(old);
     if (!bag.length) return;
     const trail = p.map.data.kind === 'wilds' ? p.trail.map(([tx, ty]) => [tx, ty] as [number, number]) : [];
-    const pile: DropRecord = { owner: id, name, map, x, y, items: merge(bag), droppedAt: Math.floor(now + this.epochOffset), trail };
+    // Put down, a live find goes dim for good.
+    const items = merge(bag.map(s => ({ item: this.items.get(s.item)?.live?.into ?? s.item, count: s.count })));
+    const pile: DropRecord = { owner: id, name, map, x, y, items, droppedAt: Math.floor(now + this.epochOffset), trail };
     this.addPile(pile);
     this.pileWrites.set(id, pile);
     this.toMap(map, { t: 'drop', drop: dropView(pile) });
     p.rec.bag = [];
-    this.sendBag(p);
+    this.sendBag(p, now);
     this.saveNow.set(id, p.rec);
   }
 
@@ -1177,7 +1201,7 @@ export class World {
     const { id, x, y, dir } = p.rec;
     const here = p.map.data.id;
     this.toMap(from.data.id, { t: 'leave', id }, id);
-    this.toMap(here, { t: 'join', player: view(p.rec) }, id);
+    this.toMap(here, { t: 'join', player: view(p.rec, p.live > 0) }, id);
     this.outbox.push({
       to: id,
       msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), stats: { ...p.rec.stats }, reason },
@@ -1492,7 +1516,7 @@ export class World {
         // Anyone who faces it holds it still, prey or not: a friend can keep watch.
         if (here.some(p => manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_SEE && faces(p.rec.x, p.rec.y, p.rec.dir, w.x, w.y))) continue;
         const prey = here
-          .filter(p => p.rec.energy > 0 && this.exposed(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_HUNT)
+          .filter(p => p.rec.energy > 0 && this.exposed(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
           .sort((a, b) => manhattan(a.rec.x, a.rec.y, w.x, w.y) - manhattan(b.rec.x, b.rec.y, w.x, w.y))[0];
         if (!prey) continue;
         const next = pathStep(map, w.x, w.y, prey.rec.x, prey.rec.y, (x, y) => this.watcherMayStand(map, x, y) && !this.nearFlare(mapId, x, y, now) && !list.some(o => o !== w && o.awake && o.x === x && o.y === y));
@@ -1545,7 +1569,7 @@ export class World {
       lost = p.rec.bag[slot]!.item;
       p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
       p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), lost, 1);
-      this.sendBag(p);
+      this.sendBag(p, now);
       this.saveNow.set(p.rec.id, p.rec);
     }
     this.advance(p, now);
@@ -1621,7 +1645,9 @@ export class World {
    * longer fits (a stack size went down) is packed again; whatever does not fit then is lost.
    */
   private fitBag(bag: unknown, slots: number): BagSlot[] {
-    const known = (Array.isArray(bag) ? bag : []).filter((s): s is BagSlot => isSlot(s) && this.items.has(s.item));
+    // Only a live item keeps when it was picked.
+    const known = (Array.isArray(bag) ? bag : []).filter((s): s is BagSlot => isSlot(s) && this.items.has(s.item))
+      .map(s => (s.since === undefined || this.items.get(s.item)!.live ? s : { item: s.item, count: s.count }));
     const fine = known.length <= slots && known.every(s => s.count <= this.items.get(s.item)!.stack);
     return fine ? copyBag(known) : addAllToBag([], known, this.items, slots).bag;
   }
@@ -1637,11 +1663,13 @@ export class World {
     const { rule } = find;
     const r = addToBag(p.rec.bag, rule.item, 1, p.slots);
     if (r.left) return this.refuse(p, 'pick', 'bag_full');
+    // A live find starts fading now: it stacks one to a slot, so the new one is the last slot.
+    if (rule.item.live) r.bag.at(-1)!.since = Math.floor(now + this.epochOffset);
     p.rec.bag = r.bag;
     this.finds.get(rule.map.data.id)!.delete(find.tile);
     const [soonest, latest] = rule.respawn;
     this.later(rule, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
-    this.got(p, [{ item: rule.item.id, count: 1 }], 'find');
+    this.got(p, [{ item: rule.item.id, count: 1 }], 'find', now);
     this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
     this.rerate(p, now);
   }
@@ -1659,7 +1687,7 @@ export class World {
     const r = addAllToBag(p.rec.bag, offered, this.items, p.slots);
     p.rec.bag = r.bag;
     this.saveNow.set(p.rec.id, p.rec);
-    this.got(p, less(offered, r.left), 'drop');
+    this.got(p, less(offered, r.left), 'drop', now);
     if (mine && r.left.length) {
       d.items = merge(r.left);
       this.pileWrites.set(d.owner, d);
@@ -1793,9 +1821,9 @@ export class World {
   }
 
   /** Tells the player what they got, then their whole bag. */
-  private got(p: Online, items: BagSlot[], from: 'find' | 'drop'): void {
+  private got(p: Online, items: BagSlot[], from: 'find' | 'drop', now: number): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'got', items, from } });
-    this.sendBag(p);
+    this.sendBag(p, now);
   }
 
   /** The player wears `gear` (piece by piece: `worn`) now: saved, everyone on the map sees it, and the player hears their bar and stash. */
@@ -1860,8 +1888,42 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'chest', stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder) } });
   }
 
-  private sendBag(p: Online): void {
-    this.outbox.push({ to: p.rec.id, msg: { t: 'bag', bag: copyBag(p.rec.bag) } });
+  /** Sends the player their bag; everyone on the map sees them start or stop glowing with a live find. */
+  private sendBag(p: Online, now: number): void {
+    this.outbox.push({ to: p.rec.id, msg: { t: 'bag', bag: bagView(p.rec.bag, now + this.epochOffset) } });
+    const live = this.liveIn(p.rec.bag);
+    if ((live > 0) !== (p.live > 0)) this.toMap(p.map.data.id, { t: 'glow', id: p.rec.id, on: live > 0 });
+    p.live = live;
+  }
+
+  /** How many live finds a bag holds. */
+  private liveIn(bag: readonly BagSlot[]): number {
+    return bag.filter(s => this.items.get(s.item)?.live).length;
+  }
+
+  /** What a live find in the bag has turned into, and is worth, `wall` ms since the epoch (a slot saved without `since` has faded). */
+  private liveNow(s: BagSlot, wall: number): { def: ItemDef; into: ItemDef | undefined; age: number } | undefined {
+    const def = this.items.get(s.item);
+    if (!def?.live) return undefined;
+    return { def, into: this.items.get(def.live.into), age: s.since === undefined ? Infinity : Math.max(0, wall - s.since) / 1000 };
+  }
+
+  /** Live finds past liveEnds become the plain item they faded into. */
+  private fadeLive(p: Online, now: number): void {
+    const wall = now + this.epochOffset;
+    let bag = p.rec.bag, changed = false;
+    for (let i = bag.length - 1; i >= 0; i--) {
+      const l = this.liveNow(bag[i]!, wall);
+      if (!l || l.age < liveEnds(l.def, l.into)) continue;
+      bag = takeFromBag(bag, i);
+      // Always fits: it takes the slot the live one left (or tops up a stack).
+      if (l.into) bag = addToBag(bag, l.into, 1, Infinity).bag;
+      changed = true;
+    }
+    if (!changed) return;
+    p.rec.bag = bag;
+    this.sendBag(p, now);
+    this.saveNow.set(p.rec.id, p.rec);
   }
 
   private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend', reason: Refusal): void {

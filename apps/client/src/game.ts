@@ -111,7 +111,7 @@ export function minutes(seconds: number): string {
 
 /** News from the world for the interface to announce (status.ts, newsBanner). */
 export type News =
-  | { kind: 'feat'; id: string } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView };
+  | { kind: 'feat'; id: string } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView };
 
 /** Lines of chat a session keeps to scroll back through. */
 export const CHAT_LOG = 100;
@@ -136,6 +136,8 @@ export class Game {
   lootChanges = 0;
   /** Your bag as the server last told it; replaced whole, never changed in place. */
   bag: BagSlot[] = [];
+  /** When the bag was told (`now`): a live find's age counts on from there. */
+  bagAt = 0;
   /** The fires on this map by "x,y": fuel left as told, and when (null: tended, it never goes out). */
   fires = new Map<string, { left: number | null; at: number }>();
   /** Marks painted on this map, by id; `markChanges` counts changes, like lootChanges. */
@@ -187,6 +189,8 @@ export class Game {
   bubbles = new Map<string, { text: string; until: number }>();
   /** The quirks of what everyone on this map wears, by player id: some show in the world. */
   quirks = new Map<string, Quirk[]>();
+  /** Who on this map carries a live find: a column of light stands over them. */
+  live = new Set<string>();
   /** What everyone on this map wears, by player id (you too). */
   gear = new Map<string, Gear>();
   /** Feats just earned, for the interface to announce (it empties the list). */
@@ -307,6 +311,7 @@ export class Game {
         this.enter(map, msg.players, msg.finds, msg.drops);
         this.scene(msg, now);
         this.bag = msg.bag;
+        this.bagAt = now;
         this.lastEnergy = { view: msg.energy, at: now };
         this.body = { view: msg.body, at: now };
         this.stone = msg.stone;
@@ -431,9 +436,16 @@ export class Game {
         this.players.set(msg.player.id, this.mover(msg.player));
         this.gear.set(msg.player.id, msg.player.gear ?? {});
         this.quirks.set(msg.player.id, msg.player.quirks ?? []);
+        if (msg.player.live) this.live.add(msg.player.id);
+        else this.live.delete(msg.player.id);
+        break;
+      case 'glow':
+        if (msg.on) this.live.add(msg.id);
+        else this.live.delete(msg.id);
         break;
       case 'leave':
         this.players.delete(msg.id);
+        this.live.delete(msg.id);
         break;
       case 'step': {
         const p = this.players.get(msg.id);
@@ -485,6 +497,7 @@ export class Game {
         }
         if (this.bag.length && !msg.bag.length) this.emptiedAt = now;
         this.bag = msg.bag;
+        this.bagAt = now;
         break;
       }
       case 'got': {
@@ -494,6 +507,8 @@ export class Game {
         // Someone else's pile can leave you nothing (your half did not fit, or the coin went the
         // other way); it is gone all the same, so say so rather than let it vanish silently.
         if (!msg.items.length) this.floatOverMe('Nothing in it for you', NO);
+        const live = msg.items.map(s => this.items.get(s.item).live).find(l => l);
+        if (live) this.news.push({ kind: 'live', fresh: live.fresh });
         break;
       }
       case 'friends':
@@ -556,6 +571,7 @@ export class Game {
     for (const p of players) this.players.set(p.id, this.mover(p));
     this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
     this.quirks = new Map(players.map(p => [p.id, p.quirks ?? []]));
+    this.live = new Set(players.filter(p => p.live).map(p => p.id));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
     this.lootChanges++;
@@ -1002,7 +1018,7 @@ export class Game {
   avatars(): Avatar[] {
     const hitched = this.body.view.hitched;
     return [...this.players.values()].map(p => ({
-      id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId,
+      id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
       look: lookOf(this.gear.get(p.id) ?? {}, this.items),
     }));
   }

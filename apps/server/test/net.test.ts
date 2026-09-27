@@ -9,7 +9,7 @@ import { hashToken } from '../src/net';
 import { startServer } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { colorFor } from '../src/world';
-import { townData } from './fixtures';
+import { itemsData, townData } from './fixtures';
 import { Client, eventually, newName, serverDefaults, setup, waitFor } from './helpers';
 
 /** The home town of the tests: spawn at 1,2 facing down, a rock above it, grass below. */
@@ -195,6 +195,37 @@ describe('playing', () => {
     a.c.send('{"t":"teleport","x":5,"y":5}');
     expect(await a.c.next('error')).toMatchObject({ code: 'bad_message' });
     expect((await a.c.closed).code).toBe(1008);
+  });
+});
+
+describe('live finds', () => {
+  // A live ember grows by the campfire in the woods, always (in the game, live shards only grow while the woods are restless).
+  let now = 1_000_000;
+  const data = itemsData();
+  const items = {
+    ...data,
+    items: [...data.items, { id: 'ember', name: 'Ember', kind: 'resource' as const, stack: 1, xp: 5, text: 'Still hot.', live: { xp: 20, fresh: 60, fade: 5, into: 'nail' } }],
+    finds: [{ item: 'ember', map: 'woods', near: { kinds: ['fireplace' as const], radius: 1.5 }, count: 1, respawn: [10, 20] as [number, number] }],
+  };
+  const { ctx, enter, login } = setup({ items, weather: 'overcast', clock: () => now });
+
+  it('light up the carrier for everyone on the map, and keep fading across a reconnect', async () => {
+    const find = ctx.server.world.findViews('woods')[0]!;
+    const a = await enter({ map: 'woods', x: 4, y: 1 });
+    const b = await enter({ map: 'woods', x: 1, y: 1 });
+    await Promise.all([a.c.settle(), b.c.settle()]);
+    a.c.send({ t: 'pick', x: find.x, y: find.y });
+    expect(await a.c.next('bag')).toEqual({ t: 'bag', bag: [{ item: 'ember', count: 1, age: 0 }] });
+    expect(await b.c.next('glow')).toEqual({ t: 'glow', id: a.id, on: true });
+    a.c.ws.close();
+    await waitFor(() => ctx.storage.get(a.id)?.bag.length === 1, 'the bag to be saved');
+    const since = ctx.storage.get(a.id)!.bag[0]!.since;
+    expect(since).toEqual(expect.any(Number));
+    now += 30_000;
+    const again = await login(a.token);
+    expect(again.welcome.bag).toEqual([{ item: 'ember', count: 1, age: 30 }]);
+    expect(await b.c.next('join')).toMatchObject({ t: 'join', player: { id: a.id, live: true } });
+    expect(ctx.server.world.get(a.id)!.bag).toEqual([{ item: 'ember', count: 1, since }]);
   });
 });
 

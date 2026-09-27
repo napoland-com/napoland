@@ -12,7 +12,7 @@ import type { ProgressView } from './progress';
 import type { FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 12;
+export const PROTOCOL_VERSION = 15;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -269,6 +269,8 @@ export interface PlayerView {
   /** What they wear, so everyone sees it (gear.ts), and the quirks of what they wear (some show in the world). */
   gear: Gear;
   quirks: Quirk[];
+  /** They carry a live find (items.ts): a column of light over them that everyone on the map sees. */
+  live?: true;
 }
 
 /** A map by id and version; a client whose copy has another version reloads. */
@@ -328,7 +330,7 @@ export type ServerMsg =
     }
   /** Your energy and body, sent when a rate changes and every few seconds (ENERGY_SYNC_MS). */
   | { t: 'energy'; energy: EnergyView; body: BodyView }
-  /** Your bag, whole, after any change. */
+  /** Your bag, whole, after any change. A live item's slot has its `age` as of now. */
   | { t: 'bag'; bag: BagSlot[] }
   /** You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message. */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify' }
@@ -358,6 +360,8 @@ export type ServerMsg =
   | { t: 'surge'; surge: SurgeView }
   /** Your map's storm clock moved to another phase. */
   | { t: 'storm'; storm: StormView }
+  /** On your map: someone started (on) or stopped carrying a live find. */
+  | { t: 'glow'; id: string; on: boolean }
   /** On your map: a patch of ground started to glow. */
   | { t: 'flash'; flash: FlashView }
   /** The Old Stone changed (everyone hears it). */

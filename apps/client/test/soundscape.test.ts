@@ -7,7 +7,7 @@ import { lightningAt } from '../src/view/world';
 const scene = (s: Partial<Scene> = {}): Scene => ({
   map: 'woods', kind: 'wilds', weather: 'overcast', storm: false, lightning: false,
   me: { x: 5, y: 5, tx: 5, ty: 5, ground: 'grass' },
-  fires: [], poles: [], surge: null, caught: false, watchers: [], flashes: [], news: [], ...s,
+  fires: [], poles: [], surge: null, caught: false, watchers: [], flashes: [], live: false, news: [], ...s,
 });
 const loops = (s: Partial<Scene>) => soundscape(scene(s)).loops;
 
@@ -17,6 +17,11 @@ describe('soundscape', () => {
     expect(loops({ weather: 'rain' }).rain).toBeGreaterThan(0);
     expect(loops({ storm: true }).rain).toBeGreaterThan(loops({ weather: 'rain' }).rain);
     expect(loops({ kind: 'inside', weather: 'rain' }).rain).toBeLessThan(loops({ weather: 'rain' }).rain);
+  });
+
+  it('shimmers faintly while you carry a live find', () => {
+    expect(loops({ live: true }).shimmer).toBeGreaterThan(0);
+    expect(loops({}).shimmer).toBe(0);
   });
 
   it('blows in the wilds and a storm, never inside', () => {
