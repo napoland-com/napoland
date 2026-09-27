@@ -729,6 +729,18 @@ describe('echoes and the notice board', () => {
     w.board('a', 0, 4, (FIRE_MAX_S / 2 + 1) * 1000);
     expect(of(to(w.drain(), 'a'), 'board')[0]!.lines).toContain('Gone out: the leavers\' camp. Bring something that burns.');
   });
+
+  it('the board is read once the steps sent before the look are walked, from where they take you', () => {
+    // A slow network bunched up the two steps that bring A next to the board (at 0,4): the second still
+    // waits in the queue when the look comes in, and from two tiles away it would show nothing.
+    const w = world(fieldData(12), 'rain', {}, rec('a', 'town', 0, 7));
+    w.step('a', 'up', 1, 350);
+    w.step('a', 'up', 2, 351);
+    w.board('a', 0, 4, 450);
+    expect(of(to(w.drain(), 'a'), 'board')).toEqual([]);
+    w.tick(1000);
+    expect(of(to(w.drain(), 'a'), 'board')).toHaveLength(1);
+  });
 });
 
 describe('the day', () => {

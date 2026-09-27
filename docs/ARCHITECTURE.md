@@ -63,7 +63,7 @@ The rules are in `packages/shared` (so client and server agree) and the World ru
 - **The Old Stone**: the first `stone` object in the world. Shards (`charge`) fed to it (`feed`) add up; at `STONE_NEED` it wakes, burns one every `STONE_SHARD_S` and sleeps at none. Everyone online hears `stone` (an Outgoing to `'all'`). Saved in `world_state` under `stone`, with the wall time of its charge, so it keeps burning across a restart.
 - **Strange objects** (`use.identify`) turn into one of their `reveals` (by weight), only in town or a house whose door opens onto one. **Charms** (kind `charm`) change `Mods` while in the bag, like feats (`feats.ts`): the server counts `rainSteps`, `nightSteps`, `heavySteps` and `fed` in `players.stats`, and a feat reached is announced (`feat`).
 - **Echoes**: the World keeps each player's last `TRAIL_STEPS` tiles in the wilds; a pile carries them (`drops.trail`, and `trail` in `DropView`).
-- **The notice board** (a map object `board`): `{t:'board', x, y}` next to one gets `board` with plain lines about the weather, today's and this week's conditions (and next week's), the surges, fires that are low or out, the last hour's collapses and the Old Stone.
+- **The notice board** (a map object `board`): `{t:'board', x, y}` next to one gets `board` with plain lines about the weather, today's and this week's conditions (and next week's), the surges, fires that are low or out, the last hour's collapses and the Old Stone. Like `talk`, a look that comes in while the steps sent before it still wait in the queue (a slow network bunched them up) is answered once they are walked, from where they took the player.
 
 ## Home: the stash, XP and levels
 

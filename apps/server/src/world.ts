@@ -300,8 +300,8 @@ interface Online {
   /** When the current step is over and the next one may start. */
   readyAt: number;
   queue: Array<{ dir: Dir; seq: number }>;
-  /** A talk that came in while steps sent before it still waited in the queue: heard once they are walked (talk). */
-  talkAfter?: { x: number; y: number };
+  /** A talk, or a look at the notice board, that came in while steps sent before it still waited in the queue: done once they are walked (talk, board). */
+  after?: { t: 'talk' | 'board'; x: number; y: number };
   /** Energy and wetness per second on the player's tile. rec.energy and rec.wet are up to date as of energyAt. */
   rate: number;
   wetRate: number;
@@ -1095,7 +1095,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (p.queue.length) p.talkAfter = { x, y };
+    if (p.queue.length) p.after = { t: 'talk', x, y };
     else this.heard(p, x, y);
   }
 
@@ -1107,13 +1107,23 @@ export class World {
     else if (o?.kind === 'console') this.moveStory(p, { read: o.id });
   }
 
-  /** Reads the notice board on tile x,y (next to the player): how things stand out there, in plain words. */
+  /**
+   * Reads the notice board on tile x,y (next to the player): how things stand out there, in plain words.
+   * Like a talk, it can come in while the steps sent before it still wait in the queue: then it is read
+   * once they are walked, or the player would press A and see nothing.
+   */
   board(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
+    this.runQueue(p, now);
+    if (p.queue.length) p.after = { t: 'board', x, y };
+    else this.readBoard(p, x, y, now);
+  }
+
+  private readBoard(p: Online, x: number, y: number, now: number): void {
     const here = p.map.data.objects.some(o => o.kind === 'board' && o.x === x && o.y === y);
     if (!here || manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
-    this.outbox.push({ to: id, msg: { t: 'board', lines: this.news(now) } });
+    this.outbox.push({ to: p.rec.id, msg: { t: 'board', lines: this.news(now) } });
   }
 
   /**
@@ -1199,11 +1209,12 @@ export class World {
       const s = p.queue.shift()!;
       this.move(p, s.dir, s.seq, now);
     }
-    // Walked (or refused, which empties the queue too): the talk behind the steps is heard from where they left the player.
-    if (p.talkAfter && !p.queue.length) {
-      const { x, y } = p.talkAfter;
-      p.talkAfter = undefined;
-      this.heard(p, x, y);
+    // Walked (or refused, which empties the queue too): the talk or look behind the steps is done from where they left the player.
+    if (p.after && !p.queue.length) {
+      const { t, x, y } = p.after;
+      p.after = undefined;
+      if (t === 'talk') this.heard(p, x, y);
+      else this.readBoard(p, x, y, now);
     }
   }
 
@@ -1298,7 +1309,7 @@ export class World {
 
   /**
    * Puts a player on a tile of a map. Queued steps go: they were planned on the old map, and so do the
-   * talk waiting behind them (it was about someone there) and the trail.
+   * talk or look waiting behind them (it was about something there) and the trail.
    */
   private place(p: Online, map: TileMap, x: number, y: number, dir: Dir): void {
     this.onMap.get(p.map.data.id)!.delete(p);
@@ -1309,7 +1320,7 @@ export class World {
     p.rec.y = y;
     p.rec.dir = dir;
     p.queue.length = 0;
-    p.talkAfter = undefined;
+    p.after = undefined;
     p.trail = [];
   }
 
