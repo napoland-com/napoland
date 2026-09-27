@@ -73,6 +73,7 @@ place({
     'The street lights won\'t warm you. But when a surge comes through the woods, stand in one.',
     'Found something strange out there? Bring it back to town and look at it in the light.',
     'The notice board by me says how things stand out there. Read it before you go.',
+    'The south road goes down to NAPO\'s old grounds. Ruth keeps a fire in the bunker there; past it, you feed your own.',
   ],
 });
 const STONE = { x: 15, y: 8 };
@@ -159,13 +160,28 @@ function round(v: number) { return Math.round(v * 1000) / 1000; }
   }
 }
 
+// The signpost for the South Road, on grass beside the south road. Placed last, so the trees drawn
+// from rnd() above keep their places; it only needs its tile and the one in front free.
+{
+  const SOUTH = { x: 10, y: 38 };
+  for (const [x, y] of [[SOUTH.x, SOUTH.y], [SOUTH.x, SOUTH.y + 1]] as const) {
+    if (blocked[y]![x] || tile[y]![x] !== 'g') throw new Error(`the South Road's signpost needs open grass at ${x},${y}`);
+  }
+  place({ kind: 'sign', ...SOUTH, text: ['South: the South Road', 'NAPO\'s old grounds. Your energy drains out there too, faster the farther you go.', 'The bunker\'s fire never goes out; feed the others.'] });
+}
+
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 6, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 7, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
-  // The north road leads into the Near Woods (its road enters at x 31-32 on the bottom row).
-  exits: [{ x: 29, y: 0, w: 2, h: 1, to: 'near-woods', tx: 31, ty: 78, dir: 'up' }, ...doors],
+  // The north road leads into the Near Woods (its road enters at x 31-32 on the bottom row), the south
+  // road down the South Road (its road enters at x 35-36 on the top row).
+  exits: [
+    { x: 29, y: 0, w: 2, h: 1, to: 'near-woods', tx: 31, ty: 78, dir: 'up' },
+    { x: 11, y: 43, w: 2, h: 1, to: 'south-road', tx: 35, ty: 1, dir: 'down' },
+    ...doors,
+  ],
   objects,
 };
 

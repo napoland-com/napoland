@@ -138,6 +138,23 @@ describe('tapping and talking', () => {
     for (let i = 0; i < lines * 2; i++) g.advanceDialog();
     expect(g.dialog).toBeNull();
   });
+  it('reads NAPO\'s signs and desks under their own names', () => {
+    const town: MapData = {
+      ...tinyTown(),
+      objects: [
+        { kind: 'sign', x: 1, y: 1, text: ['NAPO Tower', 'Do not climb.'], style: 'napo' },
+        { kind: 'console', x: 5, y: 1, name: 'Station log', text: ['Week 1. The Old Stone hums.'] },
+      ],
+    };
+    const read = (x: number, y: number) => {
+      const g = new Game(new Maps([town]), () => {}, ITEMS);
+      g.handle(welcome(town, [{ ...me, x, y, dir: 'up' }]), now);
+      g.pressA();
+      return g.dialog;
+    };
+    expect(read(1, 2)).toMatchObject({ who: 'NAPO sign', lines: ['NAPO Tower', 'Do not climb.'] });
+    expect(read(5, 2)).toMatchObject({ who: 'Station log', lines: ['Week 1. The Old Stone hums.'] });
+  });
 });
 
 describe('moving between maps', () => {

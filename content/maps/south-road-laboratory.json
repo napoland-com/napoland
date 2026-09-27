@@ -1,0 +1,49 @@
+{
+  "id": "south-road-laboratory",
+  "name": "NAPO Laboratory",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 11,
+  "height": 8,
+  "tiles": [
+    "xxxxxxxxxxx",
+    "xpppppppppx",
+    "xpppppppppx",
+    "xpppppppppx",
+    "xpppppppppx",
+    "xpppppppppx",
+    "xpppppppppx",
+    "xxxxxpxxxxx"
+  ],
+  "levels": [
+    "00000000000",
+    "00000000000",
+    "00000000000",
+    "00000000000",
+    "00000000000",
+    "00000000000",
+    "00000000000",
+    "00000000000"
+  ],
+  "spawn": {"x":5,"y":6,"dir":"up"},
+  "exits": [
+    {"x":5,"y":7,"w":1,"h":1,"to":"south-road","tx":23,"ty":43,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"fireplace","x":5,"y":1},
+    {"kind":"shelf","x":1,"y":1},
+    {"kind":"console","x":2,"y":1,"name":"Station log","text":["Week 1. The Old Stone hums. So do the rocks deep in the woods: the same hum, at the same time.","Week 30. When we play the hum back, it changes. It is not an echo. It is a reply.","Week 52. The Tower is ready. Tonight we answer.","The pages after that are blank."]},
+    {"kind":"console","x":8,"y":1,"name":"Radio","text":["The radio is on. Under the static, a low hum rises and falls.","A card is taped to it, in Vera's hand: \"Still listening. Day 3,041.\""]},
+    {"kind":"shelf","x":9,"y":1},
+    {"kind":"table","x":1,"y":4},
+    {"kind":"table","x":2,"y":4},
+    {"kind":"table","x":8,"y":4},
+    {"kind":"table","x":9,"y":4},
+    {"kind":"crate","x":9,"y":5},
+    {"kind":"crate","x":1,"y":6},
+    {"kind":"crate","x":9,"y":6},
+    {"kind":"npc","id":"vera","name":"Vera","x":7,"y":2,"dir":"down","look":{"coat":"#d9d6cc","scarf":"#2f4a6b","hair":"#c9c2b0","skin":"#e0b793"},"lines":["Quietly, please. I'm listening.","The Old Stone hums, and so do the rocks deep in the woods. The same hum. They were answering each other long before we came.","We thought we could answer too. One night we sent it back from the Tower. You've seen what came back.","The Tower still pulses every forty minutes, and the woods surge on the same clock. We set that clock.","Switch the Tower off? Go and read the note on its panel first.","Bring the shards back to the Old Stone. It is taking back what we broke off it.","We called the tall ones observers. We watched the woods for years. Now something watches back.","If NAPO is still out there, it isn't answering my radio."]}
+  ],
+  "style": "napo"
+}

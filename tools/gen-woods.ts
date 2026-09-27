@@ -414,6 +414,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', sign: '!', board: '!', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
   // Furniture belongs inside (gen-interiors.ts), but a campfire could stand out here one day.
   fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_',
+  // NAPO's masts and desks stand on the South Road (gen-south-road.ts), not here.
+  antenna: 'i', console: 'n',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();

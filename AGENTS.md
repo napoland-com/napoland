@@ -13,7 +13,7 @@ napoland is a mobile-first online exploration game in the browser: leave home, g
 | Check everything | `npm run check`: types, content, roadmap, all tests. Must pass before every push. |
 | Tests | `npm test` (Vitest). The PostgreSQL tests run only when `DATABASE_URL_TEST` is set. |
 | Content | `npm run validate`: every map, how the maps join up, the items |
-| Generated maps | `npm run gen` (runs `gen:map`, `gen:woods`, `gen:interiors` in that order), then `npm run validate` |
+| Generated maps | `npm run gen` (runs `gen:map`, `gen:woods`, `gen:south`, `gen:interiors` in that order), then `npm run validate` |
 | Roadmap | `npm run roadmap`: checks `roadmap/*.md` and prints the roadmap in order |
 | Test players | `npm run bot -- --count 3 --steps 30`, against a running dev server |
 | Full stack | `cp .env.example .env`, then `docker compose up -d --build`, then http://localhost:8080 |
@@ -22,7 +22,7 @@ napoland is a mobile-first online exploration game in the browser: leave home, g
 
 - `packages/shared`: the contract both sides run. Maps (`TileMap`), movement (`STEP_MS`, `findPath`), energy and what wears you down (`energy.ts`), the day and surges (`sky.ts`), feats (`feats.ts`), the stash, XP and levels (`progress.ts`), equipment (`gear.ts`), items, the protocol (zod schemas for every client message), content validation.
 - `apps/server`: `world.ts` (the rules, no I/O), `fires.ts` (fires burning down), `net.ts` (WebSocket sessions, the hello, limits), `auth.ts` (who is signing in: legacy, dev or Supabase), `http.ts` (health, `/auth-config`, the static client), `storage.ts` (memory or PostgreSQL), `migrations/`.
-- `apps/client`: `game.ts` (state and prediction), `hud.ts` (interface), `status.ts` (the status panel and banners), `view/` (three.js world; `wilds.ts` for marks, watchers, flares, echoes), `net.ts`, `signin.ts` (the sign-in cards), `supabase.ts` (Supabase Auth, loaded only in that mode), `about.ts` (the About panel and the sign-in small print).
+- `apps/client`: `game.ts` (state and prediction), `hud.ts` (interface), `status.ts` (the status panel and banners), `view/` (three.js world; `wilds.ts` for marks, watchers, flares, echoes; `napo.ts` for NAPO's buildings, signs and masts), `net.ts`, `signin.ts` (the sign-in cards), `supabase.ts` (Supabase Auth, loaded only in that mode), `about.ts` (the About panel and the sign-in small print).
 - `content/`: maps and items as JSON. `tools/`: generators, validators, test bots. `roadmap/`: one file per roadmap item.
 - Before changing behavior, read [docs/DESIGN.md](docs/DESIGN.md) (what the game is and why; its pillars) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (how it works).
 
@@ -31,7 +31,7 @@ napoland is a mobile-first online exploration game in the browser: leave home, g
 1. **The server decides everything.** Clients send intentions (step, face, pick up); the server checks them and tells everyone. Never trust a client message: parse every one with the zod schemas in `packages/shared/src/protocol.ts`.
 2. **`packages/shared` is the contract.** Change it on purpose, bump `PROTOCOL_VERSION` when old clients would break, and update client, server and tests in the same change.
 3. **Migrations only add.** A database change is a new numbered file in `apps/server/migrations`: new tables, new columns with defaults, so the previous release still runs on it. Never edit a migration that is on `main`.
-4. **Content is data.** Prefer changing `content/` over code. Generated maps (Stonebrook, the Near Woods, every room) are never edited by hand: change the generator in `tools/`, run `npm run gen`, commit both. When a map or `content/items.json` changes, bump its `version`.
+4. **Content is data.** Prefer changing `content/` over code. Generated maps (Stonebrook, the Near Woods, the South Road, every room) are never edited by hand: change the generator in `tools/`, run `npm run gen`, commit both. When a map or `content/items.json` changes, bump its `version`.
 5. **Tests come with changes.** Game rules: unit tests. Server behavior: tests over real WebSockets in `apps/server/test`. Client logic without a browser: `apps/client/test`. Tools: `tools/test`.
 6. **Every screen shape works.** HUD sizes come from the screen's short side (container query units), controls stay in the thumb corners, nothing forces an orientation. Check portrait and landscape.
 7. TypeScript strict, ESM, imports without extensions. Comments explain why, not what. Plain words in UI text and docs.

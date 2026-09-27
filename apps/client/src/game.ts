@@ -39,8 +39,8 @@ interface Mover {
 }
 
 /**
- * Something you face and press A at: a person or a sign (talk), the notice board (the server writes
- * it), a fire or the Old Stone (you feed them).
+ * Something you face and press A at: a person, a sign or one of NAPO's desks (talk), the notice
+ * board (the server writes it), a fire or the Old Stone (you feed them).
  */
 export type Talker = { x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' };
 
@@ -90,7 +90,8 @@ const CREATURE_STEP_MS = 420;
 function talkersOf(map: TileMap): Talker[] {
   return map.data.objects.flatMap((o: MapObject): Talker[] => {
     if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines, kind: 'talk' }];
-    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: 'Sign', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: o.style === 'napo' ? 'NAPO sign' : 'Sign', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'console') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk' }];
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];

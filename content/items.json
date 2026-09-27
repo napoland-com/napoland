@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -52,7 +52,24 @@
     {"item":"thermos","map":"near-woods-ranger-hut","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"thermos","map":"near-woods-end-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"flare","map":"near-woods","near":{"kinds":["car"],"radius":2},"count":1,"respawn":[1800,3600]},
-    {"item":"flare","map":"near-woods-ranger-hut","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]}
+    {"item":"flare","map":"near-woods-ranger-hut","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]},
+    {"item":"glowcap","map":"south-road","on":["mud","ferns"],"steps":[20,60],"count":3,"respawn":[90,240]},
+    {"item":"glowcap","map":"south-road","on":["mud","ferns"],"steps":[61,999],"count":6,"respawn":[90,240]},
+    {"item":"resin","map":"south-road","on":["grass"],"steps":[8,40],"count":2,"respawn":[300,600]},
+    {"item":"resin","map":"south-road","on":["grass"],"steps":[41,999],"count":5,"respawn":[150,360]},
+    {"item":"scrap","map":"south-road","near":{"kinds":["car","barrel","crate"],"radius":2.5},"count":6,"respawn":[480,900]},
+    {"item":"wire","map":"south-road","near":{"kinds":["pole","antenna"],"radius":2.5},"steps":[20,999],"count":4,"respawn":[600,1200]},
+    {"item":"wire","map":"south-road","near":{"kinds":["pole","antenna"],"radius":2.5},"count":4,"respawn":[120,300],"when":"aurora"},
+    {"item":"flare","map":"south-road","near":{"kinds":["car"],"radius":2},"count":2,"respawn":[1800,3600]},
+    {"item":"shard","map":"south-road","steps":[80,999],"count":2,"respawn":[1800,3600]},
+    {"item":"strange","map":"south-road","near":{"kinds":["antenna"],"radius":4},"steps":[60,999],"count":1,"respawn":[1800,3600]},
+    {"item":"cloth","map":"south-road-dormitory","near":{"kinds":["bed","crate"],"radius":1.5},"count":1,"respawn":[1800,3600]},
+    {"item":"cloth","map":"south-road-stores","near":{"kinds":["crate","shelf"],"radius":1.5},"count":2,"respawn":[1800,3600]},
+    {"item":"flare","map":"south-road-stores","near":{"kinds":["crate","shelf"],"radius":1.5},"count":1,"respawn":[1800,3600]},
+    {"item":"thermos","map":"south-road-bunker","near":{"kinds":["fireplace","table"],"radius":1.5},"count":1,"respawn":[900,1800]},
+    {"item":"thermos","map":"south-road-laboratory","near":{"kinds":["fireplace","table"],"radius":1.5},"count":1,"respawn":[900,1800]},
+    {"item":"thermos","map":"south-road-checkpoint","near":{"kinds":["fireplace","table"],"radius":1.5},"count":1,"respawn":[900,1800]},
+    {"item":"flare","map":"south-road-checkpoint","near":{"kinds":["bed","crate"],"radius":1.5},"count":1,"respawn":[1200,2400]}
   ],
   "recipes": [
     {"id":"wool-cap","make":"wool-cap","needs":[{"item":"cloth","count":6},{"item":"resin","count":1}]},

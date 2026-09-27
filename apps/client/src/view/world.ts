@@ -6,8 +6,9 @@
  * The WebGL renderer lives for the whole visit (createRenderer); a WorldView is built for one map
  * and disposed when you leave it, which frees what it put on the GPU. Big maps stay fast on
  * phones: trees and ferns are drawn in blocks the camera skips when they are off screen, the
- * props that never move (houses, cars, signs, lamps, poles, barrels, fences, furniture, hearths)
- * are joined into a few meshes, and only the few lamps and fires nearest you carry a real light.
+ * props that never move (houses and NAPO's buildings, cars, signs, lamps, poles, masts, barrels,
+ * fences, furniture, hearths; napo.ts draws NAPO's) are joined into a few meshes, and only the few
+ * lamps and fires nearest you carry a real light.
  * Inside a building (a map of kind 'inside') there is no weather and no world around the room, only
  * black: see interior.ts for the room, fire.ts for the fire and lighting.ts for the light.
  */
@@ -22,6 +23,7 @@ import {
 } from './interior';
 import { ambience, assignLights, lightSources, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
+import { napoBuilding, napoSign, towerModel } from './napo';
 import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
 
 export interface Avatar {
@@ -187,6 +189,8 @@ export class WorldView {
   private headMat = ownToon('#fff1c4', { emissive: 0x000000 });
   private tailMat = ownToon('#7a1c16', { emissive: 0x000000 });
   private headLight = new THREE.SpotLight(0xfff1c4, 0, 11, 0.5, 0.55, 1.4);
+  /** The light on top of the Tower (and any mast like it): it blinks red, day and night. */
+  private beaconMat = ownToon('#4a1410', { emissive: 0x000000 });
   private hasCar = false;
   private stoneLight = new THREE.PointLight(0xa66cff, 0, 7, 2);
   private hasStone = false;
@@ -326,8 +330,9 @@ export class WorldView {
       const c = new THREE.Color(kind === 'grass' && raised ? (chk ? '#34503a' : '#314b36') : colors[kind][chk]);
       return c.offsetHSL(0, 0, (hash2(tx * 5, ty * 3) - 0.5) * 0.025);
     };
-    // Outdoors, a building's timbers are weathered; indoors the room is warm if a fire burns in it.
-    const tone = roomTone(this.warmRoom);
+    // Outdoors, a building's timbers are weathered; indoors the room is warm if a fire burns in it, and
+    // concrete if it is one of NAPO's.
+    const tone = roomTone(this.warmRoom, map.data.style === 'napo');
     this.shapes = wallShapes(map);
     for (let ty = 0; ty < map.height; ty++) for (let tx = 0; tx < map.width; tx++) {
       const kind = map.kind(tx, ty)!, y0 = this.topY(tx, ty), raised = map.level(tx, ty) > 0;
@@ -522,6 +527,13 @@ export class WorldView {
     // Every house can be entered: its door stands open. Behind a burning fire the doorway glows and the chimney smokes.
     const chimneys: THREE.Vector3[] = [];
     for (const { house: h, x: doorX, fire } of houseDoors(this.map, this.peek)) {
+      if (h.style === 'napo') {
+        // One of NAPO's buildings (napo.ts): the same doorway, concrete around it, smoke from a flue.
+        const { root, flue } = napoBuilding(h, doorX, fire, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }, { warm: this.warm, doorGlow: this.doorGlow });
+        if (fire) chimneys.push(flue);
+        still.push(root);
+        continue;
+      }
       const g = new THREE.Group(), cx = h.x + h.w / 2, cz = h.y + h.h / 2;
       g.position.set(cx, 0, cz);
       // The door's middle across the front: 0 for the usual three-tile house, whose door is its middle tile.
@@ -613,6 +625,7 @@ export class WorldView {
 
     for (const b of this.objects('board')) still.push(boardModel(b.x, b.y));
     for (const s of this.objects('sign')) {
+      if (s.style === 'napo') { still.push(napoSign(s)); continue; }
       const g = new THREE.Group();
       g.position.set(s.x + 0.5, 0, s.y + 0.5);
       g.add(box(0.08, 0.46, 0.08, '#4a3a2c', 0, 0.23, 0), box(0.56, 0.32, 0.07, '#6b5334', 0, 0.5, 0));
@@ -653,6 +666,11 @@ export class WorldView {
     }
     if (wire.length) this.scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(wire), this.wireMat));
 
+    // Radio masts (napo.ts): their lights all blink together, a short flash every 1.6 seconds.
+    const masts = this.objects('antenna');
+    for (const a of masts) still.push(towerModel(a.x, a.y, this.beaconMat));
+    if (masts.length) this.animate.push(t => { this.beaconMat.emissive.setHex(t % 1.6 < 0.3 ? 0xff3322 : 0x1a0604); });
+
     for (const st of this.objects('stone')) {
       const cx = st.x + 0.5, cz = st.y + 0.5;
       still.push(part(flat(new THREE.CylinderGeometry(0.62, 0.7, 0.2, 8)), '#5e5a54', cx, 0.1, cz, 0.03));
@@ -679,7 +697,7 @@ export class WorldView {
     }
 
     for (const n of this.objects('npc')) {
-      const { root, bang } = makeNpc();
+      const { root, bang } = makeNpc(n.look);
       root.position.set(n.x + 0.5, this.groundAt(n.x, n.y), n.y + 0.5);
       root.rotation.y = FACE[n.dir];
       this.scene.add(root, this.blob(0.3, n.x + 0.5, n.y + 0.5));

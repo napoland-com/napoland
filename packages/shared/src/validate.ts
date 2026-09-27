@@ -4,7 +4,7 @@
  */
 import { ELEMENTS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
 import { findTiles, type ItemsData } from './items';
-import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type TileKind } from './map';
+import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
 import { Dir } from './protocol';
 
@@ -12,6 +12,9 @@ export interface Problem {
   level: 'error' | 'warning';
   message: string;
 }
+
+/** What a townsperson's look may set (map.ts, NpcLook). */
+const NPC_LOOK = ['coat', 'scarf', 'hair', 'skin', 'hat'] as const satisfies ReadonlyArray<keyof NpcLook>;
 
 export function validateMap(data: MapData): Problem[] {
   const out: Problem[] = [];
@@ -32,6 +35,7 @@ export function validateMap(data: MapData): Problem[] {
   else if (data.kind !== 'wilds' && data.depth !== 0) err(`${data.kind === 'town' ? 'a town' : 'an inside'} has depth 0`);
   else if (data.kind === 'wilds' && data.depth < 1) err('the wilds have depth 1 or more');
   if (!Array.isArray(data.exits)) err('exits must be a list (it may be empty)');
+  if (data.style !== undefined && (data.style !== 'napo' || data.kind !== 'inside')) err(`style ${JSON.stringify(data.style)}: only an inside has a style, and it is napo (one of NAPO's rooms)`);
   if (out.some(p => p.level === 'error')) return out;
 
   const map = new TileMap(data);
@@ -57,6 +61,10 @@ export function validateMap(data: MapData): Problem[] {
       const d = doorOf(o);
       if (!exitTiles.has(`${d.x},${d.y}`)) err(`house at ${o.x},${o.y}: its door ${d.x},${d.y} is not an exit, but every building must lead inside`);
       if (!map.walkable(d.x, d.y + 1)) err(`house at ${o.x},${o.y}: the tile in front of its door (${d.x},${d.y + 1}) is not walkable`);
+      // A cabin is drawn 3 by 2; NAPO's buildings are drawn to their size.
+      if (o.style !== undefined && o.style !== 'napo') err(`house at ${o.x},${o.y}: style is napo or left out, not ${JSON.stringify(o.style)}`);
+      else if (!o.style && (o.w !== 3 || o.h !== 2)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a cabin is 3 by 2 (only NAPO's buildings come in other sizes)`);
+      else if (o.style === 'napo' && !(o.w >= 3 && o.w <= 9 && o.h >= 2 && o.h <= 5)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a NAPO building is 3 to 9 wide and 2 to 5 deep`);
     }
     for (const [x, y] of objectTiles(o)) {
       if (!map.inside(x, y)) err(`${o.kind} at ${o.x},${o.y} reaches outside the map`);
@@ -67,8 +75,14 @@ export function validateMap(data: MapData): Problem[] {
       used.set(key, `${o.kind} at ${o.x},${o.y}`);
     }
     if (o.kind === 'sign' && (!o.text.length || o.text.some(t => !t.trim()))) err(`sign at ${o.x},${o.y} has no text`);
+    if (o.kind === 'sign' && o.style !== undefined && o.style !== 'napo') err(`sign at ${o.x},${o.y}: style is napo or left out, not ${JSON.stringify(o.style)}`);
+    if (o.kind === 'console' && (!o.name?.trim() || !o.text?.length || o.text.some(t => !t.trim()))) err(`console at ${o.x},${o.y} needs a name and something to read`);
     if (o.kind === 'npc' && !o.lines.length) err(`npc ${o.id} has nothing to say`);
-    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board' || o.kind === 'chest' || o.kind === 'workbench') {
+    if (o.kind === 'npc') for (const [k, c] of Object.entries(o.look ?? {})) {
+      if (!(NPC_LOOK as readonly string[]).includes(k)) err(`npc ${o.id}: a look has ${NPC_LOOK.join(', ')}, not ${k}`);
+      else if (typeof c !== 'string' || !/^#[0-9a-f]{6}$/i.test(c)) err(`npc ${o.id}: ${k} is a color, #rrggbb`);
+    }
+    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board' || o.kind === 'chest' || o.kind === 'workbench' || o.kind === 'console') {
       const front = stepTarget(o.x, o.y, 'down');
       if (!map.walkable(front.x, front.y)) err(`${o.kind} at ${o.x},${o.y}: the tile in front (below) is not walkable, so nobody can talk to it`);
     }
@@ -139,6 +153,10 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
       if (o.kind !== 'house') continue;
       const d = doorOf(o), into = map.exitAt(d.x, d.y), target = into && byId.get(into.to);
       if (target && target.data.kind !== 'inside') out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: its door leads to ${into!.to}, which is not an inside` });
+      // Concrete outside, concrete inside: one of NAPO's buildings leads into one of its rooms, a cabin into a cabin's.
+      else if (target && (o.style ?? null) !== (target.data.style ?? null)) {
+        out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: ${o.style === 'napo' ? 'a NAPO building' : 'a cabin'} leads into ${into!.to}, which is ${target.data.style === 'napo' ? 'one of NAPO\'s rooms' : 'a cabin\'s room'}` });
+      }
     }
     map.data.exits.forEach((e, i) => {
       const where = `exit ${i} (to ${e.to})`;

@@ -54,19 +54,37 @@ export const LAMP_RADIUS = 2.5;
 /** How close to a fireplace you must be to recover energy, center to center: the tiles around it. */
 export const FIRE_RADIUS = 1.5;
 
+/** How a townsperson looks: colors (#rrggbb), each optional; `hat` puts a hard hat on over the hair. */
+export interface NpcLook {
+  coat?: string;
+  scarf?: string;
+  hair?: string;
+  skin?: string;
+  hat?: string;
+}
+
 export type MapObject =
   | { kind: 'tree'; x: number; y: number; s: number; v: number }
   | { kind: 'rock'; x: number; y: number; s: number; v: number }
-  | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1 }
+  /**
+   * A building you can enter: a wooden cabin (3 by 2, a gabled roof in `roof`), or with style 'napo'
+   * one of NAPO's concrete buildings (3 by 2 or bigger, a flat roof in `roof`). Lit: someone is home.
+   */
+  | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' }
   | { kind: 'lamp'; x: number; y: number }
-  | { kind: 'sign'; x: number; y: number; text: string[] }
+  /** A wooden signpost, or with style 'napo' one of NAPO's yellow warning signs. */
+  | { kind: 'sign'; x: number; y: number; text: string[]; style?: 'napo' }
   | { kind: 'pole'; x: number; y: number }
   | { kind: 'fence'; x: number; y: number; dir: 'h' | 'v' }
   | { kind: 'barrel'; x: number; y: number }
   | { kind: 'car'; x: number; y: number; w: number }
   | { kind: 'stone'; x: number; y: number }
-  | { kind: 'npc'; x: number; y: number; id: string; name: string; dir: Dir; lines: string[] }
+  | { kind: 'npc'; x: number; y: number; id: string; name: string; dir: Dir; lines: string[]; look?: NpcLook }
   | { kind: 'shrooms'; x: number; y: number }
+  /** A tall radio mast, like the NAPO Tower's, with a red light blinking at the top. */
+  | { kind: 'antenna'; x: number; y: number }
+  /** One of NAPO's desks with a screen, a radio or a log on it: you read it like a sign, under its `name`. */
+  | { kind: 'console'; x: number; y: number; name: string; text: string[] }
   /**
    * Stand on a tile next to it to recover energy while it burns. In town it is always tended; out in
    * the wilds (and in their shelters) it burns down unless someone feeds it, or `tended` says someone
@@ -109,6 +127,8 @@ export interface MapData {
   surge?: SurgeRule;
   /** The wilds only: watchers, creatures that come closer while nobody looks at them. */
   watchers?: WatcherRule;
+  /** Insides only: the inside of one of NAPO's buildings (concrete, not logs). Its door is a NAPO building's. */
+  style?: 'napo';
 }
 
 /** How many watchers roam a region at once, and how far from home (in steps) they wake up. */
@@ -128,6 +148,7 @@ export interface Arrival {
 /** Objects that stand on a tile and stop anyone from walking onto it (a house's door tile excepted). */
 const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
+  'antenna', 'console',
 ]);
 /** Objects that are only drawn: you walk over or through them. */
 export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug']);

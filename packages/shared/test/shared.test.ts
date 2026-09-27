@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   AuthConfig, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, MAX_AUTH_CHARS, MAX_HELLO_BYTES, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, REFILL_PER_SECOND, TileMap,
-  WEATHER_DRAIN, dirOf, dirToward, energyAfter, energyRate, findPath, parseClientMsg, stepTarget, validateMap, validateWorld, type MapData,
+  WEATHER_DRAIN, dirOf, dirToward, energyAfter, energyRate, findPath, parseClientMsg, stepTarget, validateMap, validateWorld, type MapData, type MapObject,
+  type NpcLook,
 } from '../src';
 
 /** A 6x5 town: water on the right, a house in the middle (its door at 2,1 leads inside), a raised tile top-left. */
@@ -261,6 +262,76 @@ describe('validateMap', () => {
     expect(validateMap(tinyHouse())).toEqual([]);
     const trapped = { ...tinyHouse(), exits: [] };
     expect(validateMap(trapped).map(p => p.message).join('\n')).toMatch(/needs a way out/);
+  });
+});
+
+describe('what NAPO left behind', () => {
+  /** What validateMap says about the tiny town with one more thing in it. */
+  const errorsWith = (...extra: MapObject[]) => {
+    const m = tinyMap();
+    m.objects.push(...extra);
+    return validateMap(m).filter(p => p.level === 'error').map(p => p.message).join('\n');
+  };
+  const cabin = () => tinyMap().objects[0] as Extract<MapObject, { kind: 'house' }>;
+
+  it('stands in the way: nobody walks through a mast or a desk', () => {
+    const m = tinyMap();
+    m.objects.push({ kind: 'antenna', x: 0, y: 1 }, { kind: 'console', x: 2, y: 3, name: 'Station log', text: ['Week 1.'] });
+    expect(validateMap(m).filter(p => p.level === 'error')).toEqual([]);
+    const map = new TileMap(m);
+    expect(map.walkable(0, 1)).toBe(false);
+    expect(map.walkable(2, 3)).toBe(false);
+  });
+
+  it('wants a desk to have a name, something to read and room in front to read it from', () => {
+    expect(errorsWith({ kind: 'console', x: 2, y: 3, name: ' ', text: ['Week 1.'] })).toMatch(/console at 2,3 needs a name and something to read/);
+    expect(errorsWith({ kind: 'console', x: 2, y: 3, name: 'Radio', text: [] })).toMatch(/needs a name and something to read/);
+    expect(errorsWith({ kind: 'console', x: 3, y: 4, name: 'Radio', text: ['A hum.'] })).toMatch(/console at 3,4: the tile in front/);
+  });
+
+  it('builds cabins 3 by 2, and only NAPO builds bigger', () => {
+    // 4 wide from 0,0: the door is still at 2,1, the tiny house's way in.
+    const wide = { ...cabin(), x: 0, w: 4 };
+    expect(errorsWith()).toBe('');
+    const bigCabin = tinyMap();
+    bigCabin.objects[0] = wide;
+    expect(validateMap(bigCabin).map(p => p.message).join('\n')).toMatch(/house at 0,0 is 4 by 2: a cabin is 3 by 2/);
+    const station = tinyMap();
+    station.objects[0] = { ...wide, style: 'napo' };
+    expect(validateMap(station).filter(p => p.level === 'error')).toEqual([]);
+    const huge = tinyMap();
+    huge.objects[0] = { ...cabin(), w: 11, style: 'napo' };
+    expect(validateMap(huge).map(p => p.message).join('\n')).toMatch(/a NAPO building is 3 to 9 wide and 2 to 5 deep/);
+  });
+
+  it('knows only one other style of building and of sign: NAPO\'s', () => {
+    const brick = tinyMap();
+    brick.objects[0] = { ...cabin(), style: 'brick' as 'napo' };
+    expect(validateMap(brick).map(p => p.message).join('\n')).toMatch(/house at 1,0: style is napo or left out, not "brick"/);
+    const signs = tinyMap();
+    signs.objects[1] = { kind: 'sign', x: 3, y: 3, text: ['Hello'], style: 'brick' as 'napo' };
+    expect(validateMap(signs).map(p => p.message).join('\n')).toMatch(/sign at 3,3: style is napo or left out/);
+    signs.objects[1] = { kind: 'sign', x: 3, y: 3, text: ['NAPO Tower', 'Do not climb.'], style: 'napo' };
+    expect(validateMap(signs).filter(p => p.level === 'error')).toEqual([]);
+  });
+
+  it('builds NAPO\'s rooms of concrete, and leads into them only from NAPO\'s buildings', () => {
+    expect(validateMap({ ...tinyMap(), style: 'napo' }).map(p => p.message).join('\n')).toMatch(/only an inside has a style/);
+    const napoRoom: MapData = { ...tinyHouse(), style: 'napo' };
+    expect(validateMap(napoRoom)).toEqual([]);
+    const messages = (maps: MapData[]) => validateWorld(maps, 'tiny').map(p => p.message).join('\n');
+    expect(messages([townWithExit(), woodsMap(), napoRoom])).toMatch(/house at 1,0: a cabin leads into tiny-house, which is one of NAPO's rooms/);
+    const station = townWithExit();
+    station.objects[0] = { ...cabin(), style: 'napo' };
+    expect(messages([station, woodsMap(), tinyHouse()])).toMatch(/house at 1,0: a NAPO building leads into tiny-house, which is a cabin's room/);
+    expect(validateWorld([station, woodsMap(), napoRoom], 'tiny')).toEqual([]);
+  });
+
+  it('dresses townspeople in colors', () => {
+    const vera = (look: NpcLook): MapObject => ({ kind: 'npc', x: 2, y: 3, id: 'vera', name: 'Vera', dir: 'down', lines: ['Quietly, please.'], look });
+    expect(errorsWith(vera({ coat: '#d9d6cc', scarf: '#2f4a6b', hair: '#c9c2b0', skin: '#e0b793', hat: '#d9a82b' }))).toBe('');
+    expect(errorsWith(vera({ coat: '#d9d6cc', hat: 'yellow' }))).toMatch(/npc vera: hat is a color, #rrggbb/);
+    expect(errorsWith(vera({ cape: '#ffffff' } as NpcLook))).toMatch(/npc vera: a look has coat, scarf, hair, skin, hat, not cape/);
   });
 });
 

@@ -1,7 +1,7 @@
 {
   "id": "stonebrook",
   "name": "Stonebrook",
-  "version": 6,
+  "version": 7,
   "kind": "town",
   "depth": 0,
   "width": 44,
@@ -101,6 +101,7 @@
   "spawn": {"x":8,"y":21,"dir":"down"},
   "exits": [
     {"x":29,"y":0,"w":2,"h":1,"to":"near-woods","tx":31,"ty":78,"dir":"up"},
+    {"x":11,"y":43,"w":2,"h":1,"to":"south-road","tx":35,"ty":1,"dir":"down"},
     {"x":8,"y":20,"w":1,"h":1,"to":"stonebrook-home","tx":4,"ty":5,"dir":"up"},
     {"x":15,"y":20,"w":1,"h":1,"to":"stonebrook-empty-house","tx":4,"ty":5,"dir":"up"},
     {"x":8,"y":31,"w":1,"h":1,"to":"stonebrook-lodge","tx":5,"ty":6,"dir":"up"}
@@ -113,7 +114,7 @@
     {"kind":"barrel","x":15,"y":23},
     {"kind":"barrel","x":15,"y":27},
     {"kind":"barrel","x":9,"y":27},
-    {"kind":"npc","id":"mira","name":"Mira","x":10,"y":24,"dir":"down","lines":["Heading out? The woods pay better the farther you go.","Bring home what you find and put it in the chest by your fire. That is how you get stronger.","Watch your energy. If it runs out, you wake up at home and your backpack stays where you fell.","Only a fire brings your energy back. Somebody keeps the old cabin's going; the other shelters' fires burn down. Carry resin to feed them.","The street lights won't warm you. But when a surge comes through the woods, stand in one.","Found something strange out there? Bring it back to town and look at it in the light.","The notice board by me says how things stand out there. Read it before you go."]},
+    {"kind":"npc","id":"mira","name":"Mira","x":10,"y":24,"dir":"down","lines":["Heading out? The woods pay better the farther you go.","Bring home what you find and put it in the chest by your fire. That is how you get stronger.","Watch your energy. If it runs out, you wake up at home and your backpack stays where you fell.","Only a fire brings your energy back. Somebody keeps the old cabin's going; the other shelters' fires burn down. Carry resin to feed them.","The street lights won't warm you. But when a surge comes through the woods, stand in one.","Found something strange out there? Bring it back to town and look at it in the light.","The notice board by me says how things stand out there. Read it before you go.","The south road goes down to NAPO's old grounds. Ruth keeps a fire in the bunker there; past it, you feed your own."]},
     {"kind":"stone","x":15,"y":8},
     {"kind":"sign","x":13,"y":37,"text":["Stonebrook. Pop. 23","Most people left after the lights started showing up in the woods."]},
     {"kind":"sign","x":28,"y":16,"text":["North: the Near Woods","Out there your energy drains, faster the deeper you go.","Only a fire brings it back. The old cabin's never goes out; feed the others."]},
@@ -788,6 +789,7 @@
     {"kind":"tree","x":2,"y":31,"s":1.252,"v":0.63},
     {"kind":"tree","x":3,"y":35,"s":1.333,"v":0.693},
     {"kind":"tree","x":41,"y":36,"s":1.131,"v":0.243},
-    {"kind":"tree","x":41,"y":39,"s":1.359,"v":0.562}
+    {"kind":"tree","x":41,"y":39,"s":1.359,"v":0.562},
+    {"kind":"sign","x":10,"y":38,"text":["South: the South Road","NAPO's old grounds. Your energy drains out there too, faster the farther you go.","The bunker's fire never goes out; feed the others."]}
   ]
 }
