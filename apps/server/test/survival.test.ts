@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, STEP_MS, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, weatherAt,
+  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, STEP_MS, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, findTiles, weatherAt,
   type ConditionDef, type ConditionsData, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather,
 } from '@napoland/shared';
 import { loadMaps } from '../src/content';
@@ -895,5 +895,24 @@ describe('what the woods are like today', () => {
     ]);
     // And the welcome carries them.
     expect(w.join(rec('b', 'town', 1, 5), 0).conditions).toEqual(view);
+  });
+});
+
+describe('the South Road', () => {
+  it('turns up shards and strange objects at NAPO\'s field site, and nowhere else along the road', () => {
+    const { maps } = loadMaps(resolve(import.meta.dirname, '../../../content/maps'), 'stonebrook');
+    const content = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData;
+    const road = maps.get('south-road')!;
+    const site = road.data.places!.find(p => p.name === 'field site')!;
+    for (const item of ['shard', 'strange']) {
+      const rules = content.finds.filter(f => f.map === 'south-road' && f.item === item);
+      expect(rules.length, item).toBeGreaterThan(0);
+      for (const rule of rules) {
+        const tiles = findTiles(road, rule);
+        // Room enough that finds spread out over the clearing.
+        expect(tiles.length, item).toBeGreaterThanOrEqual(rule.count * 10);
+        for (const t of tiles) expect(Math.hypot(t.x - site.x, t.y - site.y), `${item} at ${t.x},${t.y}`).toBeLessThanOrEqual(5);
+      }
+    }
   });
 });
