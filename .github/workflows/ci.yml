@@ -1,4 +1,5 @@
-# Every push and pull request: typecheck, content validation and all tests (Postgres tests included).
+# Every push and pull request: typecheck, content and roadmap validation, all tests (Postgres tests
+# included), and a check that the generated maps are what their generators make.
 # Pushes to main that pass are released to https://www.napoland.com by tools/deploy.mjs.
 name: CI
 
@@ -35,7 +36,20 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+        id: install
       - run: npm run check
+      # Generated maps are never edited or merged by hand: their generators are the source. Running the
+      # generators again must change nothing. Runs even when the check failed, so one push shows both.
+      - name: Generated maps match their generators
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          npm run gen
+          if [ -n "$(git status --porcelain -- content)" ]; then
+            git status --short -- content
+            git --no-pager diff --stat -- content
+            echo "::error title=Generated maps are out of date::The maps in content/ are not what the generators make. Run npm run gen (gen:map, gen:woods, then gen:interiors) and npm run validate, and commit what changed. Never edit or merge generated JSON by hand: change the generator and run it again."
+            exit 1
+          fi
 
   deploy:
     needs: check

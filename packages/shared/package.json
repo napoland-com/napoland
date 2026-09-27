@@ -4,6 +4,13 @@
   "private": true,
   "type": "module",
   "description": "What the server and the client must agree on: the tile map, movement rules and the network protocol.",
+  "license": "AGPL-3.0-or-later",
+  "author": "Angelo Lamonaca (Neuramare)",
+  "homepage": "https://www.napoland.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/napoland-com/napoland.git"
+  },
   "exports": {
     ".": "./src/index.ts"
   },

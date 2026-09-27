@@ -8,8 +8,8 @@ export const LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error'
 const RANK: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40, silent: 100 };
 let minRank = RANK.info;
 
-/** Credentials never reach the logs, even if a caller passes one by mistake. */
-const SECRET_KEY = /token|password|secret|authorization|cookie/i;
+/** Credentials and emails never reach the logs, even if a caller passes one by mistake. */
+const SECRET_KEY = /token|password|secret|authorization|cookie|email/i;
 
 export function setLogLevel(level: LogLevel): void {
   minRank = RANK[level];

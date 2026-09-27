@@ -5,14 +5,17 @@
  * prints what happened. Along the way it picks up now and then what lies on its tile or next to it
  * (finds, and piles left by collapses), drinks a thermos when it runs low, and throws something away
  * when its bag is full.
+ * Bots sign in the way the server asks (its /auth-config): without sign-in they make a new player
+ * each run; in dev mode bot n signs in as bot-<n>@example.test, so it plays the same character every
+ * run (the name only names it the first time). A server that wants Supabase sign-in takes no bots.
  * Usage: npx tsx tools/bot.ts [--url ws://localhost:8080/ws] [--name Bot1] [--count 1] [--steps 50]
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
-  NAME_RE, PROTOCOL_VERSION, TileMap, dirOf, findPath,
-  type BagSlot, type ClientMsg, type DropView, type FindView, type ItemsData, type MapData, type MapRef, type ServerMsg,
+  AuthConfig, NAME_RE, PROTOCOL_VERSION, TileMap, dirOf, findPath,
+  type AuthMode, type BagSlot, type ClientMsg, type DropView, type FindView, type ItemsData, type MapData, type MapRef, type ServerMsg,
 } from '../packages/shared/src';
 
 const USAGE = 'Usage: npx tsx tools/bot.ts [--url ws://localhost:8080/ws] [--name Bot1] [--count 1] [--steps 50]';
@@ -92,7 +95,26 @@ function randomTarget(map: TileMap, x: number, y: number): { x: number; y: numbe
   return { x, y };
 }
 
-function runBot(url: string, name: string, steps: number): Promise<Result> {
+/**
+ * How the server at `url` (its WebSocket address) wants players to sign in. A server from before
+ * sign-in has no /auth-config; one that cannot be asked is taken to be without sign-in too, and
+ * the bots find out soon enough when they connect.
+ */
+async function signInMode(url: string): Promise<AuthMode> {
+  const page = new URL('/auth-config', url.replace(/^ws/, 'http'));
+  try {
+    const res = await fetch(page);
+    if (res.status === 404) return 'legacy';
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return AuthConfig.parse(await res.json()).mode;
+  } catch (err) {
+    console.warn(`warning: could not ask ${page.href} how to sign in (${err instanceof Error ? err.message : String(err)}); trying without sign-in`);
+    return 'legacy';
+  }
+}
+
+/** `auth`: the email the bot signs in with (dev mode), or undefined without sign-in. */
+function runBot(url: string, name: string, steps: number, auth: string | undefined): Promise<Result> {
   return new Promise(done => {
     const r: Result = {
       name, ok: false, sent: 0, accepted: 0, rejected: 0, seen: 0, maps: [], collapses: 0, energy: undefined,
@@ -193,7 +215,8 @@ function runBot(url: string, name: string, steps: number): Promise<Result> {
       }
     }
 
-    ws.addEventListener('open', () => send({ t: 'hello', v: PROTOCOL_VERSION, name }));
+    // With sign-in, the name only counts the first time: after that the bot's email has its character.
+    ws.addEventListener('open', () => send({ t: 'hello', v: PROTOCOL_VERSION, name, ...(auth !== undefined && { auth }) }));
     ws.addEventListener('error', () => finish(`cannot talk to ${url}`));
     ws.addEventListener('close', e => finish(`the server closed the connection (${e.code}${e.reason ? ` ${e.reason}` : ''})`));
     ws.addEventListener('message', e => {
@@ -201,6 +224,8 @@ function runBot(url: string, name: string, steps: number): Promise<Result> {
       switch (msg.t) {
         case 'welcome': {
           you = msg.you;
+          // Signed in, a bot plays the character its email already has, whatever name it asked for.
+          r.name = msg.name;
           const me = msg.players.find(p => p.id === you)!;
           for (const p of msg.players) if (p.id !== you) seen.add(p.id);
           r.energy = msg.energy.value;
@@ -320,9 +345,16 @@ async function main(): Promise<number> {
   const bad = names.find(n => !NAME_RE.test(n));
   if (bad !== undefined) return usage(`"${bad}" is not a valid name: 2 to 16 letters, digits, spaces, - or _`);
 
-  console.log(`${count} bot${count > 1 ? 's' : ''} on ${url}, ${steps} steps each`);
+  const mode = await signInMode(url);
+  if (mode === 'supabase') {
+    console.error(`${url} wants players to sign in with Supabase (an email and a code), which bots cannot do. Run them against a server with AUTH_MODE=dev or legacy.`);
+    return 1;
+  }
+  const auth = (i: number) => (mode === 'dev' ? `bot-${i + 1}@example.test` : undefined);
+  const who = mode === 'dev' ? `, signed in as ${auth(0)}${count > 1 ? ` to ${auth(count - 1)}` : ''} (dev mode)` : '';
+  console.log(`${count} bot${count > 1 ? 's' : ''} on ${url}, ${steps} steps each${who}`);
   // A little apart, so the first ones see the others join.
-  const results = await Promise.all(names.map((n, i) => new Promise<Result>(ok => setTimeout(() => ok(runBot(url, n, steps)), i * 150))));
+  const results = await Promise.all(names.map((n, i) => new Promise<Result>(ok => setTimeout(() => ok(runBot(url, n, steps, auth(i))), i * 150))));
   for (const r of results) {
     const refused = Object.entries(r.refused).map(([reason, n]) => `${n} ${reason}`).join(', ');
     const bag = r.bag.map(s => `${s.count} ${s.item}`).join(', ') || 'empty';

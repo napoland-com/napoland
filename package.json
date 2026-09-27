@@ -3,6 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "description": "napoland: a mobile-first online exploration game. Leave home, gather what glows, get back.",
+  "license": "AGPL-3.0-or-later",
+  "author": "Angelo Lamonaca (Neuramare)",
+  "homepage": "https://www.napoland.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/napoland-com/napoland.git"
+  },
   "type": "module",
   "workspaces": [
     "packages/*",
@@ -16,12 +23,14 @@
     "build": "npm run build -w @napoland/client && npm run build -w @napoland/server",
     "typecheck": "tsc -p packages/shared && tsc -p apps/server && tsc -p apps/client && tsc -p apps/client/test && tsc -p tools",
     "test": "vitest run",
+    "gen": "npm run gen:map && npm run gen:woods && npm run gen:interiors",
     "gen:map": "tsx tools/gen-map.ts",
     "gen:woods": "tsx tools/gen-woods.ts",
     "gen:interiors": "tsx tools/gen-interiors.ts",
     "validate": "tsx tools/validate-content.ts",
+    "roadmap": "tsx tools/validate-roadmap.ts",
     "bot": "tsx tools/bot.ts",
-    "check": "npm run typecheck && npm run validate && npm run test"
+    "check": "npm run typecheck && npm run validate && npm run roadmap && npm run test"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",

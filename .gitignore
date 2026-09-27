@@ -8,3 +8,6 @@ Thumbs.db
 .vite/
 test-results/
 playwright-report/
+# Claude Code: worktrees are separate checkouts, and local settings are personal
+.claude/worktrees/
+.claude/settings.local.json

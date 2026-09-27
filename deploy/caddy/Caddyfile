@@ -1,6 +1,23 @@
 # napoland on the internet. Caddy gets and renews the HTTPS certificates by itself.
 # This folder is mounted (not the file), so a new release's Caddyfile is seen by `caddy reload`.
 
+{
+	# The privacy page (apps/client/public/privacy.html) promises that players' IP addresses are
+	# never logged. Caddy keeps no access log, but an error line (say, the game restarting) carries
+	# the request it failed on, so its address and headers are taken out before it is written.
+	log default {
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers delete
+			}
+		}
+	}
+}
+
 www.napoland.com {
 	encode zstd gzip
 	header {

@@ -1,11 +1,12 @@
 /**
  * The interface over the world: status and energy (and how wet you are, and what clings to you), the
- * surge clock, the menu with the status panel, the joystick and A/B, name tags, the text box, the
- * bag, and the fade and name banner when you arrive somewhere.
+ * surge clock, the menu with the status and About panels, the joystick and A/B, name tags, the text
+ * box, the bag, and the fade and name banner when you arrive somewhere.
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
 import { BAG_SLOTS, type BodyView, type Dir, type EnergyView, type SurgeView } from '@napoland/shared';
+import { aboutBody, versionView } from './about';
 import { itemIcon } from './icons';
 import type { SlotView } from './items';
 
@@ -41,6 +42,8 @@ export interface HudHandlers {
   use(slot: number): void;
   /** Throw away everything in bag slot `slot` (asked once first). */
   discard(slot: number): void;
+  /** The version the server runs, for the About panel (null: none shown). Asked once, when the panel first opens. */
+  version(): Promise<string | null>;
 }
 
 /** What the bag asks before throwing a slot away. */
@@ -125,6 +128,7 @@ export class Hud {
   private bag: SlotView[] = [];
   private picked: { slot: number; item: string } | null = null;
   private asking = false;
+  private versionAsked = false;
 
   constructor(parent: HTMLElement, private h: HudHandlers) {
     this.root = document.createElement('div');
@@ -147,6 +151,7 @@ export class Hud {
       <div class="menu-panel panel" data-el="menu" hidden>
         <button type="button" data-el="menuBag">Bag</button>
         <button type="button" data-el="menuStatus">Status</button>
+        <button type="button" data-el="menuAbout">About</button>
         <button type="button" data-el="menuLogout">Log out</button>
       </div>
       <div class="stick" data-el="stick" role="group" aria-label="Movement stick"><div class="knob" data-el="knob"></div></div>
@@ -166,6 +171,10 @@ export class Hud {
       <div class="sheet panel status-sheet" data-el="statusSheet" data-open="false" role="dialog" aria-label="Status">
         <div class="sheet-head"><b>Status</b><button type="button" class="close" data-el="statusClose" aria-label="Close the status">${ICON.x}</button></div>
         <div class="status-body" data-el="statusBody"></div>
+      </div>
+      <div class="sheet panel about-sheet" data-el="aboutSheet" data-open="false" role="dialog" aria-label="About napoland">
+        <div class="sheet-head"><b>About</b><button type="button" class="close" data-el="aboutClose" aria-label="Close About">${ICON.x}</button></div>
+        ${aboutBody()}
       </div>`;
     parent.appendChild(this.root);
     this.el = {};
@@ -213,6 +222,8 @@ export class Hud {
     this.el.menuBag!.addEventListener('click', () => { this.toggleMenu(false); this.toggleBag(true); });
     this.el.menuStatus!.addEventListener('click', () => { this.toggleMenu(false); this.toggleStatus(true); });
     this.el.statusClose!.addEventListener('click', () => this.toggleStatus(false));
+    this.el.menuAbout!.addEventListener('click', () => { this.toggleMenu(false); this.toggleAbout(true); });
+    this.el.aboutClose!.addEventListener('click', () => this.toggleAbout(false));
     this.el.menuLogout!.addEventListener('click', () => { this.toggleMenu(false); this.h.logout(); });
     this.el.grid!.addEventListener('click', e => {
       const slot = (e.target as Element).closest<HTMLElement>('[data-slot]');
@@ -240,7 +251,8 @@ export class Hud {
   }
   toggleStatus(open = !this.statusOpen) {
     this.el.statusSheet!.dataset.open = String(open);
-    if (open) { this.toggleBag(false); this.h.status?.(); }
+    // The bag, the status and the About panel open in the same place: one at a time.
+    if (open) { this.toggleBag(false); this.toggleAbout(false); this.h.status?.(); }
   }
 
   /** What the status panel shows. Only written to the page when it changed. */
@@ -255,10 +267,43 @@ export class Hud {
     this.el.statusBody!.innerHTML = html;
   }
   toggleBag(open = !this.bagOpen) {
+    // The bag, the status and the About panel open in the same place: one at a time.
+    if (open) this.toggleAbout(false);
     this.el.sheet!.dataset.open = String(open);
     if (open) this.el.statusSheet!.dataset.open = 'false';
     // It opens on the whole bag, never on the details left from last time.
     this.choose(null);
+  }
+
+  get aboutOpen(): boolean {
+    return this.el.aboutSheet!.dataset.open === 'true';
+  }
+  toggleAbout(open = !this.aboutOpen) {
+    if (open && this.bagOpen) this.toggleBag(false);
+    if (open) this.el.statusSheet!.dataset.open = 'false';
+    this.el.aboutSheet!.dataset.open = String(open);
+    if (open && !this.versionAsked) {
+      this.versionAsked = true;
+      this.h.version().then(v => this.showVersion(v), () => { /* the panel then shows no version */ });
+    }
+  }
+
+  /** The version under the About panel's small print; a release links to exactly its code. */
+  private showVersion(version: string | null) {
+    if (!version) return;
+    const { text, href } = versionView(version);
+    const line = this.el.version!;
+    if (href) {
+      const a = document.createElement('a');
+      a.href = href;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = text;
+      line.replaceChildren(a);
+    } else {
+      line.textContent = text;
+    }
+    line.hidden = false;
   }
 
   /** B in the bag: out of the question, then out of the details. False when there is nothing to back out of (B closes the bag). */
@@ -339,6 +384,8 @@ export class Hud {
   }
 
   setName(name: string) { this.el.name!.textContent = name; }
+  /** "Sign out" with sign-in; "Log out" without, where it forgets the character's token. */
+  setLogoutLabel(label: string) { this.el.menuLogout!.textContent = label; }
   /** Players on your map, you included (the server only tells us about the map you are on). */
   setOnline(n: number) { this.el.online!.textContent = n > 1 ? `${n} here` : ''; }
 

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · napoland</title>
+<meta name="description" content="What napoland does with your data, in plain words.">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b1014; color: #e9e3d4; font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 30px; margin: 0 0 4px; color: #ffcf5a; letter-spacing: .01em; }
+  h2 { font-size: 20px; margin: 36px 0 8px; color: #ffcf5a; }
+  h3 { font-size: 16px; margin: 20px 0 4px; color: #f1ece0; }
+  p, li { color: #d8d1c0; }
+  ul { padding-left: 22px; }
+  li { margin: 4px 0; }
+  a { color: #f2a65a; overflow-wrap: anywhere; }
+  .date { color: #a79f8e; margin: 0 0 24px; }
+  .short { border: 2px solid #d9cfb8; border-radius: 10px; padding: 14px 18px; background: #11161d; }
+  .short h3 { margin-top: 0; }
+  .short ul { margin: 0; }
+  address { font-style: normal; margin: 8px 0; }
+  footer { margin-top: 48px; color: #a79f8e; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Privacy</h1>
+<p class="date">Last updated: 27 September 2026</p>
+
+<p>This page explains what happens to your data when you play napoland at <a href="https://www.napoland.com">www.napoland.com</a>. napoland is open source and made by its community, so you can also read exactly what the game does in its <a href="https://github.com/napoland-com/napoland">source code</a>. Copies of napoland that other people run on their own servers are theirs, with their own rules.</p>
+
+<div class="short">
+<h3>The short version</h3>
+<ul>
+<li>We collect only what the game needs to run.</li>
+<li>No ads, no analytics, no tracking and no cookies. We never sell your data or share it for marketing.</li>
+<li>Your email address is used only to sign you in. Other players never see it.</li>
+<li>Other players see your character's name.</li>
+<li>Our servers never store your IP address.</li>
+<li>You can ask us to delete everything, at any time.</li>
+</ul>
+</div>
+
+<h2>Who is responsible</h2>
+<p>napoland is published by:</p>
+<address>Angelo Lamonaca ("Neuramare")<br>Am Rainbach 22<br>6340 Baar, Switzerland<br><a href="mailto:support@neuramare.com">support@neuramare.com</a></address>
+<p>More in the <a href="https://www.neuramare.com/policies/legal-notice">legal notice</a>. We follow the Swiss Federal Act on Data Protection (FADP) and, for players in the European Union and the European Economic Area, the General Data Protection Regulation (GDPR).</p>
+
+<h2>What we collect, and why</h2>
+
+<h3>To sign you in</h3>
+<p>You sign in with your email address and a 6-digit code sent to it. Signing in is handled by Supabase, which keeps your email address and a record of your sign-ins (when, and from which IP address and browser) to send the codes and keep accounts safe. Your browser talks to Supabase directly for this. Our game server then checks your sign-in and keeps only the random id Supabase gave your account, never your email address. We never store your codes or sign-in tokens.</p>
+
+<h3>Your character</h3>
+<p>Its name and color, where it is in the world, its energy, how wet it is, what is in its bag, what counts toward its feats, the arrows it paints on the ground, the pile of things it leaves when it collapses (with the last steps it walked before, which others see as a pale figure walking back to the pile), and when it was created and last played. The game cannot run without these. Other players on the same map see your character's name and color, where it walks, and whose pile or arrow is whose.</p>
+
+<h3>While you play</h3>
+<p>While you are connected, the game server uses your IP address, in memory only, to limit how many connections and new characters one address can make. That protects the game from abuse. The address is never written down: not in the database and not in any log. Our web server keeps no record of your visits.</p>
+
+<h3>Server logs</h3>
+<p>The game server writes down technical events, such as a character being created, joining, leaving or collapsing, with the character's id and name, and errors, so that we can keep the game running and fix problems. These logs never contain email addresses, IP addresses, codes or tokens, and they are deleted after 30 days.</p>
+
+<h3>In your browser</h3>
+<p>The game keeps your sign-in session in your browser's local storage so you stay signed in (it includes your email address), and, while you wait for a code, which address it was sent to. Characters made before sign-in existed keep a login token there; our server keeps only a scrambled copy of it. None of this leaves your device, except to sign you in. We use no cookies and no trackers. Apart from signing in, everything the game loads, fonts included, comes from our own server.</p>
+
+<h2>Why we are allowed to</h2>
+<ul>
+<li><strong>To give you the game you asked for</strong> (Art. 6(1)(b) GDPR): your account, your character and everything needed to play.</li>
+<li><strong>Our legitimate interest</strong> in keeping the game safe and running (Art. 6(1)(f) GDPR): the limits per address, the logs and the backups.</li>
+</ul>
+<p>We do nothing else with your data: no profiling, no advertising, no automated decisions about you.</p>
+
+<h2>Who helps us</h2>
+<p>These companies process data for us, only on our instructions and under data processing agreements:</p>
+<ul>
+<li><strong>Amazon Web Services</strong> runs our server, database, backups and logs (Northern Virginia, United States).</li>
+<li><strong>Supabase</strong> handles sign-in, including the emails with your codes (Northern Virginia, United States).</li>
+</ul>
+<p>If you contribute to napoland on GitHub, GitHub's own privacy policy applies there.</p>
+
+<h2>Data outside Switzerland and the EU</h2>
+<p>These servers are in the United States. Your data is protected there by the providers' data processing agreements, which include the standard contractual clauses approved for Switzerland and the EU, and by the Swiss-U.S. and EU-U.S. Data Privacy Framework where a provider is certified under it.</p>
+
+<h2>How long we keep it</h2>
+<ul>
+<li>Your character, and your sign-in account at Supabase with its record of your sign-ins: until you ask us to delete them.</li>
+<li>A pile, with the last steps before the collapse: an hour. An arrow you paint: a day.</li>
+<li>Server logs: 30 days.</li>
+<li>Nightly database backups: 30 days. Server disk snapshots: 7 days.</li>
+</ul>
+<p>When you ask us to delete your data, we delete your character, its pile and arrows, your sign-in account and its record of sign-ins. The copies inside backups disappear by themselves within 30 days after that.</p>
+
+<h2>Your rights</h2>
+<p>You can ask us to show you your data, correct it, delete it, limit what we do with it, or give it to you in a form you can take elsewhere, and you can object to how we use it. Write to <a href="mailto:support@neuramare.com">support@neuramare.com</a> from the email address you sign in with, so that we know it is you. We answer within 30 days.</p>
+<p>You can also complain to a data protection authority: in Switzerland, the <a href="https://www.edoeb.admin.ch">Federal Data Protection and Information Commissioner (FDPIC)</a>; in the EU or the EEA, the authority of the country where you live.</p>
+
+<h2>Children</h2>
+<p>napoland is not meant for children under 13, and they should not sign in. If you are younger than the age at which your country lets you agree to this on your own (up to 16 in parts of the EU), ask a parent or guardian first. If we learn that a child under 13 has an account, we delete it.</p>
+
+<h2>Security</h2>
+<p>Everything travels over encrypted connections (HTTPS). Our server accepts only web traffic, and only the publisher can manage it. Login tokens are kept only as scrambled copies, and the whole game is open for anyone to review.</p>
+
+<h2>Changes</h2>
+<p>When this page changes, the date at the top changes too. If a change affects how your data is used, we will tell players in the game before it takes effect.</p>
+
+<footer>napoland · published by Angelo Lamonaca (Neuramare) · <a href="https://www.neuramare.com/policies/legal-notice">Legal notice</a> · <a href="https://github.com/napoland-com/napoland">Source code</a> · <a href="/">Back to the game</a></footer>
+</main>
+</body>
+</html>

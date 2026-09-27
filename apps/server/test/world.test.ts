@@ -26,7 +26,7 @@ function testMap(): TileMap {
 /** A player saved on map 'test' with a full bar, unless `more` says otherwise. */
 function rec(id: string, x: number, y: number, dir: Dir = 'down', more: Partial<PlayerRecord> = {}): PlayerRecord {
   return {
-    id, name: id.toUpperCase(), tokenHash: `hash-${id}`, map: 'test', x, y, dir, color: colorFor(id), energy: ENERGY_MAX, bag: [],
+    id, name: id.toUpperCase(), tokenHash: `hash-${id}`, authSub: null, map: 'test', x, y, dir, color: colorFor(id), energy: ENERGY_MAX, bag: [],
     createdAt: 1, lastSeenAt: 1, ...more,
   };
 }

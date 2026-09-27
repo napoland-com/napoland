@@ -9,8 +9,8 @@
     },
     {
       "name": "server",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["tsx", "apps/server/src/main.ts"],
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/dev.mjs", "server"],
       "port": 8080
     }
   ]

@@ -55,7 +55,7 @@ const ITEMS: ItemsData = {
 
 /** A player on `map` at x,y with a full bar, unless `more` says otherwise. */
 const rec = (id: string, map: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}): PlayerRecord => ({
-  id, name: id.toUpperCase(), tokenHash: `hash-${id}`, map, x, y, dir, color: colorFor(id), energy: ENERGY_MAX, bag: [], createdAt: 1, lastSeenAt: 1, ...more,
+  id, name: id.toUpperCase(), tokenHash: `hash-${id}`, authSub: null, map, x, y, dir, color: colorFor(id), energy: ENERGY_MAX, bag: [], createdAt: 1, lastSeenAt: 1, ...more,
 });
 
 /** A world of the town with the Old Stone, and `field` (or the fixture house and woods too). Players join at 0; joins drained. */

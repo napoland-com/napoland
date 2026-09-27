@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, REFILL_PER_SECOND, TileMap, WEATHER_DRAIN, dirOf, dirToward, energyAfter, energyRate,
-  findPath, parseClientMsg, stepTarget, validateMap, validateWorld, type MapData,
+  AuthConfig, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, MAX_AUTH_CHARS, MAX_HELLO_BYTES, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, REFILL_PER_SECOND, TileMap,
+  WEATHER_DRAIN, dirOf, dirToward, energyAfter, energyRate, findPath, parseClientMsg, stepTarget, validateMap, validateWorld, type MapData,
 } from '../src';
 
 /** A 6x5 town: water on the right, a house in the middle (its door at 2,1 leads inside), a raised tile top-left. */
@@ -200,6 +200,29 @@ describe('protocol', () => {
       '{"t":"teleport","x":5,"y":5}',
       JSON.stringify({ t: 'hello', v: 1, name: 'A'.repeat(2000) }),
     ]) expect(parseClientMsg(raw), raw).toBeNull();
+  });
+  it('takes a hello with a sign-in, which may be longer than other messages, up to its own limit', () => {
+    const jwt = `eyJhbGciOiJFUzI1NiJ9.${'x'.repeat(3000)}.sig`;
+    const hello = JSON.stringify({ t: 'hello', v: 4, auth: jwt, token: 't'.repeat(43), name: 'Aldo' });
+    expect(hello.length).toBeGreaterThan(MAX_MESSAGE_BYTES);
+    expect(parseClientMsg(hello)).toBeNull();
+    expect(parseClientMsg(hello, MAX_HELLO_BYTES)).toEqual({ t: 'hello', v: 4, auth: jwt, token: 't'.repeat(43), name: 'Aldo' });
+    expect(parseClientMsg(JSON.stringify({ t: 'hello', v: 4, auth: 'ann@example.test' }))).toEqual({ t: 'hello', v: 4, auth: 'ann@example.test' });
+    for (const auth of ['', 'x'.repeat(MAX_AUTH_CHARS + 1), 42]) {
+      expect(parseClientMsg(JSON.stringify({ t: 'hello', v: 4, auth }), MAX_HELLO_BYTES), String(auth).slice(0, 20)).toBeNull();
+    }
+    // The longest auth, with a token and a name, still fits in a hello.
+    const longest = JSON.stringify({ t: 'hello', v: PROTOCOL_VERSION, auth: 'x'.repeat(MAX_AUTH_CHARS), token: 't'.repeat(128), name: 'A'.repeat(16) });
+    expect(parseClientMsg(longest, MAX_HELLO_BYTES)).not.toBeNull();
+  });
+  it('describes how to sign in, with only http(s) addresses for Supabase', () => {
+    expect(AuthConfig.parse({ mode: 'legacy' })).toEqual({ mode: 'legacy' });
+    expect(AuthConfig.parse({ mode: 'dev' })).toEqual({ mode: 'dev' });
+    const supabase = { mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_x' };
+    expect(AuthConfig.parse(supabase)).toEqual(supabase);
+    for (const bad of [{ mode: 'google' }, { ...supabase, url: 'javascript:alert(1)' }, { ...supabase, publishableKey: '' }, { mode: 'supabase' }]) {
+      expect(AuthConfig.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
+    }
   });
 });
 

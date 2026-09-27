@@ -35,6 +35,13 @@ services:
       # For testing on this PC, where every tab and test bot shares one address (production keeps 20 and 10).
       MAX_CONNECTIONS_PER_IP: ${MAX_CONNECTIONS_PER_IP:-1000}
       NEW_PLAYERS_PER_IP_PER_HOUR: ${NEW_PLAYERS_PER_IP_PER_HOUR:-1000}
+      # Sign-in: dev mode takes an email without a code, so each tab can be someone else. The image
+      # runs with NODE_ENV=production, which refuses dev mode unless ALLOW_DEV_AUTH=1: never on a
+      # public server. AUTH_MODE=supabase with the two values below tries the real sign-in here.
+      AUTH_MODE: ${AUTH_MODE:-dev}
+      ALLOW_DEV_AUTH: "1"
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
     ports:
       - "${BIND_HOST:-0.0.0.0}:${GAME_PORT:-8080}:8080"
     stop_grace_period: 20s

@@ -1,7 +1,11 @@
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
+/* The two fonts, bundled with the game (main.ts): Fredoka, round, for titles, buttons and the HUD;
+   Nunito for reading. These are the names their packages give them. */
+:root { --font-ui: "Fredoka Variable", system-ui, sans-serif; --font-text: "Nunito Variable", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
 html, body { height: 100%; margin: 0; background: #0b1014; color: #f1ece0; overflow: hidden; overscroll-behavior: none; }
-body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+/* Nunito is used from 600 up: lighter reads poorly on the dark panels. */
+body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: antialiased; }
 #app { position: fixed; inset: 0; }
 
 /* Clipped, not hidden: the vignette and name tags reach past the edges, and a hidden box can still
@@ -11,7 +15,7 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 .screen canvas.world { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 
 /* ---------- HUD (sized from the screen's short side, so every aspect ratio works) ---------- */
-.hud { position: absolute; inset: 0; pointer-events: none; color: #f1ece0; font-family: "Fredoka", system-ui, sans-serif; font-weight: 500;
+.hud { position: absolute; inset: 0; pointer-events: none; color: #f1ece0; font-family: var(--font-ui); font-weight: 500;
   --u: clamp(8px, 2.5cqmin, 15px); --pad: calc(var(--u) * 1.1);
   --dp: clamp(112px, calc(var(--u) * 12), 170px); --ab: clamp(54px, calc(var(--u) * 5.8), 78px);
   --btn: clamp(40px, calc(var(--u) * 3.4), 50px);
@@ -73,7 +77,7 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
   visibility: hidden; opacity: 0; transform: translate(-50%, calc(var(--u) * -.8)); transition: opacity .45s ease, transform .45s ease, visibility 0s .45s; }
 .banner[data-show] { visibility: visible; opacity: 1; transform: translate(-50%, 0); transition: opacity .35s ease, transform .35s ease, visibility 0s; }
 .banner b { display: block; font-weight: 600; font-size: calc(var(--u) * 1.9); line-height: 1.15; color: #ffcf5a; letter-spacing: .01em; }
-.banner span { display: block; margin-top: .3em; font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.1); color: #d3ccbb; white-space: pre-line; }
+.banner span { display: block; margin-top: .3em; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.1); color: #d3ccbb; white-space: pre-line; }
 @media (prefers-reduced-motion: reduce) { .banner, .banner[data-show] { transform: translate(-50%, 0); } }
 
 .hud .menu-btn { position: absolute; right: calc(var(--pad) + var(--safe-r)); top: calc(var(--pad) + var(--safe-t)); width: var(--btn); height: var(--btn); border-radius: 12px; }
@@ -86,7 +90,7 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 .stick.active .knob { transition: none; }
 
 .ab { position: absolute; right: calc(var(--pad) * 1.6 + var(--safe-r)); bottom: calc(var(--pad) * 1.6 + var(--safe-b)); width: calc(var(--ab) * 2.25); height: calc(var(--ab) * 1.75); }
-.hud .ab button { position: absolute; width: var(--ab); height: var(--ab); background: #9c2b4e; border-color: #f3d6de; font-family: "Fredoka", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--ab) * .42); color: #fff4f7; box-shadow: inset 0 -4px 0 #6e1a36, 0 0 0 2px #0c0f15; }
+.hud .ab button { position: absolute; width: var(--ab); height: var(--ab); background: #9c2b4e; border-color: #f3d6de; font-family: var(--font-ui); font-weight: 700; font-size: calc(var(--ab) * .42); color: #fff4f7; box-shadow: inset 0 -4px 0 #6e1a36, 0 0 0 2px #0c0f15; }
 .hud .ab .a { right: 0; top: 0; }
 .hud .ab .b { left: 0; bottom: 0; }
 .hud .ab button:active { transform: translateY(2px); box-shadow: inset 0 -1px 0 #6e1a36, 0 0 0 2px #0c0f15; }
@@ -100,9 +104,9 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat; }
 .float { position: absolute; left: 0; top: 0; font-weight: 700; font-size: calc(var(--u) * 1.4); white-space: nowrap; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; will-change: transform, opacity; }
 
-.dialog { position: absolute; left: calc(var(--pad) + var(--safe-l)); right: calc(var(--pad) + var(--safe-r)); bottom: calc(var(--pad) * 3.2 + var(--dp) + var(--pad) + var(--safe-b)); min-height: calc(var(--u) * 7.4); padding: calc(var(--u) * 1.2) calc(var(--u) * 1.5) calc(var(--u) * 1.4); font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.35); line-height: 1.4; pointer-events: auto; cursor: pointer; display: none; }
+.dialog { position: absolute; left: calc(var(--pad) + var(--safe-l)); right: calc(var(--pad) + var(--safe-r)); bottom: calc(var(--pad) * 3.2 + var(--dp) + var(--pad) + var(--safe-b)); min-height: calc(var(--u) * 7.4); padding: calc(var(--u) * 1.2) calc(var(--u) * 1.5) calc(var(--u) * 1.4); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.35); line-height: 1.4; pointer-events: auto; cursor: pointer; display: none; }
 .hud.talking .dialog { display: block; }
-.dialog .who { position: absolute; left: calc(var(--u) * 1); top: calc(var(--u) * -1.55); padding: .15em .7em; font-family: "Fredoka", system-ui, sans-serif; font-weight: 600; font-size: calc(var(--u) * 1.05); color: #ffcf5a; }
+.dialog .who { position: absolute; left: calc(var(--u) * 1); top: calc(var(--u) * -1.55); padding: .15em .7em; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.05); color: #ffcf5a; }
 .dialog .more { position: absolute; right: calc(var(--u) * 1.1); bottom: calc(var(--u) * .45); color: #e0873a; font-size: calc(var(--u) * 1); }
 @media (prefers-reduced-motion: no-preference) { .dialog .more { animation: bob .9s steps(2, jump-none) infinite; } }
 @keyframes bob { 50% { transform: translateY(3px); } }
@@ -116,7 +120,7 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 .sheet[data-open="false"] { visibility: hidden; transition: transform .22s ease, visibility 0s .22s; }
 .sheet-head { display: flex; align-items: center; gap: calc(var(--u) * .8); font-size: calc(var(--u) * 1.35); font-weight: 600; flex: none; }
 .sheet-head b { font-weight: inherit; flex: 1; color: #ffcf5a; }
-.sheet-head .room { font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.1); color: #b9b2a2; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sheet-head .room { font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.1); color: #b9b2a2; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hud .close { width: var(--btn); height: var(--btn); flex: none; }
 /* Four slots a row, two rows. */
 .sheet .grid { flex: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--g); width: 100%; max-width: var(--col); margin-inline: auto; }
@@ -127,14 +131,14 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 .slot .n { position: absolute; right: 8%; bottom: 5%; font-size: calc(var(--u) * 1.1); font-weight: 700; line-height: 1; color: #f1ece0; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; font-variant-numeric: tabular-nums; }
 /* Under the slots: what the chosen one holds and what can be done with it, or a hint. */
 .sheet .detail { flex: none; min-height: var(--detail-h); display: flex; flex-direction: column; gap: calc(var(--u) * .7); }
-.sheet .hint { margin: 0; font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.2); line-height: 1.35; color: #b9b2a2; }
+.sheet .hint { margin: 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.2); line-height: 1.35; color: #b9b2a2; }
 .detail .about { display: flex; align-items: flex-start; gap: calc(var(--u) * .9); }
 .detail .big { flex: none; width: calc(var(--u) * 4.2); height: calc(var(--u) * 4.2); display: grid; place-items: center; border-radius: 10px; background: #1c222c; box-shadow: inset 0 0 0 2px #3a4356; }
 .detail .big svg { width: 76%; height: 76%; }
 .detail .words { min-width: 0; }
 .detail .title { display: flex; align-items: baseline; gap: .5em; font-size: calc(var(--u) * 1.5); font-weight: 600; color: #ffcf5a; }
 .detail .count { font-size: .8em; color: #d3ccbb; font-variant-numeric: tabular-nums; }
-.detail .words p { margin: .2em 0 0; font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.25); line-height: 1.35; color: #e6dfcf; }
+.detail .words p { margin: .2em 0 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.25); line-height: 1.35; color: #e6dfcf; }
 .detail .acts { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--u) * .6); }
 .detail .ask { margin-right: auto; font-size: calc(var(--u) * 1.25); font-weight: 600; }
 .hud .act { display: inline-block; width: auto; border-radius: 9px; padding: .45em 1em; font-size: calc(var(--u) * 1.25); font-weight: 600; background: #1c222c; border: 1px solid #4a5468; box-shadow: none; }
@@ -145,8 +149,8 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }
 /* The status panel: rows about you, then the feats. It sits where the bag does. */
-.status-body { display: grid; gap: calc(var(--u) * .55); font-family: "Nunito", system-ui, sans-serif; font-weight: 700; font-size: calc(var(--u) * 1.15); }
-.status-body h3 { margin: calc(var(--u) * .5) 0 0; font-family: "Fredoka", system-ui, sans-serif; font-weight: 600; font-size: calc(var(--u) * 1.25); color: #ffcf5a; }
+.status-body { display: grid; gap: calc(var(--u) * .55); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); }
+.status-body h3 { margin: calc(var(--u) * .5) 0 0; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.25); color: #ffcf5a; }
 .srow { display: grid; grid-template-columns: minmax(5.5em, auto) 1fr; gap: .15em .8em; align-items: baseline; }
 .srow .k { color: #b9b2a2; }
 .srow .v { color: #e6dfcf; }
@@ -156,11 +160,29 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 .sbar { position: relative; display: block; height: max(4px, calc(var(--u) * .4)); border-radius: 99px; overflow: hidden; background: #1c222c; box-shadow: inset 0 0 0 1px #0c0f15, 0 0 0 1px #3e4658; }
 .sbar i { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(#ffe0a0, #e0873a); }
 .feat { display: grid; grid-template-columns: minmax(0, 1fr); gap: .2em; padding: .5em .7em; border-radius: 9px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
-.feat b { font-family: "Fredoka", system-ui, sans-serif; font-weight: 600; color: #d3ccbb; }
+.feat b { font-family: var(--font-ui); font-weight: 600; color: #d3ccbb; }
 .feat span { color: #b9b2a2; font-size: .92em; }
 .feat[data-done] { box-shadow: inset 0 0 0 1px #8a7440; }
 .feat[data-done] b { color: #ffcf5a; }
 .feat[data-done] b::after { content: " ✓"; }
+/* About (about.ts): who makes the game, and where its code and rules are. It opens where the bag does.
+   Its words never go below 11 to 12px, so a small phone can still read the small print. */
+.about-sheet .sheet-head { font-size: max(14px, calc(var(--u) * 1.35)); }
+.about-body { flex: none; display: flex; flex-direction: column; gap: calc(var(--u) * .9); width: 100%; max-width: max(440px, calc(var(--u) * 40));
+  font-family: var(--font-text); font-weight: 700; font-size: max(12px, calc(var(--u) * 1.25)); line-height: 1.4; color: #e6dfcf; }
+.about-body p { margin: 0; }
+.about-body a { -webkit-tap-highlight-color: transparent; }
+.about-body a:focus-visible { outline: 2px solid #ffcf5a; outline-offset: 2px; }
+/* The source is offered to everyone who plays (the AGPL asks for it), so it is the biggest thing here. */
+.about-body .source { display: flex; align-items: center; justify-content: center; gap: .5em; padding: .55em 1em; border-radius: 10px; background: #e0873a; border: 1px solid #f3b27a; color: #1a0f04;
+  font-family: var(--font-ui); font-weight: 600; font-size: max(16px, calc(var(--u) * 1.5)); text-decoration: none; }
+.about-body .source svg { width: 1.1em; height: 1.1em; flex: none; }
+.about-body .more { display: flex; gap: calc(var(--u) * .6); }
+.about-body .more a { flex: 1; padding: .45em .8em; border-radius: 9px; background: #1c222c; border: 1px solid #4a5468; color: #f1ece0;
+  font-family: var(--font-ui); font-weight: 600; font-size: max(13px, calc(var(--u) * 1.3)); text-align: center; text-decoration: none; }
+.about-body .fine { font-size: max(11px, calc(var(--u) * 1.05)); line-height: 1.45; color: #b9b2a2; }
+.about-body .fine span { white-space: nowrap; }
+.about-body .fine a { color: inherit; text-underline-offset: 2px; }
 
 @container scr (max-width: 330px) {
   .hud { --dp: clamp(84px, calc(var(--u) * 9.5), 112px); --ab: clamp(40px, calc(var(--u) * 4.4), 54px); --btn: clamp(32px, calc(var(--u) * 3), 40px); }
@@ -183,15 +205,55 @@ body { font-family: "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans
 }
 @media (prefers-reduced-motion: reduce) { .sheet, .sheet[data-open="false"] { transition: none; } }
 
-/* ---------- screens over the game: login, connecting, messages ---------- */
-.overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; background: radial-gradient(ellipse at 50% 40%, rgba(20, 28, 36, .82), rgba(6, 8, 11, .96)); z-index: 10; }
+/* ---------- screens over the game: signing in, connecting, messages ---------- */
+/* It scrolls when a card does not fit: a phone on its side with the keyboard up has little height left. */
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden auto; overscroll-behavior: contain; background: radial-gradient(ellipse at 50% 40%, rgba(20, 28, 36, .82), rgba(6, 8, 11, .96)); z-index: 10;
+  padding: max(24px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-right, 0px)) max(24px, env(safe-area-inset-bottom, 0px)) max(24px, env(safe-area-inset-left, 0px)); }
 .overlay[hidden] { display: none; }
-.card { width: min(92vw, 380px); display: grid; gap: 14px; padding: 22px 22px 20px; }
-.card h1 { margin: 0; font-family: "Fredoka", system-ui, sans-serif; font-weight: 700; font-size: 34px; letter-spacing: .01em; color: #ffcf5a; text-align: center; }
+.card { width: min(100%, 380px); display: grid; gap: 14px; padding: 22px 22px 20px; }
+.card h1 { margin: 0; font-family: var(--font-ui); font-weight: 700; font-size: 34px; letter-spacing: .01em; color: #ffcf5a; text-align: center; }
 .card p { margin: 0; color: #c9c2b0; font-size: 15px; line-height: 1.45; text-align: center; }
-.card label { font-family: "Fredoka", system-ui, sans-serif; font-size: 14px; color: #d3ccbb; }
+.card p b { color: #f1ece0; font-weight: 800; overflow-wrap: anywhere; }
+.card .fine { font-size: 13px; color: #9d978a; }
+.card label { font-family: var(--font-ui); font-weight: 400; font-size: 14px; color: #d3ccbb; }
 .card input { width: 100%; font: inherit; font-size: 18px; padding: 10px 12px; border-radius: 10px; border: 2px solid #3e4658; background: #10141c; color: #f1ece0; outline: none; }
 .card input:focus { border-color: #ffcf5a; }
-.card button { font-family: "Fredoka", system-ui, sans-serif; font-size: 18px; font-weight: 600; padding: 10px 14px; border-radius: 10px; border: 0; background: #e0873a; color: #1a0f04; cursor: pointer; }
+.card input::placeholder { color: #5d6474; }
+/* The code: big digits, one per column, easy to check against the email. */
+.card input.code { font-family: var(--font-ui); font-size: 30px; font-weight: 600; letter-spacing: .4em; text-indent: .4em; text-align: center; font-variant-numeric: tabular-nums; padding: 8px 12px; }
+.card button { font-family: var(--font-ui); font-size: 18px; font-weight: 600; padding: 10px 14px; border-radius: 10px; border: 0; background: #e0873a; color: #1a0f04; cursor: pointer; }
 .card button:disabled { opacity: .6; cursor: default; }
 .card .err { color: #ff8f7a; min-height: 1.3em; font-size: 14px; text-align: center; }
+.card .err.ok { color: #9be0a6; }
+/* Small text buttons under a card: another code, another email, sign out. */
+.card .links { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; font-size: 14px; color: #9d978a; }
+.card .links .who { min-width: 0; overflow-wrap: anywhere; }
+.card button.link { background: none; padding: 6px 2px; font-family: var(--font-text); font-size: 14px; font-weight: 700; color: #d3ccbb; text-decoration: underline; text-underline-offset: 3px; }
+.card button.link:disabled { text-decoration: none; opacity: .55; }
+.card button:focus-visible { outline: 2px solid #ffcf5a; outline-offset: 2px; }
+/* The small print that ends every sign-in card (about.ts): quiet, but every link big enough to tap.
+   It stays in the card's flow, so with the keyboard up it scrolls away under the button. */
+.card .legal { display: grid; justify-items: center; gap: 1px; padding-top: 8px; border-top: 1px solid #262c38; font-size: 12px; line-height: 1.35; color: #8f897c; }
+.card .legal nav { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; }
+.card .legal a { padding: 5px; color: #b9b2a2; text-decoration: underline; text-decoration-color: rgba(185, 178, 162, .45); text-underline-offset: 3px; -webkit-tap-highlight-color: transparent; }
+.card .legal a:focus-visible { outline: 2px solid #ffcf5a; outline-offset: -1px; border-radius: 4px; }
+.card .legal p { font-size: 12px; line-height: 1.35; color: #8f897c; }
+
+/* Short screens (a phone on its side, more so with the keyboard up): a tighter card, without the welcome words. */
+@media (max-height: 520px) {
+  .overlay { padding-top: max(10px, env(safe-area-inset-top, 0px)); padding-bottom: max(10px, env(safe-area-inset-bottom, 0px)); }
+  .card { gap: 8px; padding: 12px 18px 12px; width: min(100%, 420px); }
+  .card h1 { font-size: 24px; }
+  .card .intro, .card .fine { display: none; }
+  .card .err { min-height: 1.1em; font-size: 13px; }
+  .card input { padding: 8px 12px; }
+  .card input.code { font-size: 24px; padding: 6px 12px; }
+  .card button { padding: 8px 14px; }
+  .card .legal { padding-top: 4px; }
+}
+/* Narrow phones: less margin around the card, so its lines (the small print too) do not wrap.
+   After the short screens' rules, so this side padding holds on a small screen that is both. */
+@media (max-width: 360px) {
+  .overlay { padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); }
+  .card { padding-left: 16px; padding-right: 16px; }
+}

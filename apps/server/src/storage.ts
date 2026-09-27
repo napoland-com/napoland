@@ -13,8 +13,16 @@ export interface PlayerRecord {
   /** A random UUID. */
   id: string;
   name: string;
-  /** SHA-256 of the login token, hex. The token itself is never stored. */
-  tokenHash: string;
+  /**
+   * SHA-256 of the login token of a character made without sign-in, hex. The token itself is never
+   * stored. Null for characters made after sign-in: they have no token.
+   */
+  tokenHash: string | null;
+  /**
+   * Who signed in with this character (auth.ts): Supabase's user id, or "dev:" and an email. Null
+   * for a character made before sign-in that nobody has claimed yet. One character per identity.
+   */
+  authSub: string | null;
   /** The id of the map the player is on. */
   map: string;
   x: number;
@@ -75,9 +83,16 @@ export interface StoneRecord {
 export interface Storage {
   init(): Promise<void>;
   findByTokenHash(hash: string): Promise<PlayerRecord | null>;
+  /** The character of a signed-in identity. */
+  findByAuthSub(sub: string): Promise<PlayerRecord | null>;
+  /**
+   * Makes the character `id` (made before sign-in) belong to identity `sub`. False if someone has
+   * claimed it already, or `sub` has a character already (two tabs racing).
+   */
+  claim(id: string, sub: string): Promise<boolean>;
   /** Names are unique regardless of case. */
   nameTaken(name: string): Promise<boolean>;
-  /** False if the name was taken in the meantime (two players racing for it). */
+  /** False if the name was taken in the meantime (two players racing for it), or the identity has a character already. */
   create(rec: PlayerRecord): Promise<boolean>;
   /** Stores what changes while playing: map, position, direction, energy, bag, color and lastSeenAt. */
   save(rec: PlayerRecord): Promise<void>;
@@ -104,6 +119,7 @@ const copyRecord = (rec: PlayerRecord): PlayerRecord => ({ ...rec, bag: copyBag(
 export class MemoryStorage implements Storage {
   private readonly byId = new Map<string, PlayerRecord>();
   private readonly idByToken = new Map<string, string>();
+  private readonly idBySub = new Map<string, string>();
   private readonly idByName = new Map<string, string>();
   private readonly drops = new Map<string, Omit<DropRecord, 'name'>>();
   private readonly marks = new Map<number, Omit<MarkRecord, 'name' | 'color'>>();
@@ -116,15 +132,31 @@ export class MemoryStorage implements Storage {
     return id === undefined ? null : copyRecord(this.byId.get(id)!);
   }
 
+  async findByAuthSub(sub: string): Promise<PlayerRecord | null> {
+    const id = this.idBySub.get(sub);
+    return id === undefined ? null : copyRecord(this.byId.get(id)!);
+  }
+
+  async claim(id: string, sub: string): Promise<boolean> {
+    const rec = this.byId.get(id);
+    if (!rec || rec.authSub !== null || this.idBySub.has(sub)) return false;
+    rec.authSub = sub;
+    this.idBySub.set(sub, id);
+    return true;
+  }
+
   async nameTaken(name: string): Promise<boolean> {
     return this.idByName.has(name.toLowerCase());
   }
 
   async create(rec: PlayerRecord): Promise<boolean> {
     const name = rec.name.toLowerCase();
-    if (this.byId.has(rec.id) || this.idByToken.has(rec.tokenHash) || this.idByName.has(name)) return false;
+    // Like the database's unique columns (nulls never collide).
+    const taken = (key: string | null, index: Map<string, string>) => key !== null && index.has(key);
+    if (this.byId.has(rec.id) || taken(rec.tokenHash, this.idByToken) || taken(rec.authSub, this.idBySub) || this.idByName.has(name)) return false;
     this.byId.set(rec.id, copyRecord(rec));
-    this.idByToken.set(rec.tokenHash, rec.id);
+    if (rec.tokenHash !== null) this.idByToken.set(rec.tokenHash, rec.id);
+    if (rec.authSub !== null) this.idBySub.set(rec.authSub, rec.id);
     this.idByName.set(name, rec.id);
     return true;
   }
@@ -209,7 +241,8 @@ export class MemoryStorage implements Storage {
 interface PlayerRow {
   id: string;
   name: string;
-  token_hash: string;
+  token_hash: string | null;
+  auth_sub: string | null;
   map: string;
   x: number;
   y: number;
@@ -259,6 +292,7 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   id: r.id,
   name: r.name,
   tokenHash: r.token_hash,
+  authSub: r.auth_sub,
   map: r.map,
   x: r.x,
   y: r.y,
@@ -274,6 +308,8 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
 
 /** Held while migrating, so two servers starting together do not both apply the same file. */
 const MIGRATION_LOCK = 4_815_162_342;
+/** Postgres' error code for a broken unique constraint. */
+const UNIQUE_VIOLATION = '23505';
 
 export class PgStorage implements Storage {
   private readonly pool: pg.Pool;
@@ -293,6 +329,22 @@ export class PgStorage implements Storage {
     return r.rows[0] ? fromRow(r.rows[0]) : null;
   }
 
+  async findByAuthSub(sub: string): Promise<PlayerRecord | null> {
+    const r = await this.pool.query<PlayerRow>('SELECT * FROM players WHERE auth_sub = $1', [sub]);
+    return r.rows[0] ? fromRow(r.rows[0]) : null;
+  }
+
+  async claim(id: string, sub: string): Promise<boolean> {
+    try {
+      const r = await this.pool.query('UPDATE players SET auth_sub = $2 WHERE id = $1 AND auth_sub IS NULL', [id, sub]);
+      return r.rowCount === 1;
+    } catch (err) {
+      // auth_sub is unique: this identity has a character already.
+      if ((err as { code?: unknown }).code === UNIQUE_VIOLATION) return false;
+      throw err;
+    }
+  }
+
   async nameTaken(name: string): Promise<boolean> {
     const r = await this.pool.query('SELECT 1 FROM players WHERE lower(name) = lower($1)', [name]);
     return (r.rowCount ?? 0) > 0;
@@ -301,11 +353,11 @@ export class PgStorage implements Storage {
   // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
-      `INSERT INTO players (id, name, token_hash, map, x, y, dir, color, energy, bag, wet, stats, created_at, last_seen_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb, $13, $14)
+      `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, created_at, last_seen_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15)
        ON CONFLICT DO NOTHING`,
       [
-        rec.id, rec.name, rec.tokenHash, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}),
+        rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}),
         new Date(rec.createdAt), new Date(rec.lastSeenAt),
       ],
     );

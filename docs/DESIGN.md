@@ -46,9 +46,9 @@ Regions are separate maps joined at their edges, like FireRed's towns and routes
 - **Controls:** a **joystick** bottom left (it picks one of four directions), **A** (pick up, talk, open) and **B** (bag, back) bottom right. No text labels on the buttons.
 - Joystick: a quick flick in a new direction **turns in place**; holding walks; the direction you already face walks at once; changing direction while walking does not stop.
 - Tapping the ground walks there along the shortest path. Tapping a person or a sign walks up to it and talks.
-- Top right there is only a **menu button**. **No map, ever:** napoland is a mapless game, you learn the world by walking it (and players share what they learn).
+- Top right there is only a **menu button**. **No minimap and no position marker, ever:** you learn the world by walking it (and players share what they learn). The one map is an old **paper map drawn by hand**, a permanent tool in your bag: it shows the region's roads, trails, cabins and landmarks but never where you are, so you work that out from what you see around you (planned: [paper-map](../roadmap/paper-map.md)).
 - The text box and the bag **never cover A and B**, so B can always close them. In portrait they sit above the controls; in landscape they take the joystick's side (it hides while you read). Pushing the joystick or tapping the world closes the bag and the menu.
-- Mobile first. On desktop the mouse acts as a finger; nothing needs a keyboard.
+- Mobile first. On desktop the mouse acts as a finger, and the keyboard is a shortcut, never a need: **WASD** or the **arrow keys** walk (with the joystick's rules), **Enter** is A and **Backspace** is B (planned: [keyboard-controls](../roadmap/keyboard-controls.md)).
 
 ## Creatures
 
@@ -130,21 +130,11 @@ Built so far: energy, how wet you are, your load, what clings to you, your charm
 - **Exchange, face to face only**: two friends on the same map, at most **10 tiles** apart, open a trade: each puts in items or gear, both confirm the final offer, and the server swaps them in one step (nothing can go missing halfway). Walking farther apart cancels it.
 - **Settings** (in the menu): anyone can turn off friend requests and trade requests.
 - Safety from day one: limits on length and speed, a word filter, block and report.
-- **Sign-in first**: chat, friends and items are worth keeping, so before these go to the public players sign in with **Google or Apple, through Supabase Auth**. The game server checks the Supabase login and keeps its own players and game data in its own database as now; a character made before sign-in can be claimed by signing in on the same browser. Today a character only lives in the browser that made it.
+- **Sign-in first**: chat, friends and items are worth keeping, so players sign in before these go to the public. Today that is **an email and a one-time code, through Supabase Auth**; Google and Apple come later, through the same sign-in ([sign-in-google-apple](../roadmap/sign-in-google-apple.md)). The game server checks the Supabase login and keeps its own players and game data in its own database; a character made before sign-in, which lived only in the browser that made it, is claimed by signing in on that browser.
 
 ## Roadmap
 
-Each step goes live when it is done, so it can be played and tuned.
-
-1. ✅ The Near Woods and energy.
-2. ✅ Buildings you can enter, fireplaces and shelters, the new energy rules.
-3. ✅ Finds and the bag (shared finds that grow back elsewhere), and the pile you drop when you collapse (all back for you, half for anyone else, gone after an hour).
-   - ✅ What wears you down, inspired by The Long Dark and Pacific Drive: fires that burn down and are fed, a heavy bag, rain that soaks you, the surge clock, watchers, hitchhikers, flares, marks, the notice board, the Old Stone, strange objects and charms, feats, echoes, the weather's day with aurora nights. Waiting for equipment (step 5): gear that wears out and is repaired at the workbench, and quirks on anomalous gear.
-4. **Next:** home: stash what you carry for XP, levels; the status tab grows with them.
-5. Equipment: the six slots, items as data, resistances, crafting at the workbench, gear shown on your character.
-6. Hazards and anomalies: the five elements, day and night, storms, flashes and surges, weather per region.
-7. Sign-in (Google and Apple, through Supabase), then world and local chat, friends, private messages, face-to-face exchange and the settings to turn requests off.
-8. Creatures, your own cabin, the group mechanics (shared light, rescue, heavy finds, camps) and deeper regions.
+The roadmap lives in [roadmap/](../roadmap/): one file per item, each with its status (done, now, next, planned or idea) and its order. `npm run roadmap` prints it in order. It changes through pull requests, like the code; [roadmap/README.md](../roadmap/README.md) explains how. Each step goes live when it is done, so it can be played and tuned.
 
 ## Look and feel
 
@@ -152,6 +142,14 @@ Each step goes live when it is done, so it can be played and tuned.
 - A **dark world** in the mood of **Pacific Drive**: a Pacific Northwest forest of tall firs, fog, rain, night, abandoned cabins, orange sodium street lights, utility poles, glowing anomalies (the Old Stone, wisps).
 - Dark interface: dark panels with cream borders, Fredoka and Nunito fonts.
 - **Any screen shape works:** nothing forces portrait or landscape. The camera shows the same circle of world around you on every screen; controls sit in the thumb corners and are sized from the short side; panels open where they cover the least.
+
+## References
+
+Games we learn from when designing what comes next:
+
+- **Pacific Drive** (Ironwood Studios): the mood (a dark Pacific Northwest forest, rain, abandoned things, glowing anomalies), and the loop of leaving a safe place, pushing your luck out there and coming back changed. Anomalies and storms that wear you down.
+- **Pokémon FireRed** (Game Freak): the structure: a tile grid under a steep camera, towns and routes as separate maps, every building enterable, a text box for talking, controls that stay simple.
+- **The Long Dark** (Hinterland Studio): survival as quiet pressure: cold, wind and exposure, fire as the thing that keeps you going, cabins to scavenge and shelter in, and maps drawn by hand that never show where you are, so you learn the land by its landmarks.
 
 ## Platform
 
