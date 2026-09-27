@@ -86,6 +86,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .banner span { display: block; margin-top: .3em; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.1); color: #d3ccbb; white-space: pre-line; }
 @media (prefers-reduced-motion: reduce) { .banner, .banner[data-show] { transform: translate(-50%, 0); } }
 
+/* The buttons under the thumbs allow no gesture at all: `manipulation` would still let a pinch
+   start on them, and a thumb on the stick plus one on A is a pinch to iPhone Safari (zoom.ts). */
+.hud .menu-btn, .hud .ab button { touch-action: none; }
 .hud .menu-btn { position: absolute; right: calc(var(--pad) + var(--safe-r)); top: calc(var(--pad) + var(--safe-t)); width: var(--btn); height: var(--btn); border-radius: 12px; }
 .menu-panel { position: absolute; right: calc(var(--pad) + var(--safe-r)); top: calc(var(--pad) * 1.6 + var(--btn) + var(--safe-t)); display: grid; gap: calc(var(--u) * .45); padding: calc(var(--u) * .7); min-width: calc(var(--u) * 13); pointer-events: auto; }
 .menu-panel[hidden] { display: none; }

@@ -19,6 +19,10 @@ import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Scr
 import { levelText, newsBanner, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { WorldView, createRenderer } from './view/world';
+import { guardZoom } from './zoom';
+
+// Before anything can be touched: on iPhones two thumbs (the stick and A) would zoom the page.
+guardZoom({ doc: document, viewport: window.visualViewport, meta: document.querySelector<HTMLMetaElement>('meta[name="viewport"]') });
 
 /** When this page last reloaded because it was out of date (see outdated()). */
 const RELOAD_KEY = 'napoland.reloadedAt';
