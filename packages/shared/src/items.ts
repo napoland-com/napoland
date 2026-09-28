@@ -529,13 +529,15 @@ export function halfOf(items: readonly BagSlot[], rng: () => number): BagSlot[] 
   return gather(units.slice(0, keep));
 }
 
-/** Every tile a find may grow on: walkable, not an exit, never ice (it thaws), and fitting the rule's tiles, steps, nearness and place. */
+/** Every tile a find may grow on: walkable, not an exit or a slab, never ice (it thaws), and fitting the rule's tiles, steps, nearness and place. */
 export function findTiles(map: TileMap, rule: FindRule): Array<{ x: number; y: number }> {
   const out: Array<{ x: number; y: number }> = [];
   // Measured from every tile an object covers, so a cabin or a car is near from all sides alike.
   const near = rule.near ? map.data.objects.filter(o => rule.near!.kinds.includes(o.kind)).flatMap(objectTiles) : [];
+  // A slab is walked over, but nothing grows on stone.
+  const slabs = new Set(map.data.objects.flatMap(o => (o.kind === 'slab' ? [o.y * map.width + o.x] : [])));
   for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
-    if (!map.walkable(x, y) || map.exitAt(x, y) || map.iceAt(x, y)) continue;
+    if (!map.walkable(x, y) || map.exitAt(x, y) || map.iceAt(x, y) || slabs.has(y * map.width + x)) continue;
     if (rule.on && !rule.on.includes(map.kind(x, y)!)) continue;
     if (rule.steps) {
       const s = map.homeSteps(x, y);

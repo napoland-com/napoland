@@ -23,6 +23,7 @@ export * from './protocol';
 export * from './shop';
 export * from './rescue';
 export * from './sky';
+export * from './slab';
 export * from './story';
 export * from './thanks';
 export * from './trade';

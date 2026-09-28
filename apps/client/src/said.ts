@@ -416,6 +416,30 @@ export function returnedLine(by: string | null, where: string): string {
 /** Said with it, once it is in your chest. */
 export const IN_YOUR_CHEST = 'It is in your chest.';
 
+// ---------- the slab in the ring of stones (slab.ts) ----------
+
+/** The name over the box at the slab. */
+export const SLAB = 'The slab';
+
+/** Why the slab did not open, by the server's answer. */
+export function slabRefusal(reason: Refusal): string {
+  switch (reason) {
+    case 'one_pair': return 'It will not move for one pair of hands.';
+    case 'cold': return 'The slab lies still and cold. Its seams glow when the woods grow restless.';
+    case 'opened': return 'You have had what the slab holds this time. It glows again the next time the woods grow restless.';
+    case 'bag_full': return 'Your bag has no room for what the slab holds. Make room first.';
+    case 'too_far': return 'Face the slab from right beside it.';
+    case 'down': return YOU_ARE_DOWN;
+    default: return 'The slab does not move.';
+  }
+}
+
+/** What it did: "Together with Bo, you lift the slab. You take 2 strange objects and a shard." */
+function slabText(did: Extract<Did, { kind: 'slab' }>, items: Items): string {
+  const got = listOf(did.got.map(s => amount(items.get(s.item), s.count)));
+  return `Together with ${did.with}, you lift the slab. You take ${got}.`;
+}
+
 // ---------- merits ----------
 
 /** "12,345": a count with its thousands apart, the same in every language the browser speaks (firsts.ts). */
@@ -485,6 +509,7 @@ export function didWho(did: Did, items: Items): string {
     case 'rescued': return did.name;
     case 'carried': return thingsOf(did.names[0] ?? 'Someone');
     case 'handedIn': return LOST_AND_FOUND;
+    case 'slab': return SLAB;
   }
 }
 
@@ -499,6 +524,7 @@ export function didText(did: Did, items: Items): string {
   if (did.kind === 'rescued') return `You give ${did.name} ${RESCUE_ENERGY} of your energy. ${did.name} is back up.`;
   if (did.kind === 'carried') return carriedText(did.names);
   if (did.kind === 'handedIn') return handedInText(did.names, did.xp);
+  if (did.kind === 'slab') return slabText(did, items);
   const def = items.get(did.item);
   switch (did.kind) {
     case 'fire': {

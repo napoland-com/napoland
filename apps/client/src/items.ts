@@ -146,6 +146,9 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'too_tired': return 'You need more energy than that';
     case 'padlocked': return 'A padlock, rusted shut';
     case 'not_yours': return 'That is someone else\'s bundle: carry it to the lost and found box in the lodge';
+    case 'cold': return 'It lies cold until the woods grow restless';
+    case 'one_pair': return 'It will not move for one pair of hands';
+    case 'opened': return 'You opened it this time already';
   }
 }
 

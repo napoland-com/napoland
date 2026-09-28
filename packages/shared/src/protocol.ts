@@ -33,8 +33,9 @@ import { OFFER_MAX } from './trade';
  * 35: the teleport in town takes you home, and a new player's first steps (`firstSteps`, in the welcome too).
  * 36: the shop for looks (`checkout`, and `shop` in the welcome and when what you bought changes), and the window to be saved, someone down out in the wilds, whom an older page could not show or get up.
  * 37: the lost and found, whose bundles, questions and letters an older page could not show.
+ * 38: the slab that needs two, which an older page could not put its hands to.
  */
-export const PROTOCOL_VERSION = 37;
+export const PROTOCOL_VERSION = 38;
 
 /**
  * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
@@ -299,6 +300,11 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('visitsOff'), off: z.boolean() }),
   /** A at NAPO's teleport on tile x,y next to you (the client asks first): in a cabin (anyone's) it sets you down in town, in front of its twin; in town, at home in front of the one in your own cabin. */
   z.object({ t: z.literal('teleport'), x: z.number().int(), y: z.number().int() }),
+  /**
+   * Put your hands to the slab on tile x,y, next to you and facing it (slab.ts): while it glows, it opens
+   * for two within SLAB_PAIR_MS of each other, each taking what it holds.
+   */
+  z.object({ t: z.literal('slab'), x: z.number().int(), y: z.number().int() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -460,7 +466,9 @@ export type Did =
    */
   | { kind: 'carried'; names: string[] }
   /** You left what you carried for `names` in the lost and found box: it is back in their chests, and you earned `xp`. */
-  | { kind: 'handedIn'; names: string[]; xp: number };
+  | { kind: 'handedIn'; names: string[]; xp: number }
+  /** You and `with` (their name) lifted the slab together (slab.ts): `got` is in your bag now. */
+  | { kind: 'slab'; with: string; got: BagSlot[] };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -580,7 +588,13 @@ export type Refusal =
   /** A padlocked door (MapExit.lock): it takes a tool you do not have. */
   | 'padlocked'
   /** It is someone else's things, in a bundle (lostfound.ts): carried to the lodge, never opened, stashed, thrown away or left. */
-  | 'not_yours';
+  | 'not_yours'
+  /** The slab lies cold: it opens only while the woods are restless (slab.ts). */
+  | 'cold'
+  /** Nobody else put their hands to the slab with yours: it will not move for one pair. */
+  | 'one_pair'
+  /** You opened the slab this restless time already: once each. */
+  | 'opened';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -1036,6 +1050,7 @@ export type RefusedAction =
   | 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
   | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
   | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn'
+  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 

@@ -158,6 +158,13 @@ export function validateMap(data: MapData): Problem[] {
       err(`fireplace at ${o.x},${o.y}: longNight is true or left out, on a fire in a room in town that nobody marked tended`);
     }
     if (o.kind === 'cache' && !o.name?.trim()) err(`cache at ${o.x},${o.y} needs a name: what a letter calls it ("the old cabin's crate")`);
+    if (o.kind === 'slab') {
+      // It glows and opens while the region is restless: only a region that surges has such times.
+      if (data.kind !== 'wilds' || !data.surge) err(`slab at ${o.x},${o.y}: it opens while the woods are restless, so it lies in wilds that surge`);
+      if (!o.name?.trim()) err(`slab at ${o.x},${o.y} needs a name: what the notice board calls it ("the slab in the ring of stones")`);
+      if (!Array.isArray(o.holds) || !o.holds.length || o.holds.some(s => !(typeof s?.item === 'string' && Number.isInteger(s.count) && s.count >= 1))) err(`slab at ${o.x},${o.y} holds nothing: a list of items and counts`);
+      if (!map.walkable(o.x, o.y)) err(`slab at ${o.x},${o.y}: it lies in the ground, where people walk`);
+    }
     if (o.kind === 'teleport') {
       // One in every cabin, and its twin in the home town (validateWorld): nowhere else, and one a map.
       if (data.private !== true && (data.kind !== 'town' || data.street)) err(`teleport at ${o.x},${o.y}: NAPO's teleports stand in a home of one's own and in the home town`);
@@ -716,6 +723,15 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
   for (const m of homes) for (const o of m.objects) if (o.kind === 'comfort' && !furnished.has(o.what)) warn(`${m.id}: the place for the ${o.what} at ${o.x},${o.y} has no furniture to make for it`);
   // Nothing in content gives a bundle: only a pile carried to the lodge is one.
   const bundles = new Set(data.items.filter(i => i.kind === 'bundle').map(i => i.id));
+  // What a slab holds goes into the bags of the two who open it: things a bag carries.
+  for (const m of maps) for (const o of m.objects) {
+    if (o.kind !== 'slab') continue;
+    for (const s of Array.isArray(o.holds) ? o.holds : []) {
+      const where = `${m.id}: the slab at ${o.x},${o.y}`, def = data.items.find(d => d.id === s.item);
+      if (!def) err(`${where} holds ${s.item}, which is not an item`);
+      else if (def.kind === 'tool' || def.kind === 'sealed' || def.kind === 'bundle' || def.live) err(`${where} holds ${s.item}, which never goes into a bag as it is`);
+    }
+  }
   for (const t of STARTER_TOOLS) {
     const def = data.items.find(i => i.id === t);
     if (def && def.kind !== 'tool') err(`the starter tool ${t} is not a tool`);

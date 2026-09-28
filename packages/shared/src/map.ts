@@ -8,6 +8,7 @@
  * to a small map of its own. Energy only comes back near a fireplace. See energy.ts.
  */
 import { comfortSize, underfootComfort, type Comfort } from './comfort';
+import type { BagSlot } from './items';
 import { STEP_MS } from './movement';
 import type { Dir } from './protocol';
 import type { FlashRule, RainWindow, StormRule, SurgeRule } from './sky';
@@ -201,6 +202,12 @@ export type MapObject =
    * lettered by hand. Whatever you carry for someone, left in it, goes back to them.
    */
   | { kind: 'lostfound'; x: number; y: number }
+  /**
+   * A flat stone slab lying in the ground, the stones' own sealed crate (slab.ts): walked over like the
+   * ground, its seams glow while the region is restless, and then two people facing it together open it,
+   * each taking what it `holds`. `name`: what the notice board calls it ("the slab in the ring of stones").
+   */
+  | { kind: 'slab'; x: number; y: number; name: string; holds: BagSlot[] }
   /** Furniture, inside buildings. A bed is one tile wide and two long (head at y); a rug is only drawn. */
   | { kind: 'bed'; x: number; y: number }
   | { kind: 'table'; x: number; y: number }
@@ -416,10 +423,10 @@ const BLOCKING = new Set<MapObject['kind']>([
 export const GATE_PULLERS = 2;
 export const GATE_WINDOW_MS = 5000;
 /**
- * Objects that are only drawn: you walk over or through them. A note is drawn on what it lies on,
- * which blocks the way itself.
+ * Objects you walk over or through: all only drawn, but the slab, which is opened from beside it. A note
+ * is drawn on what it lies on, which blocks the way itself.
  */
-export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'bridge', 'note']);
+export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'bridge', 'note', 'slab']);
 
 /** Does this object stop anyone from walking onto its tiles? A comfort place does, but for the rug. */
 export function blocks(o: MapObject): boolean {
