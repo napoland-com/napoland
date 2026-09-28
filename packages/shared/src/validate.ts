@@ -3,13 +3,14 @@
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
 import { MODS, modChanges, type Mods } from './feats';
-import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
-import { STARTER_TOOLS, TOOL_ICONS, findTiles, type ItemsData } from './items';
-import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type NpcLook, type TileKind } from './map';
+import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
+import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
+import { DECOR, FRONTED, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, hangs, objectTiles, type MapData, type MapObject, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
+import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
 import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
-import { STORY_EVENTS, type StoryData } from './story';
+import { MAX_REMARKS, MILESTONES, STORY_EVENTS, type StoryData } from './story';
 
 export interface Problem {
   level: 'error' | 'warning';
@@ -21,6 +22,18 @@ const ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** What a townsperson's look may set (map.ts, NpcLook). */
 const NPC_LOOK = ['coat', 'scarf', 'hair', 'skin', 'hat'] as const satisfies ReadonlyArray<keyof NpcLook>;
+/** The styles a building and a sign come in besides the plain one (map.ts, MapObject). */
+const HOUSE_STYLES = ['napo', 'mill'] as const;
+const SIGN_STYLES = ['napo', 'cardboard', 'mailbox'] as const;
+/** How long each vehicle is, in tiles, from the shortest to the longest: always one tile across. */
+const VEHICLE_LENGTH = { car: [2, 2], jeep: [2, 2], truck: [2, 4] } as const;
+const COLOR = /^#[0-9a-f]{6}$/i;
+/** What a style of building is called, and a room of that style. */
+const BUILDING = { napo: 'a NAPO building', mill: 'the mill', none: 'a cabin' } as const;
+const ROOM = { napo: 'one of NAPO\'s rooms', mill: 'the mill\'s floor', none: 'a cabin\'s room' } as const;
+/** Why a sealed thing may not be where content puts it (validateItems): it comes only in a parcel, and stays in the stash until opened. */
+const NO_BAG = 'those never go in a bag';
+const OPENED = 'those are only ever opened';
 
 export function validateMap(data: MapData): Problem[] {
   const out: Problem[] = [];
@@ -41,7 +54,7 @@ export function validateMap(data: MapData): Problem[] {
   else if (data.kind !== 'wilds' && data.depth !== 0) err(`${data.kind === 'town' ? 'a town' : 'an inside'} has depth 0`);
   else if (data.kind === 'wilds' && data.depth < 1) err('the wilds have depth 1 or more');
   if (!Array.isArray(data.exits)) err('exits must be a list (it may be empty)');
-  if (data.style !== undefined && (data.style !== 'napo' || data.kind !== 'inside')) err(`style ${JSON.stringify(data.style)}: only an inside has a style, and it is napo (one of NAPO's rooms)`);
+  if (data.style !== undefined && (!(HOUSE_STYLES as readonly string[]).includes(data.style) || data.kind !== 'inside')) err(`style ${JSON.stringify(data.style)}: only an inside has a style, and it is napo (one of NAPO's rooms) or mill (the sawmill's floor)`);
   if (out.some(p => p.level === 'error')) return out;
 
   const map = new TileMap(data);
@@ -67,11 +80,25 @@ export function validateMap(data: MapData): Problem[] {
       const d = doorOf(o);
       if (!exitTiles.has(`${d.x},${d.y}`)) err(`house at ${o.x},${o.y}: its door ${d.x},${d.y} is not an exit, but every building must lead inside`);
       if (!map.walkable(d.x, d.y + 1)) err(`house at ${o.x},${o.y}: the tile in front of its door (${d.x},${d.y + 1}) is not walkable`);
-      // A cabin is drawn 3 by 2; NAPO's buildings are drawn to their size.
-      if (o.style !== undefined && o.style !== 'napo') err(`house at ${o.x},${o.y}: style is napo or left out, not ${JSON.stringify(o.style)}`);
-      else if (!o.style && (o.w !== 3 || o.h !== 2)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a cabin is 3 by 2 (only NAPO's buildings come in other sizes)`);
+      // A cabin is drawn 3 by 2; NAPO's buildings and the mill are drawn to their size.
+      if (o.style !== undefined && !(HOUSE_STYLES as readonly string[]).includes(o.style)) err(`house at ${o.x},${o.y}: style is napo, mill or left out, not ${JSON.stringify(o.style)}`);
+      else if (!o.style && (o.w !== 3 || o.h !== 2)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a cabin is 3 by 2 (only NAPO's buildings and the mill come in other sizes)`);
       else if (o.style === 'napo' && !(o.w >= 3 && o.w <= 9 && o.h >= 2 && o.h <= 5)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a NAPO building is 3 to 9 wide and 2 to 5 deep`);
+      else if (o.style === 'mill' && !(o.w >= 5 && o.w <= 9 && o.h >= 2 && o.h <= 4)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: the mill is long and low, 5 to 9 wide and 2 to 4 deep`);
+      // Curtains are what the people who left drew behind them: never in a lit house, a mill or NAPO's.
+      if (o.curtains && (o.style || o.lit)) err(`house at ${o.x},${o.y}: curtains are drawn only in a cabin nobody lives in (no style, not lit)`);
     }
+    if (o.kind === 'car' || o.kind === 'truck' || o.kind === 'jeep') validateVehicle(o, map, err);
+    if ((o.kind === 'logs' || o.kind === 'carriage') && !footprint(o).every(n => Number.isInteger(n) && n >= 1 && n <= (o.kind === 'logs' ? 4 : 9))) {
+      err(`${o.kind} at ${o.x},${o.y} is ${footprint(o).join(' by ')}: ${o.kind === 'logs' ? 'a log deck is 1 to 4 tiles each way' : 'a carriage runs 1 to 9 tiles'}`);
+    }
+    if (o.kind === 'paper') {
+      if (!o.name?.trim() || !o.text?.length || o.text.some(t => !t.trim())) err(`paper at ${o.x},${o.y} needs a name and something to read`);
+      if (!(PAPER_LOOKS as readonly string[]).includes(o.look)) err(`paper at ${o.x},${o.y}: looks like ${PAPER_LOOKS.join(', ')}, not ${JSON.stringify(o.look)}`);
+      // A calendar or a drawing hangs on a wall; a note or a list lies on a table on the floor.
+      else if (hangs(o.look) !== (map.kind(o.x, o.y) === 'wall')) err(`paper at ${o.x},${o.y}: a ${o.look} ${hangs(o.look) ? 'hangs on a wall tile' : 'lies on a table, on the floor'}`);
+    }
+    if ((o.kind === 'cage' || o.kind === 'jeep') && (!o.text?.length || o.text.some(t => !t.trim()))) err(`${o.kind} at ${o.x},${o.y} has nothing to read`);
     for (const [x, y] of objectTiles(o)) {
       if (!map.inside(x, y)) err(`${o.kind} at ${o.x},${o.y} reaches outside the map`);
       if (DECOR.has(o.kind)) continue;
@@ -81,7 +108,7 @@ export function validateMap(data: MapData): Problem[] {
       used.set(key, `${o.kind} at ${o.x},${o.y}`);
     }
     if (o.kind === 'sign' && (!o.text.length || o.text.some(t => !t.trim()))) err(`sign at ${o.x},${o.y} has no text`);
-    if (o.kind === 'sign' && o.style !== undefined && o.style !== 'napo') err(`sign at ${o.x},${o.y}: style is napo or left out, not ${JSON.stringify(o.style)}`);
+    if (o.kind === 'sign' && o.style !== undefined && !(SIGN_STYLES as readonly string[]).includes(o.style)) err(`sign at ${o.x},${o.y}: style is ${SIGN_STYLES.join(', ')} or left out, not ${JSON.stringify(o.style)}`);
     if (o.kind === 'console' && (!o.name?.trim() || !o.text?.length || o.text.some(t => !t.trim()))) err(`console at ${o.x},${o.y} needs a name and something to read`);
     if (o.kind === 'console' && !ID.test(o.id ?? '')) err(`console at ${o.x},${o.y}: its id is lowercase words joined by hyphens (the story names it by it)`);
     if (o.kind === 'fireplace' && o.name !== undefined && !o.name.trim()) err(`fireplace at ${o.x},${o.y}: a name says something, or is left out`);
@@ -90,7 +117,7 @@ export function validateMap(data: MapData): Problem[] {
       if (!(NPC_LOOK as readonly string[]).includes(k)) err(`npc ${o.id}: a look has ${NPC_LOOK.join(', ')}, not ${k}`);
       else if (typeof c !== 'string' || !/^#[0-9a-f]{6}$/i.test(c)) err(`npc ${o.id}: ${k} is a color, #rrggbb`);
     }
-    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board' || o.kind === 'chest' || o.kind === 'workbench' || o.kind === 'console') {
+    if (FRONTED.has(o.kind)) {
       const front = stepTarget(o.x, o.y, 'down');
       if (!map.walkable(front.x, front.y)) err(`${o.kind} at ${o.x},${o.y}: the tile in front (below) is not walkable, so nobody can talk to it`);
     }
@@ -178,6 +205,26 @@ export function validateMap(data: MapData): Problem[] {
 }
 
 /**
+ * A car, a truck or a jeep: one tile across and as long as its kind is, its nose pointing along it,
+ * in a real color. A jeep is read from beside it, so somebody must be able to stand there.
+ */
+function validateVehicle(o: Extract<MapObject, { kind: 'car' | 'truck' | 'jeep' }>, map: TileMap, err: (message: string) => void): void {
+  const [w, h] = footprint(o), [shortest, longest] = VEHICLE_LENGTH[o.kind], long = Math.max(w, h);
+  const where = `${o.kind} at ${o.x},${o.y}`;
+  if (!(Number.isInteger(w) && Number.isInteger(h) && Math.min(w, h) === 1 && long >= shortest && long <= longest)) {
+    err(`${where} is ${w} by ${h}: ${shortest === longest ? `a ${o.kind} is ${long} by 1 or 1 by ${long}` : `a ${o.kind} is one tile across and ${shortest} to ${longest} long`}`);
+    return;
+  }
+  const dir = o.dir ?? 'right', across = w > h ? ['left', 'right'] : ['up', 'down'];
+  if (!across.includes(dir)) err(`${where}: its nose points along it, ${across.join(' or ')}, not ${JSON.stringify(dir)}`);
+  if (o.kind === 'car' && o.paint !== undefined && !COLOR.test(o.paint)) err(`${where}: paint is a color, #rrggbb`);
+  if (o.kind === 'truck' && o.style !== undefined && o.style !== 'napo') err(`${where}: style is napo or left out, not ${JSON.stringify(o.style)}`);
+  if (o.kind === 'jeep' && !objectTiles(o).some(([x, y]) => DIRS.some(d => { const n = stepTarget(x, y, d); return map.walkable(n.x, n.y); }))) {
+    err(`${where}: nobody can stand beside it to read it`);
+  }
+}
+
+/**
  * Tall grass (hidden) is ground you wade into: never under something that stands there, never raised,
  * never an exit. The tiles in front of a door and of what you read or talk to stay plain ground, so
  * nobody comes out of a shelter or reads a sign crouched in the grass. It only hides you from
@@ -188,7 +235,7 @@ function validateTallGrass(data: MapData, map: TileMap, err: (message: string) =
   const fronts = new Map<string, string>();
   for (const o of data.objects) {
     if (o.kind === 'house') { const d = doorOf(o); fronts.set(`${d.x},${d.y + 1}`, `the door of the house at ${o.x},${o.y}`); }
-    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board' || o.kind === 'chest' || o.kind === 'workbench' || o.kind === 'console') fronts.set(`${o.x},${o.y + 1}`, `the ${o.kind} at ${o.x},${o.y}`);
+    if (FRONTED.has(o.kind)) fronts.set(`${o.x},${o.y + 1}`, `the ${o.kind} at ${o.x},${o.y}`);
   }
   let tiles = 0, lit = 0;
   for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
@@ -226,9 +273,10 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
       if (o.kind !== 'house') continue;
       const d = doorOf(o), into = map.exitAt(d.x, d.y), target = into && byId.get(into.to);
       if (target && target.data.kind !== 'inside') out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: its door leads to ${into!.to}, which is not an inside` });
-      // Concrete outside, concrete inside: one of NAPO's buildings leads into one of its rooms, a cabin into a cabin's.
+      // Concrete outside, concrete inside: one of NAPO's buildings leads into one of its rooms, the mill
+      // onto its floor, a cabin into a cabin's.
       else if (target && (o.style ?? null) !== (target.data.style ?? null)) {
-        out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: ${o.style === 'napo' ? 'a NAPO building' : 'a cabin'} leads into ${into!.to}, which is ${target.data.style === 'napo' ? 'one of NAPO\'s rooms' : 'a cabin\'s room'}` });
+        out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: ${BUILDING[o.style ?? 'none']} leads into ${into!.to}, which is ${ROOM[target.data.style ?? 'none']}` });
       }
     }
     map.data.exits.forEach((e, i) => {
@@ -294,7 +342,12 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     for (const [field, v] of [['noun', i.noun], ['plural', i.plural], ['about', i.about]] as const) {
       if (v !== undefined && !(typeof v === 'string' && v.trim())) err(`${name}: ${field}, when given, says something`);
     }
-    if (!['resource', 'consumable', 'charm', 'gear', 'tool'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear or tool`);
+    if (!['resource', 'consumable', 'charm', 'gear', 'tool', 'sealed'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear, tool or sealed`);
+    if (i.kind === 'sealed') {
+      if (!i.holds?.length) err(`${name}: a sealed thing holds something`);
+      if (i.use || i.xp || i.fuel || i.charge || i.reveals) err(`${name}: a sealed thing is only opened, at the chest, and earns no XP`);
+    } else if (i.holds || i.seal !== undefined) err(`${name}: only a sealed thing holds something`);
+    if (i.seal !== undefined && !(typeof i.seal === 'string' && i.seal.trim())) err(`${name}: seal, when given, says something`);
     if (i.kind === 'tool') {
       if (i.stack !== 1) err(`${name}: a tool stacks one to a slot`);
       if (i.use || i.weight || i.xp || i.fuel || i.charge || i.live) err(`${name}: a tool is never used up, weighs nothing and earns no XP`);
@@ -334,6 +387,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       const into = data.items.find(d => d.id === i.live!.into);
       if (!into) err(`${name}: turns into ${i.live.into}, which is not an item`);
       else if (into.live) err(`${name}: turns into ${into.id}, which is live too`);
+      else if (into.kind === 'sealed') err(`${name}: turns into ${into.id}, a sealed thing: ${NO_BAG}`);
       if (!(typeof i.live.xp === 'number' && i.live.xp > (into?.xp ?? 0))) err(`${name}: live, it is worth more XP than what it turns into`);
       if (!(i.live.fresh > 0) || !(i.live.fade > 0)) err(`${name}: live, it stays fresh and fades by numbers above 0`);
       if (i.stack !== 1) err(`${name}: a live item stacks one to a slot`);
@@ -347,6 +401,9 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
   }
   // Once there are tools at all, whoever never got one of their own carries the starter tools: they must be tools.
   const tools = new Set(data.items.filter(i => i.kind === 'tool').map(i => i.id));
+  // A sealed thing comes only in a parcel and stays in the stash until it is opened there (World.open):
+  // nothing may put one in a bag, make one, or pay with one unopened.
+  const sealed = new Set(data.items.filter(i => i.kind === 'sealed').map(i => i.id));
   for (const t of STARTER_TOOLS) {
     const def = data.items.find(i => i.id === t);
     if (def && def.kind !== 'tool') err(`the starter tool ${t} is not a tool`);
@@ -362,9 +419,23 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     for (const n of cost ?? []) {
       if (!ids.has(n.item)) err(`mend: ${tier} needs ${n.item}, which is not an item`);
       else if (tools.has(n.item)) err(`mend: ${tier} needs ${n.item}, a tool: tools are never used up`);
+      else if (sealed.has(n.item)) err(`mend: ${tier} needs ${n.item}, a sealed thing: ${OPENED}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`mend: each need is a whole number from 1`);
     }
   }
+  if (data.upgrades !== undefined && !Array.isArray(data.upgrades)) err('upgrades: a list, what each level costs, +1 first');
+  else if ((data.upgrades?.length ?? 0) > UPGRADE_MAX) err(`upgrades: at most ${UPGRADE_MAX} levels`);
+  (Array.isArray(data.upgrades) ? data.upgrades : []).forEach((u, i) => {
+    const name = `upgrades: +${i + 1}`;
+    if (!u?.needs?.length) err(`${name} costs nothing`);
+    for (const n of u?.needs ?? []) {
+      if (!ids.has(n.item)) err(`${name} needs ${n.item}, which is not an item`);
+      else if (tools.has(n.item)) err(`${name} needs ${n.item}, a tool: tools are never used up`);
+      else if (sealed.has(n.item)) err(`${name} needs ${n.item}, a sealed thing: ${OPENED}`);
+      if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
+    }
+    if (u?.chance !== undefined && !(typeof u.chance === 'number' && u.chance > 0 && u.chance <= 1)) err(`${name}: chance is a share above 0, at most 1`);
+  });
   for (const q of data.quirks ?? []) {
     if (!QUIRKS.includes(q.id)) err(`quirk ${q.id}: the game knows ${QUIRKS.join(', ')}`);
     if (!q.name?.trim() || !q.text?.trim()) err(`quirk ${q.id} needs a name and a text`);
@@ -377,6 +448,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (recipeIds.has(r.id)) err(`${name} is defined twice`);
     recipeIds.add(r.id);
     if (!ids.has(r.make)) err(`${name} makes ${r.make}, which is not an item`);
+    else if (sealed.has(r.make)) err(`${name} makes ${r.make}, a sealed thing: those come only in parcels`);
     if (r.count !== undefined && !(Number.isInteger(r.count) && r.count >= 1)) err(`${name}: count is a whole number from 1`);
     // What it makes goes by its kind: a tool to the player's tools (World.giveTool), anything else to the stash.
     else if (tools.has(r.make) && r.count !== undefined && r.count !== 1) err(`${name} makes ${r.make}, a tool, which is yours once: count is 1 or left out`);
@@ -384,17 +456,54 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     for (const n of r.needs ?? []) {
       if (!ids.has(n.item)) err(`${name} needs ${n.item}, which is not an item`);
       else if (tools.has(n.item)) err(`${name} needs ${n.item}, a tool: tools are never used up`);
+      else if (sealed.has(n.item)) err(`${name} needs ${n.item}, a sealed thing: ${OPENED}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
     }
   }
   for (const i of data.items) for (const r of i.reveals ?? []) {
     if (!ids.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, which is not an item`);
     else if (tools.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a tool: tools are made at the workbench or found`);
+    else if (sealed.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a sealed thing: ${NO_BAG}`);
     if (r.item === i.id) err(`item ${JSON.stringify(i.id)} reveals itself`);
     if (!Number.isInteger(r.count) || r.count < 1 || !(r.weight > 0)) err(`item ${JSON.stringify(i.id)}: a reveal needs a count from 1 and a weight above 0`);
     // Looking closely says what it turned out to be and what that is good for: the `about` line.
     const into = data.items.find(d => d.id === r.item);
     if (into && !into.about?.trim()) warn(`item ${JSON.stringify(r.item)}: ${i.id} may turn out to be it, but it has no about line to say what it is good for`);
+  }
+  // What goes into the stash from a lockbox or a parcel: things that lie in a stash (not tools), and never another sealed thing inside a sealed one.
+  const stashable = (id: string, where: string, sealed = false) => {
+    const def = data.items.find(d => d.id === id);
+    if (!def) return err(`${where}: ${id} is not an item`);
+    if (def.kind === 'tool') err(`${where}: ${id} is a tool, which never lies in a stash`);
+    if (sealed && def.kind === 'sealed') err(`${where}: ${id} is sealed too`);
+  };
+  const slotsOf = (list: unknown, where: string, sealed = false) => {
+    if (!Array.isArray(list) || !list.length) return err(`${where}: a list of items and counts, not empty`);
+    for (const s of list as BagSlot[]) {
+      stashable(s?.item, where, sealed);
+      if (!(Number.isInteger(s?.count) && s.count >= 1)) err(`${where}: each count is a whole number from 1`);
+    }
+  };
+  for (const i of data.items) if (i.holds !== undefined && !Array.isArray(i.holds)) err(`item ${JSON.stringify(i.id)}: holds is a list`);
+  for (const i of data.items) (Array.isArray(i.holds) ? i.holds : []).forEach((h, n) => {
+    const where = `item ${JSON.stringify(i.id)}: holding ${n + 1}`;
+    if (typeof h !== 'object' || h === null) return err(`${where}: it is a weight, and some items or any one of a kind`);
+    if (!(typeof h.weight === 'number' && h.weight > 0)) err(`${where}: its weight is above 0`);
+    if ((h.items === undefined) === (h.any === undefined)) return err(`${where}: it is some items, or any one of a kind`);
+    if (h.items !== undefined) {
+      slotsOf(h.items, where, true);
+      // Opening one says what was inside and, when it is one thing, what that is good for.
+      const one = Array.isArray(h.items) && h.items.length === 1 ? data.items.find(d => d.id === h.items![0]?.item) : undefined;
+      if (one && !one.about?.trim()) warn(`item ${JSON.stringify(one.id)}: ${i.id} may hold it, but it has no about line to say what it is good for`);
+    } else if (!(['resource', 'consumable', 'charm'] as const).includes(h.any as never)) err(`${where}: any is resource, consumable or charm`);
+    else if (!data.items.some(d => d.kind === h.any)) err(`${where}: any ${h.any}, but there is none`);
+  });
+  const p = data.parcels;
+  if (p) {
+    slotsOf(p.welcome, 'parcels: the welcome parcel');
+    if (!Array.isArray(p.week) || p.week.length !== WEEKDAYS.length) err(`parcels: week is a parcel for each of the ${WEEKDAYS.length} days, Monday first`);
+    else p.week.forEach((day, n) => slotsOf(day, `parcels: ${WEEKDAYS[n]}'s parcel`));
+    if (p.allWeek !== undefined) slotsOf(p.allWeek, 'parcels: allWeek');
   }
   const byId = new Map(maps.map(m => [m.id, m]));
   const conditionIds = validateConditions(data, byId, err);
@@ -402,6 +511,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
   data.finds.forEach((f, n) => {
     const name = `find ${n} (${f.item} in ${f.map})`;
     if (!ids.has(f.item)) err(`${name}: there is no item ${f.item}`);
+    else if (sealed.has(f.item)) err(`${name}: ${f.item} is a sealed thing: ${NO_BAG}`);
     const mapData = byId.get(f.map);
     if (!mapData) return err(`${name}: there is no map ${f.map}`);
     if (!Number.isInteger(f.count) || f.count < 1) err(`${name}: count must be a whole number from 1`);
@@ -476,6 +586,20 @@ export function validateStory(story: StoryData, maps: MapData[], items?: ItemsDa
       else if (typeof line !== 'string' || !line.trim()) err(`${name}: ${who}'s hint says nothing`);
     }
   });
+  // What people say once after something done for the first time: which were said is kept a bit each, in this order.
+  const remarkIds = new Set<string>(), remarks = story.remarks ?? [];
+  if (!Array.isArray(remarks)) err('remarks is a list');
+  else remarks.forEach((r, i) => {
+    if (typeof r !== 'object' || r === null) return err(`remark ${i + 1}: a remark has an id, who says it, after what, and the line`);
+    const name = `remark ${i + 1} (${JSON.stringify(r.id)})`;
+    if (!ID.test(r.id ?? '')) err(`${name}: an id is lowercase words joined by hyphens`);
+    if (remarkIds.has(r.id)) err(`${name} is there twice`);
+    remarkIds.add(r.id);
+    if (!people.has(r.who)) err(`${name}: nobody has the id ${String(r.who)}`);
+    if (!MILESTONES.includes(r.after)) err(`${name}: after is one of ${MILESTONES.join(', ')}`);
+    if (typeof r.line !== 'string' || !r.line.trim()) err(`${name} says nothing`);
+  });
+  if (Array.isArray(remarks) && remarks.length > MAX_REMARKS) err(`there are ${remarks.length} remarks, and which were said is kept for at most ${MAX_REMARKS}`);
   return out;
 }
 

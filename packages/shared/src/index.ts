@@ -6,6 +6,8 @@ export * from './gear';
 export * from './items';
 export * from './map';
 export * from './movement';
+export * from './outfits';
+export * from './parcels';
 export * from './progress';
 export * from './protocol';
 export * from './sky';

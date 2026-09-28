@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { doorOf, type MapObject } from '@napoland/shared';
-import { NAPO_WALL_H, NAPO_YELLOW, TOWER_H, napoBuilding, napoSign, towerModel } from '../src/view/napo';
+import { HUM, NAPO_WALL_H, NAPO_YELLOW, TOWER_H, cageModel, jeepModel, napoBuilding, napoProp, napoSign, napoTruck, pumpModel, stakeModel, towerModel } from '../src/view/napo';
 
 type House = Extract<MapObject, { kind: 'house' }>;
 /** A cabin's doorway (world.ts): NAPO's buildings share it. */
@@ -90,5 +90,45 @@ describe('the Tower', () => {
     const facing = new THREE.Vector3(0, 1, 0).applyQuaternion(dish!.getWorldQuaternion(new THREE.Quaternion()));
     expect(facing.z).toBeLessThan(-0.8);
     expect(facing.y).toBeGreaterThan(0.2);
+  });
+});
+
+describe('what NAPO left out in the places', () => {
+  /** Stays on its tiles, give or take its outlines. */
+  const onTiles = (o: THREE.Object3D, x: number, y: number, w = 1, h = 1) => {
+    const b = new THREE.Box3().setFromObject(o);
+    expect([b.min.x >= x - 0.05, b.max.x <= x + w + 0.05, b.min.z >= y - 0.05, b.max.z <= y + h + 0.05], `${x},${y}`).toEqual([true, true, true, true]);
+  };
+
+  it('parks its box trucks, three tiles long, in NAPO\'s yellow and white', () => {
+    const truck = napoTruck({ kind: 'truck', x: 42, y: 36, w: 1, h: 3, dir: 'down', style: 'napo' });
+    onTiles(truck, 42, 36, 1, 3);
+    expect(colored(truck, NAPO_YELLOW).length).toBeGreaterThan(0);
+    expect(napoProp({ kind: 'truck', x: 42, y: 36, w: 1, h: 3, dir: 'down' })).toBeNull();
+  });
+
+  it('leaves its burned jeep on its two tiles, a patch of yellow left on the door that hangs open, a little way out', () => {
+    const jeep = jeepModel({ kind: 'jeep', x: 27, y: 72, w: 2, h: 1, dir: 'left', text: ['NAPO'] });
+    const b = new THREE.Box3().setFromObject(jeep);
+    expect([b.min.x >= 26.95, b.max.x <= 29.05, b.min.z >= 71.95]).toEqual([true, true, true]);
+    // The driver's door is on the south side, facing the camera, and swings out no farther than a third of a tile.
+    expect(b.max.z).toBeGreaterThan(73);
+    expect(b.max.z).toBeLessThan(73.35);
+    expect(colored(jeep, NAPO_YELLOW).length).toBeGreaterThan(0);
+  });
+
+  it('stands its pump, its cages and its stakes each on their tile; the rock in a cage hums in the one shared glow', () => {
+    onTiles(pumpModel({ x: 42, y: 40 }), 42, 40);
+    const cage = cageModel({ x: 49, y: 66 }, HUM);
+    onTiles(cage, 49, 66);
+    expect(uses(cage, HUM)).toBe(true);
+    expect(uses(napoProp({ kind: 'cage', x: 50, y: 66, text: ['NAPO · Sample 7'] })!, HUM)).toBe(true);
+    expect(colored(cage, NAPO_YELLOW).length).toBeGreaterThan(0);
+    for (const [x, y] of [[33, 21], [42, 21], [0, 0]] as const) {
+      const stake = stakeModel({ x, y });
+      onTiles(stake, x, y);
+      expect(colored(stake, NAPO_YELLOW).length).toBeGreaterThan(0);
+      expect(colored(stake, '#ff7a1a').length, 'its orange flagging').toBeGreaterThan(0);
+    }
   });
 });

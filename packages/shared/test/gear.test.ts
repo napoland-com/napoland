@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BAG_SLOTS, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, RESIST_MAX, SURGE_DRAIN, TileMap, WEATHER_DRAIN, WET_DRAIN, bagSlotsOf, canMake, energyRate, gearEnergy,
-  itemIndex, resistOf, validateItems, type ItemsData, type MapData,
+  BAG_SLOTS, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, RESIST_MAX, STARTER_GEAR, SURGE_DRAIN, TileMap, WEATHER_DRAIN, WET_DRAIN, bagSlotsOf, canMake, energyRate, gearEnergy,
+  itemIndex, nearestRecipe, resistOf, validateItems, type ItemsData, type MapData, type Recipe,
 } from '../src';
+import json from '../../../content/items.json';
 
 const data: ItemsData = {
   version: 1,
@@ -74,5 +75,43 @@ describe('validation of gear and recipes', () => {
     expect(problems({ items: starter, recipes: [{ id: 'hat', make: 'nope', needs: [{ item: 'dust', count: 0 }] }] })).toEqual([
       'recipe "hat" makes nope, which is not an item', 'recipe "hat" needs dust, which is not an item', 'recipe "hat": each need is a whole number from 1',
     ]);
+  });
+});
+
+describe('the nearest gear you could make (a first goal on the first day)', () => {
+  const content = json as unknown as ItemsData;
+  const starter = new Set(Object.values(STARTER_GEAR));
+  const RECIPES: Recipe[] = [
+    { id: 'cap', make: 'cap', needs: [{ item: 'cloth', count: 6 }, { item: 'resin', count: 1 }] },
+    { id: 'coat', make: 'coat', needs: [{ item: 'cloth', count: 8 }, { item: 'resin', count: 4 }] },
+    { id: 'gloves', make: 'gloves', needs: [{ item: 'resin', count: 6 }, { item: 'cloth', count: 2 }] },
+    { id: 'boots', make: 'boots', needs: [{ item: 'resin', count: 8 }, { item: 'scrap', count: 2 }] },
+  ];
+
+  it('points a new player, with only the welcome parcel in the stash, at rubber gloves: 1 more resin', () => {
+    expect(nearestRecipe(content.recipes!, starter, { resin: 5, cloth: 4, thermos: 1, flare: 2 }, {})).toEqual({
+      recipe: content.recipes!.find(r => r.id === 'rubber-gloves'), missing: [{ item: 'resin', count: 1 }], ready: false,
+    });
+  });
+
+  it('counts what the bag holds as well as the stash, and says it is ready only when the stash alone can pay', () => {
+    const next = nearestRecipe(RECIPES, new Set(), { resin: 5, cloth: 4 }, { resin: 3 })!;
+    expect(next).toMatchObject({ recipe: { id: 'gloves' }, missing: [], ready: false });
+    expect(nearestRecipe(RECIPES, new Set(), { resin: 6, cloth: 2 }, {})).toMatchObject({ recipe: { id: 'gloves' }, missing: [], ready: true });
+  });
+
+  it('puts one the stash can pay for first, the first of those in the recipes\' order', () => {
+    // The cap and the coat can both be made; the gloves would need 2 more resin.
+    expect(nearestRecipe(RECIPES, new Set(), { cloth: 8, resin: 4 }, {})).toMatchObject({ recipe: { id: 'cap' }, ready: true });
+    // The one that lacks the fewest; of two that lack as few, the first.
+    expect(nearestRecipe(RECIPES, new Set(), { cloth: 4, resin: 5 }, {})).toMatchObject({ recipe: { id: 'gloves' }, missing: [{ item: 'resin', count: 1 }] });
+    expect(nearestRecipe(RECIPES, new Set(), { cloth: 5, resin: 5 }, {})).toMatchObject({ recipe: { id: 'cap' }, missing: [{ item: 'cloth', count: 1 }] });
+    expect(nearestRecipe(RECIPES, new Set(), {}, {})).toMatchObject({ recipe: { id: 'cap' }, missing: [{ item: 'cloth', count: 6 }, { item: 'resin', count: 1 }] });
+  });
+
+  it('leaves out what you own already, worn or in the stash, and says nothing once you own it all', () => {
+    expect(nearestRecipe(RECIPES, new Set(['gloves']), { resin: 6, cloth: 2 }, {})).toMatchObject({ recipe: { id: 'cap' }, missing: [{ item: 'cloth', count: 4 }] });
+    expect(nearestRecipe(RECIPES, new Set(['cap', 'coat', 'gloves', 'boots']), { resin: 99 }, {})).toBeNull();
+    expect(nearestRecipe([], new Set(), {}, {})).toBeNull();
   });
 });

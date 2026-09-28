@@ -249,6 +249,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   -webkit-mask: radial-gradient(closest-side, transparent 84%, #000 86%); mask: radial-gradient(closest-side, transparent 84%, #000 86%); }
 .slot .ring[data-fading] { background: conic-gradient(#b48cff calc(var(--left) * 360deg), rgba(255, 255, 255, .08) 0); }
 .slot .n { position: absolute; right: 8%; bottom: 5%; font-size: calc(var(--u) * 1.1); font-weight: 700; line-height: 1; color: #f1ece0; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; font-variant-numeric: tabular-nums; }
+/* A piece's level, in gold at its slot's top left: the bottom holds how much is left, the top right its quirk. */
+.slot .n.up { top: 6%; left: 9%; right: auto; bottom: auto; color: #ffcf5a; }
+.hud .slot .lbl b { font-weight: 700; color: #ffcf5a; }
 /* Under the slots: what the chosen one holds and what can be done with it, or a hint. */
 .sheet .detail { flex: none; min-height: var(--detail-h); display: flex; flex-direction: column; gap: calc(var(--u) * .7); }
 .sheet .hint { margin: 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.2); line-height: 1.35; color: #b9b2a2; }
@@ -272,6 +275,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 /* The workbench: a row for each mend and recipe, what it makes, what it needs; a tap opens its card. */
 .bench-sheet .hint, .bench-sheet .recipes { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .recipes { display: grid; gap: calc(var(--u) * .6); }
+.bench-sheet .bench-title { margin: calc(var(--u) * .4) 0 0; font-weight: 600; font-size: calc(var(--u) * 1.1); color: #ffcf5a; }
+.bench-sheet .bench-title:first-child { margin-top: 0; }
 .hud .recipe { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; place-items: center stretch; gap: calc(var(--u) * .7); width: 100%; padding: .5em .6em; border: 0; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; text-align: left; }
 .hud .recipe[data-picked] { background: #1d2430; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
 .recipe .big { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); display: grid; place-items: center; border-radius: 8px; background: #1c222c; }
@@ -297,7 +302,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .sheet .dock .detail { flex: 1 1 auto; min-height: 0; width: 100%; max-width: var(--col); margin-inline: auto; gap: calc(var(--u) * .6); }
 .dock .about { min-height: 0; overflow: hidden auto; overscroll-behavior: contain; }
 .dock .acts { flex: none; }
-.hud .dock .act { width: 100%; text-align: center; }
+/* The card's button fills the row; a second one (throw away, take out) sits beside it, never pressed by A. */
+.hud .dock .act { flex: 1 1 auto; min-width: 0; text-align: center; }
+.hud .dock .act.go { flex-basis: 62%; }
 .hud .act .then { font-weight: 500; }
 @media (prefers-reduced-motion: no-preference) { .dock:not([hidden]) { animation: dock-in .18s ease-out; } }
 @keyframes dock-in { from { opacity: 0; transform: translateY(calc(var(--u) * 1.2)); } }
@@ -321,6 +328,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .detail .stats li[data-kind="energy"] { --dot: #ffcf5a; color: #ffe3a1; }
 .detail .stats li[data-kind="none"] { --dot: #4a5468; color: #b9b2a2; }
 .detail .stats s { color: #8a8474; }
+/* On an upgrade's card: what the next level gives, after what it gives now; and how long it lasts out there. */
+.detail .stats .next { font-weight: 600; color: #ffe3a1; }
+.detail .stats li[data-kind="wear"] { --dot: #cfe9c3; }
 .detail .condition { display: flex; align-items: center; gap: .55em; margin-top: .5em; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.05); line-height: 1.3; color: #cfe9c3; }
 .detail .condition[data-low="true"] { color: #ffae98; }
 .detail .cbar { position: relative; flex: none; width: calc(var(--u) * 6.5); height: max(5px, calc(var(--u) * .5)); border-radius: 99px; overflow: hidden; background: #1c222c; box-shadow: inset 0 0 0 1px #0c0f15, 0 0 0 1px #3e4658; }
@@ -337,11 +347,47 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .detail .cost i { font-style: normal; font-variant-numeric: tabular-nums; }
 .detail .words p.note { font-size: calc(var(--u) * 1.1); color: #d3ccbb; }
 .detail .words p.note[data-tone="bad"] { color: #ffae98; }
-/* The stash (the chest at home): your bag above, to put things away; the stash below, to take them out. */
+/* The stash (the chest at home): your bag above, to put things away; the stash below, to take them out.
+   The bag: what you carry, then what you wear. */
 .hud .slot[hidden] { display: none; }
-.stash-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
-.stash-sheet .hint, .stash-sheet .acts { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.stash-sheet .stash-title, .bag-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.stash-sheet .hint, .stash-sheet .acts, .stash-sheet .gate, .bag-sheet .hint { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint[hidden] { display: none; }
+/* The chest's two tabs stand where its title was: the stash (with what you wear) and the wardrobe. They
+   keep their width; the XP beside them takes what is left, and goes where too little is (a card beside
+   the list on a small screen on its side). */
+.stash-sheet .sheet-head { container: chest-head / inline-size; }
+.chest-tabs { flex: none; display: flex; gap: calc(var(--u) * .2); }
+.stash-sheet .sheet-head .room { flex: 1 1 0; text-align: right; }
+@container chest-head (max-width: 18em) { .stash-sheet .sheet-head .room { visibility: hidden; } }
+.hud .chest-tabs button { position: relative; min-height: var(--btn); padding: 0 .5em; border: 0; border-radius: 8px; background: none; box-shadow: none; font-size: inherit; font-weight: 600; color: #8a8474; white-space: nowrap; }
+.hud .chest-tabs button[aria-selected="true"] { color: #ffcf5a; }
+.hud .chest-tabs button[aria-selected="true"]::after { content: ""; position: absolute; left: .5em; right: .5em; bottom: calc(var(--u) * .35); height: 2px; border-radius: 1px; background: #ffcf5a; }
+.stash-sheet .sheet-head .room { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chest-part { flex: none; display: flex; flex-direction: column; gap: var(--gap); }
+/* The wardrobe: three tiles a row, each a small figure in its outfit with its name under it; a locked
+   one is dim and says the level that opens it, the one worn has a tick. */
+.sheet .grid.outfits { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.hud .slot.outfit svg { width: 60%; height: 60%; margin-bottom: 22%; }
+.hud .slot.outfit .lbl { bottom: 5%; padding-inline: 5%; font-size: calc(var(--u) * .92); line-height: 1.1; text-transform: none; color: #d3ccbb; }
+.hud .slot.outfit[data-locked] { background: #131820; box-shadow: inset 0 0 0 2px #232a36; }
+.hud .slot.outfit[data-locked] svg { opacity: .35; filter: grayscale(.7); }
+.hud .slot.outfit[data-locked] .lbl { color: #8a8474; }
+.hud .slot.outfit[data-worn] { box-shadow: inset 0 0 0 2px #8fd98a; }
+.hud .slot.outfit[data-picked] { background: #262d3a; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
+.slot.outfit .on { position: absolute; right: 6%; top: 6%; width: max(14px, calc(var(--u) * 1.5)); height: max(14px, calc(var(--u) * 1.5)); border-radius: 50%; background: #8fd98a; }
+.slot.outfit .on::after { content: ""; position: absolute; left: 36%; top: 20%; width: 24%; height: 44%; border: solid #12301a; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+/* What came in the parcels since the chest last opened, said once, at the top of the stash. */
+.stash-sheet .parcel-note { flex: none; display: grid; gap: .25em; width: 100%; max-width: var(--col); margin-inline: auto; padding: calc(var(--u) * .6) calc(var(--u) * .9);
+  border-radius: 10px; background: #1d2230; box-shadow: inset 0 0 0 1px #8a7440; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #ffe3a1; }
+.stash-sheet .parcel-note p { margin: 0; }
+.stash-sheet .parcel-note[hidden] { display: none; }
+/* The first goal: the nearest gear you could make, in the bag and the chest; green when the stash can pay for it. At the workbench it opens its card. */
+.hud .sheet .goal { display: block; flex: none; width: 100%; max-width: var(--col); margin: 0 auto; padding: .4em .7em; border: 0; border-radius: 9px; background: #151a22; box-shadow: inset 0 0 0 1px #3a4356;
+  text-align: left; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.1); line-height: 1.35; color: #e6dfcf; cursor: default; }
+.hud .sheet .goal[data-ready] { box-shadow: inset 0 0 0 1px #5c8f58; color: #cfe9c3; }
+.hud .sheet .goal[data-act] { cursor: pointer; box-shadow: inset 0 0 0 1px #8a7440; }
+.hud .sheet .goal[hidden] { display: none; }
 .hud .act:disabled, .hud .act[aria-disabled="true"] { opacity: .45; cursor: default; }
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }
