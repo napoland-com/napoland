@@ -16,7 +16,8 @@
  *   to be friends. A guest can still be blocked and reported.
  *
  * Whoever a change touches hears their friends list again (if online); the list says which friends
- * are online, and on which map.
+ * are online, and on which map. Who each player online is friends with is kept at hand too, for the
+ * World (a friend's street is one they may move their cabin to).
  */
 import type { PersonView, Refusal, RefusedAction, ReportReason, ServerMsg } from '@napoland/shared';
 import { RollingLimit } from './limits';
@@ -66,6 +67,8 @@ export class Social {
   private readonly reportLimit: RollingLimit;
   /** Who each player online blocks, kept at hand: chat asks it for every message (chat.ts). */
   private readonly blocking = new Map<string, Set<string>>();
+  /** Who each player online is friends with, kept at hand the same way. */
+  private readonly befriended = new Map<string, Set<string>>();
 
   constructor(private readonly o: SocialOptions) {
     this.tellLimit = new RollingLimit(TELLS_PER_MINUTE, 60_000, o.clock);
@@ -77,9 +80,15 @@ export class Social {
     return this.blocking.get(id) ?? new Set();
   }
 
+  /** Who `id` is friends with, while they are online (nobody before joined() has run, and nobody for a guest). */
+  friends(id: string): ReadonlySet<string> {
+    return this.befriended.get(id) ?? new Set();
+  }
+
   /** A player left: nothing of theirs is kept at hand. */
   left(id: string): void {
     this.blocking.delete(id);
+    this.befriended.delete(id);
   }
 
   /**
@@ -220,8 +229,9 @@ export class Social {
     const s = this.o.storage;
     const [links, me] = [await s.linksOf(id), await s.findPerson({ id })];
     const out = (kind: LinkRecord['kind']): PersonView[] => links.filter(l => l.from === id && l.kind === kind).map(l => ({ id: l.to, name: l.toName }));
-    // The list is read whole here anyway: the blocks at hand follow it.
+    // The list is read whole here anyway: the blocks and friends at hand follow it.
     this.blocking.set(id, new Set(out('block').map(p => p.id)));
+    this.befriended.set(id, new Set(out('friend').map(p => p.id)));
     this.o.send(id, {
       t: 'friends',
       friends: out('friend').map(p => ({ ...p, map: this.o.where(p.id) ?? null })),

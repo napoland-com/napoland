@@ -20,7 +20,7 @@ import type { ThanksFor, ThanksGroup } from './thanks';
 import { OFFER_MAX } from './trade';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 27;
+export const PROTOCOL_VERSION = 28;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -240,6 +240,13 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('cacheLeave'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63) }),
   /** Take the thing `id` out of the crate on tile x,y: once a visit; it thanks whoever left it. */
   z.object({ t: z.literal('cacheTake'), x: z.number().int(), y: z.number().int(), id: z.number().int().nonnegative() }),
+  /**
+   * A at a door on your street, on tile x,y next to you: a neighbor's, you knock (they hear it if they are
+   * home, and you hear whether they are); your own, what it offers (moving next to a friend: `doorstep`).
+   */
+  z.object({ t: z.literal('knock'), x: z.number().int(), y: z.number().int() }),
+  /** At your own door: move your cabin next to friend `to`'s, onto their street, where a lot must be free. It comes with you. */
+  z.object({ t: z.literal('move'), to: z.uuid() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -364,7 +371,9 @@ export type Did =
    */
   | { kind: 'took'; item: string; name: string; mine?: true; thanked?: true }
   /** You spent merits on `look` (merits.ts): it is yours for good, and `left` merits are still to spend. */
-  | { kind: 'bought'; look: string; left: number };
+  | { kind: 'bought'; look: string; left: number }
+  /** Your cabin moved next to `name`'s, onto their street: you stand in front of its door there now. */
+  | { kind: 'moved'; name: string };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -464,7 +473,11 @@ export type Refusal =
   /** Neither side gives anything. */
   | 'nothing_to_trade'
   /** That furniture stands in its place in your cabin already. */
-  | 'placed';
+  | 'placed'
+  /** Their street has no lot free: nobody can move next to them for now. */
+  | 'street_full'
+  /** You live on their street already. */
+  | 'neighbors';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -475,6 +488,21 @@ export interface PersonView {
 /** A friend: online on map `map` (an id), or offline (null). */
 export interface FriendView extends PersonView {
   map: string | null;
+}
+
+/**
+ * A lot on your street: whose cabin it is (their name, on the plate by its door) and whether they are home
+ * (online, in their own cabin: its window is lit).
+ */
+export interface LotView {
+  name: string;
+  home?: true;
+}
+
+/** Your street (a copy of the street's map): which lot is yours, and every lot on it, in the order of its houses (null: nobody lives there yet). */
+export interface StreetView {
+  mine: number;
+  lots: Array<LotView | null>;
 }
 
 /** A private message to you, kept until you read it; `at` is ms since the epoch. */
@@ -620,6 +648,8 @@ export type ServerMsg =
       firsts: FirstView[];
       /** In your own cabin: the furniture you made and set in its places (item ids). Nobody else is told. */
       furniture?: string[];
+      /** On your street: its lots, and which is yours. */
+      street?: StreetView;
       serverTime: number;
     }
   /**
@@ -631,6 +661,8 @@ export type ServerMsg =
       fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
       /** In your own cabin: the furniture you made and set in its places (item ids). Nobody else is told. */
       furniture?: string[];
+      /** On your street: its lots, and which is yours. */
+      street?: StreetView;
     }
   /** Your energy and body, sent when a rate changes and every few seconds (ENERGY_SYNC_MS). */
   | { t: 'energy'; energy: EnergyView; body: BodyView }
@@ -640,6 +672,14 @@ export type ServerMsg =
   | { t: 'tools'; tools: string[] }
   /** The furniture in your own cabin, whole (item ids), after you made one: it stands in its place now. */
   | { t: 'furniture'; furniture: string[] }
+  /** On your street: a lot changed (someone moved in or away, came home or left it); null: nobody lives there now. */
+  | { t: 'lot'; lot: number; view: LotView | null }
+  /** You knocked at the door on tile x,y of your street: whose it is (null: nobody lives there yet), and whether they are home. */
+  | { t: 'door'; x: number; y: number; name: string | null; home: boolean }
+  /** At your own door: the friends whose street has a lot free, whom you could move next to. */
+  | { t: 'doorstep'; moves: PersonView[] }
+  /** Someone (`name`) knocked at your door while you were home. */
+  | { t: 'knocked'; name: string }
   /**
    * You picked these up (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
    * A find that is a `tool` is yours for good instead, and your tools follow in a `tools` message.
@@ -773,7 +813,7 @@ export type ServerMsg =
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
-  | 'thank' | 'cacheLeave' | 'cacheTake'
+  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 

@@ -710,6 +710,7 @@ let marksShown = { changes: -1, view: null as WorldView | null };
 let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
 /** Your cabin's furniture as drawn, and the stash its trophy shelf was drawn from. */
 let comfortShown = { changes: -1, stash: null as typeof game.stash, view: null as WorldView | null };
+let lotsShown = { changes: -1, view: null as WorldView | null };
 /** The furniture the workbench's rows were drawn with. */
 let benchFurniture = -1;
 let statusAt = 0;
@@ -809,6 +810,11 @@ function frame(now: number) {
   if (game.furnitureChanges !== comfortShown.changes || game.stash !== comfortShown.stash || view !== comfortShown.view) {
     comfortShown = { changes: game.furnitureChanges, stash: game.stash, view };
     view.setComfort(madePlaces(game.furniture, id => items.get(id)), game.trophies());
+  }
+  // On your street, the windows of the neighbors who are home are lit.
+  if (game.streetChanges !== lotsShown.changes || view !== lotsShown.view) {
+    lotsShown = { changes: game.streetChanges, view };
+    view.setLots(game.litLots());
   }
   if (game.markChanges !== marksShown.changes || view !== marksShown.view) {
     marksShown = { changes: game.markChanges, view };
@@ -1008,6 +1014,8 @@ function frame(now: number) {
   }
   // Whose pile it is, while you are near. Its id is its owner's, so it gets a key of its own.
   for (const d of game.pilesNear()) { const s = view.project(d.x, d.y, 0.62); tags.push({ id: `pile:${d.id}`, name: d.name, x: s.x, y: s.y, pile: true }); }
+  // On your street, whose cabin it is, on the plate by its door, while you pass it.
+  for (const p of game.platesNear()) { const s = view.project(p.x, p.y + 0.35, 1.3); tags.push({ id: `plate:${p.lot}`, name: p.name, x: s.x, y: s.y, plate: true }); }
   hud.setTags(tags);
   // A speech bubble over whoever said something near you, above their name.
   hud.setBubbles(game.bubblesNow(now).flatMap(b => {

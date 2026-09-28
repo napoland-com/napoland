@@ -2,9 +2,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  ANYWHERE, CACHE_NEAR, COMFORTS, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, comfortMax, doorOf, findPath, findTiles, hidden, itemIndex, notesOf, objectTiles, opensOn, secretKey,
-  secretTitle, stepTarget, upgradable, upgradeChance,
-  validateItems, validateNotebook, type ItemsData, type MapData, type MapNote, type MapObject, type NotebookData, type Sight, type StoryData,
+  ANYWHERE, CACHE_NEAR, COMFORTS, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, comfortMax, doorOf, findPath, findTiles, hidden, itemIndex, lotDoors, notesOf, objectTiles, opensOn,
+  secretKey, secretTitle, stepTarget, upgradable, upgradeChance,
+  validateItems, validateNotebook, type ItemsData, type MapData, type MapExit, type MapNote, type MapObject, type NotebookData, type Sight, type StoryData,
 } from '@napoland/shared';
 
 /** The content as it ships: content/items.json and every map. */
@@ -100,9 +100,47 @@ describe('your own cabin (roadmap/own-cabin.md)', () => {
     expect(findPath(home, x, y, chest.x, chest.y + 1)).toEqual([{ x: chest.x, y: chest.y + 1 }]);
   });
 
-  it('lets you out in front of the house in Stonebrook', () => {
-    const out = home.data.exits[0]!, door = town.data.exits.find(e => e.to === 'stonebrook-home')!;
-    expect([out.to, out.tx, out.ty, out.dir]).toEqual(['stonebrook', door.x, door.y + 1, 'down']);
+  // Since streets (roadmap/streets.md) the cabin stands on your street, not in town: its door lets you out there.
+  it('lets you out onto your street, where the server puts you in front of your own door', () => {
+    const out = home.data.exits[0]!, first = lotDoors(maps.get('residents-lane')!.data)[0]!;
+    // The exit itself names the first lot's doorstep; each player is put in front of their own instead (world.ts).
+    expect([out.to, out.tx, out.ty, out.dir]).toEqual(['residents-lane', first.x, first.y + 1, 'down']);
+    expect(town.data.exits.some(e => e.to === 'stonebrook-home')).toBe(false);
+  });
+});
+
+describe('your street (roadmap/streets.md)', () => {
+  const lane = maps.get('residents-lane')!, town = maps.get('stonebrook')!;
+  const doors = lotDoors(lane.data);
+
+  it('is one lane of thirty plain cabins with name plates, with lamps and a few trees', () => {
+    expect(lane.data).toMatchObject({ kind: 'town', street: true });
+    expect([...maps.values()].filter(m => m.data.street).map(m => m.data.id)).toEqual(['residents-lane']);
+    const houses = lane.data.objects.flatMap(o => (o.kind === 'house' ? [o] : []));
+    expect(houses).toHaveLength(30);
+    expect(houses.every(h => h.plate && !h.lit && !h.style && !h.curtains)).toBe(true);
+    expect(lane.data.objects.filter(o => o.kind === 'lamp').length).toBeGreaterThanOrEqual(10);
+    expect(lane.data.objects.filter(o => o.kind === 'tree').length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('leads every lot\'s door into the cabin of your own, each with a doorstep to stand on, a walk from the way in', () => {
+    expect(doors).toHaveLength(30);
+    for (const d of doors) {
+      expect(lane.exitAt(d.x, d.y)?.to, `${d.x},${d.y}`).toBe('stonebrook-home');
+      // Where the server puts you on the street: in front of your own door.
+      expect(lane.walkable(d.x, d.y + 1) && !lane.exitAt(d.x, d.y + 1), `${d.x},${d.y + 1}`).toBe(true);
+      expect(findPath(lane, lane.data.spawn.x, lane.data.spawn.y, d.x, d.y + 1).length, `${d.x},${d.y + 1}`).toBeGreaterThan(0);
+    }
+    // Nothing else leads into it: not the town, not any other map.
+    expect([...maps.values()].flatMap(m => m.data.exits.filter(e => e.to === 'stonebrook-home').map(() => m.data.id))).toEqual(Array<string>(30).fill('residents-lane'));
+  });
+
+  it('is reached through the house that was Home in Stonebrook, and its end leads back out in front of it', () => {
+    const onto = town.data.exits.find(e => e.to === 'residents-lane')!;
+    expect(town.data.objects.some(o => o.kind === 'house' && doorOf(o).x === onto.x && doorOf(o).y === onto.y)).toBe(true);
+    const end = lane.data.exits.find(e => e.to === 'stonebrook')!;
+    expect([end.tx, end.ty, end.dir]).toEqual([onto.x, onto.y + 1, 'down']);
+    expect(lane.data.exits.map(e => e.to).sort()).toEqual(['stonebrook', ...Array<string>(30).fill('stonebrook-home')]);
   });
 });
 
@@ -497,8 +535,11 @@ describe('the pass that put more of the story in the places (roadmap/richer-plac
       const b = before[id]!, now = maps.get(id)!.data;
       expect(now.version, id).toBeGreaterThan(b.version);
       expect(now.spawn, id).toEqual(b.spawn);
-      // New exits (the doors of new houses) and new names come after the old ones.
-      expect(now.exits.slice(0, b.exits.length), id).toEqual(b.exits);
+      // New exits (the doors of new houses) and new names come after the old ones. One door changed since, on
+      // purpose: the house that was Home is the way onto your street now (roadmap/streets.md), where it was.
+      const lane = maps.get('residents-lane')!.data.spawn;
+      const since = (e: MapExit): MapExit => (e.to === 'stonebrook-home' ? { ...e, to: 'residents-lane', tx: lane.x, ty: lane.y } : e);
+      expect(now.exits.slice(0, b.exits.length), id).toEqual(b.exits.map(since));
       expect((now.places ?? []).slice(0, b.places.length), id).toEqual(b.places);
       // The old things first, in their order (which lamps flicker, and which poles the wires run between, go by it).
       const old = new Set([...b.nature, ...b.things.map(o => JSON.stringify(o))]);

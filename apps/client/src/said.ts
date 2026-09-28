@@ -340,6 +340,7 @@ export function didWho(did: Did, items: Items): string {
     case 'thanked': return did.what === 'fire' ? 'Fire' : 'Arrow';
     case 'left': case 'took': return 'Crate';
     case 'bought': return 'Wardrobe';
+    case 'moved': return YOUR_CABIN;
   }
 }
 
@@ -349,6 +350,8 @@ export function didText(did: Did, items: Items): string {
   if (did.kind === 'thanked') return did.what === 'fire' ? `You thank ${did.name} for feeding the fire.` : `You thank ${did.name} for the arrow.`;
   // Merits buy looks, not items.
   if (did.kind === 'bought') return boughtText(did);
+  // Nor does a move: your cabin, next to the friend's, by name.
+  if (did.kind === 'moved') return `Your cabin stands next to ${did.name}'s now.`;
   const def = items.get(did.item);
   switch (did.kind) {
     case 'fire': {
@@ -419,6 +422,41 @@ export function didText(did: Did, items: Items): string {
     }
   }
 }
+
+// ---------- your street ----------
+
+/** The name over the box at your own door. */
+export const YOUR_CABIN = 'Your cabin';
+
+/** The name over the box at a neighbor's door: whose cabin it is, or an empty one. */
+export function cabinWho(name: string | null): string {
+  return name ? `${name}'s cabin` : 'Empty cabin';
+}
+
+/** While a knock waits for its answer. */
+export const KNOCKING = 'You knock.';
+
+/** At a door nobody lives behind yet. */
+export const NOBODY_LIVES = 'Nobody lives here yet.';
+
+/** What a knock hears back: whether they are home. By name, never a pronoun. Visiting is for later. */
+export function doorText(name: string | null, home: boolean): string {
+  if (!name) return NOBODY_LIVES;
+  return home ? `${name} is home.` : 'Nobody answers.';
+}
+
+/** At home, when a neighbor knocks at your door. */
+export function knockedText(name: string): string {
+  return `${name} knocked.`;
+}
+
+/** At your own door, for a friend whose street has a lot free. */
+export function moveQuestion(name: string): string {
+  return `Move next to ${name}? Your cabin comes with you.`;
+}
+
+/** At your own door, with no friend to move next to. */
+export const NO_MOVES = 'Your own cabin. When a friend has a lot free on their street, you can move next to them from here.';
 
 /** A plain no from the server, as a sentence for the box. */
 export function sentence(text: string): string {

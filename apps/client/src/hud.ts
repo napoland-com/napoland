@@ -312,8 +312,11 @@ export type SocialAction =
 /** What the trade panel asks the game to do: give (or take back) a bag slot, one fewer or one more on a row of your side, Ready, Trade, or call it off. */
 export type TradeAction = { a: 'give'; slot: number } | { a: 'step'; i: number; by: -1 | 1 } | { a: 'ready' } | { a: 'confirm' } | { a: 'cancel' };
 
-/** A name over someone's head (with the drawing of their badge, merits.ts, when they wear one), or over a pile while you are near it. */
-export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; badge?: string }
+/**
+ * A name over someone's head (with the drawing of their badge, merits.ts, when they wear one), over a pile
+ * while you are near it (`pile`), or on the plate by a cabin's door on your street (`plate`).
+ */
+export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; plate?: boolean; badge?: string }
 /** `row` stacks words said at once, 0 at the bottom. */
 export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number; row: number }
 /** The fan of calls over B: the call the finger is on (null: off the fan), and whether the words show under the notes. */
@@ -1851,7 +1854,7 @@ export class Hud {
     more!.setAttribute('aria-disabled', String(c.n >= c.max));
   }
 
-  /** Name tags above other players and near piles, positioned in screen pixels. */
+  /** Name tags above other players, near piles and on the name plates of your street, positioned in screen pixels. */
   setTags(tags: TagView[]) {
     const seen = new Set<string>();
     for (const t of tags) {
@@ -1859,9 +1862,9 @@ export class Hud {
       let el = this.tagEls.get(t.id);
       if (!el) {
         el = document.createElement('div');
-        el.className = t.pile ? 'tag pile' : 'tag';
+        el.className = t.pile ? 'tag pile' : t.plate ? 'tag plate' : 'tag';
         // A player's tag can be tapped: their card, to ask them to be friends (or block or report them).
-        if (!t.pile) el.dataset.player = t.id;
+        if (!t.pile && !t.plate) el.dataset.player = t.id;
         this.el.labels!.appendChild(el);
         this.tagEls.set(t.id, el);
       }

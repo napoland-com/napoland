@@ -141,7 +141,7 @@ describe('gear on the road, over the network', () => {
       expect(await a.c.next('error')).toMatchObject({ code: 'bad_message' });
       expect((await a.c.closed).code).toBe(1008);
     }
-    // 20 brought wear and doff; outfits (21), calls (22) and thanks (23) came after them, then the rest saved up while away (24), merits (25), trades (26) and the cozy cabin (27).
-    expect(PROTOCOL_VERSION).toBe(27);
+    // 20 brought wear and doff; outfits (21), calls (22) and thanks (23) came after them, then the rest saved up while away (24), merits (25), trades (26), the cozy cabin (27) and streets (28).
+    expect(PROTOCOL_VERSION).toBe(28);
   });
 });

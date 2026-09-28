@@ -166,6 +166,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .tag.pile::before { content: ""; display: inline-block; width: .9em; height: .9em; margin-right: .3em; vertical-align: -.12em; background: currentColor;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat; }
+/* A cabin's name plate on your street: a small painted board, square-cornered, so it is not taken for a person. */
+.tag.plate { border-radius: .2em; background: rgba(74, 52, 32, .9); color: #f4e2bf; font-size: calc(var(--u) * .82); font-weight: 700; letter-spacing: .02em; box-shadow: 0 0 0 1px rgba(226, 190, 130, .4); }
 .float { position: absolute; left: 0; top: 0; font-weight: 700; font-size: calc(var(--u) * 1.4); white-space: nowrap; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; will-change: transform, opacity; }
 /* The note rising over a caller's head, in their jacket color, edged dark to read over any ground. */
 .call-note { position: absolute; left: 0; top: 0; width: calc(var(--u) * 2.3); height: calc(var(--u) * 2.3); transform-origin: 50% 100%; will-change: transform, opacity;

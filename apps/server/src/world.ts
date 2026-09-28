@@ -66,6 +66,14 @@
  * a few things anyone left. Each visit (in its room, or near one in the open) a player may leave one
  * thing from their bag and take one out; taking thanks whoever left it, and counts as taken out of the
  * taker's stash, so it earns no XP at home. What lies in each crate is kept across restarts.
+ *
+ * Streets: every player's cabin stands on a lot of a street, a copy of the street's map (Residents' Lane),
+ * about thirty neighbors to a street; a player is given the first free lot when they first come home, and
+ * new streets open as the old ones fill. The way onto the street from town, and out of the cabin, lead to
+ * the player's own street, in front of their own door; the others' doors are knocked at, not walked into,
+ * and a window is lit while its owner is home. At their own door a player may move their cabin next to a
+ * friend's, onto the friend's street, if a lot is free there. Who lives where is kept for everyone, online
+ * or not, loaded at start-up.
  */
 import {
   AFTERGLOW_NEAR,
@@ -148,6 +156,7 @@ import {
   UPGRADE_MAX,
   flashHits,
   findTiles,
+  lotDoors,
   gearEnergy,
   hidden,
   halfOf,
@@ -229,6 +238,7 @@ import {
   type ItemsData,
   type KeepsakesData,
   type LookKind,
+  type LotView,
   type MapNote,
   type MeritsView,
   type NotebookData,
@@ -257,6 +267,7 @@ import {
   type StoryData,
   type StoryEvent,
   type StoryView,
+  type StreetView,
   type StormPhase,
   type StormView,
   type SurgePhase,
@@ -269,7 +280,7 @@ import {
   type Weather,
 } from '@napoland/shared';
 import { FIRE_LOW_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, FirstRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, LotRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
 
 export { MARK_LIFETIME_MS };
 
@@ -336,6 +347,10 @@ export const SEEN_TILES = 6;
 export const FLASH_NEAR = 3;
 export const RUSTLE_HEARD = 8;
 export const HUM_NEAR = 2;
+/** A player knocks at most once in this long (at any door): a knock is heard, and must not become a noise. */
+export const KNOCK_EVERY_MS = 3000;
+/** A player moves their cabin at most once in this long: every move is saved at once, and both streets hear of it. */
+export const MOVE_EVERY_MS = 10_000;
 
 /** Jacket colors, all easy to tell apart in the rain and at night. */
 export const JACKET_COLORS = [
@@ -423,6 +438,8 @@ export interface Joined extends Scene {
   firsts: FirstView[];
   /** In their own cabin: the furniture they made for it (comfort.ts), which only they are told of. */
   furniture?: string[];
+  /** On their street: its lots, and which is theirs. */
+  street?: StreetView;
 }
 
 /** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
@@ -468,6 +485,8 @@ export interface WorldOptions {
   cacheItems?: CacheItemRecord[];
   /** The first finders of the secrets found so far (firsts.ts), as saved. */
   firsts?: FirstRecord[];
+  /** Who lives where: every player's lot on a street, as saved (online or not). */
+  lots?: LotRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
   /**
@@ -546,6 +565,18 @@ interface Online {
   fellAt?: number;
   /** Their afterglow (a quirk, gear.ts) lasts until then (game time): they glow faintly, and watchers keep off them. */
   afterglowUntil?: number;
+  /** When they last knocked at a door (game time): once in KNOCK_EVERY_MS. */
+  knockAt: number;
+  /** When they last moved their cabin (game time): once in MOVE_EVERY_MS. */
+  movedAt: number;
+}
+
+/** A player's lot: whose it is (their name goes on its plate), on which street, and which. */
+interface Lot {
+  id: string;
+  name: string;
+  street: number;
+  lot: number;
 }
 
 /** Where a player stands with their own fire (comfort.ts): away, warming by it (under COZY_AFTER_S), or held there, cozy in full. */
@@ -962,6 +993,20 @@ export class World {
   private firstWrites: FirstRecord[] = [];
   /** The game time of the last tick: what everyone sees of an afterglow is counted from it. */
   private tickAt = 0;
+  /**
+   * The street (a map with `street`): every player's cabin stands on it, each copy of it a street of
+   * neighbors, keyed by the street's number (copyFor). The doors of its lots, lot by lot (lotDoors).
+   */
+  readonly street: TileMap | undefined;
+  private readonly lotDoor: Array<{ x: number; y: number }> = [];
+  /** Who lives where, online or not: each player's lot, and each street's lots (undefined: free). */
+  private readonly lots = new Map<string, Lot>();
+  private readonly streets = new Map<number, Array<Lot | undefined>>();
+  /**
+   * Whom each player online is friends with (net.ts sets it from social.ts): a friend's street is one they
+   * may move to. Nobody, until it is set.
+   */
+  friends: (id: string) => ReadonlySet<string> = () => NOBODY;
 
   /** `maps` must fit together (validateWorld) and `items` must fit the maps (validateItems); `homeId` is a town. */
   constructor(maps: Iterable<TileMap>, homeId: string, weather: Weather, options: WorldOptions = {}) {
@@ -981,8 +1026,12 @@ export class World {
     const home = this.maps.get(homeId);
     if (!home) throw new Error(`the home map ${homeId} does not exist`);
     this.home = home;
-    // validateWorld keeps it to one home, whose door opens onto the home town.
-    const room = [...this.maps.values()].find(m => m.data.wake && this.around.get(m.data.id) === home);
+    // validateWorld keeps it to one home, whose door opens onto the home town, or onto the street off it.
+    // A street with no lots on it would leave nowhere to give anyone (validateWorld refuses one): as good as none.
+    const street = [...this.maps.values()].find(m => m.data.street && lotDoors(m.data).length > 0);
+    this.street = street;
+    this.lotDoor = street ? lotDoors(street.data) : [];
+    const room = [...this.maps.values()].find(m => m.data.wake && (this.around.get(m.data.id) === home || (this.street && this.around.get(m.data.id) === this.street)));
     this.wakeUp = room ? { map: room, ...room.data.wake! } : { map: home, ...home.data.spawn };
     this.sky = weather;
     this.cycle = options.cycle ?? false;
@@ -1039,6 +1088,12 @@ export class World {
     for (const c of options.cacheItems ?? []) this.restoreCacheItem(c);
     this.notesById = notesOf([...this.maps.values()].map(m => m.data));
     for (const f of options.firsts ?? []) if (!this.firsts.has(f.secret)) this.firsts.set(f.secret, { ...f });
+    // Who lives where: a lot saved twice (it should not happen) is the first one's; the other is given a new one when they next come home.
+    for (const l of options.lots ?? []) {
+      if (!this.street || !Number.isInteger(l.street) || l.street < 1 || !Number.isInteger(l.lot) || l.lot < 0 || l.lot >= this.lotDoor.length) continue;
+      if (this.lots.has(l.id) || this.streetLots(l.street)[l.lot]) continue;
+      this.settle({ id: l.id, name: l.name, street: l.street, lot: l.lot });
+    }
 
     // Where each map's creatures may wake is the same in every copy of it: worked out once.
     for (const m of this.maps.values()) {
@@ -1190,6 +1245,8 @@ export class World {
     const furniture = cleanFurniture(rec.furniture);
     if (furniture) r.furniture = furniture;
     else delete r.furniture;
+    // Where their cabin stands is what the World keeps of it (it may have been given to someone else meanwhile, or never saved).
+    this.recordLot(r);
     // Cozy is a time on the wall clock: it went on counting down while they were away.
     if (!(Number.isFinite(r.cozy) && r.cozy! > now + this.epochOffset)) delete r.cozy;
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
@@ -1231,12 +1288,14 @@ export class World {
     const p: Online = {
       rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
       hitchAt: now, trail: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
-      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false,
+      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity,
     };
     this.refresh(p, now);
     this.revisit(p);
     this.players.set(r.id, p);
     zone.players.add(p);
+    // Back home: their window lights on their street.
+    if (this.ownCabin(p)) this.homeChanged(p);
     const player = this.viewOf(p);
     this.toZone(zone.key, { t: 'join', player }, r.id);
     // The welcome has the energy too; the message after it is what a client listens to from then on.
@@ -1258,6 +1317,7 @@ export class World {
       // Theirs alone, beside the zone's: the keepsakes lying here for them.
       finds: this.findsFor(r, zone),
       ...this.cabinOf(p),
+      ...this.streetOf(p),
     };
   }
 
@@ -1280,8 +1340,11 @@ export class World {
     if (this.advance(p, now) <= 0) this.fall(p, now);
     // Seen until now: coming straight back (another tab, the same record) is no time away to rest in.
     p.rec.lastSeenAt = Math.floor(now + this.epochOffset);
+    const home = this.ownCabin(p);
     this.players.delete(id);
     this.quit(p);
+    // Gone from the game: their window goes dark on their street.
+    if (home) this.homeChanged(p);
     if (p.readyAt > -Infinity) this.resting.set(id, p.readyAt);
     this.toZone(from.key, { t: 'leave', id }, id);
     return copyRecord(p.rec);
@@ -2199,6 +2262,69 @@ export class World {
     this.did(p, { kind: 'took', item: def.id, name: e.name, ...(mine ? { mine: true as const } : {}), ...(thanked ? { thanked: true as const } : {}) });
   }
 
+  /**
+   * A at the door on tile x,y of the player's street, next to them. A neighbor's: they knock; they hear
+   * whose door it is and whether they are home, and a neighbor who is home (and does not block them) hears
+   * who knocked, in their text box. Visiting inside is for later. Their own: they hear the friends whose
+   * street has a lot free, whom they could move next to (`doorstep`).
+   */
+  knock(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    const lot = p.map === this.street ? this.lotDoor.findIndex(d => d.x === x && d.y === y) : -1;
+    if (lot < 0 || manhattan(x, y, p.rec.x, p.rec.y) !== 1) return this.refuse(p, 'knock', 'too_far');
+    const mine = this.lotOf(p.rec), owner = this.streetLots(mine.street)[lot];
+    if (owner?.id === id) return void this.outbox.push({ to: id, msg: { t: 'doorstep', moves: this.movesFor(p) } });
+    if (now - p.knockAt < KNOCK_EVERY_MS) return this.refuse(p, 'knock', 'slow_down');
+    p.knockAt = now;
+    const them = owner && this.players.get(owner.id), home = !!them && this.ownCabin(them);
+    this.outbox.push({ to: id, msg: { t: 'door', x, y, name: owner?.name ?? null, home } });
+    // Someone who blocks the knocker hears nothing from them, and the knocker is not told (the lit window says they are home anyway).
+    if (them && home && !this.blocks(them.rec.id).has(id)) this.outbox.push({ to: them.rec.id, msg: { t: 'knocked', name: p.rec.name } });
+  }
+
+  /**
+   * At their own door, a player moves their cabin next to friend `to`'s, onto the friend's street: to the
+   * free lot nearest the friend's. It comes with them (their cabin is the same room wherever it stands):
+   * they stand in front of its door on the new street, and both streets see the lots change.
+   */
+  moveNextTo(id: string, to: string, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    const mine = this.street && p.map === this.street ? this.lotOf(p.rec) : undefined, door = mine && this.lotDoor[mine.lot];
+    if (!mine || !door || manhattan(door.x, door.y, p.rec.x, p.rec.y) !== 1) return this.refuse(p, 'move', 'too_far');
+    if (!this.friends(id).has(to)) return this.refuse(p, 'move', 'not_friends');
+    const friend = this.lots.get(to);
+    if (!friend) return this.refuse(p, 'move', 'gone');
+    if (friend.street === mine.street) return this.refuse(p, 'move', 'neighbors');
+    const lot = this.nearestFree(friend.street, friend.lot);
+    if (lot === undefined) return this.refuse(p, 'move', 'street_full');
+    if (now - p.movedAt < MOVE_EVERY_MS) return this.refuse(p, 'move', 'slow_down');
+    p.movedAt = now;
+    this.unsettle(mine);
+    this.tellLot(mine.street, mine.lot);
+    const moved = this.settle({ id, name: p.rec.name, street: friend.street, lot });
+    this.recordLot(p.rec);
+    this.saveNow.set(id, p.rec);
+    this.tellLot(moved.street, moved.lot);
+    const from = p.zone, at = this.doorstep(p.rec);
+    this.place(p, this.zoneFor(this.street!, String(moved.street), now), at.x, at.y, 'down');
+    this.arrive(p, from, 'exit', now);
+    this.did(p, { kind: 'moved', name: friend.name });
+  }
+
+  /** Players deleted from storage (guests who stayed away): their lots are free again. */
+  forgetLots(ids: readonly string[]): void {
+    for (const id of ids) {
+      const lot = this.lots.get(id);
+      if (!lot || this.players.has(id)) continue;
+      this.unsettle(lot);
+      this.tellLot(lot.street, lot.lot);
+    }
+  }
+
   /** The player's counts toward feats as they are now: the status panel asks when it opens. */
   stats(id: string): void {
     const p = this.players.get(id);
@@ -2369,7 +2495,7 @@ export class World {
     // Energy that ran out before this step could start: the player collapses instead of walking.
     if (this.advance(p, now) <= 0) return this.collapse(p, now);
     const { x, y } = stepTarget(p.rec.x, p.rec.y, dir);
-    if (!p.map.walkable(x, y)) {
+    if (!p.map.walkable(x, y) || this.barred(p, x, y)) {
       // Steps queued behind this one were planned from a tile the player never reached.
       p.queue.length = 0;
       return this.reject(p, seq);
@@ -2411,7 +2537,10 @@ export class World {
     const from = p.zone, map = this.maps.get(to.to)!;
     // With the drying rack in their cabin, a player always walks out of it dry.
     if (this.ownCabin(p) && dries(p.rec.furniture, this.items)) p.rec.wet = 0;
-    this.place(p, this.zoneFor(map, this.copyFor(p.rec, map), now), to.x, to.y, to.dir);
+    const copy = this.copyFor(p.rec, map);
+    // Onto the street, from town or out of the cabin: in front of their own cabin's door, on their own street.
+    const at = map === this.street ? { ...this.doorstep(p.rec), dir: to.dir } : to;
+    this.place(p, this.zoneFor(map, copy, now), at.x, at.y, at.dir);
     this.arrive(p, from, 'exit', now);
     this.moveStory(p, { reach: map.data.id });
     // Home, whichever copy of it (their own cabin): the letter waits there.
@@ -2426,7 +2555,14 @@ export class World {
    * everyone shares.
    */
   protected copyFor(player: PlayerRecord, map: TileMap): string {
-    return map.data.private ? player.id : '';
+    // Coming home is when a player is given a lot, if they have none yet: their cabin stands on a street.
+    if (map.data.private) {
+      if (this.street) this.lotOf(player);
+      return player.id;
+    }
+    // The street is the player's own: their neighbors' copy of it.
+    if (map === this.street) return String(this.lotOf(player).street);
+    return '';
   }
 
   /**
@@ -2435,7 +2571,7 @@ export class World {
    * the main copy.
    */
   private rejoin(r: PlayerRecord, map: TileMap): string {
-    if (map.data.private) return this.copyFor(r, map);
+    if (map.data.private || map === this.street) return this.copyFor(r, map);
     const copy = typeof r.zone === 'string' ? r.zone : '';
     return copy && this.zones.has(zoneKey(map.data.id, copy)) ? copy : '';
   }
@@ -2518,6 +2654,7 @@ export class World {
    * copy they are in (none for a main copy), so they come back into it if it still makes sense (rejoin).
    */
   private place(p: Online, zone: Zone, x: number, y: number, dir: Dir): void {
+    const home = this.players.has(p.rec.id) && this.ownCabin(p);
     this.quit(p);
     zone.players.add(p);
     p.zone = zone;
@@ -2532,6 +2669,8 @@ export class World {
     p.after = undefined;
     p.trail = [];
     this.revisit(p);
+    // Home, or out of it: their window lights or goes dark on their street.
+    if (this.players.has(p.rec.id) && this.ownCabin(p) !== home) this.homeChanged(p);
   }
 
   /**
@@ -2546,7 +2685,10 @@ export class World {
     this.toZone(here, { t: 'join', player: this.viewOf(p) }, id);
     this.outbox.push({
       to: id,
-      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), finds: this.findsFor(p.rec, p.zone), stats: { ...p.rec.stats }, reason, ...this.cabinOf(p) },
+      msg: {
+        t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), finds: this.findsFor(p.rec, p.zone), stats: { ...p.rec.stats }, reason,
+        ...this.cabinOf(p), ...this.streetOf(p),
+      },
       // Where the network hears them from now on, when it is not the map's main copy (its key is the map's id).
       ...(p.zone.copy ? { zone: here } : {}),
     });
@@ -4044,10 +4186,115 @@ export class World {
     for (const q of this.zones.get(c.zone)?.players ?? []) if (q.visit?.cache === c.key) this.sendCache(q, c, now);
   }
 
+  // ---------- streets ----------
+
+  /** The lots of street `n`, lot by lot (undefined: free), made when first needed. */
+  private streetLots(n: number): Array<Lot | undefined> {
+    let lots = this.streets.get(n);
+    if (!lots) this.streets.set(n, (lots = Array.from({ length: this.lotDoor.length }, () => undefined)));
+    return lots;
+  }
+
+  /** Someone lives on a lot now: who lives where knows it. */
+  private settle(lot: Lot): Lot {
+    this.lots.set(lot.id, lot);
+    this.streetLots(lot.street)[lot.lot] = lot;
+    return lot;
+  }
+
+  /** A lot is free again (its owner moved, or is gone for good). */
+  private unsettle(lot: Lot): void {
+    if (this.lots.get(lot.id) === lot) this.lots.delete(lot.id);
+    const on = this.streetLots(lot.street);
+    if (on[lot.lot] === lot) on[lot.lot] = undefined;
+  }
+
+  /** A record says where its cabin stands as the World knows it (none: they have no lot yet). */
+  private recordLot(r: PlayerRecord): void {
+    const lot = this.lots.get(r.id);
+    if (lot) Object.assign(r, { street: lot.street, lot: lot.lot });
+    else {
+      delete r.street;
+      delete r.lot;
+    }
+  }
+
+  /**
+   * The player's lot, given now if they have none (they come home for the first time since streets came):
+   * the first free lot of the first street with one, streets opening one after another as they fill. Saved
+   * at once, and the street hears of its new neighbor.
+   */
+  private lotOf(r: PlayerRecord): Lot {
+    const had = this.lots.get(r.id);
+    if (had) return had;
+    let street = 1;
+    while (!this.streetLots(street).includes(undefined)) street++;
+    const lot = this.settle({ id: r.id, name: r.name, street, lot: this.streetLots(street).indexOf(undefined) });
+    this.recordLot(r);
+    this.saveNow.set(r.id, this.players.get(r.id)?.rec ?? r);
+    this.tellLot(lot.street, lot.lot);
+    return lot;
+  }
+
+  /** The free lot of street `n` nearest lot `near` (the lower one first of two as near); undefined when it is full. */
+  private nearestFree(n: number, near: number): number | undefined {
+    const on = this.streetLots(n);
+    let best: number | undefined;
+    on.forEach((l, i) => { if (!l && (best === undefined || Math.abs(i - near) < Math.abs(best - near))) best = i; });
+    return best;
+  }
+
+  /** In front of the player's own cabin's door, on their street. */
+  private doorstep(r: PlayerRecord): { x: number; y: number } {
+    const d = this.lotDoor[this.lotOf(r).lot]!;
+    return { x: d.x, y: d.y + 1 };
+  }
+
+  /** On a street, the door of someone else's lot is knocked at, never walked into: their cabin is theirs. */
+  private barred(p: Online, x: number, y: number): boolean {
+    if (p.map !== this.street) return false;
+    const lot = this.lotDoor.findIndex(d => d.x === x && d.y === y);
+    return lot >= 0 && this.lotOf(p.rec).lot !== lot;
+  }
+
+  /** A lot as its street sees it: whose it is, and whether they are home (online, in their own cabin: a lit window). */
+  private lotView(lot: Lot | undefined): LotView | null {
+    if (!lot) return null;
+    const owner = this.players.get(lot.id);
+    return { name: lot.name, ...(owner && this.ownCabin(owner) ? { home: true as const } : {}) };
+  }
+
+  /** Everyone on street `n` hears how a lot on it stands now (nobody is told when nobody is out on it). */
+  private tellLot(n: number, lot: number): void {
+    if (this.street) this.toZone(zoneKey(this.street.data.id, String(n)), { t: 'lot', lot, view: this.lotView(this.streetLots(n)[lot]) });
+  }
+
+  /** A player came home or left it (or the game there): their street sees their window light or go dark. */
+  private homeChanged(p: Online): void {
+    const lot = this.lots.get(p.rec.id);
+    if (lot) this.tellLot(lot.street, lot.lot);
+  }
+
+  /** What a zone or welcome tells a player on their street: its lots, and which is theirs. */
+  private streetOf(p: Online): { street?: StreetView } {
+    if (!this.street || p.map !== this.street) return {};
+    const mine = this.lotOf(p.rec);
+    return { street: { mine: mine.lot, lots: this.streetLots(mine.street).map(l => this.lotView(l)) } };
+  }
+
+  /** The friends of the player whose street, not theirs, has a lot free: whom they could move next to, by name. */
+  private movesFor(p: Online): PersonView[] {
+    const mine = this.lotOf(p.rec);
+    return [...this.friends(p.rec.id)].flatMap(id => {
+      const f = this.lots.get(id);
+      return f && f.street !== mine.street && this.nearestFree(f.street, f.lot) !== undefined ? [{ id, name: f.name }] : [];
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   private refuse(
     p: Online,
     action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
-      | 'thank' | 'cacheLeave' | 'cacheTake',
+      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move',
     reason: Refusal,
   ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
