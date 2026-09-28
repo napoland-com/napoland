@@ -72,7 +72,8 @@ describe('the chest at home', () => {
     const lv2 = { xp: 40, level: 2, from: 30, to: 120, maxEnergy: 105 };
     g.handle({ t: 'progress', progress: lv2, gained: 24 }, now);
     expect(g.floats.map(f => f.text)).toEqual(['+24 XP']);
-    expect(g.news).toEqual([{ kind: 'level', progress: lv2 }]);
+    // With the level it came from: one stash can climb several, and the banner names what each opened.
+    expect(g.news).toEqual([{ kind: 'level', progress: lv2, from: 1 }]);
     expect(g.progress).toEqual(lv2);
     // Nothing earned (it all came out of the stash before): no float, no news.
     g.floats = []; g.news = [];
@@ -86,7 +87,7 @@ describe('what the interface says about levels', () => {
   it('names the level and what is left to the next', () => {
     expect(levelText(START)).toBe('Level 1 · 0 XP, 30 to go');
     expect(levelText({ xp: 20000, level: 20, from: 10830, to: null, maxEnergy: 195 })).toBe('Level 20 · 20000 XP, the top');
-    expect(newsBanner({ kind: 'level', progress: { xp: 120, level: 3, from: 120, to: 270, maxEnergy: 110 } }, '')).toEqual({
+    expect(newsBanner({ kind: 'level', progress: { xp: 120, level: 3, from: 120, to: 270, maxEnergy: 110 }, from: 2 }, '')).toEqual({
       title: 'Level 3', sub: 'Your energy bar grows to 110.\nYou can go a little farther now.',
     });
   });

@@ -3,7 +3,9 @@
  * data in, plain data out, so it is tested without a page; sound.ts makes the noise.
  */
 import { FLASH_BURST_S, type CreatureView, type FlashView, type MapKind, type SurgePhase, type TileKind, type Weather } from '@napoland/shared';
+import { callSound, type CallSound } from './calls';
 import type { News } from './game';
+import { radioCrackle, radioHears, radioHum, type RadioScene } from './radio';
 import { fireLevel } from './view/fire';
 
 /** A fire is heard this many tiles away, the wires this many on aurora nights, a moving watcher this many (the server's WATCHER_HUNT). */
@@ -16,8 +18,13 @@ const SKULKER_HEARD = 8;
 const FLASH_HEARD = 6;
 
 export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water' | 'swish';
-export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'skulker' | 'shimmer';
-export type Shot = { kind: 'step'; surface: Surface } | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'cry' | 'dawn' };
+export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'skulker' | 'shimmer' | 'radio' | 'hum';
+export type Shot =
+  | { kind: 'step'; surface: Surface }
+  | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'cry' | 'dawn' }
+  | ({ kind: 'call' } & CallSound)
+  /** The radio: the Tower's pulse (a burst of static), turned on (a click and a sweep of static) and off (a click). */
+  | { kind: 'pulse' | 'tune' | 'click' };
 
 export interface Mix {
   /** How loud each loop should play, 0 to 1. */
@@ -46,6 +53,8 @@ export interface Scene {
   flashes: FlashView[];
   /** You carry a live find: it shimmers faintly. */
   live: boolean;
+  /** Your radio (radio.ts), or null: you have none. */
+  radio: RadioScene | null;
   /** News that came this frame. */
   news: News[];
 }
@@ -85,6 +94,8 @@ export function soundscape(s: Scene, was?: Scene): Mix {
     // Something rushing through the ferns: the nearest skulker on a chase, whoever it is after.
     skulker: loudest(s.creatures.filter(c => c.chasing !== undefined), SKULKER_HEARD),
     shimmer: s.live ? 0.3 : 0,
+    radio: radioCrackle(s.radio, s.kind, s.storm),
+    hum: radioHum(s.radio, s.storm),
   };
 
   const shots: Shot[] = [];
@@ -100,10 +111,16 @@ export function soundscape(s: Scene, was?: Scene): Mix {
   }
   // The moment one goes after you: a sharp cry, wherever it is.
   if (me && same) for (const c of s.creatures) if (c.chasing === me.id && was.creatures.find(o => o.id === c.id)?.chasing !== me.id) shots.push({ kind: 'cry' });
+  // The radio switched on (or just made, on) or off: the switch is heard, even in a storm.
+  if (same && !!s.radio?.on !== !!was.radio?.on) shots.push({ kind: s.radio?.on ? 'tune' : 'click' });
   for (const n of s.news) {
     if (n.kind === 'surge' && n.view.phase === 'unstable') shots.push({ kind: 'bell' });
+    // The Tower's pulse: the region turning restless comes through the radio as one burst of static.
+    if (n.kind === 'surge' && n.view.phase === 'unstable' && radioHears(s.radio, s.storm)) shots.push({ kind: 'pulse' });
     if (n.kind === 'storm' && n.view.phase === 'coming') shots.push({ kind: 'rise' });
     if (n.kind === 'conditions' && n.names.length) shots.push({ kind: 'dawn' });
+    // A call, from the side it comes from and as faint as it is far (calls.ts): yours too, from the middle.
+    if (n.kind === 'call' && me) shots.push({ kind: 'call', ...callSound(n.call, n.id, n.x - me.x, n.y - me.y) });
   }
   return { loops, shots };
 }

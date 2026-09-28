@@ -14,7 +14,7 @@ describe('feats in the status panel', () => {
     const v = statusView({
       energy: null, body: DRY, surge: null, caught: false, stone: ASLEEP, bag: [], items: ITEMS, progress: START, resists: null, wear: null, quirks: [],
       storm: null, flash: null, weather: 'overcast', wilds: false,
-      stats: { rainSteps: 3_212, nightSteps: 60_000, heavySteps: 799, fed: 20, mended: 17, found: 12_345, farSteps: 29_999 },
+      stats: { rainSteps: 3_212, nightSteps: 60_000, heavySteps: 799, fed: 20, mended: 17, found: 12_345, farSteps: 29_999, thanked: 30 },
     });
     expect(v.feats).toEqual([
       { name: 'Rain walker', rank: 1, does: 'Rain soaks you 20% slower.', next: '3,212 of 5,000 steps in the rain to rank 2', progress: 3_212 / 5_000 },
@@ -24,6 +24,7 @@ describe('feats in the status panel', () => {
       { name: 'Mender', rank: 2, does: 'Gear wears 10% slower out there.', next: '17 of 40 pieces mended to rank 3', progress: 17 / 40 },
       { name: 'Forager', rank: 5, does: 'Finds come up double 15% of the time.', next: 'Top rank' },
       { name: 'Pathfinder', rank: 4, does: '85 steps or more from home, you tire 12% slower.', next: '29,999 of 30,000 steps 85 or more from home to rank 5', progress: 29_999 / 30_000 },
+      { name: 'Good neighbor', rank: 1, does: 'Your arrows last 2 days.', next: '30 of 75 thanks to rank 2', progress: 30 / 75 },
     ]);
   });
 
@@ -31,6 +32,8 @@ describe('feats in the status panel', () => {
     expect(featView(feat('mender'), 0)).toEqual({ name: 'Mender', rank: 0, does: 'Rank 1: gear wears 5% slower out there.', next: '0 of 5 pieces mended to rank 1', progress: 0 });
     expect(featView(feat('pathfinder'), 0).does).toBe('Rank 1: 85 steps or more from home, you tire 3% slower.');
     expect(featView(feat('rain-walker'), 100_000)).toEqual({ name: 'Rain walker', rank: 5, does: 'Rain soaks you 50% slower.', next: 'Top rank' });
+    expect(featView(feat('good-neighbor'), 0)).toEqual({ name: 'Good neighbor', rank: 0, does: 'Rank 1: your arrows last 2 days.', next: '0 of 25 thanks to rank 1', progress: 0 });
+    expect(featView(feat('good-neighbor'), 1_200).does).toBe('Your arrows last 7 days.');
   });
 
   it('writes big counts with their thousands apart', () => {

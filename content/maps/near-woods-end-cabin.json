@@ -1,7 +1,7 @@
 {
   "id": "near-woods-end-cabin",
   "name": "The cabin at the end",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -35,6 +35,7 @@
     {"kind":"shelf","x":7,"y":1},
     {"kind":"table","x":6,"y":3},
     {"kind":"bed","x":1,"y":4},
-    {"kind":"crate","x":7,"y":5}
+    {"kind":"crate","x":7,"y":5},
+    {"kind":"cache","x":5,"y":1,"name":"the crate in the cabin at the end"}
   ]
 }

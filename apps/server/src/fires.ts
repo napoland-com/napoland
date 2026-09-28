@@ -6,11 +6,14 @@
  * (the numbers are in shared/energy.ts, which the client shares to draw them). Each copy of a map has
  * fires of its own: feeding one in one copy leaves the same fireplace in another as it was.
  *
+ * A fire that burns down remembers the last few players who fed it (FEEDERS_KEPT), so whoever warms at
+ * it later can thank them (thanks.ts).
+ *
  * Pure bookkeeping on game time (`now`, ms): nobody is told anything here, the World does that.
- * Fuel lives in memory only: after a restart, or when a copy opens again, the wild fires burn again at
- * a random level.
+ * Fuel and feeders live in memory only: after a restart, or when a copy opens again, the wild fires burn
+ * again at a random level, and remember nobody.
  */
-import { EMBERS, FIRE_LOW_S, FIRE_MAX_S, FIRE_RADIUS, fireFull, fireHeat, type FireView, type TileMap } from '@napoland/shared';
+import { EMBERS, FEEDERS_KEPT, FIRE_LOW_S, FIRE_MAX_S, FIRE_RADIUS, fireFull, fireHeat, type FireView, type PersonView, type TileMap } from '@napoland/shared';
 
 export { EMBERS, FIRE_LOW_S, FIRE_MAX_S };
 
@@ -24,6 +27,8 @@ export interface Fire {
   outAt: number;
   /** What people call a fire in the open (map.ts); none: it goes by its room or its region. */
   name?: string;
+  /** The last players who fed it, the most recent first, each once (at most FEEDERS_KEPT). */
+  fed: PersonView[];
 }
 
 export class Fires {
@@ -40,7 +45,7 @@ export class Fires {
     for (const o of map.data.objects) {
       if (o.kind !== 'fireplace') continue;
       const tended = o.tended === true || !wild;
-      const fire: Fire = { map, x: o.x, y: o.y, tended, outAt: tended ? Infinity : now + (0.5 + rng() * 0.5) * FIRE_MAX_S * 1000, ...(o.name ? { name: o.name } : {}) };
+      const fire: Fire = { map, x: o.x, y: o.y, tended, outAt: tended ? Infinity : now + (0.5 + rng() * 0.5) * FIRE_MAX_S * 1000, fed: [], ...(o.name ? { name: o.name } : {}) };
       this.list.push(fire);
       for (let y = o.y - r; y <= o.y + r; y++) for (let x = o.x - r; x <= o.x + r; x++) {
         if (!map.inside(x, y) || Math.hypot(x - o.x, y - o.y) > FIRE_RADIUS) continue;
@@ -85,13 +90,18 @@ export class Fires {
     return true;
   }
 
+  /** `who` fed it just now: the first of its feeders, and each player only once. */
+  fedBy(f: Fire, who: PersonView): void {
+    f.fed = [{ id: who.id, name: who.name }, ...f.fed.filter(p => p.id !== who.id)].slice(0, FEEDERS_KEPT);
+  }
+
   /** Puts a wild fire out now (a condition: it went out overnight); someone has to light it again. */
   douse(f: Fire, now: number): void {
     if (!f.tended) f.outAt = Math.min(f.outAt, now);
   }
 
   view(f: Fire, now: number): FireView {
-    return { x: f.x, y: f.y, left: f.tended ? null : Math.round(this.left(f, now)) };
+    return { x: f.x, y: f.y, left: f.tended ? null : Math.round(this.left(f, now)), ...(f.fed.length ? { fed: f.fed.map(p => ({ ...p })) } : {}) };
   }
 
   views(now: number): FireView[] {

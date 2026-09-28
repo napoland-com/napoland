@@ -17,29 +17,39 @@
  *   what you read; it says when a chapter is reached;
  * - the bag and the chest say what gear you could make next (nextGear), from your stash as the server
  *   last told it;
+ * - a crate for whoever comes next (A, facing it) opens a panel like the chest's: take one thing out
+ *   (it asks nothing, and thanks whoever left it) and leave one (it asks first), once each a visit;
+ * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
+ *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
+ *   said in the text box anywhere else, and come in a letter when you walk in at home;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
- *   it tells us, we show them;
+ *   it tells us, we show them; so is what everyone wears, gear and outfits (you choose yours at the chest);
+ * - a call (calls.ts) goes to the server, which says who heard it: each one heard, yours too, is sung
+ *   from where it came, and a note rises over the caller's head;
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
  * - energy, wetness, fires and the surge clock are counted forward between the server's reports, so
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe, nextUpgrade,
-  stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, DIR_VEC, type NextGear,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal,
+  markLifetime, mendCost, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, DIR_VEC, type CacheItemView,
+  type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
+  type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
-import { pieceAt } from './details';
+import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
+import { pieceAt, type DetailRef } from './details';
 import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, makeQuestion, mendQuestion, noShard, nothingToBurn, openQuestion, sentence,
-  shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion, mendQuestion,
+  noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import type { Maps } from './maps';
+import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
 import type { Avatar } from './view/world';
 
 interface Mover {
@@ -64,7 +74,7 @@ interface Mover {
  * the story (`story`): talking to one, or reading one, may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
@@ -114,16 +124,24 @@ const CREATURE_STEP_MS: Record<CreatureView['kind'], number> = { watcher: 420, s
 /** A creature as the game animates it: like a player, and what kind it is and whom it chases. */
 type Creature = Mover & { kind: CreatureView['kind']; chasing: string | undefined };
 
+/** What a sign is called in the text box, by its style. */
+const SIGN_WHO = { plain: 'Sign', napo: 'NAPO sign', cardboard: 'Cardboard sign', mailbox: 'Mailbox' } as const;
+
 function talkersOf(map: TileMap): Talker[] {
   return map.data.objects.flatMap((o: MapObject): Talker[] => {
     if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines, kind: 'talk', id: o.id, story: { talk: o.id } }];
-    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: o.style === 'napo' ? 'NAPO sign' : 'Sign', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: SIGN_WHO[o.style ?? 'plain'], lines: o.text, kind: 'talk' }];
     if (o.kind === 'console') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', story: { read: o.id } }];
+    if (o.kind === 'paper') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk' }];
+    if (o.kind === 'cage') return [{ x: o.x, y: o.y, who: 'NAPO tag', lines: o.text, kind: 'talk' }];
+    // A jeep is bigger than one tile: its stencil reads from whichever end you face.
+    if (o.kind === 'jeep') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO jeep', lines: o.text, kind: 'talk' }));
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
+    if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
     return [];
   });
 }
@@ -139,12 +157,16 @@ export function minutes(seconds: number): string {
 
 /** News from the world for the interface to announce (status.ts, newsBanner). A feat's is the rank just reached. */
 export type News =
-  | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView }
+  | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView }
+  /** A new level: where it stands now, and the level before (one stash can climb several). */
+  | { kind: 'level'; progress: ProgressView; from: number }
   /** A new day's conditions, by name. */
   | { kind: 'conditions'; names: string[] }
+  /** Someone (`id`, you too) sang a call from tile x,y, heard `at` (our clock): the ears announce it (soundscape.ts), nothing is shown but the note over their head. */
+  | { kind: 'call'; id: string; call: CallKind; x: number; y: number; at: number }
   | { kind: 'chapter'; chapter: Chapter }
-  /** A parcel came into your chest. */
-  | { kind: 'parcel'; parcel: ParcelView };
+  /** A parcel came into your chest; the welcome parcel also names the outfits signing in gave you (their ids). */
+  | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -155,7 +177,7 @@ export const CHAT_LOG = 100;
 /** What a `refused` can answer among friends: the friends panel says why. */
 const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave']);
 
 export class Game {
   meId: string | null = null;
@@ -173,6 +195,8 @@ export class Game {
   dialog: { who: string; lines: string[]; i: number; shown: number } | null = null;
   /** Words rising over a tile; `row` stacks several said at once (0 at the bottom). */
   floats: Array<{ id: number; text: string; color: string; x: number; y: number; t: number; row: number }> = [];
+  /** Calls heard on this map, for the note over each caller's head: whose, which, from what tile, and when (our clock), for CALL_NOTE_S. */
+  calls: Array<{ n: number; who: string; kind: CallKind; x: number; y: number; at: number }> = [];
   /** What lies on this map to pick up, by id. */
   finds = new Map<number, FindView>();
   /** Piles on this map, by id (the owner's id: each player leaves at most one). */
@@ -183,8 +207,8 @@ export class Game {
   bag: BagSlot[] = [];
   /** When the bag was told (`now`): a live find's age counts on from there. */
   bagAt = 0;
-  /** The fires on this map by "x,y": fuel left as told, and when (null: tended, it never goes out). */
-  fires = new Map<string, { left: number | null; at: number }>();
+  /** The fires on this map by "x,y": fuel left as told, and when (null: tended, it never goes out), and who fed it last. */
+  fires = new Map<string, { left: number | null; at: number; fed: PersonView[] }>();
   /** Marks painted on this map, by id; `markChanges` counts changes, like lootChanges. */
   marks = new Map<number, MarkView>();
   markChanges = 0;
@@ -219,6 +243,11 @@ export class Game {
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
   bench: { x: number; y: number; stash: BagSlot[] } | null = null;
+  /**
+   * The crate you opened (its tile): what lies in it, the newest first, with each one's age as told at
+   * `at`, and whether you left one thing and took one this visit; null while none is open.
+   */
+  cache: { x: number; y: number; items: CacheItemView[]; left: boolean; took: boolean; at: number } | null = null;
   /** Parcels that came since the chest was last opened: it says what came in them, once (takeParcels). */
   parcels: ParcelView[] = [];
   /** What your stash holds, as the server last told it (the welcome, and every chest and workbench after); null before. */
@@ -250,6 +279,8 @@ export class Game {
   live = new Set<string>();
   /** What everyone on this map wears, by player id (you too). */
   gear = new Map<string, Gear>();
+  /** The outfit each player on this map wears over their gear, by player id (you too); none: their gear shows. */
+  outfits = new Map<string, string>();
   /** Feats just earned, for the interface to announce (it empties the list). */
   news: News[] = [];
   /** A question in the text box (ask.ts): until it is answered, nobody walks and A, B and the stick answer it. */
@@ -263,6 +294,9 @@ export class Game {
   /** Counts every change to the question and the note, so the box is drawn again only when it changed. */
   boxChanges = 0;
   private fid = 0;
+  private callN = 0;
+  /** When this client last sent a call (our clock): the server takes one every CALL_EVERY_MS. */
+  private calledAt = -Infinity;
   private seq = 0;
   private pending: Array<{ seq: number; x: number; y: number }> = [];
   private path: Array<{ x: number; y: number }> = [];
@@ -285,10 +319,23 @@ export class Game {
   private later: { who: string; text: string } | null = null;
   /** A chest asked to open and not answered yet. */
   private opening: { x: number; y: number; at: number } | null = null;
-  /** A workbench asked to open and not answered yet. */
-  private benching: { x: number; y: number; at: number } | null = null;
+  /** A workbench asked to open and not answered yet, and the card it is to open on (the first goal's), if any. */
+  private benching: { x: number; y: number; at: number; card?: DetailRef } | null = null;
+  /** The card the workbench that just opened is to show: taken once (takeBenchCard). */
+  private benchCard: DetailRef | null = null;
+  /** A crate asked to open and not answered yet. */
+  private caching: { x: number; y: number; at: number } | null = null;
   /** When the server last emptied a bag that held something. */
   private emptiedAt = -Infinity;
+  /** When to offer thanks (thanks.ts), whom you thanked today (UTC day `thankedDay`), and the thanks asked for, for the words of the answer. */
+  private readonly offers = new Offers();
+  private thankedToday = new Set<string>();
+  private thankedDay = -1;
+  private thanking: { id: string; name: string } | null = null;
+  /** The server's wall clock at our `now` (the welcome says it): the UTC day turns by it. */
+  private wall = { now: 0, ms: 0 };
+  /** A letter from home (thanks while you were away), until the text box is free to show it. */
+  private letter: string[] | null = null;
 
   constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY) {
     this.current = maps.home();
@@ -391,6 +438,9 @@ export class Game {
         this.tools = msg.tools;
         this.chapter = msg.story.chapter;
         this.storyChanges++;
+        this.wall = { now, ms: msg.serverTime };
+        this.thankedDay = utcDay(msg.serverTime);
+        this.thankedToday = new Set(msg.thanked ?? []);
         break;
       }
       case 'zone': {
@@ -401,7 +451,7 @@ export class Game {
         this.scene(msg, now);
         this.stats = msg.stats;
         this.statsChanges++;
-        this.dialog = null; this.marker = null; this.floats = [];
+        this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
         // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
         const me = this.me ?? (old ? { ...old } : undefined);
         if (me) {
@@ -415,7 +465,7 @@ export class Game {
         this.body = { view: msg.body, at: now };
         break;
       case 'fire':
-        this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now });
+        this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now, fed: msg.fire.fed ?? [] });
         break;
       case 'mark':
         this.marks.set(msg.mark.id, msg.mark);
@@ -510,30 +560,58 @@ export class Game {
         this.gear.set(msg.id, msg.gear);
         this.quirks.set(msg.id, msg.quirks);
         break;
-      case 'parcel':
-        this.parcels = [...this.parcels, msg.parcel];
-        this.news.push({ kind: 'parcel', parcel: msg.parcel });
+      case 'outfit':
+        if (msg.outfit) this.outfits.set(msg.id, msg.outfit);
+        else this.outfits.delete(msg.id);
         break;
+      case 'parcel': {
+        this.parcels = [...this.parcels, msg.parcel];
+        // The welcome parcel comes with the first sign-in, which opens the wardrobe too: its banner names what is new in it.
+        const outfits = msg.parcel.weekday === null ? this.newOutfits() : [];
+        this.news.push({ kind: 'parcel', parcel: msg.parcel, ...(outfits.length ? { outfits } : {}) });
+        break;
+      }
+      case 'cache': {
+        // The answer to opening it, or news of the one open (someone left or took something).
+        const o = this.caching, c = this.cache, fresh = { x: msg.x, y: msg.y, items: msg.items, left: msg.left, took: msg.took, at: now };
+        if (o && o.x === msg.x && o.y === msg.y && this.clock - o.at < ANSWER_WAIT_MS) { this.cache = fresh; this.caching = null; }
+        else if (c && c.x === msg.x && c.y === msg.y) this.cache = fresh;
+        break;
+      }
       case 'bench': {
         this.stash = msg.stash;
         const b = this.benching;
-        if (b && this.clock - b.at < ANSWER_WAIT_MS) { this.bench = { x: b.x, y: b.y, stash: msg.stash }; this.benching = null; }
+        if (b && this.clock - b.at < ANSWER_WAIT_MS) { this.bench = { x: b.x, y: b.y, stash: msg.stash }; this.benchCard = b.card ?? null; this.benching = null; }
         else if (this.bench) this.bench = { ...this.bench, stash: msg.stash };
         break;
       }
       case 'did':
+        if (msg.did.kind === 'thanked') this.thankedToday.add(msg.did.who);
         // It takes the place of the question just said yes to, which waited for it in the box.
         this.inform(didWho(msg.did, this.items), didText(msg.did, this.items));
         break;
+      case 'thanked': {
+        // Out in the wilds, over your head; anywhere else the text box says what it was for.
+        if (msg.line) this.inform('Thanks', thankedLine(msg.name, thanksFor(msg.what, id => this.maps.find(id), this.items)));
+        else this.floatOverMe(thankedFloat(msg.name, msg.energy), GAIN);
+        break;
+      }
+      case 'letter': {
+        const lines = letterLines(msg.thanks, id => this.maps.find(id), this.items);
+        if (lines.length) this.letter = lines;
+        break;
+      }
       case 'progress':
         if (msg.gained > 0) this.floatOverMe(`+${msg.gained} XP`, GAIN);
-        if (msg.progress.level > this.progress.level) this.news.push({ kind: 'level', progress: msg.progress });
+        if (msg.progress.level > this.progress.level) this.news.push({ kind: 'level', progress: msg.progress, from: this.progress.level });
         this.progress = msg.progress;
         break;
       case 'join':
         this.players.set(msg.player.id, this.mover(msg.player));
         this.gear.set(msg.player.id, msg.player.gear ?? {});
         this.quirks.set(msg.player.id, msg.player.quirks ?? []);
+        if (msg.player.outfit) this.outfits.set(msg.player.id, msg.player.outfit);
+        else this.outfits.delete(msg.player.id);
         if (msg.player.live) this.live.add(msg.player.id);
         else this.live.delete(msg.player.id);
         // A guest who signed in comes back in as someone who is not one.
@@ -614,6 +692,13 @@ export class Game {
         this.friends = msg;
         this.socialChanges++;
         break;
+      case 'called':
+        // A hidden tab runs no frames to take them: what it heard long ago goes, so the lists stay short.
+        this.calls = this.calls.filter(c => now - c.at < CALL_NOTE_S * 1000);
+        this.news = this.news.filter(n => n.kind !== 'call' || now - n.at < CALL_FRESH_MS);
+        this.calls.push({ n: ++this.callN, who: msg.id, kind: msg.kind, x: msg.x, y: msg.y, at: now });
+        this.news.push({ kind: 'call', id: msg.id, call: msg.kind, x: msg.x, y: msg.y, at: now });
+        break;
       case 'said': {
         const mine = msg.id === this.meId;
         this.chat = [...this.chat, { to: msg.to, id: msg.id, name: msg.name, text: msg.text, mine }].slice(-CHAT_LOG);
@@ -634,11 +719,22 @@ export class Game {
       case 'refused':
         if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
         if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
+        if (msg.action === 'call') { this.murmur(refusalText(msg.reason, msg.action)); break; }
+        // A thanks is answered with the helper's name: the one asked about.
+        if (msg.action === 'thank' && this.thanking) {
+          if (msg.reason === 'thanked') this.thankedToday.add(this.thanking.id);
+          this.inform(this.note?.waiting ? this.note.who : '', thankRefusal(msg.reason, this.thanking.name));
+          break;
+        }
+        // Taking out of a crate asks nothing, but is answered in the box like what does.
+        if (msg.action === 'cacheTake') { this.inform('Crate', sentence(refusalText(msg.reason, msg.action))); break; }
         // What was asked first is answered in the same box; the rest (picking up, the chest) over your head.
         if (ASKED_FIRST.has(msg.action)) {
           this.inform(this.note?.waiting ? this.note.who : '', sentence(refusalText(msg.reason, msg.action)));
           break;
         }
+        // The wardrobe's panel would hide anything said over your head: the box stands above it.
+        if (msg.action === 'outfit') { this.inform('Wardrobe', sentence(refusalText(msg.reason, msg.action))); break; }
         if (msg.action === 'pick') this.picking = null;
         this.floatOverMe(refusalText(msg.reason, msg.action), NO);
         break;
@@ -652,8 +748,9 @@ export class Game {
     this.online = false;
     this.pending = []; this.path = []; this.goal = null;
     // Answers to what we asked went with the connection, and what was being asked may no longer hold.
-    this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null;
+    this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.benchCard = null; this.caching = null; this.cache = null;
     this.clearBox();
+    this.offers.reset();
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
     if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
@@ -667,9 +764,10 @@ export class Game {
     if (map !== this.current) {
       this.current = map;
       this.talkers = talkersOf(map);
-      this.chest = null; this.opening = null; this.bench = null; this.benching = null;
-      this.dialog = null; this.marker = null; this.floats = [];
+      this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.benchCard = null; this.cache = null; this.caching = null;
+      this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
       this.clearBox();
+      this.offers.reset();
     }
     this.players.clear();
     for (const p of players) this.players.set(p.id, this.mover(p));
@@ -677,6 +775,7 @@ export class Game {
     this.socialChanges++;
     this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
     this.quirks = new Map(players.map(p => [p.id, p.quirks ?? []]));
+    this.outfits = new Map(players.flatMap(p => (p.outfit ? [[p.id, p.outfit] as const] : [])));
     this.live = new Set(players.filter(p => p.live).map(p => p.id));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
@@ -702,7 +801,7 @@ export class Game {
     msg: { fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: Array<{ x: number; y: number; left: number }>; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null },
     now: number,
   ) {
-    this.fires = new Map(msg.fires.map(f => [`${f.x},${f.y}`, { left: f.left, at: now }]));
+    this.fires = new Map(msg.fires.map(f => [`${f.x},${f.y}`, { left: f.left, at: now, fed: f.fed ?? [] }]));
     this.marks = new Map(msg.marks.map(m => [m.id, m]));
     this.markChanges++;
     this.creatures = new Map(msg.creatures.map(c => [c.id, this.creatureMover(c)]));
@@ -788,6 +887,12 @@ export class Game {
       this.send({ t: 'bench', x: t.x, y: t.y });
       return;
     }
+    if (t.kind === 'cache') {
+      if (!this.online) return;
+      this.caching = { x: t.x, y: t.y, at: this.clock };
+      this.send({ t: 'cache', x: t.x, y: t.y });
+      return;
+    }
     return this.offer(t.x, t.y);
   }
 
@@ -838,6 +943,31 @@ export class Game {
     this.chatNote = null;
     this.chatChanges++;
     this.send({ t: 'say', to, text: t });
+  }
+
+  /**
+   * Sings a call (calls.ts): the server says who hears it, you among them, and the note comes back like
+   * anyone's. Another one too soon is not sent, and the text over your head says so. True when it went.
+   */
+  call(kind: CallKind, now: number): boolean {
+    if (!this.online) return false;
+    if (now - this.calledAt < CALL_EVERY_MS + CALL_SLACK_MS) {
+      this.murmur(refusalText('slow_down', 'call'));
+      return false;
+    }
+    this.calledAt = now;
+    this.send({ t: 'call', kind });
+    return true;
+  }
+
+  /**
+   * The news since the last frame, for the interface to announce, and none of it again. A call heard
+   * longer ago than CALL_FRESH_MS is left out: the tab was hidden, and old calls must not sing at once.
+   */
+  takeNews(now: number): News[] {
+    const out = this.news.filter(n => n.kind !== 'call' || now - n.at < CALL_FRESH_MS);
+    this.news = [];
+    return out;
   }
 
   /** Speech bubbles still up, by who said it. */
@@ -926,6 +1056,21 @@ export class Game {
     if (c && this.online) this.send({ t: 'unequip', x: c.x, y: c.y, slot });
   }
 
+  /** At the open chest: wear an outfit from the wardrobe, or none (null). It uses nothing up, so it asks nothing. */
+  wearOutfit(outfit: string | null) {
+    const c = this.chest;
+    if (c && this.online) this.send({ t: 'outfit', x: c.x, y: c.y, outfit });
+  }
+
+  /**
+   * The outfits signing in just gave you, which the welcome parcel's banner names: all your level opens
+   * (the NAPO work suit first), as none were yours before. None for a guest, and none once you wear one:
+   * then the wardrobe is no news.
+   */
+  private newOutfits(): string[] {
+    return this.guest || this.myOutfit ? [] : outfitsFor(this.progress.level, true).map(o => o.id);
+  }
+
   /**
    * Anywhere, from the bag: put on the piece in bag slot `slot` (what it replaces goes into the bag), or
    * take off what a slot wears into the bag. Nothing is used up, so nothing asks first; the server says
@@ -976,7 +1121,9 @@ export class Game {
     const owned = new Set([...Object.values(this.myGear), ...gearIn(stash), ...gearIn(this.bag)]);
     // Gear only: a recipe that makes a tool (yours for good, never worn) is never the first goal.
     const gear = this.items.recipes.filter(r => this.items.get(r.make).kind === 'gear');
-    return nearestRecipe(gear, owned, count(stash), count(this.bag));
+    // A live find carried goes into the stash as what it fades into (a live shard is a shard there).
+    const bag = this.bag.map(s => ({ item: this.items.get(s.item).live?.into ?? s.item, count: s.count }));
+    return nearestRecipe(gear, owned, count(stash), count(bag));
   }
 
   /** The workbench right next to you, where it can be opened; null when there is none. */
@@ -986,17 +1133,73 @@ export class Game {
     return b ? { x: b.x, y: b.y } : null;
   }
 
-  /** Opens the workbench next to you, as A at it does (the server answers with what the stash holds). */
-  openBench() {
+  /**
+   * Opens the workbench next to you, as A at it does (the server answers with what the stash holds), on
+   * `card` once it answers (the first goal's recipe). The card goes with the asking: an answer that never
+   * comes, or comes too late, another open, or another map forgets it.
+   */
+  openBench(card?: DetailRef) {
     const b = this.benchBeside();
     if (!b || !this.online) return;
-    this.benching = { ...b, at: this.clock };
+    this.benching = { ...b, at: this.clock, ...(card ? { card } : {}) };
     this.send({ t: 'bench', x: b.x, y: b.y });
+  }
+
+  /** The card the workbench that just opened is to show (the first goal's), once; null when none. */
+  takeBenchCard(): DetailRef | null {
+    const c = this.benchCard;
+    this.benchCard = null;
+    return c;
+  }
+
+  // ---------- a crate for whoever comes next ----------
+
+  /** What lies in the open crate, each one's age counted on to `now`. */
+  cacheItemsNow(now: number): CacheItemView[] {
+    const c = this.cache;
+    if (!c) return [];
+    const by = Math.max(0, now - c.at) / 1000;
+    return c.items.map(e => ({ ...e, age: e.age + by }));
+  }
+
+  /**
+   * At the open crate: leave one of what is in bag slot `slot` for whoever comes next. It asks first
+   * ("Leave 1 resin in the crate for whoever comes next?"), or says why not: gear stays out, you left
+   * one this visit already, or the crate is full.
+   */
+  leaveInCache(slot: number) {
+    const c = this.cache, s = this.bag[slot];
+    if (!c || !s || !this.online) return;
+    const def = this.items.get(s.item);
+    if (!cacheTakes(def)) return this.inform('Crate', CRATE_NO_GEAR);
+    if (c.left) return this.inform('Crate', LEFT_ONE);
+    if (c.items.length >= CACHE_SIZE) return this.inform('Crate', CRATE_FULL);
+    const text = leaveQuestion(def);
+    this.ask({ who: 'Crate', text, yes: () => this.actOn(slot, def.id, 'Crate', text, i => ({ t: 'cacheLeave', x: c.x, y: c.y, slot: i })) });
+  }
+
+  /** At the open crate: take the thing `id` out. Someone left it for you: it asks nothing, and the box then says what it did (and whom it thanked). */
+  takeFromCache(id: number) {
+    const c = this.cache, e = c?.items.find(x => x.id === id);
+    if (!c || !e || !this.online) return;
+    if (c.took) return this.inform('Crate', TOOK_ONE);
+    if (addToBag(this.bag, this.items.get(e.item), 1, bagSlotsOf(this.myGear, this.items.byId)).left) return this.inform('Crate', NO_ROOM);
+    this.send({ t: 'cacheTake', x: c.x, y: c.y, id });
+  }
+
+  /** Close the crate (its panel went away). */
+  closeCache() {
+    this.cache = null;
   }
 
   /** What you wear. */
   get myGear(): Gear {
     return (this.meId && this.gear.get(this.meId)) || {};
+  }
+
+  /** The outfit you wear, or null: your gear shows. */
+  get myOutfit(): string | null {
+    return (this.meId && this.outfits.get(this.meId)) || null;
   }
 
   /** What you wear, piece by piece (condition and quirk), as the server last told it. */
@@ -1130,7 +1333,8 @@ export class Game {
     if (!s || !this.online) return;
     const def = this.items.get(s.item), why = this.whyNotUse(slot, def);
     if (why) return this.inform(def.name, why);
-    const text = useQuestion(def, this.energy(this.clock));
+    // An arrow shows as long as your feats and charms say (Good neighbor), the server's rule.
+    const text = useQuestion(def, this.energy(this.clock), markLifetime(modsOf(this.stats, charmsIn(this.bag, this.items.byId))) / 1000);
     this.ask({ who: def.name, text, yes: () => { done?.(); this.actOn(slot, def.id, def.name, text, i => ({ t: 'use', slot: i })); } });
   }
 
@@ -1261,6 +1465,45 @@ export class Game {
     this.sayLater();
   }
 
+  // ---------- thanks, and the letter home ----------
+
+  /**
+   * What the game brings up by itself when nothing else holds the box: the letter home, then an offer to
+   * thank someone (thanks.ts). Call it every frame after update(); `covered`: a panel, the menu or the
+   * dark between maps is up, and nothing new may show.
+   */
+  idle(now: number, covered: boolean) {
+    // The UTC day turns: whom you thanked yesterday may be thanked again.
+    const day = utcDay(this.wall.ms + (now - this.wall.now));
+    if (day !== this.thankedDay) { this.thankedDay = day; this.thankedToday.clear(); }
+    const free = this.online && !covered && !this.held && !this.question && !this.note && !this.dialog;
+    if (free && this.letter) {
+      this.openDialog({ x: 0, y: 0, who: 'Letter', lines: this.letter, kind: 'talk' });
+      this.letter = null;
+      return;
+    }
+    const me = this.online ? this.me : undefined, blocked = new Set((this.friends?.blocked ?? []).map(p => p.id));
+    const offer = this.offers.due({
+      now, map: this.current.data.id, marks: this.marks, free,
+      me: me ? { id: me.id, x: me.tx, y: me.ty, moving: !!me.anim || !!this.pad.dir || this.path.length > 0 || !!this.goal } : null,
+      fires: [...this.fires].map(([k, f]) => { const [x, y] = k.split(',').map(Number) as [number, number]; return { x, y, left: this.fireLeft(x, y, now) ?? null, fed: f.fed }; }),
+      skip: id => this.thankedToday.has(id) || blocked.has(id),
+    });
+    if (offer) this.offerThanks(offer);
+  }
+
+  /** "Ana fed this fire. Thank Ana?" YES sends the thanks; NO means never again for that fire or arrow this session. */
+  private offerThanks(o: Offer) {
+    const who = o.kind === 'fire' ? 'Fire' : 'Arrow', name = o.helper.name;
+    const text = o.kind === 'fire' ? fireThanksQuestion(name) : markThanksQuestion(name);
+    const what = o.kind === 'fire' ? { kind: 'fire' as const, x: o.x, y: o.y } : { kind: 'mark' as const, id: o.id };
+    this.ask({
+      who, text,
+      yes: () => { this.thanking = { id: o.helper.id, name }; this.act(who, text, { t: 'thank', who: o.helper.id, what }); },
+      no: () => this.offers.decline(o.key),
+    });
+  }
+
   /** Says what waited for the box, once the box is free. */
   private sayLater() {
     const l = this.later;
@@ -1369,6 +1612,7 @@ export class Game {
     this.clock = now;
     for (const f of this.floats) f.t += dt;
     this.floats = this.floats.filter(f => f.t < 1.3);
+    if (this.calls.length && now - this.calls[0]!.at >= CALL_NOTE_S * 1000) this.calls = this.calls.filter(c => now - c.at < CALL_NOTE_S * 1000);
     if (this.marker) { this.marker.t += dt; if (this.marker.t > 0.8) this.marker = null; }
     if (this.dialog) { const line = this.dialog.lines[this.dialog.i] ?? ''; this.dialog.shown = Math.min(line.length, this.dialog.shown + dt * 48); }
     // − or + held keeps counting; what the box says by itself closes when its time is up.
@@ -1438,6 +1682,8 @@ export class Game {
       return;
     }
     if (this.path.length) this.path.shift();
+    // Stepping off an arrow the way it points follows it (thanks.ts).
+    this.offers.stepped(me.tx, me.ty, dir, to, this.marks);
     const seq = ++this.seq;
     this.pending.push({ seq, x: to.x, y: to.y });
     this.walk(me, to.x, to.y, dir, now);
@@ -1465,7 +1711,7 @@ export class Game {
     const hitched = this.body.view.hitched;
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
-      look: lookOf(this.gear.get(p.id) ?? {}, this.items),
+      look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id)),
     }));
   }
 

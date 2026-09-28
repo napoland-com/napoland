@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  STARTER_TOOLS, TileMap, addAllToBag, addToBag, findTiles, halfOf, itemIndex, liveEnds, liveXp, merge, takeFromBag, takeItem, toolsOf, validateItems,
+  CACHE_NEAR, CACHE_SIZE, STARTER_TOOLS, TileMap, addAllToBag, addToBag, cacheTakes, findTiles, halfOf, itemIndex, liveEnds, liveXp, merge, takeFromBag, takeItem, toolsOf, validateItems,
   type ItemDef, type ItemsData, type MapData,
 } from '../src';
 
@@ -166,9 +166,10 @@ describe('validateItems', () => {
       'item "near-woods-map": only a tool charts a map', 'item "near-woods-map": only a tool has an icon (everything else is drawn by its id)', 'the starter tool near-woods-map is not a tool',
     ]);
     // Its button in the bag's header needs a drawing the client has.
-    const noIcon = ['item "near-woods-map": a tool needs an icon for its button in the bag\'s header (map)'];
+    const noIcon = ['item "near-woods-map": a tool needs an icon for its button in the bag\'s header (map, radio)'];
     expect(errors({ ...map, icon: undefined })).toEqual(noIcon);
-    expect(errors({ ...map, icon: 'radio' as never })).toEqual(noIcon);
+    expect(errors({ ...map, icon: 'lantern' as never })).toEqual(noIcon);
+    expect(errors({ ...map, icon: 'radio' })).toEqual([]);
     // A tool needs a name and words, like every item.
     expect(errors({ ...map, name: ' ', text: '' })).toEqual(['item "near-woods-map" has no name', 'item "near-woods-map" has no text']);
   });
@@ -200,6 +201,24 @@ describe('validateItems', () => {
       .toEqual(['item "strange" reveals radio, a tool: tools are made at the workbench or found']);
   });
 
+  it('checks what a tool listens for: only a tool listens, loud nearer than faint, for items that lie out there, always or on aurora nights', () => {
+    const senses = { finds: [{ item: 'shard' }, { item: 'glowcap', when: 'aurora' as const }], loud: 6, faint: 15 };
+    const radio: ItemDef = { id: 'radio', name: 'Radio', kind: 'tool', stack: 1, icon: 'radio', text: 'It crackles.', senses };
+    const finds: ItemsData['finds'] = [{ item: 'shard', map: 'woods', count: 1, respawn: [60, 120] }, { item: 'glowcap', map: 'woods', count: 1, respawn: [60, 120] }];
+    const problems = (r: Partial<ItemDef>, data: Partial<ItemsData> = {}) =>
+      validateItems({ version: 1, items: [shard, glowcap, thermos, { ...radio, ...r }, mapOf('near-woods-map'), ...starters], finds, ...data }, [woods()]).map(p => `${p.level}: ${p.message}`);
+    expect(problems({})).toEqual([]);
+    const reach = ['error: item "radio": it hears loud within some tiles above 0, and faint within more'];
+    expect(problems({ senses: { ...senses, faint: 6 } })).toEqual(reach);
+    expect(problems({ senses: { ...senses, loud: 0 } })).toEqual(reach);
+    expect(problems({ senses: { ...senses, finds: [] } })).toEqual(['error: item "radio": it listens for nothing']);
+    expect(problems({ senses: { ...senses, finds: [{ item: 'shard', when: 'storm' as never }] } })).toEqual(['error: item "radio": it hears shard always, or only on aurora nights (when: aurora)']);
+    expect(problems({ senses: { ...senses, finds: [{ item: 'ghost' }] } })).toEqual(['error: item "radio" listens for ghost, which is not an item']);
+    // Something that never lies out there can be listened for, but it will never be heard.
+    expect(problems({ senses: { ...senses, finds: [{ item: 'thermos' }] } })).toEqual(['warning: item "radio" listens for thermos, which grows nowhere']);
+    expect(problems({ kind: 'resource', icon: undefined })).toContain('error: item "radio": only a tool listens (senses)');
+  });
+
   const good: ItemsData = {
     version: 1,
     items: [glowcap, shard, thermos],
@@ -228,5 +247,18 @@ describe('validateItems', () => {
     expect(msgs).toMatch(/there is no map nowhere/);
     expect(msgs).toMatch(/respawn is \[shortest, longest\]/);
     expect(msgs).toMatch(/warning: find 3 .*only 3 tiles fit the rule for 2 finds/);
+  });
+});
+
+describe('a crate for whoever comes next', () => {
+  it('takes what you find and make, never gear or a tool; six things at most', () => {
+    const coat: ItemDef = { id: 'coat', name: 'Coat', kind: 'gear', stack: 1, slot: 'shirt', text: 'Warm.' };
+    const chart: ItemDef = { id: 'woods-map', name: 'Map of the woods', kind: 'tool', stack: 1, text: 'Folded.' };
+    const pebble: ItemDef = { id: 'pebble', name: 'Warm pebble', kind: 'charm', stack: 1, text: 'Warm.', charm: { wetting: 0.6 } };
+    const lockbox: ItemDef = { id: 'lockbox', name: 'NAPO lockbox', kind: 'sealed', stack: 1, text: 'Locked.', holds: [{ weight: 1, items: [{ item: 'glowcap', count: 2 }] }] };
+    expect([glowcap, thermos, pebble].map(cacheTakes)).toEqual([true, true, true]);
+    // A piece of gear carries its own condition and quirk, a tool is yours for good, and a lockbox is opened at the chest.
+    expect([coat, chart, lockbox, undefined].map(cacheTakes)).toEqual([false, false, false, false]);
+    expect([CACHE_SIZE, CACHE_NEAR]).toEqual([6, 3]);
   });
 });

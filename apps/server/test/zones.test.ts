@@ -15,6 +15,7 @@ import {
   ENERGY_MAX, FIRE_MAX_S, STEP_MS, TileMap, conditionsAt, DAY_S,
   type ConditionsData, type Dir, type ItemsData, type MapData, type ServerMsg,
 } from '@napoland/shared';
+import { Calls } from '../src/calls';
 import { Chat } from '../src/chat';
 import { createHttpServer } from '../src/http';
 import { setLogLevel } from '../src/log';
@@ -233,7 +234,7 @@ describe('copies of a map', () => {
     expect((await s.loadDrops(0))[0]).not.toHaveProperty('zone');
     const mark: MarkRecord = { id: 5, owner: a.id, name: a.name, color: '#fff', map: 'field', zone: X, x: 4, y: 9, dir: 'up', placedAt: Date.now() };
     await s.saveMark(mark);
-    expect(await s.loadMarks(0)).toEqual([{ ...mark, name: a.name, color: colorFor(a.id) }]);
+    expect(await s.loadMarks(Date.now(), 86_400_000)).toEqual([{ ...mark, name: a.name, color: colorFor(a.id) }]);
     // And a player's copy, forgotten once a save says the main copy.
     const saved = s.get(a.id)!;
     await s.save({ ...saved, map: 'field', zone: X });
@@ -280,7 +281,8 @@ describe('copies of a map', () => {
     w.drain();
     w.feed('a', 4, 4, 0, at, 2);
     const out = w.drain();
-    expect(heardOn(out, FX)).toEqual([{ t: 'fire', fire: { x: 4, y: 4, left: Math.round(half - (at - 100_000) / 1000 + 240) } }]);
+    // The copy's fire remembers who fed it (whoever warms there may thank them); the main copy's fed by nobody.
+    expect(heardOn(out, FX)).toEqual([{ t: 'fire', fire: { x: 4, y: 4, left: Math.round(half - (at - 100_000) / 1000 + 240), fed: [{ id: 'a', name: 'A' }] } }]);
     expect(heardOn(out, 'field')).toEqual([]);
     expect(w.scene('field', at).fires).toEqual([{ x: 4, y: 4, left: Math.round(half - at / 1000) }]);
     // A room off town keeps its fire going in every copy of it.
@@ -426,6 +428,67 @@ describe('copies of a map', () => {
     w.leave('a', 7000);
     w.join({ ...again, map: 'gone', zone: X }, 8000);
     expect(w.zoneOf('a')).toBe('town');
+  });
+});
+
+describe('copies of a map, and what came with the thanks, the crates and the calls', () => {
+  it('thank only in their own copy: a fire remembers who fed it there, an arrow is followed there', () => {
+    const w = world({}, {}, rec('a', { bag: [{ item: 'twig', count: 1 }, { item: 'cap', count: 1 }] }), rec('b'), rec('d'));
+    w.send('a', 'field', X).send('d', 'field', X);
+    for (const id of ['a', 'b', 'd']) walk(w, id, ['up', 'up', 'up', 'up', 'up', 'up'], 1000);
+    // All three on 4,5, next to the fire: a feeds the copy's and paints an arrow there, pointing up.
+    w.feed('a', 4, 4, 0, 2400);
+    w.use('a', 0, 2400);
+    const mark = w.scene(FX, 2400).marks[0]!;
+    w.drain();
+    // In the main copy nobody fed its fire, and there is no such arrow.
+    w.thank('b', 'a', { kind: 'fire', x: 4, y: 4 }, 2500);
+    w.thank('b', 'a', { kind: 'mark', id: mark.id }, 2500);
+    expect(to(w.drain(), 'b').filter(m => m.t === 'refused')).toEqual([
+      { t: 'refused', action: 'thank', reason: 'gone' },
+      { t: 'refused', action: 'thank', reason: 'gone' },
+    ]);
+    // In a's copy the thanks goes through, and reaches a.
+    w.thank('d', 'a', { kind: 'fire', x: 4, y: 4 }, 2500);
+    const out = w.drain();
+    expect(of(to(out, 'd'), 'did')).toEqual([{ t: 'did', did: { kind: 'thanked', who: 'a', name: 'A', what: 'fire' } }]);
+    expect(of(to(out, 'a'), 'thanked')).toHaveLength(1);
+  });
+
+  it('each keep their own crates: a thing left in one is there alone, and there again after a restart', () => {
+    const crate = { objects: [{ kind: 'fireplace' as const, x: 4, y: 4 }, { kind: 'cache' as const, x: 6, y: 9, name: 'The crate' }] };
+    const w = world(crate, {}, rec('a', { bag: [{ item: 'moss', count: 1 }] }), rec('c'));
+    w.send('a', 'field', X);
+    // Both on 6,10, right in front of the crate, each in their own copy.
+    for (const id of ['a', 'c']) walk(w, id, ['up', 'right', 'right'], 1000);
+    w.drain();
+    w.cacheLeave('a', 6, 9, 0, 2000);
+    w.openCache('c', 6, 9, 2000);
+    const out = w.drain();
+    expect(of(to(out, 'a'), 'cache').at(-1)!.items.map(i => i.item)).toEqual(['moss']);
+    expect(of(to(out, 'c'), 'cache')).toEqual([{ t: 'cache', x: 6, y: 9, items: [], left: false, took: false }]);
+    const [left] = w.takeWrites().caches;
+    expect(left!.item).toMatchObject({ map: 'field', zone: X, x: 6, y: 9, item: 'moss', owner: 'a' });
+
+    const again = new Copies(maps(crate), 'town', 'overcast', { items: ITEMS, rng: () => 0, cacheItems: [left!.item!] });
+    again.send('d', 'field', X).join(rec('d'), 0);
+    again.join(rec('e'), 0);
+    for (const id of ['d', 'e']) walk(again, id, ['up', 'right', 'right'], 1000);
+    again.drain();
+    for (const id of ['d', 'e']) again.openCache(id, 6, 9, 2000);
+    const seen = again.drain();
+    expect(of(to(seen, 'd'), 'cache')[0]!.items).toMatchObject([{ item: 'moss', owner: 'a' }]);
+    expect(of(to(seen, 'e'), 'cache')[0]!.items).toEqual([]);
+  });
+
+  it('keep a call in the caller\'s copy', () => {
+    const w = world({}, {}, rec('a'), rec('b'), rec('c'));
+    w.send('a', 'field', X).send('b', 'field', X);
+    for (const id of ['a', 'b', 'c']) walk(w, id, ['up'], 1000);
+    const heard: string[] = [];
+    const calls = new Calls({ world: w, clock: () => 0, blocks: () => new Set(), send: (id, m) => void (m.t === 'called' && heard.push(id)) });
+    calls.call('a', 'here');
+    expect(heard).toEqual(['a', 'b']);
   });
 });
 

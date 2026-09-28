@@ -133,6 +133,19 @@ describe('loadConfig: signing in', () => {
     // Shorter than a few seconds, a day would pass before its banner is read.
     expect(problem({ PARCEL_DAY_MS: '100' })).toMatch(/PARCEL_DAY_MS must be a whole number from 5000 to 86400000/);
     expect(problem({ PARCEL_DAY_MS: 'a minute' })).toMatch(/PARCEL_DAY_MS must be a whole number/);
+    // 0 is the real calendar, as with none: anywhere, production too.
+    expect(loadConfig({ PARCEL_DAY_MS: '0' }, REPO).parcelDayMs).toBe(0);
+    expect(loadConfig({ PARCEL_DAY_MS: '0', NODE_ENV: 'production' }, REPO).parcelDayMs).toBe(0);
+    expect(problem({ PARCEL_DAY_MS: '5000', NODE_ENV: 'production' })).toMatch(/PARCEL_DAY_MS .* refused when NODE_ENV=production/);
+  });
+
+  it('multiplies the XP of stashing for a play-test, never in production', () => {
+    expect(loadConfig({}, REPO).xpMultiplier).toBe(1);
+    expect(loadConfig({ XP_MULTIPLIER: '1000' }, REPO).xpMultiplier).toBe(1000);
+    expect(loadConfig({ XP_MULTIPLIER: '1', NODE_ENV: 'production' }, REPO).xpMultiplier).toBe(1);
+    expect(problem({ XP_MULTIPLIER: '100', NODE_ENV: 'production' })).toMatch(/XP_MULTIPLIER .* refused when NODE_ENV=production/);
+    expect(problem({ XP_MULTIPLIER: '0' })).toMatch(/XP_MULTIPLIER must be a whole number from 1/);
+    expect(problem({ XP_MULTIPLIER: '2.5' })).toMatch(/XP_MULTIPLIER must be a whole number/);
   });
 
   it('takes a Supabase project: its address (as an origin) and its publishable key', () => {

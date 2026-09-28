@@ -1,22 +1,23 @@
 /**
- * A tap looks, an action is a second step. In the chest, at the workbench and in the bag a tap on
- * anything opens its card: what a piece of gear is (tier, what it resists and the energy it adds as
- * worn down as it is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a
- * mend takes, what a lockbox may hold, or what something in your bag or stash is. The card's button
- * does the one thing that can be done with it; so do A and a second tap on the same thing (DoubleTap).
- * A card may offer a second thing beside it (throwing away what you carry, taking a piece out of the
- * stash), which only its own button does.
+ * A tap looks, an action is a second step. In the chest, at the workbench, in the bag and at a crate a
+ * tap on anything opens its card: what a piece of gear is (tier, what it resists and the energy it adds
+ * as worn down as it is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what
+ * a mend takes, what a lockbox may hold, what something in your bag or stash is, an outfit in the
+ * wardrobe, or what lies in a crate and who left it. The card's button does the one thing that can be done with it; so do A and a second tap on
+ * the same thing (DoubleTap). A card may offer a second thing beside it (throwing away what you carry,
+ * taking a piece out of the stash), which only its own button does.
  *
  * Plain logic with no page in it, so it can be tested: main.ts builds a card from the game
  * (detailView), hud.ts draws it and sends what its buttons do.
  */
 import {
-  RESIST_MAX, WEAR_FADES, bagSlotsOf, mendCost, nextUpgrade, pieceFactor, upgradable, upgradeFactor, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type Piece, type PieceAt,
-  type Slot, type Tier, type Worn,
+  CACHE_SIZE, RESIST_MAX, WEAR_FADES, bagSlotsOf, cacheTakes, mayWear, mendCost, nextUpgrade, outfitOf, pieceFactor, upgradable, upgradeFactor, wearSeconds, type BagSlot, type CacheItemView,
+  type Element, type Gear, type ItemDef, type Piece, type PieceAt, type Slot, type Tier, type Worn,
 } from '@napoland/shared';
-import { iconFor } from './icons';
+import { NO_OUTFIT_ICON, iconFor, outfitIcon } from './icons';
 import { ELEMENT_WORDS, conditionText, countOf, factsOf, oddsText, pieceName, slotName, useLabel, type Items } from './items';
-import { holdsText } from './said';
+import { CRATE_FULL, CRATE_NO_GEAR, LEFT_ONE, TOOK_ONE, holdsText, leftBy } from './said';
+import { NO_OUTFIT, outfitWords, type WardrobeState } from './wardrobe';
 
 export { pieceName };
 
@@ -57,9 +58,9 @@ export class DoubleTap {
   }
 }
 
-/** What a tap in the chest, at the workbench or in the bag is on. */
+/** What a tap in the chest, at the workbench, in the bag or at a crate is on. */
 export type DetailRef =
-  /** A slot of your bag, in the chest's bag row or in the bag (and what it held when tapped). */
+  /** A slot of your bag, in the chest's or a crate's bag row or in the bag (and what it held when tapped). */
   | { from: 'bag'; slot: number; item: string }
   /** Something in your stash: gear piece by piece (the `n`th of its item, in the stash's order). */
   | { from: 'stash'; item: string; n?: number }
@@ -68,7 +69,11 @@ export type DetailRef =
   /** A recipe at the workbench, the mending of what you wear in a slot, and upgrading a piece you wear or keep in the stash. */
   | { from: 'recipe'; id: string }
   | { from: 'mend'; slot: Slot }
-  | { from: 'upgrade'; of: PieceAt };
+  | { from: 'upgrade'; of: PieceAt }
+  /** An outfit in the wardrobe (outfits.ts), by id, or NO_OUTFIT's. */
+  | { from: 'outfit'; id: string }
+  /** A thing lying in the crate you opened (caches.ts), by its id. */
+  | { from: 'crate'; id: number };
 
 /** Names what a card is about, for the double tap and to keep it open while the game changes around it. */
 export function refKey(r: DetailRef): string {
@@ -79,6 +84,8 @@ export function refKey(r: DetailRef): string {
     case 'recipe': return `recipe:${r.id}`;
     case 'mend': return `mend:${r.slot}`;
     case 'upgrade': return r.of.from === 'worn' ? `upgrade:worn:${r.of.slot}` : `upgrade:stash:${r.of.item}:${r.of.n}`;
+    case 'outfit': return `outfit:${r.id}`;
+    case 'crate': return `crate:${r.id}`;
   }
 }
 
@@ -99,7 +106,12 @@ export type DetailAct =
   | { kind: 'make'; recipe: string }
   | { kind: 'mend'; slot: Slot }
   | { kind: 'upgrade'; of: PieceAt }
-  | { kind: 'open'; item: string };
+  | { kind: 'open'; item: string }
+  /** Wear an outfit, or none (null). */
+  | { kind: 'outfit'; id: string | null }
+  /** At a crate: take the thing `id` out (it asks nothing: someone left it for you), or leave one of what bag slot `slot` holds (it asks first). */
+  | { kind: 'crateTake'; id: number }
+  | { kind: 'crateLeave'; slot: number };
 
 /** Something a piece gives: "Wind 14%" (the element's color), "+5 energy", "Holds 12 things". */
 export interface StatView {
@@ -147,7 +159,7 @@ export interface DetailView {
   more?: { label: string; enabled: boolean; tone: 'plain' | 'toss'; does: DetailAct };
 }
 
-/** What the card and the rest of the game know: your bag, what the open chest or workbench says your stash holds, what you wear. */
+/** What the card and the rest of the game know: your bag, what the open chest or workbench says your stash holds, what you wear, and the wardrobe. */
 export interface DetailState {
   items: Items;
   bag: readonly BagSlot[];
@@ -158,9 +170,14 @@ export interface DetailState {
   tools?: readonly string[];
   /**
    * Where the card opens: at home (in the chest or at the workbench), where gear goes on from and off
-   * into the stash, or in the bag, anywhere, where it goes on from and off into the bag. Home if left out.
+   * into the stash, in the bag, anywhere, where it goes on from and off into the bag, or at a crate, where
+   * a bag slot's card leaves one of it there. Home if left out.
    */
-  panel?: 'home' | 'bag';
+  panel?: 'home' | 'bag' | 'crate';
+  /** Your level, the outfit you wear, and whether you play as a guest; without it, no outfit has a card. */
+  wardrobe?: WardrobeState;
+  /** The crate you opened: what lies in it (ages in seconds as of now), what you did at it this visit, and you (to tell your own things). */
+  crate?: { items: readonly CacheItemView[]; left: boolean; took: boolean; me: string };
 }
 
 /** "Sturdy". */
@@ -241,7 +258,7 @@ export function cardPress(v: DetailView): { does?: DetailAct; close: boolean; sh
   const act = v.act;
   if (!act) return { close: false, shake: false };
   if (act.enabled) return { does: act.does, close: act.does.kind !== 'use', shake: false };
-  const asks = act.does.kind === 'make' || act.does.kind === 'mend' || act.does.kind === 'upgrade';
+  const asks = act.does.kind === 'make' || act.does.kind === 'mend' || act.does.kind === 'upgrade' || act.does.kind === 'crateLeave';
   return { ...(asks ? { does: act.does } : {}), close: false, shake: true };
 }
 
@@ -273,6 +290,7 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       if (!slot || slot.item !== ref.item) return null;
       const def = items.get(slot.item), gear = def.kind === 'gear';
       const card = gear ? gearCard(def, slot.piece ?? { cond: 1 }, s) : itemCard(def, slot.count);
+      if (s.panel === 'crate') return s.crate ? leaveCard(card, def, ref.slot, s.crate) : null;
       if (!road) return { ...card, act: { label: 'Put away', enabled: true, does: { kind: 'store', slot: ref.slot } } };
       const more = { label: 'Throw away', enabled: true, tone: 'toss', does: { kind: 'toss', slot: ref.slot } } as const;
       if (!gear) return { ...card, ...(def.use ? { act: { label: useLabel(def), enabled: true, does: { kind: 'use', slot: ref.slot } } } : {}), more };
@@ -366,7 +384,32 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       short(card, needs);
       return { ...card, act: { label: `Upgrade to +${level + 1}`, enabled: needs.every(n => n.have >= n.need), does: { kind: 'upgrade', of: ref.of } } };
     }
+    case 'outfit':
+      return s.wardrobe ? outfitCard(ref.id, s.wardrobe) : null;
+    case 'crate': {
+      const c = s.crate, e = c?.items.find(x => x.id === ref.id);
+      if (!c || !e) return null;
+      const card = itemCard(items.get(e.item), 1);
+      card.notes.push({ text: `${capital(leftBy(e.name, e.owner === c.me, e.age))}.`, tone: 'plain' });
+      // Taking asks nothing: it is someone's gift. One a visit.
+      if (c.took) card.notes.push({ text: TOOK_ONE, tone: 'bad' });
+      return { ...card, act: { label: 'Take it', enabled: !c.took, does: { kind: 'crateTake', id: e.id } } };
+    }
   }
+}
+
+/**
+ * A slot of your bag at a crate: its one button leaves one of it for whoever comes next (the game asks
+ * first), or it is greyed out and the card says why: gear stays with you, you left one this visit
+ * already, or the crate is full.
+ */
+function leaveCard(card: DetailView, def: ItemDef, slot: number, c: NonNullable<DetailState['crate']>): DetailView {
+  const act: NonNullable<DetailView['act']> = { label: 'Leave one', enabled: false, does: { kind: 'crateLeave', slot } };
+  if (!cacheTakes(def)) card.notes.push({ text: CRATE_NO_GEAR, tone: 'bad' });
+  else if (c.left) card.notes.push({ text: LEFT_ONE, tone: 'bad' });
+  else if (c.items.length >= CACHE_SIZE) card.notes.push({ text: CRATE_FULL, tone: 'bad' });
+  else act.enabled = true;
+  return { ...card, act };
 }
 
 /** The piece a workbench's upgrade is about: one you wear, or the `n`th of an item in the stash, with what it is. */
@@ -377,6 +420,31 @@ export function pieceAt(of: PieceAt, s: DetailState): { def: ItemDef; piece: Pie
   }
   const piece = s.stash.filter(b => b.item === of.item)[of.n]?.piece;
   return piece ? { def: s.items.get(of.item), piece } : null;
+}
+
+/**
+ * An outfit's card: its drawing, its name and its line. Its button wears it, or takes it off when you
+ * wear it (your gear shows again); greyed out while your level has not reached it, and the card says
+ * which level does. No outfit's card takes off the one you wear. Nothing is used up, so nothing asks.
+ */
+function outfitCard(id: string, w: WardrobeState): DetailView | null {
+  const base = { stats: [], facts: [], notes: [] as DetailView['notes'] };
+  if (id === NO_OUTFIT.id) {
+    const now = outfitOf(w.wearing);
+    if (!w.wearing) return { ...base, icon: NO_OUTFIT_ICON, name: NO_OUTFIT.name, text: NO_OUTFIT.text, notes: [{ text: 'You wear no outfit now.', tone: 'plain' }] };
+    return { ...base, icon: NO_OUTFIT_ICON, name: NO_OUTFIT.name, text: NO_OUTFIT.text, act: { label: now ? `Take off your ${outfitWords(now.name)}` : 'Take it off', enabled: true, does: { kind: 'outfit', id: null } } };
+  }
+  const o = outfitOf(id);
+  if (!o) return null;
+  const card: DetailView = { ...base, icon: outfitIcon(o.id), name: o.name, text: o.text };
+  if (w.wearing === o.id) {
+    return { ...card, notes: [{ text: 'You wear it now.', tone: 'plain' }], act: { label: 'Take off', then: 'your gear shows again', enabled: true, does: { kind: 'outfit', id: null } } };
+  }
+  const open = mayWear(o, w.level, !w.guest);
+  if (w.guest) card.notes.push({ text: 'Sign in to wear it.', tone: 'plain' });
+  else if (!open) card.notes.push({ text: `It opens at level ${o.level}. You are level ${w.level}.`, tone: 'plain' });
+  else card.facts.push(o.level > 1 ? `Yours since level ${o.level}` : 'Yours since your first sign-in');
+  return { ...card, act: { label: 'Wear', enabled: open, does: { kind: 'outfit', id: o.id } } };
 }
 
 /** A piece of gear (or what a recipe makes: no piece yet, so no wear to show). */
