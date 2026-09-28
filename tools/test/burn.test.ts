@@ -126,6 +126,23 @@ describe('the Burn, what it gives', () => {
     for (const f of rules) expect(findTiles(burn, f).length).toBeGreaterThanOrEqual(3 * f.count);
   });
 
+  it('shows how far NAPO got: its survey stakes up the trail end at the ash flats, by its snapped mast, short of the scar', () => {
+    const at = (kind: MapObject['kind']) => burn.data.objects.filter(o => o.kind === kind).map(o => burn.homeSteps(o.x, o.y));
+    const flats = burn.data.places!.find(p => p.name === 'the ash flats')!, scar = burn.data.places!.find(p => p.name === 'the scar')!;
+    const stakes = at('stake');
+    expect(stakes.length).toBeGreaterThanOrEqual(5);
+    // Every stake can be walked up to, and the last stands about as deep as the flats: nothing of NAPO's nearer the scar.
+    for (const s of stakes) expect(s).toBeGreaterThan(0);
+    expect(Math.max(...stakes, ...at('antenna'))).toBeLessThan(burn.homeSteps(scar.x, scar.y) - 10);
+    expect(Math.abs(Math.max(...stakes) - burn.homeSteps(flats.x, flats.y))).toBeLessThanOrEqual(8);
+    expect(burn.data.objects.filter(o => o.kind === 'antenna')).toEqual([expect.objectContaining({ broken: true })]);
+    const notice = burn.data.objects.find(o => o.kind === 'sign' && o.style === 'napo')!;
+    expect(notice.kind === 'sign' && notice.text.join(' ')).toMatch(/last stake/);
+    // Its old batteries turn up by the mast, for the lantern the scar's glass goes into.
+    const rule = items.finds.find(f => f.item === 'battery' && f.map === 'burn')!;
+    expect(findTiles(burn, rule).length).toBeGreaterThanOrEqual(3 * rule.count);
+  });
+
   it('keeps its paper map in the line cabin, found and not given, growing back for the next', () => {
     expect(byId.get('burn-map')).toMatchObject({ kind: 'tool', chart: 'burn', icon: 'map' });
     expect(STARTER_TOOLS).not.toContain('burn-map');

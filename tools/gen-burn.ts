@@ -242,13 +242,13 @@ const front = ((d): P => [d.x, d.y + 1])(doorOf(cabin));
 
 /** A sign beside the way near `p`: the nearest open ground off the ways with room in front of it to read it from, and cutting nobody off. */
 const signs: Array<{ x: number; y: number }> = [];
-function signNear(p: P, text: string[]) {
+function signNear(p: P, text: string[], style?: 'napo') {
   const spots: Array<[number, number, number]> = [];
   for (let y = p[1] - 3; y <= p[1] + 3; y++) for (let x = p[0] - 3; x <= p[0] + 3; x++) {
     if (walkable(x, y) && !way[y * W + x] && walkable(x, y + 1) && !signs.some(s => Math.abs(s.x - x) + Math.abs(s.y - y) < 2)) spots.push([Math.hypot(x - p[0], y - p[1]), x, y]);
   }
   spots.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
-  const spot = spots.find(([, x, y]) => tryPlace({ kind: 'sign', x, y, text }));
+  const spot = spots.find(([, x, y]) => tryPlace({ kind: 'sign', x, y, text, ...(style && { style }) }));
   if (!spot) throw new Error(`no room for a sign near ${p.join(',')}`);
   signs.push({ x: spot[1], y: spot[2] });
 }
@@ -258,6 +258,29 @@ signNear([27, 60], ['Burned into the post: "North line. Cabin west."', 'Scratche
 signNear([31, 42], ['Cut into a charred post: "Black creek. Ash in it. Boil it twice, or go thirsty."']);
 signNear([17, 31], ['Cut into a stump: "The line is under all this now. Went round by the pool."']);
 signNear([31, 14], ['A tin plate wired to a cairn of glassy stones, scratched: "Where it came up."', '"The ground rang for a week after. Do not sleep here. Do not come alone."']);
+
+// What NAPO left: after the answer its crews came through the gate in pairs and surveyed up the trail, and
+// stopped at the ash flats, where their needles went off the scale. Their stakes run up beside the trail from
+// the snags and end there, and the relay mast they set up at the flats stands snapped halfway, its notice
+// beside it. Past the last stake NAPO never went (Vera: "farther in than NAPO ever went").
+const MAST: P = [42, 30];
+must({ kind: 'antenna', x: MAST[0], y: MAST[1], broken: true });
+signNear([40, 32], ['NAPO · Survey line N-1 · Relay mast N-1a', 'Needles off the scale north of the last stake. Crew withdrawn to the gate.', 'Nobody past the last stake. Two-person rule.'], 'napo');
+/** Stakes block nothing, so they sit beside the trail: the nearest open tile off the way to each point, or a snag's tile beside the way, cleared. */
+const stakes: P[] = [];
+for (const p of [[28, 58], [30, 53], [31, 48], [32, 41], [34, 37], [36, 33], [36, 28]] as const) {
+  let best: [number, number, number] | undefined;
+  for (let y = p[1] - 2; y <= p[1] + 2; y++) for (let x = p[0] - 2; x <= p[0] + 2; x++) {
+    if (!inner(x, y) || way[y * W + x] || blocked[y * W + x] || level[y]![x]! > 0) continue;
+    if (!'gm'.includes(at(x, y)) && !(at(x, y) === 't' && SIDES.some(([dx, dy]) => way[(y + dy) * W + x + dx]))) continue;
+    const d = Math.hypot(x - p[0], y - p[1]) + hash(x, y, 64) * 0.01;
+    if (!best || d < best[0]) best = [d, x, y];
+  }
+  if (!best) throw new Error(`no room for NAPO's stake near ${p.join(',')}`);
+  if (at(best[1], best[2]) === 't') set(best[1], best[2], 'g');
+  place({ kind: 'stake', x: best[1], y: best[2] });
+  stakes.push([best[1], best[2]]);
+}
 
 // The rocks that ring: in a line down the middle of the scar, faintly aglow, where the light came up.
 for (let k = 0; k < 9; k++) {
@@ -294,6 +317,7 @@ for (const [x, y, w, h] of [[12, 25, 3, 1], [19, 28, 1, 3], [13, 30, 2, 1], [19,
 // in front of a sign or a door, or next to another thing, so the spots people gather at stay open.
 const keepOpen = new Set<number>([front[1] * W + front[0]]);
 for (const s of signs) keepOpen.add((s.y + 1) * W + s.x);
+for (const [x, y] of stakes) keepOpen.add(y * W + x);
 function open(x: number, y: number): boolean {
   if (!walkable(x, y) || way[y * W + x] || keepOpen.has(y * W + x) || shroomAt.has(y * W + x) || at(x, y) === 'l') return false;
   for (let yy = y - 1; yy <= y + 1; yy++) for (let xx = x - 1; xx <= x + 1; xx++) if (blocked[yy * W + xx]) return false;
@@ -384,7 +408,7 @@ const patches = TALL.map((p, k) => {
 const SURGE: SurgeRule = { every: 2400, unstable: 180, surge: 120, sweep: 90, offset: 2100 };
 
 const map: MapData = {
-  id: 'burn', name: 'The Burn', version: 1, kind: 'wilds', depth: 3, width: W, height: H,
+  id: 'burn', name: 'The Burn', version: 2, kind: 'wilds', depth: 3, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: ENTRY[0], y: ENTRY[1] - 1, dir: 'up' },
@@ -428,7 +452,7 @@ const out = resolve(import.meta.dirname, '../content/maps/burn.json');
 writeFileSync(out, json);
 
 // A glance at the result, two map rows per line (a terminal character is about twice as tall as wide).
-const GLYPH: Partial<Record<MapObject['kind'], string>> = { sign: '!', house: 'H', tree: 'T', rock: 'o', shrooms: ',', woodpile: 'b', logs: '#', stump: 'x' };
+const GLYPH: Partial<Record<MapObject['kind'], string>> = { sign: '!', house: 'H', tree: 'T', rock: 'o', shrooms: ',', woodpile: 'b', logs: '#', stump: 'x', stake: '!', antenna: 'A' };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', f: '"', h: ';', m: '.', g: '.', l: '_' };
 const objGlyph = new Map<number, string>();
 for (const o of objects) for (const [x, y] of objectTiles(o)) objGlyph.set(y * W + x, o.kind === 'rock' && o.hum ? '*' : GLYPH[o.kind] ?? '?');
@@ -436,14 +460,14 @@ const glyph = (x: number, y: number) => (y === EXIT.y && x >= EXIT.x && x < EXIT
 const rows = [`+${'-'.repeat(W)}+`];
 for (let y = 0; y < H; y += 2) rows.push(`|${Array.from({ length: W }, (_, x) => { const a = glyph(x, y), b = glyph(x, y + 1); return a === ' ' || a === '.' ? b : a; }).join('')}|`);
 console.log([...rows, rows[0]].join('\n'));
-console.log(' . ground  _ fused ground  " ferns  ; fireweed  ~ water  ^ rock  H cabin  o rock  * ringing rock  x burned stump  # windfall  T snag  , shrooms  v way home');
+console.log(' . ground  _ fused ground  " ferns  ; fireweed  ~ water  ^ rock  H cabin  o rock  * ringing rock  x burned stump  ! NAPO stake  A NAPO mast  # windfall  T snag  , shrooms  v way home');
 
 // How deep it goes, measured like the game does (TileMap.homeSteps drives the energy drain).
 const tm = new TileMap(map);
 const steps = new Int32Array(W * H).map((_, i) => tm.homeSteps(i % W, (i / W) | 0));
 const deepest = Math.max(...steps);
 const count = (k: MapObject['kind']) => objects.filter(o => o.kind === k).length;
-console.log(`wrote ${out}: ${W}x${H} tiles, ${objects.length} objects (${count('rock')} rocks, ${count('tree')} snags, ${count('stump')} stumps, ${count('shrooms')} shrooms)`);
+console.log(`wrote ${out}: ${W}x${H} tiles, ${objects.length} objects (${count('rock')} rocks, ${count('tree')} snags, ${count('stump')} stumps, ${count('shrooms')} shrooms, ${count('stake')} of NAPO's stakes)`);
 console.log(`steps from the way home: ${PLACES.map(([name, p]) => `${name} ${stepsTo(steps, p)}`).join(', ')}; deepest ${deepest}`);
 const lairs = steps.filter((v, i) => tile[(i / W) | 0]![i % W] === 'f' && v >= map.skulkers!.steps[0]).length;
 console.log(`ferns ${map.skulkers!.steps[0]} steps or more in: ${lairs} tiles; watchers wake on ${tm.lairs(map.watchers!.steps).length}`);
