@@ -78,7 +78,7 @@ const welcome = (more: Partial<Welcome> = {}): Welcome => ({
   t: 'welcome', v: PROTOCOL_VERSION, you: 'p1', name: 'Aldo', guest: false, map: { id: 'stonebrook', version: 1 }, players: [], finds: [], drops: [], stepMs: 200,
   weather: 'rain', energy: { value: 100, max: 100, rate: 0 }, bag: [], stash: [], items: 1, serverTime: 0,
   fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, body: DRY, stone: ASLEEP, stats: {}, progress: START, tools: [], conditions: { today: [], week: null, next: null },
-  story: { version: 0, chapter: '' }, ...more,
+  story: { version: 0, chapter: '' }, thanked: [], ...more,
 });
 
 /** Supabase with the email code alone, as before any provider is set up. */

@@ -49,9 +49,11 @@ describe('asking first, over the network', () => {
     a.c.send({ t: 'feed', x: 4, y: 2, slot: 0, count: 5 });
     const heard = await news(a.c);
     expect(heard).toContainEqual({ t: 'bag', bag: [{ item: 'resin', count: 2 }, { item: 'rock', count: 1 }] });
-    expect(heard).toContainEqual({ t: 'fire', fire: { x: 4, y: 2, left: FIRE_MAX_S } });
+    // With who fed it, for whoever warms at it later to thank.
+    const fire = { x: 4, y: 2, left: FIRE_MAX_S, fed: [{ id: a.id, name: a.welcome.name }] };
+    expect(heard).toContainEqual({ t: 'fire', fire });
     expect(heard.at(-1)).toEqual({ t: 'did', did: { kind: 'fire', item: 'resin', count: 3, left: FIRE_MAX_S } });
-    expect(await b.c.next('fire')).toEqual({ t: 'fire', fire: { x: 4, y: 2, left: FIRE_MAX_S } });
+    expect(await b.c.next('fire')).toEqual({ t: 'fire', fire });
     expect(did(await news(b.c))).toEqual([]);
     // Full now; and a rock never burns. Nothing is spent either way.
     a.c.send({ t: 'feed', x: 4, y: 2, slot: 0, count: 2 });

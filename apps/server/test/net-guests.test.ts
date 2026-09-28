@@ -6,7 +6,7 @@
  * which the server says first. Guests who stay away GUEST_DAYS are deleted, at start-up and once a day.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { GUEST_DAYS, PROTOCOL_VERSION, type ClientMsg, type RefusedAction } from '@napoland/shared';
+import { GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, type ClientMsg, type RefusedAction } from '@napoland/shared';
 import { devAuth, supabaseAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
@@ -193,7 +193,7 @@ describe('guests who stay away', () => {
       expect(storage.get(away.id)).toBeUndefined();
       expect(storage.drop(away.id)).toBeUndefined();
       expect(server.world.dropViews('woods')).toEqual([]);
-      expect(await storage.loadMarks(0)).toEqual([]);
+      expect(await storage.loadMarks(0, MARK_LIFETIME_MS)).toEqual([]);
       expect(storage.get(lately.id)).toBeDefined();
       expect(storage.get(signed.id)).toBeDefined();
     } finally {

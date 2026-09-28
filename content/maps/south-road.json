@@ -1,7 +1,7 @@
 {
   "id": "south-road",
   "name": "The South Road",
-  "version": 2,
+  "version": 3,
   "kind": "wilds",
   "depth": 1,
   "width": 72,
@@ -26,7 +26,7 @@
     "ttttttttttttttttttttttttttttttttttgrrgtgggggggtttttttttttttttttttttttttt",
     "ttttttttttttttttttttttttttttttttttgrrmtggggggggttttttttttttttttttttttttt",
     "ttttttttttttttttttttttttttttttttttgrrggggmgggggttttttttttttttttttttttttt",
-    "ttttttttttttttttttttfggggtttttttttgrrmmmmmggggtttttttttttttttttttttttttt",
+    "tttttttttttttttttttgfggggtttttttttgrrmmmmmggggtttttttttttttttttttttttttt",
     "tttttttttttttttttttffgggggttttttttgrrggttgtttttttttttttttttttttttttttttt",
     "tttttttttttttttttttfgggggggmttttttgrrggttttttttttttttttttttttttttttttttt",
     "tttttttttttttttttttgggggggmmggmmmmmrrggttttttttttttttttttttttttttttttttt",
@@ -446,7 +446,8 @@
     {"kind":"cage","x":49,"y":66,"text":["NAPO · Sample 3 · the ring of stones, Near Woods.","Keep caged. Log the hum at every pulse."]},
     {"kind":"cage","x":50,"y":66,"text":["NAPO · Sample 7 · deep in the Near Woods.","Keep caged. Log the hum at every pulse."]},
     {"kind":"cage","x":51,"y":66,"text":["NAPO · Sample 9 · the ring of stones, Near Woods.","Keep caged. Do not carry past the checkpoint."]},
-    {"kind":"cage","x":52,"y":66,"text":["NAPO · Sample 12. No place written.","Keep caged."]}
+    {"kind":"cage","x":52,"y":66,"text":["NAPO · Sample 12. No place written.","Keep caged."]},
+    {"kind":"cache","x":19,"y":19,"name":"the crate at the leavers' camp"}
   ],
   "places": [
     {"name":"the leavers' camp","x":22,"y":22},
