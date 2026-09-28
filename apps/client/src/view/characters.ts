@@ -559,6 +559,58 @@ export class LiveGlows {
   }
 }
 
+/** Lanterns drawn at once, at most: a group out in the Burn together. */
+const LANTERNS = 6;
+
+/**
+ * A lantern (energy.ts, LANTERN) in a deep region: a warm pool on the ground as wide as its light reaches,
+ * where the others tire half as fast, and the lantern itself glowing at its carrier's hip. Built once and
+ * always in the scene, like the afterglows; each frame shows as many as there are carriers, nearest first.
+ */
+export class Lanterns {
+  readonly root = new THREE.Group();
+  private readonly pool = softTexture(0.7);
+  private readonly flame = softTexture(0.25);
+  private readonly poolGeo: THREE.PlaneGeometry;
+  private readonly poolMat = new THREE.MeshBasicMaterial({ map: this.pool, color: 0xffc56b, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.42 });
+  private readonly flameMat = new THREE.SpriteMaterial({ map: this.flame, color: 0xffd98a, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, opacity: 0.9 });
+  private readonly lamps: THREE.Group[] = [];
+
+  /** `reach`: how many tiles its light reaches (LANTERN_REACH); the pool fades out just past it. */
+  constructor(reach: number) {
+    this.poolGeo = new THREE.PlaneGeometry(2 * reach + 1.5, 2 * reach + 1.5).rotateX(-Math.PI / 2);
+    for (let i = 0; i < LANTERNS; i++) {
+      const lamp = new THREE.Group(), glow = new THREE.Sprite(this.flameMat), pool = new THREE.Mesh(this.poolGeo, this.poolMat);
+      glow.scale.set(0.55, 0.55, 1);
+      glow.position.set(0.28, 0.5, 0);
+      pool.position.y = 0.04;
+      lamp.add(pool, glow);
+      lamp.visible = false;
+      this.lamps.push(lamp);
+      this.root.add(lamp);
+    }
+  }
+
+  /** Where the carriers stand now (world units, feet on the ground), nearest first; `t` makes the flames flicker. */
+  set(list: ReadonlyArray<{ x: number; y: number; z: number }>, t: number) {
+    this.poolMat.opacity = 0.4 + 0.03 * Math.sin(t * 5.3) + 0.02 * Math.sin(t * 8.1);
+    this.flameMat.opacity = 0.8 + 0.1 * Math.sin(t * 9.7);
+    this.lamps.forEach((lamp, i) => {
+      const at = list[i];
+      lamp.visible = !!at;
+      if (at) lamp.position.set(at.x, at.y, at.z);
+    });
+  }
+
+  dispose() {
+    this.pool.dispose();
+    this.flame.dispose();
+    this.poolGeo.dispose();
+    this.poolMat.dispose();
+    this.flameMat.dispose();
+  }
+}
+
 /** Afterglows drawn at once, at most: a few players who all stood by a flash. */
 const AFTERGLOWS = 6;
 

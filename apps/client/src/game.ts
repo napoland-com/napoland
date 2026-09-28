@@ -53,7 +53,7 @@
  * - the Long Night is the server's too (`longNight`): its banners, and what Walt says while it is on.
  */
 import {
-  BUBBLE_S, TILE_NEEDS, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf,
+  BUBBLE_S, TILE_NEEDS, CACHE_SIZE, LANTERN_DEPTH, lanternLights, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf,
   cacheTakes, canRescue, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal,
   lotDoors, markLifetime, worksRoom, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf,
   stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type BoardView, type ShopData, type ShopOpen,
@@ -541,6 +541,8 @@ export class Game {
   afterglows = new Map<string, number>();
   /** Who on this map lies slumped, out of energy (rescue.ts): their figure lies there, and A at one gets them up. You too. */
   downs = new Set<string>();
+  /** Who on this map owns a lantern (energy.ts, LANTERN): in a deep region it lights the ground around them. */
+  lanterns = new Set<string>();
   /** You are down: when you collapse unless someone gets you up (our clock). Null while you are not. */
   slump: { until: number } | null = null;
   /** What everyone on this map wears, by player id (you too). */
@@ -802,6 +804,14 @@ export class Game {
     if (!me || !rule || !s) return false;
     // A lookout's beam as it passes, or a street light mended together while it stands, keeps it off, as the server counts it.
     return inSurge(this.current, me.tx, me.ty, surgeFront(rule, this.current.deepest, s), this.beamOver(me.tx, me.ty, now) || this.current.lit(me.tx, me.ty, this.pass));
+  }
+
+  /** Whose lantern lights where you stand (lanternLights), by name, as the server counts it; null for nobody's. Never your own. */
+  lanternOver(): string | null {
+    const me = this.me;
+    if (!me) return null;
+    for (const p of this.players.values()) if (p.id !== me.id && this.lanterns.has(p.id) && lanternLights(this.current, me.tx, me.ty, { x: p.tx, y: p.ty })) return p.name;
+    return null;
   }
 
   /** Is tile x,y under a burning lookout's beam at `now`? As the server counts it (lookout.ts): a surge does not reach you there. */
@@ -1300,6 +1310,8 @@ export class Game {
         else this.afterglows.delete(msg.player.id);
         if (msg.player.down) this.downs.add(msg.player.id);
         else this.downs.delete(msg.player.id);
+        if (msg.player.lantern) this.lanterns.add(msg.player.id);
+        else this.lanterns.delete(msg.player.id);
         if (msg.player.up) this.ups.add(msg.player.id);
         else this.ups.delete(msg.player.id);
         // A guest who signed in comes back in as someone who is not one.
@@ -1325,6 +1337,7 @@ export class Game {
         this.afterglows.delete(msg.id);
         this.downs.delete(msg.id);
         this.ups.delete(msg.id);
+        this.lanterns.delete(msg.id);
         break;
       }
       case 'step': {
@@ -1530,6 +1543,7 @@ export class Game {
     this.lampDeclined = null;
     this.afterglows = new Map(players.flatMap(p => (p.afterglow ? [[p.id, this.clock + p.afterglow * 1000] as const] : [])));
     this.downs = new Set(players.filter(p => p.down).map(p => p.id));
+    this.lanterns = new Set(players.filter(p => p.lantern).map(p => p.id));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
     this.lootChanges++;
@@ -3172,7 +3186,7 @@ export class Game {
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
       afterglow: (this.afterglows.get(p.id) ?? 0) > this.clock,
       look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id), this.shop), down: this.downs.has(p.id),
-      up: this.ups.has(p.id),
+      up: this.ups.has(p.id), lantern: this.lanterns.has(p.id) && this.current.data.depth >= LANTERN_DEPTH && this.current.data.kind === 'wilds',
       ...(b && p.id === this.meId && { beam: { phase: b.phase, t: b.t, pad: b.pad } }),
     }));
   }

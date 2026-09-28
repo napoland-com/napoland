@@ -19,11 +19,11 @@
  */
 import * as THREE from 'three';
 import {
-  BEAM_HALF, BEAM_REACH, DIR_VEC, beamAngle, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
+  BEAM_HALF, BEAM_REACH, DIR_VEC, LANTERN_REACH, beamAngle, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
   type TileMap, type Weather,
 } from '@napoland/shared';
 import { comfortModel, comfortShadow, lampLight } from './cabin';
-import { Afterglows, LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
+import { Afterglows, Lanterns, LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
 import {
   CROUCH_DROP, CROUCH_LEAN, GRADES, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial,
@@ -69,6 +69,8 @@ export interface Avatar {
   beam?: { phase: 'out' | 'in'; t: number; pad: { x: number; y: number } };
   /** Up a fire lookout (lookout.ts): standing on its platform, in front of the cab. */
   up?: boolean;
+  /** Their lantern shines here, in a deep region (energy.ts, LANTERN): a warm pool of light around them. */
+  lantern?: boolean;
 }
 
 /** A player as drawn: their model, what it was built in, and while a teleport takes you, the materials it had (clipRig). */
@@ -417,6 +419,7 @@ export class WorldView {
   private flares = new Flares();
   private liveGlows = new LiveGlows();
   private afterglows = new Afterglows();
+  private lanterns = new Lanterns(LANTERN_REACH);
   private prints = new Prints();
   /** Where someone walks whose gear makes street lights flicker (tiles). */
   private flickerAt: Array<{ x: number; y: number }> = [];
@@ -527,7 +530,7 @@ export class WorldView {
     this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
-    this.scene.add(this.liveGlows.root, this.afterglows.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
+    this.scene.add(this.liveGlows.root, this.afterglows.root, this.lanterns.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
     if (map.data.kind === 'wilds' && map.data.watchers) this.scene.add((this.farFigure = new FarFigure()).root);
     if (map.data.kind === 'wilds') this.scene.add((this.passer = new Passer()).root);
     this.puffs.push(this.flares.sparks);
@@ -562,6 +565,7 @@ export class WorldView {
     this.flares.dispose();
     this.liveGlows.dispose();
     this.afterglows.dispose();
+    this.lanterns.dispose();
     this.prints.dispose();
     this.flashes.dispose();
     this.echoes.dispose();
@@ -1693,6 +1697,8 @@ export class WorldView {
     this.liveGlows.set(carriers.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
     const glowing = avatars.filter(a => a.afterglow).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
     this.afterglows.set(glowing.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
+    const lit = avatars.filter(a => a.lantern).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
+    this.lanterns.set(lit.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
     this.creatures.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
     for (const c of this.creatureList) if (c.moving) this.rustleAt(c.x + 0.5, c.y + 0.5);
     this.echoes.update(t, (x, z) => this.groundAt(x, z));

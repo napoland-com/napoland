@@ -229,14 +229,14 @@ describe('the Far Woods, what they give', () => {
   /** How many of `item` lie out on a map at once, every day (not a condition's, the weather's or a restless time's). */
   const always = (map: string, item: string) => items.finds.filter(f => f.map === map && f.item === item && f.when === undefined && f.condition === undefined).reduce((n, f) => n + f.count, 0);
 
-  it('grow cedar bark that burns 4 minutes a strip, and NAPO\'s old batteries, kept for later', () => {
+  it('grow cedar bark that burns 4 minutes a strip, and NAPO\'s old batteries, which a lantern runs on', () => {
     expect(byId.get('cedar-bark')).toMatchObject({ kind: 'resource', fuel: 240 });
     const battery = byId.get('battery')!;
     expect(battery).toMatchObject({ kind: 'resource', noun: 'old battery', plural: 'old batteries' });
     expect(battery.text).toMatch(/NAPO's field kit ran on them/);
-    expect(battery.text).toMatch(/Nothing at the workbench takes them yet/);
-    // Nothing makes anything of them yet: they wait for a later recipe.
-    expect((items.recipes ?? []).some(r => r.needs.some(n => n.item === 'battery'))).toBe(false);
+    expect(battery.text).toMatch(/A lantern made at the workbench runs on them/);
+    // The lantern is the one recipe that takes them (roadmap/group-mechanics.md, shared light).
+    expect((items.recipes ?? []).filter(r => r.needs.some(n => n.item === 'battery')).map(r => r.make)).toEqual(['lantern']);
     for (const item of ['cedar-bark', 'battery']) expect(rules.some(f => f.item === item), item).toBe(true);
   });
 

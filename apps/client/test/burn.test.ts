@@ -6,14 +6,15 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { STARTER_TOOLS, TileMap, type ClientMsg, type ItemsData, type MapData, type MapObject, type PlayerView } from '@napoland/shared';
+import { LANTERN_REACH, STARTER_TOOLS, TileMap, type ClientMsg, type ItemsData, type MapData, type MapObject, type PlayerView } from '@napoland/shared';
 import { GATE_PULLED, Game } from '../src/game';
 import { Items } from '../src/items';
 import { Maps } from '../src/maps';
 import { mapFor, sketchOf } from '../src/papermap';
 import { gateModel } from '../src/view/napo';
 import { fakePage, fakeRenderer } from './fakegl';
-import { welcome } from './fixtures';
+import { DRY, FULL, START, welcome } from './fixtures';
+import { statusView } from '../src/status';
 
 fakePage();
 const { WorldView } = await import('../src/view/world');
@@ -38,6 +39,33 @@ describe('NAPO\'s gate', () => {
 
   it('is drawn: its posts, the gate between them, and a handle for each who pulls', () => {
     expect(gateModel(gate).children.length).toBeGreaterThan(gate.w * 3);
+  });
+});
+
+describe('a lantern in the Burn', () => {
+  const at = { x: gate.tx, y: gate.ty };
+  const person = (id: string, name: string, x: number, lantern = false): PlayerView => ({ id, name, x, y: at.y, dir: 'up', color: '#f29e4c', gear: {}, quirks: [], ...(lantern && { lantern: true as const }) });
+  const game = (map: MapData, players: PlayerView[]) => {
+    const g = new Game(new Maps(all), () => {}, items);
+    g.handle(welcome(map, players, undefined, { tools: [...STARTER_TOOLS], items: items.version }), 1000);
+    return g;
+  };
+
+  it('says whose light you stand in, never your own, and only as far as it reaches', () => {
+    expect(game(burn.data, [person('me', 'Aldo', at.x), person('bo', 'Bo', at.x + 1, true)]).lanternOver()).toBe('Bo');
+    expect(game(burn.data, [person('me', 'Aldo', at.x, true), person('bo', 'Bo', at.x + 1)]).lanternOver()).toBeNull();
+    expect(game(burn.data, [person('me', 'Aldo', at.x), person('bo', 'Bo', at.x + LANTERN_REACH + 1, true)]).lanternOver()).toBeNull();
+  });
+
+  it('draws the light only where it counts, and the status panel says what it does', () => {
+    const lit = game(burn.data, [person('me', 'Aldo', at.x), person('bo', 'Bo', at.x + 1, true)]);
+    expect(lit.avatars().find(a => a.id === 'bo')?.lantern).toBe(true);
+    expect(game(far, [person('me', 'Aldo', gate.x), person('bo', 'Bo', gate.x + 1, true)]).avatars().find(a => a.id === 'bo')?.lantern).toBe(false);
+    const row = statusView({
+      energy: FULL, body: DRY, surge: null, caught: false, storm: null, flash: null, weather: 'overcast', wilds: true, stone: { charge: 0, need: 0, awake: false, left: 0 }, stats: {}, bag: [], items,
+      progress: START, resists: null, wear: null, quirks: [], lantern: lit.lanternOver(),
+    }).rows.find(r => r.label === 'Lantern');
+    expect(row).toEqual({ label: 'Lantern', text: 'In Bo\'s lantern light: you tire half as fast.', tone: 'good' });
   });
 });
 

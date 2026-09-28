@@ -770,6 +770,8 @@ export interface PlayerView {
   down?: true;
   /** They are up the fire lookout whose ladder they stand at the foot of (lookout.ts). */
   up?: true;
+  /** They own a lantern (energy.ts, LANTERN): in a deep region it lights the ground around them, and the others there tire slower in it. */
+  lantern?: true;
 }
 
 /** A map by id and version; a client whose copy has another version reloads. */

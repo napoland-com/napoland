@@ -201,6 +201,9 @@ import {
   cozySeconds,
   dries,
   energyRate,
+  LANTERN,
+  LANTERN_DEPTH,
+  lanternLights,
   faces,
   featOf,
   fitPieces,
@@ -1635,7 +1638,7 @@ export class World {
   private viewOf(p: Online): PlayerView {
     const glow = p.afterglowUntil === undefined ? 0 : round(Math.max(0, p.afterglowUntil - this.tickAt) / 1000, 1);
     const v = view(p.rec, p.live > 0, this.guest(p.rec), glow, !!p.slump);
-    return p.up ? { ...v, up: true } : v;
+    return { ...v, ...(p.up ? { up: true as const } : {}), ...(this.owns(p, LANTERN) ? { lantern: true as const } : {}) };
   }
 
   /** Nobody signed in with this character, on a server with sign-in: no friends and no outfits until someone does. */
@@ -4202,11 +4205,19 @@ export class World {
       drain: p.mods.drain,
       // A lookout's beam as it passes, or a street light mended together while it stands.
       lit: this.beamed(p.zone, x, y, now) || p.map.lit(x, y, p.pass),
+      lantern: this.lanterned(p),
     });
     // Down at 0, nothing drains them further (a surge or a storm neither) and nothing refills them: only a rescuer's energy gets them up.
     if (p.slump) p.rate = 0;
     // Wind resistance (a raincoat) keeps the rain out; so does a roof out of doors (a porch the town built, a lookout's cab), as any roof does.
     p.wetRate = wetRate(p.up || p.map.roofed(x, y) ? 'inside' : p.map.data.kind, weather, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
+  }
+
+  /** Does someone else's lantern light where the player stands (lanternLights)? Their own never does. */
+  private lanterned(p: Online): boolean {
+    if (p.map.data.depth < LANTERN_DEPTH) return false;
+    for (const q of p.zone.players) if (q !== p && this.owns(q, LANTERN) && lanternLights(p.map, p.rec.x, p.rec.y, q.rec)) return true;
+    return false;
   }
 
   /**
