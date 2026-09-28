@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CHANCES, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, FAR_STEPS, FEATS, HEAVY_LOAD, MARK_LIFETIME_MS, MILESTONES, MODS, NO_MODS, RANKS, STATS, STEP_STATS, TileMap, energyRate, featOf, markLifetime,
-  modChanges, modsOf, rankOf, rankText, rankValue, stepCounts, validateItems, type Feat, type MapData, type Mods,
+  AMOUNTS, CHANCES, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, FAR_STEPS, FEATS, HEAVY_LOAD, MARK_LIFETIME_MS, MILESTONES, MODS, NO_MODS, RANKS, STATS, STEP_STATS, TileMap, energyRate, featOf,
+  markLifetime, modChanges, modsOf, rankOf, rankText, rankValue, stepCounts, validateItems, type Feat, type MapData, type Mods,
 } from '../src';
 
 const feat = (id: string): Feat => FEATS.find(f => f.id === id)!;
@@ -139,6 +139,10 @@ describe('mods', () => {
     expect(modChanges('double', 0)).toBe(false);
     expect(modChanges('double', 1.5)).toBe(false);
     expect(modChanges('load', -1)).toBe(false);
+    // An amount (a pale moth's energy as a glowcap is crushed) changes something as soon as it is any.
+    expect(AMOUNTS).toEqual(['markEnergy']);
+    expect(modChanges('markEnergy', 1)).toBe(true);
+    expect(modChanges('markEnergy', 0)).toBe(false);
     const charm = (charm: Partial<Mods>) => validateItems({ version: 1, items: [{ id: 'bead', name: 'Bead', kind: 'charm', stack: 1, text: 'Odd.', charm }], finds: [] }, [])
       .filter(p => p.level === 'error').map(p => p.message);
     expect(charm({ wear: 0.8 })).toEqual([]);
@@ -146,7 +150,7 @@ describe('mods', () => {
     expect(charm({ double: 0 })).toEqual(['item "bead" is a charm that does nothing']);
     expect(charm({ luck: 2 } as Partial<Mods>)).toEqual([
       'item "bead" is a charm that does nothing',
-      'item "bead": a charm changes wetting, load, hitch, warmth, wear, farDrain, double, marks or drain, not luck',
+      'item "bead": a charm changes wetting, load, hitch, warmth, wear, farDrain, double, marks, markEnergy or drain, not luck',
     ]);
   });
 });

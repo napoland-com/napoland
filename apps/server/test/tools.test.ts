@@ -241,8 +241,8 @@ describe('tools over WebSockets', () => {
 });
 
 describe('the field radio of content/items.json', () => {
-  /** The items as they ship, without their finds (they grow on maps these tests do not have). */
-  const content = { ...(JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData), finds: [] };
+  /** The items as they ship, without their finds and keepsakes (they lie on maps these tests do not have). */
+  const content = { ...(JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData), finds: [], keepsakes: undefined };
   const radioTools = [...STARTER_TOOLS, 'radio'];
 
   it('is rewired at the workbench from 2 copper wire and 1 scrap, for good: never into the stash, and never twice', () => {

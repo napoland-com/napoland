@@ -27,6 +27,11 @@ export class Maps {
     return this.data.get(id);
   }
 
+  /** Every bundled map's data, in the order they came: to list what lies on all of them (the notes people left). */
+  all(): MapData[] {
+    return [...this.data.values()];
+  }
+
   /** What to show before the server says where you are: a town. */
   home(): TileMap {
     const all = [...this.data.values()];

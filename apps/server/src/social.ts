@@ -9,6 +9,8 @@
  * - Messages go between friends only, and are kept until read: reading them deletes them.
  * - Blocking someone ends a friendship and any request either way, and keeps them from asking again.
  * - A report is kept for the maintainers, with what was written as the reporter quoted it.
+ * - Two settings, kept with the player: one turns friend requests off, the other trade requests from
+ *   friends (trade.ts asks it). Ending a friendship ends a trade between them too.
  * - On a server with sign-in, all of it needs a real person behind it: a guest is refused every
  *   action (sign_in_first; a report needs a reporter who answers for it), and nobody can ask a guest
  *   to be friends. A guest can still be blocked and reported.
@@ -39,6 +41,7 @@ export type SocialMsg =
   | { t: 'block'; id: string; on: boolean }
   | { t: 'report'; id: string; reason: ReportReason; quote?: string }
   | { t: 'requests'; off: boolean }
+  | { t: 'tradeRequests'; off: boolean }
   | { t: 'friends' };
 
 export interface SocialOptions {
@@ -53,6 +56,8 @@ export interface SocialOptions {
   guests?: boolean;
   /** Whether a player online plays as a guest: nothing among friends is sent to them. */
   isGuest?: (id: string) => boolean;
+  /** Two players are friends no more (unfriended, or one blocked the other): a trade between them is off (trade.ts). */
+  unlinked?: (a: string, b: string) => void;
 }
 
 const has = (links: LinkRecord[], from: string, to: string, kind: LinkRecord['kind']) => links.some(l => l.from === from && l.to === to && l.kind === kind);
@@ -110,6 +115,9 @@ export class Social {
         return this.list(me);
       case 'requests':
         await s.setRequestsOff(me, msg.off);
+        return this.list(me);
+      case 'tradeRequests':
+        await s.setTradesOff(me, msg.off);
         return this.list(me);
       case 'befriend':
         return this.befriend(me, msg);
@@ -196,12 +204,13 @@ export class Social {
     await this.o.storage.setLink(b, a, 'friend', true);
   }
 
-  /** Ends a friendship and any request, either way. */
+  /** Ends a friendship and any request, either way, and a trade between them. */
   private async unlink(a: string, b: string): Promise<void> {
     for (const [x, y] of [[a, b], [b, a]] as const) {
       await this.o.storage.setLink(x, y, 'friend', false);
       await this.o.storage.setLink(x, y, 'request', false);
     }
+    this.o.unlinked?.(a, b);
   }
 
   private refuse(me: string, action: RefusedAction, reason: Refusal): void {
@@ -230,6 +239,7 @@ export class Social {
       outgoing: out('request'),
       blocked: out('block'),
       requestsOff: me?.requestsOff ?? false,
+      tradesOff: me?.tradesOff ?? false,
     });
   }
 }

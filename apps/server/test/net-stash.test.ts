@@ -24,6 +24,24 @@ const items = (): ItemsData => ({
   quirks: QUIRKS.map(id => ({ id, name: id, text: `${id}.` })),
 });
 
+describe('the chest behind steps a slow network bunched up', () => {
+  let now = 1_000_000;
+  const { enter } = setup({ maps: maps(), items: items(), weather: 'overcast', clock: () => now });
+
+  it('opens once the steps before the look are walked', async () => {
+    const a = await enter({ map: 'house', x: 2, y: 3, dir: 'right', stash: { items: { moss: 2 }, out: {} } });
+    await a.c.settle();
+    // Both steps and the A at the chest arrive together: the first step starts, the second waits its turn.
+    a.c.send({ t: 'step', dir: 'right', seq: 1 });
+    a.c.send({ t: 'step', dir: 'up', seq: 2 });
+    a.c.send({ t: 'chest', x: 3, y: 1 });
+    await a.c.next('step', m => m.seq === 1);
+    now += 400;
+    await a.c.next('step', m => m.seq === 2);
+    expect(await a.c.next('chest')).toEqual({ t: 'chest', stash: [{ item: 'moss', count: 2 }] });
+  });
+});
+
 describe('the stash keeps its gear piece by piece', () => {
   const { ctx, enter } = setup({ maps: maps(), items: items(), weather: 'overcast', rng: () => 0 });
   // Not the quirk dice that always roll 0 would give: rolled again, it would change.

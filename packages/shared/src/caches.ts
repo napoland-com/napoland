@@ -17,9 +17,12 @@ export const CACHE_SIZE = 6;
 /** A visit to a crate in the open lasts while you are this near it (tiles, either way, diagonals too). In a room, the whole room is the visit. */
 export const CACHE_NEAR = 3;
 
-/** Can a thing be left in a crate? Gear and tools stay out, and so does a sealed lockbox (it never leaves the chest). */
+/**
+ * Can a thing be left in a crate? Gear and tools stay out, and so does a sealed lockbox (it never leaves
+ * the chest) and a keepsake (it stays with you until you bring it home).
+ */
 export function cacheTakes(def: ItemDef | undefined): boolean {
-  return !!def && def.kind !== 'gear' && def.kind !== 'tool' && def.kind !== 'sealed';
+  return !!def && def.kind !== 'gear' && def.kind !== 'tool' && def.kind !== 'sealed' && def.kind !== 'keepsake';
 }
 
 /** A thing in a crate, as its visitors see it: what, who left it (id and name), and how long ago (seconds, when sent). */

@@ -10,8 +10,8 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData, type MapRef,
-  type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData, type MapRef,
+  type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
@@ -20,9 +20,10 @@ import { detailView } from './details';
 import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
+import { badgeIcon } from './icons';
 import { crateView } from './crates';
 import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, upgradeOf, upgradeViews, wearText, wornViews } from './items';
-import { journalView } from './journal';
+import { fieldNotesView, journalView, notesView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { mapFor, paperMap } from './papermap';
@@ -31,15 +32,16 @@ import { Connection, serverUrl } from './net';
 import { parcelNote, untold } from './parcels';
 import { goalText } from './said';
 import { Sound, type SoundSetting } from './sound';
+import { reachText, tradePanel } from './trade';
 import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { Resolution } from './quality';
 import { heardFinds, nearest, radioOf, type RadioScene } from './radio';
-import { levelText, newsBanner, statusView } from './status';
+import { levelText, newsBanner, restedLine, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
 import { madePlaces } from './view/cabin';
-import { WorldView, createRenderer, lightningAt } from './view/world';
+import { WorldView, createRenderer, lightningAt, nextView } from './view/world';
 import { wardrobeView, type WardrobeState } from './wardrobe';
 import { guardZoom } from './zoom';
 
@@ -71,12 +73,13 @@ const RADIO_KEY = 'napoland.radio';
 let radioOn = store.get(RADIO_KEY) !== 'off';
 
 // Every map is bundled, so moving between them needs no download; the items too, so the bag can
-// name what it holds, and the story, for what people say and the journal. (Globs, not imports: a
-// checkout without items.json or story.json still builds, and the version check below sends it the
-// message that it does not match.)
+// name what it holds, and the story and the field notes, for what people say and the journal. (Globs,
+// not imports: a checkout without items.json, story.json or notebook.json still builds, and the
+// version check below sends it the message that it does not match.)
 const maps = new Maps(Object.values(import.meta.glob<MapData>('../../../content/maps/*.json', { eager: true, import: 'default' })));
 const items = new Items(Object.values(import.meta.glob<ItemsData>('../../../content/items.json', { eager: true, import: 'default' }))[0]);
 const story: StoryData = Object.values(import.meta.glob<StoryData>('../../../content/story.json', { eager: true, import: 'default' }))[0] ?? { version: 0, chapters: [] };
+const notebook: NotebookData = Object.values(import.meta.glob<NotebookData>('../../../content/notebook.json', { eager: true, import: 'default' }))[0] ?? { version: 0, pages: [] };
 const app = document.getElementById('app')!;
 const screen = document.createElement('div');
 screen.className = 'screen';
@@ -100,18 +103,22 @@ let weather: Weather = 'rain';
 let welcomed = false;
 /** The first welcome of this page shows where you are; later ones are reconnects. */
 let arrived = false;
-const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story);
-/** A panel is open over the world (the bag, the journal, the stash...), where it covers the banners. */
-const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.crateOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen;
-/** Close the bag, the journal, the chat, the status and About panels and the menu; true when one was open. */
+const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story, notebook);
+/** A panel is open over the world (the bag, the journal, the stash, a crate, a trade...), where it covers the banners. */
+const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.crateOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen
+  || hud.tradeOpen;
+/** Close the bag, the journal, the chat, the status and About panels, a crate, a trade (which calls it off) and the menu; true when one was open. */
 const closePanels = () => {
   const open = panelOpen() || hud.menuOpen;
   hud.showPaper(null);
   hud.toggleBag(false); hud.toggleJournal(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleCrate(false); hud.toggleMenu(false); hud.toggleFriends(false); hud.toggleChat(false);
+  hud.toggleTrade(false);
   return open;
 };
 /** What the wardrobe knows: whether you play as a guest, your level and the outfit you wear. */
-const wardrobeNow = (): WardrobeState => ({ guest: game.guest, level: game.progress.level, wearing: game.myOutfit });
+const wardrobeNow = (): WardrobeState => ({
+  guest: game.guest, level: game.progress.level, wearing: game.myOutfit, xp: game.progress.xp, merits: game.merits, pattern: game.myPattern, badge: game.myBadge,
+});
 /** The status panel, as the game stands now. */
 const showStatus = () => {
   const now = performance.now();
@@ -119,7 +126,7 @@ const showStatus = () => {
     energy: game.energy(now), body: game.bodyNow(now), surge: game.surgeNow(now), caught: game.caught(now), stone: game.stone, stats: game.stats, bag: game.bag, items,
     progress: game.progress, resists: resistText(game.myGear, items, game.myWorn),
     wear: wearText(game.myGear, game.myWorn, items), quirks: quirkNames(game.myWorn, items),
-    storm: game.stormNow(now), flash: game.flashed(now), weather, wilds: game.map.data.kind === 'wilds', guest: game.guest,
+    storm: game.stormNow(now), flash: game.flashed(now), weather, wilds: game.map.data.kind === 'wilds', guest: game.guest, merits: game.merits,
   }));
 };
 /**
@@ -147,7 +154,7 @@ const controls = {
   // While it asks, the stick answers the question, and the panel it was asked from stays open.
   pad: (dir: Dir | null) => { if (dir && !game.question) closePanels(); game.padChange(dir, performance.now()); },
   // The text box first (it stands above everything but the paper map); then, with a card open in the stash or at the workbench, A presses its button.
-  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.pressCard()) return; else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.crateOpen) hud.toggleCrate(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.pressCard()) return; else if (hud.tradeOpen) game.tradePressA(); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.crateOpen) hud.toggleCrate(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the text box first, then the About panel, then out of the status, a card or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressB(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
   // B held and let go, where the finger is on the fan, 1, 2 or 3 while Q is held, and a hold taken away.
@@ -179,6 +186,8 @@ const hud = new Hud(screen, {
   doff: slot => game.doff(slot),
   open: item => game.openSealed(item),
   outfit: id => game.wearOutfit(id),
+  adorn: (kind, id) => game.wearLook(kind, id),
+  buy: look => game.buyLook(look),
   // At the workbench, the first goal opens the card of what to make (once the workbench has answered).
   goal: () => {
     const next = game.nextGear();
@@ -217,6 +226,18 @@ const hud = new Hud(screen, {
       case 'unfriend': return game.social({ t: 'unfriend', id: a.id });
       case 'block': return game.social({ t: 'block', id: a.id, on: a.on });
       case 'requests': return game.social({ t: 'requests', off: a.off });
+      case 'tradeRequests': return game.social({ t: 'tradeRequests', off: a.off });
+      // Face to face only: from farther away, the card says so (the server checks it again).
+      case 'trade': {
+        const reach = game.tradeReach(a.id);
+        if (reach !== 'near') {
+          game.socialNote = reachText(reach, a.name);
+          game.socialChanges++;
+          return;
+        }
+        hud.toggleFriends(false);
+        return game.askTrade({ id: a.id, name: a.name });
+      }
       case 'tell': return game.tell(a.id, a.text);
       case 'report': {
         // What they wrote last goes with it (a private message, or else a line of chat): the server keeps neither.
@@ -226,6 +247,15 @@ const hud = new Hud(screen, {
         game.socialChanges++;
         return;
       }
+    }
+  },
+  trade: a => {
+    switch (a.a) {
+      case 'give': return game.tradeTap(a.slot);
+      case 'step': return game.tradeStep(a.i, a.by);
+      case 'ready': return game.tradeReady();
+      case 'confirm': return game.tradeConfirm();
+      case 'cancel': return game.tradeCancel();
     }
   },
   map: () => openMap(),
@@ -241,6 +271,8 @@ const hud = new Hud(screen, {
     hud.toggleBag(false);
     game.read(def.name, [def.text]);
   },
+  fieldSeen: () => game.seenFieldNotes(),
+  notesSeen: () => game.seenNotes(),
   version: () => loadVersion(),
   sound: s => { sound.set(s); store.set(SOUND_KEY, JSON.stringify(s)); },
 });
@@ -297,8 +329,7 @@ const arrival = new Arrival(held => {
   }
   hud.setOnline(game.players.size);
   if (view.map !== game.map) {
-    view.dispose();
-    view = new WorldView(renderer, game.map, peek);
+    view = nextView(renderer, view, game.map, peek);
     view.pixelScale = resolution.scale;
     view.setWeather(weather);
     watchFires(view);
@@ -363,6 +394,12 @@ overlay.innerHTML = `
     <button type="button" data-el="accountPlay"></button>
     <div class="links center"><button type="button" class="link" data-el="accountBack">Keep playing as a guest</button></div>
   </div>
+  <div class="card panel" data-el="keepCard" hidden>
+    <h1>napoland</h1>
+    <p data-el="keepAsk"></p>
+    <button type="button" data-el="keepPlay">Keep it</button>
+    <div class="links center"><button type="button" class="link" data-el="keepBack">Play as a guest instead</button></div>
+  </div>
   <div class="card panel" data-el="msg">
     <h1>napoland</h1>
     <p data-el="msgText">Loading...</p>
@@ -403,6 +440,7 @@ function render(s: Screen) {
   // The play card is the name card, with the pitch kept on short screens and sign-in beside it.
   card('nameCard').hidden = s.kind !== 'name' && s.kind !== 'play';
   text('accountCard').hidden = s.kind !== 'account';
+  text('keepCard').hidden = s.kind !== 'keep';
   text('msg').hidden = s.kind !== 'message';
   if (s.kind === 'message') {
     text('msgText').textContent = s.text;
@@ -475,6 +513,8 @@ function render(s: Screen) {
     text('accountName').textContent = s.name;
     text('accountAsk').textContent = `Play as ${s.name}? Your guest character stays in this browser.`;
     button('accountPlay').textContent = `Play as ${s.name}`;
+  } else if (s.kind === 'keep') {
+    text('keepAsk').textContent = s.who ? `Sign in as ${s.who} and keep this guest character?` : 'Sign in with this account and keep this guest character?';
   }
 }
 
@@ -509,6 +549,8 @@ window.addEventListener('pageshow', e => { if (e.persisted) void signin?.resumed
 button('emailBack').addEventListener('click', () => signin?.back());
 button('accountPlay').addEventListener('click', () => signin?.playAccount());
 button('accountBack').addEventListener('click', () => void signin?.keepGuest());
+button('keepPlay').addEventListener('click', () => signin?.keepGuestCharacter());
+button('keepBack').addEventListener('click', () => void signin?.keepGuest());
 // Typed, pasted ("123 456") or filled in from the email by the phone: digits only, and in it goes once whole.
 codeInput.addEventListener('input', () => {
   const d = digits(codeInput.value);
@@ -559,7 +601,7 @@ conn.onMessage = (msg: ServerMsg) => {
   const now = performance.now();
   switch (msg.t) {
     case 'welcome':
-      if (!known(msg.map) || msg.items !== items.version || msg.story.version !== story.version) return outdated();
+      if (!known(msg.map) || msg.items !== items.version || msg.story.version !== story.version || (msg.notebook && msg.notebook.version !== notebook.version)) return outdated();
       welcomed = true;
       signin?.welcomed(msg);
       signedInNews = signin?.news ?? null;
@@ -579,6 +621,8 @@ conn.onMessage = (msg: ServerMsg) => {
     case 'weather':
       if (msg.weather === 'aurora' && weather !== 'aurora') hud.showBanner('Lights in the sky', 'An aurora: the old wires hum,\nand copper turns up by the poles.');
       weather = msg.weather;
+      // Some notes people left show only at night, in the rain or on an aurora night.
+      game.weather = weather;
       view.setWeather(weather);
       return;
     case 'pong':
@@ -619,7 +663,7 @@ async function boot() {
     }
   }
   let backend: AuthBackend | undefined;
-  if (config.mode === 'supabase') backend = (await import('./supabase')).supabaseBackend(config.url, config.publishableKey, (config.providers ?? []).length > 0);
+  if (config.mode === 'supabase') backend = (await import('./supabase')).supabaseBackend(config.url, config.publishableKey);
   signin = new SignIn({
     // Google and Apple send the player back to this game's address (it lives at the root of it).
     config, backend, store, tab: tabStore, now: () => Date.now(), returnTo: location.origin,
@@ -671,7 +715,9 @@ let lotsShown = { changes: -1, view: null as WorldView | null };
 let benchFurniture = -1;
 let statusAt = 0;
 let statsShown = -1;
-let friendsShown = { changes: -1, open: false };
+let friendsShown = { changes: -1, open: false, reach: '' };
+/** The trade as its panel shows it: drawn again when the trade, the bag or the bag's size changes. */
+let tradeShown = { changes: -1, bag: null as BagSlot[] | null, capacity: 0 };
 /** The chat tab shown, what of the chat is drawn, and the dots drawn on the menu. */
 let chatTab: ChatTo = 'local';
 let chatShown: { changes: number; tab: ChatTo } = { changes: -1, tab: chatTab };
@@ -697,6 +743,10 @@ let humFor = -Infinity;
 let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: null };
 /** The wardrobe as drawn: a guest's gate, or the outfits of a level, and the one worn. */
 let wardrobeShown = '';
+/** The badge before your own name, as drawn (undefined: not yet). */
+let badgeShown: string | null | undefined;
+/** A badge's drawing, if it is one this copy draws. */
+const badgeOf = (id: string | undefined) => (id ? badgeIcon(id) : undefined);
 let toolsShown: string[] | null = null;
 let radioShown: boolean | null = null;
 /** Your radio (radioOf), and where the finds it listens for lie on this map: found again only when the finds or the weather change. */
@@ -711,6 +761,10 @@ const radioScenes: [RadioScene, RadioScene] = [{ on: false, senses: { loud: 0, f
 let radioTurn = 0;
 let progressShown: typeof game.progress | null = null;
 let storyShown = -1;
+let notebookShown = -1;
+let notesShown = -1;
+/** A map's name, for the field notes' headings. */
+const mapName = (id: string) => maps.find(id)?.name;
 /**
  * Chapters, feats' ranks and levels reached and not announced yet. Each waits until it can be read: for
  * what is being said (a chapter reached by talking to someone), the panel that is open (the stash you
@@ -808,12 +862,24 @@ function frame(now: number) {
   for (const n of worldNews) {
     // A dot on the menu until the journal is opened (it shows the chapter at once if it is open).
     if (n.kind === 'chapter') { toSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
+    // The field notes' news waits like a chapter's, with a dot of its own until they are looked at.
+    if (n.kind === 'page' || n.kind === 'blank') { toSay.push(n); if (!(hud.journalOpen && hud.journalTab === 'field')) hud.setFieldNews(true); continue; }
+    // A note read needs no banner (the text box just said it), only a dot on the journal's Notes until it is looked at.
+    // A keepsake home waits like a level, for the chest to close, and puts the same dot there.
+    if (n.kind === 'note' || n.kind === 'keepsake') { if (n.kind === 'keepsake') toSay.push(n); if (!(hud.journalOpen && hud.journalTab === 'notes')) hud.setNotesNews(true); continue; }
+    // A first finder: one line for everyone online, waiting like the rest for panels and talk to be done.
+    if (n.kind === 'first') { toSay.push(n); continue; }
     if (n.kind === 'feat') { toSay.push(n); continue; }
     // A dot on the chest's Wardrobe tab too, until it is looked at, when the level opened an outfit.
     if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
+    // A merit waits like a level (it comes at the chest), and puts a dot on the patterns and badges it buys until they are looked at.
+    if (n.kind === 'merit') { toSay.push(n); if (!game.guest) hud.setMeritNews(true); continue; }
     // A parcel that comes on arrival waits for the place's name to be read first; one that comes while
-    // the chest is open needs no banner, as the stash says what came (below).
+    // the chest is open needs no banner, as the stash says what came (below). Arriving rested waits the same way.
     if (n.kind === 'parcel') { if (!game.chest) toSay.push(n); continue; }
+    if (n.kind === 'rested') { toSay.push(n); continue; }
+    // A lodestone's tug: a moment on the status panel (and a faint sound, soundscape.ts), never a banner.
+    if (n.kind === 'tug') { hud.tug(items.quirk('lodestone').name); continue; }
     const b = newsBanner(n, game.map.data.name, items, game.guest);
     if (b) hud.showBanner(b.title, b.sub);
   }
@@ -825,10 +891,28 @@ function frame(now: number) {
     storyShown = game.storyChanges;
     hud.setJournal(journalView(game.reached()));
   }
+  if (game.notebookChanges !== notebookShown) {
+    notebookShown = game.notebookChanges;
+    hud.setFieldNotes(fieldNotesView(notebook, game.fieldNotes, mapName, game.freshPages));
+  }
+  if (game.notesChanges !== notesShown) {
+    notesShown = game.notesChanges;
+    hud.setNotes(notesView(maps.all(), game.notesRead, items.keepsakes, game.keepsakesHome, id => items.byId.get(id), game.freshNotes, game.firsts, game.myName()));
+  }
   if (hud.statusOpen && (now - statusAt > 500 || game.statsChanges !== statsShown)) { statusAt = now; statsShown = game.statsChanges; showStatus(); }
-  if (game.socialChanges !== friendsShown.changes || hud.friendsOpen !== friendsShown.open) {
-    friendsShown = { changes: game.socialChanges, open: hud.friendsOpen };
+  // A friend's card says whether they are near enough to trade with, as they walk.
+  const reach = hud.friendsOpen && game.person ? game.tradeReach(game.person.id) : '';
+  if (game.socialChanges !== friendsShown.changes || hud.friendsOpen !== friendsShown.open || reach !== friendsShown.reach) {
+    friendsShown = { changes: game.socialChanges, open: hud.friendsOpen, reach };
     hud.setFriends(friendsView(game.friends, game, id => maps.find(id)?.name), game.socialNote);
+  }
+  // A trade opens its panel once both are in or you asked (a friend's ask is a question first), and it closes when it is over.
+  const trading = !!game.trade && game.trade.state !== 'asked';
+  if (trading && !hud.tradeOpen) { closePanels(); hud.toggleTrade(true); }
+  else if (!trading && hud.tradeOpen) hud.toggleTrade(false, false);
+  if (trading && (game.tradeChanges !== tradeShown.changes || game.bag !== tradeShown.bag || capacity !== tradeShown.capacity)) {
+    tradeShown = { changes: game.tradeChanges, bag: game.bag, capacity };
+    hud.setTrade(tradePanel(game.trade!, { mine: game.tradeMine, bag: game.bag, items }));
   }
   // Chat: what the open tab heard (reading it clears the dot), and the dots on the menu.
   if (hud.chatOpen) game.chatNews = false;
@@ -861,7 +945,8 @@ function frame(now: number) {
     hud.setWearing(wornViews(game.myGear, items, game.myWorn));
   }
   // A guest who signs in has the outfits at once; a new level opens more.
-  const wardrobe = wardrobeNow(), wardrobeKey = `${wardrobe.guest}|${wardrobe.level}|${wardrobe.wearing}`;
+  // Merits come with XP, and each look bought or worn changes a tile.
+  const wardrobe = wardrobeNow(), wardrobeKey = `${wardrobe.guest}|${wardrobe.level}|${wardrobe.wearing}|${meritsOf(game.progress.xp)}|${game.merits.spent}|${game.merits.owned}|${wardrobe.pattern}|${wardrobe.badge}`;
   if (wardrobeKey !== wardrobeShown) {
     wardrobeShown = wardrobeKey;
     hud.setWardrobe(wardrobeView(wardrobe));
@@ -890,6 +975,8 @@ function frame(now: number) {
     progressShown = game.progress;
     if (game.chest) hud.setStash(slotViews(game.chest.stash, items), levelText(game.progress));
     hud.setLevel(game.progress.level);
+    // At the chest, as it is spent: how much more of what comes home counts double.
+    hud.setRested(game.progress.rested ? restedLine(game.progress.rested) : null);
   }
   // Open, the stash says once what came in the parcels since it last opened, and in one that comes while it is.
   if (game.chest && game.parcels.length) {
@@ -916,7 +1003,15 @@ function frame(now: number) {
   };
   sound.update(soundscape(scene, heard));
   heard = scene;
-  const tags: TagView[] = [...game.players.values()].filter(p => p.id !== game.meId).map(p => { const s = view.project(p.x, p.y, 1.25); return { id: p.id, name: p.name, x: s.x, y: s.y }; });
+  const tags: TagView[] = [...game.players.values()].filter(p => p.id !== game.meId).map(p => {
+    const s = view.project(p.x, p.y, 1.25), badge = badgeOf(game.badges.get(p.id));
+    return { id: p.id, name: p.name, x: s.x, y: s.y, ...(badge ? { badge } : {}) };
+  });
+  // Your own, before your name at the top: what everyone else sees on your name tag.
+  if (game.myBadge !== badgeShown) {
+    badgeShown = game.myBadge;
+    hud.setBadge(badgeOf(badgeShown ?? undefined) ?? null);
+  }
   // Whose pile it is, while you are near. Its id is its owner's, so it gets a key of its own.
   for (const d of game.pilesNear()) { const s = view.project(d.x, d.y, 0.62); tags.push({ id: `pile:${d.id}`, name: d.name, x: s.x, y: s.y, pile: true }); }
   // On your street, whose cabin it is, on the plate by its door, while you pass it.

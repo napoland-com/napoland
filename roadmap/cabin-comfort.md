@@ -2,7 +2,7 @@
 id: cabin-comfort
 title: A cozy cabin
 status: done
-order: 410
+order: 480
 area: world
 depends: [own-cabin]
 ---

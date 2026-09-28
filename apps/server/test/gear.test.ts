@@ -104,9 +104,20 @@ describe('what you wear', () => {
 });
 
 describe('the workbench', () => {
+  it('opens once the steps sent before the look are walked, from where they take you', () => {
+    // Bunched up by a slow network: the step in front of the workbench (1,2) still waits when the look comes in.
+    const w = world(rec('a', 'house', 2, 3, { stash: { items: { cloth: 5 } , out: {} } }, 'left'));
+    w.step('a', 'left', 1, 350);
+    w.step('a', 'up', 2, 351);
+    w.bench('a', 1, 1, 450);
+    expect(to(w.drain(), 'a').filter(m => m.t === 'bench')).toEqual([]);
+    w.tick(1000);
+    expect(to(w.drain(), 'a').filter(m => m.t === 'bench')).toEqual([{ t: 'bench', stash: [{ item: 'cloth', count: 5 }] }]);
+  });
+
   it('opens next to it, and makes gear from the stash into the stash', () => {
     const w = world(rec('a', 'house', 1, 2, { stash: { items: { cloth: 5 }, out: {} } }));
-    w.bench('a', 1, 1);
+    w.bench('a', 1, 1, 500);
     expect(to(w.drain(), 'a')).toEqual([{ t: 'bench', stash: [{ item: 'cloth', count: 5 }] }]);
     w.craft('a', 1, 1, 'coat', 1000);
     expect(to(w.drain(), 'a')).toEqual([
@@ -339,6 +350,15 @@ describe('gear on the road', () => {
     w.unequip('a', 3, 1, 'cap', 1000);
     expect(of(to(w.drain(), 'a'), 'progress').map(p => p.gained)).toEqual([40]);
     expect(w.get('a')!.xp).toBe(40);
+  });
+
+  it('count double while rested, like anything else brought home for the first time', () => {
+    const w = road(rec('a', 'house', 3, 2, { rested: 100, bag: [{ item: 'odd', count: 1 }] }));
+    w.use('a', 0, 1000);
+    w.wear('a', 0, 1000);
+    w.drain();
+    w.unequip('a', 3, 1, 'cap', 1000);
+    expect(of(to(w.drain(), 'a'), 'progress')).toEqual([{ t: 'progress', progress: expect.objectContaining({ xp: 80, rested: 60 }), gained: 80, fromRest: 40 }]);
   });
 
   it('fall into the pile as they are when you collapse; the owner gets them back so, and anyone else their half so', () => {

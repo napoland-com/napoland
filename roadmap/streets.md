@@ -2,7 +2,7 @@
 id: streets
 title: Your street and your neighbors
 status: done
-order: 420
+order: 490
 area: social
 depends: [own-cabin]
 ---

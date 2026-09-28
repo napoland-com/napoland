@@ -180,7 +180,24 @@ export type MapObject =
    * its owner makes new furniture for it at the workbench. Each player sees their own (their cabin is
    * theirs alone). `what` says which: a bed two tiles long, the rug three by two (walked over), the rest one.
    */
-  | { kind: 'comfort'; x: number; y: number; what: Comfort };
+  | { kind: 'comfort'; x: number; y: number; what: Comfort }
+  /**
+   * A handwritten note someone left (notes.ts): on a table, a shelf, a crate or a bed, in a car, on the
+   * luggage, nailed to a pole. It lies on the tile of what it is on, so it blocks nothing itself, and you
+   * read it like a sign, facing that. `id` names it for good (what players read is kept by it), `by`
+   * says who wrote it, `name` what the text box calls it ("Nailed to the pole"). A note with `when`
+   * only shows at night, in the rain or on an aurora night; the rest of the time the box says `faint`.
+   */
+  | { kind: 'note'; x: number; y: number; id: string; by: NoteAuthor; name: string; text: string[]; when?: NoteWhen; faint?: string };
+
+/** Who left notes behind: the ranger, Walt Pruitt when he walked the line, and the Barlows from the cabin at the end. */
+export const NOTE_AUTHORS = ['ranger', 'walt', 'barlows'] as const;
+export type NoteAuthor = (typeof NOTE_AUTHORS)[number];
+/** When a note shows (notes.ts, noteShows): written in something that glows, in wax that only water shows, or scratched with a shard. */
+export const NOTE_WHEN = ['night', 'rain', 'aurora'] as const;
+export type NoteWhen = (typeof NOTE_WHEN)[number];
+/** What a note may lie on: its tile is one of these things' tiles. */
+export const NOTE_ON = ['table', 'shelf', 'crate', 'bed', 'pole', 'car', 'truck', 'luggage'] as const;
 
 /** The ways a paper to read can look (MapObject 'paper'); the first two lie on a table, the others hang on a wall. */
 export const PAPER_LOOKS = ['note', 'list', 'calendar', 'drawing'] as const;
@@ -279,8 +296,11 @@ const BLOCKING = new Set<MapObject['kind']>([
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
   'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache',
 ]);
-/** Objects that are only drawn: you walk over or through them. */
-export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust']);
+/**
+ * Objects that are only drawn: you walk over or through them. A note is drawn on what it lies on,
+ * which blocks the way itself.
+ */
+export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'note']);
 
 /** Does this object stop anyone from walking onto its tiles? A comfort place does, but for the rug. */
 export function blocks(o: MapObject): boolean {

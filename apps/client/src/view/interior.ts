@@ -9,8 +9,8 @@
  * furniture never move, so world.ts bakes them with the other props.
  */
 import * as THREE from 'three';
-import { doorOf, type Dir, type MapData, type MapObject, type TileMap } from '@napoland/shared';
-import { curtainColor, curtainPanels } from './left';
+import { NOTE_ON, doorOf, objectTiles, type Dir, type MapData, type MapObject, type TileMap } from '@napoland/shared';
+import { curtainColor, curtainPanels, luggageTop, vehiclePlace } from './left';
 import { box, flat, hash2, part, pivot, toon } from './toon';
 
 /** Height of a wall that stands (the back and side walls), and of one cut down to a baseboard (the front). */
@@ -663,6 +663,100 @@ function paperModel(o: Extract<MapObject, { kind: 'paper' }>, v: number): THREE.
     g.add(sheet);
   }
   return g;
+}
+
+/** A handwritten sheet, lying flat (or, `upright`, facing south): pale paper and a few pencil lines. */
+function sheet(w: number, d: number, v: number, upright = false): THREE.Group {
+  const s = new THREE.Group();
+  s.add(box(w, 0.006, d, '#ece6d4', 0, 0, 0, 0.005));
+  for (let k = 0; k < 3; k++) s.add(box(w * (0.7 - (k === 2 ? 0.25 : 0)), 0.004, 0.01, '#5e5e6c', -w * 0.05, 0.004, -d * 0.25 + k * d * 0.25, false));
+  s.rotation.y = (v - 0.5) * 0.6;
+  if (upright) s.rotation.set(Math.PI / 2, 0, (v - 0.5) * 0.2);
+  return s;
+}
+
+/**
+ * A note someone left (notes.ts), drawn on what it lies on, where the camera sees it: on a table, a
+ * shelf's top board, a crate's lid, a bed (tucked under a pillow), the suitcases; nailed to a pole, on its
+ * south side at chest height; in a car, under the back wiper, or, on its front half, in the glove box
+ * behind the passenger door, left open. Null when nothing it may lie on is there.
+ */
+export function noteModel(o: Extract<MapObject, { kind: 'note' }>, map: TileMap): THREE.Object3D | null {
+  const under = map.data.objects.find(u => (NOTE_ON as readonly string[]).includes(u.kind) && objectTiles(u).some(([x, y]) => x === o.x && y === o.y));
+  if (!under) return null;
+  const v = hash2(o.x * 7 + 3, o.y * 11 + 5), uv = hash2(under.x * 3 + 1, under.y * 5 + 2);
+  switch (under.kind) {
+    case 'table': {
+      const g = pivot(o.x + 0.5, 0.609, o.y + 0.5);
+      g.add(sheet(0.22, 0.16, v));
+      return g;
+    }
+    case 'shelf': {
+      // On the top board, its edge over the front, where a hand leaves a note on its way out.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = againstWall(map, o.x, o.y);
+      const s = sheet(0.2, 0.14, v);
+      s.position.set(-0.12, 1.325, -0.16);
+      g.add(s);
+      return g;
+    }
+    case 'crate': {
+      // On the lid of the crate, or of the smaller one stacked on it (furnitureModel's dice).
+      const g = pivot(o.x + 0.5, uv > 0.55 ? 0.94 : 0.561, o.y + 0.5);
+      g.rotation.y = (uv - 0.5) * 0.5 + (uv > 0.55 ? (uv - 0.75) * 1.4 : 0);
+      g.add(sheet(0.18, 0.14, v));
+      return g;
+    }
+    case 'bed': {
+      // A pillow at the head of the bed (north), and the corner of a note out from under it.
+      const g = pivot(o.x + 0.5, 0, under.y + 1);
+      g.add(box(0.5, 0.09, 0.24, '#ece5d4', 0, 0.425, -0.66, 0.012));
+      const s = sheet(0.16, 0.12, v);
+      s.position.set(0.12, 0.386, -0.5);
+      g.add(s);
+      return g;
+    }
+    case 'luggage': {
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = (uv - 0.5) * 0.8;
+      const s = sheet(0.18, 0.13, v);
+      const top = luggageTop(uv);
+      s.position.set(top.x, top.y + 0.004, top.z);
+      g.add(s);
+      return g;
+    }
+    case 'pole': {
+      // Nailed on the side you come up to, at chest height, a nail at the top.
+      const g = pivot(o.x + 0.5, 1.02, o.y + 0.5 + 0.08);
+      g.add(sheet(0.16, 0.2, v, true), box(0.018, 0.018, 0.02, '#3a3a3c', 0, 0.085, 0.006, false));
+      return g;
+    }
+    case 'car': case 'truck': {
+      // The car's own frame: its nose toward local +z. Its front half is the tile its nose points to.
+      const at = vehiclePlace(under), g = pivot(at.x, 0, at.z);
+      g.rotation.y = at.turn;
+      const long = Math.max(under.w, under.h ?? 1), front = objectTiles(under).at(under.dir === 'up' || under.dir === 'left' ? 0 : -1)!;
+      if (long > 1 && front[0] === o.x && front[1] === o.y) {
+        // In the glove box: the passenger door (right of the nose, -x) left open, the dark inside, the paper on the seat.
+        g.add(box(0.012, 0.36, 0.5, '#101418', -0.452, 0.55, 0.07, false));
+        const hinge = pivot(-0.46, 0, 0.33);
+        hinge.rotation.y = 0.7;
+        hinge.add(box(0.05, 0.4, 0.53, '#6b4a2e', -0.025, 0.41, -0.265, 0.015));
+        g.add(hinge);
+        const s = sheet(0.14, 0.1, v);
+        s.position.set(-0.47, 0.5, 0.12);
+        g.add(s);
+      } else {
+        // Under the back wiper, on the rear window.
+        const s = sheet(0.2, 0.14, v);
+        s.position.set(0.12, 0.8, -0.78);
+        s.rotation.x = -0.6;
+        g.add(s, box(0.36, 0.015, 0.015, '#18181b', 0.05, 0.815, -0.79, false));
+      }
+      return g;
+    }
+    default: return null;
+  }
 }
 
 /** Soft dark ellipses under furniture (and a fireplace), so it stands on the floor: [x, z, radius x, radius z]. */

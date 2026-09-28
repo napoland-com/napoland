@@ -50,17 +50,18 @@ describe('the story in what people say', () => {
     expect(at('woods')).toEqual(['Word from the woods today: thick fog.', 'Heading out?', 'Now the south road.']);
   });
 
-  it('tells the server who you talked to and which desk you read, and never what a sign says', () => {
+  it('tells the server who you talked to and what you read, a desk or a sign: where, and never what it says', () => {
     const sent: ClientMsg[] = [];
     talk(inWoods('what-glows', sent));
     expect(talk(inWoods('what-glows', sent, 'left'))).toEqual(['Week 1.']);
     expect(sent.filter(m => m.t === 'talk')).toEqual([{ t: 'talk', x: 2, y: 1 }, { t: 'talk', x: 1, y: 2 }]);
 
-    const town: string[] = [];
-    const t = new Game(new Maps([tinyTown(), woods()]), m => town.push(m.t), ITEMS, storyData());
+    // A sign too, since a page of the field notes may open for it (notebook.ts): only its tile goes.
+    const town: ClientMsg[] = [];
+    const t = new Game(new Maps([tinyTown(), woods()]), m => town.push(m), ITEMS, storyData());
     t.handle(welcome(tinyTown(), [me(1, 2, 'up')], undefined, { story: { version: storyData().version, chapter: 'home' } }), 1000);
     expect(talk(t)).toEqual(['Testbrook', 'Pop. 2']);
-    expect(town).not.toContain('talk');
+    expect(town.filter(m => m.t === 'talk')).toEqual([{ t: 'talk', x: 1, y: 1 }]);
   });
 
   it('moves on when the server says a chapter was reached: the journal keeps it, and it is news', () => {
