@@ -1,9 +1,10 @@
 /**
  * The interface over the world: status and energy (and how wet you are, and what clings to you), the
- * surge clock, the menu with the journal, status and About panels, the joystick and A/B (and the fan
- * of calls B opens when held), name tags, notes over the heads of callers, the text box, the bag, the
- * chest (the stash, and the wardrobe beside it) and the workbench, and the fade and name banner when
- * you arrive somewhere.
+ * surge clock, the menu with the journal (the story, and the field notes, which the notebook in the
+ * bag's header opens too), status and About panels, the joystick and A/B (and the fan of calls B
+ * opens when held), name tags, notes over the heads of callers, the text box, the bag, the chest (the
+ * stash, and the wardrobe beside it) and the workbench, and the fade and name banner when you arrive
+ * somewhere.
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
@@ -12,9 +13,9 @@ import { aboutBody, versionView } from './about';
 import { CALL_NOTE_S, CALL_WORDS, FAN, fanChoice } from './calls';
 import { DOUBLE_TAP_MS, DoubleTap, cardPress, morePress, refKey, statText, type DetailAct, type DetailRef, type DetailView } from './details';
 import type { FriendsView } from './friends';
-import { CALL_GLYPHS } from './icons';
+import { CALL_GLYPHS, NOTEBOOK_ICON } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
-import type { JournalView } from './journal';
+import { fieldNotesHtml, notesHtml, type FieldNotesView, type JournalView, type NotesView } from './journal';
 import type { SoundSetting } from './sound';
 import type { OfferRow, TradePanel } from './trade';
 import { BADGES_HINT, PATTERNS_HINT, WARDROBE_GATE, WARDROBE_HINT, type OutfitTile, type WardrobePart, type WardrobeView } from './wardrobe';
@@ -104,6 +105,10 @@ export interface HudHandlers {
   tool?(item: string): void;
   /** The map button in the bag's header: the paper map of the area you are in. */
   map?(): void;
+  /** The field notes were looked at, and the journal left them (closed, or on its story): what was new there is not any more. */
+  fieldSeen?(): void;
+  /** The same for the notes people left. */
+  notesSeen?(): void;
   /** The sound was muted or unmuted, or its volume moved. */
   sound?(s: SoundSetting): void;
   /** A guest's Sign in button (in the status panel, the Status tab, the chat or the friends panel). */
@@ -223,6 +228,15 @@ export interface StatusView { guest?: string; rows: StatusRow[]; feats: FeatView
  */
 export interface CrateView { count: string; hint: string; rows: Array<{ id: number; name: string; icon: string; line: string }>; empty: string | null }
 
+/** The parts of the journal, the one book the game keeps: the story's chapters, the field notes, and the notes people left. */
+export type JournalTab = 'story' | 'field' | 'notes';
+/** What each part of the journal says under its tabs. */
+export const JOURNAL_HINTS: Readonly<Record<JournalTab, string>> = {
+  story: 'The story so far, the latest first. It goes on: new chapters come as the world grows.',
+  field: 'What you noticed out there, place by place. A question on a page fills in once you see the answer for yourself.',
+  notes: 'What people left out there, in their own words, and what you brought home of theirs.',
+};
+
 /** What the chat and the friends panel say to a guest, over a Sign in button, instead of what they cannot use yet. */
 export const CHAT_GATE = 'Sign in to chat with other players. Signing in keeps your character.';
 export const FRIENDS_GATE = 'Sign in to make friends and write to them. Signing in keeps your character.';
@@ -322,15 +336,22 @@ export class Hud {
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
   private shown = {
     fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
-    friends: '', personActs: '', talk: '', journal: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', badge: '', tradeMine: '', tradeTheirs: '', tradeBag: '',
+    friends: '', personActs: '', talk: '', journal: '', field: '', notes: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', badge: '', tradeMine: '', tradeTheirs: '',
+    tradeBag: '',
   };
   /** The chest's tab: the stash (with what came in parcels, the first goal and what you wear), or the wardrobe. */
   private chestTab: 'stash' | 'wardrobe' = 'stash';
   /** The wardrobe's part shown (outfits, patterns or badges), and the wardrobe as last told. */
   private wardrobePart: WardrobePart = 'outfits';
   private wardrobe: WardrobeView | null = null;
-  /** What the dots say is new: among friends (a request, an unread message) and in the journal (a chapter), on the menu; in the chat (something said), on its own button. */
-  private news = { social: false, journal: false, chat: false };
+  /** The journal's part: the story's chapters, the field notes, or the notes people left. */
+  private journalPart: JournalTab = 'story';
+  /**
+   * What the dots say is new: among friends (a request, an unread message) and in the journal (a chapter,
+   * a page of the field notes or a blank filled in, a note read), on the menu; in the chat (something
+   * said), on its own button; in the field notes, on the notebook's button in the bag too.
+   */
+  private news = { social: false, journal: false, field: false, notes: false, chat: false };
   private load = 0;
   private capacity = BAG_SLOTS;
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
@@ -411,7 +432,9 @@ export class Hud {
         <div class="choices panel" data-el="choices" role="group" aria-label="Your answer" hidden><button type="button" data-choice="yes">YES</button><button type="button" data-choice="no">NO</button></div>
         <div class="more" data-el="more" aria-hidden="true" style="visibility: hidden">&#9660;</div><i class="timer" data-el="timer" aria-hidden="true" hidden></i></div>
       <div class="sheet panel bag-sheet docked" data-el="bagSheet" data-open="false" role="dialog" aria-label="Bag">
-        <div class="sheet-head bag-head"><span class="heading"><b>Bag</b><span class="room" data-el="room"></span></span><span class="tools" data-el="tools"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
+        <div class="sheet-head bag-head"><span class="heading"><b>Bag</b><span class="room" data-el="room"></span></span>
+          <span class="tools"><button type="button" class="slot" data-el="notebookBtn" aria-label="Your field notes">${NOTEBOOK_ICON}</button></span>
+          <span class="tools" data-el="tools"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
         <div class="sheet-body" data-el="bagBody">
           <div class="grid" data-el="grid">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-slot="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
           <p class="hint" data-el="hint">${EMPTY_BAG}</p>
@@ -519,9 +542,11 @@ export class Hud {
         </div>
       </div>
       <div class="sheet panel journal-sheet" data-el="journalSheet" data-open="false" role="dialog" aria-label="Journal">
-        <div class="sheet-head"><b>Journal</b><button type="button" class="close" data-el="journalClose" aria-label="Close the journal">${ICON.x}</button></div>
-        <p class="hint">The story so far, the latest first. It goes on: new chapters come as the world grows.</p>
-        <div class="journal-body" data-el="journalBody"></div>
+        <div class="sheet-head"><span class="chest-tabs" role="tablist" aria-label="Journal"><button type="button" role="tab" data-journal="story" aria-selected="true">Story</button><button type="button" role="tab" data-journal="field" aria-selected="false">Field notes</button><button type="button" role="tab" data-journal="notes" aria-selected="false">Notes</button></span><button type="button" class="close" data-el="journalClose" aria-label="Close the journal">${ICON.x}</button></div>
+        <p class="hint" data-el="journalHint">${JOURNAL_HINTS.story}</p>
+        <div class="journal-body" data-el="journalBody" role="tabpanel" aria-label="Story"></div>
+        <div class="journal-body field-notes" data-el="fieldBody" role="tabpanel" aria-label="Field notes" hidden></div>
+        <div class="journal-body field-notes" data-el="notesBody" role="tabpanel" aria-label="Notes" hidden></div>
       </div>
       <div class="sheet panel about-sheet" data-el="aboutSheet" data-open="false" role="dialog" aria-label="About napoland">
         <div class="sheet-head"><b>About</b><button type="button" class="close" data-el="aboutClose" aria-label="Close About">${ICON.x}</button></div>
@@ -636,6 +661,12 @@ export class Hud {
     this.el.menuStatus!.addEventListener('click', () => { this.toggleMenu(false); this.toggleStatus(true); });
     this.el.menuJournal!.addEventListener('click', () => { this.toggleMenu(false); this.toggleJournal(true); });
     this.el.journalClose!.addEventListener('click', () => this.toggleJournal(false));
+    this.el.journalSheet!.addEventListener('click', e => {
+      const tab = (e.target as Element).closest<HTMLElement>('[data-journal]')?.dataset.journal;
+      if (tab === 'story' || tab === 'field' || tab === 'notes') this.showJournalTab(tab);
+    });
+    // The notebook in the bag's header opens the journal at its field notes.
+    this.el.notebookBtn!.addEventListener('click', () => this.toggleJournal(true, 'field'));
     this.el.menuFriends!.addEventListener('click', () => { this.toggleMenu(false); this.toggleFriends(true); });
     this.el.chatBtn!.addEventListener('click', () => { this.toggleMenu(false); this.toggleChat(); });
     this.el.chatClose!.addEventListener('click', () => this.toggleChat(false));
@@ -894,30 +925,90 @@ export class Hud {
     this.news.chat = chat;
     this.showNews();
   }
-  /** A dot on the menu button and on Journal: a chapter you have not read yet. Opening the journal takes it away. */
+  /** A dot on the menu button, on Journal and on its Story tab: a chapter you have not read yet. Looking at the story takes it away. */
   setJournalNews(on: boolean) {
     this.news.journal = on;
     this.showNews();
   }
+  /** The same for the field notes (a page opened, a blank filled in), and on the notebook's button in the bag too. */
+  setFieldNews(on: boolean) {
+    this.news.field = on;
+    this.showNews();
+  }
+  /** The same for the notes people left (one read for the first time), on the Notes tab. */
+  setNotesNews(on: boolean) {
+    this.news.notes = on;
+    this.showNews();
+  }
   private showNews() {
-    this.el.menuBtn!.toggleAttribute('data-news', this.news.social || this.news.journal);
-    this.el.menuFriends!.toggleAttribute('data-news', this.news.social);
-    this.el.menuJournal!.toggleAttribute('data-news', this.news.journal);
-    this.el.chatBtn!.toggleAttribute('data-news', this.news.chat);
+    const { social, journal, field, notes, chat } = this.news;
+    this.el.menuBtn!.toggleAttribute('data-news', social || journal || field || notes);
+    this.el.menuFriends!.toggleAttribute('data-news', social);
+    this.el.menuJournal!.toggleAttribute('data-news', journal || field || notes);
+    this.el.chatBtn!.toggleAttribute('data-news', chat);
+    this.el.notebookBtn!.toggleAttribute('data-news', field);
+    const on: Record<JournalTab, boolean> = { story: journal, field, notes };
+    for (const b of this.el.journalSheet!.querySelectorAll<HTMLElement>('[data-journal]')) b.toggleAttribute('data-news', on[b.dataset.journal as JournalTab] ?? false);
   }
 
   get journalOpen(): boolean {
     return this.el.journalSheet!.dataset.open === 'true';
   }
-  toggleJournal(open = !this.journalOpen) {
+  /** The part of the journal shown (or shown last). */
+  get journalTab(): JournalTab {
+    return this.journalPart;
+  }
+  /**
+   * Opens or closes the journal. It opens on `tab`, or, from the menu, where the news is: the story when it
+   * has something new, else the first part that has, else the story.
+   */
+  toggleJournal(open = !this.journalOpen, tab?: JournalTab) {
+    const was = this.journalOpen;
     // It opens where the bag and the other panels do: one at a time.
     if (open) {
       this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false';
       this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false);
-      this.el.journalSheet!.scrollTop = 0;
-      this.setJournalNews(false);
+      this.showJournalTab(tab ?? (this.news.journal ? 'story' : this.news.field ? 'field' : this.news.notes ? 'notes' : 'story'));
     }
     this.el.journalSheet!.dataset.open = String(open);
+    if (was && !open) this.leftPart(this.journalPart);
+  }
+
+  /** The journal left a part that was looked at: what was new in the field notes or the notes is not any more. */
+  private leftPart(tab: JournalTab) {
+    if (tab === 'field') this.h.fieldSeen?.();
+    else if (tab === 'notes') this.h.notesSeen?.();
+  }
+
+  /** Shows one part of the journal, at the top; looking at it takes its dot away. */
+  showJournalTab(tab: JournalTab) {
+    if (this.journalPart !== tab && this.journalOpen) this.leftPart(this.journalPart);
+    this.journalPart = tab;
+    for (const b of this.el.journalSheet!.querySelectorAll<HTMLElement>('[data-journal]')) b.setAttribute('aria-selected', String(b.dataset.journal === tab));
+    this.el.journalBody!.hidden = tab !== 'story';
+    this.el.fieldBody!.hidden = tab !== 'field';
+    this.el.notesBody!.hidden = tab !== 'notes';
+    if (this.el.journalHint!.textContent !== JOURNAL_HINTS[tab]) this.el.journalHint!.textContent = JOURNAL_HINTS[tab];
+    this.el.journalSheet!.scrollTop = 0;
+    if (tab === 'story') this.setJournalNews(false);
+    else if (tab === 'field') this.setFieldNews(false);
+    else this.setNotesNews(false);
+  }
+
+  /** The notes people left that you read, by who wrote them, and the keepsakes home. Only written to the page when they changed. */
+  setNotes(v: NotesView) {
+    const html = notesHtml(v);
+    if (html === this.shown.notes) return;
+    this.shown.notes = html;
+    this.el.notesBody!.innerHTML = html;
+  }
+
+  /** The field notes, area by area. Only written to the page when they changed. */
+  setFieldNotes(v: FieldNotesView) {
+    const html = fieldNotesHtml(v);
+    if (html === this.shown.field) return;
+    this.shown.field = html;
+    this.el.fieldBody!.innerHTML = html;
   }
   /** The chapters of the story you reached. Only written to the page when they changed; the menu offers the journal once there is one. */
   setJournal(v: JournalView) {

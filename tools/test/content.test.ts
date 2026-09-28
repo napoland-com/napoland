@@ -1,7 +1,11 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CACHE_NEAR, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, objectTiles, upgradable, upgradeChance, validateItems, type ItemsData, type MapData, type MapObject, type StoryData } from '@napoland/shared';
+import {
+  ANYWHERE, CACHE_NEAR, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, itemIndex, notesOf, objectTiles, opensOn, secretKey, secretTitle,
+  stepTarget, upgradable, upgradeChance,
+  validateItems, validateNotebook, type ItemsData, type MapData, type MapNote, type MapObject, type NotebookData, type Sight, type StoryData,
+} from '@napoland/shared';
 
 /** The content as it ships: content/items.json and every map. */
 const content = resolve(import.meta.dirname, '../../content');
@@ -182,8 +186,10 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
 
   it('moved nothing: each is the last thing on its map, on ground that was open, and cuts nobody off', () => {
     for (const { map, o } of crates) {
-      expect(map.data.objects.at(-1), map.data.id).toBe(o);
-      const before = new TileMap({ ...map.data, objects: map.data.objects.slice(0, -1) });
+      // The last but the notes people left, laid after everything else on what stands there already (notes-left.ts).
+      const things = map.data.objects.filter(t => t.kind !== 'note');
+      expect(things.at(-1), map.data.id).toBe(o);
+      const before = new TileMap({ ...map.data, objects: things.slice(0, -1) });
       expect(before.walkable(o.x, o.y), map.data.id).toBe(true);
       // Everywhere anyone could walk to before, they still can, but onto the crate itself.
       const was = reach(before), is = reach(map);
@@ -273,6 +279,155 @@ describe('gear upgrades (roadmap/gear-upgrades.md)', () => {
     const gear = items.items.filter(i => i.kind === 'gear');
     expect(gear.filter(upgradable).map(i => i.tier).sort()).toEqual(expect.arrayContaining(['anomalous', 'expedition', 'rugged', 'sturdy']));
     for (const i of gear) expect(upgradable(i), i.id).toBe(i.tier !== 'worn' && i.slot !== 'bag');
+  });
+});
+
+describe('a field notebook (roadmap/field-notebook.md)', () => {
+  const notebook = JSON.parse(readFileSync(resolve(content, 'notebook.json'), 'utf8')) as NotebookData;
+  const all = [...maps.values()].map(m => m.data);
+  const opening = (e: object) => notebook.pages.filter(p => opensOn(p).some(o => JSON.stringify(o) === JSON.stringify(e)));
+
+  it('is sound: every page opened by something that exists, and none says where anything is', () => {
+    expect(validateNotebook(notebook, all, items)).toEqual([]);
+  });
+
+  // The notebook grows as the world does: about ten pages for each area it has (the Far Woods made it four and anywhere).
+  it('has about ten pages an area, across the four areas and anywhere, each with a count worth filling', () => {
+    const areas = new Map<string, number>();
+    for (const p of notebook.pages) areas.set(p.area, (areas.get(p.area) ?? 0) + 1);
+    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', ANYWHERE]);
+    expect(notebook.pages.length).toBeGreaterThanOrEqual(8 * areas.size);
+    expect(notebook.pages.length).toBeLessThanOrEqual(12 * areas.size);
+    for (const [area, n] of areas) expect(n, area).toBeGreaterThanOrEqual(8);
+  });
+
+  it('has a page for every kind of find, and for the charms a strange object turns out to be', () => {
+    const kinds = new Set(items.finds.map(f => f.item).filter(id => items.items.find(i => i.id === id)?.kind !== 'tool'));
+    for (const item of kinds) expect(opening({ find: item }).length, item).toBe(1);
+    for (const charm of items.items.filter(i => i.kind === 'charm')) expect(opening({ find: charm.id }).length, charm.id).toBe(1);
+  });
+
+  it('has a page for every kind of strange thing out there, and fills in a blank on what each does', () => {
+    const used = new Set(notebook.pages.flatMap(p => [...opensOn(p), ...(p.blanks ?? []).map(b => b.when)]).flatMap(e => ('saw' in e ? [e.saw] : [])));
+    expect([...SIGHTS].filter(s => !used.has(s))).toEqual([]);
+    const blank = (sight: Sight) => notebook.pages.flatMap(p => p.blanks ?? []).find(b => 'saw' in b.when && b.when.saw === sight)!;
+    // The ones the design names: facing a watcher, a hitchhiker letting go, a surge's drain stopping under a light, the ferns before a skulker.
+    expect([blank('froze').ask, blank('froze').fill]).toEqual(['It stops when... ?', 'It stops when someone looks at it.']);
+    expect(blank('let-go').fill).toMatch(/street light, a fire, a roof or a flare/);
+    expect(blank('lit').fill).toMatch(/street light/);
+    expect(blank('rustle').fill).toMatch(/ferns rustle/);
+  });
+
+  it('has a page for the main landmarks\' signs, NAPO\'s desks that tell no chapter, and what each family left to read', () => {
+    const read = (map: string, o: MapObject) => opening({ read: { map, x: o.x, y: o.y } }).length + (o.kind === 'console' ? opening({ read: o.id }).length : 0);
+    for (const id of ['stonebrook', 'near-woods', 'south-road', 'far-woods']) {
+      const napo = maps.get(id)!.data.objects.filter(o => o.kind === 'sign' && o.style === 'napo');
+      expect(napo.length, id).toBeGreaterThan(0);
+      for (const o of napo) expect(read(id, o), `${id} ${o.x},${o.y}`).toBe(1);
+    }
+    for (const [id, x, y] of [['stonebrook', 13, 37], ['stonebrook', 17, 10], ['near-woods', 30, 74], ['near-woods', 27, 9], ['south-road', 37, 5]] as const) {
+      expect(opening({ read: { map: id, x, y } }).length, `${id} ${x},${y}`).toBe(1);
+    }
+    for (const room of ['stonebrook-okada-house', 'stonebrook-hale-house', 'stonebrook-dahl-house', 'stonebrook-lindqvist-house']) {
+      const paper = maps.get(room)!.data.objects.find(o => o.kind === 'paper')!;
+      expect(read(room, paper), room).toBe(1);
+    }
+    expect(opening({ read: 'station-radio' })).toHaveLength(1);
+    expect(opening({ read: 'checkpoint-log' })).toHaveLength(1);
+  });
+});
+
+describe('notes and keepsakes left behind (roadmap/notes-left-behind.md)', () => {
+  const all = [...maps.values()];
+  const notes = [...notesOf(all.map(m => m.data)).values()];
+  /**
+   * How deep a note lies: steps from home to the nearest tile it is read from, out in the wilds; in a room
+   * off the wilds, the steps to its door; in town and its houses, none.
+   */
+  const depth = ({ map, note }: { map: MapData; note: MapNote }): number => {
+    const m = maps.get(map.id)!;
+    if (map.kind === 'wilds') return Math.min(...DIRS.map(d => stepTarget(note.x, note.y, d)).filter(t => m.walkable(t.x, t.y)).map(t => m.homeSteps(t.x, t.y)));
+    const out = maps.get(map.exits[0]?.to ?? '');
+    return map.kind === 'inside' && out?.data.kind === 'wilds' ? out.homeSteps(map.exits[0]!.tx, map.exits[0]!.ty) : 0;
+  };
+  const words = (n: { note: MapNote }) => n.note.text.join(' ').length;
+
+  it('lays about thirty notes, ten by each of the ranger, Walt and the Barlows', () => {
+    expect(notes.length).toBeGreaterThanOrEqual(25);
+    expect(notes.length).toBeLessThanOrEqual(35);
+    for (const by of NOTE_AUTHORS) expect(notes.filter(n => n.note.by === by).length, by).toBeGreaterThanOrEqual(8);
+  });
+
+  it('lays each on something it lies on, readable from beside it, and last on its map, after everything that was there', () => {
+    for (const { map, note } of notes) {
+      const where = `${note.id} in ${map.id}`;
+      const under = map.objects.find(o => (NOTE_ON as readonly string[]).includes(o.kind) && objectTiles(o).some(([x, y]) => x === note.x && y === note.y));
+      expect(under, where).toBeDefined();
+      expect(DIRS.some(d => { const t = stepTarget(note.x, note.y, d); return maps.get(map.id)!.walkable(t.x, t.y); }), where).toBe(true);
+      const first = map.objects.findIndex(o => o.kind === 'note');
+      expect(map.objects.slice(first).every(o => o.kind === 'note'), where).toBe(true);
+    }
+  });
+
+  it('puts them where the design says: the shelters\' tables and shelves, the old car, the poles, the empty house in town and where the leavers stopped', () => {
+    const on = (n: { map: MapData; note: MapNote }) => n.map.objects.find(o => o.kind !== 'note' && objectTiles(o).some(([x, y]) => x === n.note.x && y === n.note.y))!.kind;
+    const count = (pred: (n: { map: MapData; note: MapNote }) => boolean) => notes.filter(pred).length;
+    expect(count(n => on(n) === 'pole')).toBeGreaterThanOrEqual(8);
+    expect(count(n => n.map.id === 'near-woods' && on(n) === 'car')).toBe(2);
+    expect(count(n => n.map.id === 'stonebrook-empty-house')).toBeGreaterThanOrEqual(1);
+    expect(count(n => n.map.id === 'south-road' && (on(n) === 'car' || on(n) === 'luggage'))).toBeGreaterThanOrEqual(2);
+    for (const shelter of ['near-woods-old-cabin', 'near-woods-ranger-hut', 'near-woods-end-cabin']) expect(count(n => n.map.id === shelter), shelter).toBeGreaterThanOrEqual(2);
+    // Walt's are nailed to his poles, or lie where he went: his truck, the jam, the Tower's shed.
+    for (const n of notes.filter(n => n.note.by === 'walt')) expect(['pole', 'car', 'shelf'], n.note.id).toContain(on(n));
+  });
+
+  it('says more the deeper a note lies: a line or two near town, three in the deepest shelters', () => {
+    const near = notes.filter(n => depth(n) < 30), deep = notes.filter(n => depth(n) >= 80);
+    expect(near.length).toBeGreaterThanOrEqual(5);
+    expect(deep.length).toBeGreaterThanOrEqual(5);
+    const mean = (list: typeof notes) => list.reduce((s, n) => s + words(n), 0) / list.length;
+    expect(mean(deep)).toBeGreaterThan(mean(near) * 1.5);
+    for (const n of near) expect(n.note.text.length, n.note.id).toBeLessThanOrEqual(2);
+    expect(deep.filter(n => n.note.text.length === 3).length).toBeGreaterThanOrEqual(deep.length / 2);
+  });
+
+  it('keeps some for their time: glowing writing for the night, wax for the rain, a shard\'s scratches for a green night', () => {
+    for (const when of ['night', 'rain', 'aurora'] as const) {
+      const timed = notes.filter(n => n.note.when === when);
+      expect(timed.length, when).toBeGreaterThanOrEqual(2);
+      // What shows the rest of the time says so, in the note's own words.
+      for (const n of timed) expect(n.note.faint, n.note.id).toBeTruthy();
+    }
+    // Rain only wets paper out of doors.
+    for (const n of notes.filter(n => n.note.when === 'rain')) expect(n.map.kind, n.note.id).not.toBe('inside');
+    expect(notes.filter(n => n.note.when).length).toBeLessThanOrEqual(notes.length / 3);
+  });
+
+  it('names every note and keepsake for the first to find it: whose note and where, or the keepsake (roadmap/first-finders.md)', () => {
+    const byId = notesOf(all.map(m => m.data)), defs = itemIndex(items);
+    for (const { note } of notes) expect(secretTitle(secretKey({ kind: 'note', id: note.id }), byId, defs), note.id).toMatch(/^(the ranger's|Walt's|the Barlows') note (by|in) the /);
+    for (const p of items.keepsakes!.places) expect(secretTitle(secretKey({ kind: 'keepsake', item: p.item }), byId, defs), p.item).toMatch(/^the [a-zA-Z ]+$/);
+  });
+
+  it('lays five keepsakes, one of a kind each, where the notes lead: each on open ground somebody can walk to', () => {
+    const k = items.keepsakes!;
+    expect(k.energy).toBe(5);
+    expect(k.places.map(p => p.item)).toEqual(['old-photograph', 'brass-compass', 'pole-tag', 'tin-whistle', 'staff-badge']);
+    for (const p of k.places) {
+      const def = items.items.find(i => i.id === p.item)!;
+      expect(def.kind, p.item).toBe('keepsake');
+      expect(def.text.length, p.item).toBeGreaterThan(20);
+      const m = maps.get(p.map)!;
+      expect(m.walkable(p.x, p.y), p.item).toBe(true);
+      // Reached from the way in, as a find is.
+      expect(m.data.kind !== 'wilds' || m.homeSteps(p.x, p.y) >= 0, p.item).toBe(true);
+    }
+    // One in town, three in the woods (deeper each), one on the South Road.
+    expect(k.places.map(p => p.map)).toEqual(['stonebrook', 'near-woods', 'near-woods', 'near-woods', 'south-road']);
+    const woods = maps.get('near-woods')!;
+    const steps = k.places.filter(p => p.map === 'near-woods').map(p => woods.homeSteps(p.x, p.y));
+    expect(steps.every(s => s >= 50)).toBe(true);
+    expect(validateItems(items, all.map(m => m.data)).filter(p => p.level === 'error')).toEqual([]);
   });
 });
 

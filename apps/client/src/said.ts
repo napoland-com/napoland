@@ -5,7 +5,8 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, toNextMerit, type BagSlot, type Did, type Dir,
+  CACHE_SIZE, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Did,
+  type Dir,
   type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
 } from '@napoland/shared';
 import { oddsText, pieceName, type Items } from './items';
@@ -101,6 +102,8 @@ export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MAR
  * A piece is named with its level: "Throw away the raincoat +3?"
  */
 export function tossQuestion(def: ItemDef, n: number, inSlot: number, level = 0): string {
+  // One of a kind: it is not gone, it goes back where it lay, for you to find again (notes.ts).
+  if (def.kind === 'keepsake') return `Leave the ${nounOf(def)}? It goes back where you found it.`;
   const what = n === 1 && inSlot === 1 ? `the ${pieceNoun(def, level)}` : n === inSlot ? `all ${n} ${pluralOf(def)}` : amount(def, n);
   return `Throw away ${what}? ${they(def, n) ? 'They are' : 'It is'} gone for good.`;
 }
@@ -223,6 +226,8 @@ export const CRATE_EMPTY = 'Nothing in it yet. Leave something for whoever comes
 export const CRATE_FULL = `The crate is full: it holds ${CACHE_SIZE} things. Someone has to take one out first.`;
 /** Gear stays out of a crate (tools and lockboxes are never in the bag). */
 export const CRATE_NO_GEAR = 'Gear stays with you: a crate takes none.';
+/** A keepsake is yours alone until you bring it home (notes.ts): nobody else could ever find it. */
+export const KEEPSAKE_STAYS = 'A keepsake stays with you until you bring it home.';
 /** One thing left, and one taken, each visit. */
 export const LEFT_ONE = 'You left something here this time. Leave more the next time you come by.';
 export const TOOK_ONE = 'You took something here this time. Take more the next time you come by.';
@@ -249,10 +254,8 @@ export function leftBy(name: string, mine: boolean, ageS: number): string {
 
 // ---------- merits ----------
 
-/** "12,345": a count with its thousands apart, the same in every language the browser speaks. */
-export function thousands(n: number): string {
-  return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-}
+/** "12,345": a count with its thousands apart, the same in every language the browser speaks (firsts.ts). */
+export { thousands };
 
 /**
  * Past level 20, what merits there are: "3 to spend, 1,240 XP to the next" (a guest spends them once
@@ -359,6 +362,7 @@ export function didText(did: Did, items: Items): string {
         : `${noun} ${pl ? 'are' : 'is'} +${did.level} now.`;
     }
     case 'thrown':
+      if (def.kind === 'keepsake') return `The ${nounOf(def)} goes back where you found it.`;
       return did.level ? `You throw away the ${pieceNoun(def, did.level)}.` : `You throw away ${amount(def, did.count)}.`;
     case 'opened': {
       // One thing inside says what it is good for, as a strange object does.

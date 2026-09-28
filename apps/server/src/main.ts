@@ -5,7 +5,7 @@
 import { dirname, join } from 'node:path';
 import { createAuth } from './auth';
 import { loadConfig } from './config';
-import { loadItems, loadMaps, loadStory, loadWords } from './content';
+import { loadItems, loadMaps, loadNotebook, loadStory, loadWords } from './content';
 import { flushLogs, log, setLogLevel } from './log';
 import { startServer } from './server';
 import { MemoryStorage, PgStorage, type Storage } from './storage';
@@ -33,6 +33,11 @@ async function main(): Promise<void> {
   });
   const story = loadStory(cfg.storyFile, maps.values(), items);
   log.info('story loaded', { file: cfg.storyFile, version: story.version, chapters: story.chapters.length });
+  // The field notes lie next to the story: the journal's other part.
+  const notebookFile = join(dirname(cfg.storyFile), 'notebook.json');
+  const notebook = loadNotebook(notebookFile, maps.values(), items);
+  if (notebook) log.info('field notes loaded', { file: notebookFile, version: notebook.version, pages: notebook.pages.length });
+  else log.warn('no field notes: nothing opens a page', { file: notebookFile });
 
   // The words chat masks lie next to the items.
   const words = loadWords(join(dirname(cfg.itemsFile), 'words.json'));
@@ -49,6 +54,7 @@ async function main(): Promise<void> {
     maps: maps.values(),
     items,
     story,
+    notebook,
     words,
     homeMap: cfg.homeMap,
     weather: cfg.weather,

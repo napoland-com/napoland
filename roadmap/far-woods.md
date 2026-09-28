@@ -2,7 +2,7 @@
 id: far-woods
 title: "The Far Woods: a second region one player can reach"
 status: done
-order: 450
+order: 480
 area: world
 depends: [owned-tools]
 ---

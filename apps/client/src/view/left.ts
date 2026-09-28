@@ -212,6 +212,16 @@ export function skidModel(o: Extract<MapObject, { kind: 'skid' }>): THREE.Mesh {
 }
 
 /** Suitcases as they were left on the verge: a stack of two, a steamer trunk with a hatbox, or a case and a duffel bag. */
+/**
+ * Where the top of a heap of luggage is, in its own frame (luggageModel's dice, `v`): the case on the pile,
+ * the trunk's lid beside its round bag, or the tall case standing up. A note left on it lies there.
+ */
+export function luggageTop(v: number): { x: number; y: number; z: number } {
+  if (v < 0.34) return { x: 0.04, y: 0.37, z: -0.02 };
+  if (v < 0.67) return { x: 0.16, y: 0.4, z: 0.06 };
+  return { x: -0.12, y: 0.54, z: -0.08 };
+}
+
 export function luggageModel(o: { x: number; y: number }): THREE.Group {
   const v = hash2(o.x * 3 + 1, o.y * 5 + 2), g = pivot(o.x + 0.5, 0, o.y + 0.5);
   g.rotation.y = (v - 0.5) * 0.8;

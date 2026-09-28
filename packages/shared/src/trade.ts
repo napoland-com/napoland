@@ -8,7 +8,8 @@
  * What a side offers is always what its bag holds: each piece of gear and each live find on its own,
  * as its slot holds it (a piece keeps its condition, quirk and level; a live find when it was picked),
  * and everything else by item, never more than the bag carries. Tools never go into a bag, and sealed
- * things stay in the chest, so neither can be offered.
+ * things stay in the chest, so neither can be offered; nor can a keepsake, which stays with whoever
+ * found it until they bring it home (notes.ts).
  */
 import { addAllToBag, type BagSlot, type ItemDef } from './items';
 import type { Piece } from './gear';
@@ -18,9 +19,12 @@ export const TRADE_REACH = 10;
 /** The most a side can offer at once: no bag holds more slots. */
 export const OFFER_MAX = 16;
 
-/** Can it change hands? Anything a bag holds; never a tool (yours for good) or a sealed thing (it stays in the chest). */
+/**
+ * Can it change hands? Anything a bag holds; never a tool (yours for good), a sealed thing (it stays in
+ * the chest) or a keepsake (yours alone, until it is home).
+ */
 export function tradeable(def: ItemDef | undefined): boolean {
-  return !!def && def.kind !== 'tool' && def.kind !== 'sealed';
+  return !!def && def.kind !== 'tool' && def.kind !== 'sealed' && def.kind !== 'keepsake';
 }
 
 /** One pick of a bag for an offer: how many of what bag slot `slot` holds (a piece of gear or a live find is one). */

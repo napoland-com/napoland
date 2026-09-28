@@ -12,6 +12,7 @@ const data: ItemsData = {
     { id: 'coat', name: 'Raincoat', kind: 'gear', stack: 1, text: 'Yellow.', slot: 'shirt', tier: 'sturdy', resist: { wind: 0.35 }, xp: 10 },
     { id: 'map', name: 'Map', kind: 'tool', stack: 1, text: 'Drawn by hand.', icon: 'map' },
     { id: 'box', name: 'Lockbox', kind: 'sealed', stack: 1, text: 'Sealed.' },
+    { id: 'compass', name: 'Brass compass', kind: 'keepsake', stack: 1, text: 'It points at the woods.' },
   ],
   finds: [],
 };
@@ -32,9 +33,11 @@ describe('an offer', () => {
 
   it('leaves out an empty slot, a slot picked twice, and what cannot change hands', () => {
     expect(offerFrom(bag, [{ slot: 9, count: 1 }, { slot: 1, count: 1 }, { slot: 1, count: 1 }], items)).toEqual([coat(0.8, 2)]);
-    const odd: BagSlot[] = [{ item: 'map', count: 1 }, { item: 'box', count: 1 }];
-    expect(offerFrom(odd, [{ slot: 0, count: 1 }, { slot: 1, count: 1 }], items)).toEqual([]);
-    expect([tradeable(items.get('map')), tradeable(items.get('box')), tradeable(items.get('coat')), tradeable(undefined)]).toEqual([false, false, true, false]);
+    // A keepsake too: it stays with whoever found it until it is home (notes.ts).
+    const odd: BagSlot[] = [{ item: 'map', count: 1 }, { item: 'box', count: 1 }, { item: 'compass', count: 1 }];
+    expect(offerFrom(odd, [{ slot: 0, count: 1 }, { slot: 1, count: 1 }, { slot: 2, count: 1 }], items)).toEqual([]);
+    expect([tradeable(items.get('map')), tradeable(items.get('box')), tradeable(items.get('compass')), tradeable(items.get('coat')), tradeable(undefined)])
+      .toEqual([false, false, false, true, false]);
   });
 
   it('keeps what the bag still holds when it changes', () => {

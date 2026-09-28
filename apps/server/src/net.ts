@@ -33,7 +33,7 @@ import { log } from './log';
 import { Calls } from './calls';
 import { Chat } from './chat';
 import { Social, type SocialMsg } from './social';
-import type { CacheItemRecord, DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
 import { Trades, type TradeMsg } from './trade';
 import { colorFor, type World } from './world';
 
@@ -162,6 +162,7 @@ export function attachNet(o: NetOptions): Net {
   const pendingCredits = new Map<string, Promise<void>>();
   /** The same for each thing left in a crate. */
   const pendingCaches = new Map<number, Promise<void>>();
+  const pendingFirsts = new Map<string, Promise<void>>();
   let pendingStone: Promise<void> = Promise.resolve();
   let saving = false;
   let closing = false;
@@ -653,6 +654,10 @@ export function attachNet(o: NetOptions): Net {
       items: world.itemsVersion,
       story: joined.story,
       thanked: joined.thanked,
+      notebook: joined.notebook,
+      notes: joined.notes,
+      keepsakes: joined.keepsakes,
+      firsts: joined.firsts,
       serverTime: Date.now(),
     });
     flush();
@@ -808,6 +813,18 @@ export function attachNet(o: NetOptions): Net {
     return done;
   }
 
+  /** A first finder, kept once: storage never writes over the first (Storage.saveFirst). */
+  function persistFirst(f: FirstRecord): Promise<void> {
+    const done = (pendingFirsts.get(f.secret) ?? Promise.resolve())
+      .then(() => storage.saveFirst(f))
+      .catch((err: unknown) => log.error('saving a first finder failed', { secret: f.secret, err }))
+      .finally(() => {
+        if (pendingFirsts.get(f.secret) === done) pendingFirsts.delete(f.secret);
+      });
+    pendingFirsts.set(f.secret, done);
+    return done;
+  }
+
   function persistStone(stone: StoneRecord): Promise<void> {
     pendingStone = pendingStone.then(() => storage.saveStone(stone)).catch((err: unknown) => log.error('saving the Old Stone failed', { err }));
     return pendingStone;
@@ -815,7 +832,7 @@ export function attachNet(o: NetOptions): Net {
 
   /** Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag changed with one, the Old Stone. */
   function store(): void {
-    const { drops, players, marks, stone, thanks, credits, caches } = world.takeWrites();
+    const { drops, players, marks, stone, thanks, credits, caches, firsts } = world.takeWrites();
     // Players first: a pile or a mark belongs to a player who must exist in the database.
     for (const rec of players) void persist(rec);
     for (const { owner, drop } of drops) void persistDrop(owner, drop);
@@ -823,6 +840,7 @@ export function attachNet(o: NetOptions): Net {
     for (const { id, item } of caches) void persistCache(id, item);
     for (const t of thanks) void persistThanks(t);
     for (const helper of credits) void persistCredit(helper);
+    for (const f of firsts) void persistFirst(f);
     if (stone) void persistStone(stone);
   }
 
@@ -927,7 +945,7 @@ export function attachNet(o: NetOptions): Net {
       for (const rec of recs) void persist(rec);
       // Includes writes for players who left just before, so storage can be closed after this.
       await Promise.all([
-        ...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), ...pendingCaches.values(), pendingStone,
+        ...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), ...pendingCaches.values(), ...pendingFirsts.values(), pendingStone,
       ]);
       // Clients get a moment to answer the close; then their sockets are cut.
       const force = setTimeout(() => {

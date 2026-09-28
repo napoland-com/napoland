@@ -537,6 +537,26 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .chapter p { margin: 0; color: #e6dfcf; }
 .chapter[data-latest] { box-shadow: inset 0 0 0 1px #8a7440; }
 .chapter[data-latest] h3 { color: #ffcf5a; }
+/* Its three parts under tabs, like the chest's: the story, the field notes (area by area, each with its count) and the notes people left. */
+.journal-sheet .sheet-head .chest-tabs { flex: 1; min-width: 0; }
+.journal-body[hidden] { display: none; }
+.field-notes { gap: calc(var(--u) * 1); }
+.field-notes .area { display: grid; gap: calc(var(--u) * .5); }
+.field-notes .area h3 { margin: 0; font-family: var(--font-ui); font-weight: 600; font-size: 1.05em; line-height: 1.25; color: #ffcf5a; font-variant-numeric: tabular-nums; }
+.field-notes .page { padding: .55em .8em; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.field-notes .page h4 { margin: 0 0 .25em; font-family: var(--font-ui); font-weight: 600; font-size: 1.05em; line-height: 1.2; color: #d3ccbb; }
+.field-notes .page p { margin: 0; color: #e6dfcf; }
+/* A blank reads as a question, dim, until it is seen; then as what was seen. */
+.field-notes .page .blank { margin-top: .35em; color: #8a8474; font-style: italic; }
+.field-notes .page .blank[data-filled] { color: #cfe9c3; font-style: normal; }
+.field-notes .page[data-fresh] { box-shadow: inset 0 0 0 1px #8a7440; }
+.field-notes .page[data-fresh] h4 { color: #ffcf5a; }
+.field-notes .none { margin: 0; color: #8a8474; }
+/* The notes people left (the third part, by who wrote them): where each lies, dim under its name, then its lines. */
+.field-notes .page .where { margin: -.1em 0 .3em; font-size: .85em; color: #8a8474; }
+.field-notes .note .where + p ~ p { margin-top: .35em; }
+/* Who found it first on the server (firsts.ts), dim under it. */
+.field-notes .page .first { margin-top: .35em; font-size: .85em; color: #b9a36a; }
 /* About (about.ts): who makes the game, and where its code and rules are. It opens where the bag does.
    Its words never go below 11 to 12px, so a small phone can still read the small print. */
 .about-sheet .sheet-head { font-size: max(14px, calc(var(--u) * 1.35)); }

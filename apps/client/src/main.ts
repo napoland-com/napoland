@@ -11,7 +11,7 @@ import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
   HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData, type MapRef,
-  type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
@@ -23,7 +23,7 @@ import { Hud, type TagView } from './hud';
 import { badgeIcon } from './icons';
 import { crateView } from './crates';
 import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, upgradeOf, upgradeViews, wearText, wornViews } from './items';
-import { journalView } from './journal';
+import { fieldNotesView, journalView, notesView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { mapFor, paperMap } from './papermap';
@@ -72,12 +72,13 @@ const RADIO_KEY = 'napoland.radio';
 let radioOn = store.get(RADIO_KEY) !== 'off';
 
 // Every map is bundled, so moving between them needs no download; the items too, so the bag can
-// name what it holds, and the story, for what people say and the journal. (Globs, not imports: a
-// checkout without items.json or story.json still builds, and the version check below sends it the
-// message that it does not match.)
+// name what it holds, and the story and the field notes, for what people say and the journal. (Globs,
+// not imports: a checkout without items.json, story.json or notebook.json still builds, and the
+// version check below sends it the message that it does not match.)
 const maps = new Maps(Object.values(import.meta.glob<MapData>('../../../content/maps/*.json', { eager: true, import: 'default' })));
 const items = new Items(Object.values(import.meta.glob<ItemsData>('../../../content/items.json', { eager: true, import: 'default' }))[0]);
 const story: StoryData = Object.values(import.meta.glob<StoryData>('../../../content/story.json', { eager: true, import: 'default' }))[0] ?? { version: 0, chapters: [] };
+const notebook: NotebookData = Object.values(import.meta.glob<NotebookData>('../../../content/notebook.json', { eager: true, import: 'default' }))[0] ?? { version: 0, pages: [] };
 const app = document.getElementById('app')!;
 const screen = document.createElement('div');
 screen.className = 'screen';
@@ -101,7 +102,7 @@ let weather: Weather = 'rain';
 let welcomed = false;
 /** The first welcome of this page shows where you are; later ones are reconnects. */
 let arrived = false;
-const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story);
+const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story, notebook);
 /** A panel is open over the world (the bag, the journal, the stash, a crate, a trade...), where it covers the banners. */
 const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.crateOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen
   || hud.tradeOpen;
@@ -269,6 +270,8 @@ const hud = new Hud(screen, {
     hud.toggleBag(false);
     game.read(def.name, [def.text]);
   },
+  fieldSeen: () => game.seenFieldNotes(),
+  notesSeen: () => game.seenNotes(),
   version: () => loadVersion(),
   sound: s => { sound.set(s); store.set(SOUND_KEY, JSON.stringify(s)); },
 });
@@ -597,7 +600,7 @@ conn.onMessage = (msg: ServerMsg) => {
   const now = performance.now();
   switch (msg.t) {
     case 'welcome':
-      if (!known(msg.map) || msg.items !== items.version || msg.story.version !== story.version) return outdated();
+      if (!known(msg.map) || msg.items !== items.version || msg.story.version !== story.version || (msg.notebook && msg.notebook.version !== notebook.version)) return outdated();
       welcomed = true;
       signin?.welcomed(msg);
       signedInNews = signin?.news ?? null;
@@ -617,6 +620,8 @@ conn.onMessage = (msg: ServerMsg) => {
     case 'weather':
       if (msg.weather === 'aurora' && weather !== 'aurora') hud.showBanner('Lights in the sky', 'An aurora: the old wires hum,\nand copper turns up by the poles.');
       weather = msg.weather;
+      // Some notes people left show only at night, in the rain or on an aurora night.
+      game.weather = weather;
       view.setWeather(weather);
       return;
     case 'pong':
@@ -750,6 +755,10 @@ const radioScenes: [RadioScene, RadioScene] = [{ on: false, senses: { loud: 0, f
 let radioTurn = 0;
 let progressShown: typeof game.progress | null = null;
 let storyShown = -1;
+let notebookShown = -1;
+let notesShown = -1;
+/** A map's name, for the field notes' headings. */
+const mapName = (id: string) => maps.find(id)?.name;
 /**
  * Chapters, feats' ranks and levels reached and not announced yet. Each waits until it can be read: for
  * what is being said (a chapter reached by talking to someone), the panel that is open (the stash you
@@ -837,6 +846,13 @@ function frame(now: number) {
   for (const n of worldNews) {
     // A dot on the menu until the journal is opened (it shows the chapter at once if it is open).
     if (n.kind === 'chapter') { toSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
+    // The field notes' news waits like a chapter's, with a dot of its own until they are looked at.
+    if (n.kind === 'page' || n.kind === 'blank') { toSay.push(n); if (!(hud.journalOpen && hud.journalTab === 'field')) hud.setFieldNews(true); continue; }
+    // A note read needs no banner (the text box just said it), only a dot on the journal's Notes until it is looked at.
+    // A keepsake home waits like a level, for the chest to close, and puts the same dot there.
+    if (n.kind === 'note' || n.kind === 'keepsake') { if (n.kind === 'keepsake') toSay.push(n); if (!(hud.journalOpen && hud.journalTab === 'notes')) hud.setNotesNews(true); continue; }
+    // A first finder: one line for everyone online, waiting like the rest for panels and talk to be done.
+    if (n.kind === 'first') { toSay.push(n); continue; }
     if (n.kind === 'feat') { toSay.push(n); continue; }
     // A dot on the chest's Wardrobe tab too, until it is looked at, when the level opened an outfit.
     if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
@@ -858,6 +874,14 @@ function frame(now: number) {
   if (game.storyChanges !== storyShown) {
     storyShown = game.storyChanges;
     hud.setJournal(journalView(game.reached()));
+  }
+  if (game.notebookChanges !== notebookShown) {
+    notebookShown = game.notebookChanges;
+    hud.setFieldNotes(fieldNotesView(notebook, game.fieldNotes, mapName, game.freshPages));
+  }
+  if (game.notesChanges !== notesShown) {
+    notesShown = game.notesChanges;
+    hud.setNotes(notesView(maps.all(), game.notesRead, items.keepsakes, game.keepsakesHome, id => items.byId.get(id), game.freshNotes, game.firsts, game.myName()));
   }
   if (hud.statusOpen && (now - statusAt > 500 || game.statsChanges !== statsShown)) { statusAt = now; statsShown = game.statsChanges; showStatus(); }
   // A friend's card says whether they are near enough to trade with, as they walk.

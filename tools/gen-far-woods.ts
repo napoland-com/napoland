@@ -533,6 +533,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
   // What the loggers left at their camp and over the creek, and the trapper's things (in the cabin's room).
   ruin: 'R', yarder: 'Y', spool: 'o', bridge: '=', traps: 'L',
+  // A note lies on something else, which shows.
+  note: ' ',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();

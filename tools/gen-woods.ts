@@ -19,6 +19,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DECOR, ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
+import { noteAt, type NoteId } from './notes-left';
 import { FAR_WOODS_END, NEAR_WOODS_END } from './trappers-trail';
 
 const W = 64, H = 80, SEED = 20260927;
@@ -596,10 +597,27 @@ onForest({
   }
 }
 
+// ---- Notes people left (notes-left.ts) ----
+
+// Laid last, on what already stands here, so nothing moves: a note blocks nothing and changes no ground.
+// Walt's are nailed to the poles of the north line by their tags (the woods' poles are N-7 to N-16, in
+// the order they are strung), with the ranger's to him among them; in the old car where the north road
+// gives out, Walt's truck, his log lies in the glove box (its front, east) and Wren's secret under the
+// wiper (its back).
+{
+  const byTag = (n: number) => { const p = poles[n - 7]; if (!p) throw new Error(`the north line has no pole N-${n}`); return p; };
+  const car = objects.find(o => o.kind === 'car');
+  if (!car) throw new Error('the old car is gone: Walt\'s log and Wren\'s note lie in it');
+  const nailed: Array<[NoteId, number]> = [['walt-n8', 8], ['walt-n10', 10], ['walt-n11', 11], ['walt-n12', 12], ['ranger-walt', 13], ['walt-n14', 14], ['walt-n16', 16]];
+  for (const [id, tag] of nailed) place(noteAt(id, byTag(tag).x, byTag(tag).y));
+  place(noteAt('walt-truck', car.x + 1, car.y));
+  place(noteAt('barlow-wiper', car.x, car.y));
+}
+
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 10, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 11, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
@@ -664,6 +682,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
   // The loggers' camp, the gorge's bridge and the trapper's things are the Far Woods' (gen-far-woods.ts).
   ruin: 'H', yarder: '#', spool: 'o', bridge: '=', traps: 'L',
+  // A note lies on something else, which shows.
+  note: ' ',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();

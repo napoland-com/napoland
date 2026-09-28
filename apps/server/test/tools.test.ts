@@ -164,7 +164,7 @@ describe('a tool lying out there', () => {
 
   it('is seen only by whoever does not own it yet: never in the welcome or the arrival of one who does, and gone from their sight once they get it', () => {
     const w = world({}, rec('a', 'woods', 5, 4, { tools: ['radio'] }), rec('b', 'woods', 5, 6), rec('c', 'woods', 1, 1));
-    const seen = (id: string) => w.scene('woods', 1000, id).finds.map(f => f.item).sort();
+    const seen = (id: string) => w.findViews('woods', id).map(f => f.item).sort();
     expect(seen('a')).toEqual(['moss']);
     expect(seen('b')).toEqual(['moss', 'radio']);
     // The world as nobody in particular sees it still holds it.
@@ -263,8 +263,8 @@ describe('tools over WebSockets', () => {
 });
 
 describe('the field radio of content/items.json', () => {
-  /** The items as they ship, without their finds (they grow on maps these tests do not have). */
-  const content = { ...(JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData), finds: [] };
+  /** The items as they ship, without their finds and keepsakes (they lie on maps these tests do not have). */
+  const content = { ...(JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData), finds: [], keepsakes: undefined };
   const radioTools = [...STARTER_TOOLS, 'radio'];
 
   it('is rewired at the workbench from 2 copper wire and 1 scrap, for good: never into the stash, and never twice', () => {

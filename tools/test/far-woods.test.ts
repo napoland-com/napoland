@@ -2,14 +2,15 @@
  * The Far Woods as they ship (roadmap/far-woods.md, docs/DESIGN.md): the first region at depth 2, up
  * the trappers' trail from the cabin at the end of the Near Woods. Where they are and how they join the
  * Near Woods, how deep they go and what that costs, the trapper's cabin on the way, NAPO's field post at
- * the heart, their clocks, creatures and finds, their map found out there, and the story they add.
+ * the heart, their clocks, creatures and finds, their map found out there, the story they add, and
+ * their field notes.
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CREATURE_STEP_MIN_MS, ENERGY_MAX, FAR_STEPS, SKULKER_STEP_MS, STARTER_TOOLS, TileMap, WATCHER_STEP_MS, energyRate, findTiles, hidden, maxEnergy, modsOf, charmsIn,
-  itemIndex, skulkerStepMs, stormAt, storyLines, surgeAt, watcherStepMs, type ItemsData, type MapData, type StoryData,
+  itemIndex, opensOn, saysWhere, skulkerStepMs, stormAt, storyLines, surgeAt, watcherStepMs, type ItemsData, type MapData, type NotebookData, type NotebookEvent, type StoryData,
 } from '@napoland/shared';
 
 const content = resolve(import.meta.dirname, '../../content');
@@ -301,5 +302,36 @@ describe('the Far Woods in the story', () => {
     }
     // Reached, Vera and Walt say what they make of it, before what they always say.
     for (const npc of ['vera', 'walt']) expect(storyLines(story, last.id, npc, always(npc))[0], npc).toBe(last.hints![npc]);
+  });
+});
+
+describe('the Far Woods in the field notes', () => {
+  const notebook = JSON.parse(readFileSync(resolve(content, 'notebook.json'), 'utf8')) as NotebookData;
+  const theirs = notebook.pages.filter(p => p.area === 'far-woods');
+  const opening = (e: NotebookEvent) => notebook.pages.filter(p => opensOn(p).some(o => JSON.stringify(o) === JSON.stringify(e)));
+  const at = (map: TileMap, kind: string, x: number, y: number) => map.data.objects.find(o => o.kind === kind && o.x === x && o.y === y);
+
+  it('have an area of their own, after the South Road\'s, of pages that never say where anything is', () => {
+    expect(theirs.length).toBeGreaterThanOrEqual(8);
+    const areas = [...new Set(notebook.pages.map(p => p.area))];
+    expect(areas.indexOf('far-woods')).toBe(areas.indexOf('south-road') + 1);
+    // One run of pages: the journal shows them area by area.
+    const first = notebook.pages.findIndex(p => p.area === 'far-woods');
+    expect(notebook.pages.slice(first, first + theirs.length).every(p => p.area === 'far-woods')).toBe(true);
+    for (const p of theirs) expect(saysWhere(p.text), p.id).toBe(false);
+  });
+
+  it('open on the trail\'s sign, the fork\'s, the company\'s board, NAPO\'s sign and the trapper\'s tally, each once', () => {
+    const reads: Array<[TileMap, string, number, number]> = [[near, 'sign', 52, 2], [far, 'sign', 37, 87], [far, 'sign', 62, 57], [far, 'sign', 40, 19], [cabin, 'paper', 2, 3]];
+    for (const [map, kind, x, y] of reads) {
+      expect(at(map, kind, x, y), `${map.data.id} ${x},${y}`).toBeDefined();
+      expect(opening({ read: { map: map.data.id, x, y } }).map(p => p.area), `${map.data.id} ${x},${y}`).toEqual(['far-woods']);
+    }
+    // The field post's desk tells a chapter (the story's), so no page opens on it, like NAPO's other desks that do.
+    expect(opening({ read: 'field-post-log' })).toEqual([]);
+  });
+
+  it('open on what grows only there: cedar bark, old batteries and the resin tear', () => {
+    for (const item of ['cedar-bark', 'battery', 'resin-tear']) expect(opening({ find: item }).map(p => p.area), item).toEqual(['far-woods']);
   });
 });

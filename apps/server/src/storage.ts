@@ -6,7 +6,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
-import type { BagSlot, Dir, Gear, ParcelState, Piece, ReportReason, Stash, Stats, ThanksFor, Worn } from '@napoland/shared';
+import type { BagSlot, Dir, Gear, NotebookState, ParcelState, Piece, ReportReason, Stash, Stats, ThanksFor, Worn } from '@napoland/shared';
 import { log } from './log';
 
 export interface PlayerRecord {
@@ -105,6 +105,17 @@ export interface PlayerRecord {
    * stats' jsonb, no migration), and never forgotten by a save without it.
    */
   wornOut?: true;
+  /**
+   * The player's field notes (notebook.ts): the pages opened and the blanks filled, in the order they
+   * came. None: nothing yet. It only grows, and a save without it keeps what was saved.
+   */
+  notebook?: NotebookState;
+  /**
+   * What people left (notes.ts): the notes the player read and the keepsakes they brought home, by id,
+   * in the order they came. None: nothing yet. Both only grow, and a save without them keeps what was saved.
+   */
+  notes?: string[];
+  keepsakes?: string[];
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
@@ -167,6 +178,21 @@ export interface ThanksRecord {
   told: boolean;
   /** The giver's name, for the letter. Not stored with it: it comes from the player. */
   name: string;
+}
+
+/**
+ * The first player on the server to find a secret (firsts.ts): which secret, who (id and name), on which
+ * of the Zone's days, and when. Only the first is ever kept; the player's row takes theirs with it.
+ */
+export interface FirstRecord {
+  secret: string;
+  player: string;
+  /** The finder's name, shown with it. Not stored with it: it comes from the player. */
+  name: string;
+  /** The Zone's day it was found (zoneDay). */
+  day: number;
+  /** When it was found, ms since the epoch. */
+  at: number;
 }
 
 /**
@@ -294,6 +320,10 @@ export interface Storage {
   forgetThanks(before: number): Promise<number>;
   /** One more thanks received by `helper`, online or not: their `thanked` count grows by one, on its own. */
   creditThanks(helper: string): Promise<void>;
+  /** Every first finder, the oldest first, with their name. */
+  loadFirsts(): Promise<FirstRecord[]>;
+  /** Keeps the first finder of a secret: never over one kept already, whoever saves it. */
+  saveFirst(f: FirstRecord): Promise<void>;
   /** Every thing lying in a crate, oldest first, with its owner's name. */
   loadCacheItems(): Promise<CacheItemRecord[]>;
   saveCacheItem(c: CacheItemRecord): Promise<void>;
@@ -326,11 +356,13 @@ const savedBag = (rec: PlayerRecord): BagSlot[] => [...rec.bag, ...((rec.kept?.b
 const copyPieces = (p: Record<string, Piece[]>): Record<string, Piece[]> => Object.fromEntries(Object.entries(p).map(([id, list]) => [id, list.map(x => ({ ...x }))]));
 const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: copyPieces(s.pieces) } : {}) });
 const copyWorn = (w: Worn): Worn => Object.fromEntries(Object.entries(w).map(([slot, p]) => [slot, { ...p }]));
+const copyNotebook = (n: NotebookState): NotebookState => ({ pages: [...n.pages], blanks: [...n.blanks] });
 const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...rec, bag: copyBag(rec.bag), ...(rec.kept ? { kept: { bag: structuredClone(rec.kept.bag) } } : {}), ...(rec.stats ? { stats: { ...rec.stats } } : {}),
   ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
   ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
-  ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}),
+  ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}), ...(rec.notebook ? { notebook: copyNotebook(rec.notebook) } : {}),
+  ...(rec.notes ? { notes: [...rec.notes] } : {}), ...(rec.keepsakes ? { keepsakes: [...rec.keepsakes] } : {}),
 });
 /** A record as storage keeps it: the copy it names, if any (like the database, which keeps '' for the main copy and reads it back as none). */
 function withZone<T extends { zone?: string }>(r: T, zone: string | undefined): T {
@@ -370,6 +402,7 @@ export class MemoryStorage implements Storage {
   private readonly marks = new Map<number, Omit<MarkRecord, 'name' | 'color'>>();
   private readonly thanks = new Map<string, Omit<ThanksRecord, 'name'>>();
   private readonly cacheItems = new Map<number, Omit<CacheItemRecord, 'name'>>();
+  private readonly firsts = new Map<string, Omit<FirstRecord, 'name'>>();
   private stone: StoneRecord | null = null;
   private since: number | undefined;
   private readonly off = new Set<string>();
@@ -426,7 +459,8 @@ export class MemoryStorage implements Storage {
         stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) }, ...(rec.wornOut || cur.wornOut ? { wornOut: true as const } : {}),
         xp: rec.xp ?? 0, rested: rec.rested ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
-        ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), lastSeenAt: rec.lastSeenAt,
+        ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.notebook ? { notebook: copyNotebook(rec.notebook) } : {}), lastSeenAt: rec.lastSeenAt,
+        ...(rec.notes ? { notes: [...rec.notes] } : {}), ...(rec.keepsakes ? { keepsakes: [...rec.keepsakes] } : {}),
         ...(rec.meritsSpent !== undefined ? { meritsSpent: rec.meritsSpent } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}),
       });
       // Every save says where they are: back in the main copy, the copy they were in is forgotten.
@@ -466,6 +500,7 @@ export class MemoryStorage implements Storage {
       for (const [id, m] of this.marks) if (m.owner === rec.id) this.marks.delete(id);
       for (const [key, t] of this.thanks) if (t.giver === rec.id || t.helper === rec.id) this.thanks.delete(key);
       for (const [id, c] of this.cacheItems) if (c.owner === rec.id) this.cacheItems.delete(id);
+      for (const [secret, f] of this.firsts) if (f.player === rec.id) this.firsts.delete(secret);
       this.off.delete(rec.id);
       this.tradesOff.delete(rec.id);
       this.links = this.links.filter(l => l.from !== rec.id && l.to !== rec.id);
@@ -567,6 +602,18 @@ export class MemoryStorage implements Storage {
 
   async removeCacheItem(id: number): Promise<void> {
     this.cacheItems.delete(id);
+  }
+
+  async loadFirsts(): Promise<FirstRecord[]> {
+    return [...this.firsts.values()].map(f => ({ ...f, name: this.byId.get(f.player)!.name })).sort((a, b) => a.at - b.at);
+  }
+
+  async saveFirst(f: FirstRecord): Promise<void> {
+    // Like the database's foreign key: the finder is a player who exists. And its key: one per secret.
+    if (!this.byId.has(f.player)) throw new Error(`there is no player ${f.player}`);
+    if (this.firsts.has(f.secret)) return;
+    const { name: _name, ...stored } = f;
+    this.firsts.set(f.secret, stored);
   }
 
   async loadStone(): Promise<StoneRecord | null> {
@@ -679,6 +726,11 @@ interface PlayerRow {
   looks: unknown;
   pattern: string | null;
   badge: string | null;
+  /** Null for a player whose field notes never opened a page (021_notebook.sql). */
+  notebook: unknown;
+  /** Null for a player who never read a note, or brought a keepsake home (022_notes.sql). */
+  notes: unknown;
+  keepsakes: unknown;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -708,6 +760,14 @@ interface MarkRow {
   placed_at: Date;
   /** Null for a mark painted by a release before 015: it fades a day after it was placed. */
   fades_at: Date | null;
+}
+
+interface FirstRow {
+  secret: string;
+  player: string;
+  name: string;
+  day: number;
+  found_at: Date;
 }
 
 interface CacheItemRow {
@@ -751,6 +811,18 @@ const stash = (json: unknown): Stash => {
   return { items: rec(o.items), out: rec(o.out), ...(o.pieces && typeof o.pieces === 'object' ? { pieces: o.pieces as Record<string, Piece[]> } : {}) };
 };
 
+/** A jsonb notebook as the server wrote it, lists of ids, for the record; anything else reads as never set (the World checks it again). */
+const notebookOf = (json: unknown): { notebook?: NotebookState } => {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return {};
+  const { pages, blanks } = json as Partial<Record<keyof NotebookState, unknown>>;
+  const ids = (v: unknown) => (Array.isArray(v) ? v.filter((id): id is string => typeof id === 'string') : []);
+  return { notebook: { pages: ids(pages), blanks: ids(blanks) } };
+};
+
+/** A jsonb list of ids as the server wrote it, for the record; anything else reads as never set (the World checks it again). */
+const idsOf = <K extends 'notes' | 'keepsakes'>(key: K, json: unknown): Partial<Record<K, string[]>> =>
+  (Array.isArray(json) ? ({ [key]: json.filter((id): id is string => typeof id === 'string') } as Partial<Record<K, string[]>>) : {});
+
 const fromRow = (r: PlayerRow): PlayerRecord => ({
   id: r.id,
   name: r.name,
@@ -789,6 +861,9 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(Array.isArray(r.looks) && r.looks.some(l => typeof l === 'string') ? { looks: r.looks.filter((l): l is string => typeof l === 'string') } : {}),
   ...(r.pattern ? { pattern: r.pattern } : {}),
   ...(r.badge ? { badge: r.badge } : {}),
+  ...notebookOf(r.notebook),
+  ...idsOf('notes', r.notes),
+  ...idsOf('keepsakes', r.keepsakes),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -813,14 +888,16 @@ const thanksFor = (json: unknown): ThanksFor | null => {
 // leaves the story; so does one without an outfit, a pattern or a badge, while null (taken off) saves none; and
 // one without merits or looks leaves them, so nothing bought is ever lost. The copy is always said, as the map
 // is: a record without one is in the main copy. So is the cup of rest: none is empty. The mark of what was worn
-// counted as taken out (PlayerRecord.wornOut), once written with the counts, stays.
+// counted as taken out (PlayerRecord.wornOut), once written with the counts, stays, and a save without field
+// notes, notes read or keepsakes home (the previous release's, which never writes them) leaves those.
 const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9,
   stats = $10::jsonb || CASE WHEN players.stats ? 'wornOut' THEN '{"wornOut": 1}'::jsonb ELSE '{}'::jsonb END, xp = $11, stash = $12::jsonb,
   gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
   parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
   parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23, rested = $24,
   merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
-  badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, last_seen_at = $13 WHERE id = $1`;
+  badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, notebook = COALESCE($31::jsonb, notebook), notes = COALESCE($32::jsonb, notes),
+  keepsakes = COALESCE($33::jsonb, keepsakes), last_seen_at = $13 WHERE id = $1`;
 
 // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
 function saveParams(rec: PlayerRecord): unknown[] {
@@ -830,7 +907,8 @@ function saveParams(rec: PlayerRecord): unknown[] {
     JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
     rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
     rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? null, rec.looks ? JSON.stringify(rec.looks) : null,
-    rec.pattern !== undefined, rec.pattern ?? null, rec.badge !== undefined, rec.badge ?? null,
+    rec.pattern !== undefined, rec.pattern ?? null, rec.badge !== undefined, rec.badge ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null,
+    rec.notes ? JSON.stringify(rec.notes) : null, rec.keepsakes ? JSON.stringify(rec.keepsakes) : null,
   ];
 }
 
@@ -882,16 +960,17 @@ export class PgStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
-         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, rested, merits_spent, looks, pattern, badge)
+         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, rested, merits_spent, looks, pattern, badge, notebook, notes, keepsakes)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27,
-         $28::jsonb, $29, $30)
+         $28::jsonb, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedCounts(rec)),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
         rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.outfit ?? null,
         Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? 0, rec.looks?.length ? JSON.stringify(rec.looks) : null,
-        rec.pattern ?? null, rec.badge ?? null,
+        rec.pattern ?? null, rec.badge ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null, rec.notes ? JSON.stringify(rec.notes) : null,
+        rec.keepsakes ? JSON.stringify(rec.keepsakes) : null,
       ],
     );
     return r.rowCount === 1;
@@ -1041,6 +1120,18 @@ export class PgStorage implements Storage {
 
   async removeCacheItem(id: number): Promise<void> {
     await this.pool.query('DELETE FROM cache_items WHERE id = $1', [id]);
+  }
+
+  async loadFirsts(): Promise<FirstRecord[]> {
+    const r = await this.pool.query<FirstRow>(
+      `SELECT f.secret, f.player, p.name, f.day, f.found_at FROM firsts f JOIN players p ON p.id = f.player ORDER BY f.found_at, f.secret`,
+    );
+    return r.rows.map(f => ({ secret: f.secret, player: f.player, name: f.name, day: f.day, at: f.found_at.getTime() }));
+  }
+
+  async saveFirst(f: FirstRecord): Promise<void> {
+    // Two servers, or a write racing another: whichever came first stays.
+    await this.pool.query('INSERT INTO firsts (secret, player, day, found_at) VALUES ($1, $2, $3, $4) ON CONFLICT (secret) DO NOTHING', [f.secret, f.player, f.day, new Date(f.at)]);
   }
 
   async loadStone(): Promise<StoneRecord | null> {

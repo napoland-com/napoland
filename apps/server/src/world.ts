@@ -72,6 +72,7 @@ import {
   DIR_VEC,
   AURORA_WATCHER_STEP_MS,
   MARK_LIFETIME_MS,
+  NOTE_XP,
   QUIRKS,
   SKULKER_STEP_MS,
   WATCHER_STEP_MS,
@@ -102,11 +103,27 @@ import {
   cacheTakes,
   calendarDay,
   canMake,
+  cleanIds,
+  cleanNotebook,
   cleanRested,
   conditionsAt,
   dayIndex,
   daysThisWeek,
+  emptyNotebook,
   everyDaySoFar,
+  firstOnBoard,
+  isKeepsake,
+  keepsakeEnergy,
+  keepsakeFindId,
+  noteAt,
+  notebookIndex,
+  noted,
+  noteShows,
+  notesOf,
+  readableAt,
+  readEvents,
+  secretKey,
+  secretTitle,
   weekIndex,
   seeded,
   skulkerStepMs,
@@ -183,6 +200,8 @@ import {
   offerFrom,
   swapOffers,
   traded,
+  zoneDay,
+  type FirstView,
   type OfferPick,
   type Arrival,
   type BagSlot,
@@ -205,10 +224,17 @@ import {
   type Gear,
   type ItemDef,
   type ItemsData,
+  type KeepsakesData,
   type LookKind,
+  type MapNote,
   type MeritsView,
+  type NotebookData,
+  type NotebookEvent,
+  type NotebookIndex,
+  type NotebookView,
   type Piece,
   type Quirk,
+  type Sight,
   type Worn,
   type MapRef,
   type MarkView,
@@ -240,7 +266,7 @@ import {
   type Weather,
 } from '@napoland/shared';
 import { FIRE_LOW_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
 
 // How often creatures step is their region's (map.ts, watcherStepMs, skulkerStepMs); these are the paces a rule leaves out.
 export { AURORA_WATCHER_STEP_MS, MARK_LIFETIME_MS, SKULKER_STEP_MS, WATCHER_STEP_MS };
@@ -290,8 +316,19 @@ export const FLARE_RADIUS = 5;
 /** The Old Stone wakes with this many shards in it; awake, one burns away every STONE_SHARD_S. */
 export const STONE_NEED = 20;
 export const STONE_SHARD_S = 30 * 60;
+/** The notice board shows this many first finders, the latest first. */
+export const FIRSTS_ON_BOARD = 3;
 /** The notice board counts collapses this far back. */
 const COLLAPSES_MS = 60 * 60 * 1000;
+/**
+ * For the field notes (notebook.ts), what counts as seen or heard: a watcher within sight (the camera
+ * shows about this much around you), a flash near you, the ferns' rustle (as far as a client plays a
+ * skulker's chase) and the dead wires humming by a pole, center to center.
+ */
+export const SEEN_TILES = 6;
+export const FLASH_NEAR = 3;
+export const RUSTLE_HEARD = 8;
+export const HUM_NEAR = 2;
 
 /** Jacket colors, all easy to tell apart in the rain and at night. */
 export const JACKET_COLORS = [
@@ -371,6 +408,12 @@ export interface Joined extends Scene {
   story: StoryView;
   /** Whom the player thanked today (UTC), by id. */
   thanked: string[];
+  notebook: NotebookView;
+  /** The notes people left that the player read, and the keepsakes they brought home (notes.ts), by id. */
+  notes: string[];
+  keepsakes: string[];
+  /** Who found each secret found so far first (firsts.ts). */
+  firsts: FirstView[];
 }
 
 /** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
@@ -389,6 +432,8 @@ export interface Writes {
   credits: string[];
   /** Things left in crates (or taken out of them: undefined), by id. */
   caches: Array<{ id: number; item: CacheItemRecord | undefined }>;
+  /** First finders since (firsts.ts): each kept once, for good. */
+  firsts: FirstRecord[];
 }
 
 export interface WorldOptions {
@@ -400,6 +445,8 @@ export interface WorldOptions {
   items?: ItemsData;
   /** The story's chapters (content/story.json, checked with validateStory); none if unset. */
   story?: StoryData;
+  /** The pages of the field notes (content/notebook.json, checked with validateNotebook); none if unset. */
+  notebook?: NotebookData;
   /** Where finds grow, when and which half of a pile someone else gets, what a strange object is. Math.random unless a test sets its own. */
   rng?: () => number;
   /** Piles saved before a restart; they lie where they were until they fade. */
@@ -410,6 +457,8 @@ export interface WorldOptions {
   thanks?: ThanksRecord[];
   /** What lay in the crates before a restart. */
   cacheItems?: CacheItemRecord[];
+  /** The first finders of the secrets found so far (firsts.ts), as saved. */
+  firsts?: FirstRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
   /**
@@ -478,6 +527,8 @@ interface Online {
   surgedIn?: string;
   /** The crate they visit (its key: in its room, or near it in the open), and whether they left one thing and took one this visit. */
   visit: { cache: string; left: boolean; took: boolean } | null;
+  /** When they last collapsed: a chase they were in then was no chase they got out of. */
+  fellAt?: number;
   /** Their afterglow (a quirk, gear.ts) lasts until then (game time): they glow faintly, and watchers keep off them. */
   afterglowUntil?: number;
 }
@@ -662,7 +713,24 @@ const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), ...(r.kept ? { kept: { bag: structuredClone(r.kept.bag) } } : {}), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
   ...(r.looks ? { looks: [...r.looks] } : {}),
+  ...(r.notebook ? { notebook: { pages: [...r.notebook.pages], blanks: [...r.notebook.blanks] } } : {}),
+  ...(r.notes ? { notes: [...r.notes] } : {}), ...(r.keepsakes ? { keepsakes: [...r.keepsakes] } : {}),
 });
+/** A first finder as everyone sees them: the secret, their name, the Zone's day. */
+const firstView = (f: FirstRecord): FirstView => ({ secret: f.secret, name: f.name, day: f.day });
+/**
+ * A bag as a keepsake may be in it: one of each at most, and none that is home already (a save from
+ * before it came home, or two tabs at once). Everything else stays as it is.
+ */
+const oneOfEach = (bag: BagSlot[], items: Map<string, ItemDef>, home: readonly string[]): BagSlot[] => {
+  const seen = new Set<string>(home);
+  return bag.filter(s => {
+    if (!isKeepsake(items.get(s.item))) return true;
+    if (seen.has(s.item)) return false;
+    seen.add(s.item);
+    return true;
+  });
+};
 /** A saved piece as the server writes them: a condition from 0 to 1, a quirk the game knows (or none), a level up to UPGRADE_MAX (or none). */
 const isPiece = (p: unknown): p is Piece => {
   const { cond, quirk, level } = (typeof p === 'object' && p !== null ? p : {}) as Partial<Piece>;
@@ -851,6 +919,19 @@ export class World {
   private readonly cratesOn = new Map<string, Crate[]>();
   private readonly cacheWrites = new Map<number, CacheItemRecord | undefined>();
   private nextCacheId = 1;
+  /** The field notes' pages, by what opens them and fills in their blanks (notebook.ts). */
+  private readonly notebook: NotebookIndex;
+  /** Each map's poles, once asked for: on an aurora night the wires hum beside them. */
+  private readonly poles = new Map<string, Array<[number, number]>>();
+  /** Where each keepsake lies (content/items.json), in order: a place's index names its find (keepsakeFindId). None: no keepsakes. */
+  private readonly keepsakes: KeepsakesData | undefined;
+  /** The tiles a keepsake lies on, by map: shared finds never grow there, so none ever lies under another. */
+  private readonly keepsakeTiles = new Map<string, Set<number>>();
+  /** Every note on the maps by id, for what a secret is called on the notice board (firsts.ts). */
+  private readonly notesById: ReturnType<typeof notesOf>;
+  /** The first finder of each secret found so far, by its key (firsts.ts), and those to write. */
+  private readonly firsts = new Map<string, FirstRecord>();
+  private firstWrites: FirstRecord[] = [];
   /** The game time of the last tick: what everyone sees of an afterglow is counted from it. */
   private tickAt = 0;
 
@@ -898,6 +979,16 @@ export class World {
     this.parcels = items.parcels;
     this.calendar = options.calendar ?? UTC_CALENDAR;
     this.story = options.story ?? { version: 0, chapters: [] };
+    this.notebook = notebookIndex(options.notebook ?? { version: 0, pages: [] });
+    this.keepsakes = items.keepsakes;
+    for (const k of this.keepsakes?.places ?? []) {
+      // loadItems checks this and more (validateItems).
+      const map = this.maps.get(k.map);
+      if (!map || !this.items.get(k.item)) throw new Error(`the keepsake ${k.item} lies on map ${k.map}, but one of them does not exist`);
+      let tiles = this.keepsakeTiles.get(k.map);
+      if (!tiles) this.keepsakeTiles.set(k.map, (tiles = new Set()));
+      tiles.add(k.y * map.width + k.x);
+    }
     for (const f of items.finds) {
       // loadItems checks this and more (validateItems).
       const map = this.maps.get(f.map);
@@ -918,6 +1009,8 @@ export class World {
     }
     for (const m of this.maps.values()) this.cratesIn(m, '');
     for (const c of options.cacheItems ?? []) this.restoreCacheItem(c);
+    this.notesById = notesOf([...this.maps.values()].map(m => m.data));
+    for (const f of options.firsts ?? []) if (!this.firsts.has(f.secret)) this.firsts.set(f.secret, { ...f });
 
     // Where each map's creatures may wake is the same in every copy of it: worked out once.
     for (const m of this.maps.values()) {
@@ -1024,11 +1117,11 @@ export class World {
     return [...(this.pileTiles.get(zone)?.values() ?? [])].flat().map(dropView);
   }
 
-  /** Everything a zone holds besides players, as of `now`; with `seer`, its finds as that player sees them (findViews). */
-  scene(key: string, now: number, seer?: string): Scene {
+  /** Everything a zone holds besides players, as of `now`. A player hears its finds as they see them (findsFor). */
+  scene(key: string, now: number): Scene {
     const zone = this.zones.get(key);
     return {
-      finds: this.findViews(key, seer),
+      finds: this.findViews(key),
       drops: this.dropViews(key),
       fires: zone?.fires.views(now) ?? [],
       marks: [...(this.markTiles.get(key)?.values() ?? [])].map(markView),
@@ -1067,7 +1160,14 @@ export class World {
       meritsSpent: Number.isInteger(rec.meritsSpent) && rec.meritsSpent! > 0 ? rec.meritsSpent : 0,
       looks: cleanTools(rec.looks) ?? [],
       ...(rec.parcels !== undefined ? { parcels: cleanParcels(rec.parcels) } : {}),
+      // Pages and blanks a newer notebook wrote stay too: the client shows the ones it knows.
+      ...(rec.notebook !== undefined ? { notebook: cleanNotebook(rec.notebook) } : {}),
+      // So do the notes read and the keepsakes home: ids a newer release wrote are kept for it.
+      ...(rec.notes !== undefined ? { notes: cleanIds(rec.notes) } : {}),
+      ...(rec.keepsakes !== undefined ? { keepsakes: cleanIds(rec.keepsakes) } : {}),
     };
+    // A keepsake is carried once: never a second of it, and never one that is home already.
+    r.bag = oneOfEach(r.bag, this.items, r.keepsakes ?? []);
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
     // saved tile may be inside something new or part of an exit now (start at that map's spawn). Never
     // start inside a wall, or on an exit that would move you the moment you step.
@@ -1120,12 +1220,18 @@ export class World {
     this.giveParcel(p, now);
     const here = zone.key, today = utcDay(now + this.epochOffset);
     return {
-      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now, r.id), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
+      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
       stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats },
       progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
       thanked: [...this.thanks.values()].filter(t => t.giver === r.id && t.day === today).map(t => t.helper),
+      notebook: { version: this.notebook.data.version, ...(r.notebook ?? emptyNotebook()) },
+      notes: [...(r.notes ?? [])],
+      keepsakes: [...(r.keepsakes ?? [])],
+      firsts: [...this.firsts.values()].map(firstView),
+      // Theirs alone, beside the zone's: the keepsakes lying here for them.
+      finds: this.findsFor(r, zone),
     };
   }
 
@@ -1198,6 +1304,8 @@ export class World {
     if (pile) return this.pickPile(p, pile, now);
     const find = p.map.inside(x, y) ? p.zone.finds.get(y * p.map.width + x) : undefined;
     if (find) return this.pickFind(p, find, now);
+    const kept = this.keepsakeAt(p.rec, p.map.data.id, x, y);
+    if (kept) return this.pickKeepsake(p, kept, now);
     this.refuse(p, 'pick', 'gone');
   }
 
@@ -1267,6 +1375,11 @@ export class World {
       ...(into ? { into } : {}),
       ...(lift ? { lift } : {}),
     });
+    // Seen in the light, for the field notes: what it turned out to be comes into your hands like a find.
+    if (into) {
+      this.saw(p, 'looked');
+      this.note(p, { find: into.item });
+    }
     // Something that takes energy could empty the bar.
     if (p.rec.energy <= 0) this.collapse(p, now);
   }
@@ -1285,6 +1398,7 @@ export class World {
     const n = Math.min(thrown.count, Math.max(1, Math.floor(count)));
     p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), thrown.item, n);
     p.rec.bag = takeFromBag(p.rec.bag, slot, n);
+    this.keepsakeBack(p, thrown.item);
     this.sendBag(p, now);
     this.rerate(p, now);
     this.did(p, { kind: 'thrown', item: thrown.item, count: n, ...(thrown.piece?.level ? { level: thrown.piece.level } : {}) });
@@ -1375,11 +1489,20 @@ export class World {
     this.runQueue(p, now);
     this.advance(p, now);
     if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'store', 'too_far');
-    const going = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
-    if (!going.length) return this.refuse(p, 'store', 'empty_slot');
+    const all = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
+    if (!all.length) return this.refuse(p, 'store', 'empty_slot');
+    // A keepsake comes home apart from the stash, and stays: theirs for good, with its XP, once.
+    const home = all.filter(s => isKeepsake(this.items.get(s.item))), going = all.filter(s => !home.includes(s));
     // Live finds apart: gathering them would forget when each was picked, and each is worth what its age says.
     const wall = now + this.epochOffset;
     const r = store(p.rec.stash ?? emptyStash(), gather(going.filter(s => !this.items.get(s.item)?.live)), this.items);
+    const setBefore = keepsakeEnergy(this.keepsakes, p.rec.keepsakes), came: string[] = [];
+    for (const s of home) {
+      if (p.rec.keepsakes?.includes(s.item)) continue;
+      p.rec.keepsakes = [...(p.rec.keepsakes ?? []), s.item];
+      came.push(s.item);
+      r.xp += this.items.get(s.item)?.xp ?? 0;
+    }
     for (const s of going) {
       const l = this.liveNow(s, wall);
       if (!l?.into) continue;
@@ -1395,8 +1518,9 @@ export class World {
     this.sendBag(p, now);
     this.sendStash(p);
     this.earn(p, r.xp, true);
-    // A bigger bar: the player hears it (and at home, by the fire, it fills up).
-    if (levelOf(p.rec.xp ?? 0) !== before) this.refresh(p, now);
+    for (const item of came) this.outbox.push({ to: id, msg: { t: 'keepsake', item } });
+    // A bigger bar, from a level or the whole set of keepsakes home: the player hears it (and at home, by the fire, it fills up).
+    if (levelOf(p.rec.xp ?? 0) !== before || keepsakeEnergy(this.keepsakes, p.rec.keepsakes) !== setBefore) this.refresh(p, now);
     this.tell(p, now);
     this.moveStory(p, { store: true });
   }
@@ -1778,17 +1902,22 @@ export class World {
     if (!p) return;
     this.runQueue(p, now);
     if (p.queue.length) p.after = { t: 'talk', x, y };
-    else this.heard(p, x, y);
+    else this.heard(p, x, y, now);
   }
 
   /** Whom the player talked to, or what they read, on tile x,y: only from next to it. */
-  private heard(p: Online, x: number, y: number): void {
+  private heard(p: Online, x: number, y: number, now: number): void {
     if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
+    const note = noteAt(p.map.data, x, y);
+    if (note) this.readNote(p, note, now);
     const o = p.map.data.objects.find(o => o.x === x && o.y === y && (o.kind === 'npc' || o.kind === 'console'));
     if (o?.kind === 'npc') {
       this.remarked(p, o.id);
       this.moveStory(p, { talk: o.id });
     } else if (o?.kind === 'console') this.moveStory(p, { read: o.id });
+    // Anything read like a sign may open a page of the field notes.
+    const read = readableAt(p.map.data, x, y);
+    if (read) for (const e of readEvents(p.map.data.id, read)) this.note(p, e);
   }
 
   /**
@@ -1979,6 +2108,7 @@ export class World {
     if (!c) return this.refuse(p, 'cacheLeave', 'too_far');
     const s = p.rec.bag[slot], def = s && this.items.get(s.item);
     if (!s || !def) return this.refuse(p, 'cacheLeave', 'empty_slot');
+    if (isKeepsake(def)) return this.refuse(p, 'cacheLeave', 'keepsake');
     if (!cacheTakes(def)) return this.refuse(p, 'cacheLeave', 'no_gear');
     const visit = this.visitAt(p, c);
     if (visit.left) return this.refuse(p, 'cacheLeave', 'left_one');
@@ -2117,6 +2247,7 @@ export class World {
       if (p.live) this.fadeLive(p, now);
       this.surged(p, now);
       this.hitch(p, now);
+      this.notice(p, now);
       this.rerate(p, now);
       // The client counts on with the rates it heard; repeating the values keeps it from drifting.
       if (now - p.heardAt >= ENERGY_SYNC_MS && changing(p)) this.tell(p, now);
@@ -2165,7 +2296,9 @@ export class World {
       thanks: [...this.thanksWrites.values()].map(t => ({ ...t, what: { ...t.what } })),
       credits: this.credits,
       caches: [...this.cacheWrites].map(([id, c]) => ({ id, item: c && { ...c } })),
+      firsts: this.firstWrites,
     };
+    this.firstWrites = [];
     this.pileWrites.clear();
     this.saveNow.clear();
     this.markWrites.clear();
@@ -2189,7 +2322,7 @@ export class World {
     if (p.after && !p.queue.length) {
       const { t, x, y } = p.after;
       p.after = undefined;
-      if (t === 'talk') this.heard(p, x, y);
+      if (t === 'talk') this.heard(p, x, y, now);
       else if (t === 'board') this.readBoard(p, x, y, now);
       else if (t === 'chest') this.openChest(p, x, y);
       else if (t === 'bench') this.openBench(p, x, y);
@@ -2294,6 +2427,7 @@ export class World {
     p.afterglowUntil = undefined;
     // They wake up at home: the next time out is a new trip.
     p.gifts = 0;
+    p.fellAt = now;
     this.collapses = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
     this.collapses.push({ map, at: now });
     // Mira has a word for the first one (story.ts, remarks); the zone that follows carries the count too.
@@ -2312,7 +2446,18 @@ export class World {
     if (old) this.removePile(old);
     if (!bag.length) return;
     const trail = p.map.data.kind === 'wilds' && slot === undefined ? p.trail.map(([tx, ty]) => [tx, ty] as [number, number]) : [];
-    const falls = slot === undefined ? bag : [bag[slot]!];
+    const dropped = slot === undefined ? bag : [bag[slot]!];
+    // A keepsake never falls into a pile, where someone else could take it: it goes back where it lay.
+    const falls = dropped.filter(s => !isKeepsake(this.items.get(s.item)));
+    if (falls.length < dropped.length) {
+      p.rec.bag = slot === undefined ? [] : bag.filter((_, i) => i !== slot);
+      for (const s of dropped) if (!falls.includes(s)) this.keepsakeBack(p, s.item);
+      if (!falls.length) {
+        this.sendBag(p, now);
+        this.saveNow.set(id, p.rec);
+        return;
+      }
+    }
     // Put down, a live find goes dim for good. A carried piece of gear falls in as it is.
     const items = gather(falls.map(s => {
       const into = this.items.get(s.item)?.live?.into;
@@ -2361,7 +2506,7 @@ export class World {
     this.toZone(here, { t: 'join', player: this.viewOf(p) }, id);
     this.outbox.push({
       to: id,
-      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now, id), stats: { ...p.rec.stats }, reason },
+      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), finds: this.findsFor(p.rec, p.zone), stats: { ...p.rec.stats }, reason },
       // Where the network hears them from now on, when it is not the map's main copy (its key is the map's id).
       ...(p.zone.copy ? { zone: here } : {}),
     });
@@ -2455,6 +2600,168 @@ export class World {
   }
 
   /**
+   * Something the player picked up, read or lived through, for their field notes (notebook.ts): a page
+   * may open, a blank on an open page fill in. Theirs for good: they hear it, and it is saved at once.
+   */
+  private note(p: Online, event: NotebookEvent): void {
+    const r = noted(this.notebook, p.rec.notebook ?? emptyNotebook(), event);
+    if (!r) return;
+    p.rec.notebook = r.state;
+    this.saveNow.set(p.rec.id, p.rec);
+    for (const page of r.pages) this.outbox.push({ to: p.rec.id, msg: { t: 'page', id: page.id } });
+    for (const blank of r.blanks) this.outbox.push({ to: p.rec.id, msg: { t: 'blank', id: blank.id } });
+  }
+
+  private saw(p: Online, sight: Sight): void {
+    this.note(p, { saw: sight });
+  }
+
+  /** A find picked up, for the field notes: its kind, and when it was picked up, on an aurora night or in a storm. */
+  private found(p: Online, item: string, now: number): void {
+    this.note(p, { find: item });
+    if (this.sky === 'aurora') this.note(p, { find: item, during: 'aurora' });
+    if (this.stormOf(p.map, now)?.phase === 'storm') this.note(p, { find: item, during: 'storm' });
+  }
+
+  /**
+   * What the player lives through where they stand, for their field notes: a surge they sheltered from
+   * (and a street light that stopped its drain), a storm out in it or under a roof, a flash bursting under
+   * them, an aurora night out there and the wires humming by a pole, a watcher within sight (and frozen by
+   * their look), and something hunting near while they hide in tall grass.
+   */
+  private notice(p: Online, now: number): void {
+    const { x, y } = p.rec, map = p.map, inside = map.data.kind === 'inside';
+    const region = inside ? this.around.get(map.data.id) : map;
+    if (region?.data.kind === 'wilds') {
+      const front = this.frontOf(region, now), door = inside ? map.data.exits[0] : undefined;
+      // Under a roof the surge has reached the door; under a street light, the tile.
+      if (front !== undefined && (door ? region.homeSteps(door.tx, door.ty) : map.homeSteps(x, y)) >= front && (inside || map.lit(x, y))) {
+        this.saw(p, 'surge');
+        if (!inside && p.surgedIn === this.surgeRound(map, now)) this.saw(p, 'lit');
+      }
+      if (this.stormOf(map, now)?.phase === 'storm') this.saw(p, inside ? 'roof' : 'storm');
+    }
+    if (inside) return;
+    if (this.sky === 'aurora') {
+      if (map.data.kind === 'wilds') this.saw(p, 'aurora');
+      if (this.polesOf(map).some(([px, py]) => Math.hypot(px - x, py - y) <= HUM_NEAR)) this.saw(p, 'hum');
+    }
+    if (map.data.kind !== 'wilds') return;
+    if (p.zone.flashes.some(f => flashHits(flashView(f, now), x, y))) this.saw(p, 'burst');
+    for (const w of p.zone.watchers) {
+      if (!w.awake || Math.hypot(w.x - x, w.y - y) > SEEN_TILES) continue;
+      this.saw(p, 'watcher');
+      if (faces(x, y, p.rec.dir, w.x, w.y)) this.saw(p, 'froze');
+    }
+    if (hidden(map, x, y) && this.exposed(p, now) && this.hunted(p)) this.saw(p, 'hidden');
+  }
+
+  /** Something awake in the player's zone that would come for them were they not hidden: a watcher within its reach, a skulker within earshot. */
+  private hunted(p: Online): boolean {
+    const { x, y } = p.rec;
+    return p.zone.watchers.some(w => w.awake && manhattan(w.x, w.y, x, y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
+      || p.zone.skulkers.some(s => s.awake && manhattan(s.x, s.y, x, y) <= SKULKER_HEAR);
+  }
+
+  // ---------- notes and keepsakes people left (notes.ts) ----------
+
+  /**
+   * The player read the note someone left on tile x,y: if it shows now (at night, in the rain or on an
+   * aurora night, for a note written so), the first read gives its XP, once, and the journal keeps it.
+   * Saved at once, like a page of the field notes.
+   */
+  private readNote(p: Online, note: MapNote, now: number): void {
+    if (p.rec.notes?.includes(note.id) || !noteShows(note, this.sky, this.stormOf(p.map, now)?.phase === 'storm')) return;
+    p.rec.notes = [...(p.rec.notes ?? []), note.id];
+    this.saveNow.set(p.rec.id, p.rec);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'noteRead', id: note.id } });
+    this.first(p, secretKey({ kind: 'note', id: note.id }), now);
+    // Not stashing: no play-test multiple and no rest, only the note's own XP.
+    const before = levelOf(p.rec.xp ?? 0);
+    p.rec.xp = (p.rec.xp ?? 0) + NOTE_XP;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, p.rec.rested), gained: NOTE_XP } });
+    if (levelOf(p.rec.xp) !== before) {
+      this.refresh(p, now);
+      this.tell(p, now);
+    }
+  }
+
+  /**
+   * What lies in a zone for this player to pick up: the zone's finds as they see them (no tool they own:
+   * findViews), and the keepsakes lying on its map for them alone.
+   */
+  private findsFor(r: PlayerRecord, zone: Zone): FindView[] {
+    return [...this.findViews(zone.key, r.id), ...(this.keepsakes?.places ?? []).flatMap((k, i) => (k.map === zone.map.data.id && this.lying(r, k.item) ? [{ id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y }] : []))];
+  }
+
+  /** A keepsake lies where it was left for a player until they carry it, and for good once it is home. */
+  private lying(r: PlayerRecord, item: string): boolean {
+    return !r.keepsakes?.includes(item) && !r.bag.some(s => s.item === item);
+  }
+
+  /** The keepsake lying on tile x,y of map `mapId` for this player, with its find id. */
+  private keepsakeAt(r: PlayerRecord, mapId: string, x: number, y: number): { item: string; id: number } | undefined {
+    const i = (this.keepsakes?.places ?? []).findIndex(k => k.map === mapId && k.x === x && k.y === y && this.lying(r, k.item));
+    return i < 0 ? undefined : { item: this.keepsakes!.places[i]!.item, id: keepsakeFindId(i) };
+  }
+
+  /** Picks up a keepsake lying for the player: into the bag if it fits. Gone for them alone; nobody else ever saw it. */
+  private pickKeepsake(p: Online, kept: { item: string; id: number }, now: number): void {
+    const r = addToBag(p.rec.bag, this.items.get(kept.item)!, 1, p.slots);
+    if (r.left) return this.refuse(p, 'pick', 'bag_full');
+    p.rec.bag = r.bag;
+    this.saveNow.set(p.rec.id, p.rec);
+    this.got(p, [{ item: kept.item, count: 1 }], 'find', now);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'findGone', id: kept.id } });
+    this.rerate(p, now);
+    this.first(p, secretKey({ kind: 'keepsake', item: kept.item }), now);
+  }
+
+  /**
+   * The player found a secret (firsts.ts): the first on the server to do so is kept with it, for good, and
+   * everyone online hears it, blocked or not (it is news of the world, not a message from anyone). A guest
+   * can be first.
+   */
+  private first(p: Online, secret: string, now: number): void {
+    if (this.firsts.has(secret)) return;
+    const wall = Math.floor(now + this.epochOffset);
+    const f: FirstRecord = { secret, player: p.rec.id, name: p.rec.name, day: zoneDay(wall), at: wall };
+    this.firsts.set(secret, f);
+    this.firstWrites.push({ ...f });
+    this.outbox.push({ to: 'all', msg: { t: 'first', first: firstView(f) } });
+  }
+
+  /**
+   * A keepsake left the player's bag other than by coming home (thrown away, fallen, caught): it lies
+   * where it was left again, and they see it there if they are on that map.
+   */
+  private keepsakeBack(p: Online, item: string): void {
+    const i = (this.keepsakes?.places ?? []).findIndex(k => k.item === item);
+    const k = this.keepsakes?.places[i];
+    if (!k || !this.lying(p.rec, item)) return;
+    this.saveNow.set(p.rec.id, p.rec);
+    if (k.map === p.map.data.id) this.outbox.push({ to: p.rec.id, msg: { t: 'find', find: { id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y } } });
+  }
+
+  /** A map's poles (their tiles), found once. */
+  private polesOf(map: TileMap): Array<[number, number]> {
+    let at = this.poles.get(map.data.id);
+    if (!at) this.poles.set(map.data.id, (at = map.data.objects.flatMap(o => (o.kind === 'pole' ? [[o.x, o.y] as [number, number]] : []))));
+    return at;
+  }
+
+  /**
+   * A skulker's chase ended without a catch: its prey got out of it, unless they collapsed meanwhile. At
+   * the edge of the tall grass they reached, the chase ended there.
+   */
+  private escaped(s: Skulker): void {
+    const p = s.chasing === undefined ? undefined : this.players.get(s.chasing);
+    if (!p || (p.fellAt ?? -Infinity) >= s.chaseUntil - SKULKER_CHASE_MS) return;
+    this.saw(p, 'escaped');
+    if (p.zone === s.zone && hidden(p.map, p.rec.x, p.rec.y)) this.saw(p, 'grass');
+  }
+
+  /**
    * `by` more (one, unless said) of what counts toward a feat, or toward what people say once (a
    * collapse, a surge, gear made). A new rank is the player's for good: they hear it (once: counts only
    * go up), and it is saved at once.
@@ -2501,12 +2808,17 @@ export class World {
    * them): counted once for each surge, for what Mira says after the first (story.ts, remarks).
    */
   private surged(p: Online, now: number): void {
-    const rule = p.map.data.kind === 'wilds' ? p.map.data.surge : undefined;
-    if (!rule || !inSurge(p.map, p.rec.x, p.rec.y, this.frontOf(p.map, now))) return;
-    const round = `${p.map.data.id}:${Math.floor(((now + this.epochOffset) / 1000 + (rule.offset ?? 0)) / rule.every)}`;
+    const round = this.surgeRound(p.map, now);
+    if (!round || !inSurge(p.map, p.rec.x, p.rec.y, this.frontOf(p.map, now))) return;
     if (p.surgedIn === round) return;
     p.surgedIn = round;
     this.count(p, 'surged', now);
+  }
+
+  /** Which of a region's surges it is now, by map and round (none for a map that never surges). */
+  private surgeRound(map: TileMap, now: number): string | undefined {
+    const rule = map.data.kind === 'wilds' ? map.data.surge : undefined;
+    return rule && `${map.data.id}:${Math.floor(((now + this.epochOffset) / 1000 + (rule.offset ?? 0)) / rule.every)}`;
   }
 
   /** Tells each surging map (every copy of it) when its phase changes, and grows (or clears away) the finds of restless times. */
@@ -2679,6 +2991,7 @@ export class World {
       const flash: Flash = { x, y, kind: this.rng() < 0.5 ? 'spark' : 'fire', until: now + (FLASH_GLOW_S + FLASH_BURST_S) * 1000 };
       zone.flashes.push(flash);
       this.toZone(zone.key, { t: 'flash', flash: flashView(flash, now) });
+      for (const q of zone.players) if (Math.hypot(q.rec.x - x, q.rec.y - y) <= FLASH_NEAR) this.saw(q, 'flash');
     }
   }
 
@@ -2708,7 +3021,10 @@ export class World {
     if (woke) this.stoneAwake = true;
     this.stoneWrite = { charge: this.stoneCharge, awake: this.stoneAwake, at: now + this.epochOffset };
     this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
-    if (woke) for (const p of this.players.values()) this.rerate(p, now);
+    if (woke) for (const p of this.players.values()) {
+      this.rerate(p, now);
+      this.saw(p, 'woke');
+    }
     return woke;
   }
 
@@ -2729,12 +3045,15 @@ export class World {
     if (this.rng() < 1 - Math.exp((-dt / HITCH_EVERY_S) * p.mods.hitch)) {
       p.hitched = true;
       this.outbox.push({ to: p.rec.id, msg: { t: 'hitch', on: true } });
+      this.saw(p, 'hitched');
     }
   }
 
+  /** What clings to the player lets go: a street light, a fire, a roof or a flare (a collapse takes it off without a word). */
   private unhitch(p: Online): void {
     p.hitched = false;
     this.outbox.push({ to: p.rec.id, msg: { t: 'hitch', on: false } });
+    this.saw(p, 'let-go');
   }
 
   /** Is a flare burning in `zone` within reach of tile x,y? */
@@ -2909,7 +3228,9 @@ export class World {
     this.toZone(w.zone.key, { t: 'creature', creature: creatureView(w) });
   }
 
-  private sendAway(w: Watcher, now: number): void {
+  /** A creature goes away for a while; a skulker that chased someone and did not catch them (`caught`) lets them get away. */
+  private sendAway(w: Watcher, now: number, caught = false): void {
+    if (w.kind === 'skulker' && w.chasing !== undefined && !caught) this.escaped(w as Skulker);
     const [soonest, latest] = WATCHER_AWAY_S;
     w.awake = false;
     w.chasing = undefined;
@@ -3001,6 +3322,8 @@ export class World {
           if (s.chasing === undefined) {
             s.chasing = prey.rec.id;
             s.chaseUntil = now + SKULKER_CHASE_MS;
+            // The ferns rustle as it comes, for whoever is near enough to hear it.
+            for (const q of here) if (Math.hypot(q.rec.x - s.x, q.rec.y - s.y) <= RUSTLE_HEARD) this.saw(q, 'rustle');
           }
           if (next) this.creatureTo(s, next.x, next.y);
           else this.toZone(zone.key, { t: 'creature', creature: creatureView(s) });
@@ -3036,6 +3359,7 @@ export class World {
   }
 
   private giveUp(s: Skulker, now: number): void {
+    this.escaped(s);
     s.chasing = undefined;
     s.calmUntil = now + SKULKER_CALM_MS;
     this.toZone(s.zone.key, { t: 'creature', creature: creatureView(s) });
@@ -3046,7 +3370,7 @@ export class World {
    * they stand, to be picked up again; it goes away for a while. Emptied, they collapse as ever.
    */
   private caught(s: Skulker, p: Online, now: number): void {
-    this.sendAway(s, now);
+    this.sendAway(s, now, true);
     this.advance(p, now);
     p.rec.energy = Math.max(0, p.rec.energy - SKULKER_CATCH);
     if (p.rec.energy <= 0) {
@@ -3124,6 +3448,12 @@ export class World {
       const st = this.stoneView(now);
       lines.push(st.awake ? `The Old Stone is awake: surges are gentler for ${about(st.left, true)}.` : `The Old Stone sleeps. ${st.charge} of ${st.need} shards fed.`);
     }
+    // The latest three first finders, the latest first: something to talk about, and somewhere nobody has been.
+    const latest = [...this.firsts.values()].sort((a, b) => b.at - a.at).flatMap(f => {
+      const title = secretTitle(f.secret, this.notesById, this.items);
+      return title ? [firstOnBoard(firstView(f), title)] : [];
+    });
+    lines.push(...latest.slice(0, FIRSTS_ON_BOARD));
     return lines;
   }
 
@@ -3243,6 +3573,7 @@ export class World {
     if (wild) this.count(p, 'found', now);
     this.rerate(p, now);
     this.moveStory(p, { pick: rule.item.id });
+    this.found(p, rule.item.id, now);
   }
 
   /**
@@ -3262,6 +3593,7 @@ export class World {
     this.toZone(find.zone.key, { t: 'findGone', id: find.id });
     if (this.wild(p.map)) this.count(p, 'found', now);
     this.moveStory(p, { pick: rule.item.id });
+    this.found(p, rule.item.id, now);
   }
 
   /**
@@ -3413,8 +3745,8 @@ export class World {
   private freeTile(rule: Rule, zone: Zone, not: number | undefined): number | undefined {
     const { tiles } = rule;
     const finds = zone.finds;
-    const piles = this.pileTiles.get(zone.key);
-    const empty = (t: number) => !finds.has(t) && !piles?.has(t);
+    const piles = this.pileTiles.get(zone.key), kept = this.keepsakeTiles.get(zone.map.data.id);
+    const empty = (t: number) => !finds.has(t) && !piles?.has(t) && !kept?.has(t);
     // Finds are few next to the tiles they may grow on, so a few random tries nearly always hit a free one.
     for (let i = 0; i < 8 && tiles.length; i++) {
       const t = tiles[this.roll(tiles.length)]!;
@@ -3466,9 +3798,9 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, r.cup), gained: r.gained, ...(r.fromRest ? { fromRest: r.fromRest } : {}) } });
   }
 
-  /** A full bar: the level's, plus what the gear worn gives. */
+  /** A full bar: the level's, plus what the gear worn gives, and the keepsakes' when all of them are home. */
   private maxOf(r: PlayerRecord): number {
-    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items, r.worn);
+    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items, r.worn) + keepsakeEnergy(this.keepsakes, r.keepsakes);
   }
 
   /**
@@ -3549,6 +3881,7 @@ export class World {
     p.rec.bag = bag;
     this.sendBag(p, now);
     this.saveNow.set(p.rec.id, p.rec);
+    this.saw(p, 'faded');
   }
 
   // ---------- crates for whoever comes next ----------
