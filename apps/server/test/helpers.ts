@@ -6,7 +6,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
 import {
-  CALENDAR_DAY_MS, DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, utcDay, type BagSlot, type ClientMsg, type DropView, type ItemsData, type ServerMsg,
+  CALENDAR_DAY_MS, DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, utcDay, xpFor, type BagSlot, type ClientMsg, type DropView, type ItemsData, type ServerMsg,
 } from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
@@ -14,7 +14,7 @@ import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord, type Storage } from '../src/storage';
 import { colorFor } from '../src/world';
-import { fixtureMaps, itemsData } from './fixtures';
+import { chestMaps, fixtureMaps, itemsData } from './fixtures';
 
 export type Msg<T extends ServerMsg['t']> = Extract<ServerMsg, { t: T }>;
 
@@ -175,6 +175,55 @@ export async function restartKeepsBagsAndPiles(first: Storage, second: Storage, 
     expect(await stored(faller.id)).toBe(true);
     expect(await stored(late.id)).toBe(false);
     for (const x of [w, c, f]) x.c.ws.terminate();
+  } finally {
+    await two.stop();
+  }
+}
+
+/**
+ * Outfits through a restart, over the network with dev sign-in, on `first` and then `second` (the same
+ * storage, or two connections to the same database). Signed in at level 10, one player puts on the
+ * survey rain cape at the chest and another takes off the NAPO work suit they wore; after the restart the
+ * first comes back in the cape, and everyone who joins sees it, while the second comes back in their gear.
+ */
+export async function outfitsKeptThroughARestart(first: Storage, second: Storage): Promise<void> {
+  setLogLevel('silent');
+  const options = (storage: Storage): ServerOptions => ({ ...serverDefaults(), storage, maps: chestMaps(), items: itemsData(), auth: devAuth() });
+  const who = randomUUID().slice(0, 8), sub = (name: string) => `dev:${name}-${who}@example.test`;
+  const at = { map: 'house', x: 3, y: 2, dir: 'up', tokenHash: null, xp: xpFor(10) } as const;
+  const ann = await savedPlayer(first, { ...at, authSub: sub('ann') });
+  const cid = await savedPlayer(first, { ...at, authSub: sub('cid'), outfit: 'napo-suit' });
+  const signIn = async (port: number, name: string) => {
+    const c = await Client.open(port);
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, auth: `${name}-${who}@example.test` });
+    return { c, welcome: await c.next('welcome') };
+  };
+
+  const one = await startServer(options(first));
+  try {
+    const a = await signIn(one.port, 'ann');
+    a.c.send({ t: 'outfit', x: 3, y: 1, outfit: 'rain-cape' });
+    expect(await a.c.next('outfit')).toEqual({ t: 'outfit', id: ann.id, outfit: 'rain-cape' });
+    const c = await signIn(one.port, 'cid');
+    expect(c.welcome.players.find(p => p.id === cid.id)?.outfit).toBe('napo-suit');
+    c.c.send({ t: 'outfit', x: 3, y: 1, outfit: null });
+    expect(await c.c.next('outfit', m => m.id === cid.id)).toEqual({ t: 'outfit', id: cid.id, outfit: null });
+    for (const x of [a, c]) x.c.ws.terminate();
+    await waitFor(() => one.world.size === 0, 'everyone to leave');
+  } finally {
+    await one.stop();
+  }
+  expect((await second.findByAuthSub(sub('ann')))?.outfit).toBe('rain-cape');
+  expect((await second.findByAuthSub(sub('cid')))?.outfit).toBeUndefined();
+
+  const two = await startServer(options(second));
+  try {
+    const a = await signIn(two.port, 'ann');
+    expect(a.welcome.players.find(p => p.id === ann.id)?.outfit).toBe('rain-cape');
+    const c = await signIn(two.port, 'cid');
+    expect(c.welcome.players.find(p => p.id === ann.id)?.outfit).toBe('rain-cape');
+    expect(c.welcome.players.find(p => p.id === cid.id)?.outfit).toBeUndefined();
+    for (const x of [a, c]) x.c.ws.terminate();
   } finally {
     await two.stop();
   }
@@ -349,26 +398,72 @@ export async function keepsParcels(storage: Storage): Promise<void> {
 }
 
 /**
- * Tools and parcels kept side by side in one player (on `storage`, in memory or a real database): made
- * with both, saved with both changed, and a save with neither (a record that never had them) loses
- * neither. Returns the player's identity and what was kept.
+ * Tools, parcels and the outfit kept side by side in one player (on `storage`, in memory or a real
+ * database): made with all three, saved with all three changed, and a save with none of them (a record
+ * that never had them) loses none. Returns the player's identity and what was kept.
  */
-export async function keepsToolsAndParcels(storage: Storage): Promise<{ sub: string; kept: PlayerRecord }> {
+export async function keepsToolsParcelsAndOutfit(storage: Storage): Promise<{ sub: string; kept: PlayerRecord }> {
   const sub = `dev:${randomUUID()}@example.test`;
   // Whole, as a save writes it back (every storage fills in a stash, counts, XP and wetness), so what is read back compares as it is.
   await savedPlayer(storage, {
     tokenHash: null, authSub: sub, wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} }, tools: ['stonebrook-map', 'radio'], parcels: { welcome: true, day: 20_724, days: 0b1 },
+    outfit: 'napo-suit',
   });
   const load = async () => (await storage.findByAuthSub(sub))!;
   const made = await load();
-  expect(made).toMatchObject({ tools: ['stonebrook-map', 'radio'], parcels: { welcome: true, day: 20_724, days: 0b1 } });
-  const later = { ...made, tools: [...made.tools!, 'near-woods-map'], parcels: { welcome: true, day: 20_725, days: 0b11 }, lastSeenAt: made.lastSeenAt + 1000 };
+  expect(made).toMatchObject({ tools: ['stonebrook-map', 'radio'], parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit' });
+  const later = {
+    ...made, tools: [...made.tools!, 'near-woods-map'], parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', lastSeenAt: made.lastSeenAt + 1000,
+  };
   await storage.save(later);
   expect(await load()).toEqual(later);
-  const { tools: _tools, parcels: _parcels, ...neither } = later;
-  await storage.save({ ...neither, lastSeenAt: later.lastSeenAt + 1000 });
+  const { tools: _tools, parcels: _parcels, outfit: _outfit, ...none } = later;
+  await storage.save({ ...none, lastSeenAt: later.lastSeenAt + 1000 });
   const kept = await load();
   expect(kept).toEqual({ ...later, lastSeenAt: later.lastSeenAt + 1000 });
+  return { sub, kept };
+}
+
+/**
+ * One player whole, on `storage` (in memory, or a real database): made with everything a new character
+ * can have (the tools, the parcels, the outfit and the thanks received among it), then saved whole,
+ * every field comes back as it went (a carried piece and a live find in the bag, the counts, the stash
+ * with its pieces, what is worn and how worn, the chapter). A save writes every field it carries but the
+ * thanks received, which only creditThanks adds to (a save from an older copy of the player never undoes
+ * one), and a save without tools, parcels or an outfit loses none of them. Returns the player's identity
+ * and what was kept.
+ */
+export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; kept: PlayerRecord }> {
+  const sub = `dev:${randomUUID()}@example.test`, id = randomUUID();
+  const rec: PlayerRecord = {
+    id, name: newName(), tokenHash: null, authSub: sub, map: 'woods', x: 3, y: 4, dir: 'left', color: colorFor(id), energy: 61.5, wet: 0.25,
+    bag: [{ item: 'moss', count: 3 }, { item: 'coat', count: 1, piece: { cond: 0.5, quirk: 'hum', level: 2 } }, { item: 'spark', count: 1, since: 1_800_000_000_000 }],
+    stats: { rainSteps: 40, fed: 3, made: 1, collapsed: 2, surged: 1, told: 0b101, thanked: 7 },
+    xp: 120, stash: { items: { moss: 9, coat: 1 }, out: { moss: 2 }, pieces: { coat: [{ cond: 1, level: 1 }] } },
+    gear: { shirt: 'coat' }, worn: { shirt: { cond: 0.75, level: 2 } }, story: 'the-lineman', tools: ['stonebrook-map', 'radio'],
+    parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
+  };
+  expect(await storage.create(rec)).toBe(true);
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const { worn: _worn, story: _story, ...made } = rec;
+  expect(await load()).toMatchObject(made);
+  await storage.save(rec);
+  expect(await load()).toEqual(rec);
+  // Thanked meanwhile, by someone else: a save from the copy online before it leaves the count as it is.
+  await storage.creditThanks(id);
+  const later: PlayerRecord = {
+    ...rec, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
+    stash: { items: { moss: 11, coat: 1 }, out: {}, pieces: { coat: [{ cond: 1, level: 1 }] } }, worn: { shirt: { cond: 1, level: 2 } }, tools: [...rec.tools!, 'near-woods-map'],
+    parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', lastSeenAt: rec.lastSeenAt + 1000,
+  };
+  await storage.save(later);
+  expect(await load()).toEqual({ ...later, stats: { ...later.stats, thanked: 8 } });
+  // A save that carries no tools, parcels or outfit (and no thanks received) keeps them all.
+  const { tools: _tools, parcels: _parcels, outfit: _outfit, ...none } = later;
+  const { thanked: _thanked, ...counts } = later.stats!;
+  await storage.save({ ...none, stats: counts, lastSeenAt: later.lastSeenAt + 1000 });
+  const kept = await load();
+  expect(kept).toEqual({ ...later, stats: { ...later.stats, thanked: 8 }, lastSeenAt: later.lastSeenAt + 1000 });
   return { sub, kept };
 }
 

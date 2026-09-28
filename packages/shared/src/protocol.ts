@@ -14,7 +14,7 @@ import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 22;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -157,6 +157,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
   }),
   /** Open a sealed item (a NAPO lockbox) in your stash, at the chest on tile x,y: what it holds goes into the stash. */
   z.object({ t: z.literal('open'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40) }),
+  /** Wear an outfit (outfits.ts) from the wardrobe at the chest on tile x,y, or none (null): your gear shows again. */
+  z.object({ t: z.literal('outfit'), x: z.number().int(), y: z.number().int(), outfit: z.string().min(1).max(40).nullable() }),
   /** Ask someone to be your friend, by id (tapping their name tag) or by name. If they asked you already, you are friends. */
   z.object({ t: z.literal('befriend'), id: z.uuid().optional(), name: PlayerName.optional() }),
   /** Answer someone's friend request: yes makes you friends, no drops it. */
@@ -367,6 +369,8 @@ export type Refusal =
   | 'top_level'
   /** A sealed thing stays in the chest: it is opened there. */
   | 'sealed_stays'
+  /** Your level has not reached that outfit yet. */
+  | 'locked'
   /** You thanked them today already: each helper once a UTC day. */
   | 'thanked';
 
@@ -400,6 +404,8 @@ export interface PlayerView {
   /** What they wear, so everyone sees it (gear.ts), and the quirks of what they wear (some show in the world). */
   gear: Gear;
   quirks: Quirk[];
+  /** The outfit they wear over it (outfits.ts): how they look, whatever their gear. None: their gear shows. */
+  outfit?: string;
   /** They carry a live find (items.ts): a column of light over them that everyone on the map sees. */
   live?: true;
   /** They play as a guest (only on a server with sign-in): no friends until they sign in. */
@@ -558,6 +564,8 @@ export type ServerMsg =
   | { t: 'progress'; progress: ProgressView; gained: number }
   /** On your map: what someone wears now (you too, after you changed it). */
   | { t: 'gear'; id: string; gear: Gear; quirks: Quirk[] }
+  /** On your map: the outfit someone wears now (you too, after you chose it); null: none, their gear shows. */
+  | { t: 'outfit'; id: string; outfit: string | null }
   /** The workbench you opened: what your stash holds, whole, after opening it, making or mending something, or a parcel came. */
   | { t: 'bench'; stash: BagSlot[] }
   /** On your map: a find grew here, or someone took one / it went. */
@@ -582,7 +590,7 @@ export type ServerMsg =
 
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
-  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'say' | 'thank'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'say' | 'thank'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
 
 /**

@@ -299,6 +299,9 @@ export function attachNet(o: NetOptions): Net {
       case 'doff':
         world.doff(s.id, msg.slot, now);
         return flush();
+      case 'outfit':
+        world.outfit(s.id, msg.x, msg.y, msg.outfit, now);
+        return flush();
       case 'bench':
         world.bench(s.id, msg.x, msg.y);
         return flush();

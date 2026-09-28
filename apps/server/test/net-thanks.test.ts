@@ -16,7 +16,7 @@ import { setLogLevel } from '../src/log';
 import { startServer } from '../src/server';
 import { MemoryStorage } from '../src/storage';
 import { houseData, itemsData, townData, woodsData } from './fixtures';
-import { Client, loginTo, savedPlayer, serverDefaults, setup, waitFor } from './helpers';
+import { Client, keepsWholeRow, loginTo, savedPlayer, serverDefaults, setup, waitFor } from './helpers';
 
 const DAY = 86_400_000;
 /** Long enough for every fire out there to go out. */
@@ -250,6 +250,13 @@ describe('thanks kept for 7 days', () => {
     } finally {
       await server.stop();
     }
+  });
+});
+
+describe('the thanks received, stored', () => {
+  it('stay apart from every save, in memory as in the database: a whole player round trips, and a save from an older copy undoes no thanks', async () => {
+    const { kept } = await keepsWholeRow(new MemoryStorage());
+    expect(kept.stats?.thanked).toBe(8);
   });
 });
 

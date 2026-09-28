@@ -1,7 +1,8 @@
 /**
  * The interface over the world: status and energy (and how wet you are, and what clings to you), the
  * surge clock, the menu with the journal, status and About panels, the joystick and A/B, name tags,
- * the text box, the bag, and the fade and name banner when you arrive somewhere.
+ * the text box, the bag, the chest (the stash, and the wardrobe beside it) and the workbench, and the
+ * fade and name banner when you arrive somewhere.
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
@@ -12,6 +13,7 @@ import type { FriendsView } from './friends';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import type { JournalView } from './journal';
 import type { SoundSetting } from './sound';
+import { WARDROBE_GATE, WARDROBE_HINT, type WardrobeView } from './wardrobe';
 
 const svg = (inner: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 const ICON = {
@@ -68,6 +70,8 @@ export interface HudHandlers {
   unequip?(slot: Slot): void;
   /** At the chest: open a sealed thing from the stash (a NAPO lockbox); the game asks first. */
   open?(item: string): void;
+  /** In the chest's wardrobe: wear an outfit, or none (null). */
+  outfit?(id: string | null): void;
   /** The first goal was tapped where it does something: at the workbench, its card of what to make. */
   goal?(): void;
   craft?(recipe: string): void;
@@ -268,7 +272,12 @@ export class Hud {
   private tagEls = new Map<string, HTMLElement>();
   private floatEls = new Map<number, HTMLElement>();
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
-  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', card: '', friends: '', personActs: '', talk: '', journal: '', chat: '', goal: '' };
+  private shown = {
+    fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', card: '',
+    friends: '', personActs: '', talk: '', journal: '', chat: '', goal: '', wardrobe: '',
+  };
+  /** The chest's tab: the stash (with what came in parcels, the first goal and what you wear), or the wardrobe. */
+  private chestTab: 'stash' | 'wardrobe' = 'stash';
   /** What the dots say is new: among friends (a request, an unread message) and in the journal (a chapter), on the menu; in the chat (something said), on its own button. */
   private news = { social: false, journal: false, chat: false };
   private load = 0;
@@ -356,20 +365,27 @@ export class Hud {
         <div class="dock" data-el="bagDock" hidden><div class="detail" data-el="bagCard" aria-live="polite"></div></div>
       </div>
       <div class="paper-view" data-el="paper" hidden role="dialog" aria-label="Map"><button type="button" class="close" data-el="paperClose" aria-label="Put the map away">${ICON.x}</button></div>
-      <div class="sheet panel stash-sheet docked" data-el="stashSheet" data-open="false" role="dialog" aria-label="Stash">
-        <div class="sheet-head"><b>Stash</b><span class="room" data-el="stashXp"></span><button type="button" class="close" data-el="stashClose" aria-label="Close the stash">${ICON.x}</button></div>
+      <div class="sheet panel stash-sheet docked" data-el="stashSheet" data-open="false" role="dialog" aria-label="Chest">
+        <div class="sheet-head"><span class="chest-tabs" role="tablist" aria-label="Chest"><button type="button" role="tab" data-chest="stash" aria-selected="true">Stash</button><button type="button" role="tab" data-chest="wardrobe" aria-selected="false">Wardrobe</button></span><span class="room" data-el="stashXp"></span><button type="button" class="close" data-el="stashClose" aria-label="Close the chest">${ICON.x}</button></div>
         <div class="sheet-body" data-el="stashBody">
-          <div class="parcel-note" data-el="stashParcels" role="status" hidden></div>
-          <button type="button" class="goal" data-el="stashGoal" aria-disabled="true" tabindex="-1" hidden></button>
-          <p class="hint">What you bring home earns XP. Tap something to see it, and tap it twice to put it away.</p>
-          <div class="grid" data-el="stashBag">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-bag="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
-          <div class="acts"><button type="button" class="act go" data-el="storeAll">Put everything in</button></div>
-          <h3 class="stash-title">Wearing</h3>
-          <p class="hint">Tap a piece to see what it does. Tap it twice to take it off, or to wear it from the stash.</p>
-          <div class="grid wear" data-el="wearGrid">${wearSlots()}</div>
-          <h3 class="stash-title">In the stash</h3>
-          <div class="grid" data-el="stashGrid"></div>
-          <p class="hint" data-el="stashEmpty">Nothing here yet.</p>
+          <div class="chest-part" data-el="stashPart" role="tabpanel" aria-label="Stash">
+            <div class="parcel-note" data-el="stashParcels" role="status" hidden></div>
+            <button type="button" class="goal" data-el="stashGoal" aria-disabled="true" tabindex="-1" hidden></button>
+            <p class="hint">What you bring home earns XP. Tap something to see it, and tap it twice to put it away.</p>
+            <div class="grid" data-el="stashBag">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-bag="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
+            <div class="acts"><button type="button" class="act go" data-el="storeAll">Put everything in</button></div>
+            <h3 class="stash-title">Wearing</h3>
+            <p class="hint">Tap a piece to see what it does. Tap it twice to take it off, or to wear it from the stash.</p>
+            <div class="grid wear" data-el="wearGrid">${wearSlots()}</div>
+            <h3 class="stash-title">In the stash</h3>
+            <div class="grid" data-el="stashGrid"></div>
+            <p class="hint" data-el="stashEmpty">Nothing here yet.</p>
+          </div>
+          <div class="chest-part" data-el="wardrobePart" role="tabpanel" aria-label="Wardrobe" hidden>
+            <p class="hint" data-el="wardrobeHint">${WARDROBE_HINT}</p>
+            <div class="grid outfits" data-el="outfitGrid"></div>
+            <div class="gate" data-el="wardrobeGate" hidden><p>${WARDROBE_GATE}</p><button type="button" class="act go" data-signin>Sign in</button></div>
+          </div>
         </div>
         <div class="dock" data-el="stashDock" hidden><div class="detail" data-el="stashCard" aria-live="polite"></div></div>
       </div>
@@ -558,6 +574,10 @@ export class Hud {
     });
     this.el.statusClose!.addEventListener('click', () => this.toggleStatus(false));
     this.el.stashClose!.addEventListener('click', () => this.toggleStash(false));
+    this.el.stashSheet!.addEventListener('click', e => {
+      const tab = (e.target as Element).closest<HTMLElement>('[data-chest]')?.dataset.chest;
+      if (tab === 'stash' || tab === 'wardrobe') this.showChestTab(tab);
+    });
     this.el.storeAll!.addEventListener('click', () => this.h.store?.());
     // A tap looks, an action is a second step: in the chest, at the workbench and in the bag a tap opens
     // a card, and its button, A or a second tap does what it says. Taken in the capture phase, so a
@@ -764,8 +784,8 @@ export class Hud {
   toggleStash(open = !this.stashOpen) {
     const was = this.stashOpen;
     if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
-    // It opens at the top of the list, never on a card left from last time; closing, the card slides away with it.
-    if (open && !was) { this.el.stashBody!.scrollTop = 0; if (this.docked === 'stash') this.closeCard(); }
+    // It opens on the stash, at the top of the list, never on a card left from last time; closing, the card slides away with it.
+    if (open && !was) { this.showChestTab('stash'); this.el.stashBody!.scrollTop = 0; if (this.docked === 'stash') this.closeCard(); }
     else if (!open && this.card?.where === 'stash') this.forgetCard();
     // What came in the parcels is said once: it goes with the panel.
     if (!open && this.parcelLines.length) { this.parcelLines = []; this.showParcels(); }
@@ -851,6 +871,36 @@ export class Hud {
     this.refreshCard();
   }
 
+  /** A dot on the chest's Wardrobe tab: a new level opened an outfit. Looking at the wardrobe takes it away. */
+  setWardrobeNews(on: boolean) {
+    this.el.stashSheet!.querySelector('[data-chest="wardrobe"]')!.toggleAttribute('data-news', on && this.chestTab !== 'wardrobe');
+  }
+
+  /** Shows the chest's stash or its wardrobe, at the top, without a card: the card belonged to the other. */
+  showChestTab(tab: 'stash' | 'wardrobe') {
+    if (tab === 'wardrobe') this.setWardrobeNews(false);
+    if (tab === this.chestTab) return;
+    this.chestTab = tab;
+    if (this.card?.where === 'stash' || this.docked === 'stash') this.closeCard();
+    for (const b of this.el.stashSheet!.querySelectorAll<HTMLElement>('[data-chest]')) b.setAttribute('aria-selected', String(b.dataset.chest === tab));
+    this.el.stashPart!.hidden = tab !== 'stash';
+    this.el.wardrobePart!.hidden = tab !== 'wardrobe';
+    this.el.stashBody!.scrollTop = 0;
+  }
+
+  /**
+   * The wardrobe: a tile for no outfit and one for each outfit, or for a guest one card that says what
+   * signing in keeps, with the Sign in button. Only written to the page when it changed.
+   */
+  setWardrobe(v: WardrobeView) {
+    const html = v.tiles.map(t => `<button type="button" class="slot outfit" data-outfit="${esc(t.id)}"${t.locked ? ' data-locked' : ''}${t.worn ? ' data-worn' : ''}`
+      + ` aria-label="${esc(`${t.name}${t.worn ? ', wearing it' : t.locked ? `, opens at ${t.label.toLowerCase()}` : ''}`)}">${t.icon}<span class="lbl">${esc(t.label)}</span>${t.worn ? '<i class="on" aria-hidden="true"></i>' : ''}</button>`).join('');
+    if (html !== this.shown.wardrobe) { this.shown.wardrobe = html; this.el.outfitGrid!.innerHTML = html; }
+    this.el.wardrobeGate!.hidden = !v.gate;
+    this.el.wardrobeHint!.hidden = this.el.outfitGrid!.hidden = !!v.gate;
+    this.refreshCard();
+  }
+
   /** A card is open in the stash, at the workbench or in the bag. */
   get cardOpen(): boolean {
     return !!this.card;
@@ -908,6 +958,8 @@ export class Hud {
     }
     const wear = target.closest<HTMLElement>('[data-wear]');
     if (wear) return wear.dataset.empty === 'true' ? 'empty' : { from: 'worn', slot: wear.dataset.wear as Slot };
+    const outfit = target.closest<HTMLElement>('[data-outfit]')?.dataset.outfit;
+    if (outfit) return { from: 'outfit', id: outfit };
     const it = target.closest<HTMLElement>('[data-item]');
     if (it) return it.dataset.n === undefined ? { from: 'stash', item: it.dataset.item! } : { from: 'stash', item: it.dataset.item!, n: Number(it.dataset.n) };
     return null;
@@ -1035,6 +1087,7 @@ export class Hud {
       case 'mend': return this.bench(`mend:${a.slot}`);
       case 'upgrade': return this.bench(upgradeId(a.of));
       case 'open': return this.h.open?.(a.item);
+      case 'outfit': return this.h.outfit?.(a.id);
     }
   }
 
@@ -1518,6 +1571,7 @@ function pickedSelector(r: DetailRef, where: CardSheet): string {
     case 'recipe': return `[data-recipe="${r.id}"]`;
     case 'mend': return `[data-recipe="mend:${r.slot}"]`;
     case 'upgrade': return `[data-recipe="${upgradeId(r.of)}"]`;
+    case 'outfit': return `[data-outfit="${r.id}"]`;
   }
 }
 

@@ -54,6 +54,8 @@ export interface ServerOptions {
   clockShiftMs?: number;
   /** Development only (PARCEL_DAY_MS): the parcels' days last this long, the first a Monday that starts now, so a week of them passes in minutes. */
   parcelDayMs?: number;
+  /** Development only (XP_MULTIPLIER): stashing earns this many times the XP. 1 unless set. */
+  xpMultiplier?: number;
   /** With sign-in, how often guests who stayed away GUEST_DAYS are looked for (after start-up); default once a day. */
   forgetGuestsEveryMs?: number;
   /** How often thanks older than THANKS_KEPT_DAYS are deleted (after start-up); default once an hour. */
@@ -135,6 +137,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     epochOffset: Date.now() + shift - clock(),
     guests,
     ...(o.parcelDayMs ? { calendar: quickCalendar(o.parcelDayMs, Date.now() + shift) } : {}),
+    xpTimes: o.xpMultiplier,
   });
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version, auth: auth.config });
   const net = attachNet({

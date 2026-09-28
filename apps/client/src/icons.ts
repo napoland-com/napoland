@@ -127,6 +127,51 @@ export const MAP_ICON = icon(`<path d="M4 8l8-2.5 8 2.5 8-2.5v19L20 27l-8-2.5L4 
   <path d="M6.5 22c3-1 3.5-5 7-6s5 2 8.5-3" stroke="#6b4a31" stroke-dasharray="2 1.6"/>
   <ellipse cx="22.5" cy="20.5" rx="2.6" ry="1.6" fill="#6f98b0" stroke="#3f5f72"/>`);
 
+/**
+ * Outfits in the wardrobe (outfits.ts): a small figure in each, in the colors the world draws it in
+ * (view/characters.ts, OUTFIT_LOOKS): what it wears on its head over a head, and the clothes below.
+ */
+const HEAD = '<circle cx="16" cy="8.4" r="3.1" fill="#f2cda8"/>';
+/** A jacket to the hips, over trousers; a coat to the knees, over boots. */
+const JACKET = 'M12 11l4 2.4 4-2.4 6.5 4.2-2.6 5-2.2-1.2V25H10.3v-6l-2.2 1.2-2.6-5z';
+const TROUSERS = 'M10.8 25h10.4l-.5 5.5h-4.1l-.6-3.2-.6 3.2h-4.1z';
+const COAT = 'M12 11l4 2.4 4-2.4 6.5 4.2-2.6 5-2.2-1.2v3l1.2 5.8H9.1l1.2-5.8v-3l-2.2 1.2-2.6-5z';
+const BOOTS = 'M11 27.8h3.6v2.7H11zM17.4 27.8H21v2.7h-3.6z';
+const OUTFIT_ICONS: Record<string, string> = {
+  // A grey coverall, belted, with the yellow patch; a cap of the same grey.
+  'napo-suit': icon(`<path d="M12 11l4 2.4 4-2.4 6.5 4.2-2.6 5-2.2-1.2v11.5H17l-1-7.5-1 7.5h-4.7V19l-2.2 1.2-2.6-5z" fill="#7b8288"/>
+    <path d="M16 13.4v8.1" stroke-width="1.2"/><path d="M10.4 21.6h11.2" stroke="#555b61" stroke-width="1.8"/>
+    <path d="M17.6 15h2.6v2.2h-2.6z" fill="#d6ad2f" stroke="none"/>
+    ${HEAD}<path d="M12.3 7.8c0-2.7 1.7-4.5 3.7-4.5s3.7 1.8 3.7 4.5z" fill="#555b61"/><path d="M14.7 5.4h2.6v1.5h-2.6z" fill="#d6ad2f" stroke="none"/>`),
+  // An orange jacket with two pale bands, and a yellow hard hat with a ridge and a brim.
+  'lineman-jacket': icon(`<path d="${TROUSERS}" fill="#3b4a63"/><path d="${JACKET}" fill="#e0712c"/>
+    <path d="M10.4 20.6h11.2M10.4 23.2h11.2" stroke="#e2e6e2" stroke-width="1.4"/><path d="M16 13.4V25" stroke="#b3531b" stroke-width="1.2"/>
+    ${HEAD}<path d="M11.8 7.5c0-2.9 1.9-4.9 4.2-4.9s4.2 2 4.2 4.9z" fill="#d9a82b"/><path d="M10.2 7.3h11.6v1.4H10.2z" fill="#d9a82b"/><path d="M16 2.8v4.4" stroke="#a88020" stroke-width="1.3"/>`),
+  // A dark green cape, flaring to a yellow hem, and its hood up, edged in yellow round the face.
+  'rain-cape': icon(`<path d="M12.6 27.5h2.4v3h-2.4zM17 27.5h2.4v3H17z" fill="#46483a"/><path d="M12.5 10.5L6 27.5h20l-6.5-17z" fill="#2f5b3f"/>
+    <path d="M6.7 25.8h18.6" stroke="#d6ad2f" stroke-width="1.8"/>
+    <path d="M10.9 11.2c0-4.6 2.3-7.9 5.1-7.9s5.1 3.3 5.1 7.9z" fill="#2f5b3f"/><path d="M13.4 10.9V9.7c0-2.2 1.1-3.6 2.6-3.6s2.6 1.4 2.6 3.6v1.2z" fill="#f2cda8" stroke="#d6ad2f" stroke-width="1.2"/>`),
+  // A brown coat to the knees, belted, with the brass badge; a campaign hat, wide brim and pinched crown.
+  'ranger-coat': icon(`<path d="${BOOTS}" fill="#3a2718"/><path d="${COAT}" fill="#6e4a2e"/>
+    <path d="M16 13.4V27.8" stroke="#4b3120" stroke-width="1"/><path d="M10.4 21.9h11.2" stroke="#4b3120" stroke-width="1.6"/>
+    <circle cx="19.3" cy="16.3" r="1.35" fill="#d6b24c" stroke="none"/>
+    ${HEAD}<path d="M12.7 6.9l1.6-4.3h3.4l1.6 4.3z" fill="#8b6c40"/><path d="M13 6h6" stroke="#4b3120" stroke-width="1"/><path d="M9.3 6.9h13.4v1.4H9.3z" fill="#8b6c40"/>`),
+  // A coat of four cloths, the sleeves and the skirt each another, with patches stitched on; a knitted cap and its bobble.
+  patchwork: icon(`<path d="${BOOTS}" fill="#4a3322"/><path d="${COAT}" fill="#a8584a"/>
+    <path d="M12 11L5.5 15.2l2.6 5 2.2-1.2z" fill="#3e7c77"/><path d="M20 11l6.5 4.2-2.6 5-2.2-1.2z" fill="#c39a3e"/><path d="M10.3 22h11.4l1.2 5.8H9.1z" fill="#4f6b95"/>
+    <path d="M11.3 15.4h3.5v3.1h-3.5zM17.2 17.3h3.1v2.6h-3.1z" fill="#c39a3e" stroke="#e6d6ae" stroke-width=".8" stroke-dasharray="1 .8"/>
+    ${HEAD}<path d="M12.2 7.6c0-2.8 1.7-4.6 3.8-4.6s3.8 1.8 3.8 4.6z" fill="#c39a3e"/><path d="M11.9 6.6h8.2v1.7h-8.2z" fill="#3e7c77"/><circle cx="16" cy="2.7" r="1.4" fill="#e6d6ae"/>`),
+};
+
+/** An outfit's drawing, for the wardrobe's tiles and cards; a sack for one this copy cannot draw. */
+export function outfitIcon(id: string): string {
+  return OUTFIT_ICONS[id] ?? SACK;
+}
+
+/** No outfit: an empty hanger. */
+export const NO_OUTFIT_ICON = icon(`<path d="M16 12.6v-1.7c0-1 .6-1.5 1.5-2 .9-.5 1.5-1.1 1.5-2.1 0-1.3-1.2-2.3-2.9-2.3-1.6 0-2.7 1-2.7 2.3" stroke-width="1.8"/>
+  <path d="M16 12.6L4.6 21.4c-.8.6-.4 1.9.6 1.9h21.6c1 0 1.4-1.3.6-1.9z" stroke-width="1.8"/>`);
+
 /** The drawing on each tool's button in the bag's header, by the icon its item names (TOOL_ICONS: every one is drawn). */
 export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON };
 
