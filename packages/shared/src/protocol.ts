@@ -118,6 +118,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('friends') }),
   /** You talked to the person, or read the desk, on tile x,y next to you: the story may move on (story.ts). */
   z.object({ t: z.literal('talk'), x: z.number().int(), y: z.number().int() }),
+  /** Send me my counts toward feats as they are now (the status panel opened): the answer is `stats`. */
+  z.object({ t: z.literal('stats') }),
   /** Say something to everyone online (world) or to whoever is near you (local). Only signed-in players can. */
   z.object({ t: z.literal('say'), to: z.enum(['world', 'local']), text: z.string().trim().min(1).max(MAX_SAY_CHARS) }),
 ]);
@@ -325,7 +327,7 @@ export type ServerMsg =
       stone: StoneView;
       /** What the woods are like today, this week and next week (sky.ts, conditionsAt). */
       conditions: ConditionsView;
-      /** What you did so far that counts toward feats, and the feats earned (feats.ts). */
+      /** What you did so far that counts toward feats: each feat's rank follows from its count (feats.ts, rankOf). */
       stats: Stats;
       /** Your XP and level (progress.ts). */
       progress: ProgressView;
@@ -349,8 +351,11 @@ export type ServerMsg =
   | { t: 'energy'; energy: EnergyView; body: BodyView }
   /** Your bag, whole, after any change. A live item's slot has its `age` as of now. */
   | { t: 'bag'; bag: BagSlot[] }
-  /** You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message. */
-  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify' }
+  /**
+   * You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
+   * `double`: the find came up double (the forager's ranks, feats.ts).
+   */
+  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify'; double?: true }
   /** A pick, use, discard or feed that did not happen, and why. */
   | { t: 'refused'; action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'befriend' | 'tell' | 'say'; reason: Refusal }
   /** Someone said something you can hear: to everyone online, or near them on your map (a bubble over their head). You hear your own too. */
@@ -390,8 +395,10 @@ export type ServerMsg =
   | { t: 'conditions'; conditions: ConditionsView }
   /** The notice board, read: one line per thing worth knowing. */
   | { t: 'board'; lines: string[] }
-  /** You earned a feat (feats.ts); `stats` is where your counts stand now. */
-  | { t: 'feat'; id: string; stats: Stats }
+  /** You reached rank `rank` (1 to RANKS) of a feat (feats.ts), told once; `stats` is where your counts stand now. */
+  | { t: 'feat'; id: string; rank: number; stats: Stats }
+  /** Your counts toward feats, as you asked (`stats`): the ranks follow from them (feats.ts, rankOf). */
+  | { t: 'stats'; stats: Stats }
   /** You reached this chapter of the story (story.ts): it goes into your journal. */
   | { t: 'chapter'; id: string }
   /** What is in your stash, whole, after you opened the chest or anything went in or out. */

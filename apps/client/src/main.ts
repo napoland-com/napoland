@@ -115,7 +115,8 @@ const hud = new Hud(screen, {
   // Using something shows what it did over your head (and on the energy bar), so the bag closes.
   use: slot => { game.use(slot); hud.toggleBag(false); },
   discard: slot => game.discard(slot),
-  status: showStatus,
+  // Steps count toward feats without the server telling each one: the panel asks for the counts as they are.
+  status: () => { game.askStats(); showStatus(); },
   store: slot => game.store(slot),
   take: item => game.take(item),
   stashClosed: () => game.closeChest(),
@@ -486,6 +487,7 @@ let marksShown = { changes: -1, view: null as WorldView | null };
 /** Echoes are chosen again when the piles change or you reach another tile. */
 let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
 let statusAt = 0;
+let statsShown = -1;
 let friendsShown = { changes: -1, open: false };
 /** The chat tab shown, what of the chat is drawn, and the dots drawn on the menu. */
 let chatTab: ChatTo = 'local';
@@ -509,11 +511,11 @@ let toolsShown: string[] | null = null;
 let progressShown: typeof game.progress | null = null;
 let storyShown = -1;
 /**
- * Chapters reached and not announced yet. Each waits until it can be read: for what is being said
- * (a chapter reached by talking to someone), the panel that is open (the stash you put things in),
- * the fade and the banner already up.
+ * Chapters and feats' ranks reached and not announced yet. Each waits until it can be read: for what
+ * is being said (a chapter reached by talking to someone), the panel that is open (the stash you put
+ * things in, the workbench you mend at), the fade and the banner already up.
  */
-const chaptersToSay: News[] = [];
+const toSay: News[] = [];
 /** The scene sound was mixed for last frame: what changed since is what makes a one-shot. */
 let heard: Scene | undefined;
 function frame(now: number) {
@@ -577,19 +579,20 @@ function frame(now: number) {
   const worldNews = game.news.splice(0);
   for (const n of worldNews) {
     // A dot on the menu until the journal is opened (it shows the chapter at once if it is open).
-    if (n.kind === 'chapter') { chaptersToSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
+    if (n.kind === 'chapter') { toSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
+    if (n.kind === 'feat') { toSay.push(n); continue; }
     const b = newsBanner(n, game.map.data.name);
     if (b) hud.showBanner(b.title, b.sub);
   }
-  if (chaptersToSay.length && !game.dialog && !panelOpen() && !hud.bannerUp && !arrival.dark) {
-    const b = newsBanner(chaptersToSay.shift()!, game.map.data.name);
+  if (toSay.length && !game.dialog && !panelOpen() && !hud.bannerUp && !arrival.dark) {
+    const b = newsBanner(toSay.shift()!, game.map.data.name);
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (game.storyChanges !== storyShown) {
     storyShown = game.storyChanges;
     hud.setJournal(journalView(game.reached()));
   }
-  if (hud.statusOpen && now - statusAt > 500) { statusAt = now; showStatus(); }
+  if (hud.statusOpen && (now - statusAt > 500 || game.statsChanges !== statsShown)) { statusAt = now; statsShown = game.statsChanges; showStatus(); }
   if (game.socialChanges !== friendsShown.changes || hud.friendsOpen !== friendsShown.open) {
     friendsShown = { changes: game.socialChanges, open: hud.friendsOpen };
     hud.setFriends(friendsView(game.friends, game, id => maps.find(id)?.name), game.socialNote);

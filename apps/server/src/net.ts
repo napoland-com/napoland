@@ -286,6 +286,9 @@ export function attachNet(o: NetOptions): Net {
       case 'talk':
         world.talk(s.id, msg.x, msg.y, now);
         return flush();
+      case 'stats':
+        world.stats(s.id);
+        return flush();
       case 'befriend':
       case 'answer':
       case 'unfriend':

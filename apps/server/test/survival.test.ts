@@ -678,20 +678,20 @@ describe('strange objects, charms and feats', () => {
   });
 
   it('earn a feat for good once its count is reached, and tell the player', () => {
-    const rain = FEATS.find(f => f.id === 'rain-walker')!;
-    const w = world(fieldData(), 'rain', {}, rec('a', 'field', 1, 5, 'right', { stats: { rainSteps: rain.need - 1 } }));
+    const need = FEATS.find(f => f.id === 'rain-walker')!.ranks[0]!.need;
+    const w = world(fieldData(), 'rain', {}, rec('a', 'field', 1, 5, 'right', { stats: { rainSteps: need - 1 } }));
     w.step('a', 'right', 1, 1000);
-    expect(of(to(w.drain(), 'a'), 'feat')).toEqual([{ t: 'feat', id: 'rain-walker', stats: { rainSteps: rain.need } }]);
-    expect(w.takeWrites().players.map(p => p.stats)).toEqual([{ rainSteps: rain.need }]);
+    expect(of(to(w.drain(), 'a'), 'feat')).toEqual([{ t: 'feat', id: 'rain-walker', rank: 1, stats: { rainSteps: need } }]);
+    expect(w.takeWrites().players.map(p => p.stats)).toEqual([{ rainSteps: need }]);
     // Rain soaks a rain walker 20% slower, from now on.
     w.step('a', 'right', 2, 1200);
     w.tick(1400);
-    expect(w.get('a')!.stats).toEqual({ rainSteps: rain.need + 1 });
+    expect(w.get('a')!.stats).toEqual({ rainSteps: need + 1 });
   });
 
   it('change the rates the moment they are earned', () => {
-    const rain = FEATS.find(f => f.id === 'rain-walker')!;
-    const w = world(fieldData(), 'rain', {}, rec('a', 'field', 1, 5, 'right', { stats: { rainSteps: rain.need - 1 } }));
+    const need = FEATS.find(f => f.id === 'rain-walker')!.ranks[0]!.need;
+    const w = world(fieldData(), 'rain', {}, rec('a', 'field', 1, 5, 'right', { stats: { rainSteps: need - 1 } }));
     w.step('a', 'right', 1, 1000);
     expect(lastEnergy(w.drain(), 'a')?.body.wetRate).toBe(Math.round((0.8 / WET_SECONDS) * 1e5) / 1e5);
   });

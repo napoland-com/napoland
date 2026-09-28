@@ -1,8 +1,8 @@
 ---
 id: feat-ranks
 title: Feats with ranks, and new feats
-status: idea
-order: 120
+status: done
+order: 230
 area: gameplay
 depends: [survival-dynamics]
 ---
