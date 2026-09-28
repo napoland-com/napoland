@@ -197,7 +197,13 @@ export type MapObject =
   /** The saw carriage on its rails, w tiles long east to west, a log still dogged on it. */
   | { kind: 'carriage'; x: number; y: number; w: number }
   /** A drift of sawdust on the mill floor: walked through. */
-  | { kind: 'sawdust'; x: number; y: number };
+  | { kind: 'sawdust'; x: number; y: number }
+  /**
+   * A fire lookout from the logging days (lookout.ts): a timber tower on four legs, 2 by 2, a cab on top
+   * with a lamp in it, its ladder up the south face of its east column. Climbed from the tile in front
+   * of the ladder (footOf); its lamp burns what someone feeds it there, and sweeps a beam round the woods.
+   */
+  | { kind: 'lookout'; x: number; y: number };
 
 /** The ways a paper to read can look (MapObject 'paper'); the first two lie on a table, the others hang on a wall. */
 export const PAPER_LOOKS = ['note', 'list', 'calendar', 'drawing'] as const;
@@ -289,7 +295,7 @@ const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
-  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache',
+  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'lookout',
 ]);
 /** Objects that are only drawn: you walk over or through them. */
 export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust']);
@@ -307,6 +313,7 @@ export function footprint(o: MapObject): [number, number] {
     case 'carriage': return [o.w, 1];
     case 'bed': return [1, 2];
     case 'piano': return [2, 1];
+    case 'lookout': return [2, 2];
     default: return [1, 1];
   }
 }

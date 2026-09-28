@@ -5,6 +5,7 @@
 import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
 import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
+import { footOf } from './lookout';
 import { DECOR, FRONTED, PAPER_LOOKS, TILE_CHARS, TILE_NEEDS, TileMap, doorOf, footprint, hangs, objectTiles, type MapData, type MapObject, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
 import { WEEKDAYS } from './parcels';
@@ -128,6 +129,12 @@ export function validateMap(data: MapData): Problem[] {
     if (FRONTED.has(o.kind)) {
       const front = stepTarget(o.x, o.y, 'down');
       if (!map.walkable(front.x, front.y)) err(`${o.kind} at ${o.x},${o.y}: the tile in front (below) is not walkable, so nobody can talk to it`);
+    }
+    // A lookout is climbed from in front of its ladder: open ground anyone stands on, never a way out.
+    if (o.kind === 'lookout') {
+      const foot = footOf(o);
+      if (!map.walkable(foot.x, foot.y) || map.exitAt(foot.x, foot.y)) err(`lookout at ${o.x},${o.y}: the foot of its ladder (${foot.x},${foot.y}) is not open ground, so nobody can climb it`);
+      if (data.kind !== 'wilds') err(`lookout at ${o.x},${o.y}: a fire lookout stands out in the wilds`);
     }
   }
   const s = data.spawn;
@@ -255,6 +262,7 @@ function validateTallGrass(data: MapData, map: TileMap, err: (message: string) =
   for (const o of data.objects) {
     if (o.kind === 'house') { const d = doorOf(o); fronts.set(`${d.x},${d.y + 1}`, `the door of the house at ${o.x},${o.y}`); }
     if (FRONTED.has(o.kind)) fronts.set(`${o.x},${o.y + 1}`, `the ${o.kind} at ${o.x},${o.y}`);
+    if (o.kind === 'lookout') { const f = footOf(o); fronts.set(`${f.x},${f.y}`, `the ladder of the lookout at ${o.x},${o.y}`); }
   }
   let tiles = 0, lit = 0;
   for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {

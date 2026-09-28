@@ -540,6 +540,67 @@ export function culvertMouthModel(x: number, y: number, dir: Dir): THREE.Group {
   return g;
 }
 
+/** How high a fire lookout's platform stands, where whoever climbs it stands, and where its lamp hangs (world units). */
+export const LOOKOUT_DECK = 3.2;
+export const LOOKOUT_LAMP_Y = LOOKOUT_DECK + 0.72;
+/** Where on the platform someone up there stands: on the catwalk in front of the cab, where the camera sees them (x: 0 to 2 across the tower). */
+export const LOOKOUT_STAND_Z = 1.74;
+
+/**
+ * The loggers' fire lookout on its 2 by 2 tiles: four timber legs leaning in, braced crosswise in two
+ * stages, a platform with a railing round it, a small cab of weathered boards at its back with windows
+ * all round and a pyramid roof, and the ladder up the south face of its east column. The lamp in the
+ * cab's front window is drawn with `lamp` (its glow follows how long it burns); the rest is baked.
+ */
+export function lookoutModel(o: { x: number; y: number }, lamp: THREE.Material): THREE.Group {
+  const g = pivot(o.x + 1, 0, o.y + 1);
+  const timber = '#6b5540', brace = '#57442f', boards = '#6e6254', D = LOOKOUT_DECK;
+  // The legs, from the tiles' corners in toward the platform's.
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+    const foot = [sx * 0.86, sz * 0.86], top = [sx * 0.62, sz * 0.62];
+    const leg = box(0.13, Math.hypot(D, 0.24 * Math.SQRT2), 0.13, timber, (foot[0]! + top[0]!) / 2, D / 2, (foot[1]! + top[1]!) / 2, 0.02);
+    leg.rotation.set(sz * -0.074, 0, sx * 0.074);
+    g.add(leg);
+  }
+  // Crosswise braces on every face, two stages of them, and a girt where the stages meet.
+  for (const [a, b] of [[0.2, 1.6], [1.6, 3.0]] as const) {
+    const wa = 0.86 - (a / D) * 0.24, wb = 0.86 - (b / D) * 0.24, w = (wa + wb), h = b - a, len = Math.hypot(w, h), tilt = Math.atan2(h, w);
+    for (const [face, turn] of [[1, 0], [-1, 0], [1, Math.PI / 2], [-1, Math.PI / 2]] as const) {
+      for (const s of [-1, 1]) {
+        const x = turn ? face * (wa + wb) / 2 : 0, z = turn ? 0 : face * (wa + wb) / 2;
+        const b2 = box(len, 0.06, 0.05, brace, x, (a + b) / 2, z, false);
+        b2.rotation.set(0, turn, s * tilt);
+        g.add(b2);
+      }
+    }
+    const wg = 0.86 - (b / D) * 0.24;
+    for (const s of [-1, 1]) g.add(box(wg * 2, 0.08, 0.07, timber, 0, b, s * wg, false), box(0.07, 0.08, wg * 2, timber, s * wg, b, 0, false));
+  }
+  // The platform, its railing round the edge, and the cab at its back.
+  g.add(box(1.72, 0.12, 1.72, timber, 0, D, 0, 0.02));
+  for (const s of [-1, 1]) {
+    g.add(box(1.72, 0.05, 0.05, brace, 0, D + 0.52, s * 0.84, false), box(0.05, 0.05, 1.72, brace, s * 0.84, D + 0.52, 0, false));
+    for (const t of [-0.84, 0, 0.84]) g.add(box(0.05, 0.52, 0.05, brace, t, D + 0.26, s * 0.84, false), box(0.05, 0.52, 0.05, brace, s * 0.84, D + 0.26, t, false));
+  }
+  const cabZ = -0.28, cabW = 1.16, cabD = 0.9, cabH = 0.92;
+  g.add(box(cabW, 0.34, cabD, boards, 0, D + 0.23, cabZ, 0.02));
+  for (const [px, pz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) g.add(box(0.07, cabH, 0.07, timber, px * (cabW / 2 - 0.035), D + 0.06 + cabH / 2, cabZ + pz * (cabD / 2 - 0.035), false));
+  // Its windows, dark, all round above the boards; the lamp in the front one.
+  g.add(box(cabW - 0.1, cabH - 0.4, cabD - 0.1, '#1a2026', 0, D + 0.66, cabZ, false));
+  g.add(part(new THREE.CylinderGeometry(0.13, 0.17, 0.2, 8).rotateX(Math.PI / 2), lamp, 0, LOOKOUT_LAMP_Y - 0.1, cabZ + cabD / 2 + 0.02, 0.015));
+  const roof = part(new THREE.ConeGeometry(0.98, 0.52, 4, 1).rotateY(Math.PI / 4), '#4b3f35', 0, D + 0.06 + cabH + 0.26, cabZ, 0.025);
+  g.add(roof);
+  // The ladder, up the south face of the east column: two rails and the rungs between them.
+  const lx = 0.5, lz = 0.97, rails = Math.hypot(D + 0.1, 0.12);
+  for (const s of [-1, 1]) {
+    const rail = box(0.045, rails, 0.045, brace, lx + s * 0.17, (D + 0.1) / 2, lz - 0.06, false);
+    rail.rotation.x = -0.035;
+    g.add(rail);
+  }
+  for (let y = 0.28; y < D; y += 0.3) g.add(box(0.34, 0.03, 0.03, '#7a6248', lx, y, lz - 0.06 + (y / D) * 0.1, false));
+  return g;
+}
+
 /** Curtains drawn across a dark window (world.ts's cabins, interior.ts's rooms): two panels nearly meeting, and a valance. */
 export function curtainPanels(g: THREE.Object3D, color: string, x: number, y: number, z: number, w: number, h: number) {
   const fold = new THREE.Color(color).offsetHSL(0, 0, -0.06).getStyle();

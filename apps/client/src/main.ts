@@ -102,6 +102,9 @@ let welcomed = false;
 /** The first welcome of this page shows where you are; later ones are reconnects. */
 let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story);
+/** How long a fire lookout's lamp burns on as of this frame (lampsAt), for the view: made once, not a function every frame. */
+let lampsAt = 0;
+const lampLeft = (x: number, y: number) => game.lampLeft(x, y, lampsAt) ?? 0;
 /** A panel is open over the world (the bag, the journal, the stash, a crate, a trade...), where it covers the banners. */
 const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.crateOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen
   || hud.tradeOpen;
@@ -824,6 +827,10 @@ function frame(now: number) {
     }
   }
   view.setStone(game.stone.awake);
+  // Fire lookouts: their lamps and beams, and how far the view is pulled back up one.
+  lampsAt = now;
+  view.setLamps(lampLeft, game.wallNow(now));
+  view.setZoom(game.zoom);
   const surge = game.surgeNow(now), caught = game.caught(now);
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
   hud.setSurge(surge, caught);
@@ -951,7 +958,7 @@ function frame(now: number) {
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;
   const scene: Scene = {
-    map: map.data.id, kind: map.data.kind, weather, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
+    map: map.data.id, kind: map.data.kind, up: !!game.up, weather, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
     me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty) } : null,
     fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),
     poles: map.data.objects.filter(o => o.kind === 'pole'),

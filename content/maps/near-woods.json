@@ -1,7 +1,7 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 10,
+  "version": 11,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
@@ -31,9 +31,9 @@
     "ttttttttttttttttmmtttttttttttttttggglllllgtttttttttttttttttttttt",
     "ttttttttttttttttmmttttttttttttttggggllllllgttttttttttttttmmttttt",
     "ttttttttttttffffgmttttttttttttttggggllllllgtttttttttttwwmmmftttt",
-    "ttttttttttffffffttttttttttttttmmgggglllllgtttttttttttwwwwmmftttt",
-    "tttttttttggfffffgtttttttttttttmmmgggghlhhgtttttttttttmmmmmfftttt",
-    "tttttttttgffffffgtttttttttttttmmtttghhhhhtmmtttttttttgmmggmmmttt",
+    "ttttttttttffffffttttttttttttggmmgggglllllgtttttttttttwwwwmmftttt",
+    "tttttttttggfffffgtttttttttttggmmmgggghlhhgtttttttttttmmmmmfftttt",
+    "tttttttttgffffffgtttttttttttgmmmtttghhhhhtmmtttttttttgmmggmmmttt",
     "ttttttttttgfffffttttttttttttmmmmttttthhtttmmtttttttttggggmmwwttt",
     "tttttttttttgffggtttttttttfftgmmmttttttttttgggmtttttttttggmmttttt",
     "tttttttttttgttttttttttttffffmmttttttttttttggggttttttttttttmttttt",
@@ -312,7 +312,9 @@
     {"kind":"stump","x":28,"y":70,"s":1.07,"v":0.643,"burned":true},
     {"kind":"stump","x":27,"y":73,"s":1.099,"v":0.783,"burned":true},
     {"kind":"stump","x":28,"y":74,"s":1.061,"v":0.361,"burned":true},
-    {"kind":"house","x":31,"y":2,"w":2,"h":2,"roof":"#4c5646","lit":0,"style":"shed"}
+    {"kind":"house","x":31,"y":2,"w":2,"h":2,"roof":"#4c5646","lit":0,"style":"shed"},
+    {"kind":"lookout","x":28,"y":24},
+    {"kind":"sign","x":28,"y":26,"text":["Fire lookout. Stonebrook Timber Co.","Climb it to see the woods. Keep its lamp fed with resin: its beam brings the crews home.","Built the summer the mill opened."]}
   ],
   "surge": {"every":2400,"unstable":360,"surge":150,"sweep":90},
   "storm": {"every":2400,"warn":60,"length":180,"offset":1200},
@@ -328,6 +330,7 @@
     {"name":"the long grass","x":17,"y":36},
     {"name":"the deer beds","x":37,"y":19},
     {"name":"the log landing","x":44,"y":69},
-    {"name":"the burned jeep","x":28,"y":72}
+    {"name":"the burned jeep","x":28,"y":72},
+    {"name":"the fire lookout","x":29,"y":26}
   ]
 }

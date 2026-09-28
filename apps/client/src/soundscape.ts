@@ -38,6 +38,8 @@ export interface Mix {
 export interface Scene {
   map: string;
   kind: MapKind;
+  /** You are up a fire lookout: under its roof, the rain drums as it does on a house's. */
+  up?: boolean;
   weather: Weather;
   storm: boolean;
   /** The lightning blink (lightningAt); it only strikes in a storm, outdoors. */
@@ -80,7 +82,8 @@ const near = (d: number, far: number) => Math.max(0, 1 - d / far);
 
 /** The mix for scene `s`; `was` is the scene a frame ago, for what just started. */
 export function soundscape(s: Scene, was?: Scene): Mix {
-  const outdoors = s.kind !== 'inside', me = s.me;
+  // Up a lookout the rain drums on its roof, as it does on a house's: the wind still blows up there.
+  const outdoors = s.kind !== 'inside', roofed = !outdoors || !!s.up, me = s.me;
   const dist = (p: { x: number; y: number }) => (me ? Math.hypot(p.x - me.x, p.y - me.y) : Infinity);
   const loudest = (list: Array<{ x: number; y: number }>, far: number, k: (i: number) => number = () => 1) =>
     list.reduce((m, p, i) => Math.max(m, k(i) * near(dist(p), far)), 0);
@@ -88,7 +91,8 @@ export function soundscape(s: Scene, was?: Scene): Mix {
 
   const surge = s.caught ? 1 : s.surge?.phase === 'unstable' ? 0.15 : s.surge?.phase === 'surge' ? 0.3 + 0.4 * (1 - Math.min(1, Math.max(0, s.surge.gap))) : 0;
   const loops: Record<Loop, number> = {
-    rain: outdoors ? (s.storm ? 0.9 : wet ? 0.6 : 0) : s.weather === 'rain' ? 0.15 : 0,
+    // Under a roof it drums faintly: up a lookout in rain or a storm, indoors when it rains, as ever.
+    rain: !roofed ? (s.storm ? 0.9 : wet ? 0.6 : 0) : (outdoors ? wet : s.weather === 'rain') ? 0.15 : 0,
     wind: !outdoors ? 0 : s.storm ? 0.6 : s.kind === 'wilds' ? 0.25 : 0,
     fire: loudest(s.fires, FIRE_HEARD, i => fireLevel(s.fires[i]!.left)),
     wires: s.weather === 'aurora' ? loudest(s.poles, WIRES_HEARD) : 0,

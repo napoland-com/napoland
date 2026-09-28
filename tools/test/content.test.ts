@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CACHE_NEAR, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, objectTiles, upgradable, upgradeChance, validateItems, type ItemsData, type MapData, type MapObject, type StoryData } from '@napoland/shared';
+import { CACHE_NEAR, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, footOf, hidden, ladderOf, objectTiles, upgradable, upgradeChance, validateItems, type ItemsData, type MapData, type MapObject, type StoryData } from '@napoland/shared';
 
 /** The content as it ships: content/items.json and every map. */
 const content = resolve(import.meta.dirname, '../../content');
@@ -548,14 +548,16 @@ describe('places you can see but not reach yet (roadmap/locked-places.md)', () =
     expect(walk(from, WADERS)(home)).toBeLessThan(walk(from)(home));
   });
 
-  it('moved nothing: the shed and its door came last, and every tile anyone walks is as far from home as without them', () => {
-    expect(woods.data.objects.at(-1)).toBe(shed);
+  it('moved nothing: the shed and its door came after everything before them, and every tile anyone walks is as far from home as without them', () => {
+    // Only what came later still (the fire lookout, and its sign) stands after the shed; its door is the last exit.
+    const after = woods.data.objects.slice(woods.data.objects.indexOf(shed) + 1);
+    expect(after.every(o => o.kind === 'lookout' || o.kind === 'sign')).toBe(true);
     expect(woods.data.exits.at(-1)).toMatchObject({ to: 'near-woods-shed' });
     // The woods as they were: forest where the culvert runs and the shed stands (its ground was cut out of the firs).
     const under = new Set(objectTiles(shed).map(([x, y]) => `${x},${y}`));
     const without = new TileMap({
       ...woods.data, tiles: woods.data.tiles.map((r, y) => [...r.replaceAll('c', 't')].map((c, x) => (under.has(`${x},${y}`) ? 't' : c)).join('')),
-      exits: woods.data.exits.slice(0, -1), objects: woods.data.objects.slice(0, -1),
+      exits: woods.data.exits.filter(e => e.to !== 'near-woods-shed'), objects: woods.data.objects.filter(o => o !== shed),
     });
     expect(woods.deepest).toBe(without.deepest);
     for (let y = 0; y < woods.height; y++) for (let x = 0; x < W; x++) {
@@ -575,5 +577,49 @@ describe('places you can see but not reach yet (roadmap/locked-places.md)', () =
     }
     expect(items.items.find(i => i.id === 'bolt-cutters')!.icon).toBe('cutters');
     expect(items.items.find(i => i.id === 'waders')!.icon).toBe('waders');
+  });
+});
+
+describe('the fire lookout (roadmap/lookout-tower.md)', () => {
+  const woods = maps.get('near-woods')!, W = woods.width;
+  const lookouts = [...maps.values()].flatMap(m => m.data.objects.filter((o): o is Extract<MapObject, { kind: 'lookout' }> => o.kind === 'lookout').map(o => ({ map: m.data.id, o })));
+  const tower = lookouts[0]!.o, foot = footOf(tower);
+  const rocks = woods.data.places!.find(p => p.name === 'the rocks')!;
+
+  it('is one timber tower in the Near Woods, near the rocks, climbed from the foot of its ladder, which anyone walks to from home', () => {
+    expect(lookouts.map(l => l.map)).toEqual(['near-woods']);
+    expect(Math.hypot(foot.x - rocks.x, foot.y - rocks.y)).toBeLessThan(10);
+    expect(woods.walkable(foot.x, foot.y)).toBe(true);
+    expect(woods.exitAt(foot.x, foot.y)).toBeUndefined();
+    expect(woods.homeSteps(foot.x, foot.y)).toBeGreaterThan(30);
+    expect(woods.walkable(ladderOf(tower).x, ladderOf(tower).y)).toBe(false);
+    // The paper map names it where you climb it.
+    expect(woods.data.places).toContainEqual({ name: 'the fire lookout', x: foot.x, y: foot.y });
+  });
+
+  it('is the loggers\', older than NAPO: the timber company\'s sign beside it says so, and what keeps its lamp burning', () => {
+    const sign = woods.data.objects.find(o => o.kind === 'sign' && o.y === foot.y && Math.abs(o.x - foot.x) === 1);
+    const text = sign?.kind === 'sign' ? sign.text.join(' ') : '';
+    expect(text).toMatch(/^Fire lookout\. Stonebrook Timber Co\./);
+    expect(text).toMatch(/resin/);
+    expect(text).not.toMatch(/NAPO/);
+    // NAPO's Tower is no lookout: nobody climbs it.
+    const road = maps.get('south-road')!;
+    expect(road.data.objects.some(o => o.kind === 'sign' && o.text.join(' ').includes('Do not climb'))).toBe(true);
+  });
+
+  it('moved nothing: it and its sign came last, on forest they cleared, and every tile anyone walks is as far from home as without them', () => {
+    const at = woods.data.objects.indexOf(tower);
+    expect(woods.data.objects.slice(at).map(o => o.kind)).toEqual(['lookout', 'sign']);
+    const cleared = new Set([...objectTiles(tower), ...objectTiles(woods.data.objects[at + 1]!), [foot.x, foot.y] as const].map(([x, y]) => `${x},${y}`));
+    const without = new TileMap({
+      ...woods.data, tiles: woods.data.tiles.map((r, y) => [...r].map((c, x) => (cleared.has(`${x},${y}`) ? 't' : c)).join('')), objects: woods.data.objects.slice(0, at),
+    });
+    expect(woods.deepest).toBe(without.deepest);
+    for (let y = 0; y < woods.height; y++) for (let x = 0; x < W; x++) {
+      if (!without.walkable(x, y)) continue;
+      expect(woods.walkable(x, y), `${x},${y}`).toBe(true);
+      expect(woods.homeSteps(x, y), `${x},${y}`).toBe(without.homeSteps(x, y));
+    }
   });
 });

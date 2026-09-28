@@ -5,7 +5,7 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, toNextMerit, type BagSlot, type Did, type Dir,
+  CACHE_SIZE, LAMP_MAX_S, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, toNextMerit, type BagSlot, type Did, type Dir,
   type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
 } from '@napoland/shared';
 import { oddsText, pieceName, type Items } from './items';
@@ -52,6 +52,9 @@ export function howLong(seconds: number): string {
   return d === 1 ? 'a day' : `${d} days`;
 }
 
+/** A lookout's lamp that takes nothing more: within a second of LAMP_MAX_S. */
+const lampFull = (left: number) => left >= LAMP_MAX_S - 1;
+
 /** How long a fire burns on: "18 more minutes", "under a minute more". */
 function burnsOn(left: number): string {
   if (left < 60) return 'under a minute more';
@@ -67,6 +70,16 @@ const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 /** A: at a fire. "Feed the fire resin?" (how many is asked beside it). */
 export function feedQuestion(fuel: ItemDef): string {
   return `Feed the fire ${pluralOf(fuel)}?`;
+}
+
+/** A: at the foot of a fire lookout's ladder, with what its lamp burns. "Feed the lookout's lamp resin?" (how many is asked beside it). */
+export function lampQuestion(fuel: ItemDef): string {
+  return `Feed the lookout's lamp ${pluralOf(fuel)}?`;
+}
+
+/** Up a fire lookout: what the text box says as you get there (LOOKOUT_UP_S: how long you may stay). */
+export function upText(seconds: number): string {
+  return `You climb up to the lookout and see the woods for miles. You can stay ${howLong(seconds)}: B climbs down.`;
 }
 
 /** A: at the Old Stone. "Give the Old Stone a shard?", "Give the Old Stone 3 shards?" */
@@ -301,6 +314,7 @@ function boughtText(did: Extract<Did, { kind: 'bought' }>): string {
 export function didWho(did: Did, items: Items): string {
   switch (did.kind) {
     case 'fire': return 'Fire';
+    case 'lamp': return 'Lookout';
     case 'stone': return 'The Old Stone';
     case 'made': case 'mended': case 'upgraded': return 'Workbench';
     case 'used': case 'opened': return items.get(did.item).name;
@@ -322,6 +336,10 @@ export function didText(did: Did, items: Items): string {
     case 'fire': {
       const took = `The fire takes ${amount(def, did.count)}${did.lit ? ' and catches again' : ''}.`;
       return `${took} ${fireFull(did.left) ? 'It is full: it' : 'It'} will burn ${burnsOn(did.left)}.`;
+    }
+    case 'lamp': {
+      const took = `The lamp takes ${amount(def, did.count)}${did.lit ? ' and lights up' : ''}.`;
+      return `${took} ${lampFull(did.left) ? 'It is full: it' : 'It'} will burn ${burnsOn(did.left)}, its beam sweeping the woods.`;
     }
     case 'stone': {
       const what = did.count === 1 ? `the ${nounOf(def)}` : amount(def, did.count), s = did.stone;

@@ -368,6 +368,12 @@ export function attachNet(o: NetOptions): Net {
         // Guests too: a thanks carries no words.
         world.thank(s.id, msg.who, msg.what, now);
         return flush();
+      case 'climb':
+        world.climb(s.id, msg.x, msg.y, now);
+        return flush();
+      case 'climbDown':
+        world.climbDown(s.id, now);
+        return flush();
       case 'cache':
         world.openCache(s.id, msg.x, msg.y, now);
         return flush();
@@ -636,6 +642,7 @@ export function attachNet(o: NetOptions): Net {
       bag: joined.bag,
       stash: joined.stash,
       fires: joined.fires,
+      ...(joined.lamps ? { lamps: joined.lamps } : {}),
       marks: joined.marks,
       creatures: joined.creatures,
       flares: joined.flares,

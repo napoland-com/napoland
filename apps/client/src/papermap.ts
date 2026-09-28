@@ -76,7 +76,7 @@ export interface Sketch {
 }
 
 /** The small things the paper map marks, each its own way. */
-type Thing = 'luggage' | 'boxes' | 'rocker' | 'piano' | 'bike' | 'birdcage' | 'pump' | 'cage' | 'mailbox';
+type Thing = 'luggage' | 'boxes' | 'rocker' | 'piano' | 'bike' | 'birdcage' | 'pump' | 'cage' | 'mailbox' | 'lookout';
 const THINGS = new Set<string>(['luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage']);
 
 /** The area a map belongs to: the map itself, or for a room the place its door opens onto. */
@@ -138,6 +138,8 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
     else if (o.kind === 'stake') s.stakes.push(drift(o.x, o.y, 18));
     // Across the road, as the skid lies.
     else if (o.kind === 'skid') s.skids.push(o.dir === 'h' ? [[o.x + 0.5, o.y + 0.15], [o.x + 0.5, o.y + 0.85]] : [[o.x + 0.15, o.y + 0.5], [o.x + 0.85, o.y + 0.5]]);
+    // The loggers' fire lookout, a landmark to steer by: drawn standing over the middle of its tiles, not a little off.
+    else if (o.kind === 'lookout') s.things.push({ at: [o.x + 1, o.y + 1], kind: 'lookout' });
     else if (THINGS.has(o.kind)) s.things.push({ at: o.kind === 'piano' ? [o.x + 1, o.y + 0.5] : drift(o.x, o.y, 19), kind: o.kind as Thing });
   }
   s.poles.forEach((a, i) => s.poles.slice(i + 1).forEach(b => { if (Math.hypot(a[0] - b[0], a[1] - b[1]) <= MAX_WIRE) s.wires.push([a, b]); }));
@@ -239,7 +241,8 @@ function biggest(map: TileMap, kind: string): Pt[] {
 /**
  * A small thing, drawn the way a hand would mark it at px, py: a suitcase with its handle, a pair of
  * boxes, a rocking chair from the side, a piano with its keys, a bike's two wheels, a birdcage's dome,
- * NAPO's pump with its hose and its cages crosshatched, a mailbox on its post.
+ * NAPO's pump with its hose and its cages crosshatched, a mailbox on its post, the fire lookout's cab
+ * up on its splayed, braced legs.
  */
 function thing(g: CanvasRenderingContext2D, kind: Thing, px: number, py: number) {
   g.beginPath();
@@ -253,6 +256,11 @@ function thing(g: CanvasRenderingContext2D, kind: Thing, px: number, py: number)
     case 'pump': g.rect(px - 2, py - 4, 4, 8); g.moveTo(px + 2, py - 2); g.quadraticCurveTo(px + 5, py, px + 3, py + 3); break;
     case 'cage': g.rect(px - 4, py - 4, 8, 8); g.moveTo(px - 4, py); g.lineTo(px + 4, py); g.moveTo(px, py - 4); g.lineTo(px, py + 4); break;
     case 'mailbox': g.rect(px - 2.5, py - 4, 5, 3); g.moveTo(px, py - 1); g.lineTo(px, py + 4); break;
+    case 'lookout':
+      g.moveTo(px - 5, py + 6); g.lineTo(px - 2.5, py - 4); g.moveTo(px + 5, py + 6); g.lineTo(px + 2.5, py - 4);
+      g.moveTo(px - 4, py + 2); g.lineTo(px + 3.3, py - 1.5); g.moveTo(px + 4, py + 2); g.lineTo(px - 3.3, py - 1.5);
+      g.rect(px - 4, py - 9, 8, 5); g.moveTo(px - 5, py - 9); g.lineTo(px, py - 12); g.lineTo(px + 5, py - 9);
+      break;
   }
   g.stroke();
 }

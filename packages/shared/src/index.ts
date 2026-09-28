@@ -5,6 +5,7 @@ export * from './energy';
 export * from './feats';
 export * from './gear';
 export * from './items';
+export * from './lookout';
 export * from './map';
 export * from './merits';
 export * from './movement';

@@ -115,6 +115,8 @@ export interface Conditions {
   resist?: Partial<Resist>;
   /** How hard the whole drain is FAR_STEPS or more from home (the pathfinder's ranks, feats.ts); nearer home it is as ever. Default 1. */
   farDrain?: number;
+  /** A light over you besides the street lights (a fire lookout's beam as it passes, lookout.ts): a surge does not reach you under it. */
+  lit?: boolean;
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -135,7 +137,7 @@ export function energyRate(map: TileMap, x: number, y: number, weather: Weather,
   if (c.hitched) k *= HITCH_DRAIN;
   if (c.storm) k *= 1 + (STORM_DRAIN - 1) * (1 - (r('wind') + r('electricity')) / 2);
   if (c.flash) k *= 1 + (FLASH_DRAIN - 1) * (1 - r(c.flash === 'fire' ? 'heat' : 'electricity'));
-  if (inSurge(map, x, y, c.surgeFront)) {
+  if (inSurge(map, x, y, c.surgeFront, c.lit)) {
     // A surge is electric and radiant: each resistance cuts half of its extra drain.
     const shield = (r('electricity') + r('radiation')) / 2;
     k *= 1 + ((c.surgeDrain ?? SURGE_DRAIN) - 1) * (1 - shield);
@@ -144,9 +146,12 @@ export function energyRate(map: TileMap, x: number, y: number, weather: Weather,
   return -DRAIN_PER_SECOND * Math.max(1, map.data.depth) * (1 + far / DRAIN_GROWTH_STEPS) * k;
 }
 
-/** Is tile x,y caught by a surge whose front is at `front` steps from home? A street light shelters you. */
-export function inSurge(map: TileMap, x: number, y: number, front: number | undefined): boolean {
-  if (front === undefined || map.data.kind !== 'wilds' || map.lit(x, y)) return false;
+/**
+ * Is tile x,y caught by a surge whose front is at `front` steps from home? A street light shelters you,
+ * and so does any other light over you right now (`lit`: a fire lookout's beam as it passes).
+ */
+export function inSurge(map: TileMap, x: number, y: number, front: number | undefined, lit = false): boolean {
+  if (front === undefined || map.data.kind !== 'wilds' || lit || map.lit(x, y)) return false;
   const steps = map.homeSteps(x, y);
   return (steps < 0 ? Infinity : steps) >= front;
 }
