@@ -19,7 +19,7 @@
  */
 import * as THREE from 'three';
 import {
-  BEAM_HALF, BEAM_REACH, DIR_VEC, LANTERN_REACH, beamAngle, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
+  BEAM_HALF, BEAM_REACH, DIR_VEC, LANTERN_REACH, PRINTS_PER_MAP, beamAngle, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
   type TileMap, type Weather,
 } from '@napoland/shared';
 import { comfortModel, comfortShadow, lampLight } from './cabin';
@@ -28,7 +28,7 @@ import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthMo
 import {
   CROUCH_DROP, CROUCH_LEAN, GRADES, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial,
 } from './grass';
-import { Creatures, Echoes, FAR_FIGURE_H, FarFigure, Flares, Flashes, Marks, Passer, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
+import { Creatures, Echoes, FAR_FIGURE_H, FarFigure, Flares, Flashes, Marks, Passer, Prints, SnowPrints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
@@ -36,7 +36,7 @@ import {
 import {
   LOOKOUT_DECK, LOOKOUT_LAMP_Y, LOOKOUT_STAND_Z, bridgeModel, bridgeRails, cardboardModel, carModel, culvertMouthModel, culvertMouths, curtainColor, curtainPanels, footbridgeModel, headlightCar, leftModel, lookoutModel, mailboxModel, millBuilding, porchModel, shedBuilding,
 } from './left';
-import { SNOW, ambience, assignBeams, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
+import { SNOW, ambience, assignBeams, assignLights, lightSources, onSnow, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
 import { HUM, TELEPORT_RINGS, TELEPORT_ROCK_Y, napoBuilding, napoProp, napoSign, teleportCore, towerModel, type TeleportCore } from './napo';
 import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, riseTexture, softTexture, toon } from './toon';
@@ -248,6 +248,8 @@ export const DEEP_FERNS: readonly [number, number] = [1.3, 1.5];
  * little taller with their needles gone. Tinted and scaled like the cedars: no draw call of its own.
  */
 export const SNAG_TINT = new THREE.Color(0.3, 0.26, 0.24);
+/** Snow on the Ridge's firs (MapData.forest 'snow'): the same firs, their boughs whitened. */
+export const FROST_TINT = new THREE.Color(1.5, 1.6, 1.7);
 export const SNAG_SPREAD = 0.5;
 export const SNAG_HEIGHT = 1.12;
 
@@ -421,6 +423,8 @@ export class WorldView {
   private afterglows = new Afterglows();
   private lanterns = new Lanterns(LANTERN_REACH);
   private prints = new Prints();
+  /** Footprints in the snow (the Ridge): only on a map of snow. */
+  private readonly snowPrints = new SnowPrints(PRINTS_PER_MAP);
   /** Where someone walks whose gear makes street lights flicker (tiles). */
   private flickerAt: Array<{ x: number; y: number }> = [];
   private flashes = new Flashes();
@@ -530,7 +534,8 @@ export class WorldView {
     this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
-    this.scene.add(this.liveGlows.root, this.afterglows.root, this.lanterns.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
+    this.scene.add(this.liveGlows.root, this.afterglows.root, this.lanterns.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root, this.snowPrints.root);
+    this.snowPrints.root.visible = map.data.forest === 'snow';
     if (map.data.kind === 'wilds' && map.data.watchers) this.scene.add((this.farFigure = new FarFigure()).root);
     if (map.data.kind === 'wilds') this.scene.add((this.passer = new Passer()).root);
     this.puffs.push(this.flares.sparks);
@@ -567,6 +572,7 @@ export class WorldView {
     this.afterglows.dispose();
     this.lanterns.dispose();
     this.prints.dispose();
+    this.snowPrints.dispose();
     this.flashes.dispose();
     this.echoes.dispose();
     disposeTree(this.scene);
@@ -649,8 +655,8 @@ export class WorldView {
         quad([a[0], y0, a[1]], [a[0], ny, a[1]], [b[0], ny, b[1]], [b[0], y0, b[1]], w);
       }
     }
-    // Past a burnt forest's edge the ground is ash too, so no line of green shows where the map ends.
-    const W = map.width, H = map.height, outerColor = map.data.forest === 'burnt' ? '#2b2826' : '#1b271d';
+    // Past a burnt forest's edge the ground is ash too, and past the Ridge's snow, so no line of green shows where the map ends.
+    const W = map.width, H = map.height, outerColor = map.data.forest === 'burnt' ? '#2b2826' : map.data.forest === 'snow' ? '#8d979c' : '#1b271d';
     // Where an exit leaves the map, its road or trail goes on outside and fades into the dark, so you can see the way on.
     const outer = new THREE.Color(outerColor);
     for (const [key, o] of this.openings) {
@@ -725,7 +731,9 @@ export class WorldView {
     // Old growth (the Far Woods): taller firs with cedars among them, and deeper ferns.
     const old = map.data.forest === 'old', burnt = map.data.forest === 'burnt';
     // `shade`: it casts a blob shadow. Deep in old growth nobody sees the ground under the crowns, so none
-    // there: a block of only such trees costs one draw call less.
+    // there: a block of only such trees costs one draw call less. Nor under the snowy firs of the Ridge, packed
+    // as tight on a narrow slope.
+    const snow = map.data.forest === 'snow';
     type Tree = { x: number; y: number; z: number; s: number; v: number; cedar: boolean; shade: boolean };
     const trees: Tree[] = this.objects('tree').map(t => ({ x: t.x + 0.5 + (hash2(t.x, t.y) - 0.5) * 0.2, y: t.y + 0.5, z: this.groundAt(t.x, t.y), s: t.s, v: t.v, cedar: old && isCedar(t.x, t.y), shade: true }));
     // Forest tiles: one tree each, sized, turned and nudged by its position, so the woods look the same on every visit.
@@ -739,7 +747,7 @@ export class WorldView {
         s: treeSize(hash2(tx * 13, ty * 5 + 3), old, deep),
         v: hash2(tx * 5 + 11, ty * 11),
         cedar: old && isCedar(tx, ty),
-        shade: !deep,
+        shade: !(deep || (snow && deepInForest(map, tx, ty))),
       });
     }
     // The forest around the map, so its edge never shows. A room has none: it is black around.
@@ -763,7 +771,7 @@ export class WorldView {
       // In an order of their own, so any first part of a block is trees from all over it: the far look draws only the first half.
       block.sort((a, b) => hash2(Math.floor(a.x * 7), Math.floor(a.y * 11)) - hash2(Math.floor(b.x * 7), Math.floor(b.y * 11)));
       const lod = this.lod(block[0]!.x, block[0]!.y);
-      lod.body = this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); }, bodyMat, true);
+      lod.body = this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); if (snow) c.multiply(FROST_TINT); }, bodyMat, true);
       lod.trees = block.length;
       lod.extras.push(this.instanced(shell, block, place, OUTLINE_INSTANCED));
       // Outside the map the forest is only a backdrop, too dense to see the ground under it: no shadows, one draw call less a block.
@@ -783,7 +791,7 @@ export class WorldView {
         list.push(t);
       }
       const meshes = [...pieces.values()].map(list => {
-        const m = this.instanced(body, list, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); }, bodyMat, true);
+        const m = this.instanced(body, list, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); if (snow) c.multiply(FROST_TINT); }, bodyMat, true);
         m.visible = false;
         return m;
       });
@@ -1385,7 +1393,7 @@ export class WorldView {
   setWeather(w: Weather) {
     this.weather = w;
     const plain = ambience(this.map.data.kind, w, this.warmRoom, this.season);
-    const a = (this.amb = this.map.data.forest === 'old' ? underOldGrowth(plain) : plain);
+    const a = (this.amb = this.map.data.forest === 'old' ? underOldGrowth(plain) : this.map.data.forest === 'snow' ? onSnow(plain) : plain);
     this.hemi.color.set(a.hemi.sky);
     this.hemi.groundColor.set(a.hemi.ground);
     this.hemi.intensity = a.hemi.intensity * L;
@@ -1473,6 +1481,11 @@ export class WorldView {
   /** Glowing footprints (a quirk), newest last, with their age in seconds: every frame. */
   setPrints(list: ReadonlyArray<{ x: number; y: number; dir: Dir; age: number }>) {
     this.prints.set(list, (x, y) => this.groundAt(x, y));
+  }
+
+  /** The footprints in the snow here, oldest first, each with how far it has faded: when they change. */
+  setSnowPrints(list: ReadonlyArray<{ x: number; y: number; dir: Dir; faded: number }>) {
+    this.snowPrints.set(list, (x, y) => this.groundAt(x, y));
   }
 
   /** Where players walk whose gear makes street lights flicker as they pass (a quirk): every frame. */

@@ -136,7 +136,8 @@ import {
   FIRST_STEPS,
   FLASH_BURST_S,
   FLASH_GLOW_S,
-  GATE_PULLERS,
+  PRINTS_KEPT_MS,
+  PRINTS_PER_MAP,
   GATE_WINDOW_MS,
   GLIMPSES_PER_MAP,
   GLIMPSE_EVERY_S,
@@ -209,6 +210,7 @@ import {
   fitPieces,
   gateArrival,
   gateAt,
+  gatePullers,
   gather,
   gift,
   mendCost,
@@ -341,6 +343,7 @@ import {
   type FlashView,
   type Gear,
   type GlimpseView,
+  type PrintView,
   type ItemDef,
   type ItemsData,
   type KeepsakesData,
@@ -560,6 +563,8 @@ export interface Joined extends Scene {
   players: PlayerView[];
   /** The weather over their map (a room: the map outside its door). */
   weather: Weather;
+  /** In the snow: the footprints of the last hour there. */
+  prints?: PrintView[];
   energy: EnergyView;
   body: BodyView;
   bag: BagSlot[];
@@ -1379,6 +1384,8 @@ export class World {
   private readonly walks = new Map<string, Walk[]>();
   /** When the oldest walk is to be forgotten (or later), so tick() only looks when one is due. */
   private walkForgetAt = Infinity;
+  /** Footprints in the snow (glimpses.ts), by map id, oldest first: PRINTS_PER_MAP at most, in memory only, never whose. */
+  private readonly prints = new Map<string, Array<{ x: number; y: number; dir: Dir; at: number }>>();
   /** How often someone alone out there glimpses a walk (WorldOptions.glimpseEveryMs); undefined: every GLIMPSE_EVERY_S. */
   private readonly glimpseEvery: number | undefined;
   /**
@@ -1825,6 +1832,7 @@ export class World {
       clock: Math.floor(now + this.epochOffset),
       ...this.cabinOf(p),
       ...this.streetOf(p),
+      ...this.printsOf(p.map, now),
       ...(r.doorOff && { doorOff: true as const }),
       ...(r.visitsOff && { visitsOff: true as const }),
       ...(r.firstSteps && { firstSteps: r.firstSteps }),
@@ -2871,7 +2879,7 @@ export class World {
 
   /**
    * The player pulls at one of NAPO's gates (A at it, from the row below it). It will not move for one: when
-   * GATE_PULLERS different people pull within GATE_WINDOW_MS, each still under it, it swings open and every
+   * as many different people as it takes (gatePullers) pull within GATE_WINDOW_MS, each still under it, it swings open and every
    * one of them goes through, as if they had stepped onto an exit. The way back needs nobody (the far side's
    * home exit). Pulls are kept by the copy of the map and the gate, only as long as they count.
    */
@@ -2881,7 +2889,7 @@ export class World {
     const key = `${p.zone.key}|${gate.x},${gate.y}`;
     const pullers = [...(this.pulls.get(key) ?? []).filter(q => now - q.at <= GATE_WINDOW_MS && q.id !== p.rec.id), { id: p.rec.id, at: now }]
       .filter(q => under(this.players.get(q.id)));
-    if (pullers.length < GATE_PULLERS) return void this.pulls.set(key, pullers);
+    if (pullers.length < gatePullers(gate)) return void this.pulls.set(key, pullers);
     this.pulls.delete(key);
     for (const { id } of pullers) {
       const q = this.players.get(id)!;
@@ -3781,6 +3789,7 @@ export class World {
       if (p.trail.length > TRAIL_STEPS) p.trail.shift();
       p.walked.push([x, y]);
       if (p.walked.length > GLIMPSE_STEPS[1]) p.walked.shift();
+      if (p.map.data.forest === 'snow') this.print(p.map.data.id, x, y, dir, now);
       // The pack mule counts what the bag really weighs: a feel made lighter by its own ranks or a charm
       // must not slow the count toward its next rank.
       const real = bagLoad(p.rec.bag, this.items);
@@ -4157,7 +4166,7 @@ export class World {
       to: id,
       msg: {
         t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), finds: this.findsFor(p.rec, p.zone), stats: { ...p.rec.stats },
-        weather: this.weatherOf(p.map), reason, ...this.cabinOf(p), ...this.streetOf(p),
+        weather: this.weatherOf(p.map), reason, ...this.cabinOf(p), ...this.streetOf(p), ...this.printsOf(p.map, now),
       },
       // Where the network hears them from now on, when it is not the map's main copy (its key is the map's id).
       ...(p.zone.copy ? { zone: here } : {}),
@@ -4200,8 +4209,8 @@ export class World {
       flash: p.up ? undefined : p.zone.flashes.find(f => flashHits(flashView(f, now), x, y))?.kind,
       resist,
       farDrain: p.mods.farDrain,
-      // In winter the cold bites harder (sky.ts, SEASONS).
-      chill: { weather: SEASONS[this.season].chill, wet: SEASONS[this.season].wet },
+      // In winter the cold bites harder (sky.ts, SEASONS), and up in the snow it is always winter.
+      chill: ((s) => ({ weather: s.chill, wet: s.wet }))(SEASONS[p.map.data.forest === 'snow' ? 'winter' : this.season]),
       drain: p.mods.drain,
       // A lookout's beam as it passes, or a street light mended together while it stands.
       lit: this.beamed(p.zone, x, y, now) || p.map.lit(x, y, p.pass),
@@ -5293,6 +5302,21 @@ export class World {
     // A few to a map: the oldest goes first.
     if (walks.length > GLIMPSES_PER_MAP) walks.shift();
     this.walkForgetAt = Math.min(this.walkForgetAt, walks[0]!.at + GLIMPSE_KEPT_MS);
+  }
+
+  /** A step in the snow leaves a footprint there for the next hour. */
+  private print(mapId: string, x: number, y: number, dir: Dir, now: number): void {
+    let prints = this.prints.get(mapId);
+    if (!prints) this.prints.set(mapId, (prints = []));
+    prints.push({ x, y, dir, at: now });
+    if (prints.length > PRINTS_PER_MAP) prints.shift();
+  }
+
+  /** What a zone or welcome tells a player arriving in the snow: the footprints of the last hour there, oldest first. */
+  private printsOf(map: TileMap, now: number): { prints?: PrintView[] } {
+    if (map.data.forest !== 'snow') return {};
+    const fresh = (this.prints.get(map.data.id) ?? []).filter(q => now - q.at < PRINTS_KEPT_MS);
+    return { prints: fresh.map(q => ({ x: q.x, y: q.y, dir: q.dir, age: Math.floor((now - q.at) / 1000) })) };
   }
 
   /** Walks a day old are forgotten, glimpsed or not. */

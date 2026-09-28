@@ -39,13 +39,13 @@ const walkCost = (map: TileMap, from: number, to: number) => {
 describe('the Burn, where it is', () => {
   it('is the first region at depth 3: a burnt forest, in the wilds, smaller than the Far Woods', () => {
     expect(burn.data).toMatchObject({ name: 'The Burn', kind: 'wilds', depth: 3, forest: 'burnt' });
-    expect([...maps.values()].filter(m => m.data.depth >= 3).map(m => m.data.id)).toEqual(['burn']);
+    expect([...maps.values()].filter(m => m.data.depth === 3).map(m => m.data.id)).toEqual(['burn']);
     expect(burn.width * burn.height).toBeLessThan(far.width * far.height);
   });
 
   it('is reached only through NAPO\'s gate north of the Far Woods\' hollow, as wide as the two who must pull it', () => {
-    // No exit leads in from anywhere outdoors (its cabin's door only leads back out).
-    expect([...maps.values()].filter(m => m.data.kind !== 'inside' && m.data.exits.some(e => e.to === 'burn')).map(m => m.data.id)).toEqual([]);
+    // No exit leads in from anywhere outdoors (its cabin's door only leads back out, the Ridge's way home only back down).
+    expect([...maps.values()].filter(m => m.data.kind !== 'inside' && m.data.exits.some(e => e.to === 'burn' && !e.home)).map(m => m.data.id)).toEqual([]);
     expect(gate).toMatchObject({ to: 'burn', w: GATE_PULLERS });
     // Deeper than anything in the Far Woods but the cut up to it: north of the field post, past the hollow.
     const post = far.data.exits.find(e => e.to === 'far-woods-field-post')!;

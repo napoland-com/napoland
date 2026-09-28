@@ -110,7 +110,7 @@ const watchFires = (v: WorldView) => v.setFires((x, y) => fireLevel(game.fireLef
 let skyShown: { weather: Weather | null; view: WorldView | null } = { weather: null, view: null };
 /** A new view of the map you are on, in the season's colors (the old one freed after, nextView): on arrival, and when the season turns. */
 function buildView() {
-  view = nextView(renderer, view, game.map, peek, game.season.view.season);
+  view = nextView(renderer, view, game.map, peek, game.viewSeason());
   view.pixelScale = resolution.scale;
   view.setWeather(game.weather);
   skyShown = { weather: game.weather, view };
@@ -369,7 +369,7 @@ const arrival = new Arrival(held => {
   hud.setOnline(game.players.size);
   // Only the town changed this map (nobody arrived): drawn again, and no name to say.
   const onlyTown = redraw && view.map === game.map && !held.length;
-  if (view.map !== game.map || view.season !== game.season.view.season || redraw) {
+  if (view.map !== game.map || view.season !== game.viewSeason() || redraw) {
     redraw = false;
     buildView();
   }
@@ -776,6 +776,9 @@ let boardShown: typeof game.board = null;
 /** Glowing footprints (a quirk): the tile each player was last seen on, and the prints left on this map, oldest first. */
 const printTiles = new Map<string, string>();
 let prints: Array<{ map: string; x: number; y: number; dir: Dir; at: number }> = [];
+/** When the snow's footprints were last laid, and for which view and which change of the game's. */
+let snowPrinted: { changes: number; view: unknown; at: number } = { changes: -1, view: null, at: 0 };
+const SNOW_PRINTS_EVERY_MS = 5000;
 /** When the last hum said the region grows restless: one hum for each time it does. */
 let humFor = -Infinity;
 let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: null };
@@ -898,6 +901,11 @@ function frame(now: number) {
   }
   prints = prints.filter(p => p.map === mapId && now - p.at < PRINT_S * 1000);
   view.setPrints(prints.map(p => ({ x: p.x, y: p.y, dir: p.dir, age: (now - p.at) / 1000 })));
+  // Footprints in the snow: laid again when they change, or every few seconds as they fade (and on a new view).
+  if (game.printChanges !== snowPrinted.changes || snowPrinted.view !== view || now - snowPrinted.at > SNOW_PRINTS_EVERY_MS) {
+    snowPrinted = { changes: game.printChanges, view, at: now };
+    view.setSnowPrints(game.printsNow(now));
+  }
   view.setFlickerAt(flicker);
   // A humming piece: a minute before the region grows restless, before anyone is told.
   const coming = game.surgeNow(now);
@@ -909,7 +917,7 @@ function frame(now: number) {
     }
   }
   // The season turned (as the week did): the map is drawn again in its colors, its water frozen or not.
-  if (view.season !== game.season.view.season && !arrival.dark) buildView();
+  if (view.season !== game.viewSeason() && !arrival.dark) buildView();
   // The weather over your map (your region's, a room's the map outside it): the sky turns with it.
   if (game.weather !== skyShown.weather || view !== skyShown.view) {
     skyShown = { weather: game.weather, view };
@@ -1111,7 +1119,7 @@ function frame(now: number) {
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;
   const scene: Scene = {
-    map: map.data.id, kind: map.data.kind, up: !!game.up, weather: game.weather, snow: SEASONS[game.season.view.season].snow, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
+    map: map.data.id, kind: map.data.kind, up: !!game.up, weather: game.weather, snow: SEASONS[game.viewSeason()].snow, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
     // On a footbridge that stands, the planks under your feet, not the creek.
     me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.needs(me.tx, me.ty) !== undefined && map.kind(me.tx, me.ty) === 'water' ? 'floor' : map.kind(me.tx, me.ty), ice: map.frozenAt(me.tx, me.ty) } : null,
     fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),

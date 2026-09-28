@@ -409,6 +409,53 @@ export class Prints {
   }
 }
 
+/** A footprint in the snow, fresh, and the snow it fades back into over the hour. */
+const TRODDEN = new THREE.Color('#5d6d79'), FRESH_SNOW = new THREE.Color('#e3eaee');
+
+/**
+ * Footprints in the snow (glimpses.ts, the Ridge): every step taken there in the last hour, anyone's, pressed
+ * into the snow and filling in slowly, never whose. All of them in one instanced mesh, laid again only when the
+ * game says they changed (a step, an arrival) or a while has passed, so they fade.
+ */
+export class SnowPrints {
+  readonly root = new THREE.Group();
+  private readonly geo = new THREE.CircleGeometry(0.11, 8).scale(0.8, 1.5, 1).rotateX(-Math.PI / 2);
+  private readonly mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, depthWrite: false });
+  private readonly mesh: THREE.InstancedMesh;
+  private readonly m = new THREE.Object3D();
+  private readonly c = new THREE.Color();
+
+  constructor(max: number) {
+    this.mesh = new THREE.InstancedMesh(this.geo, this.mat, max);
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    this.root.add(this.mesh);
+  }
+
+  /** The prints, oldest first, each with how far it has faded (0 to 1); `ground` says how high the tile is. */
+  set(list: ReadonlyArray<{ x: number; y: number; dir: Dir; faded: number }>, ground: (x: number, y: number) => number) {
+    const shown = list.slice(-this.mesh.instanceMatrix.count);
+    shown.forEach((p, i) => {
+      // Left and right foot by turns, side by side across the way they walked.
+      const side = i % 2 ? 0.1 : -0.1, a = TURN_OF[p.dir];
+      this.m.position.set(p.x + 0.5 + Math.cos(a) * side, ground(p.x + 0.5, p.y + 0.5) + 0.02, p.y + 0.5 - Math.sin(a) * side);
+      this.m.rotation.set(0, a, 0);
+      this.m.updateMatrix();
+      this.mesh.setMatrixAt(i, this.m.matrix);
+      this.mesh.setColorAt(i, this.c.copy(TRODDEN).lerp(FRESH_SNOW, p.faded));
+    });
+    this.mesh.count = shown.length;
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+  }
+
+  dispose() {
+    this.geo.dispose();
+    this.mat.dispose();
+    this.mesh.dispose();
+  }
+}
+
 /** Echoes walk only near you, and only a couple at once. */
 const ECHO_NEAR = 11;
 const ECHOES = 2;

@@ -1,0 +1,38 @@
+{
+  "id": "ridge-high-hut",
+  "name": "The high hut",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 7,
+  "height": 6,
+  "tiles": [
+    "xxxxxxx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xxxpxxx"
+  ],
+  "levels": [
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000"
+  ],
+  "spawn": {"x":3,"y":4,"dir":"up"},
+  "exits": [
+    {"x":3,"y":5,"w":1,"h":1,"to":"ridge","tx":6,"ty":40,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"fireplace","x":3,"y":1},
+    {"kind":"bed","x":1,"y":1},
+    {"kind":"bed","x":5,"y":2},
+    {"kind":"woodpile","x":1,"y":4},
+    {"kind":"paper","x":2,"y":0,"look":"calendar","name":"The tally on the wall","text":["Three names in pencil to every trip up the high line, a stroke for each, years of them. The last three are crossed out and written again, as if to be sure.","Under them: \"The needles turn up here too, but slowly, like they are thinking.\"","And last, pressed hard: \"The ice sang all night. We tied the rope off for three again at the top. Nobody comes up this line alone.\""]},
+    {"kind":"shelf","x":5,"y":1},
+    {"kind":"cache","x":4,"y":1,"name":"the high hut's crate"}
+  ]
+}

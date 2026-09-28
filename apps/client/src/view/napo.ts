@@ -444,6 +444,26 @@ export function gateModel(o: { x: number; y: number; w: number }): THREE.Group {
   return g;
 }
 
+/**
+ * The trappers' fixed rope up the ice (a gate with look 'rope', north of the Burn's scar): a wall of old ice
+ * across its w tiles, pale and blue in its cracks, a rope down it over each tile knotted every so often, with
+ * a loop at its foot to take hold of (one for each who must be on it), and their board beside it.
+ */
+export function ropeModel(o: { x: number; y: number; w: number }): THREE.Group {
+  const g = pivot(o.x + o.w / 2, 0, o.y + 0.5), W = o.w, H = 1.6;
+  g.add(box(W + 0.2, H, 0.7, '#cfe3ea', 0, H / 2, -0.15), box(W + 0.24, 0.2, 0.74, '#cfe3ea', 0, H + 0.08, -0.15, false));
+  for (let k = 0; k < W * 2; k++) g.add(box(0.04, H * (0.5 + hash2(o.x + k, o.y) * 0.4), 0.02, '#8fb3c4', -W / 2 + 0.25 + k * 0.5, H * 0.45, 0.21, false));
+  for (let t = 0; t < W; t++) {
+    const x = -W / 2 + t + 0.5;
+    g.add(box(0.05, H + 0.1, 0.05, '#a0703e', x, H / 2 + 0.05, 0.24, false));
+    for (let n = 1; n < 5; n++) g.add(box(0.09, 0.07, 0.09, '#a0703e', x, (H * n) / 5, 0.24, false));
+    const loop = part(new THREE.TorusGeometry(0.12, 0.025, 4, 10), '#a0703e', x, 0.22, 0.3, false);
+    g.add(loop);
+  }
+  g.add(box(0.36, 0.26, 0.04, '#8a6a45', W / 2 + 0.2, 0.7, 0.3, 0.01), box(0.05, 0.7, 0.05, '#8a6a45', W / 2 + 0.2, 0.35, 0.28, false));
+  return g;
+}
+
 /** NAPO's things that stand on a tile (its signs and buildings aside): null for anything else. */
 export function napoProp(o: MapObject): THREE.Object3D | null {
   switch (o.kind) {
@@ -452,7 +472,7 @@ export function napoProp(o: MapObject): THREE.Object3D | null {
     case 'cage': return cageModel(o, HUM);
     case 'teleport': return teleportModel(o);
     case 'stake': return stakeModel(o);
-    case 'gate': return gateModel(o);
+    case 'gate': return o.look === 'rope' ? ropeModel(o) : gateModel(o);
     case 'truck': return o.style === 'napo' ? napoTruck(o) : null;
     default: return null;
   }

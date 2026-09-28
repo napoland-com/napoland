@@ -12,7 +12,7 @@ import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { FirstView } from './firsts';
 import type { Gear, Quirk, Worn } from './gear';
-import type { GlimpseView } from './glimpses';
+import type { GlimpseView, PrintView } from './glimpses';
 import type { BagSlot } from './items';
 import type { MeritsView } from './merits';
 import type { NotebookView } from './notebook';
@@ -904,6 +904,8 @@ export type ServerMsg =
       visit?: VisitView;
       /** On your street: its lots, and which is yours. */
       street?: StreetView;
+      /** In the snow (MapData.forest 'snow'): the footprints of the last hour there (glimpses.ts), oldest first. */
+      prints?: PrintView[];
       /** You keep your name off your door and your window dark (the setting in the menu). */
       doorOff?: true;
       /** You let only friends into your cabin (the setting in the menu). */
@@ -927,6 +929,8 @@ export type ServerMsg =
       visit?: VisitView;
       /** On your street: its lots, and which is yours. */
       street?: StreetView;
+      /** In the snow (MapData.forest 'snow'): the footprints of the last hour there (glimpses.ts), oldest first. */
+      prints?: PrintView[];
     }
   /** Your energy and body, sent when a rate changes and every few seconds (ENERGY_SYNC_MS). */
   | { t: 'energy'; energy: EnergyView; body: BodyView }

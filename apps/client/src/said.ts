@@ -359,6 +359,11 @@ export function floodedText(tool: ItemDef | undefined): string {
   return `The culvert is flooded to the waist, and the water is cold.${tool ? ` ${tool.name} would do it.` : ''}`;
 }
 
+/** Over a tap on the icefall without crampons (TILE_NEEDS): what it is, and what would do it. */
+export function icefallText(tool: ItemDef | undefined): string {
+  return `Old ice, too steep and too smooth for boots.${tool ? ` ${tool.name} would do it.` : ''}`;
+}
+
 export function padlocked(tool: ItemDef | undefined): string {
   const why = tool ? `a padlock, rusted shut. ${tool.name} would do it.` : 'a padlock, rusted shut.';
   return `You pull at the door. It gives a little, and no more: ${why}`;

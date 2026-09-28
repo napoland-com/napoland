@@ -160,6 +160,12 @@ const ICONS: Record<string, string> = {
     <path d="M14.5 17.2c1.4-1.8 3.8-1.6 4.4.4.6 2.2-1.4 4.4-3.4 3.8-1.8-.6-2.2-2.6-1-4.2z" fill="#6b4020"/>
     <path d="M12.4 14.2c.6-1.4 1.4-2.6 2.2-3.4" stroke="#ffe3a8" stroke-width="1.3"/>`),
   // A lump of green glass from the scar, bubbled, with a bright edge where it broke.
+  // A shard of clear quartz off the crest, rime furred along its edges, a cold blue glint.
+  'rime-quartz': icon(`${halo(16, 17, 12, '#bfe6ff')}
+    <path d="M9 25l3.4-15.5L17.6 5l5.6 6.4L24 25z" fill="#d9eef8"/>
+    <path d="M12.4 9.5l5.2 4.3L23.2 11.4M17.6 13.8V25" stroke="#8fb3c4" stroke-width="1.2"/>
+    <path d="M9.6 22.4l2.2-1.4 1.6 1.8 2.2-1.6 2 1.8 2.4-1.8 2 1.6 1.6-1" stroke="#ffffff" stroke-width="1.4"/>
+    <path d="M14 11.5l2.4-3.6" stroke="#ffffff" stroke-width="1.3"/>`),
   'fused-glass': icon(`${halo(16, 17, 12, '#8fe0b4')}
     <path d="M5.5 19.5l4.5-8 7.5-3 8 4.5 1.5 7.5-6 5.5-9.5-.5z" fill="#4f9a78"/>
     <path d="M10 11.5l5 5.5 10.5-4.5M15 17l1.5 9" stroke="#2c5c47" stroke-width="1.2"/>
@@ -510,8 +516,14 @@ export const LANTERN_ICON = icon(`${halo(16, 18, 11, '#ffc56b')}
   <path d="M12 12.4v11.2M20 12.4v11.2M16 12.4v2" stroke="#6d7780" stroke-width="1.3"/>
   <path d="M10.4 23.6h11.2v2.6H10.4z" fill="#57636a"/>`);
 
+/** Crampons: a steel frame of spikes under a boot's sole, its straps of copper wire. */
+export const CRAMPONS_ICON = icon(`<path d="M7 12.5h18l-1.4 6.5H8.4z" fill="#8e979b"/>
+  <path d="M8.6 19l-1.2 5M12.4 19l-.6 5.4M16 19v5.6M19.6 19l.6 5.4M23.4 19l1.2 5" stroke="#cfd8dc" stroke-width="1.6"/>
+  <path d="M10 12.5c0-4 12-4 12 0" stroke="#d9773a" stroke-width="1.6"/>
+  <path d="M6 12.5l-1.6-2.4M26 12.5l1.6-2.4" stroke="#cfd8dc" stroke-width="1.4"/>`);
+
 /** The drawing on each tool's button in the bag's header, by the icon its item names (TOOL_ICONS: every one is drawn). */
-export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON, radio: RADIO_ICON, cutters: CUTTERS_ICON, waders: WADERS_ICON, lantern: LANTERN_ICON };
+export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON, radio: RADIO_ICON, cutters: CUTTERS_ICON, waders: WADERS_ICON, lantern: LANTERN_ICON, crampons: CRAMPONS_ICON };
 
 /**
  * The drawing for an item: its own, or its slot's in its color for gear, a tool's by its icon (a paper map

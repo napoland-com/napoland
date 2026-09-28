@@ -1,10 +1,10 @@
 /**
  * What the Burn added to the contract (map.ts, validate.ts): NAPO's gate, which blocks its tiles, is pulled
  * at from below and takes its pullers through side by side, and leads only deeper, to a map whose way home
- * comes back to it; and the burnt forest.
+ * comes back to it; and the burnt forest. The Ridge: a gate that takes three (the trappers' rope), and snow.
  */
 import { describe, expect, it } from 'vitest';
-import { GATE_PULLERS, TileMap, gateArrival, gateAt, validateMap, validateWorld, type MapData, type MapObject } from '../src';
+import { GATE_PULLERS, TileMap, gateArrival, gateAt, gatePullers, validateMap, validateWorld, type MapData, type MapObject } from '../src';
 
 type Gate = Extract<MapObject, { kind: 'gate' }>;
 const GATE: Gate = { kind: 'gate', x: 4, y: 1, w: 2, to: 'deep', tx: 3, ty: 4, dir: 'up', text: ['Two to pull.'] };
@@ -57,6 +57,16 @@ describe('NAPO\'s gate', () => {
     expect(errors(woods({ tiles: ['tttttttttt', 'ttttggtttt', 'tggggtgggt', 'tggggggggt', 'tggggggggt', 'ttttgttttt'] })).join()).toMatch(/every tile below it is walkable/);
   });
 
+  it('can take more than two (the trappers\' rope takes three), each with a tile of their own, and looks like NAPO\'s steel or like a rope', () => {
+    expect(gatePullers(GATE)).toBe(GATE_PULLERS);
+    const three = woods({ tiles: ['tttttttttt', 'ttttgggttt', 'tggggggggt', 'tggggggggt', 'tggggggggt', 'ttttgttttt'] }, { w: 3, pullers: 3, look: 'rope' });
+    expect(errors(three)).toEqual([]);
+    expect(gatePullers(three.objects[0] as Gate)).toBe(3);
+    expect(errors(woods({}, { pullers: 3 })).join()).toMatch(/gate at 4,1 is 2 wide: 3 to 4/);
+    expect(errors(woods({}, { pullers: 1 })).join()).toMatch(/takes 1 to pull/);
+    expect(errors(woods({}, { look: 'chain' as 'rope' })).join()).toMatch(/look is rope or left out/);
+  });
+
   it('leads deeper, to a map whose way home comes back to it, so nobody is shut in behind it; and what is behind it counts as reached', () => {
     expect(worldErrors(town, woods(), deep())).toEqual([]);
     expect(validateWorld([town, woods(), deep()], 'town').map(p => p.message).join()).not.toMatch(/cannot be reached/);
@@ -69,6 +79,7 @@ describe('NAPO\'s gate', () => {
 describe('the burnt forest', () => {
   it('is said of the wilds only', () => {
     expect(errors(woods({ forest: 'burnt' }))).toEqual([]);
+    expect(errors(woods({ forest: 'snow' }))).toEqual([]);
     expect(errors(woods({ forest: 'ash' as 'burnt' })).join()).toMatch(/forest "ash"/);
   });
 });

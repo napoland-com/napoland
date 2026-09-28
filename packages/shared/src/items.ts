@@ -43,7 +43,7 @@ export interface Holding {
  * The drawings a tool's button in the bag's header can show: content/items.json names one for each
  * tool (`icon`), and the client draws each (icons.ts). A tool that needs a new drawing adds it here.
  */
-export const TOOL_ICONS = ['map', 'radio', 'cutters', 'waders', 'lantern'] as const;
+export const TOOL_ICONS = ['map', 'radio', 'cutters', 'waders', 'lantern', 'crampons'] as const;
 export type ToolIcon = (typeof TOOL_ICONS)[number];
 
 /**

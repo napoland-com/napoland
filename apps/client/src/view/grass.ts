@@ -70,6 +70,13 @@ const ASH = color('#6b6763'), GLASSED = color('#4d5f58');
 const ASHEN: Partial<Record<TileKind, number>> = { grass: 0.55, tallgrass: 0.25, ferns: 0.3, forest: 0.7, mud: 0.35 };
 const ASHEN_PLANTS = 0.3;
 
+/** Snow over the Ridge's ground (MapData.forest 'snow'), and the trails trodden grey through it. */
+// Brighter than white on purpose: the overcast up there dims everything, and snow still has to read as snow.
+const SNOW = new THREE.Color(1.8, 1.86, 1.94), TRODDEN = color('#c3cbd0');
+/** How far snow whitens each kind of ground there; bare rock (lot) is scoured clean by the wind. */
+const SNOWED: Partial<Record<TileKind, number>> = { grass: 0.88, tallgrass: 0.3, forest: 0.8, mud: 0.7, lot: 0.12 };
+const SNOWED_PLANTS = 0.35;
+
 /**
  * What a season does to the colors: toward `tint`, the open ground that far, the plants (tufts, tall grass,
  * ferns) that far, and roads and lots only in a frost. Kept gentle: the same place, another time of year.
@@ -92,7 +99,7 @@ function gradeOf(g: Grade, kind: TileKind): number {
   switch (kind) {
     case 'road': case 'lot': return g.paved;
     case 'mud': case 'forest': return g.ground * 0.6;
-    case 'water': case 'floor': case 'wall': return 0;
+    case 'water': case 'floor': case 'wall': case 'icefall': return 0;
     default: return g.ground;
   }
 }
@@ -115,12 +122,15 @@ export class Ground {
   private readonly grade: Grade | undefined;
   /** A burnt forest: its ground greyed with ash, and its bare ground fused to glass. */
   private readonly ash: boolean;
+  /** Snow: its ground under snow, its trails trodden grey (and only a stalk of grass here and there through it). */
+  readonly snow: boolean;
 
   constructor(map: TileMap, season?: Season) {
     const W = (this.W = map.width), H = (this.H = map.height);
     this.seed = mapSeed(map.data.id);
     this.grade = season && GRADES[season];
     this.ash = map.data.forest === 'burnt';
+    this.snow = map.data.forest === 'snow';
     // What shades the ground: the forest (past the map's edge too, where the woods go on) and the lone
     // trees; what makes it damp: water, and a little the mud of the banks.
     const shadeOf = new Float32Array(W * H), wetOf = new Float32Array(W * H);
@@ -207,6 +217,11 @@ export class Ground {
       case 'culvert':
         out.copy(SILT);
         break;
+      // Old ice down a slope: winter's ice, only steeper and never gone.
+      case 'icefall':
+        out.copy(ICE).lerp(ICE_CLOUD, smooth(0.4, 0.8, noise(cx, cy, 1.6, s + 42)) * 0.8);
+        light += fine * 0.1;
+        break;
       case 'floor':
         out.copy(FLOOR);
         break;
@@ -217,6 +232,7 @@ export class Ground {
     const k = this.grade ? gradeOf(this.grade, kind) : 0;
     if (k) out.lerp(this.grade!.tint, k);
     if (this.ash) out.lerp(kind === 'lot' ? GLASSED : ASH, kind === 'lot' ? 0.6 : ASHEN[kind] ?? 0);
+    if (this.snow) out.lerp(kind === 'mud' ? TRODDEN : SNOW, SNOWED[kind] ?? 0);
     return out.multiplyScalar(light);
   }
 
@@ -230,6 +246,7 @@ export class Ground {
   /** A plant's color (a fern, a tuft) as the season has it. */
   plant(out: THREE.Color): THREE.Color {
     if (this.grade) out.lerp(this.grade.tint, this.grade.plants);
+    if (this.snow) out.lerp(SNOW, SNOWED_PLANTS);
     return this.ash ? out.lerp(ASH, ASHEN_PLANTS) : out;
   }
 
@@ -285,9 +302,11 @@ export function grassClumps(map: TileMap, ground: Ground): Clump[] {
     if ((kind !== 'grass' && kind !== 'tallgrass') || map.blocked[i] || map.exitAt(tx, ty) || shrooms.has(i)) continue;
     const h = map.level(tx, ty) * 0.55;
     if (kind === 'grass') {
+      // Under snow, only a stalk pokes through on one tile in seven.
+      if (ground.snow && hash(tx, ty, s + 26) > 0.15) continue;
       // Lush grass grows more and taller tufts than dry.
       const lush = 1 - smooth(0.52, 0.8, noise(tx + 0.5, ty + 0.5, 12, s + 3));
-      const n = 1 + Math.floor(hash(tx, ty, s + 20) * 1.9 + lush * 1.1);
+      const n = ground.snow ? 1 : 1 + Math.floor(hash(tx, ty, s + 20) * 1.9 + lush * 1.1);
       for (let k = 0; k < n; k++) {
         const x = tx + 0.14 + hash(tx * 4 + k, ty, s + 21) * 0.72, y = ty + 0.14 + hash(tx, ty * 4 + k, s + 22) * 0.72;
         const r = hash(tx + k * 17, ty, s + 23);
