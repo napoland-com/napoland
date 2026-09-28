@@ -297,7 +297,7 @@ export function attachNet(o: NetOptions): Net {
         world.board(s.id, msg.x, msg.y, now);
         return flush();
       case 'chest':
-        world.chest(s.id, msg.x, msg.y);
+        world.chest(s.id, msg.x, msg.y, now);
         return flush();
       case 'store':
         world.store(s.id, msg.x, msg.y, msg.slot, now);
@@ -333,7 +333,7 @@ export function attachNet(o: NetOptions): Net {
         world.badge(s.id, msg.x, msg.y, msg.badge, now);
         return flush();
       case 'bench':
-        world.bench(s.id, msg.x, msg.y);
+        world.bench(s.id, msg.x, msg.y, now);
         return flush();
       case 'craft':
         world.craft(s.id, msg.x, msg.y, msg.recipe, now);

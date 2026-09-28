@@ -104,9 +104,20 @@ describe('what you wear', () => {
 });
 
 describe('the workbench', () => {
+  it('opens once the steps sent before the look are walked, from where they take you', () => {
+    // Bunched up by a slow network: the step in front of the workbench (1,2) still waits when the look comes in.
+    const w = world(rec('a', 'house', 2, 3, { stash: { items: { cloth: 5 } , out: {} } }, 'left'));
+    w.step('a', 'left', 1, 350);
+    w.step('a', 'up', 2, 351);
+    w.bench('a', 1, 1, 450);
+    expect(to(w.drain(), 'a').filter(m => m.t === 'bench')).toEqual([]);
+    w.tick(1000);
+    expect(to(w.drain(), 'a').filter(m => m.t === 'bench')).toEqual([{ t: 'bench', stash: [{ item: 'cloth', count: 5 }] }]);
+  });
+
   it('opens next to it, and makes gear from the stash into the stash', () => {
     const w = world(rec('a', 'house', 1, 2, { stash: { items: { cloth: 5 }, out: {} } }));
-    w.bench('a', 1, 1);
+    w.bench('a', 1, 1, 500);
     expect(to(w.drain(), 'a')).toEqual([{ t: 'bench', stash: [{ item: 'cloth', count: 5 }] }]);
     w.craft('a', 1, 1, 'coat', 1000);
     expect(to(w.drain(), 'a')).toEqual([

@@ -431,8 +431,11 @@ interface Online {
   /** When the current step is over and the next one may start. */
   readyAt: number;
   queue: Array<{ dir: Dir; seq: number }>;
-  /** A talk, or a look at the notice board, that came in while steps sent before it still waited in the queue: done once they are walked (talk, board). */
-  after?: { t: 'talk' | 'board'; x: number; y: number };
+  /**
+   * A talk, or a look at the notice board, the chest, the workbench or a crate, that came in while steps
+   * sent before it still waited in the queue: done once they are walked (talk, board, chest, bench, openCache).
+   */
+  after?: { t: 'talk' | 'board' | 'chest' | 'bench' | 'cache'; x: number; y: number };
   /** Energy and wetness per second on the player's tile. rec.energy and rec.wet are up to date as of energyAt. */
   rate: number;
   wetRate: number;
@@ -1296,11 +1299,21 @@ export class World {
     this.did(p, { kind: 'fire', item: def.id, count: fed, left: burning.left ?? 0, ...(lit ? { lit: true as const } : {}) });
   }
 
-  /** Opens the chest on tile x,y (next to the player): they hear what is in their stash. */
-  chest(id: string, x: number, y: number): void {
+  /**
+   * Opens the chest on tile x,y (next to the player): they hear what is in their stash. Like a talk, it
+   * can come in while the steps sent before it still wait in the queue (a slow network bunched them up):
+   * then it opens once they are walked, from where they took the player.
+   */
+  chest(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
-    if (!p || !this.chestNextTo(p, x, y)) return;
-    this.sendStash(p);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (p.queue.length) p.after = { t: 'chest', x, y };
+    else this.openChest(p, x, y);
+  }
+
+  private openChest(p: Online, x: number, y: number): void {
+    if (this.chestNextTo(p, x, y)) this.sendStash(p);
   }
 
   /**
@@ -1521,11 +1534,17 @@ export class World {
     return { spent: r.meritsSpent ?? 0, owned: (r.looks ?? []).filter(l => meritLookOf(l)) };
   }
 
-  /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. */
-  bench(id: string, x: number, y: number): void {
+  /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. Behind steps still waiting, like the chest. */
+  bench(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
-    if (!p || !this.benchNextTo(p, x, y)) return;
-    this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder) } });
+    if (!p) return;
+    this.runQueue(p, now);
+    if (p.queue.length) p.after = { t: 'bench', x, y };
+    else this.openBench(p, x, y);
+  }
+
+  private openBench(p: Online, x: number, y: number): void {
+    if (this.benchNextTo(p, x, y)) this.outbox.push({ to: p.rec.id, msg: { t: 'bench', stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder) } });
   }
 
   /** Makes recipe `recipeId` at the workbench on tile x,y next to the player, from their stash, into their stash. */
@@ -1878,11 +1897,16 @@ export class World {
     this.thanksForgetAt = next;
   }
 
-  /** Opens the crate on tile x,y (next to the player): they hear what is in it, and what they did at it this visit. */
+  /** Opens the crate on tile x,y (next to the player): they hear what is in it, and what they did at it this visit. Behind steps still waiting, like the chest. */
   openCache(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
+    if (p.queue.length) p.after = { t: 'cache', x, y };
+    else this.lookInCrate(p, x, y, now);
+  }
+
+  private lookInCrate(p: Online, x: number, y: number, now: number): void {
     const c = this.crateNextTo(p, x, y);
     if (c) this.sendCache(p, c, now);
   }
@@ -2068,7 +2092,10 @@ export class World {
       const { t, x, y } = p.after;
       p.after = undefined;
       if (t === 'talk') this.heard(p, x, y);
-      else this.readBoard(p, x, y, now);
+      else if (t === 'board') this.readBoard(p, x, y, now);
+      else if (t === 'chest') this.openChest(p, x, y);
+      else if (t === 'bench') this.openBench(p, x, y);
+      else this.lookInCrate(p, x, y, now);
     }
   }
 

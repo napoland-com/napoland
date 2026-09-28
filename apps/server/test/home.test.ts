@@ -53,13 +53,25 @@ const to = (out: Outgoing[], id: string) => out.flatMap(o => (o.to === id ? [o.m
 const of = <T extends ServerMsg['t']>(msgs: ServerMsg[], t: T) => msgs.filter((m): m is Extract<ServerMsg, { t: T }> => m.t === t);
 
 describe('the chest at home', () => {
+  it('opens once the steps sent before the look are walked, from where they take you', () => {
+    // A slow network bunched up the two steps that bring A in front of the chest (3,2): the second still
+    // waits in the queue when the look comes in, and from where A stands then it would open nothing.
+    const w = world(rec('a', 2, 3, { stash: { items: { moss: 4 }, out: {} } }, 'right'));
+    w.step('a', 'right', 1, 350);
+    w.step('a', 'up', 2, 351);
+    w.chest('a', 3, 1, 450);
+    expect(of(to(w.drain(), 'a'), 'chest')).toEqual([]);
+    w.tick(1000);
+    expect(of(to(w.drain(), 'a'), 'chest')).toEqual([{ t: 'chest', stash: [{ item: 'moss', count: 4 }] }]);
+  });
+
   it('shows each player their own stash, and only from next to it', () => {
     const w = world(rec('a', 3, 2, { stash: { items: { moss: 4 }, out: {} } }), rec('b', 2, 2));
-    w.chest('a', 3, 1);
+    w.chest('a', 3, 1, 1000);
     expect(to(w.drain(), 'a')).toEqual([{ t: 'chest', stash: [{ item: 'moss', count: 4 }] }]);
     // b stands two tiles away; and a cannot open a chest where none stands.
-    w.chest('b', 3, 1);
-    w.chest('a', 3, 3);
+    w.chest('b', 3, 1, 1000);
+    w.chest('a', 3, 3, 1000);
     expect(w.drain()).toEqual([]);
   });
 
