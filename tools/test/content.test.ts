@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { TileMap, doorOf, findPath, findTiles, hidden, type ItemsData, type MapData } from '@napoland/shared';
+import { TileMap, doorOf, findPath, findTiles, hidden, type ItemsData, type MapData, type StoryData } from '@napoland/shared';
 
 /** The content as it ships: content/items.json and every map. */
 const content = resolve(import.meta.dirname, '../../content');
@@ -51,6 +51,32 @@ describe('a parcel a day (roadmap/daily-parcels.md)', () => {
     expect(box.xp).toBeUndefined();
     expect(box.holds!.map(h => (h.any ? `any ${h.any}` : said(h.items!)))).toEqual(['3 shard', '1 strange', 'any charm', '6 cloth, 4 wire']);
     expect(items.finds.some(f => f.item === 'lockbox')).toBe(false);
+  });
+});
+
+describe('a first goal on the first day (roadmap/first-day.md)', () => {
+  const woods = items.finds.filter(f => f.map === 'near-woods' && f.when === undefined && f.condition === undefined);
+  /** How many of an item lie out at once on rules that stay within the first 40 steps into the Near Woods, and on the rest. */
+  const near = (item: string) => woods.filter(f => f.item === item && f.steps && f.steps[1] <= 40).reduce((n, f) => n + f.count, 0);
+  const deeper = (item: string) => woods.filter(f => f.item === item && !(f.steps && f.steps[1] <= 40)).reduce((n, f) => n + f.count, 0);
+
+  it('fills the first 40 steps into the Near Woods with resin and glowcaps, so a first trip never comes home empty', () => {
+    expect(near('resin')).toBeGreaterThanOrEqual(5);
+    expect(near('glowcap')).toBeGreaterThanOrEqual(4);
+    // Each with room to move: three tiles or more a find.
+    for (const f of woods.filter(f => f.steps && f.steps[1] <= 40)) expect(findTiles(maps.get(f.map)!, f).length, `${f.item} ${f.steps}`).toBeGreaterThanOrEqual(3 * f.count);
+  });
+
+  it('leaves the finds deeper in as they were', () => {
+    expect(deeper('resin')).toBe(6);
+    expect(deeper('glowcap')).toBe(12);
+  });
+
+  it('has Mira say something once after the first collapse and the first surge, and Walt after the first thing made', () => {
+    const story = JSON.parse(readFileSync(resolve(content, 'story.json'), 'utf8')) as StoryData;
+    expect((story.remarks ?? []).map(r => [r.who, r.after])).toEqual([['mira', 'collapsed'], ['mira', 'surged'], ['walt', 'made']]);
+    // The collapse one says what the design says: what you carried lies where you fell for an hour.
+    expect(story.remarks![0]!.line).toMatch(/where you fell for an hour/);
   });
 });
 

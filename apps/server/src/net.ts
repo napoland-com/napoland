@@ -527,6 +527,7 @@ export function attachNet(o: NetOptions): Net {
       weather: world.weather,
       energy: joined.energy,
       bag: joined.bag,
+      stash: joined.stash,
       fires: joined.fires,
       marks: joined.marks,
       creatures: joined.creatures,

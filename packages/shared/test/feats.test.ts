@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CHANCES, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, FAR_STEPS, FEATS, HEAVY_LOAD, MODS, NO_MODS, RANKS, STATS, STEP_STATS, TileMap, energyRate, featOf, modChanges, modsOf, rankOf,
+  CHANCES, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, FAR_STEPS, FEATS, HEAVY_LOAD, MILESTONES, MODS, NO_MODS, RANKS, STATS, STEP_STATS, TileMap, energyRate, featOf, modChanges, modsOf, rankOf,
   rankText, rankValue, stepCounts, validateItems, type Feat, type MapData, type Mods,
 } from '../src';
 
@@ -48,7 +48,9 @@ describe('the table of feats and ranks', () => {
       expect(featOf(f.stat)).toBe(f);
     }
     expect(new Set(FEATS.map(f => f.stat)).size).toBe(FEATS.length);
-    expect([...STATS].sort()).toEqual(FEATS.map(f => f.stat).sort());
+    // Every count is a feat's, or one of what people say once after the first time (story.ts), or which of that was said.
+    expect([...STATS].sort()).toEqual([...FEATS.map(f => f.stat), ...MILESTONES, 'told'].sort());
+    for (const m of [...MILESTONES, 'told' as const]) expect(featOf(m), m).toBeUndefined();
     for (const s of STEP_STATS) expect(STATS).toContain(s);
   });
 

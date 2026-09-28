@@ -10,7 +10,7 @@ import { DIRS, stepTarget } from './movement';
 import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
 import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
-import { STORY_EVENTS, type StoryData } from './story';
+import { MAX_REMARKS, MILESTONES, STORY_EVENTS, type StoryData } from './story';
 
 export interface Problem {
   level: 'error' | 'warning';
@@ -501,6 +501,19 @@ export function validateStory(story: StoryData, maps: MapData[], items?: ItemsDa
       else if (typeof line !== 'string' || !line.trim()) err(`${name}: ${who}'s hint says nothing`);
     }
   });
+  // What people say once after something done for the first time: which were said is kept a bit each, in this order.
+  const remarkIds = new Set<string>(), remarks = story.remarks ?? [];
+  if (!Array.isArray(remarks)) err('remarks is a list');
+  else remarks.forEach((r, i) => {
+    const name = `remark ${i + 1} (${JSON.stringify(r?.id)})`;
+    if (!ID.test(r?.id ?? '')) err(`${name}: an id is lowercase words joined by hyphens`);
+    if (remarkIds.has(r.id)) err(`${name} is there twice`);
+    remarkIds.add(r.id);
+    if (!people.has(r.who)) err(`${name}: nobody has the id ${String(r.who)}`);
+    if (!MILESTONES.includes(r.after)) err(`${name}: after is one of ${MILESTONES.join(', ')}`);
+    if (typeof r.line !== 'string' || !r.line.trim()) err(`${name} says nothing`);
+  });
+  if (Array.isArray(remarks) && remarks.length > MAX_REMARKS) err(`there are ${remarks.length} remarks, and which were said is kept for at most ${MAX_REMARKS}`);
   return out;
 }
 

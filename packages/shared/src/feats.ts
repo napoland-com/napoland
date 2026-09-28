@@ -46,10 +46,14 @@ export function modChanges(k: keyof Mods, v: unknown): boolean {
   return CHANCES.includes(k) ? v <= 1 : v !== 1;
 }
 
-/** What the server counts for feats. */
-export type Stat = 'rainSteps' | 'nightSteps' | 'heavySteps' | 'farSteps' | 'fed' | 'mended' | 'found';
+/**
+ * What the server counts: for feats, and for what people say once after the first time you did
+ * something (story.ts, remarks): gear made, collapses, and surges that caught you out in the wilds.
+ * `told` is not a count: it keeps which of those remarks were said, a bit each (story.ts, toldAfter).
+ */
+export type Stat = 'rainSteps' | 'nightSteps' | 'heavySteps' | 'farSteps' | 'fed' | 'mended' | 'found' | 'made' | 'collapsed' | 'surged' | 'told';
 export type Stats = Partial<Record<Stat, number>>;
-export const STATS: readonly Stat[] = ['rainSteps', 'nightSteps', 'heavySteps', 'farSteps', 'fed', 'mended', 'found'];
+export const STATS: readonly Stat[] = ['rainSteps', 'nightSteps', 'heavySteps', 'farSteps', 'fed', 'mended', 'found', 'made', 'collapsed', 'surged', 'told'];
 /** The counts a step out in the wilds may add to (stepCounts). */
 export const STEP_STATS = ['rainSteps', 'nightSteps', 'heavySteps', 'farSteps'] as const satisfies readonly Stat[];
 
