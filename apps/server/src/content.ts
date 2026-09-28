@@ -6,7 +6,8 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
-  TileMap, validateItems, validateMap, validateNotebook, validateStory, validateWorld, type ItemsData, type MapData, type NotebookData, type Problem, type StoryData,
+  NO_SHOP, TileMap, validateItems, validateMap, validateNotebook, validateShop, validateStory, validateWorld, type ItemsData, type MapData, type NotebookData, type Problem,
+  type ShopData, type StoryData,
 } from '@napoland/shared';
 
 /** Something odd about a map that does not stop the server, for the log. */
@@ -141,6 +142,32 @@ export function loadNotebook(file: string, maps: Iterable<TileMap>, items?: Item
   }
   const errors = problems.filter(p => p.level === 'error').map(p => p.message);
   if (errors.length) throw new Error(`the field notes in ${file} are not valid:\n  ${errors.join('\n  ')}`);
+  return data;
+}
+
+/**
+ * What the shop sells (content/shop.json, next to the items), checked: never a look that can be earned,
+ * and, when the shop sells in `currency` (SHOP_CURRENCY), a price in it for every look. Nothing for sale
+ * if the file is not there; throws with every error found if it is and is broken.
+ */
+export function loadShop(file: string, currency?: string): ShopData {
+  let raw: string;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch {
+    return NO_SHOP;
+  }
+  let data: ShopData;
+  let problems: Problem[];
+  try {
+    data = JSON.parse(raw) as ShopData;
+    if (typeof data !== 'object' || data === null) throw new Error('it needs a version and a list of looks');
+    problems = validateShop(data, currency);
+  } catch (err) {
+    throw new Error(`the shop in ${file} cannot be read: ${reason(err)}`);
+  }
+  const errors = problems.filter(p => p.level === 'error').map(p => p.message);
+  if (errors.length) throw new Error(`the shop in ${file} is not valid:\n  ${errors.join('\n  ')}`);
   return data;
 }
 

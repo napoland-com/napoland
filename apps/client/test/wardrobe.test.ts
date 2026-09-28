@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { OUTFITS, xpFor, type ClientMsg, type ItemsData, type MapData, type ParcelView, type PlayerView } from '@napoland/shared';
+import { OUTFITS, xpFor, type ClientMsg, type ItemsData, type MapData, type ParcelView, type PlayerView, type ShopData } from '@napoland/shared';
 import { cardPress, detailView, refKey, type DetailState, type DetailView } from '../src/details';
 import { Game } from '../src/game';
 import { cardHtml } from '../src/hud';
@@ -19,6 +19,10 @@ import { newsBanner } from '../src/status';
 import { NO_OUTFIT, WARDROBE_GATE, outfitWords, wardrobeView, type WardrobeState } from '../src/wardrobe';
 import { OUTFIT_LOOKS, dressOf, makePlayer } from '../src/view/characters';
 import { FULL, itemsData, tinyTown, welcome } from './fixtures';
+import shopJson from '../../../content/shop.json';
+
+/** What the shop sells: its outfits are drawn like the others. */
+const SHOP = shopJson as ShopData;
 
 const data: ItemsData = {
   ...itemsData(),
@@ -56,7 +60,7 @@ describe('the wardrobe\'s tiles', () => {
   });
 
   it('are one card for a guest: signing in keeps what you wear', () => {
-    expect(wardrobeView({ guest: true, level: 20, wearing: null })).toEqual({ gate: WARDROBE_GATE, tiles: [], patterns: [], badges: [], merits: '' });
+    expect(wardrobeView({ guest: true, level: 20, wearing: null })).toEqual({ gate: WARDROBE_GATE, tiles: [], patterns: [], badges: [], merits: '', shop: null });
     expect(WARDROBE_GATE).toBe('Sign in to keep what you wear. Signing in keeps your character.');
   });
 
@@ -261,8 +265,8 @@ describe('an outfit as the world draws it', () => {
     expect(dressOf('#fff', { outfit: 'napo-suit' }).packBack).toBe(0);
   });
 
-  it('has a look for every outfit, and draws the gear for one this copy does not have', () => {
-    expect(Object.keys(OUTFIT_LOOKS).sort()).toEqual(OUTFITS.map(o => o.id).sort());
+  it('has a look for every outfit, earned or sold in the shop, and draws the gear for one this copy does not have', () => {
+    expect(Object.keys(OUTFIT_LOOKS).sort()).toEqual([...OUTFITS.map(o => o.id), ...SHOP.looks.filter(l => l.kind === 'outfit').map(l => l.id)].sort());
     expect(dressOf('#3a86ff', { outfit: 'top-hat', cap: null })).toEqual(dressOf('#3a86ff', { cap: null }));
   });
 

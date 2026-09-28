@@ -18,6 +18,7 @@ export * from './outfits';
 export * from './parcels';
 export * from './progress';
 export * from './protocol';
+export * from './shop';
 export * from './sky';
 export * from './story';
 export * from './thanks';

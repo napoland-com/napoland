@@ -35,6 +35,7 @@
     "roadmap": "tsx tools/validate-roadmap.ts",
     "clock": "tsx tools/clock.ts",
     "bot": "tsx tools/bot.ts",
+    "fake-stripe": "tsx tools/fake-stripe.ts",
     "check": "npm run typecheck && npm run validate && npm run roadmap && npm run test"
   },
   "devDependencies": {

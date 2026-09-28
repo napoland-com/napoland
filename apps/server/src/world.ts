@@ -39,7 +39,9 @@
  * half of it); it goes on and comes off at the chest, and anywhere from and into the bag. The bag
  * you wear changes only at the chest. Over it all, a player signed in may wear an outfit (outfits.ts),
  * which changes how they look and nothing else; past level 20, merits buy a pattern for their jacket and
- * a badge for their name tag (merits.ts), looks too.
+ * a badge for their name tag (merits.ts), looks too; and the shop sells looks of each kind that can never
+ * be earned (shop.ts), which are theirs once Stripe says they are paid (shop.ts, on the server: the World
+ * only hears which looks a player bought, and checks what is asked of the shop).
  *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
  * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). Time away fills
@@ -222,7 +224,11 @@ import {
   merge,
   mayWear,
   mayWearLook,
+  mayWearShopLook,
   meritLookOf,
+  NO_SHOP,
+  shopLookOf,
+  whyNotCheckout,
   meritsLeft,
   modsOf,
   nextParcel,
@@ -325,6 +331,8 @@ import {
   type Resist,
   type Season,
   type SeasonView,
+  type ShopData,
+  type ShopKind,
   type Stash,
   type ServerMsg,
   type Stats,
@@ -518,6 +526,8 @@ export interface Joined extends Scene {
   restedAway: number;
   /** What they spent of their merits, and the looks they bought (those this release has). */
   merits: MeritsView;
+  /** The looks they bought in the shop, paid and not refunded (those the catalog has). */
+  shop: string[];
   /** Every tool the player owns, in the order they got them (toolsOf): the starter tools until they got one of their own. */
   tools: string[];
   story: StoryView;
@@ -614,6 +624,8 @@ export interface WorldOptions {
   calendar?: Calendar;
   /** Development only (XP_MULTIPLIER): stashing earns this many times the XP, to play-test the levels without the trips. 1 unless set. */
   xpTimes?: number;
+  /** What the shop sells (content/shop.json, checked with validateShop): the looks a player may have bought. None if unset. */
+  shop?: ShopData;
   /** Development only (RESTED_EVERY_MS): the time away that fills one XP of rest, to play-test it without the days away. RESTED_EVERY_MS unless set. */
   restedEveryMs?: number;
   /** How many make a crowd (TOWN_CROWD and REGION_CROWD unless set): tests, and play-tests with a few tabs (TOWN_CROWD, REGION_CROWD), set fewer. */
@@ -960,7 +972,7 @@ const copyStash = (s: Stash): Stash => ({
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), ...(r.kept ? { kept: { bag: structuredClone(r.kept.bag) } } : {}), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
-  ...(r.looks ? { looks: [...r.looks] } : {}),
+  ...(r.looks ? { looks: [...r.looks] } : {}), ...(r.shop ? { shop: [...r.shop] } : {}),
   ...(r.notebook ? { notebook: { pages: [...r.notebook.pages], blanks: [...r.notebook.blanks] } } : {}),
   ...(r.notes ? { notes: [...r.notes] } : {}), ...(r.keepsakes ? { keepsakes: [...r.keepsakes] } : {}),
   ...(r.furniture ? { furniture: [...r.furniture] } : {}),
@@ -1104,6 +1116,8 @@ export class World {
   private readonly guests: boolean;
   /** Stashing earns this many times an item's XP: 1, but for play-tests (WorldOptions.xpTimes). */
   private readonly xpTimes: number;
+  /** The looks the shop sells (shop.ts), whether it is open or not: whoever bought one wears it. */
+  private readonly shop: ShopData;
   /** The time away that fills one XP of rest (WorldOptions.restedEveryMs). */
   private readonly restedEvery: number | undefined;
   private readonly onCollapse: WorldOptions['onCollapse'];
@@ -1291,6 +1305,7 @@ export class World {
     this.cycle = options.cycle ?? false;
     this.guests = options.guests ?? false;
     this.xpTimes = options.xpTimes ?? 1;
+    this.shop = options.shop ?? NO_SHOP;
     this.restedEvery = options.restedEveryMs;
     this.glimpseEvery = Number.isFinite(options.glimpseEveryMs) && options.glimpseEveryMs! > 0 ? options.glimpseEveryMs : undefined;
     this.stepMs = options.stepMs ?? STEP_MS;
@@ -1515,6 +1530,8 @@ export class World {
       // Merits spent stay spent, and every look bought stays theirs, a newer release's too (a list of ids, as the tools are).
       meritsSpent: Number.isInteger(rec.meritsSpent) && rec.meritsSpent! > 0 ? rec.meritsSpent : 0,
       looks: cleanTools(rec.looks) ?? [],
+      // What they bought in the shop, as the purchases say: a look the catalog no longer has stays theirs, unshown.
+      shop: cleanTools(rec.shop) ?? [],
       ...(rec.parcels !== undefined ? { parcels: cleanParcels(rec.parcels) } : {}),
       // Pages and blanks a newer notebook wrote stay too: the client shows the ones it knows.
       ...(rec.notebook !== undefined ? { notebook: cleanNotebook(rec.notebook) } : {}),
@@ -1572,11 +1589,12 @@ export class World {
       r.stash = { ...stash, out };
       r.wornOut = true;
     }
-    // An outfit shows only while they may wear it (signed in, the level reached). One they may not (it
-    // is from a newer release, or they play as a guest now) shows as none, and stays saved for when they may.
-    if (r.outfit && !mayWear(r.outfit, levelOf(r.xp ?? 0), !this.guest(r))) delete r.outfit;
+    // An outfit shows only while they may wear it (signed in, the level reached, or bought in the shop). One
+    // they may not (it is from a newer release, refunded, or they play as a guest now) shows as none, and
+    // stays saved for when they may.
+    if (r.outfit && !this.mayWearAs(r, r.outfit, 'outfit')) delete r.outfit;
     // A pattern and a badge likewise: only one of theirs, only signed in.
-    for (const kind of ['pattern', 'badge'] as const) if (r[kind] && !mayWearLook(r[kind], kind, r.looks!, !this.guest(r))) delete r[kind];
+    for (const kind of ['pattern', 'badge'] as const) if (r[kind] && !this.mayWearAs(r, r[kind], kind)) delete r[kind];
     r.energy = Number.isFinite(r.energy) ? Math.min(this.maxOf(r), Math.max(0, r.energy)) : this.maxOf(r);
     r.wet = Number.isFinite(r.wet) ? clamp01(r.wet!) : 0;
     const readyAt = this.resting.get(r.id) ?? -Infinity;
@@ -1605,7 +1623,7 @@ export class World {
       bag: bagView(r.bag, now + this.epochOffset),
       stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), season: this.seasonNow(now),
       longNight: this.longNightView(now), stats: { ...r.stats },
-      progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), tools: toolsOf(r.tools, this.items),
+      progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), shop: this.shopOwned(r), tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
       thanked: [...this.thanks.values()].filter(t => t.giver === r.id && t.day === today).map(t => t.helper),
@@ -2058,13 +2076,17 @@ export class World {
     const why = this.chestRefusal(p, x, y);
     if (why) return this.refuse(p, 'outfit', why);
     const def = outfit === null ? undefined : outfitOf(outfit);
-    if (outfit !== null && !def) return this.refuse(p, 'outfit', 'gone');
+    // An outfit the shop sells is worn once it is bought, at any level.
+    const sold = outfit === null || def ? undefined : shopLookOf(this.shop, outfit, 'outfit');
+    if (outfit !== null && !def && !sold) return this.refuse(p, 'outfit', 'gone');
     if (def && !mayWear(def, levelOf(p.rec.xp ?? 0), true)) return this.refuse(p, 'outfit', 'locked');
+    if (sold && !(p.rec.shop ?? []).includes(sold.id)) return this.refuse(p, 'outfit', 'not_owned');
     if ((p.rec.outfit ?? null) === outfit) return;
     // Taken off is null, not left out: a save without an outfit keeps the one saved.
-    p.rec.outfit = def ? def.id : null;
+    const wears = def?.id ?? sold?.id ?? null;
+    p.rec.outfit = wears;
     this.saveNow.set(id, p.rec);
-    this.toZone(p.zone.key, { t: 'outfit', id, outfit: def?.id ?? null });
+    this.toZone(p.zone.key, { t: 'outfit', id, outfit: wears });
   }
 
   /**
@@ -2115,9 +2137,12 @@ export class World {
     const why = this.chestRefusal(p, x, y);
     if (why) return this.refuse(p, kind, why);
     const look = lookId === null ? undefined : meritLookOf(lookId, kind);
-    if (lookId !== null && !look) return this.refuse(p, kind, 'gone');
+    // Or one of the shop's, bought.
+    const sold = lookId === null || look ? undefined : shopLookOf(this.shop, lookId, kind);
+    if (lookId !== null && !look && !sold) return this.refuse(p, kind, 'gone');
     if (look && !(p.rec.looks ?? []).includes(look.id)) return this.refuse(p, kind, 'not_owned');
-    const wears = look?.id ?? null;
+    if (sold && !(p.rec.shop ?? []).includes(sold.id)) return this.refuse(p, kind, 'not_owned');
+    const wears = look?.id ?? sold?.id ?? null;
     if ((p.rec[kind] ?? null) === wears) return;
     // Taken off is null, not left out: a save without one keeps the one saved.
     p.rec[kind] = wears;
@@ -2128,6 +2153,68 @@ export class World {
   /** What the player hears of their merits: what they spent, and the looks they bought that this release has. */
   private meritsOf(r: PlayerRecord): MeritsView {
     return { spent: r.meritsSpent ?? 0, owned: (r.looks ?? []).filter(l => meritLookOf(l)) };
+  }
+
+  /** What the player hears of what they bought in the shop: the looks the catalog has, in the order they bought them. */
+  private shopOwned(r: PlayerRecord): string[] {
+    return (r.shop ?? []).filter(l => shopLookOf(this.shop, l));
+  }
+
+  /**
+   * May the player of `r` wear `id` as their `kind` (an outfit, a pattern, a badge)? One the level opened,
+   * one merits bought, or one bought in the shop; and only signed in.
+   */
+  private mayWearAs(r: PlayerRecord, id: string, kind: ShopKind): boolean {
+    const signedIn = !this.guest(r);
+    if (mayWearShopLook(this.shop, id, kind, r.shop ?? [], signedIn)) return true;
+    return kind === 'outfit' ? mayWear(id, levelOf(r.xp ?? 0), signedIn) : mayWearLook(id, kind, r.looks ?? [], signedIn);
+  }
+
+  /**
+   * Why the player may not buy `lookId` in the shop now (null: they may), checked before the shop asks
+   * Stripe for a payment: only signed in (on a server with sign-in: a purchase belongs to an account),
+   * next to the chest on tile x,y (the shop is in the wardrobe), a look the shop sells, and not bought yet.
+   * Like everything at the chest, it waits for the steps sent before it.
+   */
+  mayCheckout(id: string, x: number, y: number, lookId: string, now: number): Refusal | null {
+    const p = this.players.get(id);
+    if (!p) return 'gone';
+    this.runQueue(p, now);
+    if (!this.signedIn(p)) return 'sign_in_first';
+    if (!this.chestNextTo(p, x, y)) return 'too_far';
+    const look = shopLookOf(this.shop, lookId);
+    if (!look) return 'gone';
+    return whyNotCheckout(look, p.rec.shop ?? [], true, true);
+  }
+
+  /**
+   * Stripe said a look of the player's is paid, or refunded: what they bought, whole, as storage says it now
+   * (`owned`). They hear it; a look no longer theirs that they wear comes off, for everyone who sees them,
+   * and is saved at once. False when they are not online (they hear it all the next time they join).
+   */
+  setShop(id: string, owned: readonly string[]): boolean {
+    const p = this.players.get(id);
+    if (!p) return false;
+    p.rec.shop = [...owned];
+    this.outbox.push({ to: id, msg: { t: 'shop', owned: this.shopOwned(p.rec) } });
+    const off = (kind: ShopKind) => {
+      const worn = p.rec[kind];
+      return !!worn && !!shopLookOf(this.shop, worn, kind) && !owned.includes(worn);
+    };
+    if (off('outfit')) {
+      p.rec.outfit = null;
+      this.toZone(p.zone.key, { t: 'outfit', id, outfit: null });
+    }
+    if (off('pattern')) {
+      p.rec.pattern = null;
+      this.toZone(p.zone.key, { t: 'pattern', id, pattern: null });
+    }
+    if (off('badge')) {
+      p.rec.badge = null;
+      this.toZone(p.zone.key, { t: 'badge', id, badge: null });
+    }
+    this.saveNow.set(id, p.rec);
+    return true;
   }
 
   /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. Behind steps still waiting, like the chest. */
@@ -5494,7 +5581,7 @@ export class World {
 
   private refuse(
     p: Online,
-    action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
+    action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind | 'checkout'
       | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport',
     reason: Refusal,
   ): void {

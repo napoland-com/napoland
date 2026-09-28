@@ -1,7 +1,7 @@
 import {
   PROTOCOL_VERSION, STEP_MS, type BagSlot, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type FlashView, type StormView, type ItemsData,
-  type LongNightView, type MapData, type MarkView, type MeritsView, type NotebookView, type PlayerView, type ProgressView, type SeasonView, type ServerMsg, type StoneView, type StoryData,
-  type StoryView, type SurgeView, type ConditionsView, type Weather,
+  type LongNightView, type MapData, type MarkView, type MeritsView, type NotebookView, type PlayerView, type ProgressView, type SeasonView, type ServerMsg, type ShopData, type ShopView,
+  type StoneView, type StoryData, type StoryView, type SurgeView, type ConditionsView, type Weather,
 } from '@napoland/shared';
 import { Items } from '../src/items';
 
@@ -119,6 +119,21 @@ export function storyData(): StoryData {
   };
 }
 
+/**
+ * What a test shop sells: an outfit, a pattern and a badge the game draws (the real ones' ids), priced in
+ * euros and francs. Its version is its own, so a game given it hears of it in the welcome.
+ */
+export function shopData(): ShopData {
+  return {
+    version: 7,
+    looks: [
+      { id: 'lighthouse-oilskin', kind: 'outfit', name: 'Lighthouse oilskin', noun: 'the lighthouse oilskin', text: 'Yellow oilskin.', prices: { eur: 299, chf: 290 } },
+      { id: 'aurora-bands', kind: 'pattern', name: 'Aurora bands', noun: 'the aurora bands', plural: true, text: 'Green and violet.', prices: { eur: 149, chf: 150 } },
+      { id: 'heart', kind: 'badge', name: 'Heart', noun: 'the heart badge', text: 'A red heart.', prices: { eur: 99, chf: 100 } },
+    ],
+  };
+}
+
 /** A full bar that holds, as it does in town and inside (only a fire refills it). */
 export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 
@@ -130,6 +145,8 @@ export interface Extras {
   notebook?: NotebookView;
   /** Whom you thanked today (UTC), by id. */
   thanked?: string[];
+  /** The shop: its catalog's version, what you bought, and whether it is open. None: a game without a shop (version 0), closed. */
+  shop?: ShopView;
 }
 /** Dry, light and alone. */
 export const DRY: BodyView = { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} };
@@ -143,6 +160,7 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
     finds: extras.finds ?? [], drops: extras.drops ?? [], bag: extras.bag ?? [], stash: extras.stash ?? [], items: extras.items ?? ITEMS.version,
     fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], flashes: extras.flashes ?? [], surge: extras.surge ?? null, storm: extras.storm ?? null,
     body: extras.body ?? DRY, stone: extras.stone ?? ASLEEP, stats: {}, progress: extras.progress ?? START, merits: extras.merits ?? { spent: 0, owned: [] }, tools: extras.tools ?? [],
+    shop: extras.shop ?? { version: 0, owned: [] },
     // A game made without a story has none (version 0), and without field notes none either.
     story: extras.story ?? { version: 0, chapter: '' },
     notebook: extras.notebook ?? { version: 0, pages: [], blanks: [] },

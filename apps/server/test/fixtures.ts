@@ -38,7 +38,8 @@
  *   nail: two at a time in the town, around the rock: the 8 tiles from (0,0) to (2,2), the spawn (1,2) among them.
  *   tea:  +30 energy; it grows nowhere, tests put it in bags.
  */
-import { TileMap, type ItemsData, type MapData } from '@napoland/shared';
+import { TileMap, type ItemsData, type MapData, type ShopData } from '@napoland/shared';
+import type { ShopSettings } from '../src/config';
 
 export function townData(): MapData {
   return {
@@ -135,6 +136,31 @@ export function laneData(): MapData {
     objects: [house(1), house(5), house(9)],
   };
 }
+
+/** What a test shop sells: an outfit, a jacket pattern and a name tag badge, priced in euros and francs. */
+export function shopData(): ShopData {
+  return {
+    version: 3,
+    looks: [
+      { id: 'winter-parka', kind: 'outfit', name: 'Winter parka', noun: 'the winter parka', text: 'A long parka.', prices: { eur: 299, chf: 290 } },
+      { id: 'argyle', kind: 'pattern', name: 'Argyle', noun: 'the argyle pattern', text: 'Diamonds.', prices: { eur: 149, chf: 150 } },
+      { id: 'heart', kind: 'badge', name: 'Heart', noun: 'the heart badge', text: 'A heart.', prices: { eur: 99, chf: 100 } },
+    ],
+  };
+}
+
+/**
+ * A made-up Stripe key or secret of a kind ('sk_test', 'rk_live', 'whsec'...), never a real one. It is put
+ * together here rather than written out whole, so that no secret scanner takes the tests for a leaked key
+ * and stops a push.
+ */
+export const fakeKey = (kind: string, rest = '51FakeKeyForTheTestsOnly0000000000') => `${kind}_${rest}`;
+
+/** How a test shop is set up: open, in Stripe's test mode, in euros. The keys are made up: never a real one. */
+export const shopSettings = (more: Partial<ShopSettings> = {}): ShopSettings => ({
+  secretKey: fakeKey('sk_test'), webhookSecret: fakeKey('whsec', 'FakeSigningSecret0000000000'), terms: 'https://example.test/terms', currency: 'eur',
+  publicUrl: 'https://play.example.test', api: 'https://api.stripe.com', live: false, ...more,
+});
 
 export function itemsData(): ItemsData {
   return {

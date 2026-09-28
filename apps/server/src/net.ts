@@ -6,6 +6,8 @@
  * and when they leave), piles and marks (whenever one changes), thanks (whenever one is given or told,
  * with one more thanks received for its helper), what lies in the crates (whenever a thing is left or
  * taken) and the Old Stone (whenever it is fed or falls asleep).
+ * The shop's payments go to shop.ts, which asks Stripe for them and hears Stripe's webhook (http.ts), and
+ * tells the World what each player bought.
  * Friends, requests, blocks, private messages and reports go to social.ts, and trades between friends
  * to trade.ts, one player's in order; what is said to chat.ts, and calls without words to calls.ts. On
  * a server with sign-in, whoever says hello without it plays as a guest (a character that lives in
@@ -19,6 +21,7 @@ import {
   ENERGY_MAX,
   MAX_HELLO_BYTES,
   MAX_MESSAGE_BYTES,
+  NO_SHOP,
   PROTOCOL_VERSION,
   PlayerName,
   encode,
@@ -26,14 +29,18 @@ import {
   type ClientMsg,
   type ErrorCode,
   type ServerMsg,
+  type ShopData,
 } from '@napoland/shared';
 import { legacyAuth, type Auth } from './auth';
 import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
 import { Calls } from './calls';
 import { Chat } from './chat';
+import type { ShopSettings } from './config';
+import { Shop, type WebhookAnswer } from './shop';
 import { Social, type SocialMsg } from './social';
 import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
+import type { Fetch } from './stripe';
 import { Trades, type TradeMsg } from './trade';
 import { colorFor, type World } from './world';
 
@@ -86,6 +93,12 @@ export interface NetOptions {
   auth?: Auth;
   /** Words chat masks. None if unset. */
   words?: readonly string[];
+  /**
+   * The shop (shop.ts): how it is set up (none: closed), what it sells, and for tests, the network Stripe
+   * is reached over and the wall clock in seconds a webhook's signature is checked against. None: closed,
+   * selling nothing.
+   */
+  shop?: { settings: ShopSettings | undefined; catalog: ShopData; fetch?: Fetch; nowS?: () => number };
 }
 
 export interface Net {
@@ -95,6 +108,8 @@ export interface Net {
   saveAll(): Promise<void>;
   /** Disconnects everyone with `code`, saves them and stops accepting connections. */
   close(code?: number): Promise<void>;
+  /** Stripe's webhook, for http.ts: the event's raw body and its signature header (shop.ts). */
+  stripeWebhook(body: Buffer, signature: string | undefined): Promise<WebhookAnswer>;
 }
 
 interface Session {
@@ -217,6 +232,17 @@ export function attachNet(o: NetOptions): Net {
     clock,
     blocks: id => social.blocks(id),
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
+  });
+  const shop = new Shop({
+    settings: o.shop?.settings,
+    catalog: o.shop?.catalog ?? NO_SHOP,
+    fetch: o.shop?.fetch,
+    nowS: o.shop?.nowS,
+    world,
+    storage,
+    clock,
+    send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
+    flush: () => flush(),
   });
   // Someone who blocks a player hears no thanks from them either, nor a knock at their door, and keeps them
   // out of their cabin; a friend's street is one to move to, and a friend's cabin one to walk into.
@@ -358,6 +384,9 @@ export function attachNet(o: NetOptions): Net {
       case 'badge':
         world.badge(s.id, msg.x, msg.y, msg.badge, now);
         return flush();
+      case 'checkout':
+        // Stripe is asked over the network: the answer comes when it does (shop.ts says it, or why not).
+        return void shop.checkout(s.id, msg.x, msg.y, msg.look);
       case 'bench':
         world.bench(s.id, msg.x, msg.y, now);
         return flush();
@@ -682,6 +711,7 @@ export function attachNet(o: NetOptions): Net {
       progress: joined.progress,
       ...(joined.restedAway > 0 && { restedAway: joined.restedAway }),
       merits: joined.merits,
+      shop: shop.view(joined.shop),
       tools: joined.tools,
       items: world.itemsVersion,
       story: joined.story,
@@ -699,6 +729,8 @@ export function attachNet(o: NetOptions): Net {
       serverTime: Date.now(),
     });
     flush();
+    // Stripe's word that came while they were on their way in (their hello may have read storage before it).
+    void shop.joined(rec.id);
     const guest = s.guest;
     // Once whom they block is known, a player back in the game at home reads their letter (World.returned).
     befriends(rec.id, async () => {
@@ -967,6 +999,10 @@ export function attachNet(o: NetOptions): Net {
       }
     },
 
+    stripeWebhook(body, signature) {
+      return shop.webhook(body, signature);
+    },
+
     async close(code = 1012) {
       if (closing) return;
       closing = true;
@@ -1006,11 +1042,13 @@ export function attachNet(o: NetOptions): Net {
 
 /**
  * A player as they left (`left`, their saves still on the way), with what storage says that only
- * storage knows (`read`): whose character it is (a claim) and the thanks others gave them meanwhile.
+ * storage knows (`read`): whose character it is (a claim), the thanks others gave them meanwhile, and
+ * what they bought in the shop (Stripe's word, which may have come while they were away).
  */
 function fresher(left: PlayerRecord, read: PlayerRecord): PlayerRecord {
   const thanked = Math.max(left.stats?.thanked ?? 0, read.stats?.thanked ?? 0);
-  return { ...left, authSub: read.authSub ?? left.authSub, stats: { ...left.stats, ...(thanked ? { thanked } : {}) } };
+  const { shop: _left, ...rest } = left;
+  return { ...rest, authSub: read.authSub ?? left.authSub, stats: { ...left.stats, ...(thanked ? { thanked } : {}) }, ...(read.shop ? { shop: read.shop } : {}) };
 }
 
 function text(data: RawData): string {

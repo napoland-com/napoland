@@ -98,6 +98,12 @@ export interface PlayerRecord {
   pattern?: string | null;
   badge?: string | null;
   /**
+   * The looks the player bought in the shop (shop.ts), paid and not refunded, in the order they first
+   * bought each: read from the purchases (PurchaseRecord) with the player, and never written by a save.
+   * Only Stripe's word changes them (Storage.addPurchase, refundPurchase). None: none bought.
+   */
+  shop?: string[];
+  /**
    * What a newer release saved that this one does not know, set aside when the player joins (World.join)
    * and written back as it was with every save, so that coming back to the newer release (after a
    * rollback to this one) finds it again: the bag's slots of items this release has no definition of.
@@ -257,6 +263,27 @@ export interface CacheItemRecord {
   at: number;
 }
 
+/**
+ * A look bought in the shop (shop.ts), as Stripe's webhook said it was paid: one a checkout, so an event
+ * that comes twice is kept once. Never anything about the card, or who the buyer is at Stripe.
+ */
+export interface PurchaseRecord {
+  /** Stripe's Checkout Session (cs_...): the reference of the payment at Stripe. */
+  session: string;
+  /** Who bought it. None once their character is deleted: the payment stays, as the accounts need it. */
+  player: string | null;
+  look: string;
+  /** What was paid, in minor units, and in what (lowercase ISO 4217). */
+  amount: number;
+  currency: string;
+  /** Stripe's payment (pi_...), which a refund names; none if Stripe did not say. */
+  paymentIntent: string | null;
+  status: 'paid' | 'refunded';
+  /** When it was paid, and refunded (ms since the epoch). */
+  created: number;
+  refunded: number | null;
+}
+
 /** A player's lot on a street, for the World to know who lives where, online or not: their name goes on its plate. */
 export interface LotRecord {
   id: string;
@@ -414,6 +441,20 @@ export interface Storage {
   /** The Long Night as it was last saved, or null. */
   loadLongNight(): Promise<LongNightRecord | null>;
   saveLongNight(night: LongNightRecord): Promise<void>;
+  /**
+   * Keeps a look paid for (Stripe's webhook said so), once for each checkout: true when it was kept now,
+   * false when that checkout was kept already (Stripe sends an event again until it hears it arrived). A
+   * player who is gone by then is none: the payment is kept all the same.
+   */
+  addPurchase(p: PurchaseRecord): Promise<boolean>;
+  /**
+   * The payment `paymentIntent` was refunded at `at` (ms since the epoch): the look it paid for is no
+   * longer the buyer's. Returns whose it was and which look, or null when no paid purchase has that
+   * payment (another of the account's sales, or refunded already).
+   */
+  refundPurchase(paymentIntent: string, at: number): Promise<{ player: string | null; look: string } | null>;
+  /** The looks `player` bought, paid and not refunded, in the order they first bought each (PlayerRecord.shop). */
+  shopLooksOf(player: string): Promise<string[]>;
   /** A player by id, or by name regardless of case. */
   findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null>;
   setRequestsOff(id: string, off: boolean): Promise<void>;
@@ -448,6 +489,7 @@ const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}), ...(rec.notebook ? { notebook: copyNotebook(rec.notebook) } : {}),
   ...(rec.notes ? { notes: [...rec.notes] } : {}), ...(rec.keepsakes ? { keepsakes: [...rec.keepsakes] } : {}), ...(rec.furniture ? { furniture: [...rec.furniture] } : {}),
   ...(rec.bests ? { bests: copyBests(rec.bests) } : {}),
+  ...(rec.shop ? { shop: [...rec.shop] } : {}),
 });
 /** A record as storage keeps it: the copy it names, if any (like the database, which keeps '' for the main copy and reads it back as none). */
 function withZone<T extends { zone?: string }>(r: T, zone: string | undefined): T {
@@ -462,6 +504,8 @@ const stored = (rec: PlayerRecord): PlayerRecord => tidy(withZone(copyRecord(rec
 const tidy = (out: PlayerRecord): PlayerRecord => {
   for (const k of ['outfit', 'pattern', 'badge', 'rested', 'meritsSpent'] as const) if (!out[k]) delete out[k];
   if (!out.looks?.length) delete out.looks;
+  // What was bought in the shop is the purchases', read with the player: a row never holds it.
+  delete out.shop;
   // What a newer release saved goes back where it was saved: in the bag.
   if (out.kept) {
     out.bag = savedBag(out);
@@ -488,6 +532,8 @@ export class MemoryStorage implements Storage {
   private readonly thanks = new Map<string, Omit<ThanksRecord, 'name'>>();
   private readonly cacheItems = new Map<number, Omit<CacheItemRecord, 'name'>>();
   private readonly firsts = new Map<string, Omit<FirstRecord, 'name'>>();
+  /** Purchases by Stripe's checkout id, in the order they were kept. */
+  private readonly purchases = new Map<string, PurchaseRecord>();
   private stone: StoneRecord | null = null;
   private longNight: LongNightRecord | null = null;
   private since: number | undefined;
@@ -502,12 +548,23 @@ export class MemoryStorage implements Storage {
 
   async findByTokenHash(hash: string): Promise<PlayerRecord | null> {
     const id = this.idByToken.get(hash);
-    return id === undefined ? null : copyRecord(this.byId.get(id)!);
+    return id === undefined ? null : this.read(id);
   }
 
   async findByAuthSub(sub: string): Promise<PlayerRecord | null> {
     const id = this.idBySub.get(sub);
-    return id === undefined ? null : copyRecord(this.byId.get(id)!);
+    return id === undefined ? null : this.read(id);
+  }
+
+  /** A player as a read gives them: their row, and what they bought in the shop, as the database's join does. */
+  private read(id: string): PlayerRecord {
+    const shop = this.shopOf(id);
+    return { ...copyRecord(this.byId.get(id)!), ...(shop.length ? { shop } : {}) };
+  }
+
+  /** The looks a player bought, paid and not refunded, each once, in the order they first bought it. */
+  private shopOf(id: string): string[] {
+    return [...new Set([...this.purchases.values()].filter(p => p.player === id && p.status === 'paid').sort((a, b) => a.created - b.created).map(p => p.look))];
   }
 
   async claim(id: string, sub: string): Promise<boolean> {
@@ -602,6 +659,8 @@ export class MemoryStorage implements Storage {
       for (const [key, t] of this.thanks) if (t.giver === rec.id || t.helper === rec.id) this.thanks.delete(key);
       for (const [id, c] of this.cacheItems) if (c.owner === rec.id) this.cacheItems.delete(id);
       for (const [secret, f] of this.firsts) if (f.player === rec.id) this.firsts.delete(secret);
+      // A purchase stays, for the accounts, without whose it was (ON DELETE SET NULL). A guest never buys: alike all the same.
+      for (const p of this.purchases.values()) if (p.player === rec.id) p.player = null;
       this.off.delete(rec.id);
       this.tradesOff.delete(rec.id);
       this.links = this.links.filter(l => l.from !== rec.id && l.to !== rec.id);
@@ -740,6 +799,31 @@ export class MemoryStorage implements Storage {
     this.longNight = { ...night };
   }
 
+  async addPurchase(p: PurchaseRecord): Promise<boolean> {
+    // Like the database's keys: one row a checkout, and a payment in one row at most.
+    if (this.purchases.has(p.session) || (p.paymentIntent !== null && [...this.purchases.values()].some(x => x.paymentIntent === p.paymentIntent))) return false;
+    // Like the database: whose it is only while they exist.
+    this.purchases.set(p.session, { ...p, player: p.player !== null && this.byId.has(p.player) ? p.player : null });
+    return true;
+  }
+
+  async refundPurchase(paymentIntent: string, at: number): Promise<{ player: string | null; look: string } | null> {
+    const p = [...this.purchases.values()].find(x => x.paymentIntent === paymentIntent && x.status === 'paid');
+    if (!p) return null;
+    p.status = 'refunded';
+    p.refunded = at;
+    return { player: p.player, look: p.look };
+  }
+
+  async shopLooksOf(player: string): Promise<string[]> {
+    return this.shopOf(player);
+  }
+
+  /** The purchases kept, in the order they were, for tests. */
+  storedPurchases(): PurchaseRecord[] {
+    return [...this.purchases.values()].map(p => ({ ...p }));
+  }
+
   async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {
     const id = 'id' in by ? by.id : this.idByName.get(by.name.toLowerCase());
     const rec = id === undefined ? undefined : this.byId.get(id);
@@ -787,10 +871,9 @@ export class MemoryStorage implements Storage {
 
   async close(): Promise<void> {}
 
-  /** The stored copy of a player, for tests. */
+  /** The stored copy of a player (with what they bought in the shop, as a read gives it), for tests. */
   get(id: string): PlayerRecord | undefined {
-    const rec = this.byId.get(id);
-    return rec && copyRecord(rec);
+    return this.byId.has(id) ? this.read(id) : undefined;
   }
 
   /** The stored pile of a player, for tests. */
@@ -865,6 +948,8 @@ interface PlayerRow {
   first_steps: number | null;
   created_at: Date;
   last_seen_at: Date;
+  /** Not a column: the looks they bought in the shop (026_purchases.sql), paid and not refunded, as PLAYER reads them; null for none. */
+  shop: unknown;
 }
 
 interface DropRow {
@@ -1020,9 +1105,18 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.street_told ? { streetTold: true as const } : {}),
   ...(r.visits_off ? { visitsOff: true as const } : {}),
   ...(r.first_steps ? { firstSteps: r.first_steps } : {}),
+  // The purchases' word, never the row's: a list of look ids (the World keeps only the looks it has).
+  ...(Array.isArray(r.shop) && r.shop.some(l => typeof l === 'string') ? { shop: r.shop.filter((l): l is string => typeof l === 'string') } : {}),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
+
+/**
+ * A player's row, with the looks they bought in the shop: each look with a paid purchase once, in the order
+ * it was first bought (026_purchases.sql). `where` picks the row.
+ */
+const PLAYER = (where: string) => `SELECT p.*, (SELECT jsonb_agg(b.look ORDER BY b.first, b.look) FROM (SELECT look, min(created) AS first FROM purchases
+    WHERE player = p.id AND status = 'paid' GROUP BY look) b) AS shop FROM players p WHERE ${where}`;
 
 /** A jsonb thanks' `what` as the server wrote it, or null for anything else (such a thanks is left out). */
 const thanksFor = (json: unknown): ThanksFor | null => {
@@ -1094,12 +1188,12 @@ export class PgStorage implements Storage {
   }
 
   async findByTokenHash(hash: string): Promise<PlayerRecord | null> {
-    const r = await this.pool.query<PlayerRow>('SELECT * FROM players WHERE token_hash = $1', [hash]);
+    const r = await this.pool.query<PlayerRow>(PLAYER('p.token_hash = $1'), [hash]);
     return r.rows[0] ? fromRow(r.rows[0]) : null;
   }
 
   async findByAuthSub(sub: string): Promise<PlayerRecord | null> {
-    const r = await this.pool.query<PlayerRow>('SELECT * FROM players WHERE auth_sub = $1', [sub]);
+    const r = await this.pool.query<PlayerRow>(PLAYER('p.auth_sub = $1'), [sub]);
     return r.rows[0] ? fromRow(r.rows[0]) : null;
   }
 
@@ -1334,6 +1428,33 @@ export class PgStorage implements Storage {
       `INSERT INTO world_state (key, value) VALUES ('long_night', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
       [JSON.stringify(night)],
     );
+  }
+
+  async addPurchase(p: PurchaseRecord): Promise<boolean> {
+    // Whose it is only while they exist (a character deleted before Stripe's word came): the payment is kept either way.
+    const r = await this.pool.query(
+      `INSERT INTO purchases (session, player, look, amount, currency, payment_intent, status, created, refunded)
+       VALUES ($1, (SELECT id FROM players WHERE id = $2::uuid), $3, $4, $5, $6, $7, $8, $9)
+       ON CONFLICT DO NOTHING`,
+      [p.session, p.player, p.look, p.amount, p.currency, p.paymentIntent, p.status, new Date(p.created), p.refunded === null ? null : new Date(p.refunded)],
+    );
+    return r.rowCount === 1;
+  }
+
+  async refundPurchase(paymentIntent: string, at: number): Promise<{ player: string | null; look: string } | null> {
+    const r = await this.pool.query<{ player: string | null; look: string }>(
+      `UPDATE purchases SET status = 'refunded', refunded = $2 WHERE payment_intent = $1 AND status = 'paid' RETURNING player, look`,
+      [paymentIntent, new Date(at)],
+    );
+    return r.rows[0] ?? null;
+  }
+
+  async shopLooksOf(player: string): Promise<string[]> {
+    const r = await this.pool.query<{ look: string }>(
+      `SELECT look FROM purchases WHERE player = $1 AND status = 'paid' GROUP BY look ORDER BY min(created), look`,
+      [player],
+    );
+    return r.rows.map(x => x.look);
   }
 
   async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {

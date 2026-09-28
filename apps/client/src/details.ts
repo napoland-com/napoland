@@ -3,7 +3,7 @@
  * tap on anything opens its card: what a piece of gear is (tier, what it resists and the energy it adds
  * as worn down as it is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what
  * a mend takes, what a lockbox may hold, what something in your bag or stash is, an outfit in the
- * wardrobe, or what lies in a crate and who left it. The card's button does the one thing that can be done with it; so do A and a second tap on
+ * wardrobe, a look the shop sells, or what lies in a crate and who left it. The card's button does the one thing that can be done with it; so do A and a second tap on
  * the same thing (DoubleTap). A card may offer a second thing beside it (throwing away what you carry,
  * taking a piece out of the stash), which only its own button does.
  *
@@ -11,12 +11,14 @@
  * (detailView), hud.ts draws it and sends what its buttons do.
  */
 import {
-  CACHE_SIZE, RESIST_MAX, WEAR_FADES, bagSlotsOf, cacheTakes, mayWear, meritLookOf, meritsLeft, mendCost, nextUpgrade, outfitOf, pieceFactor, upgradable, upgradeFactor, wearSeconds,
-  whyNotBuy, xpFor, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type LookKind, type Piece, type PieceAt, type Slot, type Tier, type Worn,
+  CACHE_SIZE, RESIST_MAX, WEAR_FADES, bagSlotsOf, cacheTakes, formatPrice, mayWear, meritLookOf, meritsLeft, mendCost, nextUpgrade, outfitOf, pieceFactor, priceOf, shopLookOf, upgradable,
+  upgradeFactor, wearSeconds, whyNotBuy, whyNotCheckout, xpFor, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type LookKind, type Piece, type PieceAt, type Slot,
+  type Tier, type Worn,
 } from '@napoland/shared';
 import { NO_BADGE_ICON, NO_OUTFIT_ICON, NO_PATTERN_ICON, iconFor, outfitIcon } from './icons';
 import { ELEMENT_WORDS, conditionText, countOf, factsOf, oddsText, pieceName, slotName, useLabel, type Items } from './items';
 import { CRATE_FULL, CRATE_NO_GEAR, KEEPSAKE_STAYS, LEFT_ONE, TOOK_ONE, holdsText, leftBy, merits, noMerit, price } from './said';
+import { SHOP_WHERE, YOURS, shopIcon } from './shop';
 import { NO_BADGE, NO_OUTFIT, NO_PATTERN, lookIcon, outfitWords, type WardrobeState } from './wardrobe';
 
 export { pieceName };
@@ -75,7 +77,9 @@ export type DetailRef =
   /** A thing lying in the crate you opened (caches.ts), by its id. */
   | { from: 'crate'; id: number }
   /** A jacket pattern or a name tag badge in the wardrobe (merits.ts), by id, or NO_PATTERN's or NO_BADGE's. */
-  | { from: 'look'; id: string };
+  | { from: 'look'; id: string }
+  /** A look the shop sells (shop.ts), by id: in the Shop tab, or, bought, in its kind's tab. */
+  | { from: 'shop'; id: string };
 
 /** Names what a card is about, for the double tap and to keep it open while the game changes around it. */
 export function refKey(r: DetailRef): string {
@@ -89,6 +93,7 @@ export function refKey(r: DetailRef): string {
     case 'outfit': return `outfit:${r.id}`;
     case 'crate': return `crate:${r.id}`;
     case 'look': return `look:${r.id}`;
+    case 'shop': return `shop:${r.id}`;
   }
 }
 
@@ -116,6 +121,8 @@ export type DetailAct =
   | { kind: 'badge'; id: string | null }
   /** Spend merits on a look: it asks first, with the card still open. */
   | { kind: 'buy'; look: string }
+  /** Buy a look in the shop, on Stripe's page: it asks first (with the waiver), with the card still open. */
+  | { kind: 'checkout'; look: string }
   /** At a crate: take the thing `id` out (it asks nothing: someone left it for you), or leave one of what bag slot `slot` holds (it asks first). */
   | { kind: 'crateTake'; id: number }
   | { kind: 'crateLeave'; slot: number };
@@ -267,7 +274,7 @@ export function cardPress(v: DetailView): { does?: DetailAct; close: boolean; sh
   const act = v.act;
   if (!act) return { close: false, shake: false };
   // Using and buying ask first, with the card still open behind the question; bought, it offers to wear it.
-  if (act.enabled) return { does: act.does, close: act.does.kind !== 'use' && act.does.kind !== 'buy', shake: false };
+  if (act.enabled) return { does: act.does, close: act.does.kind !== 'use' && act.does.kind !== 'buy' && act.does.kind !== 'checkout', shake: false };
   const asks = act.does.kind === 'make' || act.does.kind === 'mend' || act.does.kind === 'upgrade' || act.does.kind === 'crateLeave';
   return { ...(asks ? { does: act.does } : {}), close: false, shake: true };
 }
@@ -408,7 +415,36 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
     }
     case 'look':
       return s.wardrobe ? lookCard(ref.id, s.wardrobe) : null;
+    case 'shop':
+      return s.wardrobe ? shopCard(ref.id, s.wardrobe) : null;
   }
+}
+
+/**
+ * A look the shop sells: its drawing, name and line, where it goes, and its one button. Bought, it wears it
+ * (or takes it off, when you wear it), whether the shop is open or not; not yet, Buy with its price, which
+ * asks first with the waiver and sends you to Stripe's page, greyed out for a guest, with why. Gone for a
+ * look the shop does not sell, and for one not bought while the shop is closed.
+ */
+function shopCard(id: string, w: WardrobeState): DetailView | null {
+  const s = w.shop, look = shopLookOf(s?.catalog, id);
+  if (!s || !look) return null;
+  const card: DetailView = { icon: shopIcon(look), name: look.name, text: look.text, stats: [], facts: [SHOP_WHERE[look.kind]], notes: [] };
+  if (s.owned.includes(look.id)) {
+    card.facts.push(`${YOURS} for good`);
+    const kind = look.kind, wearing = kind === 'outfit' ? w.wearing : kind === 'pattern' ? w.pattern : w.badge;
+    if (wearing === look.id) {
+      const then = kind === 'outfit' ? 'your gear shows again' : kind === 'pattern' ? 'your jacket as it is' : 'your name alone';
+      return { ...card, notes: [{ text: 'You wear it now.', tone: 'plain' }], act: { label: 'Take off', then, enabled: true, does: { kind, id: null } } };
+    }
+    return { ...card, act: { label: 'Wear', enabled: true, does: { kind, id: look.id } } };
+  }
+  const amount = s.open ? priceOf(look, s.open.currency) : undefined;
+  if (!s.open || amount === undefined) return null;
+  const why = whyNotCheckout(look, s.owned, !w.guest, true);
+  if (why === 'sign_in_first') card.notes.push({ text: 'Sign in to buy looks.', tone: 'plain' });
+  else card.notes.push({ text: 'A look only: it changes nothing out there. You pay on Stripe\'s page.', tone: 'plain' });
+  return { ...card, act: { label: 'Buy', then: formatPrice(amount, s.open.currency), enabled: !why, does: { kind: 'checkout', look: look.id } } };
 }
 
 /**

@@ -10,8 +10,8 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, SEASONS, bagSlotsOf, inTheDark, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData,
-  type MapRef, type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, NO_SHOP, OAUTH_PROVIDERS, SEASONS, bagSlotsOf, inTheDark, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear,
+  type ItemsData, type MapData, type MapRef, type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type ShopData, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
@@ -38,6 +38,7 @@ import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { Resolution } from './quality';
 import { heardFinds, nearest, radioOf, type RadioScene } from './radio';
+import { returnFrom, withoutReturn } from './shop';
 import { levelText, newsBanner, restedLine, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
@@ -83,6 +84,8 @@ const maps = new Maps(Object.values(import.meta.glob<MapData>('../../../content/
 const items = new Items(Object.values(import.meta.glob<ItemsData>('../../../content/items.json', { eager: true, import: 'default' }))[0]);
 const story: StoryData = Object.values(import.meta.glob<StoryData>('../../../content/story.json', { eager: true, import: 'default' }))[0] ?? { version: 0, chapters: [] };
 const notebook: NotebookData = Object.values(import.meta.glob<NotebookData>('../../../content/notebook.json', { eager: true, import: 'default' }))[0] ?? { version: 0, pages: [] };
+// What the shop sells: its looks' names, lines and prices, in every currency the server may sell in.
+const shopData: ShopData = Object.values(import.meta.glob<ShopData>('../../../content/shop.json', { eager: true, import: 'default' }))[0] ?? NO_SHOP;
 const app = document.getElementById('app')!;
 const screen = document.createElement('div');
 screen.className = 'screen';
@@ -116,7 +119,18 @@ function buildView() {
 let welcomed = false;
 /** The first welcome of this page shows where you are; later ones are reconnects. */
 let arrived = false;
-const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story, notebook);
+const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story, notebook, shopData);
+// The payment page the server opened for a look: the game leaves for it (a page of Stripe's, never loaded into this one).
+game.goTo = url => location.assign(url);
+// Back from that page: the game says how the payment went once it is in (shop.ts). The address loses those
+// words at once, so a reload says nothing again.
+{
+  const back = returnFrom(location.search, shopData);
+  if (back) {
+    game.returning = back;
+    history.replaceState(history.state, '', `${location.pathname}${withoutReturn(location.search)}${location.hash}`);
+  }
+}
 /** A panel is open over the world (the bag, the journal, the stash, a crate, a trade...), where it covers the banners. */
 const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.crateOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen
   || hud.tradeOpen;
@@ -131,6 +145,7 @@ const closePanels = () => {
 /** What the wardrobe knows: whether you play as a guest, your level and the outfit you wear. */
 const wardrobeNow = (): WardrobeState => ({
   guest: game.guest, level: game.progress.level, wearing: game.myOutfit, xp: game.progress.xp, merits: game.merits, pattern: game.myPattern, badge: game.myBadge,
+  shop: { catalog: shopData, open: game.shopOpen, owned: game.shopOwned },
 });
 /** The status panel, as the game stands now. */
 const showStatus = () => {
@@ -201,6 +216,7 @@ const hud = new Hud(screen, {
   outfit: id => game.wearOutfit(id),
   adorn: (kind, id) => game.wearLook(kind, id),
   buy: look => game.buyLook(look),
+  checkout: look => game.checkout(look),
   // At the workbench, the first goal opens the card of what to make (once the workbench has answered).
   goal: () => {
     const next = game.nextGear();
@@ -610,7 +626,8 @@ conn.onMessage = (msg: ServerMsg) => {
   const now = performance.now();
   switch (msg.t) {
     case 'welcome':
-      if (!known(msg.map) || msg.items !== items.version || msg.story.version !== story.version || (msg.notebook && msg.notebook.version !== notebook.version)) return outdated();
+      if (!known(msg.map) || msg.items !== items.version || msg.story.version !== story.version || (msg.notebook && msg.notebook.version !== notebook.version)
+        || (msg.shop && msg.shop.version !== shopData.version)) return outdated();
       welcomed = true;
       signin?.welcomed(msg);
       signedInNews = signin?.news ?? null;
@@ -897,6 +914,8 @@ function frame(now: number) {
     if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
     // A merit waits like a level (it comes at the chest), and puts a dot on the patterns and badges it buys until they are looked at.
     if (n.kind === 'merit') { toSay.push(n); if (!game.guest) hud.setMeritNews(true); continue; }
+    // A look bought in the shop: a banner (unless the text box said it already) and a dot on the Wardrobe tab until it is looked at.
+    if (n.kind === 'bought') { toSay.push(n); hud.setWardrobeNews(true); continue; }
     // A parcel that comes on arrival waits for the place's name to be read first; one that comes while
     // the chest is open needs no banner, as the stash says what came (below). Arriving rested waits the same way.
     if (n.kind === 'parcel') { if (!game.chest) toSay.push(n); continue; }
@@ -975,7 +994,9 @@ function frame(now: number) {
   }
   // A guest who signs in has the outfits at once; a new level opens more.
   // Merits come with XP, and each look bought or worn changes a tile.
-  const wardrobe = wardrobeNow(), wardrobeKey = `${wardrobe.guest}|${wardrobe.level}|${wardrobe.wearing}|${meritsOf(game.progress.xp)}|${game.merits.spent}|${game.merits.owned}|${wardrobe.pattern}|${wardrobe.badge}`;
+  // And the shop: whether it is open, and what was bought in it.
+  const wardrobe = wardrobeNow(), wardrobeKey = `${wardrobe.guest}|${wardrobe.level}|${wardrobe.wearing}|${meritsOf(game.progress.xp)}|${game.merits.spent}|${game.merits.owned}|${wardrobe.pattern}|${wardrobe.badge}`
+    + `|${game.shopOpen?.currency ?? ''}|${game.shopOpen?.terms ?? ''}|${game.shopOwned}`;
   if (wardrobeKey !== wardrobeShown) {
     wardrobeShown = wardrobeKey;
     hud.setWardrobe(wardrobeView(wardrobe));

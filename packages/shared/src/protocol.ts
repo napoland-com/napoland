@@ -17,6 +17,7 @@ import type { MeritsView } from './merits';
 import type { NotebookView } from './notebook';
 import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
+import type { ShopView } from './shop';
 import type { ConditionsView, FlashView, SeasonView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
 import { OFFER_MAX } from './trade';
@@ -30,8 +31,9 @@ import { OFFER_MAX } from './trade';
  * 34: visits (a neighbor's door lets you in: `visit` in the welcome and `zone`, whose furniture is theirs),
  * the road to your street, and NAPO's teleport (`teleport`), which a client that did not know would never use.
  * 35: the teleport in town takes you home, and a new player's first steps (`firstSteps`, in the welcome too).
+ * 36: the shop for looks (`checkout`, and `shop` in the welcome and when what you bought changes).
  */
-export const PROTOCOL_VERSION = 35;
+export const PROTOCOL_VERSION = 36;
 
 /**
  * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
@@ -188,6 +190,13 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('pattern'), x: z.number().int(), y: z.number().int(), pattern: z.string().min(1).max(40).nullable() }),
   /** Wear a name tag badge of yours from the wardrobe at the chest on tile x,y, or none (null). */
   z.object({ t: z.literal('badge'), x: z.number().int(), y: z.number().int(), badge: z.string().min(1).max(40).nullable() }),
+  /**
+   * Buy a look in the shop (shop.ts) from the wardrobe at the chest on tile x,y: the server opens a payment
+   * for it on Stripe's page and says where (`checkout`). Only with `waiver`: the player said yes to getting
+   * it at once, and so to giving up the 14 days to change their mind. The look is theirs only once Stripe
+   * tells the server it is paid.
+   */
+  z.object({ t: z.literal('checkout'), x: z.number().int(), y: z.number().int(), look: z.string().min(1).max(40), waiver: z.literal(true) }),
   /** Ask someone to be your friend, by id (tapping their name tag) or by name. If they asked you already, you are friends. */
   z.object({ t: z.literal('befriend'), id: z.uuid().optional(), name: PlayerName.optional() }),
   /** Answer someone's friend request: yes makes you friends, no drops it. */
@@ -525,7 +534,11 @@ export type Refusal =
   /** Their street has no lot free: nobody can move next to them for now. */
   | 'street_full'
   /** You live on their street already. */
-  | 'neighbors';
+  | 'neighbors'
+  /** The shop is closed: the owner has not set up payments (or turned them off). */
+  | 'shop_closed'
+  /** The shop could not open a payment just now (Stripe did not answer): try again in a moment. */
+  | 'shop_down';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -719,6 +732,8 @@ export type ServerMsg =
       restedAway?: number;
       /** What you spent of your merits and the looks you bought (merits.ts); what you earned follows from your XP. */
       merits: MeritsView;
+      /** The shop for looks (shop.ts): its catalog's version, the looks you bought in it, and whether it is open now. */
+      shop: ShopView;
       /** Your tools (item ids, items.ts, toolsOf), in the order you got them: kept for good, apart from the bag. */
       tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
@@ -923,6 +938,10 @@ export type ServerMsg =
   | { t: 'badge'; id: string; badge: string | null }
   /** Your merits, whole, after you spent some: what you spent, and every look you bought. */
   | { t: 'merits'; merits: MeritsView }
+  /** The looks you bought in the shop, whole, after Stripe said one is paid or refunded: paid ones only, in the order you bought them. */
+  | { t: 'shop'; owned: string[] }
+  /** The payment you asked for (`checkout`) is open on Stripe's page, at `url`: the game takes you there. */
+  | { t: 'checkout'; look: string; url: string }
   /** The workbench you opened: what your stash holds, whole, after opening it, making or mending something, or a parcel came. */
   | { t: 'bench'; stash: BagSlot[] }
   /** On your map: a find grew here, or someone took one / it went. */
@@ -949,6 +968,7 @@ export type ServerMsg =
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
+  | 'checkout'
   | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';

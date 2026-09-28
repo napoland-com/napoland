@@ -12,6 +12,7 @@ import type { FeatView, StatusView } from './hud';
 import { ELEMENT_WORDS, type Items } from './items';
 import { parcelBanner } from './parcels';
 import { cozyText, meritText, thousands } from './said';
+import { inWardrobe } from './shop';
 import { outfitWords } from './wardrobe';
 
 export interface StatusInput {
@@ -196,14 +197,16 @@ export function longNightBanner(on: boolean, bonus: boolean, does: string): { ti
  * The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a
  * feat, a level, a chapter of the story, a page of the field notes or a blank filled in on one, a keepsake
  * home, a parcel (which names what came: `items`, and with the welcome parcel, the outfits signing in
- * gave). Null: nothing to say, as for a note just read (the text box said it all). A level says the
- * outfits it opens, which a guest (`guest`) would wear once signed in.
+ * gave), a look bought in the shop. Null: nothing to say, as for a note just read (the text box said it
+ * all). A level says the outfits it opens, which a guest (`guest`) would wear once signed in.
  */
 export function newsBanner(n: News, place: string, items?: Items, guest = false): { title: string; sub: string } | null {
   // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where. A
   // lodestone's tug is a pulse on the status panel and a faint sound: a banner would make it loud. Steps
   // that are not yours (unease.ts) are only ever heard: said out loud, they would be nothing.
   if (n.kind === 'call' || n.kind === 'tug' || n.kind === 'note' || n.kind === 'stalk') return null;
+  // Bought in the shop: thanked in the text box already when the player came back from paying for it.
+  if (n.kind === 'bought') return n.said ? null : { title: 'Thank you', sub: inWardrobe(n.noun, n.plural) };
   // One line, for everyone online.
   if (n.kind === 'first') return { title: n.text, sub: '' };
   if (n.kind === 'keepsake') {
