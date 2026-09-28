@@ -653,6 +653,7 @@ export function attachNet(o: NetOptions): Net {
       items: world.itemsVersion,
       story: joined.story,
       thanked: joined.thanked,
+      notebook: joined.notebook,
       serverTime: Date.now(),
     });
     flush();

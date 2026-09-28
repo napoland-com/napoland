@@ -7,6 +7,7 @@ import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element
 import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
 import { DECOR, FRONTED, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, hangs, objectTiles, type MapData, type MapObject, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
+import { ANYWHERE, DURING, SIGHTS, opensOn, readableAt, type NotebookData, type NotebookEvent } from './notebook';
 import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
 import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
@@ -671,4 +672,95 @@ function validateConditions(data: ItemsData, byId: Map<string, MapData>, err: (m
     }
   }
   return ids;
+}
+
+/** A page is short: a few lines in the journal. */
+const PAGE_TITLE_MAX = 32;
+const PAGE_TEXT_MAX = 300;
+/**
+ * Words that say where something is, which a page never does (the world is learned by walking it): the
+ * compass, a count of steps or tiles, a tile's two numbers. "The South Road" is a name, not a way.
+ */
+const WHERE = [/\b(north|south|east|west)(east|west|ern|wards?)?\b/i, /\b\d+ (steps?|tiles?)\b/i, /\b\d{1,2} ?, ?\d{1,2}\b/];
+export const saysWhere = (text: string): boolean => WHERE.some(re => re.test(text.replace(/\bSouth Road\b/g, '')));
+
+/**
+ * content/notebook.json: pages with ids, areas, titles and texts, each opened by what a player picks up,
+ * reads or lives through, about finds, readable things and sights that exist, and never saying where
+ * anything is; blanks with a question, its answer and what fills it in.
+ */
+export function validateNotebook(data: NotebookData, maps: MapData[], items?: ItemsData): Problem[] {
+  const out: Problem[] = [];
+  const err = (message: string) => out.push({ level: 'error', message });
+  const warn = (message: string) => out.push({ level: 'warning', message });
+  if (!Number.isInteger(data.version) || data.version < 1) err('version must be a whole number from 1');
+  if (!Array.isArray(data.pages) || !data.pages.length) {
+    err('there are no pages');
+    return out;
+  }
+  const byId = new Map(maps.map(m => [m.id, m]));
+  const areas = new Set([ANYWHERE, ...maps.filter(m => m.kind !== 'inside').map(m => m.id)]);
+  // What can be picked up: what finds grow, and what a strange object may turn out to be.
+  const found = new Set([...(items?.finds ?? []).map(f => f.item), ...(items?.items ?? []).flatMap(i => (i.reveals ?? []).map(r => r.item))]);
+  // What has an id of its own to be read by: NAPO's desks.
+  const named = new Set<string>();
+  for (const m of maps) for (const o of m.objects) if (o.kind === 'console') named.add(o.id);
+  const event = (e: NotebookEvent, name: string) => {
+    const kinds = typeof e === 'object' && e !== null ? Object.keys(e).filter(k => k !== 'during') : [];
+    if (kinds.length !== 1 || !['find', 'read', 'saw'].includes(kinds[0]!)) return err(`${name}: an event is one of find, read or saw`);
+    if ('during' in e && !('find' in e)) err(`${name}: only a find has a during`);
+    if ('find' in e) {
+      if (!found.has(e.find)) err(`${name}: nothing out there is ${String(e.find)}: no find grows it and nothing turns out to be it`);
+      if (e.during !== undefined && !(DURING as readonly string[]).includes(e.during)) err(`${name}: during is ${DURING.join(' or ')}`);
+    } else if ('read' in e) {
+      if (typeof e.read === 'string') {
+        if (!named.has(e.read)) err(`${name}: nothing to read has the id ${e.read}`);
+      } else {
+        const m = byId.get(e.read?.map);
+        const o = m && readableAt(m, e.read.x, e.read.y);
+        if (!m) err(`${name}: there is no map ${String(e.read?.map)}`);
+        else if (!o) err(`${name}: nothing to read at ${e.read.x},${e.read.y} in ${e.read.map}`);
+        else if (o.x !== e.read.x || o.y !== e.read.y) err(`${name}: the ${o.kind} at ${e.read.x},${e.read.y} in ${e.read.map} is named by its first tile, ${o.x},${o.y}`);
+      }
+    } else if (!(SIGHTS as readonly string[]).includes(e.saw)) err(`${name}: saw is one of ${SIGHTS.join(', ')}`);
+    return undefined;
+  };
+  const words = (text: unknown, name: string, max: number) => {
+    if (typeof text !== 'string' || !text.trim()) return err(`${name} says nothing`);
+    if (text.length > max) err(`${name} is ${text.length} characters: a page is short, ${max} at most`);
+    if (saysWhere(text)) err(`${name} says where something is: "${text}". A page never does`);
+    return undefined;
+  };
+  const pageIds = new Set<string>(), blankIds = new Set<string>();
+  data.pages.forEach((p, i) => {
+    const name = `page ${i + 1} (${JSON.stringify(p?.id)})`;
+    if (typeof p !== 'object' || p === null) return err(`${name}: a page has an id, an area, a title, a text and what opens it`);
+    if (!ID.test(p.id ?? '')) err(`${name}: an id is lowercase words joined by hyphens`);
+    if (pageIds.has(p.id)) err(`${name} is there twice`);
+    pageIds.add(p.id);
+    if (!areas.has(p.area)) err(`${name}: its area is a town or a region (${[...areas].filter(a => a !== ANYWHERE).join(', ')}), or ${ANYWHERE}`);
+    words(p.title, `${name}: its title`, PAGE_TITLE_MAX);
+    words(p.text, `${name}: its text`, PAGE_TEXT_MAX);
+    const opens = p.when === undefined ? [] : opensOn(p);
+    if (!opens.length) err(`${name}: nothing opens it`);
+    opens.forEach((e, k) => event(e, `${name}: what opens it${opens.length > 1 ? ` (${k + 1})` : ''}`));
+    if (p.blanks !== undefined && !Array.isArray(p.blanks)) return err(`${name}: blanks is a list`);
+    (p.blanks ?? []).forEach((b, k) => {
+      const where = `${name}: blank ${k + 1} (${JSON.stringify(b?.id)})`;
+      if (typeof b !== 'object' || b === null) return err(`${where}: a blank has an id, a question, its answer and what fills it in`);
+      if (!ID.test(b.id ?? '')) err(`${where}: an id is lowercase words joined by hyphens`);
+      if (blankIds.has(b.id)) err(`${where} is there twice`);
+      blankIds.add(b.id);
+      words(b.ask, `${where}: its question`, PAGE_TITLE_MAX * 2);
+      if (typeof b.ask === 'string' && !b.ask.trim().endsWith('?')) err(`${where}: its question ends in "?"`);
+      words(b.fill, `${where}: its answer`, PAGE_TEXT_MAX / 2);
+      if (b.when === undefined) return err(`${where}: nothing fills it in`);
+      event(b.when, `${where}: what fills it in`);
+      // It would fill in as the page opens, and never read as a question.
+      if (opens.some(e => JSON.stringify(e) === JSON.stringify(b.when))) warn(`${where}: filled in by what opens its page, so it never reads as a question`);
+      return undefined;
+    });
+    return undefined;
+  });
+  return out;
 }

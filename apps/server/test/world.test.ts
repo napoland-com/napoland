@@ -263,10 +263,11 @@ describe('World: turning, joining and leaving', () => {
       merits: { spent: 0, owned: [] },
       // No items, so no paper map to carry.
       tools: [],
-      // No story in this world: no chapter to be in.
+      // No story in this world: no chapter to be in; and no field notes, so not a page yet.
       story: { version: 0, chapter: '' },
       // Nobody thanked today.
       thanked: [],
+      notebook: { version: 0, pages: [], blanks: [] },
     });
     expect(w.drain()).toEqual([
       { to: '*', map: 'test', except: 'a', msg: { t: 'join', player: joined.player } },

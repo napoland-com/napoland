@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { ItemsData, MapData, StoryData } from '@napoland/shared';
-import { loadItems, loadMaps, loadStory } from '../src/content';
+import type { ItemsData, MapData, NotebookData, StoryData } from '@napoland/shared';
+import { loadItems, loadMaps, loadNotebook, loadStory } from '../src/content';
 import { fixtureMaps, houseData, itemsData, townData, woodsData } from './fixtures';
 
 const dirs: string[] = [];
@@ -153,5 +153,38 @@ describe('loadStory', () => {
     expect(() => loadStory(file('{}'), fixtureMaps())).toThrow(/cannot be read: it needs a version and a list of chapters/);
     expect(() => loadStory(file('{"version": 1, "chapters": [null]}'), fixtureMaps())).toThrow(/cannot be read/);
     expect(() => loadStory(join(tmpdir(), 'napoland-no-such-story.json'), fixtureMaps())).toThrow(/cannot be read/);
+  });
+});
+
+describe('loadNotebook', () => {
+  /** A notebook file with this content, in a folder of its own. */
+  const file = (body: NotebookData | string) => join(folder({ 'notebook.json': typeof body === 'string' ? body : JSON.stringify(body) }), 'notebook.json');
+  /** A page moss opens, and one a storm does. */
+  const notebook = (): NotebookData => ({
+    version: 1,
+    pages: [
+      { id: 'moss', area: 'woods', title: 'Moss', text: 'Soft and damp.', when: { find: 'moss' } },
+      { id: 'storms', area: 'anywhere', title: 'Storms', text: 'The sky darkens.', when: { saw: 'storm' } },
+    ],
+  });
+
+  it('loads field notes about finds and sights that exist', () => {
+    expect(loadNotebook(file(notebook()), fixtureMaps(), itemsData())).toEqual(notebook());
+  });
+
+  it('has none when the file is not there', () => {
+    expect(loadNotebook(join(tmpdir(), 'napoland-no-such-notebook.json'), fixtureMaps(), itemsData())).toBeUndefined();
+  });
+
+  it('stops at field notes that break the rules, or a file it cannot read, naming the file and every problem', () => {
+    const bad = notebook();
+    bad.pages.push({ id: 'moss', area: 'woods', title: 'Moss again', text: 'North of the campfire.', when: { find: 'nothing' } });
+    const path = file(bad);
+    expect(() => loadNotebook(path, fixtureMaps(), itemsData())).toThrow(/^the field notes in .*notebook\.json are not valid:/);
+    expect(() => loadNotebook(path, fixtureMaps(), itemsData())).toThrow(/page 3 \("moss"\) is there twice/);
+    expect(() => loadNotebook(path, fixtureMaps(), itemsData())).toThrow(/says where something is/);
+    expect(() => loadNotebook(path, fixtureMaps(), itemsData())).toThrow(/nothing out there is nothing/);
+    expect(() => loadNotebook(file('{"version": 1, "pages": ['), fixtureMaps())).toThrow(/the field notes in .* cannot be read: .*JSON/);
+    expect(() => loadNotebook(file('{}'), fixtureMaps())).toThrow(/cannot be read: it needs a version and a list of pages/);
   });
 });
