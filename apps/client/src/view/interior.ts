@@ -61,13 +61,14 @@ export function hasFire(data: MapData | undefined): boolean {
 /**
  * Where windows go: in standing back walls with room in front, between two other wall tiles, and not
  * over a fireplace or a cold hearth (its chimney is there), a shelf, a workbench (the board its tools
- * hang on) or a tall clock, nor where a calendar or a drawing hangs. One in a narrow room; two in a wide
- * one, a quarter of the way in from each side.
+ * hang on), a trapper's pegs, a tall clock, a stove's pipe or the trophy shelf, nor where a calendar or a
+ * drawing hangs. One in a narrow room; two in a wide one, a quarter of the way in from each side.
  */
 export function windowSpots(map: TileMap, shapes: readonly WallShape[]): Array<{ x: number; y: number }> {
   const W = map.width, busy = new Set<string>();
   for (const f of [...objectsOf(map.data, 'fireplace'), ...objectsOf(map.data, 'hearth')]) for (const dx of [-1, 0, 1]) busy.add(`${f.x + dx},${f.y}`);
-  for (const s of [...objectsOf(map.data, 'shelf'), ...objectsOf(map.data, 'workbench'), ...objectsOf(map.data, 'clock')]) busy.add(`${s.x},${s.y}`);
+  for (const s of [...objectsOf(map.data, 'shelf'), ...objectsOf(map.data, 'workbench'), ...objectsOf(map.data, 'clock'), ...objectsOf(map.data, 'traps')]) busy.add(`${s.x},${s.y}`);
+  for (const c of objectsOf(map.data, 'comfort')) if (c.what === 'stove' || c.what === 'shelf') busy.add(`${c.x},${c.y}`);
   // A paper on the wall stands on the wall tile itself: the floor it is read from is below it.
   for (const p of objectsOf(map.data, 'paper')) if (map.kind(p.x, p.y) === 'wall') busy.add(`${p.x},${p.y + 1}`);
   const tall = (x: number, y: number) => map.inside(x, y) && shapes[y * W + x] === 'tall';
@@ -328,7 +329,7 @@ const NAPO_INK = '#1a1b1c';
 const CHALK = '#e8e3d3';
 
 /** Which way a shelf's back goes: against a wall north, west or east of it (north if none). */
-function againstWall(map: TileMap, x: number, y: number): number {
+export function againstWall(map: TileMap, x: number, y: number): number {
   if (map.kind(x, y - 1) === 'wall') return 0;
   if (map.kind(x - 1, y) === 'wall') return Math.PI / 2;
   if (map.kind(x + 1, y) === 'wall') return -Math.PI / 2;
@@ -348,8 +349,8 @@ function log(g: THREE.Object3D, r: number, len: number, bark: string, x: number,
 /**
  * Low-poly furniture with toon outlines, placed on its tiles: a bed (head north), a table with a mug
  * and a book, a shelf of books and jars (its back to the nearest wall), a crate (sometimes two), a
- * crate for whoever comes next (indoors and out), a rug, one of NAPO's desks (its back to the wall too)
- * and a woodpile (along its wall). Colors vary by position, the same on every visit. Null for anything else.
+ * crate for whoever comes next (indoors and out), a rug, one of NAPO's desks (its back to the wall too),
+ * a trapper's pegs of traps and snowshoes (on the wall) and a woodpile (along its wall). Colors vary by position, the same on every visit. Null for anything else.
  */
 export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | null {
   const v = hash2(o.x * 3 + 1, o.y * 5 + 2);
@@ -582,6 +583,28 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
       g.add(box(0.2, 0.01, 0.26, '#e6dfcc', 0.12, 0.655, -0.02, false).rotateY(0.25 - v * 0.5));
       return g;
     }
+    case 'traps': {
+      // A trapper's things on their pegs against the wall: steel traps hung by their chains, a coil of
+      // snare wire, and a pair of snowshoes leaning under them.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = againstWall(map, o.x, o.y);
+      g.add(box(0.9, 0.12, 0.05, '#4a3223', 0, 1.3, -0.44, 0.012));
+      for (const x of [-0.3, 0, 0.3]) g.add(box(0.03, 0.03, 0.1, '#3a2a1c', x, 1.3, -0.4, false));
+      for (const [x, y] of [[-0.3, 0.98], [0.3, 0.92]] as const) {
+        // The chain from the top of the jaws up to its peg.
+        g.add(box(0.012, 1.18 - y, 0.012, '#5a5d60', x, (1.28 + y + 0.1) / 2, -0.4, false));
+        g.add(part(new THREE.TorusGeometry(0.1, 0.016, 4, 10), '#6b6f73', x, y, -0.38, false));
+        g.add(box(0.26, 0.03, 0.03, '#44474a', x, y - 0.11, -0.38, false));
+      }
+      g.add(part(new THREE.TorusGeometry(0.075, 0.012, 4, 12), '#b08a58', 0, 1.12, -0.39, false));
+      for (const x of [-0.13, 0.13]) {
+        const shoe = part(new THREE.TorusGeometry(0.11, 0.02, 4, 12), '#8a6a44', x, 0.36, -0.34, false);
+        shoe.scale.set(1, 2.3, 1);
+        shoe.rotation.x = -0.22;
+        g.add(shoe, box(0.012, 0.42, 0.012, '#c9b48a', x, 0.36, -0.34, false));
+      }
+      return g;
+    }
     case 'woodpile': {
       // Split firewood stacked along the wall on two sleepers, one log short on top (it went on the
       // fire), and a chopping block in front with the hatchet left in it.
@@ -617,7 +640,7 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
 }
 
 /** A table on tile x,y: its top and legs, nothing on it yet. */
-function tableModel(x: number, y: number): THREE.Group {
+export function tableModel(x: number, y: number): THREE.Group {
   const g = pivot(x + 0.5, 0, y + 0.5);
   g.add(box(0.86, 0.07, 0.72, '#6b4a31', 0, 0.57, 0));
   for (const [lx, lz] of [[-0.36, -0.29], [0.36, -0.29], [-0.36, 0.29], [0.36, 0.29]] as const) g.add(box(0.07, 0.54, 0.07, '#4a3223', lx, 0.27, lz, false));
@@ -769,7 +792,7 @@ export function furnitureShadows(map: TileMap): Array<[number, number, number, n
     else if (o.kind === 'chest') out.push([o.x + 0.5, o.y + 0.46, 0.46, 0.32]);
     else if (o.kind === 'workbench') out.push([o.x + 0.5, o.y + 0.42, 0.52, 0.36]);
     else if (o.kind === 'console' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.36, 0.52, 0.32]);
-    else if (o.kind === 'shelf' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.28, 0.52, 0.26]);
+    else if ((o.kind === 'shelf' || o.kind === 'traps') && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.28, 0.52, 0.26]);
     else if (o.kind === 'paper' && map.kind(o.x, o.y) !== 'wall') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.44]);
     else if (o.kind === 'sheeted' || o.kind === 'crib') out.push([o.x + 0.5, o.y + 0.5, 0.46, 0.4]);
     else if (o.kind === 'clock' || o.kind === 'saw') out.push([o.x + 0.5, o.y + 0.25, 0.36, 0.26]);

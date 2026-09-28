@@ -8,7 +8,8 @@
  * old cabin. West lies the pond, north the rocks. Past them there is one lonely lamp nobody wired,
  * with a ranger's hut behind it, and beyond it the deepest spots: a ring of stones (west) and the
  * cabin at the end (east). NAPO was here too: its Zone warning where the road comes in, and a
- * listening post by the ring, the rocks that hum back to the Old Stone.
+ * listening post by the ring, the rocks that hum back to the Old Stone. From the cabin at the end the
+ * trappers' trail climbs north off the map, into the Far Woods (gen-far-woods.ts).
  *
  * Energy only comes back by a fire, so the three buildings are shelters that keep one burning (their
  * rooms are in gen-interiors.ts): the old cabin, the hut and the cabin at the end, each a stage deeper.
@@ -16,9 +17,10 @@
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DECOR, ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, objectTiles, underfoot, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
 import { noteAt, type NoteId } from './notes-left';
+import { FAR_WOODS_END, NEAR_WOODS_END } from './trappers-trail';
 
 const W = 64, H = 80, SEED = 20260927;
 type P = readonly [number, number];
@@ -215,7 +217,7 @@ const blocked = new Uint8Array(W * H);
 function place(o: MapObject) {
   for (const [x, y] of objectTiles(o)) {
     if (!inner(x, y)) throw new Error(`${o.kind} at ${o.x},${o.y} is on the map edge`);
-    if (DECOR.has(o.kind)) continue;
+    if (underfoot(o)) continue;
     if (blocked[y * W + x]) throw new Error(`${o.kind} at ${o.x},${o.y} overlaps something on ${x},${y}`);
     blocked[y * W + x] = 1;
     if (at(x, y) === 't' || at(x, y) === 'w') set(x, y, 'g');
@@ -562,6 +564,41 @@ for (const [x, y] of [[27, 71], [28, 70], [27, 73], [28, 74]] as const) onForest
   }
 }
 
+// ---- The way on to the Far Woods (roadmap/far-woods.md) ----
+
+// The trappers' trail climbs north out of the clearing of the cabin at the end, on the cabin's west side,
+// and leaves the map on its top row for the Far Woods. It comes last, like what the loggers and NAPO
+// left: only forest is cut for it, as a dead end off the clearing, so every tile that was walkable stays
+// as far from home; and it goes no deeper than the ring of stones already was, so a surge still starts
+// there and rolls home as it always did. At its foot a sign says what lies up it.
+const beforeWay = tile.map(r => r.join('')), stepsBeforeWay = stepsHome();
+const DEEPEST = Math.max(...stepsBeforeWay);
+const FOOT: P = [NEAR_WOODS_END.x, 3];
+if (!walkable(...FOOT)) throw new Error(`the trappers' trail has no clearing to start from at ${FOOT.join(',')}`);
+for (let y = NEAR_WOODS_END.y; y < FOOT[1]; y++) {
+  if (beforeWay[y]![NEAR_WOODS_END.x] !== 't') throw new Error(`the trappers' trail at ${NEAR_WOODS_END.x},${y} runs onto ground that was there`);
+  // The top row is the map's edge, which set() keeps forest: the way out is cut there by hand.
+  tile[y]![NEAR_WOODS_END.x] = y === FOOT[1] - 1 ? 'g' : 'm';
+}
+/** The way on: the trail's end on the top row, into the Far Woods where they come in from the south. */
+const FAR_WAY: MapExit = { x: NEAR_WOODS_END.x, y: NEAR_WOODS_END.y, w: 1, h: 1, to: 'far-woods', tx: FAR_WOODS_END.x, ty: FAR_WOODS_END.y - 1, dir: 'up' };
+onForest({
+  kind: 'sign', x: FOOT[0] - 1, y: FOOT[1] - 1,
+  text: [
+    'The Far Woods, up the trappers\' trail.',
+    'Past here the old trappers went in pairs. Up there you tire twice as fast as down here.',
+    'Feed the fire in the trapper\'s cabin on the way in, so it still burns on your way out.',
+  ],
+});
+{
+  const d = stepsHome();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, was = beforeWay[y]![x]!;
+    if (was !== 't' && tile[y]![x] !== was) throw new Error(`the tile at ${x},${y} was ${was} and is now ${tile[y]![x]}: only forest may change`);
+    if (stepsBeforeWay[i]! >= 0 && d[i] !== stepsBeforeWay[i]) throw new Error(`the tile at ${x},${y} was ${stepsBeforeWay[i]} steps from home and is now ${d[i]}`);
+  }
+}
+
 // ---- Notes people left (notes-left.ts) ----
 
 // Laid last, on what already stands here, so nothing moves: a note blocks nothing and changes no ground.
@@ -582,11 +619,11 @@ for (const [x, y] of [[27, 71], [28, 70], [27, 73], [28, 74]] as const) onForest
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 12, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 13, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
-  exits: [EXIT, ...doors],
+  exits: [EXIT, ...doors, FAR_WAY],
   objects,
   // Rain from 12 minutes after dawn, for 12: the wettest part of the day, while the South Road is dry.
   rain: [{ from: 12 * 60, length: 12 * 60 }],
@@ -651,8 +688,12 @@ const GLYPH: Record<MapObject['kind'], string> = {
   // The rest of what people left stands in town, on the South Road and in the rooms.
   truck: 'C', luggage: 'b', boxes: 'c', rocker: 'n', piano: 'n', bike: 'n', birdcage: 'n', pump: 'i', cage: 'c',
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
+  // The loggers' camp, the gorge's bridge and the trapper's things are the Far Woods' (gen-far-woods.ts).
+  ruin: 'H', yarder: '#', spool: 'o', bridge: '=', traps: 'L',
   // A note lies on something else, which shows.
   note: ' ',
+  // The furniture of your own cabin stands there alone (gen-interiors.ts).
+  comfort: 'n',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();
@@ -672,6 +713,8 @@ console.log(' . ground  " ferns  ; tall grass  = old road  ~ water  ^ rocks  * s
 const tm = new TileMap(map);
 const steps = new Int32Array(W * H).map((_, i) => tm.homeSteps(i % W, (i / W) | 0));
 const deepest = Math.max(...steps);
+// The way on to the Far Woods goes no deeper than the woods already went: the surge starts where it did.
+if (deepest !== DEEPEST) throw new Error(`the deepest place is ${deepest} steps from home now, not ${DEEPEST}: the trappers' trail went too deep`);
 const deepTiles: string[] = [];
 steps.forEach((v, i) => { if (v === deepest) deepTiles.push(`${i % W},${(i / W) | 0}`); });
 const count = (k: MapObject['kind']) => objects.filter(o => o.kind === k).length;

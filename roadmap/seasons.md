@@ -2,7 +2,7 @@
 id: seasons
 title: Seasons
 status: done
-order: 490
+order: 530
 area: world
 depends: [hazards-anomalies]
 ---

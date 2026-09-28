@@ -8,6 +8,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { objectTiles, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
+import { ontoStreet } from './gen-street';
 
 const N = 44;
 function mulberry32(a: number) {
@@ -47,10 +48,11 @@ rect(0, 0, N - 1, N - 1, (x, y) => {
 });
 for (const [x0, y0, x1, y1] of [[21, 4, 27, 10], [32, 5, 39, 11], [33, 19, 40, 25]] as const) rect(x0, y0, x1, y1, (x, y) => { if (tile[y]![x] === 'g' && !level[y]![x]) tile[y]![x] = 'f'; });
 
-// Town. Every house can be entered: home (the spawn is at its door), the empty house next door, and
-// the lodge, where the town sits by the fire.
+// Town. Every house can be entered: the house that was home, whose door is the way onto your street
+// (Residents' Lane, gen-street.ts, where your own cabin stands; the spawn is at its door), the empty
+// house next door, and the lodge, where the town sits by the fire.
 const houses = [
-  { x: 7, y: 19, roof: '#6b7075', lit: 1, inside: 'stonebrook-home' },
+  { x: 7, y: 19, roof: '#6b7075', lit: 1, inside: null },
   { x: 14, y: 19, roof: '#7a4b33', lit: 0, inside: 'stonebrook-empty-house' },
   { x: 7, y: 30, roof: '#4a5a44', lit: 1, inside: 'stonebrook-lodge' },
 ] as const;
@@ -58,7 +60,7 @@ const doors: MapExit[] = [];
 for (const h of houses) {
   const house = { kind: 'house', x: h.x, y: h.y, w: 3, h: 2, roof: h.roof, lit: h.lit } as const;
   place(house);
-  doors.push(doorInto(h.inside, 'stonebrook', house));
+  doors.push(h.inside ? doorInto(h.inside, 'stonebrook', house) : ontoStreet(house));
 }
 place({ kind: 'car', x: 13, y: 24, w: 2 });
 for (const [x, y] of [[15, 23], [15, 27], [9, 27]] as const) place({ kind: 'barrel', x, y });
@@ -282,7 +284,7 @@ const brook: Array<[number, number]> = [];
 }
 
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 12, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 13, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },

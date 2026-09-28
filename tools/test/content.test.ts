@@ -2,9 +2,9 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  ANYWHERE, CACHE_NEAR, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, itemIndex, notesOf, objectTiles, opensOn, secretKey, secretTitle,
-  stepTarget, upgradable, upgradeChance,
-  validateItems, validateNotebook, type ItemsData, type MapData, type MapNote, type MapObject, type NotebookData, type Sight, type StoryData,
+  ANYWHERE, CACHE_NEAR, COMFORTS, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, comfortMax, doorOf, findPath, findTiles, hidden, itemIndex, lotDoors, notesOf, objectTiles, opensOn,
+  secretKey, secretTitle, stepTarget, upgradable, upgradeChance,
+  validateItems, validateNotebook, type ItemsData, type MapData, type MapExit, type MapNote, type MapObject, type NotebookData, type Sight, type StoryData,
 } from '@napoland/shared';
 
 /** The content as it ships: content/items.json and every map. */
@@ -101,9 +101,75 @@ describe('your own cabin (roadmap/own-cabin.md)', () => {
     expect(findPath(home, x, y, chest.x, chest.y + 1)).toEqual([{ x: chest.x, y: chest.y + 1 }]);
   });
 
-  it('lets you out in front of the house in Stonebrook', () => {
-    const out = home.data.exits[0]!, door = town.data.exits.find(e => e.to === 'stonebrook-home')!;
-    expect([out.to, out.tx, out.ty, out.dir]).toEqual(['stonebrook', door.x, door.y + 1, 'down']);
+  // Since streets (roadmap/streets.md) the cabin stands on your street, not in town: its door lets you out there.
+  it('lets you out onto your street, where the server puts you in front of your own door', () => {
+    const out = home.data.exits[0]!, first = lotDoors(maps.get('residents-lane')!.data)[0]!;
+    // The exit itself names the first lot's doorstep; each player is put in front of their own instead (world.ts).
+    expect([out.to, out.tx, out.ty, out.dir]).toEqual(['residents-lane', first.x, first.y + 1, 'down']);
+    expect(town.data.exits.some(e => e.to === 'stonebrook-home')).toBe(false);
+  });
+});
+
+describe('your street (roadmap/streets.md)', () => {
+  const lane = maps.get('residents-lane')!, town = maps.get('stonebrook')!;
+  const doors = lotDoors(lane.data);
+
+  it('is one lane of thirty plain cabins with name plates, with lamps and a few trees', () => {
+    expect(lane.data).toMatchObject({ kind: 'town', street: true });
+    expect([...maps.values()].filter(m => m.data.street).map(m => m.data.id)).toEqual(['residents-lane']);
+    const houses = lane.data.objects.flatMap(o => (o.kind === 'house' ? [o] : []));
+    expect(houses).toHaveLength(30);
+    expect(houses.every(h => h.plate && !h.lit && !h.style && !h.curtains)).toBe(true);
+    expect(lane.data.objects.filter(o => o.kind === 'lamp').length).toBeGreaterThanOrEqual(10);
+    expect(lane.data.objects.filter(o => o.kind === 'tree').length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('leads every lot\'s door into the cabin of your own, each with a doorstep to stand on, a walk from the way in', () => {
+    expect(doors).toHaveLength(30);
+    for (const d of doors) {
+      expect(lane.exitAt(d.x, d.y)?.to, `${d.x},${d.y}`).toBe('stonebrook-home');
+      // Where the server puts you on the street: in front of your own door.
+      expect(lane.walkable(d.x, d.y + 1) && !lane.exitAt(d.x, d.y + 1), `${d.x},${d.y + 1}`).toBe(true);
+      expect(findPath(lane, lane.data.spawn.x, lane.data.spawn.y, d.x, d.y + 1).length, `${d.x},${d.y + 1}`).toBeGreaterThan(0);
+    }
+    // Nothing else leads into it: not the town, not any other map.
+    expect([...maps.values()].flatMap(m => m.data.exits.filter(e => e.to === 'stonebrook-home').map(() => m.data.id))).toEqual(Array<string>(30).fill('residents-lane'));
+  });
+
+  it('is reached through the house that was Home in Stonebrook, and its end leads back out in front of it', () => {
+    const onto = town.data.exits.find(e => e.to === 'residents-lane')!;
+    expect(town.data.objects.some(o => o.kind === 'house' && doorOf(o).x === onto.x && doorOf(o).y === onto.y)).toBe(true);
+    const end = lane.data.exits.find(e => e.to === 'stonebrook')!;
+    expect([end.tx, end.ty, end.dir]).toEqual([onto.x, onto.y + 1, 'down']);
+    expect(lane.data.exits.map(e => e.to).sort()).toEqual(['stonebrook', ...Array<string>(30).fill('stonebrook-home')]);
+  });
+});
+
+describe('a cozy cabin (roadmap/cabin-comfort.md)', () => {
+  const home = maps.get('stonebrook-home')!;
+  const at = (kind: MapObject['kind']) => home.data.objects.filter(o => o.kind === kind).map(o => [o.x, o.y]);
+  const furniture = items.items.filter(i => i.kind === 'furniture');
+
+  it('has a place in the home for each thing years of damp spoiled, and the fire, the chest, the workbench and the door where they were', () => {
+    expect(home.data.objects.flatMap(o => (o.kind === 'comfort' ? [o.what] : [])).sort()).toEqual([...COMFORTS].sort());
+    expect([at('fireplace'), at('chest'), at('workbench')]).toEqual([[[4, 1]], [[5, 1]], [[6, 1]]]);
+    expect(home.data.exits.map(e => [e.x, e.y])).toEqual([[4, 6]]);
+    // Everything you walk to stays in reach: the chest and the workbench from the door, the wake point by the fire.
+    for (const [x, y] of [[5, 2], [6, 2], [4, 2]] as const) expect(findPath(home, home.data.spawn.x, home.data.spawn.y, x, y).at(-1)).toEqual({ x, y });
+  });
+
+  it('makes each at the workbench from what you bring home, dearer the more comfort it adds: 10 in all', () => {
+    expect(Object.fromEntries(furniture.map(f => [f.furnishes, f.comfort]))).toEqual({ stove: 3, bed: 2, rack: 2, rug: 1, lamp: 1, shelf: 1 });
+    expect(comfortMax(items.items)).toBe(10);
+    for (const f of furniture) {
+      const r = items.recipes!.filter(x => x.make === f.id);
+      expect(r, f.id).toHaveLength(1);
+      // Six of scrap, cloth, wire and resin for each point of comfort.
+      expect(r[0]!.needs.every(n => ['scrap', 'cloth', 'wire', 'resin'].includes(n.item)), f.id).toBe(true);
+      expect(r[0]!.needs.reduce((n, x) => n + x.count, 0), f.id).toBe(6 * f.comfort!);
+    }
+    // Only the rack dries you.
+    expect(furniture.filter(f => f.dries).map(f => f.furnishes)).toEqual(['rack']);
   });
 });
 
@@ -167,7 +233,8 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
 
   it('stands in every place out there where people rest by a fire: the shelters, and by the fire in the open', () => {
     expect(shelters.map(m => m.data.id).sort()).toEqual([
-      'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'south-road-bunker', 'south-road-checkpoint', 'south-road-dormitory', 'south-road-laboratory',
+      'far-woods-trapper-cabin', 'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'south-road-bunker', 'south-road-checkpoint', 'south-road-dormitory',
+      'south-road-laboratory',
     ]);
     for (const m of shelters) expect(crates.filter(c => c.map === m), m.data.id).toHaveLength(1);
     expect(openFires.map(f => `${f.map.data.id} ${f.x},${f.y}`)).toEqual(['south-road 22,22']);
@@ -180,7 +247,7 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
   it('has a name each, for the letter of whoever left something in it', () => {
     expect(crates.map(c => c.o.kind === 'cache' && c.o.name).sort()).toEqual([
       'the bunker\'s crate', 'the checkpoint\'s crate', 'the crate at the leavers\' camp', 'the crate in the cabin at the end', 'the dormitory\'s crate',
-      'the laboratory\'s crate', 'the old cabin\'s crate', 'the ranger\'s crate',
+      'the laboratory\'s crate', 'the old cabin\'s crate', 'the ranger\'s crate', 'the trapper\'s crate',
     ]);
   });
 
@@ -291,12 +358,13 @@ describe('a field notebook (roadmap/field-notebook.md)', () => {
     expect(validateNotebook(notebook, all, items)).toEqual([]);
   });
 
-  it('has about 40 pages, across the three areas and anywhere, each with a count worth filling', () => {
-    expect(notebook.pages.length).toBeGreaterThanOrEqual(35);
-    expect(notebook.pages.length).toBeLessThanOrEqual(50);
+  // The notebook grows as the world does: about ten pages for each area it has (the Far Woods made it four and anywhere).
+  it('has about ten pages an area, across the four areas and anywhere, each with a count worth filling', () => {
     const areas = new Map<string, number>();
     for (const p of notebook.pages) areas.set(p.area, (areas.get(p.area) ?? 0) + 1);
-    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', ANYWHERE]);
+    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', ANYWHERE]);
+    expect(notebook.pages.length).toBeGreaterThanOrEqual(8 * areas.size);
+    expect(notebook.pages.length).toBeLessThanOrEqual(12 * areas.size);
     for (const [area, n] of areas) expect(n, area).toBeGreaterThanOrEqual(8);
   });
 
@@ -319,7 +387,7 @@ describe('a field notebook (roadmap/field-notebook.md)', () => {
 
   it('has a page for the main landmarks\' signs, NAPO\'s desks that tell no chapter, and what each family left to read', () => {
     const read = (map: string, o: MapObject) => opening({ read: { map, x: o.x, y: o.y } }).length + (o.kind === 'console' ? opening({ read: o.id }).length : 0);
-    for (const id of ['stonebrook', 'near-woods', 'south-road']) {
+    for (const id of ['stonebrook', 'near-woods', 'south-road', 'far-woods']) {
       const napo = maps.get(id)!.data.objects.filter(o => o.kind === 'sign' && o.style === 'napo');
       expect(napo.length, id).toBeGreaterThan(0);
       for (const o of napo) expect(read(id, o), `${id} ${o.x},${o.y}`).toBe(1);
@@ -470,8 +538,11 @@ describe('the pass that put more of the story in the places (roadmap/richer-plac
       const b = before[id]!, now = maps.get(id)!.data;
       expect(now.version, id).toBeGreaterThan(b.version);
       expect(now.spawn, id).toEqual(b.spawn);
-      // New exits (the doors of new houses) and new names come after the old ones.
-      expect(now.exits.slice(0, b.exits.length), id).toEqual(b.exits);
+      // New exits (the doors of new houses) and new names come after the old ones. One door changed since, on
+      // purpose: the house that was Home is the way onto your street now (roadmap/streets.md), where it was.
+      const lane = maps.get('residents-lane')!.data.spawn;
+      const since = (e: MapExit): MapExit => (e.to === 'stonebrook-home' ? { ...e, to: 'residents-lane', tx: lane.x, ty: lane.y } : e);
+      expect(now.exits.slice(0, b.exits.length), id).toEqual(b.exits.map(since));
       expect((now.places ?? []).slice(0, b.places.length), id).toEqual(b.places);
       // The old things first, in their order (which lamps flicker, and which poles the wires run between, go by it).
       const old = new Set([...b.nature, ...b.things.map(o => JSON.stringify(o))]);

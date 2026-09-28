@@ -495,7 +495,7 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   // Only a guest is seen so: someone signed in with is no guest (a guest's hello by token loses to the claim).
   expect(await storage.seen(signed.id, now)).toBe(false);
 
-  expect(await storage.forgetGuests(cutoff)).toBe(1);
+  expect(await storage.forgetGuests(cutoff)).toEqual([away.id]);
   expect(await storage.findByTokenHash(hashToken(away.token))).toBeNull();
   expect(await storage.nameTaken(away.name)).toBe(false);
   expect((await storage.loadDrops(now - DROP_LIFETIME_MS)).map(d => d.owner)).not.toContain(away.id);
@@ -507,7 +507,7 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   expect(await storage.seen(away.id, now)).toBe(false);
   for (const stays of [lately, signed, back]) expect(await storage.findPerson({ id: stays.id }), stays.name).not.toBeNull();
   // Nobody else has stayed away that long.
-  expect(await storage.forgetGuests(cutoff)).toBe(0);
+  expect(await storage.forgetGuests(cutoff)).toEqual([]);
   // The day this server began to delete guests is kept from the first time it is asked.
   const began = await storage.guestsSince(now);
   expect(await storage.guestsSince(now + 86_400_000)).toBe(began);
@@ -689,12 +689,14 @@ export async function keepsToolsParcelsAndOutfit(storage: Storage): Promise<{ su
 
 /**
  * One player whole, on `storage` (in memory, or a real database): made with everything a new character
- * can have (the tools, the parcels, the outfit and the thanks received among it), then saved whole,
- * every field comes back as it went (a carried piece and a live find in the bag, the counts, the stash
- * with its pieces, what is worn and how worn, the chapter). A save writes every field it carries but the
- * thanks received, which only creditThanks adds to (a save from an older copy of the player never undoes
- * one), and a save without tools, parcels or an outfit loses none of them. Returns the player's identity
- * and what was kept.
+ * can have (the tools, the parcels, the outfit, the furniture in their cabin, being cozy and the thanks
+ * received among it), then saved whole, every field comes back as it went (a carried piece and a live
+ * find in the bag, the counts, the stash with its pieces, what is worn and how worn, the chapter). A save
+ * writes every field it carries but the thanks received, which only creditThanks adds to (a save from an
+ * older copy of the player never undoes one), and a save without tools, parcels, an outfit or furniture
+ * loses none of them; every save says whether they are cozy, where their cabin stands and whether they keep
+ * their door to themselves, and the letter about their street stays read. Returns the player's identity and
+ * what was kept.
  */
 export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; kept: PlayerRecord }> {
   const sub = `dev:${randomUUID()}@example.test`, id = randomUUID();
@@ -704,7 +706,9 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
     stats: { rainSteps: 40, fed: 3, made: 1, collapsed: 2, surged: 1, told: 0b101, thanked: 7 },
     xp: 120, stash: { items: { moss: 9, coat: 1 }, out: { moss: 2 }, pieces: { coat: [{ cond: 1, level: 1 }] } },
     gear: { shirt: 'coat' }, worn: { shirt: { cond: 0.75, level: 2 } }, story: 'the-lineman', tools: ['stonebrook-map', 'radio'],
-    parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', notebook: { pages: ['glowcaps', 'watchers'], blanks: [] }, createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
+    parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', notebook: { pages: ['glowcaps', 'watchers'], blanks: [] }, furniture: ['iron-stove'], cozy: 1_700_000_300_000,
+    street: 2, lot: 7, doorOff: true,
+    createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   };
   expect(await storage.create(rec)).toBe(true);
   const load = async () => (await storage.findByAuthSub(sub))!;
@@ -714,20 +718,41 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
   expect(await load()).toEqual(rec);
   // Thanked meanwhile, by someone else: a save from the copy online before it leaves the count as it is.
   await storage.creditThanks(id);
+  // Later: their door shown again, and the letter about their street read.
+  const { doorOff: _door, ...shown } = rec;
   const later: PlayerRecord = {
-    ...rec, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
+    ...shown, streetTold: true, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
     stash: { items: { moss: 11, coat: 1 }, out: {}, pieces: { coat: [{ cond: 1, level: 1 }] } }, worn: { shirt: { cond: 1, level: 2 } }, tools: [...rec.tools!, 'near-woods-map'],
-    parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', notebook: { pages: ['glowcaps', 'watchers'], blanks: ['watcher-stops'] }, lastSeenAt: rec.lastSeenAt + 1000,
+    parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', notebook: { pages: ['glowcaps', 'watchers'], blanks: ['watcher-stops'] }, furniture: ['iron-stove', 'bed'],
+    cozy: 1_700_000_400_000, street: 3, lot: 0, lastSeenAt: rec.lastSeenAt + 1000,
   };
   await storage.save(later);
   expect(await load()).toEqual({ ...later, stats: { ...later.stats, thanked: 8 } });
-  // A save that carries no tools, parcels, outfit or field notes (and no thanks received) keeps them all.
-  const { tools: _tools, parcels: _parcels, outfit: _outfit, notebook: _notebook, ...none } = later;
+  // A save that carries no tools, parcels, outfit, field notes or furniture (and no thanks received) keeps them all.
+  const { tools: _tools, parcels: _parcels, outfit: _outfit, notebook: _notebook, furniture: _furniture, ...none } = later;
   const { thanked: _thanked, ...counts } = later.stats!;
   await storage.save({ ...none, stats: counts, lastSeenAt: later.lastSeenAt + 1000 });
   const kept = await load();
   expect(kept).toEqual({ ...later, stats: { ...later.stats, thanked: 8 }, lastSeenAt: later.lastSeenAt + 1000 });
-  return { sub, kept };
+  // Every save says whether they are cozy: one without it, and they are not.
+  const { cozy: _cozy, ...cold } = kept;
+  await storage.save({ ...cold, lastSeenAt: kept.lastSeenAt + 1000 });
+  expect((await load()).cozy).toBeUndefined();
+  // The letter about their street, once read, stays read, even by a save without it; the door's setting is said by every save.
+  const { streetTold: _told, ...untold } = kept;
+  await storage.save({ ...untold, doorOff: true, lastSeenAt: kept.lastSeenAt + 1200 });
+  expect(await load()).toMatchObject({ streetTold: true, doorOff: true });
+  expect((await storage.loadLots()).find(l => l.id === id)).toEqual({ id, name: rec.name, street: 3, lot: 0, off: true });
+  await storage.save({ ...kept, lastSeenAt: kept.lastSeenAt + 1300 });
+  expect((await load()).doorOff).toBeUndefined();
+  // And where their cabin stands, which everyone's lots are read from: one without it, and it stands on none.
+  expect(await storage.loadLots()).toContainEqual({ id, name: rec.name, street: 3, lot: 0 });
+  const { street: _street, lot: _lot, ...unhoused } = kept;
+  await storage.save({ ...unhoused, lastSeenAt: kept.lastSeenAt + 1500 });
+  expect(await load()).not.toHaveProperty('street');
+  expect((await storage.loadLots()).some(l => l.id === id)).toBe(false);
+  await storage.save({ ...kept, lastSeenAt: kept.lastSeenAt + 2000 });
+  return { sub, kept: await load() };
 }
 
 /**

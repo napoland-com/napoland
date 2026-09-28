@@ -1,0 +1,37 @@
+{
+  "id": "far-woods-field-post",
+  "name": "The NAPO field post",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 7,
+  "height": 6,
+  "tiles": [
+    "xxxxxxx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xxxpxxx"
+  ],
+  "levels": [
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000"
+  ],
+  "spawn": {"x":3,"y":4,"dir":"up"},
+  "exits": [
+    {"x":3,"y":5,"w":1,"h":1,"to":"far-woods","tx":46,"ty":9,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"shelf","x":1,"y":1},
+    {"kind":"console","x":3,"y":1,"id":"field-post-log","name":"Field post log","text":["NAPO · Field post, the hollow. It relays to the listening post by the ring of stones.","Week 38. The rocks here hum back louder than the ring's. North of here the needles will not settle.","After the answer: crews up in pairs, batteries changed every ten days. Nobody stays the night.","The last page, in pencil: \"Relief did not come. Batteries in the crate for whoever does.\""]},
+    {"kind":"crate","x":5,"y":1},
+    {"kind":"bed","x":5,"y":3},
+    {"kind":"crate","x":1,"y":4}
+  ],
+  "style": "napo"
+}

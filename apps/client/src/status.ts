@@ -11,7 +11,7 @@ import { minutes, type News } from './game';
 import type { FeatView, StatusView } from './hud';
 import { ELEMENT_WORDS, type Items } from './items';
 import { parcelBanner } from './parcels';
-import { meritText, thousands } from './said';
+import { cozyText, meritText, thousands } from './said';
 import { outfitWords } from './wardrobe';
 
 export interface StatusInput {
@@ -159,6 +159,9 @@ export function statusView(s: StatusInput): StatusView {
   for (const f of s.effects ?? []) if (f.left > 0) rows.push({ label: s.items.get(f.item).name, text: effectText(f, s.items), tone: 'good' });
   if (s.wilds) rows.push({ label: 'Draining', text: drainText({ ...s, wet: s.body.wet, storm: s.storm?.phase === 'storm', season: s.season?.season }) ?? 'Just being out here', tone: 'bad' });
   if (s.body.hitched) rows.push({ label: 'On you', text: 'Something clings to your back. Find a light, a fire or a roof.', tone: 'bad' });
+  // The warmth of your own fire (comfort.ts): out in the wilds you tire slower while it lasts.
+  const cozy = cozyText(s.body.cozy ?? 0, s.body.fireside);
+  if (cozy) rows.push({ label: 'Cozy', text: cozy, tone: 'good' });
   const charms = [...new Set(s.bag.map(b => s.items.get(b.item)).filter(d => d.kind === 'charm').map(d => d.name))];
   if (charms.length) rows.push({ label: 'Charms', text: charms.join(', '), tone: 'good' });
   if (s.surge && s.surge.phase !== 'calm') {
@@ -200,6 +203,7 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
     const ice = !n.frozen.length ? '' : n.season === 'winter' ? `\n${capital(listWords(n.frozen))} ${n.frozen.length > 1 ? 'are' : 'is'} frozen: you can walk across.` : n.season === 'spring' ? '\nThe ice is gone.' : '';
     return { title: SEASONS[n.season].name, sub: `${SEASON_DOES[n.season]}${ice}` };
   }
+  if (n.kind === 'cozy') return { title: 'Cozy', sub: `Out in the wilds you tire 10% slower\nfor ${n.minutes} minutes once you leave the fire.` };
   if (n.kind === 'level') {
     const opened = listWords(outfitsOpening(n.from, n.progress.level).map(o => `the ${outfitWords(o.name)}`));
     const outfits = opened ? (guest ? `\nSign in to wear ${opened}.` : `\nNew in your wardrobe: ${opened}.`) : '';

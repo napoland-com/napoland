@@ -5,8 +5,8 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Did,
-  type Dir, type Element, type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
+  CACHE_SIZE, COZY_AFTER_S, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, comfortMax, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit,
+  type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, oddsText, pieceName, type Items } from './items';
 
@@ -119,10 +119,11 @@ export function tossQuestion(def: ItemDef, n: number, inSlot: number, level = 0)
   return `Throw away ${what}? ${they(def, n) ? 'They are' : 'It is'} gone for good.`;
 }
 
-/** At the workbench: "Make a raincoat? It uses 8 cloth and 4 resin." */
+/** At the workbench: "Make a raincoat? It uses 8 cloth and 4 resin." Furniture says where it goes: straight into its place. */
 export function makeQuestion(recipe: Recipe, items: Items): string {
   const made = items.get(recipe.make), n = recipe.count ?? 1;
-  return `Make ${n === 1 ? aOf(made) : amount(made, n)}? It uses ${listOf(recipe.needs.map(x => counted(items.get(x.item), x.count)))}.`;
+  const ask = `Make ${n === 1 ? aOf(made) : amount(made, n)}? It uses ${listOf(recipe.needs.map(x => counted(items.get(x.item), x.count)))}.`;
+  return made.kind === 'furniture' ? `${ask} It goes straight into its place.` : ask;
 }
 
 /** At the workbench: "Mend your raincoat? It uses 2 cloth and 1 scrap." (with its level: "your raincoat +3"). */
@@ -170,6 +171,8 @@ const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 // ---------- why it cannot happen ----------
 
 export const TENDED = 'Someone keeps this fire going. It needs nothing.';
+/** The map button where you carry no map of the area: farther out, a region's map is found, not given. */
+export const NO_MAP_YET = 'You have no map of this place yet.';
 
 /** A fire that takes nothing more: "The fire is as full as it gets. It will burn 30 more minutes." */
 export function fullFire(left: number): string {
@@ -217,6 +220,42 @@ const YOURS = 'It is yours for good: its button is in your bag.';
 /** At the workbench, a tool you have already: each is yours once. */
 export function haveTool(def: ItemDef): string {
   return `You have ${aOf(def)} already. ${YOURS}`;
+}
+
+// ---------- a cozy cabin (comfort.ts) ----------
+
+/** At the workbench, furniture you made already: each place in the cabin has one. */
+export function placedAlready(def: ItemDef): string {
+  return `Your ${nounOf(def)} stands in its place already.`;
+}
+
+/** What stands in a place of your cabin until you make its furniture again, as the text box names it. */
+export const SPOILED_NAMES: Readonly<Record<Comfort, string>> = {
+  stove: 'Old stove', bed: 'Bed frame', rug: 'Old rug', lamp: 'Old lamp', rack: 'Broken rack', shelf: 'Old shelf',
+};
+
+/**
+ * A at a place in your cabin: what stands there spoiled and where to make it again, or, made, what it is;
+ * the trophy shelf says what stands on it (`trophies`: the charms and anomalous gear in your stash).
+ */
+export function comfortLines(what: Comfort, def: ItemDef | undefined, placed: boolean, trophies: readonly ItemDef[] = []): { who: string; lines: string[] } {
+  if (!def) return { who: SPOILED_NAMES[what], lines: ['Years of damp spoiled it.'] };
+  if (!placed) return { who: SPOILED_NAMES[what], lines: [def.spoiled ?? 'Years of damp spoiled it.', `Make ${aOf(def)} at the workbench beside the chest: it goes straight into its place.`] };
+  if (what !== 'shelf') return { who: def.name, lines: [def.text] };
+  const on = trophies.length ? `On it: ${listOf(trophies.map(aOf))}.` : 'Nothing on it yet. The charms and anomalous gear you keep in your stash will stand here.';
+  return { who: def.name, lines: [def.text, on] };
+}
+
+/**
+ * How cozy you are, for the status panel (comfort.ts): "12 min left", "8 min, from when you leave the
+ * fire" while you stand by it in full, or how long until you are, by your fire. Null: none of it.
+ */
+export function cozyText(cozy: number, fireside: number | undefined): string | null {
+  const mins = (s: number) => (s < 60 ? 'under a minute' : `${Math.ceil(s / 60)} min`);
+  if (fireside !== undefined && fireside >= COZY_AFTER_S && cozy > 0) return `${mins(cozy)}, from when you leave the fire`;
+  if (cozy > 0) return `${mins(cozy)} left`;
+  if (fireside !== undefined) return `Warming up by your fire: cozy in ${Math.max(1, Math.ceil(COZY_AFTER_S - fireside))} s`;
+  return null;
 }
 
 /** What a list of needs lacks against what a stash holds, need by need (none: it can pay). */
@@ -315,6 +354,7 @@ export function didWho(did: Did, items: Items): string {
     case 'thanked': return did.what === 'fire' ? 'Fire' : 'Arrow';
     case 'left': case 'took': return 'Crate';
     case 'bought': return 'Wardrobe';
+    case 'moved': return YOUR_CABIN;
   }
 }
 
@@ -324,6 +364,8 @@ export function didText(did: Did, items: Items): string {
   if (did.kind === 'thanked') return did.what === 'fire' ? `You thank ${did.name} for feeding the fire.` : `You thank ${did.name} for the arrow.`;
   // Merits buy looks, not items.
   if (did.kind === 'bought') return boughtText(did);
+  // Nor does a move: your cabin, next to the friend's, by name.
+  if (did.kind === 'moved') return `Your cabin stands next to ${did.name}'s now.`;
   const def = items.get(did.item);
   switch (did.kind) {
     case 'fire': {
@@ -364,6 +406,11 @@ export function didText(did: Did, items: Items): string {
     case 'made': {
       // A tool never goes into the stash: it joins your tools (World.giveTool). What it does comes with it.
       if (def.kind === 'tool') return `You make ${aOf(def)}. ${YOURS}${def.about ? ` ${def.about}` : ''}`;
+      // Nor does furniture: it stands in its place in your cabin at once, and the cabin is cozier.
+      if (def.kind === 'furniture') {
+        const of = comfortMax(items.byId.values());
+        return `You make ${aOf(def)} and set it in its place. Your cabin's comfort is ${did.comfort ?? def.comfort ?? 0} of ${of}.`;
+      }
       const pl = they(def, did.count), gear = def.kind === 'gear';
       return `You make ${did.count === 1 ? aOf(def) : amount(def, did.count)}. ${pl ? 'They wait' : 'It waits'} in your stash${gear ? `: put ${pl ? 'them' : 'it'} on at the chest` : ''}.`;
     }
@@ -395,6 +442,61 @@ export function didText(did: Did, items: Items): string {
     }
   }
 }
+
+// ---------- your street ----------
+
+/** The name over the box at your own door. */
+export const YOUR_CABIN = 'Your cabin';
+
+/** On the plate of someone who keeps their name off their door (the setting in the menu). */
+export const RESIDENT = 'A resident';
+
+/** The name over the box at a neighbor's door: whose cabin it is, a resident's who keeps their name to themselves, or an empty one. */
+export function cabinWho(lot: LotView | null): string {
+  if (!lot) return 'Empty cabin';
+  return lot.name ? `${lot.name}'s cabin` : `${RESIDENT}'s cabin`;
+}
+
+/** While a knock waits for its answer. */
+export const KNOCKING = 'You knock.';
+
+/** At a door nobody lives behind yet. */
+export const NOBODY_LIVES = 'Nobody lives here yet.';
+
+/**
+ * What a knock hears back: whether they are home. By name, never a pronoun. Someone who keeps their door to
+ * themselves answers only friends: to anyone else, nobody answers. Visiting is for later.
+ */
+export function doorText(lot: LotView | null): string {
+  if (!lot) return NOBODY_LIVES;
+  return lot.name && lot.home ? `${lot.name} is home.` : 'Nobody answers.';
+}
+
+/** The setting beside friend and trade requests: whether your street sees your name on your door, and your window lit while you are home. */
+export const DOOR_SETTING = 'Show my name on my door and when I am home';
+
+/**
+ * The letter the first time you come home since streets came: what your street sees of you, and where to
+ * change it (`doorOff`: you keep both to yourself already).
+ */
+export function streetLetterLines(doorOff: boolean): string[] {
+  return doorOff
+    ? ['Your cabin stands on Residents\' Lane now. Your neighbors see a resident\'s cabin: your name stays off your door, and your window dark, as you chose.', 'You can show both in the menu, under Friends.']
+    : ['Your cabin stands on Residents\' Lane now. Your neighbors see your name on your door, and your window lit while you are home.', 'You can hide both in the menu, under Friends.'];
+}
+
+/** At home, when a neighbor knocks at your door. */
+export function knockedText(name: string): string {
+  return `${name} knocked.`;
+}
+
+/** At your own door, for a friend whose street has a lot free. */
+export function moveQuestion(name: string): string {
+  return `Move next to ${name}? Your cabin comes with you.`;
+}
+
+/** At your own door, with no friend to move next to. */
+export const NO_MOVES = 'Your own cabin. When a friend has a lot free on their street, you can move next to them from here.';
 
 /** A plain no from the server, as a sentence for the box. */
 export function sentence(text: string): string {

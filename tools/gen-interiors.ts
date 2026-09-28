@@ -13,13 +13,14 @@
  * `cache`, caches.ts), added last in its list so that nothing placed before it ever moves. The notes
  * people left (notes-left.ts) come after even that, each lying on a table, a shelf, a crate or a bed.
  *
- * The outside generators (gen-map.ts, gen-woods.ts) put the exit on each house's door with doorInto,
- * which fails if the room expects its house somewhere else. This script checks the other direction, so
- * run it after them: each door on the outside maps must lead to its room's way in.
+ * The outside generators (gen-map.ts, gen-woods.ts, gen-street.ts) put the exit on each house's door with
+ * doorInto, which fails if the room expects its house somewhere else. This script checks the other
+ * direction, so run it after them: each door on the outside maps must lead to its room's way in. Your own
+ * cabin is behind every door of Residents' Lane (`lots`): each player's own, whichever lot is theirs.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DECOR, TileMap, doorOf, hangs, objectTiles, validateMap, type Dir, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { TileMap, doorOf, hangs, objectTiles, underfoot, validateMap, type Comfort, type Dir, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { noteAt } from './notes-left';
 
 type House = Extract<MapObject, { kind: 'house' }>;
@@ -42,6 +43,12 @@ interface Room {
   private?: true;
   /** Where you wake up in it, by the fire: as a new player, and after a collapse. */
   wake?: { x: number; y: number; dir: Dir };
+  /**
+   * Behind every door of its street (gen-street.ts), not one house's: each lot's cabin is this room, its
+   * owner's own copy of it. `door` is then the first lot's, where its way out leads unless the server says
+   * otherwise (it takes each player out in front of their own door).
+   */
+  lots?: true;
 }
 
 /** The camera shows about six tiles around you: a room this size fits on any screen. */
@@ -56,7 +63,11 @@ const ROOMS: readonly Room[] = [
     // fire, the chest (your stash: what you put in it earns XP) and the workbench, which makes gear from
     // what the chest holds. The chest's front is warm, so you thaw out while you put things away, and the
     // workbench is one step on. The middle stays open from the door to the fire.
-    id: 'stonebrook-home', name: 'Home', version: 4, outside: 'stonebrook', door: [8, 20], private: true, wake: { x: 4, y: 2, dir: 'down' },
+    // Years of damp spoiled the rest (comfort.ts): an iron stove in the corner, a shelf, a drying rack
+    // by the fire, the bed, the rug and the lamp on the table stand spoiled in their places until you
+    // make each again at the workbench, which sets it there at once.
+    // Its door is every cabin's on Residents' Lane (gen-street.ts): the server lets each player in through their own.
+    id: 'stonebrook-home', name: 'Home', version: 6, outside: 'residents-lane', door: [6, 20], lots: true, private: true, wake: { x: 4, y: 2, dir: 'down' },
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -68,13 +79,14 @@ const ROOMS: readonly Room[] = [
     ],
     things: [
       { kind: 'fireplace', x: 4, y: 1 },
-      { kind: 'rug', x: 3, y: 2, w: 3, h: 2 },
-      { kind: 'shelf', x: 1, y: 1 },
-      { kind: 'shelf', x: 2, y: 1 },
-      { kind: 'bed', x: 7, y: 1 },
-      { kind: 'table', x: 2, y: 4 },
       { kind: 'chest', x: 5, y: 1 },
       { kind: 'workbench', x: 6, y: 1 },
+      { kind: 'comfort', x: 1, y: 1, what: 'stove' },
+      { kind: 'comfort', x: 2, y: 1, what: 'shelf' },
+      { kind: 'comfort', x: 3, y: 1, what: 'rack' },
+      { kind: 'comfort', x: 7, y: 1, what: 'bed' },
+      { kind: 'comfort', x: 3, y: 2, what: 'rug' },
+      { kind: 'comfort', x: 2, y: 4, what: 'lamp' },
     ],
   },
   {
@@ -229,6 +241,67 @@ const ROOMS: readonly Room[] = [
       noteAt('barlow-crews', 6, 3),
       noteAt('barlow-tall-ones', 1, 4),
       noteAt('barlow-ferns', 7, 5),
+    ],
+  },
+  {
+    // The one shelter of the Far Woods (gen-far-woods.ts), beyond the gorge: the trapper's bunk, his traps
+    // on their pegs, the wood he split, his tally on the table, and a fire nobody keeps: it burns down
+    // unless whoever passes feeds it. His map of these woods lies by the tally for whoever has none (a
+    // find: content/items.json). A crate for whoever comes next stands by the fire, last in the list.
+    id: 'far-woods-trapper-cabin', name: 'The trapper\'s cabin', version: 1, outside: 'far-woods', door: [15, 62],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      { kind: 'fireplace', x: 4, y: 1 },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'traps', x: 6, y: 1 },
+      { kind: 'shelf', x: 7, y: 1 },
+      { kind: 'woodpile', x: 7, y: 3 },
+      {
+        kind: 'paper', x: 2, y: 3, look: 'list', name: 'Tally in pencil',
+        text: [
+          'A trapper\'s tally in pencil, the seasons down the side: marten, fisher, and one lynx, underlined twice.',
+          'Along the bottom: "No sets past the split rock. Up there the traps come back sprung, and empty."',
+          'Pressed in hard under it: "Never alone past the gorge. Feed the fire going in. Leave wood for the next one."',
+        ],
+      },
+      { kind: 'crate', x: 7, y: 4 },
+      { kind: 'cache', x: 2, y: 1, name: 'the trapper\'s crate' },
+    ],
+  },
+  {
+    // NAPO's field post in the hollow of the Far Woods where the rocks hum back, further gone than the
+    // listening post by the ring of stones: a concrete room with no fire, a cot, the shelves and crates
+    // of its field kit, and the desk with the post's log, NAPO's last word from up here. Cold and dark.
+    id: 'far-woods-field-post', name: 'The NAPO field post', version: 1, outside: 'far-woods', door: [46, 8], style: 'napo',
+    rows: [
+      'xxxxxxx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xxxpxxx',
+    ],
+    things: [
+      { kind: 'shelf', x: 1, y: 1 },
+      {
+        kind: 'console', x: 3, y: 1, id: 'field-post-log', name: 'Field post log',
+        text: [
+          'NAPO · Field post, the hollow. It relays to the listening post by the ring of stones.',
+          'Week 38. The rocks here hum back louder than the ring\'s. North of here the needles will not settle.',
+          'After the answer: crews up in pairs, batteries changed every ten days. Nobody stays the night.',
+          'The last page, in pencil: "Relief did not come. Batteries in the crate for whoever does."',
+        ],
+      },
+      { kind: 'crate', x: 5, y: 1 },
+      { kind: 'bed', x: 5, y: 3 },
+      { kind: 'crate', x: 1, y: 4 },
     ],
   },
   {
@@ -615,7 +688,7 @@ export function doorInto(id: string, outside: string, house: House): MapExit {
   const room = ROOMS.find(r => r.id === id);
   if (!room) throw new Error(`there is no room ${id} in tools/gen-interiors.ts`);
   const d = doorOf(house);
-  if (room.outside !== outside || room.door[0] !== d.x || room.door[1] !== d.y) {
+  if (room.outside !== outside || (!room.lots && (room.door[0] !== d.x || room.door[1] !== d.y))) {
     throw new Error(`the room ${id} expects its door at ${room.door.join(',')} in ${room.outside}, but this house's door is at ${d.x},${d.y} in ${outside}`);
   }
   if ((room.style ?? null) !== (house.style ?? null)) throw new Error(`the room ${id} is ${room.style ?? 'a cabin\'s'} style, but its house is ${house.style ?? 'a cabin'}`);
@@ -687,13 +760,16 @@ function json(map: MapData): string {
 const GLYPH: Partial<Record<MapObject['kind'], string>> = {
   fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@',
   hearth: 'f', sheeted: 's', boxes: 'n', crib: 'C', clock: 'k', paper: '?', saw: 'S', carriage: '=', sawdust: ':', logs: 'l', luggage: 'u', cache: 'X',
+  traps: 't',
 };
+/** The places for furniture in a home (comfort.ts), in lower case: what stands there, spoiled until it is made. */
+const COMFORT_GLYPH: Record<Comfort, string> = { stove: 'o', bed: 'b', rug: '_', lamp: 'i', rack: 'r', shelf: 't' };
 function glance(map: MapData): string[] {
   const tm = new TileMap(map);
   const things = new Map<string, string>();
   // Solid things first, so a rug under a table shows the table.
-  for (const o of [...map.objects].sort((a, b) => Number(DECOR.has(b.kind)) - Number(DECOR.has(a.kind)))) {
-    for (const [x, y] of objectTiles(o)) things.set(`${x},${y}`, GLYPH[o.kind] ?? '?');
+  for (const o of [...map.objects].sort((a, b) => Number(underfoot(b)) - Number(underfoot(a)))) {
+    for (const [x, y] of objectTiles(o)) things.set(`${x},${y}`, o.kind === 'comfort' ? COMFORT_GLYPH[o.what] : GLYPH[o.kind] ?? '?');
   }
   const exit = map.exits[0]!;
   return map.tiles.map((row, y) => [...row].map((c, x) => {
@@ -722,11 +798,14 @@ if (import.meta.main) {
   }
   // The other direction of doorInto: the door on the outside map must lead to the room's way in. It is
   // written by the outside map's generator, so after changing a room's size, run that one again too.
-  const GENERATOR: Record<string, string> = { stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south' };
+  const GENERATOR: Record<string, string> = {
+    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', 'residents-lane': 'npm run gen:street',
+  };
   for (const room of ROOMS) {
     const outside = JSON.parse(readFileSync(resolve(import.meta.dirname, `../content/maps/${room.outside}.json`), 'utf8')) as MapData;
-    const door = outside.exits.find(e => e.to === room.id), way = wayOut(room);
-    if (door?.x === room.door[0] && door.y === room.door[1] && door.tx === way.x && door.ty === way.y - 1) continue;
+    const doors = outside.exits.filter(e => e.to === room.id), way = wayOut(room);
+    const first = doors[0], inside = doors.every(e => e.tx === way.x && e.ty === way.y - 1);
+    if (first?.x === room.door[0] && first.y === room.door[1] && inside && (room.lots || doors.length === 1)) continue;
     console.log(`error: ${room.outside}.json has no door at ${room.door.join(',')} into ${room.id}'s way in (${way.x},${way.y - 1}): run ${GENERATOR[room.outside] ?? `the generator of ${room.outside}`} again`);
     failed = true;
   }
