@@ -615,10 +615,11 @@ export function attachNet(o: NetOptions): Net {
       const id = randomUUID();
       const now = Date.now();
       // Where everyone wakes up: at home, by the fire (the World puts them in a copy of the home of their own).
+      // Everyone new is shown their first steps, from the first (world.ts).
       const { map, x, y, dir } = world.wakeUp;
       const rec: PlayerRecord = {
         id, name, tokenHash: token === undefined ? null : hashToken(token), authSub: sub, map: map.data.id, x, y, dir,
-        color: colorFor(id), energy: ENERGY_MAX, bag: [], wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} }, createdAt: now, lastSeenAt: now,
+        color: colorFor(id), energy: ENERGY_MAX, bag: [], wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} }, firstSteps: 1, createdAt: now, lastSeenAt: now,
       };
       // create() also refuses the name if another player took it since nameTaken().
       made = await storage.create(rec);
@@ -694,6 +695,7 @@ export function attachNet(o: NetOptions): Net {
       ...(joined.street && { street: joined.street }),
       ...(joined.doorOff && { doorOff: true }),
       ...(joined.visitsOff && { visitsOff: true }),
+      ...(joined.firstSteps && { firstSteps: joined.firstSteps }),
       serverTime: Date.now(),
     });
     flush();

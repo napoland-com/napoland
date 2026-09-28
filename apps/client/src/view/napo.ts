@@ -337,30 +337,64 @@ export function stakeModel(s: { x: number; y: number }): THREE.Group {
   return g;
 }
 
+/** How high the rock hums in a teleport's arch (teleportCore), which world.ts bobs it about. */
+export const TELEPORT_ROCK_Y = 0.58;
+
 /**
- * One of NAPO's teleports (one in every cabin, its twin in town): a round concrete pad rimmed in NAPO yellow,
- * a steel gate over it with NAPO's plate and eye on the crossbar, and in the gate a rock from deep in the woods
- * that hums like the ones in its sample cages (`rock`, the humming material), held on a rod. Its control box,
- * on the right post, faces the tile in front, where you stand to use it and where it sets you down.
+ * One of NAPO's teleports (one in every cabin, its twin in town), as it stands: a round concrete pad rimmed in
+ * NAPO yellow with black ticks, a dark steel plate in it, and over it a steel arch on two posts, clamped in
+ * yellow, with NAPO's plate and eye at its crown. Its control box, on the right post, faces the tile in front,
+ * where you stand to use it and where it sets you down. What moves in it is teleportCore's.
  */
-export function teleportModel(t: { x: number; y: number }, rock: THREE.Material): THREE.Group {
+export function teleportModel(t: { x: number; y: number }): THREE.Group {
   const g = pivot(t.x + 0.5, 0, t.y + 0.5);
-  g.add(part(flat(new THREE.CylinderGeometry(0.44, 0.46, 0.08, 14)), CONCRETE, 0, 0.04, 0, 0.015));
-  g.add(part(flat(new THREE.CylinderGeometry(0.42, 0.42, 0.02, 14)), NAPO_YELLOW, 0, 0.09, 0, false));
-  g.add(part(flat(new THREE.CylinderGeometry(0.34, 0.34, 0.025, 14)), '#5e6466', 0, 0.095, 0, false));
-  const H = 1.05, s = 0.36;
-  for (const x of [-s, s]) g.add(box(0.07, H, 0.07, STEEL, x, H / 2, -0.04));
-  g.add(box(2 * s + 0.12, 0.09, 0.1, STEEL, 0, H + 0.02, -0.04));
-  g.add(box(0.34, 0.12, 0.02, NAPO_YELLOW, 0, H + 0.02, 0.02, 0.008));
-  eye(g, 0, H + 0.02, 0.031, 0.07);
-  g.add(box(0.025, H - 0.55, 0.025, STEEL, 0, (H + 0.55) / 2, -0.04, false));
-  const r = part(new THREE.DodecahedronGeometry(0.15, 0), rock, 0, 0.5, -0.02, 0.015);
-  r.rotation.set(hash2(t.x, t.y) * 3, hash2(t.y, t.x) * 3, 0);
-  r.scale.set(1, 1.2, 0.9);
-  g.add(r);
-  g.add(box(0.14, 0.2, 0.08, '#2c3335', s, 0.62, 0.04, 0.012));
-  g.add(box(0.05, 0.05, 0.01, NAPO_YELLOW, s, 0.66, 0.085, false), box(0.08, 0.03, 0.01, '#e6dfcc', s, 0.57, 0.085, false));
+  g.add(part(flat(new THREE.CylinderGeometry(0.45, 0.47, 0.08, 16)), CONCRETE, 0, 0.04, 0, 0.015));
+  g.add(part(flat(new THREE.CylinderGeometry(0.42, 0.42, 0.02, 16)), NAPO_YELLOW, 0, 0.09, 0, false));
+  g.add(part(flat(new THREE.CylinderGeometry(0.35, 0.35, 0.025, 16)), '#2c3335', 0, 0.1, 0, false));
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2, tick = box(0.07, 0.022, 0.03, INK, Math.cos(a) * 0.385, 0.101, Math.sin(a) * 0.385, false);
+    tick.rotation.y = -a;
+    g.add(tick);
+  }
+  // The arch: its radius, how high its posts stand, and set back a little from the middle of the plate.
+  const R = 0.34, P = 0.66, z = -0.06;
+  for (const x of [-R, R]) g.add(box(0.08, P - 0.1, 0.09, STEEL, x, 0.1 + (P - 0.1) / 2, z));
+  g.add(part(new THREE.TorusGeometry(R, 0.042, 6, 20, Math.PI), STEEL, 0, P, z, 0.012));
+  for (const a of [Math.PI / 5, Math.PI / 2, (4 * Math.PI) / 5]) {
+    const clamp = box(0.11, 0.05, 0.12, NAPO_YELLOW, Math.cos(a) * R, P + Math.sin(a) * R, z, false);
+    clamp.rotation.z = a;
+    g.add(clamp);
+  }
+  g.add(box(0.26, 0.12, 0.02, NAPO_YELLOW, 0, P + R - 0.12, z + 0.06, 0.008));
+  eye(g, 0, P + R - 0.12, z + 0.072, 0.07);
+  g.add(box(0.13, 0.2, 0.08, '#2c3335', R, 0.48, z + 0.09, 0.012));
+  g.add(box(0.045, 0.045, 0.01, NAPO_YELLOW, R, 0.52, z + 0.135, false), box(0.08, 0.03, 0.01, '#8fe0d0', R, 0.44, z + 0.135, false));
   return g;
+}
+
+/**
+ * What moves in a teleport (world.ts makes it live): the rock from deep in the woods that hums in its arch, like
+ * the ones in NAPO's sample cages (`rock`, the humming material), the soft glow (`glow`) on its plate and in the
+ * arch, and a ring of light (`ripple`) that spreads over the plate to its rim, which is what the camera, looking
+ * down, sees best. teleportModel's stand around them.
+ */
+export function teleportCore(
+  t: { x: number; y: number }, rock: THREE.Material, glow: THREE.Material, ripple: THREE.Material,
+): { root: THREE.Group; rock: THREE.Object3D; ripple: THREE.Object3D } {
+  const root = pivot(t.x + 0.5, 0, t.y + 0.5);
+  const r = part(new THREE.DodecahedronGeometry(0.13, 0), rock, 0, TELEPORT_ROCK_Y, -0.06, 0.012);
+  r.rotation.set(hash2(t.x, t.y) * 3, 0, hash2(t.y, t.x) * 3);
+  r.scale.set(1, 1.2, 0.9);
+  const plate = new THREE.Mesh(new THREE.CircleGeometry(0.34, 24), glow);
+  plate.rotation.x = -Math.PI / 2;
+  plate.position.y = 0.117;
+  const field = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.86), glow);
+  field.position.set(0, 0.56, -0.06);
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.34, 32), ripple);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.12;
+  root.add(r, plate, field, ring);
+  return { root, rock: r, ripple: ring };
 }
 
 /**
@@ -389,7 +423,7 @@ export function napoProp(o: MapObject): THREE.Object3D | null {
     case 'jeep': return jeepModel(o);
     case 'pump': return pumpModel(o);
     case 'cage': return cageModel(o, HUM);
-    case 'teleport': return teleportModel(o, HUM);
+    case 'teleport': return teleportModel(o);
     case 'stake': return stakeModel(o);
     case 'gate': return gateModel(o);
     case 'truck': return o.style === 'napo' ? napoTruck(o) : null;

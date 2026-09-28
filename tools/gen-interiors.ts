@@ -67,9 +67,10 @@ const ROOMS: readonly Room[] = [
     // by the fire, the bed, the rug and the lamp on the table stand spoiled in their places until you
     // make each again at the workbench, which sets it there at once.
     // Its door is every cabin's on Residents' Lane (gen-street.ts): the server lets each player in through
-    // their own, and a neighbor through theirs when they let neighbors visit. In the corner by the bed
-    // stands NAPO's teleport, the same in every cabin: A at it and you are in town, in front of its twin by
-    // the notice board (roadmap/street-visits.md), a step off the way from the door to the fire.
+    // their own, and a neighbor through theirs when they let neighbors visit. In the corner by the bed,
+    // a step off the way from the door to the fire, stands NAPO's teleport, the same in every cabin: A at
+    // it and you are in town, in front of its twin by the notice board (roadmap/street-visits.md), and A at
+    // that one brings you home, in front of this one (roadmap/first-steps.md).
     id: 'stonebrook-home', name: 'Home', version: 7, outside: 'residents-lane', door: [6, 20], lots: true, private: true, wake: { x: 4, y: 2, dir: 'down' },
     rows: [
       'xxxxxxxxx',

@@ -5,7 +5,7 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, COZY_AFTER_S, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, comfortMax, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit,
+  CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, comfortMax, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit,
   type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, oddsText, pieceName, type Items } from './items';
@@ -520,8 +520,29 @@ export function notYours(name: string, what: 'chest' | 'bench'): { who: string; 
 /** Over the box at NAPO's teleport, in a cabin or in town. */
 export const TELEPORT = 'NAPO teleport';
 
-/** A at the one in town, which only receives: the way home is the road. */
-export const TELEPORT_TOWN = 'It only brings people here, from the one in their cabin. The way home is the road west, to Residents\' Lane.';
+/** A at NAPO's teleport asks first: the one in a cabin goes to town, the one in town home (`home`). */
+export function teleportQuestion(home: boolean): string {
+  return home ? 'Go home? It sets you down in your cabin.' : 'Go to town? It sets you down by the notice board.';
+}
+
+/** Over a new player's first steps (roadmap/first-steps.md), with which one it is. */
+export const FIRST_STEPS_TITLE = 'First steps';
+
+/** What each first step asks, in order: to town by the teleport, out to pick something up, home to the chest. */
+export const FIRST_STEP_LINES: readonly string[] = [
+  'Walk to NAPO\'s teleport in the corner and press A: it takes you to town.',
+  'Go out of town up the north road, and pick up something you find in the woods.',
+  'Take the teleport by the notice board home, and put what you found in the chest.',
+];
+
+/** The first steps are done: the text box says so, once. */
+export const FIRST_STEPS_DONE = 'That is the basics: go out, pick up what you find, and bring it home to the chest.';
+
+/** The first step to take now (`step`, 1 to FIRST_STEPS) as the status panel shows it: which one, and what it asks. Nothing for none. */
+export function firstStepsView(step: number | null): { title: string; text: string } | null {
+  const text = step === null ? undefined : FIRST_STEP_LINES[step - 1];
+  return text === undefined ? null : { title: `${FIRST_STEPS_TITLE} · ${step} of ${FIRST_STEPS}`, text };
+}
 
 /**
  * The letter the first time you come home since streets came: what your street sees of you, and where to

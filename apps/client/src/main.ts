@@ -764,6 +764,7 @@ const radioScenes: [RadioScene, RadioScene] = [{ on: false, senses: { loud: 0, f
 let radioTurn = 0;
 let progressShown: typeof game.progress | null = null;
 let storyShown = -1;
+let firstStepsShown = -1;
 let notebookShown = -1;
 let notesShown = -1;
 /** A map's name, for the field notes' headings. */
@@ -905,6 +906,10 @@ function frame(now: number) {
   if (game.storyChanges !== storyShown) {
     storyShown = game.storyChanges;
     hud.setJournal(journalView(game.reached()));
+  }
+  if (game.firstStepsChanges !== firstStepsShown) {
+    firstStepsShown = game.firstStepsChanges;
+    hud.setFirstSteps(game.firstSteps);
   }
   if (game.notebookChanges !== notebookShown) {
     notebookShown = game.notebookChanges;

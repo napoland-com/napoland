@@ -33,6 +33,11 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .status .sub { display: flex; justify-content: space-between; gap: .8em; font-size: calc(var(--u) * .92); color: #d3ccbb; white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* A tap on the status panel opens the Status tab. */
 .status { pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+/* A new player's first steps (roadmap/first-steps.md): at the foot of the panel, which one, and what to do now. */
+.status .steps { display: grid; gap: .15em; max-width: calc(var(--u) * 15); margin-top: calc(var(--u) * .15); padding-top: calc(var(--u) * .45); border-top: 1px solid rgba(217, 207, 184, .25); white-space: normal; }
+.status .steps[hidden] { display: none; }
+.status .steps b { font-size: calc(var(--u) * .82); font-weight: 600; letter-spacing: .02em; color: #ffcf5a; }
+.status .steps span { font-size: calc(var(--u) * .95); line-height: 1.25; }
 /* A guest: a small label under the name, and Sign in, a target of its own. The row stays for the whole
    session, so nothing under it moves while playing, and it is no wider than the panel already is. */
 .status .guest { display: flex; align-items: center; justify-content: space-between; gap: .6em; }

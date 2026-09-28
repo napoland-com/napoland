@@ -1,8 +1,8 @@
 /**
  * Visits and NAPO's teleport, as the client shows them (roadmap/street-visits.md): a neighbor's cabin drawn
  * with their furniture and trophy shelf, never yours, and named by whose it is; their chest and workbench
- * saying whose they are; the owner reading who came in; the setting under Friends; A at the teleport, and
- * its hum; the road onto your street on the paper map. On the real maps and items, since players read
+ * saying whose they are; the owner reading who came in; the setting under Friends; A at the teleport, which
+ * asks first, both ways, and its hum; the road onto your street on the paper map. On the real maps and items, since players read
  * their words there.
  */
 import { readFileSync } from 'node:fs';
@@ -14,7 +14,7 @@ import { Game } from '../src/game';
 import { Items } from '../src/items';
 import { Maps } from '../src/maps';
 import { sketchOf } from '../src/papermap';
-import { TELEPORT, TELEPORT_TOWN, VISITS_SETTING, comfortLines, visitedText } from '../src/said';
+import { TELEPORT, VISITS_SETTING, comfortLines, teleportQuestion, visitedText } from '../src/said';
 import { soundscape, type Scene } from '../src/soundscape';
 import { FULL, welcome, zone } from './fixtures';
 
@@ -126,21 +126,31 @@ describe('who comes into your cabin', () => {
 });
 
 describe('NAPO\'s teleport', () => {
-  it('goes to town with A, from your own cabin or a neighbor\'s', () => {
+  it('asks first with A, and goes to town on YES, from your own cabin or a neighbor\'s; NO stays', () => {
     g.pressA();
+    expect(g.askView()).toMatchObject({ who: TELEPORT, text: 'Go to town? It sets you down by the notice board.' });
+    expect(sent).toEqual([]);
+    g.answer('no');
+    expect([g.question, sent]).toEqual([null, []]);
+    g.pressA();
+    g.answer('yes');
     expect(sent).toEqual([{ t: 'teleport', x: teleport.x, y: teleport.y }]);
     standBefore(teleport, true);
     g.pressA();
+    expect(g.askView()).toMatchObject({ text: teleportQuestion(false) });
+    g.answer('yes');
     expect(sent).toEqual([{ t: 'teleport', x: teleport.x, y: teleport.y }]);
   });
 
-  it('in town only brings people here: A there says the way home is the road', () => {
+  it('in town asks first, and takes you home on YES', () => {
     const at = teleportArrival(twin);
     g.handle(zone(stonebrook, at.x, at.y, [me(at.x, at.y)]), 2000);
     sent.length = 0;
     g.pressA();
+    expect(g.askView()).toMatchObject({ who: TELEPORT, text: 'Go home? It sets you down in your cabin.' });
     expect(sent).toEqual([]);
-    expect(g.note).toMatchObject({ who: TELEPORT, text: TELEPORT_TOWN });
+    g.answer('yes');
+    expect(sent).toEqual([{ t: 'teleport', x: twin.x, y: twin.y }]);
   });
 
   it('hums close by, softly, and not from across the room', () => {

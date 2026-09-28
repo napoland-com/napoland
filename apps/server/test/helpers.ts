@@ -725,7 +725,7 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
     xp: 120, stash: { items: { moss: 9, coat: 1 }, out: { moss: 2 }, pieces: { coat: [{ cond: 1, level: 1 }] } },
     gear: { shirt: 'coat' }, worn: { shirt: { cond: 0.75, level: 2 } }, story: 'the-lineman', tools: ['stonebrook-map', 'radio'],
     parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', notebook: { pages: ['glowcaps', 'watchers'], blanks: [] }, furniture: ['iron-stove'], cozy: 1_700_000_300_000,
-    street: 2, lot: 7, doorOff: true, visitsOff: true,
+    street: 2, lot: 7, doorOff: true, visitsOff: true, firstSteps: 2,
     createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   };
   expect(await storage.create(rec)).toBe(true);
@@ -742,7 +742,7 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
     ...shown, streetTold: true, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
     stash: { items: { moss: 11, coat: 1 }, out: {}, pieces: { coat: [{ cond: 1, level: 1 }] } }, worn: { shirt: { cond: 1, level: 2 } }, tools: [...rec.tools!, 'near-woods-map'],
     parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', notebook: { pages: ['glowcaps', 'watchers'], blanks: ['watcher-stops'] }, furniture: ['iron-stove', 'bed'],
-    cozy: 1_700_000_400_000, street: 3, lot: 0, lastSeenAt: rec.lastSeenAt + 1000,
+    cozy: 1_700_000_400_000, street: 3, lot: 0, firstSteps: 3, lastSeenAt: rec.lastSeenAt + 1000,
   };
   await storage.save(later);
   expect(await load()).toEqual({ ...later, stats: { ...later.stats, thanked: 8 } });
@@ -756,6 +756,10 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
   const { cozy: _cozy, ...cold } = kept;
   await storage.save({ ...cold, lastSeenAt: kept.lastSeenAt + 1000 });
   expect((await load()).cozy).toBeUndefined();
+  // And which of the first steps is theirs to take: one without it, and they took them all.
+  const { firstSteps: _first, ...past } = kept;
+  await storage.save({ ...past, lastSeenAt: kept.lastSeenAt + 1100 });
+  expect((await load()).firstSteps).toBeUndefined();
   // The letter about their street, once read, stays read, even by a save without it; the door's setting and
   // who may come in are said by every save.
   const { streetTold: _told, ...untold } = kept;

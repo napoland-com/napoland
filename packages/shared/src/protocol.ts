@@ -29,8 +29,15 @@ import { OFFER_MAX } from './trade';
  * 33: how the trip went (`trip`), when you come home or wake up there.
  * 34: visits (a neighbor's door lets you in: `visit` in the welcome and `zone`, whose furniture is theirs),
  * the road to your street, and NAPO's teleport (`teleport`), which a client that did not know would never use.
+ * 35: the teleport in town takes you home, and a new player's first steps (`firstSteps`, in the welcome too).
  */
-export const PROTOCOL_VERSION = 34;
+export const PROTOCOL_VERSION = 35;
+
+/**
+ * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
+ * to pick something up, and home again to put it in the chest.
+ */
+export const FIRST_STEPS = 3;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -267,7 +274,7 @@ export const ClientMsg = z.discriminatedUnion('t', [
    * everyone does until they choose). Anyone, guests too: a guest's cabin stands on a street as well.
    */
   z.object({ t: z.literal('visitsOff'), off: z.boolean() }),
-  /** A at NAPO's teleport on tile x,y next to you, in a cabin (anyone's): it sets you down in town, in front of its twin. */
+  /** A at NAPO's teleport on tile x,y next to you (the client asks first): in a cabin (anyone's) it sets you down in town, in front of its twin; in town, at home in front of the one in your own cabin. */
   z.object({ t: z.literal('teleport'), x: z.number().int(), y: z.number().int() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
@@ -738,6 +745,8 @@ export type ServerMsg =
       doorOff?: true;
       /** You let only friends into your cabin (the setting in the menu). */
       visitsOff?: true;
+      /** A new player's first step to take now, 1 to FIRST_STEPS; none once they are done, or for anyone older. */
+      firstSteps?: number;
       serverTime: number;
     }
   /**
@@ -783,6 +792,8 @@ export type ServerMsg =
   | { t: 'doorOff'; off: boolean }
   /** Who may walk into your cabin, as it stands now that you changed it (`off`: only friends). */
   | { t: 'visitsOff'; off: boolean }
+  /** You took a first step: the next one to take (null: you are done). */
+  | { t: 'firstSteps'; step: number | null }
   /**
    * The first time you come home since streets came: a letter about what your street sees of you (your name
    * on your door, your window lit while you are home; `doorOff`: you keep both to yourself already). Once.

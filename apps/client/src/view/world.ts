@@ -36,7 +36,7 @@ import {
 import { bridgeModel, bridgeRails, cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
 import { SNOW, ambience, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
-import { HUM, napoBuilding, napoProp, napoSign, towerModel } from './napo';
+import { HUM, TELEPORT_ROCK_Y, napoBuilding, napoProp, napoSign, teleportCore, towerModel } from './napo';
 import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
 
 export interface Avatar {
@@ -299,6 +299,9 @@ export class WorldView {
   private headLight = new THREE.SpotLight(0xfff1c4, 0, 11, 0.5, 0.55, 1.4);
   /** The light on top of the Tower (and any mast like it): it blinks red, day and night. */
   private beaconMat = ownToon('#4a1410', { emissive: 0x000000 });
+  /** The glow of NAPO's teleports (napo.ts, teleportCore): soft violet on the plate and in the arch, pulsing; and the ring that spreads over the plate. */
+  private teleportGlow = new THREE.MeshBasicMaterial({ map: softTexture(0.3), color: 0xa98cff, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  private teleportRipple = new THREE.MeshBasicMaterial({ color: 0xc9b6ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
   private hasCar = false;
   private stoneLight = new THREE.PointLight(0xa66cff, 0, 7, 2);
   private hasStone = false;
@@ -935,6 +938,22 @@ export class WorldView {
         : o.kind === 'note' ? noteModel(o, map)
         : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
       if (m) still.push(m);
+    }
+    // NAPO's teleports: the rock in each floats in its arch, turning slowly, over a glow that breathes, and a
+    // ring of light spreads from the middle of the plate to its rim, fading, every two seconds.
+    const cores = this.objects('teleport').map(o => teleportCore(o, HUM, this.teleportGlow, this.teleportRipple));
+    for (const c of cores) this.scene.add(c.root);
+    if (cores.length) {
+      this.animate.push(t => {
+        const k = (t * 0.5) % 1;
+        cores.forEach((c, i) => {
+          c.rock.position.y = TELEPORT_ROCK_Y + Math.sin(t * 1.6 + i) * 0.035;
+          c.rock.rotation.y = t * 0.7;
+          c.ripple.scale.setScalar(0.2 + 0.8 * k);
+        });
+        this.teleportGlow.opacity = 0.42 + 0.14 * Math.sin(t * 2.1);
+        this.teleportRipple.opacity = 0.6 * (1 - k) * Math.min(1, k * 6);
+      });
     }
     const fireplaces = this.objects('fireplace');
     if (fireplaces.length) {

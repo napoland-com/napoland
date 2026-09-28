@@ -97,15 +97,14 @@ export const MOSS_TILES = [{ x: 3, y: 1 }, { x: 4, y: 1 }, { x: 5, y: 1 }];
 
 /**
  * The town of a street (streets.test.ts, visits.test.ts): townData without its house. Its road off the
- * bottom edge, (4,7) and (5,7), leads onto laneData's lane where the road comes in, (6,4) and (7,4). NAPO's
- * teleport stands at (8,5): the one in a cabin sets you down in front of it, at (8,6), facing down.
+ * bottom edge, (4,7) and (5,7), leads onto laneData's lane where the road comes in, (6,4) and (7,4).
  */
 export function streetTownData(): MapData {
   const t = townData();
   return {
     ...t,
     exits: [...t.exits.filter(e => e.to !== 'house'), { x: 4, y: 7, w: 2, h: 1, to: 'lane', tx: 6, ty: 4, dir: 'up' }],
-    objects: [...t.objects.filter(o => o.kind !== 'house'), { kind: 'teleport', x: 8, y: 5 }],
+    objects: t.objects.filter(o => o.kind !== 'house'),
   };
 }
 

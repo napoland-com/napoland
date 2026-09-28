@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { doorOf, type MapObject } from '@napoland/shared';
-import { HUM, NAPO_WALL_H, NAPO_YELLOW, TOWER_H, cageModel, jeepModel, napoBuilding, napoProp, napoSign, napoTruck, pumpModel, stakeModel, teleportModel, towerModel } from '../src/view/napo';
+import {
+  HUM, NAPO_WALL_H, NAPO_YELLOW, TELEPORT_ROCK_Y, TOWER_H, cageModel, jeepModel, napoBuilding, napoProp, napoSign, napoTruck, pumpModel, stakeModel, teleportCore, teleportModel, towerModel,
+} from '../src/view/napo';
 
 type House = Extract<MapObject, { kind: 'house' }>;
 /** A cabin's doorway (world.ts): NAPO's buildings share it. */
@@ -132,12 +134,25 @@ describe('what NAPO left out in the places', () => {
     }
   });
 
-  it('stands a teleport on its tile, under a cabin\'s ceiling, rimmed and plated in NAPO yellow, its rock humming in the glow the cages share', () => {
-    const t = teleportModel({ x: 7, y: 4 }, HUM);
+  it('stands a teleport on its tile, under a cabin\'s ceiling, rimmed and clamped in NAPO yellow, its rock humming in its arch over a glow', () => {
+    const t = teleportModel({ x: 7, y: 4 });
     onTiles(t, 7, 4);
-    expect(new THREE.Box3().setFromObject(t).max.y).toBeLessThan(NAPO_WALL_H);
-    expect(colored(t, NAPO_YELLOW).length).toBeGreaterThan(0);
-    expect(uses(t, HUM)).toBe(true);
-    expect(uses(napoProp({ kind: 'teleport', x: 12, y: 26 })!, HUM)).toBe(true);
+    const arch = new THREE.Box3().setFromObject(t);
+    expect(arch.max.y).toBeLessThan(NAPO_WALL_H);
+    expect(colored(t, NAPO_YELLOW).length).toBeGreaterThan(2);
+    expect(napoProp({ kind: 'teleport', x: 12, y: 26 })).not.toBeNull();
+    // What moves in it: the rock, in the glow the cages share, floating in the arch over its plate; the glow; and
+    // the ring that spreads over the plate, as wide as it at most, just over it.
+    const glow = new THREE.MeshBasicMaterial(), ripple = new THREE.MeshBasicMaterial();
+    const core = teleportCore({ x: 7, y: 4 }, HUM, glow, ripple);
+    onTiles(core.root, 7, 4);
+    expect([uses(core.root, HUM), uses(core.root, glow), uses(core.root, ripple)]).toEqual([true, true, true]);
+    expect(core.rock.position.y).toBe(TELEPORT_ROCK_Y);
+    const rock = new THREE.Box3().setFromObject(core.rock);
+    expect(rock.min.y).toBeGreaterThan(0.2);
+    expect(rock.max.y).toBeLessThan(arch.max.y - 0.1);
+    const ring = new THREE.Box3().setFromObject(core.ripple);
+    expect(ring.max.x - ring.min.x).toBeLessThanOrEqual(0.7);
+    expect([ring.min.y, ring.max.y].every(y => y > 0.1 && y < 0.13)).toBe(true);
   });
 });

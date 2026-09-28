@@ -154,6 +154,11 @@ export interface PlayerRecord {
    * may, as for everyone until they choose. Every save says it.
    */
   visitsOff?: true;
+  /**
+   * A new player's first step to take now (world.ts, first steps: 1 to FIRST_STEPS). None: they are done, or
+   * came before first steps did. Every save says it.
+   */
+  firstSteps?: number;
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
@@ -557,6 +562,8 @@ export class MemoryStorage implements Storage {
       if (rec.streetTold) cur.streetTold = true;
       if (rec.visitsOff) cur.visitsOff = true;
       else delete cur.visitsOff;
+      if (rec.firstSteps) cur.firstSteps = rec.firstSteps;
+      else delete cur.firstSteps;
       // Every save says where they are: back in the main copy, the copy they were in is forgotten.
       if (rec.zone) cur.zone = rec.zone;
       else delete cur.zone;
@@ -854,6 +861,8 @@ interface PlayerRow {
   street_told: boolean;
   /** Whether only friends may walk into their cabin (028_visits.sql). */
   visits_off: boolean;
+  /** A new player's first step to take now; null when done, or for anyone older (029_first_steps.sql). */
+  first_steps: number | null;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -1010,6 +1019,7 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.door_off ? { doorOff: true as const } : {}),
   ...(r.street_told ? { streetTold: true as const } : {}),
   ...(r.visits_off ? { visitsOff: true as const } : {}),
+  ...(r.first_steps ? { firstSteps: r.first_steps } : {}),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -1047,7 +1057,7 @@ const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, colo
   merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
   badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, notebook = COALESCE($31::jsonb, notebook), notes = COALESCE($32::jsonb, notes),
   keepsakes = COALESCE($33::jsonb, keepsakes), furniture = COALESCE($34::jsonb, furniture), cozy_until = $35, street = $36, lot = $37, door_off = $38,
-  street_told = street_told OR $39, bests = COALESCE($40::jsonb, bests), visits_off = $41, last_seen_at = $13 WHERE id = $1`;
+  street_told = street_told OR $39, bests = COALESCE($40::jsonb, bests), visits_off = $41, first_steps = $42, last_seen_at = $13 WHERE id = $1`;
 
 // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
 function saveParams(rec: PlayerRecord): unknown[] {
@@ -1061,7 +1071,7 @@ function saveParams(rec: PlayerRecord): unknown[] {
     rec.notes ? JSON.stringify(rec.notes) : null, rec.keepsakes ? JSON.stringify(rec.keepsakes) : null,
     rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
     rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null, rec.doorOff === true, rec.streetTold === true,
-    rec.bests ? JSON.stringify(rec.bests) : null, rec.visitsOff === true,
+    rec.bests ? JSON.stringify(rec.bests) : null, rec.visitsOff === true, rec.firstSteps ?? null,
   ];
 }
 
@@ -1114,9 +1124,9 @@ export class PgStorage implements Storage {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
          parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, rested, merits_spent, looks, pattern, badge, notebook, notes, keepsakes, furniture, cozy_until, street, lot,
-         door_off, street_told, visits_off)
+         door_off, street_told, visits_off, first_steps)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27,
-         $28::jsonb, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb, $34::jsonb, $35, $36, $37, $38, $39, $40)
+         $28::jsonb, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb, $34::jsonb, $35, $36, $37, $38, $39, $40, $41)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedCounts(rec)),
@@ -1126,6 +1136,7 @@ export class PgStorage implements Storage {
         rec.pattern ?? null, rec.badge ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null, rec.notes ? JSON.stringify(rec.notes) : null,
         rec.keepsakes ? JSON.stringify(rec.keepsakes) : null, rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
         rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null, rec.doorOff === true, rec.streetTold === true, rec.visitsOff === true,
+        rec.firstSteps ?? null,
       ],
     );
     return r.rowCount === 1;

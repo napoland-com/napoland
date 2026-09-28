@@ -64,9 +64,9 @@ import { Passing } from './glimpses';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TELEPORT, TELEPORT_TOWN, TENDED, TOOK_ONE,
+  CRATE_FULL, CRATE_NO_GEAR, FIRST_STEPS_DONE, FIRST_STEPS_TITLE, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TELEPORT, TENDED, TOOK_ONE,
   TOO_DARK, YOUR_CABIN, buyQuestion, cabinWho, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion,
-  noMerit, noShard, notYours, nothingToBurn, openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion,
+  noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion,
   useQuestion, visitedText, visitWho, waltOnTheLongNight,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
@@ -359,6 +359,12 @@ export class Game {
   doorOff = false;
   /** Only friends may walk into your cabin (the setting below the door's), as the server last said. It counts in socialChanges too. */
   visitsOff = false;
+  /**
+   * A new player's first step to take now (1 to FIRST_STEPS: roadmap/first-steps.md), as the server said, on
+   * the status panel; null when there is none. `firstStepsChanges` counts changes.
+   */
+  firstSteps: number | null = null;
+  firstStepsChanges = 0;
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The id of the chapter of the story you are in, as the server said ('' until its welcome). */
@@ -678,6 +684,8 @@ export class Game {
         this.doorOff = msg.doorOff === true;
         this.visitsOff = msg.visitsOff === true;
         this.socialChanges++;
+        this.firstSteps = msg.firstSteps ?? null;
+        this.firstStepsChanges++;
         this.scene(msg, now);
         this.weather = msg.weather;
         this.setSeason(msg.season, now, false);
@@ -785,6 +793,12 @@ export class Game {
         break;
       case 'visited':
         this.inform(YOUR_CABIN, visitedText(msg.name));
+        break;
+      case 'firstSteps':
+        // The last one taken: the text box says the basics are done, once.
+        if (msg.step === null && this.firstSteps !== null) this.inform(FIRST_STEPS_TITLE, FIRST_STEPS_DONE);
+        this.firstSteps = msg.step;
+        this.firstStepsChanges++;
         break;
       case 'streetLetter':
         this.letters.push({ who: 'Letter', lines: streetLetterLines(msg.doorOff) });
@@ -1324,10 +1338,8 @@ export class Game {
       return this.inform(said.who, said.text);
     }
     if (t.kind === 'teleport') {
-      // The one in a cabin (anyone's) sets you down in town; the one in town only receives.
-      if (!this.current.data.private) return this.inform(TELEPORT, TELEPORT_TOWN);
-      if (this.online) this.send({ t: 'teleport', x: t.x, y: t.y });
-      return;
+      // It takes you somewhere else, so it asks first: the one in a cabin (anyone's) to town, the one in town home.
+      return this.ask({ who: TELEPORT, text: teleportQuestion(!this.current.data.private), yes: () => { if (this.online) this.send({ t: 'teleport', x: t.x, y: t.y }); } });
     }
     if (t.kind === 'chest') {
       if (!this.online) return;

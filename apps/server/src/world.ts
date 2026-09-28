@@ -126,6 +126,7 @@ import {
   UTC_CALENDAR,
   WEEKDAYS,
   WHOLE_WEEK,
+  FIRST_STEPS,
   FLASH_BURST_S,
   FLASH_GLOW_S,
   GATE_PULLERS,
@@ -538,6 +539,8 @@ export interface Joined extends Scene {
   doorOff?: true;
   /** They let only friends into their cabin. */
   visitsOff?: true;
+  /** A new player's first step to take now (first steps). */
+  firstSteps?: number;
 }
 
 /** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
@@ -1243,6 +1246,8 @@ export class World {
   private readonly cabin: TileMap | undefined;
   /** NAPO's teleport in the home town: the one in every cabin sets you down in front of it (teleportArrival). */
   private readonly townTeleport: { x: number; y: number } | undefined;
+  /** NAPO's teleport in the cabin: the one in town sets you down in front of it, at home in your own. */
+  private readonly cabinTeleport: { x: number; y: number } | undefined;
 
   /** `maps` must fit together (validateWorld) and `items` must fit the maps (validateItems); `homeId` is a town. */
   constructor(maps: Iterable<TileMap>, homeId: string, weather: Weather, options: WorldOptions = {}) {
@@ -1277,8 +1282,9 @@ export class World {
     this.street = street;
     this.lotDoor = street ? lotDoors(street.data) : [];
     this.cabin = [...this.maps.values()].find(m => m.data.private);
-    const teleport = home.data.objects.find(o => o.kind === 'teleport');
+    const teleport = home.data.objects.find(o => o.kind === 'teleport'), inCabin = this.cabin?.data.objects.find(o => o.kind === 'teleport');
     this.townTeleport = teleport && { x: teleport.x, y: teleport.y };
+    this.cabinTeleport = inCabin && { x: inCabin.x, y: inCabin.y };
     const room = [...this.maps.values()].find(m => m.data.wake && (this.around.get(m.data.id) === home || (this.street && this.around.get(m.data.id) === this.street)));
     this.wakeUp = room ? { map: room, ...room.data.wake! } : { map: home, ...home.data.spawn };
     this.sky = weather;
@@ -1526,6 +1532,7 @@ export class World {
     if (r.doorOff !== true) delete r.doorOff;
     if (r.streetTold !== true) delete r.streetTold;
     if (r.visitsOff !== true) delete r.visitsOff;
+    if (!(Number.isInteger(r.firstSteps) && r.firstSteps! >= 1 && r.firstSteps! <= FIRST_STEPS)) delete r.firstSteps;
     // Their door's setting is theirs: the lot kept for them follows it, and so does their street. So does who may visit.
     this.markDoor(r.id, r.doorOff === true);
     this.markVisits(r.id, r.visitsOff === true);
@@ -1612,6 +1619,7 @@ export class World {
       ...this.streetOf(p),
       ...(r.doorOff && { doorOff: true as const }),
       ...(r.visitsOff && { visitsOff: true as const }),
+      ...(r.firstSteps && { firstSteps: r.firstSteps }),
     };
   }
 
@@ -1932,6 +1940,8 @@ export class World {
     if (levelOf(p.rec.xp ?? 0) !== before || keepsakeEnergy(this.keepsakes, p.rec.keepsakes) !== setBefore) this.refresh(p, now);
     this.tell(p, now);
     this.moveStory(p, { store: true });
+    // The last of the first steps: home, and what was found put in the chest.
+    this.firstStep(p, 3);
   }
 
   /**
@@ -2742,23 +2752,44 @@ export class World {
   }
 
   /**
-   * A at NAPO's teleport on tile x,y next to the player, in a cabin (anyone's, a neighbor's too): they are
-   * in town at once, in front of its twin there (teleportArrival), in the copy of town walking in would give
-   * them (copyFor: where their friends are). It only goes that way: the way home is the road.
+   * A at NAPO's teleport on tile x,y next to the player (the client asks first). The one in a cabin (anyone's,
+   * a neighbor's too) sets them down in town, in front of its twin there (teleportArrival), in the copy of town
+   * walking in would give them (copyFor: where their friends are); the one in town sets them down at home, in
+   * front of the one in their own cabin, which is coming home as walking in is (the trip ends, the letter waits).
    */
   teleport(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    const here = p.map.data.private === true && p.map.data.objects.some(o => o.kind === 'teleport' && o.x === x && o.y === y);
-    if (!here || manhattan(x, y, p.rec.x, p.rec.y) !== 1) return this.refuse(p, 'teleport', 'too_far');
-    if (!this.townTeleport) return this.refuse(p, 'teleport', 'gone');
+    const here = p.map.data.objects.some(o => o.kind === 'teleport' && o.x === x && o.y === y);
+    const toTown = p.map.data.private === true, toCabin = p.map === this.home;
+    if (!here || !(toTown || toCabin) || manhattan(x, y, p.rec.x, p.rec.y) !== 1) return this.refuse(p, 'teleport', 'too_far');
+    const to = toTown ? this.home : this.cabin, twin = toTown ? this.townTeleport : this.cabinTeleport;
+    if (!to || !twin) return this.refuse(p, 'teleport', 'gone');
     // Out of their own cabin with the drying rack in it, they leave dry, as through its door.
     if (this.ownCabin(p) && dries(p.rec.furniture, this.items)) p.rec.wet = 0;
-    const from = p.zone, at = teleportArrival(this.townTeleport);
-    this.place(p, this.zoneFor(this.home, this.copyFor(p.rec, this.home), now), at.x, at.y, at.dir);
+    const from = p.zone, at = teleportArrival(twin);
+    this.place(p, this.zoneFor(to, this.copyFor(p.rec, to), now), at.x, at.y, at.dir);
     this.arrive(p, from, 'exit', now);
-    this.moveStory(p, { reach: this.home.data.id });
+    const home = this.atHome(p);
+    if (home) this.endTrip(p, now, null);
+    this.moveStory(p, { reach: to.data.id });
+    if (home) this.homecoming(p, now);
+  }
+
+  /**
+   * A new player's first steps (roadmap/first-steps.md), kept on their record (PlayerRecord.firstSteps: the one
+   * to take now): to town (by the teleport, or on foot), something picked up out of town, then home to put it
+   * in the chest. `step` is the one just taken; when it was theirs to take, they hear the next, or that they
+   * are done, and it is saved at once. Anyone else, and anyone older than first steps, is not told a thing.
+   */
+  private firstStep(p: Online, step: number): void {
+    if (p.rec.firstSteps !== step) return;
+    const next = step < FIRST_STEPS ? step + 1 : undefined;
+    if (next) p.rec.firstSteps = next;
+    else delete p.rec.firstSteps;
+    this.saveNow.set(p.rec.id, p.rec);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'firstSteps', step: next ?? null } });
   }
 
   /** Players deleted from storage (guests who stayed away): their lots are free again. */
@@ -3316,6 +3347,8 @@ export class World {
     if (p.hitched && p.map.data.kind !== 'wilds') this.unhitch(p);
     this.refresh(p, now);
     this.tell(p, now);
+    // The first of the first steps: to town, by the teleport or on foot.
+    if (p.map === this.home) this.firstStep(p, 1);
   }
 
   /** The rates and load for where the player stands now, and their mods. Nobody is told. */
@@ -5057,6 +5090,8 @@ export class World {
   private got(p: Online, items: BagSlot[], from: 'find' | 'drop', now: number, double = false): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'got', items, from, ...(double && { double: true as const }) } });
     this.sendBag(p, now);
+    // The second of the first steps: something picked up out of town, in the wilds or a room off them.
+    if (from === 'find' && this.placeOf(p.map).data.kind === 'wilds') this.firstStep(p, 2);
   }
 
   /**
