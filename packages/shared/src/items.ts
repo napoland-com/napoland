@@ -9,7 +9,7 @@
  * else gets a random half (the rest is lost), and it fades an hour after the collapse.
  */
 import type { Mods } from './feats';
-import type { Element, Piece, Quirk, Recipe, Slot, Tier } from './gear';
+import type { Element, Piece, Quirk, Recipe, Slot, Tier, Upgrade } from './gear';
 import type { ParcelsData } from './parcels';
 import type { ConditionsData } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
@@ -144,6 +144,8 @@ export interface ItemsData {
   wear?: Partial<Record<Tier, number>>;
   /** What mending a piece of each tier costs at the workbench, from the stash. */
   mend?: Partial<Record<Tier, BagSlot[]>>;
+  /** What upgrading a piece one level costs at the workbench, from the stash, and how often it works: +1 first (gear.ts). None: nothing is upgraded. */
+  upgrades?: Upgrade[];
   /** Names and words for the quirks of anomalous gear (gear.ts, QUIRKS). */
   quirks?: Array<{ id: Quirk; name: string; text: string }>;
   /** What the woods are like today and this week (sky.ts). None: nothing changes from day to day. */

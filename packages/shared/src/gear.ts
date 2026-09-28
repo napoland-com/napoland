@@ -17,6 +17,11 @@
  * not at all, until it is mended at the workbench (`mend`: what that costs, by tier). The rarest
  * pieces (anomalous) come with a quirk (QUIRKS), rolled when a piece comes to be: in your stash, on
  * you, or in your bag.
+ *
+ * A piece can be upgraded at the workbench, one level at a time from +1 to +9 (`upgrades` in
+ * content/items.json: what each level costs, and how often it works). Each level makes it resist
+ * UPGRADE_STEP more of what it resists and wear UPGRADE_STEP more slowly; the resistances still stop at
+ * RESIST_MAX in all. Worn clothes (they resist nothing) and bags (their size is the point) are not upgraded.
  */
 import { BAG_SLOTS, type BagSlot, type ItemDef, type ItemsData } from './items';
 
@@ -44,10 +49,11 @@ export const STARTER_GEAR: Readonly<Gear> = {
 /** Slots when no bag is worn: a world whose items have no bags (the tests) keeps the old bag. */
 export const NO_BAG = BAG_SLOTS;
 
-/** One piece of gear: its condition (1 new, 0 worn out) and its quirk, if it has one. */
+/** One piece of gear: its condition (1 new, 0 worn out), its quirk if it has one, and its upgrade level (none: +0). */
 export interface Piece {
   cond: number;
   quirk?: Quirk;
+  level?: number;
 }
 
 /** What you wear, piece by piece, by slot. */
@@ -83,15 +89,45 @@ export interface Recipe {
   needs: BagSlot[];
 }
 
+/** The highest level a piece goes to, and what each level adds: that share more of what it resists, and of how long it lasts out there. */
+export const UPGRADE_MAX = 9;
+export const UPGRADE_STEP = 0.05;
+
+/** What going up one level takes from the stash (`upgrades` in content/items.json, +1 first), and how often it works (always, left out). */
+export interface Upgrade {
+  needs: BagSlot[];
+  chance?: number;
+}
+
+/** What a piece's level multiplies what it resists and how long it lasts by: 1 at +0, 1.45 at +9. */
+export const upgradeFactor = (level = 0): number => 1 + UPGRADE_STEP * Math.min(UPGRADE_MAX, Math.max(0, Math.floor(level)));
+
+/** Can a piece of `def` be upgraded? Gear of any tier but worn clothes (they resist nothing), and never a bag (its size is the point). */
+export function upgradable(def: ItemDef | undefined): boolean {
+  return def?.kind === 'gear' && def.slot !== 'bag' && def.tier !== undefined && def.tier !== 'worn';
+}
+
+/** Going from `level` to the next: what it takes and how often it works. Undefined at the top, or past the levels the data lists. */
+export function nextUpgrade(level: number, upgrades: ItemsData['upgrades']): Upgrade | undefined {
+  const l = Math.max(0, Math.floor(level));
+  return l < UPGRADE_MAX ? upgrades?.[l] : undefined;
+}
+
+/** How often an upgrade works, from 0 to 1 (1: always). */
+export const upgradeChance = (u: Upgrade): number => Math.min(1, Math.max(0, u.chance ?? 1));
+
 export const noResist = (): Resist => ({ heat: 0, cold: 0, wind: 0, electricity: 0, radiation: 0 });
 
-/** Every element's resistance over what is worn (as worn down as `pieces` say), each at most RESIST_MAX. */
+/**
+ * Every element's resistance over what is worn (as worn down and as upgraded as `pieces` say), each at
+ * most RESIST_MAX in all: no upgrade makes anyone immune.
+ */
 export function resistOf(gear: Gear, items: Map<string, ItemDef>, pieces: Worn = {}): Resist {
   const out = noResist();
   for (const s of SLOTS) {
     const def = gear[s] ? items.get(gear[s]!) : undefined;
     if (def?.kind !== 'gear') continue;
-    const k = pieceFactor(pieces[s]?.cond ?? 1);
+    const k = pieceFactor(pieces[s]?.cond ?? 1) * upgradeFactor(pieces[s]?.level);
     for (const e of ELEMENTS) out[e] += (def.resist?.[e] ?? 0) * k;
   }
   for (const e of ELEMENTS) out[e] = Math.round(Math.min(RESIST_MAX, Math.max(0, out[e])) * 1000) / 1000;
@@ -112,11 +148,14 @@ export function gearEnergy(gear: Gear, items: Map<string, ItemDef>, pieces: Worn
   }, 0);
 }
 
-/** Seconds out in the wilds that wear a piece from new to worn out; undefined: it never wears (worn clothes, bags). */
-export function wearSeconds(def: ItemDef | undefined, wear: ItemsData['wear']): number | undefined {
+/**
+ * Seconds out in the wilds that wear a piece from new to worn out, longer the higher it is upgraded;
+ * undefined: it never wears (worn clothes, bags).
+ */
+export function wearSeconds(def: ItemDef | undefined, wear: ItemsData['wear'], level = 0): number | undefined {
   if (def?.kind !== 'gear' || def.slot === 'bag' || !def.tier) return undefined;
   const s = wear?.[def.tier];
-  return s && s > 0 ? s : undefined;
+  return s && s > 0 ? s * upgradeFactor(level) : undefined;
 }
 
 /** What mending a piece of `def` costs at the workbench (by its tier); undefined: it cannot be mended. */

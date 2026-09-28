@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BagSlot, Gear, ItemsData, Worn } from '@napoland/shared';
+import type { BagSlot, Gear, ItemsData, PieceAt, Worn } from '@napoland/shared';
 import {
   BAG_AT_HOME, DOUBLE_TAP_MS, DOUBLE_TAP_SLOP, DoubleTap, KEEP_BAG_OUT, NO_ROOM_TO_TAKE_OFF, NO_ROOM_TO_TAKE_OUT, actText, cardPress, detailView, listWords, morePress, pieceName, pieceStats, refKey,
   statText, tierName, type DetailRef, type DetailState, type DetailView,
@@ -13,6 +13,9 @@ const items = new Items({
     { id: 'cloth', name: 'Cloth scraps', kind: 'resource', stack: 10, xp: 2, weight: 0.1, fuel: 90, text: 'Dry.' },
     { id: 'resin', name: 'Fir resin', kind: 'resource', stack: 20, text: 'Sticky.' },
     { id: 'scrap', name: 'Scrap metal', kind: 'resource', stack: 10, text: 'Heavy.' },
+    { id: 'wire', name: 'Copper wire', kind: 'resource', stack: 10, text: 'Bright.' },
+    { id: 'shard', name: 'Anomaly shard', kind: 'resource', stack: 5, text: 'Warm.' },
+    { id: 'strange', name: 'Strange object', kind: 'resource', stack: 1, text: 'Odd.' },
     { id: 'thermos', name: 'Thermos', kind: 'consumable', stack: 2, text: 'Hot tea.', use: { energy: 30 } },
     { id: 'worn-cap', name: 'Worn cap', kind: 'gear', stack: 1, slot: 'cap', tier: 'worn', color: '#d63b33', text: 'Faded.' },
     { id: 'worn-gloves', name: 'Fingerless gloves', kind: 'gear', stack: 1, slot: 'gloves', tier: 'worn', text: 'Knitted.' },
@@ -33,6 +36,17 @@ const items = new Items({
   wear: { sturdy: 5400, rugged: 7200, anomalous: 10800 },
   mend: { sturdy: [{ item: 'cloth', count: 2 }, { item: 'scrap', count: 1 }], rugged: [{ item: 'cloth', count: 3 }, { item: 'scrap', count: 2 }] },
   quirks: [{ id: 'hum', name: 'Humming', text: 'It hums a minute before the region you are in grows restless.' }],
+  upgrades: [
+    { needs: [{ item: 'scrap', count: 2 }, { item: 'cloth', count: 2 }] },
+    { needs: [{ item: 'scrap', count: 3 }, { item: 'cloth', count: 2 }, { item: 'wire', count: 1 }] },
+    { needs: [{ item: 'scrap', count: 4 }, { item: 'cloth', count: 3 }, { item: 'wire', count: 2 }] },
+    { needs: [{ item: 'scrap', count: 4 }, { item: 'wire', count: 2 }, { item: 'shard', count: 1 }] },
+    { needs: [{ item: 'scrap', count: 5 }, { item: 'wire', count: 3 }, { item: 'shard', count: 2 }] },
+    { needs: [{ item: 'scrap', count: 6 }, { item: 'wire', count: 4 }, { item: 'shard', count: 3 }] },
+    { needs: [{ item: 'shard', count: 4 }, { item: 'strange', count: 1 }], chance: 0.7 },
+    { needs: [{ item: 'shard', count: 5 }, { item: 'strange', count: 2 }], chance: 0.5 },
+    { needs: [{ item: 'shard', count: 6 }, { item: 'strange', count: 3 }], chance: 0.3 },
+  ],
 } satisfies ItemsData);
 
 const WEARING: Gear = { cap: 'worn-cap', shirt: 'raincoat', gloves: 'worn-gloves', bag: 'backpack' };
@@ -350,6 +364,63 @@ describe('the cards at the workbench', () => {
     expect(detailView({ from: 'mend', slot: 'shirt' }, state({ worn: { shirt: { cond: 1 } } }))).toBeNull();
     expect(detailView({ from: 'mend', slot: 'cap' }, state())).toBeNull();
     expect(detailView({ from: 'recipe', id: 'nothing' }, state())).toBeNull();
+  });
+});
+
+describe('the upgrade cards at the workbench', () => {
+  const rich: BagSlot[] = ['scrap', 'cloth', 'wire', 'shard', 'strange'].map(item => ({ item, count: 99 }));
+  const shirt: PieceAt = { from: 'worn', slot: 'shirt' };
+
+  it('show what the next level changes, whole: what it resists, and how long it lasts out there', () => {
+    const v = view({ from: 'upgrade', of: shirt }, { stash: rich });
+    expect(v).toMatchObject({ name: 'Raincoat', tier: { name: 'Sturdy' }, cond: { words: 'Worn: 40% left' } });
+    expect(v.stats.map(statText)).toEqual(['Wind 35% → 37%', 'Cold 10% → 11%', 'Lasts 90 min → 95 min']);
+    expect(v.costs).toEqual({ title: 'To +1 it takes', needs: [
+      { item: 'scrap', name: 'Scrap metal', icon: expect.any(String), have: 99, need: 2 }, { item: 'cloth', name: 'Cloth scraps', icon: expect.any(String), have: 99, need: 2 },
+    ] });
+    expect(v.notes.map(n => n.text)).toEqual(['It always works.']);
+    expect(v.act).toEqual({ label: 'Upgrade to +1', enabled: true, does: { kind: 'upgrade', of: shirt } });
+    expect(cardPress(v)).toEqual({ does: { kind: 'upgrade', of: shirt }, close: true, shake: false });
+  });
+
+  it('name the piece with its level, and from +7 give the odds and what a failure costs', () => {
+    const v = view({ from: 'upgrade', of: { from: 'stash', item: 'raincoat', n: 1 } }, { stash: [{ item: 'raincoat', count: 1, piece: { cond: 1 } }, { item: 'raincoat', count: 1, piece: { cond: 1, level: 6 } }, ...rich] });
+    expect(v.name).toBe('Raincoat +6');
+    expect(v.stats.map(statText)).toEqual(['Wind 46% → 47%', 'Cold 13% → 14%', 'Lasts 117 min → 122 min']);
+    expect(v.costs!.title).toBe('To +7 it takes');
+    expect(v.costs!.needs.map(n => [n.item, n.need])).toEqual([['shard', 4], ['strange', 1]]);
+    expect(v.notes.map(n => n.text)).toEqual(['It works 7 times in 10. If it does not take, the materials are gone, and it stays +6.']);
+    // A stat the next level does not move, at this rounding, has no arrow.
+    const cap = view({ from: 'upgrade', of: { from: 'stash', item: 'wool-cap', n: 0 } }, { stash: [{ item: 'wool-cap', count: 1, piece: { cond: 1, level: 2 } }, ...rich] });
+    expect(cap.stats.map(statText)).toEqual(['Cold 17%', 'Lasts 99 min → 104 min']);
+  });
+
+  it('say what the stash is short of, and cannot upgrade then: pressed, the button shakes and the game still hears it', () => {
+    const v = view({ from: 'upgrade', of: shirt }, { stash: [{ item: 'scrap', count: 1 }] });
+    expect(v.act!.enabled).toBe(false);
+    expect(v.notes.map(n => n.text)).toContain('Your stash is short of scrap metal and cloth scraps.');
+    expect(cardPress(v)).toEqual({ does: { kind: 'upgrade', of: shirt }, close: false, shake: true });
+  });
+
+  it('are none for worn clothes, a bag, a piece at the top, or one that is not there', () => {
+    expect(detailView({ from: 'upgrade', of: { from: 'worn', slot: 'cap' } }, state({ stash: rich }))).toBeNull();
+    expect(detailView({ from: 'upgrade', of: { from: 'worn', slot: 'bag' } }, state({ stash: rich }))).toBeNull();
+    expect(detailView({ from: 'upgrade', of: shirt }, state({ stash: rich, worn: { shirt: { cond: 1, level: 9 } } }))).toBeNull();
+    expect(detailView({ from: 'upgrade', of: { from: 'stash', item: 'raincoat', n: 0 } }, state({ stash: rich }))).toBeNull();
+    expect(refKey({ from: 'upgrade', of: shirt })).toBe('upgrade:worn:shirt');
+    expect(refKey({ from: 'upgrade', of: { from: 'stash', item: 'raincoat', n: 1 } })).toBe('upgrade:stash:raincoat:1');
+  });
+
+  it('show the level after a piece\'s name everywhere a card names one, with what it resists as upgraded', () => {
+    const stashed = view({ from: 'stash', item: 'raincoat', n: 0 }, { stash: [{ item: 'raincoat', count: 1, piece: { cond: 1, level: 3 } }] });
+    expect(stashed.name).toBe('Raincoat +3');
+    expect(stashed.stats.map(statText)).toEqual(['Wind 40%', 'Cold 12%']);
+    expect(actText(stashed.act!)).toBe('Wear (your raincoat goes into the stash)');
+    const worn = { shirt: { cond: 1, level: 2 } };
+    expect(actText(view({ from: 'stash', item: 'storm-coat', n: 0 }, { stash: [{ item: 'storm-coat', count: 1, piece: { cond: 1 } }], worn }).act!)).toBe('Wear (your raincoat +2 goes into the stash)');
+    expect(view({ from: 'worn', slot: 'shirt' }, { worn }).name).toBe('Raincoat +2');
+    expect(view({ from: 'bag', slot: 0, item: 'raincoat' }, { panel: 'bag', bag: [{ item: 'raincoat', count: 1, piece: { cond: 0.1, level: 5 } }] }).stats.map(statText))
+      .toEqual(['Wind 18% (44% when mended)', 'Cold 5% (13% when mended)']);
   });
 });
 

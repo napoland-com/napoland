@@ -9,7 +9,7 @@ import { BAG_SLOTS, RANKS, SLOTS, type BodyView, type Dir, type EnergyView, type
 import { aboutBody, versionView } from './about';
 import { DOUBLE_TAP_MS, DoubleTap, cardPress, morePress, refKey, statText, type DetailAct, type DetailRef, type DetailView } from './details';
 import type { FriendsView } from './friends';
-import { liveState, type SlotView } from './items';
+import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import type { JournalView } from './journal';
 import type { SoundSetting } from './sound';
 
@@ -155,12 +155,25 @@ export function roomText(slots: number, load: number, capacity: number = BAG_SLO
 /** The most slots a bag can have: the grids hold this many, and show as many as the bag worn has. */
 export const MAX_BAG = 16;
 
-/** A slot of what you wear, as the stash sheet shows it: the piece's name and drawing, or bare. */
-export interface WornView { slot: Slot; name: string; icon: string; /** How worn down (1 new, 0 worn out), for gear that wears. */ cond?: number; /** Its quirk's name. */ quirk?: string }
+/** A slot of what you wear, as the Wearing rows show it: the piece's name and drawing, or bare. */
+export interface WornView {
+  slot: Slot; name: string; icon: string;
+  /** How worn down (1 new, 0 worn out), for gear that wears. */
+  cond?: number;
+  /** Its quirk's name, and its upgrade level once it has one. */
+  quirk?: string;
+  level?: number;
+}
 /** The nearest gear you could make, in the bag and the chest: what they say, whether the stash can pay for it, and whether a tap opens its card (at the workbench). */
 export interface GoalView { text: string; ready: boolean; act: boolean }
-/** A row of the workbench: what a recipe makes (or a mend), what it needs against what your stash holds, and whether it can be done. */
-export interface RecipeView { id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean }
+/**
+ * A row of the workbench: a mend, an upgrade or what a recipe makes (`group`, under its heading), what it
+ * needs against what your stash holds, and whether it can be done.
+ */
+export interface RecipeView {
+  id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean;
+  group?: 'mend' | 'upgrade' | 'make';
+}
 /** A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or another tool of yours. */
 export interface ToolView { item: string | null; label: string; icon: string }
 
@@ -363,7 +376,7 @@ export class Hud {
       <div class="sheet panel bench-sheet docked" data-el="benchSheet" data-open="false" role="dialog" aria-label="Workbench">
         <div class="sheet-head"><b>Workbench</b><button type="button" class="close" data-el="benchClose" aria-label="Close the workbench">${ICON.x}</button></div>
         <div class="sheet-body" data-el="benchBody">
-          <p class="hint">It makes and mends gear from your stash; wear what it makes from the chest beside it. Tap one to see what it takes, and tap it twice to do it.</p>
+          <p class="hint">It makes, mends and upgrades gear from your stash; wear what it makes from the chest beside it. Tap one to see what it takes, and tap it twice to do it.</p>
           <div class="recipes" data-el="benchList"></div>
         </div>
         <div class="dock" data-el="benchDock" hidden><div class="detail" data-el="benchCard" aria-live="polite"></div></div>
@@ -775,9 +788,7 @@ export class Hud {
 
   /** The workbench's rows: mending, then what it makes. Each opens its card. Only written to the page when they changed. */
   setBench(recipes: RecipeView[]) {
-    const html = recipes.map(r => `<button type="button" class="recipe" data-recipe="${esc(r.id)}"${r.can ? '' : ' data-short'} aria-label="${esc(`${r.name}${r.can ? ', ready' : ''}`)}"><span class="big">${r.icon}</span><span class="words"><b>${esc(r.name)}</b><span class="rfacts">${esc(r.facts)}</span>
-      <span class="needs">${r.needs.map(n => `<span class="need"${n.have >= n.need ? '' : ' data-short'} title="${esc(n.name)}">${n.icon}<i>${Math.min(n.have, n.need)}/${n.need}</i></span>`).join('')}</span></span>
-      <span class="more">${r.can ? '<i class="ready">Ready</i>' : ''}${ICON.more}</span></button>`).join('');
+    const html = benchHtml(recipes);
     if (html !== this.shown.bench) { this.shown.bench = html; this.el.benchList!.innerHTML = html; }
     this.refreshCard();
   }
@@ -885,6 +896,8 @@ export class Hud {
     if (where === 'bench') {
       const id = target.closest<HTMLElement>('[data-recipe]')?.dataset.recipe;
       if (!id) return null;
+      const of = upgradeOf(id);
+      if (of) return { from: 'upgrade', of };
       return id.startsWith('mend:') ? { from: 'mend', slot: id.slice(5) as Slot } : { from: 'recipe', id };
     }
     // The bag's own slots, or the chest's row of them.
@@ -1020,11 +1033,12 @@ export class Hud {
       case 'toss': return this.h.discard(a.slot);
       case 'make': return this.bench(a.recipe);
       case 'mend': return this.bench(`mend:${a.slot}`);
+      case 'upgrade': return this.bench(upgradeId(a.of));
       case 'open': return this.h.open?.(a.item);
     }
   }
 
-  /** The one way making and mending leave the workbench's panel: whatever asks first before using things up wraps `craft`. */
+  /** The one way making, mending and upgrading leave the workbench's panel: whatever asks first before using things up wraps `craft`. */
   private bench(id: string) {
     this.h.craft?.(id);
   }
@@ -1405,6 +1419,24 @@ export class Hud {
 /** The sheets a tap opens a card in. */
 type CardSheet = 'stash' | 'bench' | 'bag';
 
+/** The headings of the workbench's list, over the rows of each kind. */
+const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> = { mend: 'Mend', upgrade: 'Upgrade', make: 'Make' };
+
+/**
+ * The workbench's list: its rows in the order given (mending, upgrades, then what it makes), each kind
+ * under its heading. A row shows what it is, what it needs against the stash, and Ready when it can be done.
+ */
+export function benchHtml(rows: readonly RecipeView[]): string {
+  let group: RecipeView['group'];
+  return rows.map(r => {
+    const title = r.group && r.group !== group ? `<h3 class="bench-title">${BENCH_GROUPS[r.group]}</h3>` : '';
+    group = r.group;
+    return `${title}<button type="button" class="recipe" data-recipe="${esc(r.id)}"${r.can ? '' : ' data-short'} aria-label="${esc(`${r.name}${r.can ? ', ready' : ''}`)}"><span class="big">${r.icon}</span><span class="words"><b>${esc(r.name)}</b><span class="rfacts">${esc(r.facts)}</span>
+      <span class="needs">${r.needs.map(n => `<span class="need"${n.have >= n.need ? '' : ' data-short'} title="${esc(n.name)}">${n.icon}<i>${Math.min(n.have, n.need)}/${n.need}</i></span>`).join('')}</span></span>
+      <span class="more">${r.can ? '<i class="ready">Ready</i>' : ''}${ICON.more}</span></button>`;
+  }).join('');
+}
+
 /** The six slots of what you wear, each named, empty until setWearing fills them (the bag's row and the stash sheet's). */
 function wearSlots(): string {
   return SLOTS.map(sl => `<button type="button" class="slot" data-wear="${sl}" aria-label="${sl}"><span class="lbl">${sl}</span></button>`).join('');
@@ -1418,18 +1450,19 @@ function wearSlots(): string {
 export function wearSlotView(slot: Slot, w: WornView | null): { html: string; label: string; empty: boolean } {
   if (!w) return { html: `<span class="lbl">${slot}</span>`, label: `${slot}: nothing`, empty: true };
   return {
-    html: `${w.icon}<span class="lbl">${slot}</span>${condBar(w.cond)}${quirkStar(w.quirk)}`,
+    // The level rides on the slot's name: the corners hold how much is left and the quirk.
+    html: `${w.icon}<span class="lbl">${slot}${w.level ? ` <b>+${w.level}</b>` : ''}</span>${condBar(w.cond)}${quirkStar(w.quirk)}`,
     label: `${w.name}${w.cond === undefined ? '' : `, ${Math.round(w.cond * 100)}% left`}${w.quirk ? `, ${w.quirk}` : ''}`,
     empty: false,
   };
 }
 
 /**
- * A slot's drawing, in the bag and in the stash: a piece of gear with how much of it is left and its
- * quirk, anything else with how many; a live find gets its countdown ring (tickLive turns it).
+ * A slot's drawing, in the bag and in the stash: a piece of gear with how much of it is left, its quirk
+ * and its level where anything else says how many; a live find gets its countdown ring (tickLive turns it).
  */
 export function slotHtml(s: SlotView): string {
-  const tail = s.slot ? `${condBar(s.cond)}${quirkStar(s.quirk)}` : `<span class="n">${s.count}</span>`;
+  const tail = s.slot ? `${condBar(s.cond)}${quirkStar(s.quirk)}${s.level ? `<span class="n up">+${s.level}</span>` : ''}` : `<span class="n">${s.count}</span>`;
   return `${s.live ? '<i class="ring" aria-hidden="true"></i>' : ''}${s.icon}${tail}`;
 }
 
@@ -1458,7 +1491,7 @@ function quirkStar(quirk: string | undefined): string {
 export function cardHtml(v: DetailView): string {
   const title = `<div class="title"><b>${esc(v.name)}</b>${v.count && v.count > 1 ? `<span class="count">× ${v.count}</span>` : ''}${v.tier ? `<span class="tier" data-tier="${v.tier.id}">${esc(v.tier.name)}</span>` : ''}</div>`;
   const stats = v.stats.length
-    ? `<ul class="stats">${v.stats.map(s => `<li data-kind="${s.kind}" aria-label="${esc(statText(s))}">${esc(s.text)}${s.whole ? `<s>${esc(s.whole)}</s>` : ''}</li>`).join('')}</ul>`
+    ? `<ul class="stats">${v.stats.map(s => `<li data-kind="${s.kind}" aria-label="${esc(statText(s))}">${esc(s.text)}${s.whole ? `<s>${esc(s.whole)}</s>` : ''}${s.next ? `<b class="next">→ ${esc(s.next)}</b>` : ''}</li>`).join('')}</ul>`
     : '';
   const cond = v.cond
     ? `<div class="condition" data-low="${v.cond.low}">${v.cond.bar ? `<span class="cbar" aria-hidden="true"><i style="transform:scaleX(${v.cond.share.toFixed(3)})"></i></span>` : ''}<span>${esc(v.cond.words)}</span></div>`
@@ -1484,6 +1517,7 @@ function pickedSelector(r: DetailRef, where: CardSheet): string {
     case 'stash': return r.n === undefined ? `[data-item="${r.item}"]:not([data-n])` : `[data-item="${r.item}"][data-n="${r.n}"]`;
     case 'recipe': return `[data-recipe="${r.id}"]`;
     case 'mend': return `[data-recipe="mend:${r.slot}"]`;
+    case 'upgrade': return `[data-recipe="${upgradeId(r.of)}"]`;
   }
 }
 
