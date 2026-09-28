@@ -8,6 +8,7 @@ export * from './firsts';
 export * from './gear';
 export * from './items';
 export * from './map';
+export * from './meals';
 export * from './merits';
 export * from './movement';
 export * from './notebook';

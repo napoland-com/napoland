@@ -31,6 +31,34 @@ export function weatherAt(wallMs: number): { weather: Weather; left: number } {
   return { weather: 'overcast', left: 1 };
 }
 
+/** When it rains in a day, as [start, end) seconds after the day begins (the rain of DAY). */
+const RAIN: ReadonlyArray<readonly [number, number]> = (() => {
+  const out: Array<[number, number]> = [];
+  let t = 0;
+  for (const [w, len] of DAY) {
+    if (w === 'rain') out.push([t, t + len]);
+    t += len;
+  }
+  return out;
+})();
+
+/**
+ * Seconds since it last rained, at a wall clock time: 0 while it rains, else how long ago the rain stopped
+ * (today's, or the day before's). What comes up after the rain (chanterelles) grows while this is short.
+ */
+export function sinceRain(wallMs: number): number {
+  const s = wallMs / 1000, into = s - Math.floor(s / DAY_S) * DAY_S;
+  let stopped = -Infinity;
+  for (const [a, b] of RAIN) {
+    if (into >= a && into < b) return 0;
+    if (into >= b) stopped = b;
+  }
+  if (stopped > -Infinity) return into - stopped;
+  // Before today's first rain: yesterday's last one.
+  const last = RAIN.at(-1);
+  return last ? into + DAY_S - last[1] : Infinity;
+}
+
 /** How a region surges, in seconds: one round every `every`, ending with `unstable` then `surge`. */
 export interface SurgeRule {
   every: number;

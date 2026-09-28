@@ -115,7 +115,14 @@ import {
   addToBag,
   amount,
   bagLoad,
+  bagShort,
   bagSlotsOf,
+  cleanMeals,
+  isMeal,
+  mealMods,
+  payBag,
+  sinceRain,
+  whyNotEat,
   cacheTakes,
   calendarDay,
   canMake,
@@ -632,6 +639,8 @@ interface Rule {
   respawn: [number, number];
   /** Only then; and whether it is now. Rules without `when` are always open. */
   when?: FindWhen;
+  /** What grows in the rain grows this many seconds more after it stops. */
+  after?: number;
   /** Only while this condition is on (sky.ts). */
   condition?: string;
   open: boolean;
@@ -740,12 +749,12 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 const flashView = (f: Flash, now: number): FlashView => ({ x: f.x, y: f.y, kind: f.kind, left: round((f.until - now) / 1000, 1) });
 const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), max: p.max, rate: round(p.rate, 3) });
 const copyWorn = (w: Worn | undefined): Worn => Object.fromEntries(Object.entries(w ?? {}).map(([s, p]) => [s, { ...p, cond: round(p.cond, 3) }]));
-/** The player's body as they hear it, `wall` ms since the epoch: with how long they stay cozy, and how long they stood by their own fire. */
+/** The player's body as they hear it, `wall` ms since the epoch: with how long they stay cozy, how long they stood by their own fire, and the meals in them. */
 const bodyView = (p: Online, wall: number, by: boolean): BodyView => {
   const cozy = (p.rec.cozy ?? 0) - wall;
   return {
     wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched, worn: copyWorn(p.rec.worn),
-    ...(cozy > 0 ? { cozy: round(cozy / 1000, 1) } : {}), ...(by ? { fireside: round(p.fireside, 1) } : {}),
+    ...(cozy > 0 ? { cozy: round(cozy / 1000, 1) } : {}), ...(by ? { fireside: round(p.fireside, 1) } : {}), ...(p.rec.meals?.length ? { meals: [...p.rec.meals] } : {}),
   };
 };
 /**
@@ -797,7 +806,7 @@ const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...(r.looks ? { looks: [...r.looks] } : {}),
   ...(r.notebook ? { notebook: { pages: [...r.notebook.pages], blanks: [...r.notebook.blanks] } } : {}),
   ...(r.notes ? { notes: [...r.notes] } : {}), ...(r.keepsakes ? { keepsakes: [...r.keepsakes] } : {}),
-  ...(r.furniture ? { furniture: [...r.furniture] } : {}),
+  ...(r.furniture ? { furniture: [...r.furniture] } : {}), ...(r.meals ? { meals: [...r.meals] } : {}),
 });
 /** A first finder as everyone sees them: the secret, their name, the Zone's day. */
 const firstView = (f: FirstRecord): FirstView => ({ secret: f.secret, name: f.name, day: f.day });
@@ -918,6 +927,10 @@ export class World {
   private readonly itemOrder: ItemDef[];
   /** What the workbench makes, by recipe id. */
   private readonly recipes: Map<string, Recipe>;
+  /** What cooks at a fire (meals.ts), by recipe id. */
+  private readonly cooking: Map<string, Recipe>;
+  /** When it last rained over each map with something that grows in the rain (game time): it grows a while after (a rule's `after`). */
+  private readonly rainedAt = new Map<string, number>();
   /** How gear wears out, and what mending and upgrading it cost (content/items.json). */
   private readonly wearTimes: ItemsData['wear'];
   private readonly mendCosts: ItemsData['mend'];
@@ -1088,6 +1101,7 @@ export class World {
     this.items = itemIndex(items);
     this.itemOrder = items.items;
     this.recipes = new Map((items.recipes ?? []).map(rc => [rc.id, rc]));
+    this.cooking = new Map((items.cooking ?? []).map(rc => [rc.id, rc]));
     this.wearTimes = items.wear;
     this.mendCosts = items.mend;
     this.upgrades = items.upgrades;
@@ -1113,7 +1127,7 @@ export class World {
       if (!item) throw new Error(`a find rule on map ${f.map} grows ${f.item}, which is not an item`);
       const tiles = findTiles(map, f).map(t => t.y * map.width + t.x);
       // Finds that only grow at certain times wait for the first tick to tell whether it is one.
-      this.rules.push({ item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, condition: f.condition, open: !f.when && !f.condition });
+      this.rules.push({ item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, after: f.after, condition: f.condition, open: !f.when && !f.condition });
     }
     // The piles first: finds never grow on a tile that has one.
     for (const d of options.drops ?? []) this.restore(d);
@@ -1284,6 +1298,10 @@ export class World {
     const furniture = cleanFurniture(rec.furniture);
     if (furniture) r.furniture = furniture;
     else delete r.furniture;
+    // A meal eaten lasts the trip: across a reconnect, or a restart, until they come home.
+    const meals = cleanMeals(rec.meals, this.items);
+    if (meals.length) r.meals = meals;
+    else delete r.meals;
     // Where their cabin stands is what the World keeps of it (it may have been given to someone else meanwhile, or never saved).
     this.recordLot(r);
     // Cozy is a time on the wall clock: it went on counting down while they were away.
@@ -1455,6 +1473,7 @@ export class World {
     const def = this.items.get(s.item);
     const use = def?.use;
     if (!def || !use) return this.refuse(p, 'use', 'not_usable');
+    if (isMeal(def)) return this.eat(p, slot, def, now);
     const { x, y } = p.rec;
     // Everything that can fail is checked before the item is spent.
     if (use.mark && (p.map.data.kind === 'inside' || p.map.exitAt(x, y))) return this.refuse(p, 'use', 'not_here');
@@ -1510,6 +1529,71 @@ export class World {
     }
     // Something that takes energy could empty the bar.
     if (p.rec.energy <= 0) this.collapse(p, now);
+  }
+
+  /**
+   * Eats (or drinks) the meal in bag slot `slot` (meals.ts): it works until the player comes home into their
+   * cabin, or collapses. Two at a time, never the same one twice; saved at once, as it outlasts a reconnect.
+   * A meal that adds to the bar fills it by as much as it adds: a bigger bar left as full would look emptier.
+   */
+  private eat(p: Online, slot: number, def: ItemDef, now: number): void {
+    const why = whyNotEat(def.id, p.rec.meals ?? []);
+    if (why) return this.refuse(p, 'use', why);
+    p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
+    p.rec.meals = [...(p.rec.meals ?? []), def.id];
+    this.saveNow.set(p.rec.id, p.rec);
+    const before = p.rec.energy;
+    this.refresh(p, now);
+    p.rec.energy = Math.min(p.max, p.rec.energy + Math.max(0, def.eaten?.energy ?? 0));
+    this.tell(p, now);
+    this.sendBag(p, now);
+    const gave = Math.round(p.rec.energy - before);
+    this.saw(p, 'ate');
+    this.did(p, { kind: 'ate', item: def.id, ...(gave > 0 ? { energy: gave } : {}) });
+  }
+
+  /**
+   * The meals the player ate this trip are over: they came home into their cabin (or collapsed, fall). The
+   * bar shrinks back by what they added, and what it held over that is gone. The next refresh tells them.
+   */
+  private endMeals(p: Online, now: number): void {
+    if (!p.rec.meals) return;
+    delete p.rec.meals;
+    this.saveNow.set(p.rec.id, p.rec);
+    this.refresh(p, now);
+    p.rec.energy = Math.min(p.rec.energy, p.max);
+  }
+
+  /**
+   * Cooks recipe `recipeId` (meals.ts) at the fire on tile x,y next to the player (diagonals too, as it
+   * warms them), while it burns: tended (at home, in town, the shelters kept going) or with fuel left, never
+   * a dead one. What it needs comes out of the bag, and the meal goes into it, if there is room once they are out.
+   */
+  cook(id: string, x: number, y: number, recipeId: string, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'cook', 'too_far');
+    }
+    if (Math.max(Math.abs(x - p.rec.x), Math.abs(y - p.rec.y)) > 1) return this.refuse(p, 'cook', 'too_far');
+    const fires = p.zone.fires, fire = fires.at(x, y);
+    if (!fire) return this.refuse(p, 'cook', 'gone');
+    if (fires.heat(fire, now) <= 0) return this.refuse(p, 'cook', 'fire_out');
+    const recipe = this.cooking.get(recipeId), meal = recipe && this.items.get(recipe.make);
+    if (!recipe || !meal) return this.refuse(p, 'cook', 'gone');
+    if (bagShort(recipe, p.rec.bag).length) return this.refuse(p, 'cook', 'missing');
+    const count = recipe.count ?? 1;
+    const r = addToBag(payBag(p.rec.bag, recipe.needs), meal, count, p.slots);
+    if (r.left) return this.refuse(p, 'cook', 'bag_full');
+    p.rec.bag = r.bag;
+    // Cooked, what went in never goes back: taken out of the stash, it no longer counts as out.
+    for (const n of recipe.needs) p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), n.item, n.count);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    this.did(p, { kind: 'cooked', item: meal.id, count });
   }
 
   /** Throws away `count` of what is in bag slot `slot`, or all of it. */
@@ -2430,6 +2514,7 @@ export class World {
     if (this.cycle) this.setWeather(weatherAt(wall).weather, now);
     this.moveSurges(now);
     this.moveStorms(now);
+    this.moveRain(now);
     this.moveConditions(now);
     this.moveCalendar(now);
     this.startFlashes(now);
@@ -2468,6 +2553,8 @@ export class World {
   /** Changes the weather everywhere. Energy rates follow: bad weather drains faster, and rain soaks. */
   setWeather(weather: Weather, now: number): void {
     if (weather === this.sky) return;
+    // The rain stops now: what grows after it counts from here (moveRain).
+    if (this.sky === 'rain') for (const rule of this.rules) if (rule.when === 'rain') this.rainedAt.set(rule.map.data.id, now);
     const aurora = weather === 'aurora' || this.sky === 'aurora';
     this.sky = weather;
     for (const z of this.zones.values()) if (z.players.size) this.outbox.push({ to: '*', map: z.key, msg: { t: 'weather', weather } });
@@ -2576,6 +2663,8 @@ export class World {
     const from = p.zone, map = this.maps.get(to.to)!;
     // With the drying rack in their cabin, a player always walks out of it dry.
     if (this.ownCabin(p) && dries(p.rec.furniture, this.items)) p.rec.wet = 0;
+    // Home again: the trip is over, and so are the meals eaten for it.
+    if (this.homes.has(map.data.id)) this.endMeals(p, now);
     const copy = this.copyFor(p.rec, map);
     // Onto the street, from town or out of the cabin: in front of their own cabin's door, on their own street.
     const at = map === this.street ? { ...this.doorstep(p.rec), dir: to.dir } : to;
@@ -2683,6 +2772,11 @@ export class World {
   private fall(p: Online, now: number): void {
     const { id, map, x, y } = p.rec;
     this.dropBag(p, now);
+    // What they ate this trip is spent: the trip is over.
+    if (p.rec.meals) {
+      delete p.rec.meals;
+      this.saveNow.set(id, p.rec);
+    }
     const w = this.wakeUp;
     this.place(p, this.zoneFor(w.map, this.copyFor(p.rec, w.map), now), w.x, w.y, w.dir);
     p.rec.energy = this.maxOf(p.rec);
@@ -2792,12 +2886,13 @@ export class World {
   /** The rates and load for where the player stands now, and their mods. Nobody is told. */
   private refresh(p: Online, now: number): void {
     const { x, y } = p.rec;
-    // Being cozy changes Mods like a charm does (comfort.ts): out in the wilds they tire slower.
-    p.mods = modsOf(p.rec.stats ?? {}, [...charmsIn(p.rec.bag, this.items), ...(this.cozy(p, now) ? [COZY_MODS] : [])]);
+    // Being cozy changes Mods like a charm does (comfort.ts): out in the wilds they tire slower. So do the meals eaten this trip (meals.ts).
+    p.mods = modsOf(p.rec.stats ?? {}, [...charmsIn(p.rec.bag, this.items), ...mealMods(p.rec.meals, this.items), ...(this.cozy(p, now) ? [COZY_MODS] : [])]);
     p.load = bagLoad(p.rec.bag, this.items, p.mods.load);
-    p.max = this.maxOf(p.rec);
+    p.max = this.maxOf(p.rec, p.mods);
     p.slots = bagSlotsOf(p.rec.gear ?? {}, this.items);
-    const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn);
+    // A meal's cold resistance goes on top of what they wear, under the same cap.
+    const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn, { cold: p.mods.cold });
     const warmth = p.map.warm(x, y) ? p.zone.fires.warmth(x, y, now) : 0;
     const storm = this.stormOf(p.map, now)?.phase === 'storm';
     p.rate = energyRate(p.map, x, y, this.sky, {
@@ -2952,6 +3047,7 @@ export class World {
     this.note(p, { find: item });
     if (this.sky === 'aurora') this.note(p, { find: item, during: 'aurora' });
     if (this.stormOf(p.map, now)?.phase === 'storm') this.note(p, { find: item, during: 'storm' });
+    if (this.skyOf(p.map) === 'rain') this.note(p, { find: item, during: 'rain' });
   }
 
   /**
@@ -3181,6 +3277,27 @@ export class World {
       this.stormPhase.set(map.data.id, s.phase);
       if (!first) this.toCopies(map.data.id, { t: 'storm', storm: s });
       for (const rule of this.rules) if (rule.when === 'storm' && rule.map === map) this.openRule(rule, s.phase === 'storm', now);
+    }
+  }
+
+  /** The weather over a map: one sky for every map, so far. */
+  private skyOf(_map: TileMap): Weather {
+    return this.sky;
+  }
+
+  /**
+   * What grows in the rain (chanterelles) grows while it rains over its map and for its `after` seconds more,
+   * in every copy of the map; then it goes. When the server starts on the day's clock, the rain it missed is
+   * counted from the clock (sinceRain), so a restart just after the rain finds them still up.
+   */
+  private moveRain(now: number): void {
+    for (const rule of this.rules) {
+      if (rule.when !== 'rain') continue;
+      const id = rule.map.data.id;
+      if (this.skyOf(rule.map) === 'rain') this.rainedAt.set(id, now);
+      else if (!this.rainedAt.has(id) && this.cycle) this.rainedAt.set(id, now - sinceRain(now + this.epochOffset) * 1000);
+      const at = this.rainedAt.get(id);
+      this.openRule(rule, at !== undefined && now - at <= (rule.after ?? 0) * 1000, now);
     }
   }
 
@@ -4115,9 +4232,12 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, r.cup), gained: r.gained, ...(r.fromRest ? { fromRest: r.fromRest } : {}) } });
   }
 
-  /** A full bar: the level's, plus what the gear worn gives, and the keepsakes' when all of them are home. */
-  private maxOf(r: PlayerRecord): number {
-    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items, r.worn) + keepsakeEnergy(this.keepsakes, r.keepsakes);
+  /**
+   * A full bar: the level's, plus what the gear worn gives, the keepsakes' when all of them are home, and what
+   * `mods` add (a meal eaten this trip: the meals alone, unless the caller has the player's whole Mods at hand).
+   */
+  private maxOf(r: PlayerRecord, mods = modsOf({}, mealMods(r.meals, this.items))): number {
+    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items, r.worn) + keepsakeEnergy(this.keepsakes, r.keepsakes) + Math.round(mods.energy);
   }
 
   /**
@@ -4384,7 +4504,7 @@ export class World {
 
   private refuse(
     p: Online,
-    action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
+    action: 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
       | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move',
     reason: Refusal,
   ): void {

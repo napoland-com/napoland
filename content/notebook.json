@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "pages": [
     {
       "id": "pop-23",
@@ -173,6 +173,23 @@
       ]
     },
     {
+      "id": "food-from-the-woods",
+      "area": "near-woods",
+      "title": "Food from the woods",
+      "when": [{ "find": "huckleberries" }, { "find": "fiddleheads" }, { "find": "fir-tips" }],
+      "text": "Huckleberries ripen out in the open, fiddleheads uncurl by the water, fir tips are soft and green at the ends of the branches. At any fire that burns they cook into something that keeps me going."
+    },
+    {
+      "id": "chanterelles",
+      "area": "near-woods",
+      "title": "Chanterelles",
+      "when": { "find": "chanterelles" },
+      "text": "Golden mushrooms in the moss under the firs, smelling of apricots. There one hour and gone the next.",
+      "blanks": [
+        { "id": "chanterelles-rain", "ask": "They come up... ?", "fill": "They come up in the rain, and last a while after it stops.", "when": { "find": "chanterelles", "during": "rain" } }
+      ]
+    },
+    {
       "id": "the-south-road",
       "area": "south-road",
       "title": "The South Road",
@@ -332,6 +349,13 @@
       "title": "Road flares",
       "when": { "find": "flare" },
       "text": "Red road flares from the gloveboxes. Lit, one burns for most of a minute, and nothing comes near while it does."
+    },
+    {
+      "id": "meals",
+      "area": "anywhere",
+      "title": "A meal for the trip",
+      "when": { "saw": "ate" },
+      "text": "A meal cooked at a fire lasts the trip: until I am home again, or I fall. Two at a time, never the same one twice. Eaten at home before I set out, it goes the whole way with me."
     },
     {
       "id": "charms",

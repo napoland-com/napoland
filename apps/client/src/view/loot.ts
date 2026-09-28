@@ -19,6 +19,8 @@ import { OUTLINE, OUTLINE_INSTANCED, bake, box, flat, hash2, ownToon, part, pivo
 /** Items with a look of their own; any other item is drawn as a sack. */
 export const ITEM_LOOKS = [
   'glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'live-shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead', 'ember-coal', 'pale-moth',
+  // What cooks at a fire, and the meals it cooks into (meals.ts): a meal lies on the ground only where someone dropped it.
+  'huckleberries', 'fiddleheads', 'fir-tips', 'chanterelles', 'fir-tip-tea', 'chanterelle-stew', 'berry-pemmican',
   // The keepsakes people left (notes.ts): each lies for one player alone, in a soft gold light.
   'old-photograph', 'brass-compass', 'pole-tag', 'tin-whistle', 'staff-badge',
 ] as const;
@@ -56,6 +58,13 @@ const STYLE: Record<Look, Style> = {
   'humming-bead': { pool: '#5ff0e0', size: 1.3, top: 0.3, glow: { color: '#8ff7ee', emissive: '#1f8f86' }, floats: true },
   'ember-coal': { pool: '#ff6a3a', size: 1.25, top: 0.16, glow: { color: '#ff6a38', emissive: '#a3280c' } },
   'pale-moth': { pool: '#f2ecd8', size: 1.3, top: 0.34, glow: { color: '#efe8d2', emissive: '#6e6650' }, floats: true },
+  huckleberries: { pool: '#7d8cff', size: 1.2, top: 0.14, glow: { color: '#5a6ad8', emissive: '#1f2a7a' } },
+  fiddleheads: { pool: '#a8e07a', size: 1.15, top: 0.3 },
+  'fir-tips': { pool: '#9fe68a', size: 1.15, top: 0.1 },
+  chanterelles: { pool: '#ffbe55', size: 1.3, top: 0.2, glow: { color: '#f2ac3c', emissive: '#8a5510' } },
+  'fir-tip-tea': { pool: '#c9f0b0', size: 1.15, top: 0.24 },
+  'chanterelle-stew': { pool: '#ffcf87', size: 1.2, top: 0.16 },
+  'berry-pemmican': { pool: '#c9a0a0', size: 1.15, top: 0.12 },
   'old-photograph': { pool: '#ffd98a', size: 1.35, top: 0.06 },
   'brass-compass': { pool: '#ffd98a', size: 1.35, top: 0.08, glow: { color: '#f3d27a', emissive: '#8a6a1a' } },
   'pole-tag': { pool: '#ffd98a', size: 1.35, top: 0.05 },
@@ -191,6 +200,74 @@ export function lootModel(look: Look, glow: THREE.Material): THREE.Group {
     case 'humming-bead': {
       g.add(part(new THREE.IcosahedronGeometry(0.07, 1), glow, 0, 0.26, 0, 0.012));
       g.add(part(flat(new THREE.TorusGeometry(0.1, 0.008, 4, 16)), '#c9d6d4', 0, 0.26, 0, false));
+      break;
+    }
+    case 'huckleberries': {
+      // A sprig off a huckleberry bush lying in the grass: two leaves, and a cluster of dark-blue berries that catch the light.
+      const leaf = (x: number, z: number, turn: number) => {
+        const l = box(0.13, 0.012, 0.07, '#5d9c4c', x, 0.02, z, 0.008);
+        l.rotation.y = turn;
+        return l;
+      };
+      g.add(leaf(-0.12, -0.06, 0.5), leaf(0.1, -0.1, -0.4), box(0.26, 0.012, 0.014, '#6b4d33', 0, 0.015, -0.04, false));
+      for (const [x, z, r] of [[-0.05, 0.03, 0.055], [0.05, 0.05, 0.05], [0, 0.12, 0.048], [0.1, 0.13, 0.042], [-0.1, 0.12, 0.04]] as const) g.add(part(new THREE.IcosahedronGeometry(r, 1), glow, x, r, z, 0.008));
+      break;
+    }
+    case 'fiddleheads': {
+      // Three fiddleheads standing up out of the ground: a green stem each, and its tight curl at the top.
+      for (const [x, z, h, s] of [[-0.09, 0.02, 0.2, 1], [0.08, -0.05, 0.16, 0.85], [0.03, 0.1, 0.12, 0.7]] as const) {
+        g.add(part(flat(new THREE.CylinderGeometry(0.014, 0.018, h, 5)), '#5f9e44', x, h / 2, z, 0.008));
+        const curl = part(flat(new THREE.TorusGeometry(0.045 * s, 0.02 * s, 4, 8, Math.PI * 1.6)), '#7fc15a', x + 0.03 * s, h + 0.03 * s, z, 0.008);
+        curl.rotation.y = x * 8;
+        g.add(curl);
+      }
+      break;
+    }
+    case 'fir-tips': {
+      // A handful of fir tips lying in the grass: a short woody stem, its new needles bright green along it.
+      const b = pivot(0, 0.02, 0);
+      b.rotation.y = 0.6;
+      b.add(box(0.32, 0.018, 0.018, '#7a5a3a', 0, 0, 0, 0.006));
+      for (let i = 0; i < 6; i++) {
+        for (const side of [-1, 1]) {
+          const n = box(0.012, 0.012, 0.09, i % 2 ? '#8ee06a' : '#6fc253', -0.13 + i * 0.05, 0.01, side * 0.045, false);
+          n.rotation.y = side * 0.5;
+          b.add(n);
+        }
+      }
+      b.add(box(0.07, 0.03, 0.03, '#b6f08e', 0.17, 0.012, 0, 0.006));
+      g.add(b);
+      break;
+    }
+    case 'chanterelles': {
+      // Three chanterelles pushing up through the moss: golden funnels, wider at the top, faintly lit.
+      for (const [x, z, s] of [[-0.08, 0.02, 1], [0.1, -0.05, 0.8], [0.04, 0.12, 0.65]] as const) {
+        g.add(part(flat(new THREE.CylinderGeometry(0.02 * s, 0.028 * s, 0.1 * s, 6)), '#e89a36', x, 0.05 * s, z, 0.01));
+        const cap = part(flat(new THREE.CylinderGeometry(0.1 * s, 0.03 * s, 0.07 * s, 7)), glow, x, 0.13 * s, z, 0.01);
+        g.add(cap);
+      }
+      break;
+    }
+    case 'fir-tip-tea':
+      // A tin mug of fir-tip tea, still green on top.
+      g.add(part(flat(new THREE.CylinderGeometry(0.075, 0.07, 0.16, 8)), '#9aabb4', 0, 0.08, 0, 0.012));
+      g.add(part(flat(new THREE.CylinderGeometry(0.066, 0.066, 0.01, 8)), '#6fae52', 0, 0.162, 0, false));
+      g.add(box(0.03, 0.08, 0.018, '#7d8b92', 0.095, 0.09, 0, 0.008));
+      break;
+    case 'chanterelle-stew':
+      // A tin of stew: a low pot, golden inside.
+      g.add(part(flat(new THREE.CylinderGeometry(0.13, 0.11, 0.1, 9)), '#6d7c85', 0, 0.05, 0, 0.012));
+      g.add(part(flat(new THREE.CylinderGeometry(0.118, 0.118, 0.01, 9)), '#c99a4a', 0, 0.098, 0, false));
+      for (const [x, z] of [[-0.04, 0.02], [0.05, -0.03], [0.01, 0.06]] as const) g.add(box(0.03, 0.012, 0.025, '#f7c35a', x, 0.106, z, false));
+      break;
+    case 'berry-pemmican': {
+      // Two cakes of berry pemmican on a scrap of wax paper, dark and flecked with blue.
+      g.add(box(0.3, 0.006, 0.22, '#e9dfc4', 0, 0.003, 0, 0.006));
+      for (const [x, z, t] of [[-0.05, 0.02, 0.2], [0.07, -0.03, -0.3]] as const) {
+        const cake = box(0.12, 0.05, 0.09, '#5a3b33', x, 0.031, z, 0.008);
+        cake.rotation.y = t;
+        g.add(cake, box(0.02, 0.006, 0.02, '#6f7fd6', x - 0.02, 0.058, z + 0.01, false), box(0.018, 0.006, 0.018, '#6f7fd6', x + 0.03, 0.058, z - 0.02, false));
+      }
       break;
     }
     case 'old-photograph': {

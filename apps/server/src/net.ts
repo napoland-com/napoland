@@ -309,6 +309,9 @@ export function attachNet(o: NetOptions): Net {
       case 'feed':
         world.feed(s.id, msg.x, msg.y, msg.slot, now, msg.count);
         return flush();
+      case 'cook':
+        world.cook(s.id, msg.x, msg.y, msg.recipe, now);
+        return flush();
       case 'board':
         world.board(s.id, msg.x, msg.y, now);
         return flush();

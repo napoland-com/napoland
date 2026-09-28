@@ -151,7 +151,7 @@ export function givenSlots(mine: readonly BagSlot[], bag: readonly BagSlot[], it
 /** One thing a side gives, as a row: its name (with its level), how many, and what it is. */
 function row(e: BagSlot, i: number, items: Items, mine: boolean, bag: readonly BagSlot[]): OfferRow {
   const def = items.get(e.item), stack = !single(e, items);
-  const facts = e.piece ? gearFacts(def, e.piece, items) : factsOf(def).slice(0, 3);
+  const facts = e.piece ? gearFacts(def, e.piece, items) : factsOf(def, items).slice(0, 3);
   const quirk = e.piece?.quirk ? items.quirk(e.piece.quirk) : undefined;
   return {
     i, item: e.item, name: pieceName(def, e.piece?.level), icon: iconFor(def), count: e.count, facts: facts.join(' · '),

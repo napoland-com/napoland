@@ -41,12 +41,14 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, emptyNotebook,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, carriesFood, charmsIn, cookable, cooks, dirOf,
+  dirToward, emptyNotebook, nearestCooking, whyNotEat,
   energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe,
   nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
-  type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
+  type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Recipe, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData,
+  type SurgeView, type TileMap,
   type CallKind, type ChatTo, type Comfort, type ConditionsView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView, type StreetView,
   type TradeEnd, type TradeView, type Weather,
 } from '@napoland/shared';
@@ -57,9 +59,9 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MOVES, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, buyQuestion, cabinWho,
-  comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn, openQuestion,
-  placedAlready, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, FIRE_CHOICE, FIRE_OPTIONS, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MOVES, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, TWO_MEALS,
+  WHAT_TO_COOK, YOUR_CABIN, ateAlready, buyQuestion, cabinWho, comfortLines, cookQuestion, cookShort, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion,
+  makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn, openQuestion, placedAlready, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { trophiesIn } from './view/cabin';
@@ -227,7 +229,7 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'cook', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move']);
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
 const WARDROBE = new Set<RefusedAction>(['outfit', 'pattern', 'badge']);
 
@@ -621,6 +623,8 @@ export class Game {
         const was = this.body.view.cozy ?? 0, is = msg.body.cozy ?? 0;
         if (!was && is > 0) this.news.push({ kind: 'cozy', minutes: Math.round(is / 60) });
         else if (was > 0 && !is && msg.body.fireside === undefined) this.murmur('The warmth of home wears off');
+        // The trip is over (home again, or a collapse), and what you ate for it with it.
+        if (this.body.view.meals?.length && !msg.body.meals?.length) this.murmur('What you ate has worn off');
         this.lastEnergy = { view: msg.energy, at: now };
         this.body = { view: msg.body, at: now };
         break;
@@ -1649,10 +1653,44 @@ export class Game {
   }
 
   /**
-   * A at a fire: asks to feed it what burns longest of what you carry, and how many (as many as you
-   * carry and as fit), or says why not: someone keeps it going, it is full, or nothing you carry burns.
+   * A at a fire. With something to cook (meals.ts) at a fire that burns, a choice: feed it, or cook on it;
+   * only one of the two when the other cannot happen (a fire someone keeps going takes no fuel, one that is
+   * full no more, and nothing cooks on a dead one). Anything else is feeding it, as ever.
    */
   private tend(x: number, y: number) {
+    const left = this.fireLeft(x, y, this.clock);
+    if (!carriesFood(this.items.cooking, this.bag) || !cooks(left)) return this.feed(x, y);
+    const fuel = this.bestSlot(def => def.fuel ?? 0);
+    const feeds = left !== null && fuel >= 0 && fireTakes(left ?? 0, this.items.get(this.bag[fuel].item).fuel ?? 0) > 0;
+    if (!feeds) return this.cookAt(x, y);
+    this.ask({ who: 'Fire', text: FIRE_CHOICE, options: FIRE_OPTIONS, yes: () => {}, pick: i => (i === 0 ? this.feed(x, y) : this.cookAt(x, y)) });
+  }
+
+  /**
+   * Cooking at a fire that burns: what the bag can cook, asked first with what it uses ("Cook fir-tip tea?
+   * It uses 3 fir tips."), after a choice of which when it can cook more than one; with too little for any,
+   * what the nearest one still lacks.
+   */
+  private cookAt(x: number, y: number) {
+    const can = cookable(this.items.cooking, this.bag);
+    if (!can.length) {
+      const near = nearestCooking(this.items.cooking, this.bag);
+      return near && this.inform('Fire', cookShort(near, this.bag, this.items));
+    }
+    if (can.length === 1) return this.cook(x, y, can[0]!);
+    this.ask({ who: 'Fire', text: WHAT_TO_COOK, options: can.map(r => this.items.get(r.make).name), yes: () => {}, pick: i => this.cook(x, y, can[i]!) });
+  }
+
+  private cook(x: number, y: number, recipe: Recipe) {
+    const text = cookQuestion(recipe, this.items);
+    this.ask({ who: 'Fire', text, yes: () => this.act('Fire', text, { t: 'cook', x, y, recipe: recipe.id }) });
+  }
+
+  /**
+   * Feeding a fire: asks to feed it what burns longest of what you carry, and how many (as many as you
+   * carry and as fit), or says why not: someone keeps it going, it is full, or nothing you carry burns.
+   */
+  private feed(x: number, y: number) {
     const left = this.fireLeft(x, y, this.clock);
     if (left === null) return this.inform('Fire', TENDED);
     const slot = this.bestSlot(def => def.fuel ?? 0);
@@ -1809,6 +1847,10 @@ export class Game {
   /** Why using `def` from bag slot `slot` cannot work here, when the game knows it already (the server checks it anyway); null when it can. */
   private whyNotUse(slot: number, def: ItemDef): string | null {
     const u = def.use ?? {}, me = this.me;
+    if (u.meal) {
+      const why = whyNotEat(def.id, this.body.view.meals ?? []);
+      if (why) return why === 'ate_it' ? ateAlready(def) : TWO_MEALS;
+    }
     if (u.identify) {
       if (!this.inTown()) return TOO_DARK;
       // Its own slot frees up; whatever it turns out to be must fit somewhere.
@@ -1852,7 +1894,7 @@ export class Game {
     this.boxChanges++;
   }
 
-  /** YES or NO to the open question: A, B, a tap on either, or a tap outside the box (NO). */
+  /** YES or NO to the open question, or an answer of a choice: A, B, a tap on either, or a tap outside the box (NO). */
   answer(choice: Choice) {
     const q = this.question;
     if (!q) return;
@@ -1861,7 +1903,8 @@ export class Game {
     // A direction held while it asked walks only once it is pressed again.
     this.pad.dir = null;
     this.boxChanges++;
-    if (choice === 'yes') q.ask.yes(q.n);
+    if (typeof choice === 'number') q.ask.pick?.(choice);
+    else if (choice === 'yes') q.ask.yes(q.n);
     else q.ask.no?.();
     // Whatever was said meanwhile is old news once a new answer is on its way.
     if (this.note?.waiting) this.later = null;

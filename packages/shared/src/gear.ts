@@ -129,10 +129,10 @@ export const upgradeChance = (u: Upgrade): number => Math.min(1, Math.max(0, u.c
 export const noResist = (): Resist => ({ heat: 0, cold: 0, wind: 0, electricity: 0, radiation: 0 });
 
 /**
- * Every element's resistance over what is worn (as worn down and as upgraded as `pieces` say), each at
- * most RESIST_MAX in all: no upgrade makes anyone immune.
+ * Every element's resistance over what is worn (as worn down and as upgraded as `pieces` say), with
+ * `extra` on top (what a meal eaten adds, meals.ts), each at most RESIST_MAX in all: nothing makes anyone immune.
  */
-export function resistOf(gear: Gear, items: Map<string, ItemDef>, pieces: Worn = {}): Resist {
+export function resistOf(gear: Gear, items: Map<string, ItemDef>, pieces: Worn = {}, extra: Partial<Resist> = {}): Resist {
   const out = noResist();
   for (const s of SLOTS) {
     const def = gear[s] ? items.get(gear[s]!) : undefined;
@@ -140,6 +140,7 @@ export function resistOf(gear: Gear, items: Map<string, ItemDef>, pieces: Worn =
     const k = pieceFactor(pieces[s]?.cond ?? 1) * upgradeFactor(pieces[s]?.level);
     for (const e of ELEMENTS) out[e] += (def.resist?.[e] ?? 0) * k;
   }
+  for (const e of ELEMENTS) out[e] += extra[e] ?? 0;
   for (const e of ELEMENTS) out[e] = Math.round(Math.min(RESIST_MAX, Math.max(0, out[e])) * 1000) / 1000;
   return out;
 }
