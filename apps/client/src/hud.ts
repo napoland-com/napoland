@@ -205,7 +205,7 @@ export interface GoalView { text: string; ready: boolean; act: boolean }
  */
 export interface RecipeView {
   id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean;
-  group?: 'mend' | 'upgrade' | 'make';
+  group?: 'mend' | 'upgrade' | 'make' | 'cabin';
 }
 /**
  * A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or
@@ -1963,11 +1963,12 @@ export function offerHtml(rows: readonly OfferRow[], side: 'mine' | 'theirs'): s
 }
 
 /** The headings of the workbench's list, over the rows of each kind. */
-const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> = { mend: 'Mend', upgrade: 'Upgrade', make: 'Make' };
+const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> = { mend: 'Mend', upgrade: 'Upgrade', make: 'Make', cabin: 'For your cabin' };
 
 /**
- * The workbench's list: its rows in the order given (mending, upgrades, then what it makes), each kind
- * under its heading. A row shows what it is, what it needs against the stash, and Ready when it can be done.
+ * The workbench's list: its rows in the order given (mending, upgrades, what it makes, then furniture for
+ * your cabin), each kind under its heading. A row shows what it is, what it needs against the stash, and
+ * Ready when it can be done.
  */
 export function benchHtml(rows: readonly RecipeView[]): string {
   let group: RecipeView['group'];

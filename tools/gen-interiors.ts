@@ -19,7 +19,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DECOR, TileMap, doorOf, hangs, objectTiles, validateMap, type Dir, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { TileMap, doorOf, hangs, objectTiles, underfoot, validateMap, type Comfort, type Dir, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { noteAt } from './notes-left';
 
 type House = Extract<MapObject, { kind: 'house' }>;
@@ -56,7 +56,10 @@ const ROOMS: readonly Room[] = [
     // fire, the chest (your stash: what you put in it earns XP) and the workbench, which makes gear from
     // what the chest holds. The chest's front is warm, so you thaw out while you put things away, and the
     // workbench is one step on. The middle stays open from the door to the fire.
-    id: 'stonebrook-home', name: 'Home', version: 4, outside: 'stonebrook', door: [8, 20], private: true, wake: { x: 4, y: 2, dir: 'down' },
+    // Years of damp spoiled the rest (comfort.ts): an iron stove in the corner, a shelf, a drying rack
+    // by the fire, the bed, the rug and the lamp on the table stand spoiled in their places until you
+    // make each again at the workbench, which sets it there at once.
+    id: 'stonebrook-home', name: 'Home', version: 5, outside: 'stonebrook', door: [8, 20], private: true, wake: { x: 4, y: 2, dir: 'down' },
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -68,13 +71,14 @@ const ROOMS: readonly Room[] = [
     ],
     things: [
       { kind: 'fireplace', x: 4, y: 1 },
-      { kind: 'rug', x: 3, y: 2, w: 3, h: 2 },
-      { kind: 'shelf', x: 1, y: 1 },
-      { kind: 'shelf', x: 2, y: 1 },
-      { kind: 'bed', x: 7, y: 1 },
-      { kind: 'table', x: 2, y: 4 },
       { kind: 'chest', x: 5, y: 1 },
       { kind: 'workbench', x: 6, y: 1 },
+      { kind: 'comfort', x: 1, y: 1, what: 'stove' },
+      { kind: 'comfort', x: 2, y: 1, what: 'shelf' },
+      { kind: 'comfort', x: 3, y: 1, what: 'rack' },
+      { kind: 'comfort', x: 7, y: 1, what: 'bed' },
+      { kind: 'comfort', x: 3, y: 2, what: 'rug' },
+      { kind: 'comfort', x: 2, y: 4, what: 'lamp' },
     ],
   },
   {
@@ -688,12 +692,14 @@ const GLYPH: Partial<Record<MapObject['kind'], string>> = {
   fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@',
   hearth: 'f', sheeted: 's', boxes: 'n', crib: 'C', clock: 'k', paper: '?', saw: 'S', carriage: '=', sawdust: ':', logs: 'l', luggage: 'u', cache: 'X',
 };
+/** The places for furniture in a home (comfort.ts), in lower case: what stands there, spoiled until it is made. */
+const COMFORT_GLYPH: Record<Comfort, string> = { stove: 'o', bed: 'b', rug: '_', lamp: 'i', rack: 'r', shelf: 't' };
 function glance(map: MapData): string[] {
   const tm = new TileMap(map);
   const things = new Map<string, string>();
   // Solid things first, so a rug under a table shows the table.
-  for (const o of [...map.objects].sort((a, b) => Number(DECOR.has(b.kind)) - Number(DECOR.has(a.kind)))) {
-    for (const [x, y] of objectTiles(o)) things.set(`${x},${y}`, GLYPH[o.kind] ?? '?');
+  for (const o of [...map.objects].sort((a, b) => Number(underfoot(b)) - Number(underfoot(a)))) {
+    for (const [x, y] of objectTiles(o)) things.set(`${x},${y}`, o.kind === 'comfort' ? COMFORT_GLYPH[o.what] : GLYPH[o.kind] ?? '?');
   }
   const exit = map.exits[0]!;
   return map.tiles.map((row, y) => [...row].map((c, x) => {

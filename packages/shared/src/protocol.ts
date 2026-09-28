@@ -20,7 +20,7 @@ import type { ThanksFor, ThanksGroup } from './thanks';
 import { OFFER_MAX } from './trade';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 26;
+export const PROTOCOL_VERSION = 27;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -342,9 +342,10 @@ export type Did =
   | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number } }
   /**
    * The workbench made `count` of `item`, into your stash. A tool (its kind says so) went to your tools
-   * instead, yours for good: your tools came before this in a `tools` message.
+   * instead, yours for good: your tools came before this in a `tools` message. Furniture went into its
+   * place in your cabin (a `furniture` message came before this): `comfort` is how comfortable it is now.
    */
-  | { kind: 'made'; item: string; count: number }
+  | { kind: 'made'; item: string; count: number; comfort?: number }
   /** The `item` you wear (at `level`, when upgraded) is mended: whole again. */
   | { kind: 'mended'; item: string; level?: number }
   /** A piece of `item` is `level` now; `failed`: the upgrade did not take, the piece stays at `level` and the materials are spent. */
@@ -373,6 +374,13 @@ export interface BodyView {
   hitched: boolean;
   /** What you wear, piece by piece: its condition (it wears down out in the wilds) and quirk. */
   worn: Worn;
+  /**
+   * Cozy (comfort.ts): seconds of it left, as of this message. None: you are not. It holds while you stand
+   * by your own fire long enough, and counts down from when you leave it.
+   */
+  cozy?: number;
+  /** Seconds you have stood by your own fire, in your own cabin, as of this message (counting on while you stay). None: you are not by it. */
+  fireside?: number;
 }
 
 /** Why the server did not do what was asked. */
@@ -454,7 +462,9 @@ export type Refusal =
   /** The bag of whoever you trade with has no room for what they would get (yours has: `bag_full` is yours). */
   | 'their_bag_full'
   /** Neither side gives anything. */
-  | 'nothing_to_trade';
+  | 'nothing_to_trade'
+  /** That furniture stands in its place in your cabin already. */
+  | 'placed';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -608,6 +618,8 @@ export type ServerMsg =
       keepsakes: string[];
       /** Who was the first on the server to find each secret found so far (firsts.ts), and on which day. */
       firsts: FirstView[];
+      /** In your own cabin: the furniture you made and set in its places (item ids). Nobody else is told. */
+      furniture?: string[];
       serverTime: number;
     }
   /**
@@ -617,6 +629,8 @@ export type ServerMsg =
   | {
       t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; finds: FindView[]; drops: DropView[]; reason: 'exit' | 'collapse';
       fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
+      /** In your own cabin: the furniture you made and set in its places (item ids). Nobody else is told. */
+      furniture?: string[];
     }
   /** Your energy and body, sent when a rate changes and every few seconds (ENERGY_SYNC_MS). */
   | { t: 'energy'; energy: EnergyView; body: BodyView }
@@ -624,6 +638,8 @@ export type ServerMsg =
   | { t: 'bag'; bag: BagSlot[] }
   /** Your tools, whole (item ids, in the order you got them), after you got one. */
   | { t: 'tools'; tools: string[] }
+  /** The furniture in your own cabin, whole (item ids), after you made one: it stands in its place now. */
+  | { t: 'furniture'; furniture: string[] }
   /**
    * You picked these up (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
    * A find that is a `tool` is yours for good instead, and your tools follow in a `tools` message.

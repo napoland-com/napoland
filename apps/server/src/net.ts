@@ -658,6 +658,7 @@ export function attachNet(o: NetOptions): Net {
       notes: joined.notes,
       keepsakes: joined.keepsakes,
       firsts: joined.firsts,
+      ...(joined.furniture && { furniture: joined.furniture }),
       serverTime: Date.now(),
     });
     flush();

@@ -54,7 +54,8 @@ describe('what items look like', () => {
     expect(content.items.length).toBeGreaterThan(0);
     for (const i of content.items) {
       // Gear is drawn by its slot, in its color, and a map as a map: never a sack. Neither grows as a find, so they need no model on the ground.
-      if (i.kind === 'gear' || i.kind === 'tool') {
+      // Furniture is drawn by the place it goes into, at the workbench; it stands in the cabin, never on the ground.
+      if (i.kind === 'gear' || i.kind === 'tool' || i.kind === 'furniture') {
         expect(iconFor(i), i.id).not.toBe(itemIcon('fir-cone'));
         expect(content.finds.map(f => f.item), i.id).not.toContain(i.id);
         continue;

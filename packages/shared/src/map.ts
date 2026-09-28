@@ -7,6 +7,7 @@
  * the deeper you are) or the inside of a building. Every house can be entered: its door is an exit
  * to a small map of its own. Energy only comes back near a fireplace. See energy.ts.
  */
+import { comfortSize, underfootComfort, type Comfort } from './comfort';
 import type { Dir } from './protocol';
 import type { FlashRule, StormRule, SurgeRule } from './sky';
 
@@ -173,6 +174,12 @@ export type MapObject =
   /** A drift of sawdust on the mill floor: walked through. */
   | { kind: 'sawdust'; x: number; y: number }
   /**
+   * A place in a home of one's own where furniture stands (comfort.ts): spoiled by years of damp until
+   * its owner makes new furniture for it at the workbench. Each player sees their own (their cabin is
+   * theirs alone). `what` says which: a bed two tiles long, the rug three by two (walked over), the rest one.
+   */
+  | { kind: 'comfort'; x: number; y: number; what: Comfort }
+  /**
    * A handwritten note someone left (notes.ts): on a table, a shelf, a crate or a bed, in a car, on the
    * luggage, nailed to a pole. It lies on the tile of what it is on, so it blocks nothing itself, and you
    * read it like a sign, facing that. `id` names it for good (what players read is kept by it), `by`
@@ -286,6 +293,16 @@ const BLOCKING = new Set<MapObject['kind']>([
  * which blocks the way itself.
  */
 export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'note']);
+
+/** Does this object stop anyone from walking onto its tiles? A comfort place does, but for the rug. */
+export function blocks(o: MapObject): boolean {
+  return o.kind === 'comfort' ? !underfootComfort(o.what) : BLOCKING.has(o.kind);
+}
+
+/** Is this object only drawn, walked over or through (DECOR, and the rug of a comfort place)? */
+export function underfoot(o: MapObject): boolean {
+  return o.kind === 'comfort' ? underfootComfort(o.what) : DECOR.has(o.kind);
+}
 /**
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
@@ -300,6 +317,7 @@ export function footprint(o: MapObject): [number, number] {
     case 'carriage': return [o.w, 1];
     case 'bed': return [1, 2];
     case 'piano': return [2, 1];
+    case 'comfort': return comfortSize(o.what);
     default: return [1, 1];
   }
 }
@@ -366,7 +384,7 @@ export class TileMap {
         this.levels[y * W + x] = Number(lv[x] ?? '0') || 0;
       }
     }
-    for (const o of data.objects) if (BLOCKING.has(o.kind)) for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.blocked[y * W + x] = 1;
+    for (const o of data.objects) if (blocks(o)) for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.blocked[y * W + x] = 1;
     // Every house can be entered: its door tile stays open (it is an exit to the house's inside).
     for (const o of data.objects) {
       if (o.kind !== 'house') continue;

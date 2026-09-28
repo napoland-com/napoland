@@ -2,8 +2,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  ANYWHERE, CACHE_NEAR, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, itemIndex, notesOf, objectTiles, opensOn, secretKey, secretTitle,
-  stepTarget, upgradable, upgradeChance,
+  ANYWHERE, CACHE_NEAR, COMFORTS, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, comfortMax, doorOf, findPath, findTiles, hidden, itemIndex, notesOf, objectTiles, opensOn, secretKey,
+  secretTitle, stepTarget, upgradable, upgradeChance,
   validateItems, validateNotebook, type ItemsData, type MapData, type MapNote, type MapObject, type NotebookData, type Sight, type StoryData,
 } from '@napoland/shared';
 
@@ -103,6 +103,34 @@ describe('your own cabin (roadmap/own-cabin.md)', () => {
   it('lets you out in front of the house in Stonebrook', () => {
     const out = home.data.exits[0]!, door = town.data.exits.find(e => e.to === 'stonebrook-home')!;
     expect([out.to, out.tx, out.ty, out.dir]).toEqual(['stonebrook', door.x, door.y + 1, 'down']);
+  });
+});
+
+describe('a cozy cabin (roadmap/cabin-comfort.md)', () => {
+  const home = maps.get('stonebrook-home')!;
+  const at = (kind: MapObject['kind']) => home.data.objects.filter(o => o.kind === kind).map(o => [o.x, o.y]);
+  const furniture = items.items.filter(i => i.kind === 'furniture');
+
+  it('has a place in the home for each thing years of damp spoiled, and the fire, the chest, the workbench and the door where they were', () => {
+    expect(home.data.objects.flatMap(o => (o.kind === 'comfort' ? [o.what] : [])).sort()).toEqual([...COMFORTS].sort());
+    expect([at('fireplace'), at('chest'), at('workbench')]).toEqual([[[4, 1]], [[5, 1]], [[6, 1]]]);
+    expect(home.data.exits.map(e => [e.x, e.y])).toEqual([[4, 6]]);
+    // Everything you walk to stays in reach: the chest and the workbench from the door, the wake point by the fire.
+    for (const [x, y] of [[5, 2], [6, 2], [4, 2]] as const) expect(findPath(home, home.data.spawn.x, home.data.spawn.y, x, y).at(-1)).toEqual({ x, y });
+  });
+
+  it('makes each at the workbench from what you bring home, dearer the more comfort it adds: 10 in all', () => {
+    expect(Object.fromEntries(furniture.map(f => [f.furnishes, f.comfort]))).toEqual({ stove: 3, bed: 2, rack: 2, rug: 1, lamp: 1, shelf: 1 });
+    expect(comfortMax(items.items)).toBe(10);
+    for (const f of furniture) {
+      const r = items.recipes!.filter(x => x.make === f.id);
+      expect(r, f.id).toHaveLength(1);
+      // Six of scrap, cloth, wire and resin for each point of comfort.
+      expect(r[0]!.needs.every(n => ['scrap', 'cloth', 'wire', 'resin'].includes(n.item)), f.id).toBe(true);
+      expect(r[0]!.needs.reduce((n, x) => n + x.count, 0), f.id).toBe(6 * f.comfort!);
+    }
+    // Only the rack dries you.
+    expect(furniture.filter(f => f.dries).map(f => f.furnishes)).toEqual(['rack']);
   });
 });
 

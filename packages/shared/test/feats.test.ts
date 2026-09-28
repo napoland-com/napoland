@@ -150,7 +150,7 @@ describe('mods', () => {
     expect(charm({ double: 0 })).toEqual(['item "bead" is a charm that does nothing']);
     expect(charm({ luck: 2 } as Partial<Mods>)).toEqual([
       'item "bead" is a charm that does nothing',
-      'item "bead": a charm changes wetting, load, hitch, warmth, wear, farDrain, double, marks or markEnergy, not luck',
+      'item "bead": a charm changes wetting, load, hitch, warmth, wear, farDrain, double, marks, markEnergy or drain, not luck',
     ]);
   });
 });

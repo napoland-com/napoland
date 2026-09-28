@@ -129,6 +129,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'trading': return 'Finish the trade you are in first';
     case 'their_bag_full': return 'Their bag has no room for it';
     case 'nothing_to_trade': return 'There is nothing to trade yet';
+    case 'placed': return 'It stands in its place already';
   }
 }
 
@@ -247,6 +248,7 @@ export function factsOf(def: ItemDef): string[] {
   if (def.kind === 'charm') out.push('Works while in your bag');
   if (def.kind === 'tool') out.push('A tool, yours for good');
   if (def.kind === 'keepsake') out.push('One of a kind: bring it home');
+  if (def.kind === 'furniture' && def.comfort) out.push(`Comfort ${def.comfort}`);
   return out;
 }
 
@@ -275,13 +277,20 @@ export function lookOf(gear: Gear, items: Items, outfit?: string, pattern?: stri
 /**
  * The workbench's recipes against what a stash holds: what each makes, what it needs, whether it can.
  * A tool is yours once: the row of one among your `tools` says you have it, and is never ready (its
- * card says so too, details.ts).
+ * card says so too, details.ts). Furniture for your cabin (comfort.ts) comes after the rest, under a
+ * heading of its own, and the row of a piece already among your `furniture` says it stands in its place.
  */
-export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[], items: Items, tools: readonly string[] = []): RecipeView[] {
-  return recipes.map(r => {
-    const def = items.get(r.make), have = def.kind === 'tool' && tools.includes(r.make), needs = needsOf(r.needs, stash, items);
+export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[], items: Items, tools: readonly string[] = [], furniture: readonly string[] = []): RecipeView[] {
+  const rows = recipes.map((r): RecipeView => {
+    const def = items.get(r.make), needs = needsOf(r.needs, stash, items);
+    if (def.kind === 'furniture') {
+      const placed = furniture.includes(r.make);
+      return { id: r.id, group: 'cabin', name: def.name, icon: iconFor(def), facts: placed ? `Comfort ${def.comfort ?? 0} · In its place` : factsOf(def).join(' · '), needs, can: !placed && needs.every(n => n.have >= n.need) };
+    }
+    const have = def.kind === 'tool' && tools.includes(r.make);
     return { id: r.id, group: 'make', name: def.name, icon: iconFor(def), facts: have ? 'You have it' : factsOf(def).join(' · '), needs, can: !have && needs.every(n => n.have >= n.need) };
   });
+  return [...rows.filter(r => r.group !== 'cabin'), ...rows.filter(r => r.group === 'cabin')];
 }
 
 /**

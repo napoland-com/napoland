@@ -61,13 +61,14 @@ export function hasFire(data: MapData | undefined): boolean {
 /**
  * Where windows go: in standing back walls with room in front, between two other wall tiles, and not
  * over a fireplace or a cold hearth (its chimney is there), a shelf, a workbench (the board its tools
- * hang on) or a tall clock, nor where a calendar or a drawing hangs. One in a narrow room; two in a wide
- * one, a quarter of the way in from each side.
+ * hang on), a tall clock, a stove's pipe or the trophy shelf, nor where a calendar or a drawing hangs.
+ * One in a narrow room; two in a wide one, a quarter of the way in from each side.
  */
 export function windowSpots(map: TileMap, shapes: readonly WallShape[]): Array<{ x: number; y: number }> {
   const W = map.width, busy = new Set<string>();
   for (const f of [...objectsOf(map.data, 'fireplace'), ...objectsOf(map.data, 'hearth')]) for (const dx of [-1, 0, 1]) busy.add(`${f.x + dx},${f.y}`);
   for (const s of [...objectsOf(map.data, 'shelf'), ...objectsOf(map.data, 'workbench'), ...objectsOf(map.data, 'clock')]) busy.add(`${s.x},${s.y}`);
+  for (const c of objectsOf(map.data, 'comfort')) if (c.what === 'stove' || c.what === 'shelf') busy.add(`${c.x},${c.y}`);
   // A paper on the wall stands on the wall tile itself: the floor it is read from is below it.
   for (const p of objectsOf(map.data, 'paper')) if (map.kind(p.x, p.y) === 'wall') busy.add(`${p.x},${p.y + 1}`);
   const tall = (x: number, y: number) => map.inside(x, y) && shapes[y * W + x] === 'tall';
@@ -328,7 +329,7 @@ const NAPO_INK = '#1a1b1c';
 const CHALK = '#e8e3d3';
 
 /** Which way a shelf's back goes: against a wall north, west or east of it (north if none). */
-function againstWall(map: TileMap, x: number, y: number): number {
+export function againstWall(map: TileMap, x: number, y: number): number {
   if (map.kind(x, y - 1) === 'wall') return 0;
   if (map.kind(x - 1, y) === 'wall') return Math.PI / 2;
   if (map.kind(x + 1, y) === 'wall') return -Math.PI / 2;
@@ -617,7 +618,7 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
 }
 
 /** A table on tile x,y: its top and legs, nothing on it yet. */
-function tableModel(x: number, y: number): THREE.Group {
+export function tableModel(x: number, y: number): THREE.Group {
   const g = pivot(x + 0.5, 0, y + 0.5);
   g.add(box(0.86, 0.07, 0.72, '#6b4a31', 0, 0.57, 0));
   for (const [lx, lz] of [[-0.36, -0.29], [0.36, -0.29], [-0.36, 0.29], [0.36, 0.29]] as const) g.add(box(0.07, 0.54, 0.07, '#4a3223', lx, 0.27, lz, false));
