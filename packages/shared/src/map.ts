@@ -347,7 +347,13 @@ export type MapObject =
    * says who wrote it, `name` what the text box calls it ("Nailed to the pole"). A note with `when`
    * only shows at night, in the rain or on an aurora night; the rest of the time the box says `faint`.
    */
-  | { kind: 'note'; x: number; y: number; id: string; by: NoteAuthor; name: string; text: string[]; when?: NoteWhen; faint?: string };
+  | { kind: 'note'; x: number; y: number; id: string; by: NoteAuthor; name: string; text: string[]; when?: NoteWhen; faint?: string }
+  /**
+   * A fire lookout from the logging days (lookout.ts): a timber tower on four legs, 2 by 2, a cab on top
+   * with a lamp in it, its ladder up the south face of its east column. Climbed from the tile in front
+   * of the ladder (footOf); its lamp burns what someone feeds it there, and sweeps a beam round the woods.
+   */
+  | { kind: 'lookout'; x: number; y: number };
 
 /** Who left notes behind: the ranger, Walt Pruitt when he walked the line, and the Barlows from the cabin at the end. */
 export const NOTE_AUTHORS = ['ranger', 'walt', 'barlows'] as const;
@@ -510,7 +516,7 @@ const BLOCKING = new Set<MapObject['kind']>([
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
   'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport', 'lostfound', 'ledger',
-  'ruin', 'yarder', 'spool', 'traps', 'gate',
+  'ruin', 'yarder', 'spool', 'traps', 'gate', 'lookout',
 ]);
 
 /** How many must pull at one of NAPO's gates at once (MapObject 'gate'), and how close together their pulls count as at once. */
@@ -559,6 +565,7 @@ export function footprint(o: MapObject): [number, number] {
     case 'piano': return [2, 1];
     case 'yarder': return [2, 2];
     case 'comfort': return comfortSize(o.what);
+    case 'lookout': return [2, 2];
     default: return [1, 1];
   }
 }

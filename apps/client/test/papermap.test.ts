@@ -131,6 +131,16 @@ describe('the paper map', () => {
     expect(g.signs).toHaveLength(1);
   });
 
+  it('draws the fire lookout where it stands, over the middle of its four legs, and names it where you climb it', () => {
+    const hill: MapData = {
+      ...woods(), width: 12, height: 10, tiles: Array<string>(10).fill('g'.repeat(12)), levels: Array<string>(10).fill('0'.repeat(12)), exits: [],
+      objects: [{ kind: 'lookout', x: 4, y: 3 }], places: [{ name: 'the fire lookout', x: 5, y: 5 }],
+    };
+    const g = sketchOf(new TileMap(hill), id => names[id]);
+    expect(g.things).toEqual([{ at: [5, 4], kind: 'lookout' }]);
+    expect(g.labels.map(l => l.text)).toContain('the fire lookout');
+  });
+
   it('writes a name once: a door named like a place gives its name to the place', () => {
     const mill: MapData = { ...woods(), places: [{ name: 'the hut', x: 1, y: 1 }] };
     const labels = sketchOf(new TileMap(mill), id => ({ ...names, hut: 'The hut' })[id]).labels.map(l => l.text);

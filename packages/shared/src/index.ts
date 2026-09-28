@@ -11,6 +11,7 @@ export * from './glimpses';
 export * from './items';
 export * from './landmarks';
 export * from './lostfound';
+export * from './lookout';
 export * from './map';
 export * from './meals';
 export * from './merits';

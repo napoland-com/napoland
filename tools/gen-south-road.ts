@@ -546,7 +546,7 @@ const GLYPH: Record<MapObject['kind'], string> = {
   // The furniture of your own cabin stands there alone (gen-interiors.ts).
   comfort: 'n',
   // NAPO's teleport stands in every cabin and by the notice board in town (gen-interiors.ts, gen-map.ts).
-  teleport: 'N',
+  teleport: 'N', lookout: 'A',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '_' };
 const objGlyph = new Map<number, string>();

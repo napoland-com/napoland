@@ -21,6 +21,16 @@ describe('soundscape', () => {
     expect(loops({ kind: 'inside', weather: 'rain' }).rain).toBeLessThan(loops({ weather: 'rain' }).rain);
   });
 
+  it('drums faintly on the lookout\'s roof up there, in rain or a storm, and the wind still blows', () => {
+    expect(loops({ up: true, weather: 'rain' }).rain).toBe(loops({ kind: 'inside', weather: 'rain' }).rain);
+    expect(loops({ up: true, storm: true }).rain).toBeGreaterThan(0);
+    expect(loops({ up: true, storm: true }).rain).toBeLessThan(loops({ weather: 'rain' }).rain);
+    expect(loops({ up: true }).rain).toBe(0);
+    expect(loops({ up: true, storm: true }).wind).toBe(loops({ storm: true }).wind);
+    // Indoors a storm is heard as before: only the rain of a rainy day.
+    expect(loops({ kind: 'inside', storm: true }).rain).toBe(0);
+  });
+
   it('shimmers faintly while you carry a live find', () => {
     expect(loops({ live: true }).shimmer).toBeGreaterThan(0);
     expect(loops({}).shimmer).toBe(0);

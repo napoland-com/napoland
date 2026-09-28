@@ -36,8 +36,9 @@ import { OFFER_MAX } from './trade';
  * 37: the lost and found, whose bundles, questions and letters an older page could not show.
  * 38: the slab that needs two, which an older page could not put its hands to.
  * 39: the town waking up: its milestones and ledger (`town`), townspeople's scenes, swaps and gifts, which an older page could not show.
+ * 40: the fire lookout: climbing it and feeding its lamp (`climb`, `lamp`, `up`), which an older page could not do.
  */
-export const PROTOCOL_VERSION = 39;
+export const PROTOCOL_VERSION = 40;
 
 /**
  * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
@@ -269,6 +270,12 @@ export const ClientMsg = z.discriminatedUnion('t', [
   }),
   /** Sing a call (calls.ts): everyone on your map within CALL_REACH hears it, you too. Anyone may, guests included. */
   z.object({ t: z.literal('call'), kind: z.enum(CALL_KINDS) }),
+  /**
+   * Climb the fire lookout whose corner is tile x,y (lookout.ts), from the foot of its ladder, where you
+   * stand: up there you see far, for up to LOOKOUT_UP_S. `climbDown` comes down sooner.
+   */
+  z.object({ t: z.literal('climb'), x: z.number().int(), y: z.number().int() }),
+  z.object({ t: z.literal('climbDown') }),
   /** Open the crate on tile x,y, next to you (caches.ts): the server answers with what is in it. */
   z.object({ t: z.literal('cache'), x: z.number().int(), y: z.number().int() }),
   /** Leave one of what is in bag slot `slot` in the crate on tile x,y: once a visit, never gear. */
@@ -393,6 +400,16 @@ export interface CreatureView {
   chasing?: string;
 }
 
+/**
+ * A fire lookout's lamp on your map (lookout.ts), by the lookout's corner x,y: it burns `left` more seconds
+ * (0: out). While it burns, its beam sweeps the woods, where the wall clock says (beamAngle).
+ */
+export interface LampView {
+  x: number;
+  y: number;
+  left: number;
+}
+
 /** A flare burning on tile x,y for `left` more seconds. */
 export interface FlareView {
   x: number;
@@ -431,6 +448,8 @@ export interface StoneView {
 export type Did =
   /** A fire took `count` of `item`, and has `left` seconds of fuel now; `lit`: it was out. */
   | { kind: 'fire'; item: string; count: number; left: number; lit?: true }
+  /** A fire lookout's lamp took `count` of `item`, and burns `left` seconds now; `lit`: it was out. */
+  | { kind: 'lamp'; item: string; count: number; left: number; lit?: true }
   /** The Old Stone took `count` of `item`, and stands so now; `woke`: this woke it. */
   | { kind: 'stone'; item: string; count: number; stone: StoneView; woke?: true }
   /**
@@ -626,7 +645,11 @@ export type Refusal =
   /** You ate two meals this trip already: a third waits for the next trip. */
   | 'two_meals'
   /** The town's ledger wants no more of that for this work (it has all it needs of it, or it is done). */
-  | 'not_needed';
+  | 'not_needed'
+  /** The lookout's lamp holds as much as it can. */
+  | 'lamp_full'
+  /** You are up the lookout: come down first. */
+  | 'up';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -729,6 +752,8 @@ export interface PlayerView {
   guest?: true;
   /** They lie slumped out in the wilds, out of energy, until someone gets them up or they collapse (rescue.ts). */
   down?: true;
+  /** They are up the fire lookout whose ladder they stand at the foot of (lookout.ts). */
+  up?: true;
 }
 
 /** A map by id and version; a client whose copy has another version reloads. */
@@ -800,6 +825,8 @@ export type ServerMsg =
       stash: BagSlot[];
       /** Your map's fires, marks, creatures, flares, flashes, and surge and storm clocks (null: a map that never surges, or never storms). */
       fires: FireView[];
+      /** Your map's fire lookouts' lamps (lookout.ts): how long each burns. None on a map without a lookout. */
+      lamps?: LampView[];
       marks: MarkView[];
       creatures: CreatureView[];
       flares: FlareView[];
@@ -872,7 +899,7 @@ export type ServerMsg =
    */
   | {
       t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; finds: FindView[]; drops: DropView[]; reason: 'exit' | 'collapse';
-      fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
+      fires: FireView[]; lamps?: LampView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
       weather: Weather;
       /** In a cabin: the furniture made and set in its places (item ids), yours in your own, the owner's in a neighbor's (`visit`). */
       furniture?: string[];
@@ -960,6 +987,13 @@ export type ServerMsg =
   | { t: 'tradeOver'; with: PersonView; end: TradeEnd }
   /** On your map: a fire was fed (or lit again). */
   | { t: 'fire'; fire: FireView }
+  /** On your map: a fire lookout's lamp was fed (or lit again), or went out. */
+  | { t: 'lamp'; lamp: LampView }
+  /**
+   * On your map: someone climbed the fire lookout at whose ladder they stand (on), or came down. To the one
+   * who climbed, `left`: the seconds they may stay up there.
+   */
+  | { t: 'up'; id: string; on: boolean; left?: number }
   /** On your map: a mark was painted, or faded. */
   | { t: 'mark'; mark: MarkView }
   | { t: 'markGone'; id: number }
@@ -1096,6 +1130,7 @@ export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge'
   | 'say' | 'call' | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
   | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'swap' | 'give'
+  | 'climb' | 'climbDown'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 

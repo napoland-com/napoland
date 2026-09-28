@@ -82,7 +82,7 @@ export interface Sketch {
 }
 
 /** The small things the paper map marks, each its own way. */
-type Thing = 'luggage' | 'boxes' | 'rocker' | 'piano' | 'bike' | 'birdcage' | 'pump' | 'cage' | 'mailbox' | 'yarder' | 'spool';
+type Thing = 'luggage' | 'boxes' | 'rocker' | 'piano' | 'bike' | 'birdcage' | 'pump' | 'cage' | 'mailbox' | 'yarder' | 'spool' | 'lookout';
 const THINGS = new Set<string>(['luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage', 'yarder', 'spool']);
 
 /**
@@ -154,7 +154,10 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
     else if (o.kind === 'bridge') {
       if (o.dir === 'v') s.bridges.push([[o.x + 0.1, o.y], [o.x + 0.1, o.y + 1]], [[o.x + 0.9, o.y], [o.x + 0.9, o.y + 1]]);
       else s.bridges.push([[o.x, o.y + 0.1], [o.x + 1, o.y + 0.1]], [[o.x, o.y + 0.9], [o.x + 1, o.y + 0.9]]);
-    } else if (THINGS.has(o.kind)) s.things.push({ at: o.kind === 'piano' || o.kind === 'yarder' ? [o.x + 1, o.y + (o.kind === 'yarder' ? 1 : 0.5)] : drift(o.x, o.y, 19), kind: o.kind as Thing });
+    }
+    // The loggers' fire lookout, a landmark to steer by: drawn standing over the middle of its tiles, not a little off.
+    else if (o.kind === 'lookout') s.things.push({ at: [o.x + 1, o.y + 1], kind: 'lookout' });
+    else if (THINGS.has(o.kind)) s.things.push({ at: o.kind === 'piano' || o.kind === 'yarder' ? [o.x + 1, o.y + (o.kind === 'yarder' ? 1 : 0.5)] : drift(o.x, o.y, 19), kind: o.kind as Thing });
   }
   s.poles.forEach((a, i) => s.poles.slice(i + 1).forEach(b => { if (Math.hypot(a[0] - b[0], a[1] - b[1]) <= MAX_WIRE) s.wires.push([a, b]); }));
   s.culverts = culvertRuns(map);
@@ -262,7 +265,8 @@ function biggest(map: TileMap, kind: string): Pt[] {
  * A small thing, drawn the way a hand would mark it at px, py: a suitcase with its handle, a pair of
  * boxes, a rocking chair from the side, a piano with its keys, a bike's two wheels, a birdcage's dome,
  * NAPO's pump with its hose and its cages crosshatched, a mailbox on its post, the loggers' yarder (its
- * boiler and its drum on a sled) and a cable spool from the side.
+ * boiler and its drum on a sled), a cable spool from the side, and the fire lookout's cab up on its splayed,
+ * braced legs.
  */
 function thing(g: CanvasRenderingContext2D, kind: Thing, px: number, py: number) {
   g.beginPath();
@@ -278,6 +282,11 @@ function thing(g: CanvasRenderingContext2D, kind: Thing, px: number, py: number)
     case 'mailbox': g.rect(px - 2.5, py - 4, 5, 3); g.moveTo(px, py - 1); g.lineTo(px, py + 4); break;
     case 'yarder': g.moveTo(px - 11, py + 6); g.lineTo(px + 11, py + 6); g.rect(px - 9, py - 7, 6, 13); g.moveTo(px + 9, py); g.arc(px + 5, py, 4, 0, Math.PI * 2); g.moveTo(px - 6, py - 7); g.lineTo(px - 6, py - 11); break;
     case 'spool': g.moveTo(px + 4.5, py); g.arc(px, py, 4.5, 0, Math.PI * 2); g.moveTo(px + 1.5, py); g.arc(px, py, 1.5, 0, Math.PI * 2); break;
+    case 'lookout':
+      g.moveTo(px - 5, py + 6); g.lineTo(px - 2.5, py - 4); g.moveTo(px + 5, py + 6); g.lineTo(px + 2.5, py - 4);
+      g.moveTo(px - 4, py + 2); g.lineTo(px + 3.3, py - 1.5); g.moveTo(px + 4, py + 2); g.lineTo(px - 3.3, py - 1.5);
+      g.rect(px - 4, py - 9, 8, 5); g.moveTo(px - 5, py - 9); g.lineTo(px, py - 12); g.lineTo(px + 5, py - 9);
+      break;
   }
   g.stroke();
 }

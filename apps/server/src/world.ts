@@ -148,6 +148,8 @@ import {
   UNEASE_COMPANY,
   UNEASE_MODS,
   UNEASE_SHAKEN_S,
+  LAMP_BURNS,
+  LOOKOUT_UP_S,
   activeConditions,
   addAllToBag,
   addToBag,
@@ -220,6 +222,8 @@ import {
   flashHits,
   findTiles,
   lotDoors,
+  footOf,
+  lookoutAtFoot,
   gearEnergy,
   hidden,
   halfOf,
@@ -338,6 +342,7 @@ import {
   type ItemsData,
   type KeepsakesData,
   type LongNightView,
+  type LampView,
   type LookKind,
   type LotView,
   type MapNote,
@@ -392,6 +397,7 @@ import {
 } from '@napoland/shared';
 import { FIRE_LOW_S, FIRE_MAX_S, Fires, type Fire } from './fires';
 import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, ReturnRecord, StoneRecord, ThanksRecord, TownRecord } from './storage';
+import { Lamps, type Lamp, type Lookout } from './lookout';
 
 // How often creatures step is their region's (map.ts, watcherStepMs, skulkerStepMs); these are the paces a rule leaves out.
 export { AURORA_WATCHER_STEP_MS, MARK_LIFETIME_MS, SKULKER_STEP_MS, WATCHER_STEP_MS, faces };
@@ -529,6 +535,8 @@ export interface Scene {
   finds: FindView[];
   drops: DropView[];
   fires: FireView[];
+  /** A map with a fire lookout: its lamps (none elsewhere). */
+  lamps?: LampView[];
   marks: MarkView[];
   creatures: CreatureView[];
   flares: FlareView[];
@@ -809,6 +817,11 @@ interface Online {
   known: boolean;
   /** What opens the tiles that open only for some (TileMap.walkable): the tools they own. Made again whenever they get one. */
   pass: Set<string>;
+  /**
+   * Up a fire lookout (lookout.ts): which, and until when (game time). Their tile stays the foot of its
+   * ladder; up there is like under a roof, but they still tire.
+   */
+  up?: { o: Lookout; until: number };
 }
 
 /** What a cabin shows a neighbor who walks in (visits): the furniture made, and what the trophy shelf shows (item ids). */
@@ -1381,6 +1394,9 @@ export class World {
   private readonly townTeleport: { x: number; y: number } | undefined;
   /** NAPO's teleport in the cabin: the one in town sets you down in front of it, at home in your own. */
   private readonly cabinTeleport: { x: number; y: number } | undefined;
+  /** The fire lookouts' lamps, each zone's own (lookout.ts), and the game time they were last looked at, for the ones that go out. */
+  private readonly lamps = new Lamps();
+  private lampsAt = 0;
 
   /** `maps` must fit together (validateWorld) and `items` must fit the maps (validateItems); `homeId` is a town. */
   constructor(maps: Iterable<TileMap>, homeId: string, weather: Weather, options: WorldOptions = {}) {
@@ -1604,7 +1620,8 @@ export class World {
   /** A player as everyone sees them (an afterglow's seconds left as of the last tick). */
   private viewOf(p: Online): PlayerView {
     const glow = p.afterglowUntil === undefined ? 0 : round(Math.max(0, p.afterglowUntil - this.tickAt) / 1000, 1);
-    return view(p.rec, p.live > 0, this.guest(p.rec), glow, !!p.slump);
+    const v = view(p.rec, p.live > 0, this.guest(p.rec), glow, !!p.slump);
+    return p.up ? { ...v, up: true } : v;
   }
 
   /** Nobody signed in with this character, on a server with sign-in: no friends and no outfits until someone does. */
@@ -1633,11 +1650,12 @@ export class World {
 
   /** Everything a zone holds besides players, as of `now`. A player hears its finds as they see them (findsFor). */
   scene(key: string, now: number): Scene {
-    const zone = this.zones.get(key);
+    const zone = this.zones.get(key), lamps = zone ? this.lamps.views(key, zone.map, now) : [];
     return {
       finds: this.findViews(key),
       drops: this.dropViews(key),
       fires: zone?.fires.views(now) ?? [],
+      ...(lamps.length ? { lamps } : {}),
       marks: [...(this.markTiles.get(key)?.values() ?? [])].map(markView),
       creatures: zone ? [...zone.watchers, ...zone.skulkers].filter(w => w.awake).map(creatureView) : [],
       flares: (zone?.flares ?? []).filter(f => f.until > now).map(f => ({ x: f.x, y: f.y, left: round((f.until - now) / 1000, 1) })),
@@ -1842,6 +1860,8 @@ export class World {
     if (!p) return;
     // Down, nobody walks: the client stands where the server has them.
     if (p.slump) return this.reject(p, seq);
+    // Up the lookout nobody walks: they climb down first.
+    if (p.up) return this.reject(p, seq);
     this.runQueue(p, now);
     if (p.queue.length === 0 && this.ready(p, now)) this.move(p, dir, seq, now);
     else if (p.queue.length < STEP_QUEUE_MAX) p.queue.push({ dir, seq });
@@ -1869,6 +1889,7 @@ export class World {
     // Out of energy before reaching for it: down where they stand, or collapsed and far away from it now.
     if (this.spent(p, now)) return this.refuse(p, 'pick', p.slump ? 'down' : 'too_far');
     if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return this.refuse(p, 'pick', 'too_far');
+    if (p.up) return this.refuse(p, 'pick', 'up');
     const pile = this.pileAt(p.zone, x, y, id);
     if (pile) return this.pickPile(p, pile, now);
     const find = p.map.inside(x, y) ? p.zone.finds.get(y * p.map.width + x) : undefined;
@@ -2051,6 +2072,9 @@ export class World {
     if (!p) return;
     this.runQueue(p, now);
     if (this.spent(p, now)) return this.refuse(p, 'feed', p.slump ? 'down' : 'too_far');
+    // A lookout's lamp, by the lookout's corner: fed from the foot of its ladder (lookout.ts).
+    const lamp = this.lamps.at(p.zone.key, p.map, x, y);
+    if (lamp) return this.feedLamp(p, lamp, slot, count, now);
     if (Math.max(Math.abs(x - p.rec.x), Math.abs(y - p.rec.y)) > 1) return this.refuse(p, 'feed', 'too_far');
     const s = p.rec.bag[slot];
     if (!s) return this.refuse(p, 'feed', 'empty_slot');
@@ -2099,6 +2123,80 @@ export class World {
     this.did(p, { kind: 'fire', item: def.id, count: fed, left: burning.left ?? 0, ...(lit ? { lit: true as const } : {}) });
     // The town counts the fires fed out there (town.ts): a town's fires are tended, so every fire fed is one.
     if (this.wild(p.map)) this.bumpTown('fed', fed, now);
+  }
+
+  /**
+   * Feeds a fire lookout's lamp what it burns (LAMP_BURNS), from the foot of its ladder and never from up
+   * there: from that slot first, then from others holding the same, as many as fit. Everyone in the zone
+   * sees it burn (and its beam sweep again); the feeder hears what it did.
+   */
+  private feedLamp(p: Online, lamp: Lamp, slot: number, count: number, now: number): void {
+    const foot = footOf(lamp.o);
+    if (p.up || p.rec.x !== foot.x || p.rec.y !== foot.y) return this.refuse(p, 'feed', 'too_far');
+    const s = p.rec.bag[slot];
+    if (!s) return this.refuse(p, 'feed', 'empty_slot');
+    if (s.item !== LAMP_BURNS) return this.refuse(p, 'feed', 'not_fuel');
+    const lit = this.lamps.left(lamp, now) <= 0;
+    const have = p.rec.bag.reduce((n, b) => n + (b.item === s.item ? b.count : 0), 0);
+    const fed = this.lamps.feed(lamp, Math.min(count, have), now);
+    if (!fed) return this.refuse(p, 'feed', 'lamp_full');
+    p.rec.bag = takeItem(p.rec.bag, slot, fed).bag;
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), s.item, fed);
+    this.sendBag(p, now);
+    const burning = this.lamps.view(lamp, now);
+    this.toZone(p.zone.key, { t: 'lamp', lamp: burning });
+    this.rerate(p, now);
+    this.did(p, { kind: 'lamp', item: s.item, count: fed, left: burning.left, ...(lit ? { lit: true as const } : {}) });
+  }
+
+  /**
+   * Climbs the fire lookout whose corner is x,y, from the foot of its ladder, where the player stands
+   * (lookout.ts): up there for LOOKOUT_UP_S at most. Up there is like under a roof (no rain, storm, flash
+   * or hitchhiker, and nothing out there reaches them), but they still tire as at its foot, surges and
+   * all. Everyone in the zone sees them go up; they hear how long they may stay.
+   */
+  climb(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'climb', 'too_far');
+    }
+    if (p.up) return this.refuse(p, 'climb', 'up');
+    const o = lookoutAtFoot(p.map.data.objects, p.rec.x, p.rec.y);
+    if (!o || o.x !== x || o.y !== y || p.queue.length) return this.refuse(p, 'climb', 'too_far');
+    p.up = { o, until: now + LOOKOUT_UP_S * 1000 };
+    // A roof shakes off whatever clung to you, and so does the climb.
+    if (p.hitched) this.unhitch(p);
+    this.toZone(p.zone.key, { t: 'up', id, on: true }, id);
+    this.outbox.push({ to: id, msg: { t: 'up', id, on: true, left: LOOKOUT_UP_S } });
+    this.rerate(p, now);
+  }
+
+  /** Comes down the lookout sooner than the time up there is over (B). */
+  climbDown(id: string, now: number): void {
+    const p = this.players.get(id);
+    if (p?.up) this.down(p, now);
+  }
+
+  /** Down at the foot of the ladder again: everyone in the zone sees it, and the rain and the rest find them as ever. */
+  private down(p: Online, now: number): void {
+    p.up = undefined;
+    this.toZone(p.zone.key, { t: 'up', id: p.rec.id, on: false });
+    this.rerate(p, now);
+  }
+
+  /** The lamps that burned out since the last tick (everyone in their zone hears it), and whoever's time up a lookout is over climbs down. */
+  private lookouts(now: number): void {
+    for (const { zone, lamp } of this.lamps.outBetween(this.lampsAt, now)) this.toZone(zone, { t: 'lamp', lamp: this.lamps.view(lamp, now) });
+    this.lampsAt = now;
+    for (const p of this.players.values()) if (p.up && now >= p.up.until) this.down(p, now);
+  }
+
+  /** Is tile x,y of the player's zone under a lookout's beam right now? It shelters from a surge and a hitchhiker, and holds a watcher still. */
+  private beamed(zone: Zone, x: number, y: number, now: number): boolean {
+    return this.lamps.beamOver(zone.key, zone.map, x, y, now, now + this.epochOffset);
   }
 
   /**
@@ -3401,6 +3499,7 @@ export class World {
     this.moveCalendar(now);
     this.startFlashes(now);
     this.afterglows(now);
+    this.lookouts(now);
     const wasAwake = this.stoneAwake;
     this.burnStone(now);
     if (wasAwake && !this.stoneAwake) this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
@@ -3918,6 +4017,8 @@ export class World {
   private place(p: Online, zone: Zone, x: number, y: number, dir: Dir): void {
     const home = this.players.has(p.rec.id) && this.ownCabin(p);
     this.quit(p);
+    // Another map, or home after a collapse: down off any lookout.
+    p.up = undefined;
     zone.players.add(p);
     p.zone = zone;
     p.map = zone.map;
@@ -3980,7 +4081,8 @@ export class World {
     const boost = this.boost(p.rec.id, now);
     const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn, { ...boost, cold: (boost.cold ?? 0) + p.mods.cold });
     const warmth = p.map.warm(x, y) ? p.zone.fires.warmth(x, y, now) : 0;
-    const storm = this.stormOf(p.map, now)?.phase === 'storm', weather = this.weatherOf(p.map);
+    // Up a lookout is like under a roof: no storm, no flash, no rain (it dries you as a roof does).
+    const storm = !p.up && this.stormOf(p.map, now)?.phase === 'storm', weather = this.weatherOf(p.map);
     p.rate = energyRate(p.map, x, y, weather, {
       warmth: warmth * p.mods.warmth,
       wet: p.rec.wet,
@@ -3990,17 +4092,18 @@ export class World {
       surgeDrain: this.stoneAwake ? 1 + (SURGE_DRAIN - 1) / 2 : SURGE_DRAIN,
       hitched: p.hitched,
       storm,
-      flash: p.zone.flashes.find(f => flashHits(flashView(f, now), x, y))?.kind,
+      flash: p.up ? undefined : p.zone.flashes.find(f => flashHits(flashView(f, now), x, y))?.kind,
       resist,
       farDrain: p.mods.farDrain,
       // In winter the cold bites harder (sky.ts, SEASONS).
       chill: { weather: SEASONS[this.season].chill, wet: SEASONS[this.season].wet },
       drain: p.mods.drain,
+      lit: this.beamed(p.zone, x, y, now),
     });
     // Down at 0, nothing drains them further (a surge or a storm neither) and nothing refills them: only a rescuer's energy gets them up.
     if (p.slump) p.rate = 0;
-    // Wind resistance (a raincoat) keeps the rain out; so does a roof out of doors (a porch the town built), as any roof does.
-    p.wetRate = wetRate(p.map.roofed(x, y) ? 'inside' : p.map.data.kind, weather, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
+    // Wind resistance (a raincoat) keeps the rain out; so does a roof out of doors (a porch the town built, a lookout's cab), as any roof does.
+    p.wetRate = wetRate(p.up || p.map.roofed(x, y) ? 'inside' : p.map.data.kind, weather, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
   }
 
   /**
@@ -4489,7 +4592,7 @@ export class World {
    */
   private surged(p: Online, now: number): void {
     const round = this.surgeRound(p.map, now);
-    if (!round || !inSurge(p.map, p.rec.x, p.rec.y, this.frontOf(p.map, now))) return;
+    if (!round || !inSurge(p.map, p.rec.x, p.rec.y, this.frontOf(p.map, now), this.beamed(p.zone, p.rec.x, p.rec.y, now))) return;
     if (p.surgedIn === round) return;
     p.surgedIn = round;
     if (p.trip) p.trip.surges++;
@@ -4966,7 +5069,8 @@ export class World {
     const dt = Math.max(0, now - p.hitchAt) / 1000;
     p.hitchAt = now;
     const { x, y } = p.rec;
-    const safe = p.map.data.kind !== 'wilds' || p.map.lit(x, y) || (p.map.warm(x, y) && p.zone.fires.warmth(x, y, now) > 0);
+    // Up a lookout, under a roof; or in a lookout's beam as it passes, as in a street light.
+    const safe = !!p.up || p.map.data.kind !== 'wilds' || p.map.lit(x, y) || this.beamed(p.zone, x, y, now) || (p.map.warm(x, y) && p.zone.fires.warmth(x, y, now) > 0);
     if (p.hitched) {
       if (safe || this.nearFlare(p.zone, x, y, now)) this.unhitch(p);
       return;
@@ -5192,6 +5296,8 @@ export class World {
           this.sendAway(w, now);
           continue;
         }
+        // A lookout's beam holds it still as it passes, as a face does.
+        if (this.beamed(zone, w.x, w.y, now)) continue;
         // Anyone who faces it holds it still, prey or not: a friend can keep watch. Someone down watches nothing.
         if (here.some(p => !p.slump && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_SEE && faces(p.rec.x, p.rec.y, p.rec.dir, w.x, w.y))) continue;
         // An afterglow keeps them off: whoever glows with it is nobody's prey.
@@ -5247,6 +5353,8 @@ export class World {
 
   /** Out in the open: not by a burning fire, not in a street light, not near a flare. A flash still finds you in tall grass. */
   private exposed(p: Online, now: number): boolean {
+    // Up a lookout nothing out there reaches you, and no flash starts under you.
+    if (p.up) return false;
     const { x, y } = p.rec;
     if (p.map.lit(x, y) || this.nearFlare(p.zone, x, y, now)) return false;
     return !(p.map.warm(x, y) && p.zone.fires.warmth(x, y, now) > 0);
@@ -5473,6 +5581,13 @@ export class World {
       if (s.phase === 'storm') lines.push(`${map.data.name}: a storm is on, ${about(s.left, true)} more. Get under a roof.`);
       else if (s.phase === 'coming') lines.push(`${map.data.name}: a storm is coming ${about(s.left)}.`);
       else lines.push(`${map.data.name}: clear. The next storm comes ${about(s.left + rule.warn)}.`);
+    }
+    // The fire lookouts' lamps of the world everyone shares: how long each burns, or that it is out.
+    for (const map of this.maps.values()) for (const l of this.lamps.in(map.data.id, map)) {
+      const left = this.lamps.left(l, now), where = map.data.name.replace(/^The /, 'the ');
+      lines.push(left > 0
+        ? `The fire lookout in ${where}: its lamp burns for ${about(left, true)} more, and its beam sweeps the woods.`
+        : `The fire lookout in ${where}: its lamp is out. It burns resin: feed it at the foot of the ladder.`);
     }
     // The fires of the world everyone shares: each map's main copy. The lodge's, on the Long Night, has a line of its own.
     const low: string[] = [], out: string[] = [], fires = [...this.maps.values()].map(m => this.main(m).fires), lodge = this.lodge()?.fire;
@@ -6306,7 +6421,7 @@ export class World {
 
   private refuse(
     p: Online,
-    action: 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind | 'checkout'
+    action: 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'climb' | LookKind | 'checkout'
       | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab' | 'swap' | 'give',
     reason: Refusal,
   ): void {
@@ -6400,6 +6515,7 @@ export class World {
       if (zone.players.size || this.zones.get(zone.key) !== zone) continue;
       this.zones.delete(zone.key);
       this.copies.get(zone.map.data.id)!.delete(zone);
+      this.lamps.forget(zone.key);
       this.growing = this.growing.filter(g => g.zone !== zone);
       const crates = this.cratesOn.get(zone.key);
       if (crates?.every(c => !c.items.length)) {

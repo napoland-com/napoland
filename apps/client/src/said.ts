@@ -7,7 +7,7 @@
 import {
   CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, RESCUE_ENERGY, aOf, amount, comfortMax, countable, fireFull, formatPrice, levelOf, meritLookOf, meritsLeft,
   nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear,
-  type Recipe, type Refusal, type ShopLook, type StoneView, type Upgrade, bagShort, type Mods, workLeft, type SwapDef, type TownView, type TownWork,
+  type Recipe, type Refusal, type ShopLook, type StoneView, type Upgrade, bagShort, type Mods, workLeft, type SwapDef, type TownView, type TownWork, LAMP_MAX_S,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, bundleText, kgText, oddsText, pieceName, thingsOf, type Items } from './items';
 
@@ -55,6 +55,9 @@ export function howLong(seconds: number): string {
   return d === 1 ? 'a day' : `${d} days`;
 }
 
+/** A lookout's lamp that takes nothing more: within a second of LAMP_MAX_S. */
+const lampFull = (left: number) => left >= LAMP_MAX_S - 1;
+
 /** How long a fire burns on: "18 more minutes", "under a minute more". */
 function burnsOn(left: number): string {
   if (left < 60) return 'under a minute more';
@@ -75,6 +78,16 @@ export function effectWords(def: ItemDef): string {
 /** A: at a fire. "Feed the fire resin?" (how many is asked beside it). */
 export function feedQuestion(fuel: ItemDef): string {
   return `Feed the fire ${pluralOf(fuel)}?`;
+}
+
+/** A: at the foot of a fire lookout's ladder, with what its lamp burns. "Feed the lookout's lamp resin?" (how many is asked beside it). */
+export function lampQuestion(fuel: ItemDef): string {
+  return `Feed the lookout's lamp ${pluralOf(fuel)}?`;
+}
+
+/** Up a fire lookout: what the text box says as you get there (LOOKOUT_UP_S: how long you may stay). */
+export function upText(seconds: number): string {
+  return `You climb up to the lookout and see the woods for miles. You can stay ${howLong(seconds)}: B climbs down.`;
 }
 
 /** A: at the Old Stone. "Give the Old Stone a shard?", "Give the Old Stone 3 shards?" */
@@ -586,6 +599,7 @@ const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 export function didWho(did: Did, items: Items, ctx: DidContext = {}): string {
   switch (did.kind) {
     case 'fire': case 'cooked': return 'Fire';
+    case 'lamp': return 'Lookout';
     case 'stone': return 'The Old Stone';
     case 'made': case 'mended': case 'upgraded': return 'Workbench';
     case 'used': case 'opened': case 'ate': return items.get(did.item).name;
@@ -626,6 +640,10 @@ export function didText(did: Did, items: Items, ctx: DidContext = {}): string {
     case 'fire': {
       const took = `The fire takes ${amount(def, did.count)}${did.lit ? ' and catches again' : ''}.`;
       return `${took} ${fireFull(did.left) ? 'It is full: it' : 'It'} will burn ${burnsOn(did.left)}.`;
+    }
+    case 'lamp': {
+      const took = `The lamp takes ${amount(def, did.count)}${did.lit ? ' and lights up' : ''}.`;
+      return `${took} ${lampFull(did.left) ? 'It is full: it' : 'It'} will burn ${burnsOn(did.left)}, its beam sweeping the woods.`;
     }
     case 'stone': {
       const what = did.count === 1 ? `the ${nounOf(def)}` : amount(def, did.count), s = did.stone;

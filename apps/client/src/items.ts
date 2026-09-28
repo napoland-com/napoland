@@ -162,6 +162,8 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'fire_out': return 'The fire is out: nothing cooks on it';
     case 'ate_it': return 'You ate that this trip already';
     case 'two_meals': return 'You ate two meals this trip already';
+    case 'lamp_full': return 'The lamp holds as much as it can';
+    case 'up': return 'Climb down first';
   }
 }
 
