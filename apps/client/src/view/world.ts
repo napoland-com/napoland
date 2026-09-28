@@ -93,8 +93,13 @@ const SURGE_HEMI = new THREE.Color('#9a6ae0');
 const STORM_SKY = new THREE.Color('#1b2126');
 /** Is the lightning blinking at `t` seconds? Every several seconds, never on a fixed beat; the thunder follows it (sound.ts). */
 export const lightningAt = (t: number) => Math.sin(t * 0.71) * Math.sin(t * 1.93) > 0.93;
-/** The forest goes on this many tiles outside the map, so its edge never shows. */
-const RING = 4;
+/**
+ * The forest goes on this many tiles outside the map, so its edge never shows: standing on a map's
+ * last row, an upright phone sees about 15 tiles past it. Its blocks are skipped like any off screen.
+ */
+const RING = 17;
+/** Over this many tiles a road or trail leaving the map fades into the dark ground outside it. */
+const FADE = 6;
 /** Poles farther apart than this belong to different lines: no wire between them. */
 const MAX_WIRE = 10;
 /** One patch of mist for about this many tiles. */
@@ -384,7 +389,7 @@ export class WorldView {
     const outer = new THREE.Color(outerColor);
     for (const [key, o] of this.openings) {
       const [x, y] = key.split(',').map(Number) as [number, number];
-      top(o.kind, x, y, 0, false, o.k / (RING + 1), outer);
+      top(o.kind, x, y, 0, false, Math.min(1, o.k / (FADE + 1)), outer);
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -476,7 +481,10 @@ export class WorldView {
     for (const block of blocks(trees)) {
       this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); }, bodyMat, true);
       this.instanced(shell, block, place, OUTLINE_INSTANCED);
-      this.instanced(this.shadowGeo, block, (t, o) => { o.position.set(t.x, t.z + 0.012, t.y); o.scale.setScalar(0.46 * t.s); }, this.shadowMat);
+      // Outside the map the forest is only a backdrop, too dense to see the ground under it: no shadows, one draw call less a block.
+      if (block.some(t => map.inside(Math.floor(t.x), Math.floor(t.y)))) {
+        this.instanced(this.shadowGeo, block, (t, o) => { o.position.set(t.x, t.z + 0.012, t.y); o.scale.setScalar(0.46 * t.s); }, this.shadowMat);
+      }
     }
 
     const rocks = this.objects('rock');
