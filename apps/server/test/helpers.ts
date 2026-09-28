@@ -5,14 +5,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
-import { DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, PROTOCOL_VERSION, type BagSlot, type ClientMsg, type DropView, type ServerMsg } from '@napoland/shared';
+import { CALENDAR_DAY_MS, DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, PROTOCOL_VERSION, xpFor, type BagSlot, type ClientMsg, type DropView, type ItemsData, type ServerMsg } from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord, type Storage } from '../src/storage';
 import { colorFor } from '../src/world';
-import { fixtureMaps, itemsData } from './fixtures';
+import { chestMaps, fixtureMaps, itemsData } from './fixtures';
 
 export type Msg<T extends ServerMsg['t']> = Extract<ServerMsg, { t: T }>;
 
@@ -179,6 +179,55 @@ export async function restartKeepsBagsAndPiles(first: Storage, second: Storage, 
 }
 
 /**
+ * Outfits through a restart, over the network with dev sign-in, on `first` and then `second` (the same
+ * storage, or two connections to the same database). Signed in at level 10, one player puts on the
+ * survey rain cape at the chest and another takes off the NAPO work suit they wore; after the restart the
+ * first comes back in the cape, and everyone who joins sees it, while the second comes back in their gear.
+ */
+export async function outfitsKeptThroughARestart(first: Storage, second: Storage): Promise<void> {
+  setLogLevel('silent');
+  const options = (storage: Storage): ServerOptions => ({ ...serverDefaults(), storage, maps: chestMaps(), items: itemsData(), auth: devAuth() });
+  const who = randomUUID().slice(0, 8), sub = (name: string) => `dev:${name}-${who}@example.test`;
+  const at = { map: 'house', x: 3, y: 2, dir: 'up', tokenHash: null, xp: xpFor(10) } as const;
+  const ann = await savedPlayer(first, { ...at, authSub: sub('ann') });
+  const cid = await savedPlayer(first, { ...at, authSub: sub('cid'), outfit: 'napo-suit' });
+  const signIn = async (port: number, name: string) => {
+    const c = await Client.open(port);
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, auth: `${name}-${who}@example.test` });
+    return { c, welcome: await c.next('welcome') };
+  };
+
+  const one = await startServer(options(first));
+  try {
+    const a = await signIn(one.port, 'ann');
+    a.c.send({ t: 'outfit', x: 3, y: 1, outfit: 'rain-cape' });
+    expect(await a.c.next('outfit')).toEqual({ t: 'outfit', id: ann.id, outfit: 'rain-cape' });
+    const c = await signIn(one.port, 'cid');
+    expect(c.welcome.players.find(p => p.id === cid.id)?.outfit).toBe('napo-suit');
+    c.c.send({ t: 'outfit', x: 3, y: 1, outfit: null });
+    expect(await c.c.next('outfit', m => m.id === cid.id)).toEqual({ t: 'outfit', id: cid.id, outfit: null });
+    for (const x of [a, c]) x.c.ws.terminate();
+    await waitFor(() => one.world.size === 0, 'everyone to leave');
+  } finally {
+    await one.stop();
+  }
+  expect((await second.findByAuthSub(sub('ann')))?.outfit).toBe('rain-cape');
+  expect((await second.findByAuthSub(sub('cid')))?.outfit).toBeUndefined();
+
+  const two = await startServer(options(second));
+  try {
+    const a = await signIn(two.port, 'ann');
+    expect(a.welcome.players.find(p => p.id === ann.id)?.outfit).toBe('rain-cape');
+    const c = await signIn(two.port, 'cid');
+    expect(c.welcome.players.find(p => p.id === ann.id)?.outfit).toBe('rain-cape');
+    expect(c.welcome.players.find(p => p.id === cid.id)?.outfit).toBeUndefined();
+    for (const x of [a, c]) x.c.ws.terminate();
+  } finally {
+    await two.stop();
+  }
+}
+
+/**
  * Signing in with an identity (dev mode here, so on any storage): a character made before sign-in
  * is claimed with its token by the first identity that brings it, and is theirs from then on, with
  * or without the token; for anyone else the token claims nothing, and they make their own. Runs on
@@ -314,6 +363,88 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   const began = await storage.guestsSince(now);
   expect(await storage.guestsSince(now + 86_400_000)).toBe(began);
   return { away: away.id, reporter: signed.id };
+}
+
+/**
+ * The daily parcels kept with a player, on `storage` (in memory, or a real database): none for a new
+ * player, what a save writes, and a save of a record without them (one that never had a parcel) leaves
+ * them as they are, as a save without a chapter leaves the story.
+ */
+export async function keepsParcels(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: sub });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect(rec.parcels).toBeUndefined();
+  const had = { ...rec, parcels: { welcome: true, day: 20_724, days: 0b101 }, lastSeenAt: rec.lastSeenAt + 1000 };
+  await storage.save(had);
+  expect((await load()).parcels).toEqual({ welcome: true, day: 20_724, days: 0b101 });
+  const { parcels: _left, ...without } = had;
+  await storage.save(without);
+  expect((await load()).parcels).toEqual({ welcome: true, day: 20_724, days: 0b101 });
+  await storage.save({ ...had, parcels: { welcome: true, day: 20_725, days: 0b1 } });
+  expect((await load()).parcels).toEqual({ welcome: true, day: 20_725, days: 0b1 });
+  // Made with them too.
+  const other = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: other, parcels: { welcome: true, day: 20_000, days: 0b1000000 } });
+  expect((await storage.findByAuthSub(other))!.parcels).toEqual({ welcome: true, day: 20_000, days: 0b1000000 });
+}
+
+/**
+ * Tools, parcels and the outfit kept side by side in one player (on `storage`, in memory or a real
+ * database): made with all three, saved with all three changed, and a save with none of them (a record
+ * that never had them) loses none. Returns the player's identity and what was kept.
+ */
+export async function keepsToolsParcelsAndOutfit(storage: Storage): Promise<{ sub: string; kept: PlayerRecord }> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  // Whole, as a save writes it back (every storage fills in a stash, counts, XP and wetness), so what is read back compares as it is.
+  await savedPlayer(storage, {
+    tokenHash: null, authSub: sub, wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} }, tools: ['stonebrook-map', 'radio'], parcels: { welcome: true, day: 20_724, days: 0b1 },
+    outfit: 'napo-suit',
+  });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const made = await load();
+  expect(made).toMatchObject({ tools: ['stonebrook-map', 'radio'], parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit' });
+  const later = {
+    ...made, tools: [...made.tools!, 'near-woods-map'], parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', lastSeenAt: made.lastSeenAt + 1000,
+  };
+  await storage.save(later);
+  expect(await load()).toEqual(later);
+  const { tools: _tools, parcels: _parcels, outfit: _outfit, ...none } = later;
+  await storage.save({ ...none, lastSeenAt: later.lastSeenAt + 1000 });
+  const kept = await load();
+  expect(kept).toEqual({ ...later, lastSeenAt: later.lastSeenAt + 1000 });
+  return { sub, kept };
+}
+
+/**
+ * The parcels through restarts, on `storage`: a welcome parcel the first time someone signs in; after a
+ * restart the same day, nothing more; on the next calendar day, that day's parcel, into a stash that
+ * kept everything. Each server's world clock reads a time of that day.
+ */
+export async function parcelsThroughRestarts(storage: Storage): Promise<void> {
+  setLogLevel('silent');
+  // Monday 28 September 2026, ten in the morning (UTC), and the day after.
+  const monday = Date.UTC(2026, 8, 28, 10);
+  const items: ItemsData = { ...itemsData(), parcels: { welcome: [{ item: 'tea', count: 2 }], week: Array.from({ length: 7 }, (_, i) => [{ item: 'nail', count: i + 1 }]) } };
+  const signIn = async (at: number) => {
+    const server = await startServer({ ...serverDefaults(), storage, items, auth: devAuth(), clockShiftMs: at - Date.now() });
+    const c = await Client.open(server.port);
+    try {
+      c.send({ t: 'hello', v: PROTOCOL_VERSION, auth: 'parcels@example.test', name: 'Parcel Keeper' });
+      await c.next('welcome');
+      return (await c.settle()).flatMap(m => (m.t === 'parcel' ? [m.parcel] : []));
+    } finally {
+      c.ws.terminate();
+      await server.stop();
+    }
+  };
+  expect(await signIn(monday)).toEqual([{ weekday: null, items: [{ item: 'tea', count: 2 }] }]);
+  expect(await signIn(monday + 3_600_000)).toEqual([]);
+  expect(await signIn(monday + CALENDAR_DAY_MS)).toEqual([{ weekday: 1, items: [{ item: 'nail', count: 2 }] }]);
+  const rec = (await storage.findByAuthSub('dev:parcels@example.test'))!;
+  expect(rec).toMatchObject({ xp: 0, stash: { items: { tea: 2, nail: 2 }, out: {} } });
+  expect(rec.parcels).toEqual({ welcome: true, day: Date.UTC(2026, 8, 29) / CALENDAR_DAY_MS, days: 0b11 });
 }
 
 /** What every test server gets unless the test says otherwise: the fixture maps, home in the town. */

@@ -155,6 +155,30 @@ describe('tapping and talking', () => {
     expect(read(1, 2)).toMatchObject({ who: 'NAPO sign', lines: ['NAPO Tower', 'Do not climb.'] });
     expect(read(5, 2)).toMatchObject({ who: 'Station log', lines: ['Week 1. The Old Stone hums.'] });
   });
+  it('reads what people left under what it is: a mailbox, a cardboard sign, a note, a NAPO tag, and a jeep\'s stencil from either end', () => {
+    const town: MapData = {
+      ...tinyTown(),
+      objects: [
+        { kind: 'sign', x: 0, y: 1, text: ['DAHL, painted in white.'], style: 'mailbox' },
+        { kind: 'sign', x: 2, y: 1, text: ['PLEASE LEAVE THESE.'], style: 'cardboard' },
+        { kind: 'paper', x: 4, y: 1, look: 'note', name: 'Note on the table', text: ['Back soon.'] },
+        { kind: 'cage', x: 6, y: 1, text: ['NAPO · Sample 3'] },
+        { kind: 'jeep', x: 5, y: 3, w: 2, h: 1, dir: 'left', text: ['NAPO · FIELD SURVEY · UNIT 7.'] },
+      ],
+    };
+    const read = (x: number, y: number, dir: PlayerView['dir'] = 'up') => {
+      const g = new Game(new Maps([town]), () => {}, ITEMS);
+      g.handle(welcome(town, [{ ...me, x, y, dir }]), now);
+      g.pressA();
+      return g.dialog;
+    };
+    expect(read(0, 2)).toMatchObject({ who: 'Mailbox', lines: ['DAHL, painted in white.'] });
+    expect(read(2, 2)).toMatchObject({ who: 'Cardboard sign' });
+    expect(read(4, 2)).toMatchObject({ who: 'Note on the table', lines: ['Back soon.'] });
+    expect(read(6, 2)).toMatchObject({ who: 'NAPO tag' });
+    expect(read(4, 3, 'right')).toMatchObject({ who: 'NAPO jeep' });
+    expect(read(6, 2, 'down')).toMatchObject({ who: 'NAPO jeep' });
+  });
 });
 
 describe('moving between maps', () => {

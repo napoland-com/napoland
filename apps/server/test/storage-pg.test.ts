@@ -13,7 +13,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DROP_LIFETIME_MS } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord } from '../src/storage';
-import { forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, playFirstThenSignIn, restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
+import {
+  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsParcels, keepsToolsParcelsAndOutfit, outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn,
+  restartKeepsBagsAndPiles, signInAndClaim,
+} from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -57,7 +60,7 @@ describe.skipIf(!url)('PgStorage', () => {
   it('applies each migration once', async () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
-      '011_guests.sql', '012_tools.sql',
+      '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -221,6 +224,41 @@ describe.skipIf(!url)('PgStorage', () => {
     expect((await storage.findByTokenHash(rec.tokenHash!))!.story).toBe('the-lineman');
   });
 
+  it('keeps the outfit a player wears, none for one who wears none, none once it is taken off, and never loses it to a save without it', async () => {
+    const rec = player('Pg Dresser');
+    expect(await storage.create(rec)).toBe(true);
+    const outfit = async () => (await storage.findByTokenHash(rec.tokenHash))!.outfit;
+    expect(await outfit()).toBeUndefined();
+    const caped = { ...rec, outfit: 'rain-cape' };
+    await storage.save(caped);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(caped);
+    // A save without one keeps it, like the tools and the parcels; taken off (null), it is none.
+    await storage.save(rec);
+    expect(await outfit()).toBe('rain-cape');
+    await storage.save({ ...rec, outfit: null });
+    expect(await outfit()).toBeUndefined();
+    const born = { ...player('Pg Born Dressed'), outfit: 'napo-suit' };
+    expect(await storage.create(born)).toBe(true);
+    expect(await storage.findByTokenHash(born.tokenHash)).toEqual(born);
+    // The previous release's saves never touch it.
+    await admin.query(`UPDATE ${schema}.players SET x = 1 WHERE id = $1`, [born.id]);
+    expect((await storage.findByTokenHash(born.tokenHash))!.outfit).toBe('napo-suit');
+  });
+
+  it('keeps outfits through a restart of the server, over the network', async () => {
+    const fresh = await freshSchema();
+    const first = new PgStorage(fresh.url, MIGRATIONS);
+    const second = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await first.init();
+      await second.init();
+      await outfitsKeptThroughARestart(first, second);
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  });
+
   it('keeps the tools a player owns, in order, none for one who never got one, and never loses them to a save without them', async () => {
     const rec = player('Pg Tinker');
     expect(await storage.create(rec)).toBe(true);
@@ -252,6 +290,48 @@ describe.skipIf(!url)('PgStorage', () => {
       old.id, 'stonebrook', 8, 21, 90, '[]', '{"items": {}, "out": {}}', new Date(old.lastSeenAt),
     ]);
     expect((await storage.findByTokenHash(old.tokenHash))!.tools).toEqual(['radio']);
+  });
+
+  it('keeps the daily parcels: whether the welcome came, the day of the last one and the days of its week, never lost to a save without them', async () => {
+    await keepsParcels(storage);
+    // What the columns hold, as the migration made them.
+    const sub = `dev:${randomUUID()}@example.test`;
+    const rec = { ...player('Pg Parcels'), tokenHash: null, authSub: sub, parcels: { welcome: true, day: 20_724, days: 0b1011 } };
+    expect(await storage.create(rec)).toBe(true);
+    const row = await admin.query(`SELECT parcel_welcome, parcel_day, parcel_days FROM ${schema}.players WHERE id = $1`, [rec.id]);
+    expect(row.rows).toEqual([{ parcel_welcome: true, parcel_day: 20_724, parcel_days: 0b1011 }]);
+    expect(await storage.findByAuthSub(sub)).toEqual(rec);
+  });
+
+  it('gives the parcels through restarts of the server, on the database', async () => {
+    const fresh = await freshSchema();
+    const pgStorage = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await pgStorage.init();
+      await parcelsThroughRestarts(pgStorage);
+    } finally {
+      await pgStorage.close();
+    }
+  });
+
+  it('keeps tools, parcels and the outfit side by side in one row: made with all three, saved with all three, and a save with none of them loses none', async () => {
+    const { sub, kept } = await keepsToolsParcelsAndOutfit(storage);
+    const row = await admin.query(`SELECT tools, parcel_welcome, parcel_day, parcel_days, outfit FROM ${schema}.players WHERE auth_sub = $1`, [sub]);
+    expect(row.rows).toEqual([{ tools: ['stonebrook-map', 'radio', 'near-woods-map'], parcel_welcome: true, parcel_day: 20_725, parcel_days: 0b11, outfit: 'rain-cape' }]);
+    // The releases before save with the statements they know: after a rollback, what is newer stays. The one
+    // before parcels (tools, no parcel columns, no outfit), then the one before outfits (tools and parcels).
+    const before = { parcels: 'tools = COALESCE($17::jsonb, tools)', outfits: `tools = COALESCE($17::jsonb, tools),
+       parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
+       parcel_days = COALESCE($20::smallint, parcel_days)` };
+    const saved = [kept.id, 'stonebrook', 8, 21, 'down', kept.color, 90, '[]', 0, '{}', 0, '{"items": {}, "out": {}}', new Date(kept.lastSeenAt), null, null, null, null];
+    for (const [release, set] of Object.entries(before)) {
+      await admin.query(
+        `UPDATE ${schema}.players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
+         gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), ${set}, last_seen_at = $13 WHERE id = $1`,
+        release === 'outfits' ? [...saved, null, null, null] : saved,
+      );
+      expect(await storage.findByAuthSub(sub), release).toMatchObject({ tools: kept.tools, parcels: kept.parcels, outfit: kept.outfit });
+    }
   });
 
   it('keeps XP and the stash, with what was taken out of it', async () => {

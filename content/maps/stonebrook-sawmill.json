@@ -1,0 +1,49 @@
+{
+  "id": "stonebrook-sawmill",
+  "name": "The sawmill",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 11,
+  "height": 7,
+  "tiles": [
+    "xxxxxxxxxxx",
+    "xpppppppppx",
+    "xpppppppppx",
+    "xpppppppppx",
+    "xpppppppppx",
+    "xpppppppppx",
+    "xxxxxpxxxxx"
+  ],
+  "levels": [
+    "00000000000",
+    "00000000000",
+    "00000000000",
+    "00000000000",
+    "00000000000",
+    "00000000000",
+    "00000000000"
+  ],
+  "spawn": {"x":5,"y":5,"dir":"up"},
+  "exits": [
+    {"x":5,"y":6,"w":1,"h":1,"to":"stonebrook","tx":36,"ty":29,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"shelf","x":1,"y":1},
+    {"kind":"barrel","x":3,"y":1},
+    {"kind":"crate","x":4,"y":1},
+    {"kind":"saw","x":5,"y":1},
+    {"kind":"crate","x":6,"y":1},
+    {"kind":"barrel","x":7,"y":1},
+    {"kind":"shelf","x":9,"y":1},
+    {"kind":"carriage","x":3,"y":2,"w":5},
+    {"kind":"sawdust","x":4,"y":3},
+    {"kind":"sawdust","x":6,"y":3},
+    {"kind":"sawdust","x":7,"y":4},
+    {"kind":"logs","x":1,"y":4,"w":2,"h":1},
+    {"kind":"crate","x":9,"y":4},
+    {"kind":"crate","x":9,"y":5},
+    {"kind":"sawdust","x":3,"y":5}
+  ],
+  "style": "mill"
+}

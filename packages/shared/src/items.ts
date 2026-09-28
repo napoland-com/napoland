@@ -9,7 +9,8 @@
  * else gets a random half (the rest is lost), and it fades an hour after the collapse.
  */
 import type { Mods } from './feats';
-import type { Element, Piece, Quirk, Recipe, Slot, Tier } from './gear';
+import type { Element, Piece, Quirk, Recipe, Slot, Tier, Upgrade } from './gear';
+import type { ParcelsData } from './parcels';
 import type { ConditionsData } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 
@@ -17,9 +18,17 @@ import { objectTiles, type MapObject, type TileKind, type TileMap } from './map'
  * A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn
  * (gear.ts). A tool is yours for good, once made at the workbench or found: never used up, never in a
  * pile, the stash or a trade, weighing nothing, and it takes no bag slot (players keep their tools
- * apart from the bag, like what they wear: a button each in the bag's header).
+ * apart from the bag, like what they wear: a button each in the bag's header). A sealed thing (a NAPO
+ * lockbox) stays in the chest at home and is opened there: it holds one of its `holds`.
  */
-export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool';
+export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool' | 'sealed';
+
+/** One thing a sealed item may hold, by weight: these items, or one item of kind `any`, every one of that kind alike (any charm). */
+export interface Holding {
+  weight: number;
+  items?: BagSlot[];
+  any?: ItemKind;
+}
 
 /**
  * The drawings a tool's button in the bag's header can show: content/items.json names one for each
@@ -67,7 +76,7 @@ export interface ItemDef {
    */
   noun?: string;
   plural?: string;
-  /** One plain sentence on what it is good for, said when a strange object turns out to be it, or when you make it. */
+  /** One plain sentence on what it is good for, said when a strange object turns out to be it, a lockbox holds it, or you make it. */
   about?: string;
   /** What using it does. Consumables must do something; a resource may (a glowcap paints a mark). */
   use?: ItemUse;
@@ -81,6 +90,10 @@ export interface ItemDef {
   charge?: number;
   /** What it may turn out to be when identified: the chance of each is its weight over the sum. */
   reveals?: Array<{ item: string; count: number; weight: number }>;
+  /** Sealed: what it may hold when opened, one of these by weight (openSealed). */
+  holds?: Holding[];
+  /** Sealed: one plain sentence said with the question before it is opened ("It has been sealed since the evacuation."). */
+  seal?: string;
   /** What a charm does while it is in your bag, as factors (feats.ts). */
   charm?: Partial<Mods>;
   /** Gear only: the slot it is worn in, its tier, what it resists (0.3: 30% of the loss) and extra energy it gives. */
@@ -144,13 +157,20 @@ export interface ItemsData {
   wear?: Partial<Record<Tier, number>>;
   /** What mending a piece of each tier costs at the workbench, from the stash. */
   mend?: Partial<Record<Tier, BagSlot[]>>;
+  /** What upgrading a piece one level costs at the workbench, from the stash, and how often it works: +1 first (gear.ts). None: nothing is upgraded. */
+  upgrades?: Upgrade[];
   /** Names and words for the quirks of anomalous gear (gear.ts, QUIRKS). */
   quirks?: Array<{ id: Quirk; name: string; text: string }>;
   /** What the woods are like today and this week (sky.ts). None: nothing changes from day to day. */
   conditions?: ConditionsData;
+  /** The welcome parcel and the week's calendar of parcels (parcels.ts). None: no parcels. */
+  parcels?: ParcelsData;
 }
 
-/** One bag slot: an item and how many of it (at most its stack). In a stash's list, a piece of gear comes with its condition and quirk. */
+/**
+ * One bag slot: an item and how many of it (at most its stack). Gear stacks one to a slot, and its slot
+ * carries the piece (its condition, quirk and level) wherever it goes: in a bag, a pile, a stash's list.
+ */
 export interface BagSlot {
   item: string;
   count: number;
@@ -204,16 +224,66 @@ export function charmsIn(bag: readonly BagSlot[], items: Map<string, ItemDef>): 
   return out;
 }
 
-/** One of `reveals`, by weight; undefined for an empty list. */
-export function reveal(list: NonNullable<ItemDef['reveals']>, rng: () => number): { item: string; count: number } | undefined {
+/** One of a list, by weight: the chance of each is its weight over the sum. Undefined for an empty list. */
+export function byWeight<T extends { weight: number }>(list: readonly T[], rng: () => number): T | undefined {
   const total = list.reduce((n, r) => n + Math.max(0, r.weight), 0);
   let roll = rng() * total;
   for (const r of list) {
     roll -= Math.max(0, r.weight);
-    if (roll < 0) return { item: r.item, count: r.count };
+    if (roll < 0) return r;
   }
-  const last = list.at(-1);
-  return last && { item: last.item, count: last.count };
+  return list.at(-1);
+}
+
+/** One of `reveals`, by weight; undefined for an empty list. */
+export function reveal(list: NonNullable<ItemDef['reveals']>, rng: () => number): { item: string; count: number } | undefined {
+  const r = byWeight(list, rng);
+  return r && { item: r.item, count: r.count };
+}
+
+/**
+ * What a sealed item turns out to hold when opened: one of its `holds`, by weight; for one of a kind
+ * (`any`), one of every item of that kind in `all`, each as likely. Nothing for an empty one.
+ */
+export function openSealed(def: ItemDef, all: readonly ItemDef[], rng: () => number): BagSlot[] {
+  const h = byWeight(def.holds ?? [], rng);
+  if (!h) return [];
+  if (h.any !== undefined) {
+    const pool = all.filter(d => d.kind === h.any);
+    const one = pool[Math.min(pool.length - 1, Math.floor(rng() * pool.length))];
+    return one ? [{ item: one.id, count: 1 }] : [];
+  }
+  return (h.items ?? []).map(s => ({ item: s.item, count: s.count }));
+}
+
+// ---------- naming things in a sentence (the text box, the notice board) ----------
+
+/** One of an item in a sentence: its `noun`, or its name as a word ("Road flare": "road flare"). */
+export function nounOf(def: ItemDef): string {
+  return def.noun ?? def.name.charAt(0).toLowerCase() + def.name.slice(1);
+}
+
+/** Several: its `plural`, or the noun with an s. A noun that ends in one already names a pair or a heap: "rubber gloves", "cloth scraps". */
+export function pluralOf(def: ItemDef): string {
+  const n = nounOf(def);
+  return def.plural ?? (n.endsWith('s') ? n : `${n}s`);
+}
+
+/** Counted one by one ("a shard", "2 shards"), unlike resin or rubber gloves, whose plural is the same word. */
+export function countable(def: ItemDef): boolean {
+  return pluralOf(def) !== nounOf(def);
+}
+
+/** "a raincoat", "an anomaly shard"; and without "a" what is not counted so: "resin", "rubber gloves". */
+export function aOf(def: ItemDef): string {
+  const n = nounOf(def);
+  return countable(def) ? `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n}` : n;
+}
+
+/** How many, as people say it: "a glowcap", "1 resin", "3 resin", "2 shards". */
+export function amount(def: ItemDef, n: number): string {
+  if (n !== 1) return `${n} ${pluralOf(def)}`;
+  return countable(def) ? aOf(def) : `1 ${nounOf(def)}`;
 }
 
 /** What a live item is worth `ageS` seconds after it was picked: its full XP while fresh, then less each minute, never below `into`'s. */
@@ -258,7 +328,10 @@ export function addToBag(bag: readonly BagSlot[], item: ItemDef, count: number, 
   return { bag: out, left };
 }
 
-/** Puts several stacks into a bag, in order; what does not fit comes back in `left`. */
+/**
+ * Puts several stacks into a bag, in order; what does not fit comes back in `left`. A piece of gear
+ * keeps its piece, in the bag or left out.
+ */
 export function addAllToBag(bag: readonly BagSlot[], add: readonly BagSlot[], items: Map<string, ItemDef>, slots = BAG_SLOTS): { bag: BagSlot[]; left: BagSlot[] } {
   let out = bag.map(s => ({ ...s }));
   const left: BagSlot[] = [];
@@ -266,10 +339,13 @@ export function addAllToBag(bag: readonly BagSlot[], add: readonly BagSlot[], it
     const def = items.get(a.item);
     if (!def) continue; // an item that no longer exists is dropped silently
     const r = addToBag(out, def, a.count, slots);
-    // A live item keeps when it was picked (it stacks one to a slot, so its slots are new ones).
-    if (a.since !== undefined) for (const s of r.bag.slice(out.length)) s.since = a.since;
+    // A live item keeps when it was picked, and gear its piece: both stack one to a slot, so their slots are new ones.
+    for (const s of r.bag.slice(out.length)) {
+      if (a.since !== undefined) s.since = a.since;
+      if (a.piece) s.piece = { ...a.piece };
+    }
     out = r.bag;
-    if (r.left) left.push({ item: a.item, count: r.left });
+    if (r.left) left.push({ item: a.item, count: r.left, ...(a.piece ? { piece: { ...a.piece } } : {}) });
   }
   return { bag: out, left };
 }
@@ -306,7 +382,7 @@ export function takeItem(bag: readonly BagSlot[], slot: number, count: number): 
   return { bag: bag.flatMap((s, i) => (left[i]! > 0 ? [{ ...s, count: left[i]! }] : [])), taken };
 }
 
-/** The same items with equal kinds joined (for piles and messages; ignores stack sizes). */
+/** The same items with equal kinds joined (for counting, and "+2 Glowcap" over your head; ignores stack sizes and pieces). */
 export function merge(items: readonly BagSlot[]): BagSlot[] {
   const by = new Map<string, number>();
   for (const s of items) if (s.count > 0) by.set(s.item, (by.get(s.item) ?? 0) + s.count);
@@ -314,19 +390,45 @@ export function merge(items: readonly BagSlot[]): BagSlot[] {
 }
 
 /**
+ * What a pile holds: the same items joined like merge, but each piece of gear on its own with its
+ * piece, so it comes back out of the pile as it went in. In the order they first came.
+ */
+export function gather(items: readonly BagSlot[]): BagSlot[] {
+  const out: BagSlot[] = [];
+  const by = new Map<string, BagSlot>();
+  for (const s of items) {
+    if (s.count <= 0) continue;
+    if (s.piece) {
+      // A piece is one of its item, however the slot counted it.
+      out.push({ item: s.item, count: 1, piece: { ...s.piece } });
+      continue;
+    }
+    const joined = by.get(s.item);
+    if (joined) joined.count += s.count;
+    else {
+      const slot = { item: s.item, count: s.count };
+      by.set(s.item, slot);
+      out.push(slot);
+    }
+  }
+  return out;
+}
+
+/**
  * A random half of a pile, for someone who is not its owner: exactly half of the units, chosen at
- * random, and an odd one out goes either way by a coin toss (so on average it is exactly half).
+ * random, and an odd one out goes either way by a coin toss (so on average it is exactly half). A
+ * piece of gear in it is a unit like any other, and keeps its piece.
  */
 export function halfOf(items: readonly BagSlot[], rng: () => number): BagSlot[] {
-  const units: string[] = [];
-  for (const s of items) for (let i = 0; i < s.count; i++) units.push(s.item);
+  const units: BagSlot[] = [];
+  for (const s of items) for (let i = 0; i < s.count; i++) units.push(s.piece ? { item: s.item, count: 1, piece: s.piece } : { item: s.item, count: 1 });
   // Fisher-Yates, then keep the first half.
   for (let i = units.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [units[i], units[j]] = [units[j]!, units[i]!];
   }
   const keep = Math.floor(units.length / 2) + (units.length % 2 && rng() < 0.5 ? 1 : 0);
-  return merge(units.slice(0, keep).map(item => ({ item, count: 1 })));
+  return gather(units.slice(0, keep));
 }
 
 /** Every tile a find may grow on: walkable, not an exit, and fitting the rule's tiles, steps, nearness and place. */

@@ -60,6 +60,11 @@ describe('what items look like', () => {
         continue;
       }
       expect(DRAWN_ITEMS, i.id).toContain(i.id);
+      // A sealed thing (a lockbox) never leaves the chest, where it is opened: it never lies on the ground, nor grows as a find.
+      if (i.kind === 'sealed') {
+        expect(content.finds.map(f => f.item), i.id).not.toContain(i.id);
+        continue;
+      }
       expect(lookOf(i.id), i.id).toBe(i.id);
     }
   });

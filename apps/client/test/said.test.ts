@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 import type { Did, ItemsData, StoneView } from '@napoland/shared';
 import { Items } from '../src/items';
 import {
-  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, aOf, amount, counted, didText, didWho, feedQuestion, fullFire, howLong, listOf, makeQuestion, mendQuestion, noShard, nothingToBurn,
-  nounOf, pluralOf, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, useQuestion,
+  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, aOf, amount, counted, didText, didWho, feedQuestion, fullFire, holdsText, howLong, listOf, makeQuestion, mendQuestion, noShard,
+  nothingToBurn, nounOf, openQuestion, pluralOf, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from '../src/said';
 
 /** What players read comes from the real items, so it is tested with them. */
@@ -74,6 +74,26 @@ describe('the questions', () => {
     expect(makeQuestion({ id: 'caps', make: 'wool-cap', count: 2, needs: [{ item: 'cloth', count: 1 }] }, items)).toBe('Make 2 wool caps? It uses 1 cloth.');
     expect(mendQuestion(item('raincoat'), content.mend!.sturdy!, items)).toBe('Mend your raincoat? It uses 2 cloth and 1 scrap.');
     expect(mendQuestion(item('shard-cap'), content.mend!.anomalous!, items)).toBe('Mend your shard-lined cap? It uses 2 scrap and 1 shard.');
+    // An upgraded piece is named with its level; mending costs the same at any level.
+    expect(mendQuestion(item('raincoat'), content.mend!.sturdy!, items, 3)).toBe('Mend your raincoat +3? It uses 2 cloth and 1 scrap.');
+    expect(tossQuestion(item('raincoat'), 1, 1, 4)).toBe('Throw away the raincoat +4? It is gone for good.');
+  });
+
+  it('before an upgrade: what it uses, and from +7 how often it works', () => {
+    const up = (to: number, id = 'raincoat') => upgradeQuestion(item(id), to, content.upgrades![to - 1]!, items);
+    expect(up(1)).toBe('Upgrade your raincoat to +1? It uses 2 scrap and 2 cloth.');
+    expect(up(2)).toBe('Upgrade your raincoat to +2? It uses 3 scrap, 2 cloth and 1 wire.');
+    expect(up(4)).toBe('Upgrade your raincoat to +4? It uses 4 scrap, 2 wire and a shard.');
+    expect(up(6)).toBe('Upgrade your raincoat to +6? It uses 6 scrap, 4 wire and 3 shards.');
+    expect(up(7)).toBe('Upgrade your raincoat to +7? It uses 4 shards and a strange object. It works 7 times in 10.');
+    expect(up(8, 'rubber-gloves')).toBe('Upgrade your rubber gloves to +8? It uses 5 shards and 2 strange objects. It works 5 times in 10.');
+    expect(up(9, 'shard-cap')).toBe('Upgrade your shard-lined cap to +9? It uses 6 shards and 3 strange objects. It works 3 times in 10.');
+  });
+
+  it('at the chest, before a NAPO lockbox is opened, and what it may hold', () => {
+    expect(openQuestion(item('lockbox'))).toBe('Open the NAPO lockbox? It has been sealed since the evacuation.');
+    expect([aOf(item('lockbox')), amount(item('lockbox'), 2)]).toEqual(['a NAPO lockbox', '2 NAPO lockboxes']);
+    expect(holdsText(item('lockbox'), items)).toBe('Inside is one of these: 3 shards, a strange object, a charm or 6 cloth and 4 wire.');
   });
 });
 
@@ -99,6 +119,9 @@ describe('why it cannot happen', () => {
     expect(short).toEqual([{ item: 'cloth', count: 3 }, { item: 'resin', count: 4 }]);
     expect(stashShort(short, items, { make: item('raincoat') })).toBe('Your stash is short of 3 cloth and 4 resin for a raincoat.');
     expect(stashShort([{ item: 'scrap', count: 1 }], items, { mend: item('rubber-gloves') })).toBe('Your stash is short of 1 scrap to mend your rubber gloves.');
+    expect(stashShort([{ item: 'cloth', count: 2 }], items, { mend: item('raincoat'), level: 5 })).toBe('Your stash is short of 2 cloth to mend your raincoat +5.');
+    expect(stashShort([{ item: 'shard', count: 2 }, { item: 'strange', count: 1 }], items, { upgrade: item('raincoat'), to: 7 }))
+      .toBe('Your stash is short of 2 shards and 1 strange object to upgrade your raincoat to +7.');
     expect(shortOf(recipe('raincoat').needs, [{ item: 'cloth', count: 5 }, { item: 'cloth', count: 3 }, { item: 'resin', count: 4 }])).toEqual([]);
     expect(sentence('The fire is as big as it gets')).toBe('The fire is as big as it gets.');
     expect(sentence('Too far?')).toBe('Too far?');
@@ -127,6 +150,9 @@ describe('what it did, from the server\'s answer', () => {
     expect(didText({ kind: 'used', item: 'glowcap', mark: { dir: 'left', left: 86_400 } }, items)).toBe('You crush the glowcap. An arrow glows where you stand, pointing west. Everyone sees it for a day.');
     expect(said({ kind: 'used', item: 'strange', into: { item: 'hollow-feather', count: 1 } })).toEqual(['Strange object', 'It turns out to be a hollow feather. While it is in your bag, what you carry feels lighter.']);
     expect(didText({ kind: 'used', item: 'strange', into: { item: 'shard', count: 2 } }, items)).toBe('It turns out to be 2 shards. The Old Stone in town wants shards back: enough of them wake it.');
+    // Gear is a piece the moment it lands in the bag, its quirk rolled: it can be worn at once.
+    expect(didText({ kind: 'used', item: 'strange', into: { item: 'shard-cap', count: 1, piece: { cond: 1, quirk: 'flicker' } } }, items))
+      .toBe('It turns out to be a shard-lined cap. Put it on from your bag: half the glow of the anomalies never reaches you. It has a quirk: restless light.');
     expect(didText({ kind: 'used', item: 'thermos' }, items)).toBe('You use the thermos.');
   });
 
@@ -136,6 +162,32 @@ describe('what it did, from the server\'s answer', () => {
     expect(said({ kind: 'mended', item: 'raincoat' })).toEqual(['Workbench', 'You mend your raincoat: as good as new.']);
     expect(said({ kind: 'thrown', item: 'resin', count: 3 })).toEqual(['Fir resin', 'You throw away 3 resin.']);
     expect(didText({ kind: 'thrown', item: 'glowcap', count: 1 }, items)).toBe('You throw away a glowcap.');
+    // An upgraded piece is named with its level.
+    expect(said({ kind: 'thrown', item: 'raincoat', count: 1, level: 3 })).toEqual(['Raincoat +3', 'You throw away the raincoat +3.']);
+    expect(said({ kind: 'mended', item: 'raincoat', level: 3 })).toEqual(['Workbench', 'You mend your raincoat +3: as good as new.']);
+  });
+
+  it('after an upgrade: the level it is now, or that it did not take and what that cost', () => {
+    expect(said({ kind: 'upgraded', item: 'raincoat', level: 7 })).toEqual(['Workbench', 'The raincoat is +7 now.']);
+    expect(didText({ kind: 'upgraded', item: 'raincoat', level: 6, failed: true }, items)).toBe('It did not take. The raincoat stays +6, and the materials are gone.');
+    expect(didText({ kind: 'upgraded', item: 'rubber-gloves', level: 3 }, items)).toBe('The rubber gloves are +3 now.');
+    expect(didText({ kind: 'upgraded', item: 'rubber-gloves', level: 8, failed: true }, items)).toBe('It did not take. The rubber gloves stay +8, and the materials are gone.');
+  });
+
+  it('at the chest: what the lockbox held, and what one thing inside is good for', () => {
+    expect(said({ kind: 'opened', item: 'lockbox', got: [{ item: 'humming-bead', count: 1 }] })).toEqual([
+      'NAPO lockbox', 'Inside: a humming bead. While it is in your bag, what wants to cling to you in the dark thinks twice.',
+    ]);
+    expect(didText({ kind: 'opened', item: 'lockbox', got: [{ item: 'shard', count: 3 }] }, items)).toBe('Inside: 3 shards. The Old Stone in town wants shards back: enough of them wake it.');
+    expect(didText({ kind: 'opened', item: 'lockbox', got: [{ item: 'strange', count: 1 }] }, items)).toBe('Inside: a strange object. Look at it closely in town, in the light, to see what it turns out to be.');
+    expect(didText({ kind: 'opened', item: 'lockbox', got: [{ item: 'cloth', count: 6 }, { item: 'wire', count: 4 }] }, items)).toBe('Inside: 6 cloth and 4 wire.');
+    expect(didText({ kind: 'opened', item: 'lockbox', got: [] }, items)).toBe('The NAPO lockbox is empty.');
+  });
+
+  it('says what anything a lockbox may hold alone is good for', () => {
+    const alone = content.items.flatMap(i => i.holds ?? []).flatMap(h => (h.any ? content.items.filter(d => d.kind === h.any) : h.items?.length === 1 ? [item(h.items[0]!.item)] : []));
+    expect(alone.length).toBeGreaterThan(0);
+    for (const d of alone) expect(d.about, d.id).toMatch(/^[A-Z].*\.$/);
   });
 
   it('says what anything a strange object turns into is good for, with the numbers its item has', () => {

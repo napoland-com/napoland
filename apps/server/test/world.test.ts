@@ -243,10 +243,11 @@ describe('World: turning, joining and leaving', () => {
       players: [joined.player],
       // A town without a fireplace: energy holds.
       energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 },
-      // No items in this world: nothing lies around, and the bag is empty.
+      // No items in this world: nothing lies around, and the bag and the stash are empty.
       finds: [],
       drops: [],
       bag: [],
+      stash: [],
       // No fires, marks, creatures or flares here, and a town never surges. Rain soaks you in town too.
       fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null,
       body: { wet: 0, wetRate: Math.round((1 / WET_SECONDS) * 1e5) / 1e5, load: 0, hitched: false, worn: {} },
@@ -567,6 +568,8 @@ describe('World: collapsing', () => {
     expect(collapses).toEqual([]);
     w.tick(empty + 1);
     expect(w.drain()).toEqual([
+      // The count first, as each goes up (what Mira says waits on it); the zone carries it too.
+      { to: 'a', msg: { t: 'stats', stats: { collapsed: 1 } } },
       { to: '*', map: 'woods', except: 'a', msg: { t: 'leave', id: 'a' } },
       { to: '*', map: 'town', except: 'a', msg: { t: 'join', player: viewOf('a', 1, 2, 'down') } },
       {
@@ -583,7 +586,7 @@ describe('World: collapsing', () => {
   it('collapses instead of taking a step when the energy ran out before it', () => {
     const { w, collapses } = collapsing(inWoods('a', 3, 6, 'up', { energy: 0.1 }));
     w.step('a', 'up', 1, 1000);
-    expect(answers(w.drain(), 'a').map(m => m.t)).toEqual(['zone', 'energy']);
+    expect(answers(w.drain(), 'a').map(m => m.t)).toEqual(['stats', 'zone', 'energy']);
     expect(w.get('a')).toMatchObject({ map: 'town', x: 1, y: 2, energy: ENERGY_MAX });
     expect(collapses.map(([id]) => id)).toEqual(['a']);
   });
@@ -605,8 +608,9 @@ describe('World: collapsing', () => {
 
   it('saves a player whose energy runs out as they leave at home, full', () => {
     const { w, collapses } = collapsing(inWoods('a', 3, 6, 'up', { energy: 0.05 }), inWoods('c', 5, 5));
-    expect(w.leave('a', 1000)).toMatchObject({ map: 'town', x: 1, y: 2, dir: 'down', energy: ENERGY_MAX });
-    expect(w.drain()).toEqual([{ to: '*', map: 'woods', except: 'a', msg: { t: 'leave', id: 'a' } }]);
+    expect(w.leave('a', 1000)).toMatchObject({ map: 'town', x: 1, y: 2, dir: 'down', energy: ENERGY_MAX, stats: { collapsed: 1 } });
+    // The count, told as it goes up, finds nobody to hear it (net.ts): the welcome next time carries it.
+    expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'stats', stats: { collapsed: 1 } } }, { to: '*', map: 'woods', except: 'a', msg: { t: 'leave', id: 'a' } }]);
     expect(collapses).toEqual([['a', { map: 'woods', x: 3, y: 6 }]]);
     expect(w.views('town')).toEqual([]);
   });
@@ -851,7 +855,7 @@ describe('World: the bag', () => {
     const w = itemsWorld({}, inWoods('a', 3, 6, 'up', { energy: 0.5, bag: [{ item: 'tea', count: 1 }] }));
     w.use('a', 0, 5000);
     const out = answers(w.drain(), 'a');
-    expect(out.map(m => m.t)).toEqual(['bag', 'zone', 'energy', 'refused']);
+    expect(out.map(m => m.t)).toEqual(['bag', 'stats', 'zone', 'energy', 'refused']);
     expect(out.at(-1)).toEqual({ t: 'refused', action: 'use', reason: 'empty_slot' });
     expect(w.dropViews('woods')).toMatchObject([{ id: 'a', x: 3, y: 6 }]);
   });
@@ -868,6 +872,7 @@ describe('World: piles', () => {
     expect(noEnergy(w.drain())).toEqual([
       { to: '*', map: 'woods', msg: { t: 'drop', drop } },
       { to: 'a', msg: { t: 'bag', bag: [] } },
+      { to: 'a', msg: { t: 'stats', stats: { collapsed: 1 } } },
       { to: '*', map: 'woods', except: 'a', msg: { t: 'leave', id: 'a' } },
       { to: '*', map: 'town', except: 'a', msg: { t: 'join', player: viewOf('a', 1, 2, 'down') } },
       {
