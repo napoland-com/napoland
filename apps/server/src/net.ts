@@ -4,10 +4,10 @@
  * out what the World has to say, each message to the players it is for: one player, or everyone on
  * one map. Nothing a client sends is trusted. It also stores players (now and then, and when they
  * leave), piles and marks (whenever one changes) and the Old Stone (whenever it is fed or falls asleep).
- * Friends, requests, blocks, private messages and reports go to social.ts, one player's in order;
- * what is said to chat.ts, and calls without words to calls.ts. On a server with sign-in, whoever
- * says hello without it plays as a guest (a character that lives in their browser, by its token);
- * signing in later with that token keeps the character.
+ * Friends, requests, blocks, private messages and reports go to social.ts, and trades between friends
+ * to trade.ts, one player's in order; what is said to chat.ts, and calls without words to calls.ts. On
+ * a server with sign-in, whoever says hello without it plays as a guest (a character that lives in
+ * their browser, by its token); signing in later with that token keeps the character.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
@@ -32,6 +32,7 @@ import { Calls } from './calls';
 import { Chat } from './chat';
 import { Social, type SocialMsg } from './social';
 import type { DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord } from './storage';
+import { Trades, type TradeMsg } from './trade';
 import { colorFor, type World } from './world';
 
 const HELLO_TIMEOUT_MS = 5000;
@@ -157,6 +158,18 @@ export function attachNet(o: NetOptions): Net {
   const warnCannotCheck = throttledLog('error', 'cannot check sign-ins (are Supabase\'s keys reachable?)', clock);
   /** Players sign in on this server, so whoever has not plays as a guest. */
   const guests = auth.mode !== 'legacy';
+  const trades = new Trades({
+    world,
+    clock,
+    friends: async (a, b) => (await storage.linksOf(a)).some(l => l.from === a && l.to === b && l.kind === 'friend'),
+    person: async id => {
+      const p = await storage.findPerson({ id });
+      return p && { name: p.name, tradesOff: p.tradesOff };
+    },
+    send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
+    flush: () => flush(),
+    saveTogether: ids => void persistTogether(ids.flatMap(id => world.get(id) ?? [])),
+  });
   const social = new Social({
     storage,
     clock,
@@ -164,6 +177,7 @@ export function attachNet(o: NetOptions): Net {
     isGuest: id => playing.get(id)?.guest ?? false,
     where: id => playing.get(id)?.map || undefined,
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
+    unlinked: (a, b) => trades.unlinked(a, b),
   });
   const chat = new Chat({
     world,
@@ -330,9 +344,20 @@ export function attachNet(o: NetOptions): Net {
       case 'block':
       case 'report':
       case 'requests':
+      case 'tradeRequests':
       case 'friends':
         // Whether they play as a guest is taken now: the action may run after they have left.
         return befriends(s.id, () => social.handle(s.id, msg as SocialMsg, s.guest));
+      case 'tradeOpen':
+      case 'tradeAnswer':
+      case 'tradeOffer':
+      case 'tradeReady':
+      case 'tradeConfirm':
+      case 'tradeCancel': {
+        // In the same queue as the friends' actions: an ask reads storage, and what comes after it waits for it.
+        const guest = s.guest;
+        return befriends(s.id, () => trades.handle(s.id, msg as TradeMsg, guest));
+      }
       case 'say':
         return chat.say(s.id, msg.to, msg.text);
       case 'call':
@@ -598,6 +623,7 @@ export function attachNet(o: NetOptions): Net {
     hear(s, '');
     const rec = world.leave(s.id, clock());
     flush();
+    trades.left(s.id);
     if (rec && save) void persist(rec);
     log.info('player left', { id: s.id, online: world.size });
     return rec;
@@ -623,6 +649,22 @@ export function attachNet(o: NetOptions): Net {
         if (pendingSaves.get(rec.id) === done) pendingSaves.delete(rec.id);
       });
     pendingSaves.set(rec.id, done);
+    return done;
+  }
+
+  /**
+   * Saves snapshots of several players in one step (two who just traded), after the saves of each that
+   * started earlier; their next saves wait for it, as persist() does for one player.
+   */
+  function persistTogether(recs: PlayerRecord[]): Promise<void> {
+    const at = Date.now(), snapshots = recs.map(rec => ({ ...rec, lastSeenAt: at }));
+    const done = Promise.all(recs.map(rec => pendingSaves.get(rec.id) ?? Promise.resolve()))
+      .then(() => storage.saveTogether(snapshots))
+      .catch((err: unknown) => log.error('saving a trade failed', { ids: recs.map(r => r.id), err }))
+      .finally(() => {
+        for (const rec of recs) if (pendingSaves.get(rec.id) === done) pendingSaves.delete(rec.id);
+      });
+    for (const rec of recs) pendingSaves.set(rec.id, done);
     return done;
   }
 
@@ -669,9 +711,11 @@ export function attachNet(o: NetOptions): Net {
    * Sends everything the World has queued, in order, and starts the writes it asked for. Runs after
    * every World call. A message for a map goes to the players on it at that point of the queue: a
    * player who changes maps hears the new map from their `zone` message on, even when several
-   * players moved in the same tick.
+   * players moved in the same tick. A trade hears of it too: a player on another map is out of it, and
+   * a bag that changed keeps its side to what it still holds.
    */
   function flush(): void {
+    const bags = new Set<string>();
     for (const out of world.drain()) {
       const data = encode(out.msg);
       if (out.to === 'all') {
@@ -686,8 +730,11 @@ export function attachNet(o: NetOptions): Net {
       if (!s) continue;
       if (out.msg.t === 'zone') hear(s, out.msg.map.id);
       sendRaw(s, data);
+      if (out.msg.t === 'zone') trades.moved(out.to, out.msg.reason);
+      else if (out.msg.t === 'bag') bags.add(out.to);
     }
     store();
+    for (const id of bags) trades.bagChanged(id);
   }
 
   /** Makes a session hear the news of another map ('' for none). */
@@ -723,6 +770,7 @@ export function attachNet(o: NetOptions): Net {
     tick() {
       world.tick(clock());
       flush();
+      trades.tick(clock());
     },
 
     async saveAll() {

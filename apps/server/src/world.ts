@@ -135,6 +135,11 @@ import {
   weatherAt,
   weekdayOf,
   wetRate,
+  keptOffer,
+  offerFrom,
+  swapOffers,
+  traded,
+  type OfferPick,
   type Arrival,
   type BagSlot,
   type BodyView,
@@ -300,6 +305,9 @@ export interface Joined extends Scene {
   tools: string[];
   story: StoryView;
 }
+
+/** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
+export type Swap = { ok: true; aGave: BagSlot[]; bGave: BagSlot[] } | { ok: false; why: 'gone' | 'room'; who: string };
 
 /** What storage must hear: piles and marks to write (or remove: undefined), players to save now, and the Old Stone if it changed. */
 export interface Writes {
@@ -1457,6 +1465,49 @@ export class World {
   stats(id: string): void {
     const p = this.players.get(id);
     if (p) this.outbox.push({ to: id, msg: { t: 'stats', stats: { ...p.rec.stats } } });
+  }
+
+  // ---------- trades (trade.ts keeps them; this is only what they do to the bags) ----------
+
+  /** Where an online player is: the zone whose news they hear (for now, a map is one zone) and their tile. */
+  where(id: string): { zone: string; x: number; y: number } | undefined {
+    const p = this.players.get(id);
+    return p && { zone: p.map.data.id, x: p.rec.x, y: p.rec.y };
+  }
+
+  /** What these picks of an online player's bag offer in a trade (offerFrom): only ever what the bag holds. */
+  offerOf(id: string, picks: readonly OfferPick[]): BagSlot[] {
+    const p = this.players.get(id);
+    return p ? offerFrom(p.rec.bag, picks, this.items) : [];
+  }
+
+  /** What of an offer an online player's bag still holds (keptOffer), after it changed. */
+  keptOf(id: string, offer: readonly BagSlot[]): BagSlot[] {
+    const p = this.players.get(id);
+    return p ? keptOffer(p.rec.bag, offer) : [];
+  }
+
+  /**
+   * Two players trade: what each offers leaves their bag and goes into the other's, in one step, or nothing
+   * moves (a bag no longer holds all it offered, or has no room for what it gets after what it gives:
+   * swapOffers). What either had taken out of their stash is out for whoever gets it now (traded), so no
+   * trade earns XP twice. Both hear their bags and rates; saving them, together, is the caller's.
+   */
+  swap(aId: string, bId: string, aGives: readonly BagSlot[], bGives: readonly BagSlot[], now: number): Swap {
+    const a = this.players.get(aId), b = this.players.get(bId);
+    if (!a || !b) return { ok: false, why: 'gone', who: a ? bId : aId };
+    // A bar that ran out collapses on this tick: with its bag, so nothing is handed over by someone who is falling.
+    for (const p of [a, b]) if (this.advance(p, now) <= 0) return { ok: false, why: 'gone', who: p.rec.id };
+    const r = swapOffers(a.rec.bag, b.rec.bag, aGives, bGives, a.slots, b.slots, this.items);
+    if (!r.ok) return { ok: false, why: r.why, who: r.side === 'a' ? aId : bId };
+    a.rec.bag = r.a;
+    b.rec.bag = r.b;
+    [a.rec.stash, b.rec.stash] = traded(a.rec.stash ?? emptyStash(), b.rec.stash ?? emptyStash(), r.aGave, r.bGave);
+    for (const p of [a, b]) {
+      this.sendBag(p, now);
+      this.rerate(p, now);
+    }
+    return { ok: true, aGave: r.aGave, bGave: r.bGave };
   }
 
   /**

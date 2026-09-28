@@ -99,7 +99,10 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
     case 'slow_down': return action === 'call' ? 'Catch your breath first' : 'Slow down a little';
-    case 'sign_in_first': return action === 'say' || action === undefined ? 'Sign in to talk' : action === 'outfit' ? 'Sign in to wear an outfit' : 'Sign in to make friends';
+    case 'sign_in_first':
+      if (action === 'say' || action === undefined) return 'Sign in to talk';
+      if (action === 'outfit') return 'Sign in to wear an outfit';
+      return action.startsWith('trade') ? 'Sign in to trade' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'bag_at_home': return 'The bag you wear changes only at home';
     case 'whole': return 'It needs no mending';
@@ -108,6 +111,11 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'top_level': return 'It goes no higher';
     case 'sealed_stays': return 'It stays in the chest: open it there';
     case 'locked': return 'Your level has not reached it yet';
+    case 'trades_off': return 'They take no trade requests';
+    case 'busy': return 'They are trading with someone else';
+    case 'trading': return 'Finish the trade you are in first';
+    case 'their_bag_full': return 'Their bag has no room for it';
+    case 'nothing_to_trade': return 'There is nothing to trade yet';
   }
 }
 

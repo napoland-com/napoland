@@ -523,13 +523,18 @@ export function setup(options: Partial<ServerOptions> | (() => Partial<ServerOpt
  */
 export async function keepsFriendsAndMessages(storage: Storage): Promise<void> {
   const a = await savedPlayer(storage), b = await savedPlayer(storage);
-  expect(await storage.findPerson({ name: a.name.toUpperCase() })).toEqual({ id: a.id, name: a.name, requestsOff: false, signedIn: false });
+  expect(await storage.findPerson({ name: a.name.toUpperCase() })).toEqual({ id: a.id, name: a.name, requestsOff: false, tradesOff: false, signedIn: false });
   expect(await storage.findPerson({ id: randomUUID() })).toBeNull();
   // Whether anyone signed in with them: a guest cannot be asked to be friends.
   const signed = await savedPlayer(storage, { tokenHash: null, authSub: `dev:${randomUUID()}@example.test` });
   expect((await storage.findPerson({ id: signed.id }))?.signedIn).toBe(true);
   await storage.setRequestsOff(b.id, true);
-  expect((await storage.findPerson({ id: b.id }))?.requestsOff).toBe(true);
+  expect((await storage.findPerson({ id: b.id }))).toMatchObject({ requestsOff: true, tradesOff: false });
+  // The two settings are apart: trade requests off leaves friend requests as they were.
+  await storage.setTradesOff(a.id, true);
+  expect((await storage.findPerson({ id: a.id }))).toMatchObject({ requestsOff: false, tradesOff: true });
+  await storage.setTradesOff(a.id, false);
+  expect((await storage.findPerson({ id: a.id }))?.tradesOff).toBe(false);
 
   await storage.setLink(a.id, b.id, 'request', true);
   await storage.setLink(a.id, b.id, 'request', true);
@@ -551,4 +556,21 @@ export async function keepsFriendsAndMessages(storage: Storage): Promise<void> {
   await storage.deleteTells(b.id, a.id);
   expect(await storage.tellsTo(b.id)).toEqual([]);
   await storage.addReport({ reporter: a.id, reported: b.id, reason: 'spam', quote: null, at: 1_700_000_002_000 });
+}
+
+/**
+ * Two players who traded, saved together (on `storage`, in memory or a real database): both bags and
+ * stashes as the swap left them, read back whole.
+ */
+export async function savesATradeTogether(storage: Storage): Promise<void> {
+  const whole = { wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } };
+  const [a, b] = [await savedPlayer(storage, { ...whole, bag: [{ item: 'nail', count: 3 }] }), await savedPlayer(storage, { ...whole, bag: [{ item: 'tea', count: 1 }] })];
+  const load = async (token: string) => (await storage.findByTokenHash(hashToken(token)))!;
+  const [ra, rb] = [await load(a.token), await load(b.token)];
+  const after = [
+    { ...ra, bag: [{ item: 'tea', count: 1 }], stash: { items: {}, out: { tea: 1 } }, lastSeenAt: ra.lastSeenAt + 1000 },
+    { ...rb, bag: [{ item: 'nail', count: 3 }], lastSeenAt: rb.lastSeenAt + 1000 },
+  ];
+  await storage.saveTogether(after);
+  expect([await load(a.token), await load(b.token)]).toEqual(after);
 }

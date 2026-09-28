@@ -30,6 +30,7 @@ import { Connection, serverUrl } from './net';
 import { parcelNote, untold } from './parcels';
 import { goalText } from './said';
 import { Sound, type SoundSetting } from './sound';
+import { reachText, tradePanel } from './trade';
 import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { Resolution } from './quality';
@@ -99,13 +100,14 @@ let welcomed = false;
 /** The first welcome of this page shows where you are; later ones are reconnects. */
 let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story);
-/** A panel is open over the world (the bag, the journal, the stash...), where it covers the banners. */
-const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen;
-/** Close the bag, the journal, the chat, the status and About panels and the menu; true when one was open. */
+/** A panel is open over the world (the bag, the journal, the stash, a trade...), where it covers the banners. */
+const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen || hud.tradeOpen;
+/** Close the bag, the journal, the chat, the status and About panels, a trade (which calls it off) and the menu; true when one was open. */
 const closePanels = () => {
   const open = panelOpen() || hud.menuOpen;
   hud.showPaper(null);
   hud.toggleBag(false); hud.toggleJournal(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false); hud.toggleChat(false);
+  hud.toggleTrade(false);
   return open;
 };
 /** What the wardrobe knows: whether you play as a guest, your level and the outfit you wear. */
@@ -145,7 +147,7 @@ const controls = {
   // While it asks, the stick answers the question, and the panel it was asked from stays open.
   pad: (dir: Dir | null) => { if (dir && !game.question) closePanels(); game.padChange(dir, performance.now()); },
   // The text box first (it stands above everything but the paper map); then, with a card open in the stash or at the workbench, A presses its button.
-  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.pressCard()) return; else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.pressCard()) return; else if (hud.tradeOpen) game.tradePressA(); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the text box first, then the About panel, then out of the status, a card or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressB(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
   // B held and let go, where the finger is on the fan, 1, 2 or 3 while Q is held, and a hold taken away.
@@ -210,6 +212,18 @@ const hud = new Hud(screen, {
       case 'unfriend': return game.social({ t: 'unfriend', id: a.id });
       case 'block': return game.social({ t: 'block', id: a.id, on: a.on });
       case 'requests': return game.social({ t: 'requests', off: a.off });
+      case 'tradeRequests': return game.social({ t: 'tradeRequests', off: a.off });
+      // Face to face only: from farther away, the card says so (the server checks it again).
+      case 'trade': {
+        const reach = game.tradeReach(a.id);
+        if (reach !== 'near') {
+          game.socialNote = reachText(reach, a.name);
+          game.socialChanges++;
+          return;
+        }
+        hud.toggleFriends(false);
+        return game.askTrade({ id: a.id, name: a.name });
+      }
       case 'tell': return game.tell(a.id, a.text);
       case 'report': {
         // What they wrote last goes with it (a private message, or else a line of chat): the server keeps neither.
@@ -219,6 +233,15 @@ const hud = new Hud(screen, {
         game.socialChanges++;
         return;
       }
+    }
+  },
+  trade: a => {
+    switch (a.a) {
+      case 'give': return game.tradeTap(a.slot);
+      case 'step': return game.tradeStep(a.i, a.by);
+      case 'ready': return game.tradeReady();
+      case 'confirm': return game.tradeConfirm();
+      case 'cancel': return game.tradeCancel();
     }
   },
   map: () => openMap(),
@@ -659,7 +682,9 @@ let marksShown = { changes: -1, view: null as WorldView | null };
 let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
 let statusAt = 0;
 let statsShown = -1;
-let friendsShown = { changes: -1, open: false };
+let friendsShown = { changes: -1, open: false, reach: '' };
+/** The trade as its panel shows it: drawn again when the trade, the bag or the bag's size changes. */
+let tradeShown = { changes: -1, bag: null as BagSlot[] | null, capacity: 0 };
 /** The chat tab shown, what of the chat is drawn, and the dots drawn on the menu. */
 let chatTab: ChatTo = 'local';
 let chatShown: { changes: number; tab: ChatTo } = { changes: -1, tab: chatTab };
@@ -797,9 +822,19 @@ function frame(now: number) {
     hud.setJournal(journalView(game.reached()));
   }
   if (hud.statusOpen && (now - statusAt > 500 || game.statsChanges !== statsShown)) { statusAt = now; statsShown = game.statsChanges; showStatus(); }
-  if (game.socialChanges !== friendsShown.changes || hud.friendsOpen !== friendsShown.open) {
-    friendsShown = { changes: game.socialChanges, open: hud.friendsOpen };
+  // A friend's card says whether they are near enough to trade with, as they walk.
+  const reach = hud.friendsOpen && game.person ? game.tradeReach(game.person.id) : '';
+  if (game.socialChanges !== friendsShown.changes || hud.friendsOpen !== friendsShown.open || reach !== friendsShown.reach) {
+    friendsShown = { changes: game.socialChanges, open: hud.friendsOpen, reach };
     hud.setFriends(friendsView(game.friends, game, id => maps.find(id)?.name), game.socialNote);
+  }
+  // A trade opens its panel once both are in or you asked (a friend's ask is a question first), and it closes when it is over.
+  const trading = !!game.trade && game.trade.state !== 'asked';
+  if (trading && !hud.tradeOpen) { closePanels(); hud.toggleTrade(true); }
+  else if (!trading && hud.tradeOpen) hud.toggleTrade(false, false);
+  if (trading && (game.tradeChanges !== tradeShown.changes || game.bag !== tradeShown.bag || capacity !== tradeShown.capacity)) {
+    tradeShown = { changes: game.tradeChanges, bag: game.bag, capacity };
+    hud.setTrade(tradePanel(game.trade!, { mine: game.tradeMine, bag: game.bag, items }));
   }
   // Chat: what the open tab heard (reading it clears the dot), and the dots on the menu.
   if (hud.chatOpen) game.chatNews = false;

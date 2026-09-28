@@ -12,9 +12,10 @@ import type { BagSlot } from './items';
 import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
+import { OFFER_MAX } from './trade';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 23;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -175,8 +176,31 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('report'), id: z.uuid(), reason: ReportReason, quote: z.string().max(MAX_TELL_CHARS).optional() }),
   /** Settings: turn friend requests from others off, or back on. */
   z.object({ t: z.literal('requests'), off: z.boolean() }),
+  /** Settings: turn trade requests from friends off, or back on. */
+  z.object({ t: z.literal('tradeRequests'), off: z.boolean() }),
   /** Send me my friends list again: who is online now, and where. */
   z.object({ t: z.literal('friends') }),
+  /**
+   * Ask a friend to trade (trade.ts): on your map, within TRADE_REACH. They are asked; if they asked you
+   * already, the trade opens at once.
+   */
+  z.object({ t: z.literal('tradeOpen'), id: z.uuid() }),
+  /** Answer a friend's ask to trade: yes opens it for both, no drops it. */
+  z.object({ t: z.literal('tradeAnswer'), id: z.uuid(), yes: z.boolean() }),
+  /**
+   * What you give in your trade, whole: how many of what each bag slot holds (a piece of gear or a live
+   * find is one). The server keeps what your bag really holds; any change takes both Readys back.
+   */
+  z.object({
+    t: z.literal('tradeOffer'),
+    items: z.array(z.object({ slot: z.number().int().nonnegative().max(63), count: z.number().int().positive().max(999) })).max(OFFER_MAX),
+  }),
+  /** Ready (on) with what both sides give, or not any more. */
+  z.object({ t: z.literal('tradeReady'), on: z.boolean() }),
+  /** Trade: once both are ready and both press it, the server swaps both sides in one step. */
+  z.object({ t: z.literal('tradeConfirm') }),
+  /** Call off your trade (or your ask to trade): for both. */
+  z.object({ t: z.literal('tradeCancel') }),
   /** You talked to the person, or read the desk, on tile x,y next to you: the story may move on (story.ts). */
   z.object({ t: z.literal('talk'), x: z.number().int(), y: z.number().int() }),
   /** Send me my counts toward feats as they are now (the status panel opened): the answer is `stats`. */
@@ -351,7 +375,17 @@ export type Refusal =
   /** A sealed thing stays in the chest: it is opened there. */
   | 'sealed_stays'
   /** Your level has not reached that outfit yet. */
-  | 'locked';
+  | 'locked'
+  /** They take no trade requests. */
+  | 'trades_off'
+  /** They are trading with someone else, or being asked to. */
+  | 'busy'
+  /** You are in a trade already: one at a time. */
+  | 'trading'
+  /** The bag of whoever you trade with has no room for what they would get (yours has: `bag_full` is yours). */
+  | 'their_bag_full'
+  /** Neither side gives anything. */
+  | 'nothing_to_trade';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -371,6 +405,34 @@ export interface TellView {
   text: string;
   at: number;
 }
+
+/**
+ * Your trade as it stands (trade.ts), from your side: whom with; `asking` while they have not answered
+ * your ask yet, `asked` while you have not answered theirs, `open` once both are in. What each side gives
+ * (a piece of gear with its piece, one entry each; the rest by item), and whether each pressed Ready and
+ * then Trade.
+ */
+export interface TradeView {
+  with: PersonView;
+  state: 'asking' | 'asked' | 'open';
+  mine: BagSlot[];
+  theirs: BagSlot[];
+  ready: boolean;
+  theyReady: boolean;
+  confirmed: boolean;
+  theyConfirmed: boolean;
+}
+
+/** Why a trade is off: called off, the ask said no to or not answered, too far apart, one left the map, collapsed or went offline, or they are friends no more. */
+export type TradeOff = 'cancel' | 'no' | 'timeout' | 'far' | 'left' | 'collapsed' | 'offline' | 'unfriended';
+
+/**
+ * How a trade ended: it went through (what you gave, and what you got), or it is off, and why, and who
+ * did it (you or them; none when it was nobody's doing, like walking too far apart).
+ */
+export type TradeEnd =
+  | { kind: 'done'; gave: BagSlot[]; got: BagSlot[] }
+  | { kind: 'off'; why: TradeOff; by?: 'you' | 'them' };
 
 /** What every client knows about a player it can see. x and y are tile coordinates. */
 export interface PlayerView {
@@ -485,10 +547,14 @@ export type ServerMsg =
   | { t: 'said'; to: ChatTo; id: string; name: string; text: string }
   /** Someone on your map within CALL_REACH sang a call, from tile x,y (calls.ts). You hear your own too. */
   | { t: 'called'; id: string; kind: CallKind; x: number; y: number }
-  /** Your friends (with who is online, and where), requests to you and from you, who you block and your setting: whole, after any change and when asked. */
-  | { t: 'friends'; friends: FriendView[]; incoming: PersonView[]; outgoing: PersonView[]; blocked: PersonView[]; requestsOff: boolean }
+  /** Your friends (with who is online, and where), requests to you and from you, who you block and your settings: whole, after any change and when asked. */
+  | { t: 'friends'; friends: FriendView[]; incoming: PersonView[]; outgoing: PersonView[]; blocked: PersonView[]; requestsOff: boolean; tradesOff: boolean }
   /** Private messages to you: every unread one after the welcome, then each new one as it comes. */
   | { t: 'tells'; tells: TellView[] }
+  /** Your trade, whole, after any change: you asked, you are asked (the text box asks you), or it is open. */
+  | { t: 'trade'; trade: TradeView }
+  /** Your trade is over: it went through, or it is off (and why). */
+  | { t: 'tradeOver'; with: PersonView; end: TradeEnd }
   /** On your map: a fire was fed (or lit again). */
   | { t: 'fire'; fire: FireView }
   /** On your map: a mark was painted, or faded. */
@@ -565,7 +631,8 @@ export type ServerMsg =
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'say' | 'call'
-  | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
+  | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
+  | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 
 /**
  * need_name: signed in, but there is no character yet; say hello again with a name.

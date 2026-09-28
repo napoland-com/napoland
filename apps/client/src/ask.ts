@@ -31,6 +31,8 @@ export interface Ask {
   yes(n: number): void;
   /** NO, B or a tap outside the box: nothing happens, nothing is spent. */
   no?(): void;
+  /** What the question is about, when something else may take it back before it is answered (a friend's ask to trade that is over). */
+  tag?: 'trade';
 }
 
 export type Choice = 'yes' | 'no';
