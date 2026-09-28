@@ -1,15 +1,18 @@
 /**
  * The interface over the world: status and energy (and how wet you are, and what clings to you), the
- * surge clock, the menu with the journal, status and About panels, the joystick and A/B, name tags,
- * the text box, the bag, the chest (the stash, and the wardrobe beside it) and the workbench, and the
- * fade and name banner when you arrive somewhere.
+ * surge clock, the menu with the journal, status and About panels, the joystick and A/B (and the fan
+ * of calls B opens when held), name tags, notes over the heads of callers, the text box, the bag, the
+ * chest (the stash, and the wardrobe beside it) and the workbench, and the fade and name banner when
+ * you arrive somewhere.
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
-import { BAG_SLOTS, RANKS, SLOTS, type BodyView, type Dir, type EnergyView, type Slot, type SurgeView } from '@napoland/shared';
+import { BAG_SLOTS, RANKS, SLOTS, type BodyView, type CallKind, type Dir, type EnergyView, type Slot, type SurgeView } from '@napoland/shared';
 import { aboutBody, versionView } from './about';
+import { CALL_NOTE_S, CALL_WORDS, FAN, fanChoice } from './calls';
 import { DOUBLE_TAP_MS, DoubleTap, cardPress, morePress, refKey, statText, type DetailAct, type DetailRef, type DetailView } from './details';
 import type { FriendsView } from './friends';
+import { CALL_GLYPHS } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import type { JournalView } from './journal';
 import type { SoundSetting } from './sound';
@@ -95,6 +98,15 @@ export interface HudHandlers {
   signIn?(): void;
   a(): void;
   b(): void;
+  /**
+   * A finger went down on B (true) or let go (false): a tap is B, held long enough with nothing open it
+   * is a call (calls.ts). Without it, a tap on B is b().
+   */
+  holdB?(on: boolean): void;
+  /** The finger holding B is over this call of the fan now (null: off the fan, where letting go sings nothing). */
+  pointB?(choice: CallKind | null): void;
+  /** The finger holding B was taken away (the system took the touch): no call, and no B. */
+  cancelCall?(): void;
   /** A tap on the text box itself (not on its buttons). */
   dialogTap(): void;
   /** The question in the text box: YES or NO tapped; − or + pressed (-1 or 1) and let go (0); a tap anywhere outside the box. */
@@ -178,8 +190,11 @@ export interface RecipeView {
   id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean;
   group?: 'mend' | 'upgrade' | 'make';
 }
-/** A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or another tool of yours. */
-export interface ToolView { item: string | null; label: string; icon: string }
+/**
+ * A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or
+ * another tool of yours; `on` for one its button switches on and off (the radio), with a small lamp lit while it is on.
+ */
+export interface ToolView { item: string | null; label: string; icon: string; on?: boolean }
 
 /** One row of the status panel: a label, what it says, and a bar (0 to 1) when it has one. */
 export interface StatusRow { label: string; text: string; bar?: number; tone?: 'good' | 'bad' | 'plain' }
@@ -259,6 +274,10 @@ export type SocialAction =
 export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean }
 /** `row` stacks words said at once, 0 at the bottom. */
 export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number; row: number }
+/** The fan of calls over B: the call the finger is on (null: off the fan), and whether the words show under the notes. */
+export interface FanView { choice: CallKind | null; words: boolean }
+/** A note rising over a caller's head (the shape of their call, in their jacket color): where their head is on screen, and seconds since. */
+export interface CallNoteView { id: number; kind: CallKind; color: string; x: number; y: number; t: number }
 /** Someone's lines in the text box, as far as they are typed out (`done`: the whole line is). */
 export interface DialogView { who: string; text: string; done: boolean }
 /** A question in the text box (ask.ts): its words, the choice highlighted, and how many (null: it does not ask how many). */
@@ -271,6 +290,7 @@ export class Hud {
   private el: Record<string, HTMLElement>;
   private tagEls = new Map<string, HTMLElement>();
   private floatEls = new Map<number, HTMLElement>();
+  private callNoteEls = new Map<number, HTMLElement>();
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
   private shown = {
     fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', card: '',
@@ -347,7 +367,8 @@ export class Hud {
         <button type="button" data-el="menuLogout">Log out</button>
       </div>
       <div class="stick" data-el="stick" role="group" aria-label="Movement stick"><div class="knob" data-el="knob"></div></div>
-      <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back">B</button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button></div>
+      <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back. Hold it to call">B</button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button>
+        <div class="fan" data-el="fan" aria-hidden="true">${FAN.map((f, i) => `<span class="call" data-call="${f.kind}" style="--a: ${-f.deg}deg"><span class="dot" data-key="${i + 1}">${CALL_GLYPHS[f.kind]}</span><span class="w">${esc(CALL_WORDS[f.kind])}</span></span>`).join('')}</div></div>
       <div class="scrim" data-el="scrim" hidden></div>
       <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div class="line" data-el="text"></div>
         <div class="count" data-el="count" role="group" aria-label="How many" hidden><button type="button" class="step" data-step="-1" aria-label="One fewer">${ICON.minus}</button><b class="n" data-el="countN"></b><button type="button" class="step" data-step="1" aria-label="One more">${ICON.plus}</button></div>
@@ -475,7 +496,39 @@ export class Hud {
     stick.addEventListener('pointercancel', end);
     stick.addEventListener('lostpointercapture', end);
     this.el.a!.addEventListener('click', () => this.h.a());
-    this.el.b!.addEventListener('click', () => this.h.b());
+    // B: a tap is B (the bag, back); held with nothing open it is a call (calls.ts), sung where the
+    // finger lets go on the fan. The finger stays B's while it is down, so it can slide out onto the fan.
+    const b = this.el.b!;
+    let bFinger = -1, bAt = -Infinity;
+    const onFan = (e: PointerEvent): CallKind | null => {
+      const r = b.getBoundingClientRect(), d = r.width || 1;
+      return fanChoice((e.clientX - (r.left + r.width / 2)) / d, (e.clientY - (r.top + r.height / 2)) / d);
+    };
+    b.addEventListener('pointerdown', e => {
+      if (bFinger >= 0 || e.button > 0) return;
+      e.preventDefault();
+      bFinger = e.pointerId;
+      bAt = performance.now();
+      try { b.setPointerCapture(e.pointerId); } catch { /* not all browsers allow it */ }
+      this.h.holdB?.(true);
+    });
+    b.addEventListener('pointermove', e => { if (e.pointerId === bFinger) this.h.pointB?.(onFan(e)); });
+    b.addEventListener('pointerup', e => {
+      if (e.pointerId !== bFinger) return;
+      bFinger = -1;
+      if (!this.h.holdB) return this.h.b();
+      this.h.pointB?.(onFan(e));
+      this.h.holdB(false);
+    });
+    const lost = (e: PointerEvent) => {
+      if (e.pointerId !== bFinger) return;
+      bFinger = -1;
+      this.h.cancelCall?.();
+    };
+    b.addEventListener('pointercancel', lost);
+    b.addEventListener('lostpointercapture', lost);
+    // Pressed from the keyboard (B focused, then Enter or Space), it is B at once; a finger's click was its pointer's already.
+    b.addEventListener('click', e => { if (e.detail === 0 && performance.now() - bAt > 1000) this.h.b(); });
     // Every Sign in button a guest sees, wherever it is.
     this.root.addEventListener('click', e => {
       if ((e.target as Element).closest('[data-signin]')) this.h.signIn?.();
@@ -1154,7 +1207,7 @@ export class Hud {
 
   /** Your tools, as buttons in the bag's header (toolViews): the one map button, and a button for each other tool, in the order you got them. */
   setTools(tools: ToolView[]) {
-    const html = tools.map(t => `<button type="button" class="slot" ${t.item === null ? 'data-map' : `data-tool="${esc(t.item)}"`} aria-label="${esc(t.label)}">${t.icon}</button>`).join('');
+    const html = toolsHtml(tools);
     if (this.el.tools!.innerHTML !== html) this.el.tools!.innerHTML = html;
   }
 
@@ -1455,6 +1508,42 @@ export class Hud {
     for (const [id, el] of this.tagEls) if (!seen.has(id)) { el.remove(); this.tagEls.delete(id); }
   }
 
+  /**
+   * The fan of calls over B while it is held long enough (null: closed): the call under the finger lit,
+   * all of them dimmed while the finger is off the fan, and the words under the notes the first few times.
+   */
+  setFan(v: FanView | null) {
+    const fan = this.el.fan!;
+    fan.toggleAttribute('data-open', !!v);
+    this.el.b!.toggleAttribute('data-held', !!v);
+    if (!v) return;
+    fan.toggleAttribute('data-words', v.words);
+    fan.toggleAttribute('data-off', v.choice === null);
+    for (const el of fan.querySelectorAll<HTMLElement>('[data-call]')) el.toggleAttribute('data-on', el.dataset.call === v.choice);
+  }
+
+  /** Notes rising over the heads of whoever called, in screen pixels, every frame. Off screen they are simply not seen: nothing at the edge. */
+  setCallNotes(notes: readonly CallNoteView[]) {
+    const seen = new Set<number>();
+    for (const n of notes) {
+      seen.add(n.id);
+      let el = this.callNoteEls.get(n.id);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'call-note';
+        el.innerHTML = CALL_GLYPHS[n.kind];
+        el.style.color = n.color;
+        this.el.floats!.appendChild(el);
+        this.callNoteEls.set(n.id, el);
+      }
+      // It pops up over the name tag, rises and fades out.
+      const k = Math.min(1, Math.max(0, n.t / CALL_NOTE_S)), grow = Math.min(1, k / 0.15);
+      el.style.transform = `translate(${n.x.toFixed(1)}px, ${(n.y - 18 - k * 30).toFixed(1)}px) translate(-50%, -100%) scale(${(0.6 + 0.4 * grow).toFixed(3)})`;
+      el.style.opacity = (k < 0.15 ? grow : 1 - ((k - 0.15) / 0.85) ** 2).toFixed(3);
+    }
+    for (const [id, el] of this.callNoteEls) if (!seen.has(id)) { el.remove(); this.callNoteEls.delete(id); }
+  }
+
   setFloats(floats: FloatView[]) {
     const seen = new Set<number>();
     for (const f of floats) {
@@ -1467,6 +1556,18 @@ export class Hud {
     }
     for (const [id, el] of this.floatEls) if (!seen.has(id)) { el.remove(); this.floatEls.delete(id); }
   }
+}
+
+/**
+ * The bag header's tool buttons: the map button, and each other tool's; a tool switched on and off by its
+ * button (the radio) says whether it is on (pressed, to a screen reader) and has a small lamp, lit while it is.
+ */
+export function toolsHtml(tools: readonly ToolView[]): string {
+  return tools.map(t => {
+    const which = t.item === null ? 'data-map' : `data-tool="${esc(t.item)}"`;
+    const switched = t.on === undefined ? '' : ` aria-pressed="${t.on}"${t.on ? ' data-on' : ''}`;
+    return `<button type="button" class="slot" ${which}${switched} aria-label="${esc(t.label)}">${t.icon}${t.on === undefined ? '' : '<i class="lamp" aria-hidden="true"></i>'}</button>`;
+  }).join('');
 }
 
 /** The sheets a tap opens a card in. */

@@ -98,7 +98,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'not_friends': return 'You can only message friends';
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
-    case 'slow_down': return 'Slow down a little';
+    case 'slow_down': return action === 'call' ? 'Catch your breath first' : 'Slow down a little';
     case 'sign_in_first': return action === 'say' || action === undefined ? 'Sign in to talk' : action === 'outfit' ? 'Sign in to wear an outfit' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'bag_at_home': return 'The bag you wear changes only at home';
@@ -264,14 +264,16 @@ export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[
 /**
  * The buttons in the bag's header for the tools you own, in the order you got them: every map is the
  * one map button, where the first of them came (it opens the map of the area you are in, as M does),
- * and every other tool has a button of its own, beside it.
+ * and every other tool has a button of its own, beside it. A tool that listens (the radio) is switched
+ * on and off by its button: `radioOn` is how this browser left it, and its button says so (`on`).
  */
-export function toolViews(tools: readonly string[], items: Items): ToolView[] {
+export function toolViews(tools: readonly string[], items: Items, radioOn = true): ToolView[] {
   let map = false;
   return tools.flatMap((t): ToolView[] => {
     const def = items.get(t);
     // The server sends only tools; one this copy does not know as a tool gets no button of its own.
     if (def.kind !== 'tool') return [];
+    if (def.senses) return [{ item: t, label: def.name, icon: iconFor(def), on: radioOn }];
     if (!def.chart) return [{ item: t, label: def.name, icon: iconFor(def) }];
     if (map) return [];
     map = true;

@@ -3,6 +3,7 @@
  * Everything the client sends is validated with these schemas; the server never trusts it.
  */
 import { z } from 'zod';
+import { CALL_KINDS, type CallKind } from './calls';
 import { MAX_SAY_CHARS, type ChatTo } from './chat';
 import type { EnergyView } from './energy';
 import type { Stats } from './feats';
@@ -14,7 +15,7 @@ import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 23;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -194,6 +195,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
       z.object({ kind: z.literal('mark'), id: z.number().int().nonnegative() }),
     ]),
   }),
+  /** Sing a call (calls.ts): everyone on your map within CALL_REACH hears it, you too. Anyone may, guests included. */
+  z.object({ t: z.literal('call'), kind: z.enum(CALL_KINDS) }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -351,7 +354,7 @@ export type Refusal =
   | 'you_blocked'
   /** Too many requests waiting, or messages they have not read. */
   | 'too_many'
-  /** Too many messages at once. */
+  /** Too many messages at once, or another call too soon after the last. */
   | 'slow_down'
   /** That needs sign-in: talking, and everything among friends (a guest has neither until they sign in). */
   | 'sign_in_first'
@@ -514,6 +517,8 @@ export type ServerMsg =
   | { t: 'refused'; action: RefusedAction; reason: Refusal }
   /** Someone said something you can hear: to everyone online, or near them on your map (a bubble over their head). You hear your own too. */
   | { t: 'said'; to: ChatTo; id: string; name: string; text: string }
+  /** Someone on your map within CALL_REACH sang a call, from tile x,y (calls.ts). You hear your own too. */
+  | { t: 'called'; id: string; kind: CallKind; x: number; y: number }
   /** Your friends (with who is online, and where), requests to you and from you, who you block and your setting: whole, after any change and when asked. */
   | { t: 'friends'; friends: FriendView[]; incoming: PersonView[]; outgoing: PersonView[]; blocked: PersonView[]; requestsOff: boolean }
   /** Private messages to you: every unread one after the welcome, then each new one as it comes. */
@@ -552,7 +557,10 @@ export type ServerMsg =
   | { t: 'board'; lines: string[] }
   /** You reached rank `rank` (1 to RANKS) of a feat (feats.ts), told once; `stats` is where your counts stand now. */
   | { t: 'feat'; id: string; rank: number; stats: Stats }
-  /** Your counts toward feats, as you asked (`stats`): the ranks follow from them (feats.ts, rankOf). */
+  /**
+   * Your counts toward feats, as you asked (`stats`): the ranks follow from them (feats.ts, rankOf). Also
+   * sent unasked when a count that people remark on goes up (gear made, a collapse, a surge: story.ts).
+   */
   | { t: 'stats'; stats: Stats }
   /** You reached this chapter of the story (story.ts): it goes into your journal. */
   | { t: 'chapter'; id: string }
@@ -590,7 +598,7 @@ export type ServerMsg =
 
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
-  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'say' | 'thank'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'say' | 'call' | 'thank'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
 
 /**

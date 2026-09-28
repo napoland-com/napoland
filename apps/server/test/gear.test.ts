@@ -110,6 +110,8 @@ describe('the workbench', () => {
     expect(to(w.drain(), 'a')).toEqual([{ t: 'bench', stash: [{ item: 'cloth', count: 5 }] }]);
     w.craft('a', 1, 1, 'coat', 1000);
     expect(to(w.drain(), 'a')).toEqual([
+      // Gear made counts toward what Walt says once, and the player hears the count at once.
+      { t: 'stats', stats: { made: 1 } },
       { t: 'bench', stash: [{ item: 'coat', count: 1, piece: { cond: 1 } }, { item: 'cloth', count: 1 }] },
       { t: 'did', did: { kind: 'made', item: 'coat', count: 1 } },
     ]);
