@@ -356,6 +356,13 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     } else {
       if (i.chart !== undefined) err(`${name}: only a tool charts a map`);
       if (i.icon !== undefined) err(`${name}: only a tool has an icon (everything else is drawn by its id)`);
+      if (i.senses !== undefined) err(`${name}: only a tool listens (senses)`);
+    }
+    if (i.senses !== undefined) {
+      const { loud, faint, finds } = i.senses;
+      if (!(typeof loud === 'number' && loud > 0 && typeof faint === 'number' && faint > loud)) err(`${name}: it hears loud within some tiles above 0, and faint within more`);
+      if (!Array.isArray(finds) || !finds.length) err(`${name}: it listens for nothing`);
+      for (const f of Array.isArray(finds) ? finds : []) if (f.when !== undefined && f.when !== 'aurora') err(`${name}: it hears ${f.item} always, or only on aurora nights (when: aurora)`);
     }
     if (i.kind === 'gear') {
       if (!SLOTS.includes(i.slot!)) err(`${name}: gear needs a slot (${SLOTS.join(', ')})`);
@@ -459,6 +466,11 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (sealed.has(n.item)) err(`${name} needs ${n.item}, a sealed thing: ${OPENED}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
     }
+  }
+  // What a radio listens for must be something that lies out there.
+  for (const i of data.items) for (const f of Array.isArray(i.senses?.finds) ? i.senses.finds : []) {
+    if (!ids.has(f.item)) err(`item ${JSON.stringify(i.id)} listens for ${f.item}, which is not an item`);
+    else if (!data.finds.some(r => r.item === f.item)) warn(`item ${JSON.stringify(i.id)} listens for ${f.item}, which grows nowhere`);
   }
   for (const i of data.items) for (const r of i.reveals ?? []) {
     if (!ids.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, which is not an item`);

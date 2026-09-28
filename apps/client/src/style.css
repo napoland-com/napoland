@@ -219,6 +219,10 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
    it on any phone held upright, five in landscape. Past that the room line ends in "...". */
 .sheet-head .tools { display: flex; gap: calc(var(--u) * .5); flex: none; }
 .sheet-head .tools .slot { width: var(--btn); height: var(--btn); }
+/* A tool its button switches on and off (the radio): a small lamp in its top left corner (the aerial
+   takes the right), lit green while it is on. */
+.sheet-head .tools .lamp { position: absolute; top: 9%; left: 9%; width: 22%; height: 22%; border-radius: 50%; background: #262e22; box-shadow: 0 0 0 1.5px #0c0f15; }
+.sheet-head .tools [data-on] .lamp { background: #7ff0a8; box-shadow: 0 0 0 1.5px #0c0f15, 0 0 6px 1px rgba(127, 240, 168, .75); }
 .bag-head .heading { flex: 1; min-width: 0; display: grid; gap: .1em; }
 /* Tall enough a line that clipping it (for the ellipsis, with many tools on a small phone) cuts no letter. */
 .bag-head .room { overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }

@@ -166,9 +166,10 @@ describe('validateItems', () => {
       'item "near-woods-map": only a tool charts a map', 'item "near-woods-map": only a tool has an icon (everything else is drawn by its id)', 'the starter tool near-woods-map is not a tool',
     ]);
     // Its button in the bag's header needs a drawing the client has.
-    const noIcon = ['item "near-woods-map": a tool needs an icon for its button in the bag\'s header (map)'];
+    const noIcon = ['item "near-woods-map": a tool needs an icon for its button in the bag\'s header (map, radio)'];
     expect(errors({ ...map, icon: undefined })).toEqual(noIcon);
-    expect(errors({ ...map, icon: 'radio' as never })).toEqual(noIcon);
+    expect(errors({ ...map, icon: 'lantern' as never })).toEqual(noIcon);
+    expect(errors({ ...map, icon: 'radio' })).toEqual([]);
     // A tool needs a name and words, like every item.
     expect(errors({ ...map, name: ' ', text: '' })).toEqual(['item "near-woods-map" has no name', 'item "near-woods-map" has no text']);
   });
@@ -198,6 +199,24 @@ describe('validateItems', () => {
     expect(errors({ mend: { sturdy: [{ item: 'near-woods-map', count: 1 }] } })).toEqual(['mend: sturdy needs near-woods-map, a tool: tools are never used up']);
     expect(errors({ items: [shard, { ...strange, reveals: [{ item: 'radio', count: 1, weight: 1 }] }, radio, mapOf('near-woods-map'), ...starters] }))
       .toEqual(['item "strange" reveals radio, a tool: tools are made at the workbench or found']);
+  });
+
+  it('checks what a tool listens for: only a tool listens, loud nearer than faint, for items that lie out there, always or on aurora nights', () => {
+    const senses = { finds: [{ item: 'shard' }, { item: 'glowcap', when: 'aurora' as const }], loud: 6, faint: 15 };
+    const radio: ItemDef = { id: 'radio', name: 'Radio', kind: 'tool', stack: 1, icon: 'radio', text: 'It crackles.', senses };
+    const finds: ItemsData['finds'] = [{ item: 'shard', map: 'woods', count: 1, respawn: [60, 120] }, { item: 'glowcap', map: 'woods', count: 1, respawn: [60, 120] }];
+    const problems = (r: Partial<ItemDef>, data: Partial<ItemsData> = {}) =>
+      validateItems({ version: 1, items: [shard, glowcap, thermos, { ...radio, ...r }, mapOf('near-woods-map'), ...starters], finds, ...data }, [woods()]).map(p => `${p.level}: ${p.message}`);
+    expect(problems({})).toEqual([]);
+    const reach = ['error: item "radio": it hears loud within some tiles above 0, and faint within more'];
+    expect(problems({ senses: { ...senses, faint: 6 } })).toEqual(reach);
+    expect(problems({ senses: { ...senses, loud: 0 } })).toEqual(reach);
+    expect(problems({ senses: { ...senses, finds: [] } })).toEqual(['error: item "radio": it listens for nothing']);
+    expect(problems({ senses: { ...senses, finds: [{ item: 'shard', when: 'storm' as never }] } })).toEqual(['error: item "radio": it hears shard always, or only on aurora nights (when: aurora)']);
+    expect(problems({ senses: { ...senses, finds: [{ item: 'ghost' }] } })).toEqual(['error: item "radio" listens for ghost, which is not an item']);
+    // Something that never lies out there can be listened for, but it will never be heard.
+    expect(problems({ senses: { ...senses, finds: [{ item: 'thermos' }] } })).toEqual(['warning: item "radio" listens for thermos, which grows nowhere']);
+    expect(problems({ kind: 'resource', icon: undefined })).toContain('error: item "radio": only a tool listens (senses)');
   });
 
   const good: ItemsData = {

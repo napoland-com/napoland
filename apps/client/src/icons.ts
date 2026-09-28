@@ -128,6 +128,15 @@ export const MAP_ICON = icon(`<path d="M4 8l8-2.5 8 2.5 8-2.5v19L20 27l-8-2.5L4 
   <path d="M6.5 22c3-1 3.5-5 7-6s5 2 8.5-3" stroke="#6b4a31" stroke-dasharray="2 1.6"/>
   <ellipse cx="22.5" cy="20.5" rx="2.6" ry="1.6" fill="#6f98b0" stroke="#3f5f72"/>`);
 
+/** A NAPO field radio: a boxy set with NAPO's yellow band, its speaker, a window glowing green like NAPO's screens, and an aerial. */
+export const RADIO_ICON = icon(`<path d="M21 11.5l3.6-8" stroke-width="1.6"/><circle cx="24.9" cy="3.1" r="1.4" fill="${CREAM}" stroke="none"/>
+  <rect x="5" y="11" width="22" height="17.5" rx="2.6" fill="#5b6448"/>
+  <path d="M6 14.8h20" stroke="#e0b83a" stroke-width="2.2"/>
+  <circle cx="11.8" cy="21.9" r="4.4" fill="#343a2c"/>
+  <path d="M9.4 20.3h4.8M8.9 21.9h5.8M9.4 23.5h4.8" stroke="#a3aa8c" stroke-width="1"/>
+  <rect x="18" y="18.2" width="6.4" height="3.4" rx=".7" fill="#7ff0a8" stroke="none"/>
+  <circle cx="21.2" cy="25.2" r="1.7" fill="#c9c2b0"/>`);
+
 /**
  * Outfits in the wardrobe (outfits.ts): a small figure in each, in the colors the world draws it in
  * (view/characters.ts, OUTFIT_LOOKS): what it wears on its head over a head, and the clothes below.
@@ -174,7 +183,7 @@ export const NO_OUTFIT_ICON = icon(`<path d="M16 12.6v-1.7c0-1 .6-1.5 1.5-2 .9-.
   <path d="M16 12.6L4.6 21.4c-.8.6-.4 1.9.6 1.9h21.6c1 0 1.4-1.3.6-1.9z" stroke-width="1.8"/>`);
 
 /** The drawing on each tool's button in the bag's header, by the icon its item names (TOOL_ICONS: every one is drawn). */
-export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON };
+export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON, radio: RADIO_ICON };
 
 /** The drawing for an item: its own, or its slot's in its color for gear, a tool's by its icon (a paper map for one that charts), or a sack. */
 export function iconFor(def: ItemDef): string {

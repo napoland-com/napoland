@@ -247,8 +247,8 @@ export function didText(did: Did, items: Items): string {
       return said.length ? said.join(' ') : `You use the ${n}.`;
     }
     case 'made': {
-      // A tool never goes into the stash: it joins your tools (World.giveTool).
-      if (def.kind === 'tool') return `You make ${aOf(def)}. ${YOURS}`;
+      // A tool never goes into the stash: it joins your tools (World.giveTool). What it does comes with it.
+      if (def.kind === 'tool') return `You make ${aOf(def)}. ${YOURS}${def.about ? ` ${def.about}` : ''}`;
       const pl = they(def, did.count), gear = def.kind === 'gear';
       return `You make ${did.count === 1 ? aOf(def) : amount(def, did.count)}. ${pl ? 'They wait' : 'It waits'} in your stash${gear ? `: put ${pl ? 'them' : 'it'} on at the chest` : ''}.`;
     }
