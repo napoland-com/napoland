@@ -3,6 +3,7 @@
  * data in, plain data out, so it is tested without a page; sound.ts makes the noise.
  */
 import { FLASH_BURST_S, type CreatureView, type FlashView, type MapKind, type SurgePhase, type TileKind, type Weather } from '@napoland/shared';
+import { callSound, type CallSound } from './calls';
 import type { News } from './game';
 import { fireLevel } from './view/fire';
 
@@ -17,7 +18,7 @@ const FLASH_HEARD = 6;
 
 export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water' | 'swish';
 export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'skulker' | 'shimmer';
-export type Shot = { kind: 'step'; surface: Surface } | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'cry' | 'dawn' };
+export type Shot = { kind: 'step'; surface: Surface } | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'cry' | 'dawn' } | ({ kind: 'call' } & CallSound);
 
 export interface Mix {
   /** How loud each loop should play, 0 to 1. */
@@ -104,6 +105,8 @@ export function soundscape(s: Scene, was?: Scene): Mix {
     if (n.kind === 'surge' && n.view.phase === 'unstable') shots.push({ kind: 'bell' });
     if (n.kind === 'storm' && n.view.phase === 'coming') shots.push({ kind: 'rise' });
     if (n.kind === 'conditions' && n.names.length) shots.push({ kind: 'dawn' });
+    // A call, from the side it comes from and as faint as it is far (calls.ts): yours too, from the middle.
+    if (n.kind === 'call' && me) shots.push({ kind: 'call', ...callSound(n.call, n.id, n.x - me.x, n.y - me.y) });
   }
   return { loops, shots };
 }

@@ -6,6 +6,7 @@
  * Browsers only let sound start after a gesture, so the AudioContext is made on the first tap or key.
  * Without Web Audio, Sound does nothing.
  */
+import { CALL_SONGS, type CallNote, type CallSound } from './calls';
 import type { Loop, Mix, Shot, Surface } from './soundscape';
 
 export interface SoundSetting {
@@ -18,6 +19,8 @@ export interface SoundSetting {
 const LOOP_GAIN: Record<Loop, number> = { rain: 0.35, wind: 0.5, fire: 0.6, wires: 0.12, surge: 0.4, watcher: 0.45, skulker: 0.55, shimmer: 0.08 };
 /** Loops ease to a new level with this time constant: most of the way in 0.3 s. */
 const EASE_S = 0.1;
+/** How loud a call beside you is, against the rest. */
+const CALL_PEAK = 0.5;
 
 interface Voice {
   gain: GainNode;
@@ -30,6 +33,8 @@ export class Sound {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private noise: AudioBuffer | null = null;
+  /** The timbre every call is sung in: a soft note with a little of its octave and twelfth, like a hum through cupped hands. */
+  private voice: PeriodicWave | null = null;
   private loops = new Map<Loop, Voice>();
 
   constructor(private setting: SoundSetting) {
@@ -74,6 +79,9 @@ export class Sound {
     const noise = (this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate));
     const n = noise.getChannelData(0);
     for (let i = 0; i < n.length; i++) n[i] = Math.random() * 2 - 1;
+    try {
+      this.voice = ctx.createPeriodicWave(new Float32Array([0, 0, 0, 0]), new Float32Array([0, 1, 0.3, 0.1]));
+    } catch { /* a triangle, then */ }
 
     this.loop('rain', this.filtered(this.hiss(), 'highpass', 1200, 0.5), this.filtered(null, 'lowpass', 7000));
     // Wind: noise through a band that wanders slowly, gusting.
@@ -191,7 +199,63 @@ export class Sound {
       case 'dawn': this.tone(now, 'sine', 392, 392, 1.6, 0.12); return this.tone(now + 0.3, 'sine', 587, 587, 2, 0.1);
       // Something bursting out of the ferns: a sharp rustle and a short cry falling away.
       case 'cry': this.burst(now, 'highpass', 1800, 0.35, 0.6); return this.tone(now + 0.05, 'sawtooth', 1300, 420, 0.4, 0.18);
+      case 'call': return this.call(s, now);
     }
+  }
+
+  /**
+   * A call (calls.ts): the caller's note, in the shape of its kind, from where it came: panned to its
+   * side, and dulled and quietened by the distance. Its nodes are made for it and let go once it ends.
+   */
+  private call(s: CallSound, now: number) {
+    const ctx = this.ctx!, air = this.filtered(null, 'lowpass', s.tone, 0.5), level = ctx.createGain();
+    level.gain.value = s.gain * CALL_PEAK;
+    air.connect(level);
+    // Without a stereo panner (an old Safari) it plays from the middle.
+    if (typeof ctx.createStereoPanner === 'function') {
+      const side = ctx.createStereoPanner();
+      side.pan.value = s.pan;
+      level.connect(side).connect(this.master!);
+    } else level.connect(this.master!);
+    for (const n of CALL_SONGS[s.call]) this.sing(air, now + n.at, n, s.pitch);
+  }
+
+  /** One note of a call at `f` Hz into `into`: it scoops up into its pitch as a voice does, holds with a slow vibrato, and may rise. */
+  private sing(into: AudioNode, at: number, n: CallNote, f: number) {
+    const ctx = this.ctx!, end = at + n.len, o = ctx.createOscillator(), g = ctx.createGain();
+    if (this.voice) o.setPeriodicWave(this.voice);
+    else o.type = 'triangle';
+    o.frequency.setValueAtTime(f * 0.96, at);
+    o.frequency.exponentialRampToValueAtTime(f, at + 0.05);
+    if (n.rise && n.hold !== undefined) {
+      o.frequency.setValueAtTime(f, at + n.hold);
+      o.frequency.exponentialRampToValueAtTime(f * n.rise, end - 0.05);
+    }
+    // The vibrato comes in once the note is held, in cents, so it sways as much on a high voice as a low one.
+    const lfo = ctx.createOscillator(), sway = ctx.createGain();
+    lfo.frequency.value = 5.2;
+    sway.gain.setValueAtTime(0, at);
+    sway.gain.setValueAtTime(0, at + 0.12);
+    sway.gain.linearRampToValueAtTime(14, at + 0.35);
+    lfo.connect(sway).connect(o.detune);
+    const fade = Math.min(0.2, n.len * 0.5);
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(n.peak, at + 0.03);
+    g.gain.setValueAtTime(n.peak, end - fade);
+    g.gain.exponentialRampToValueAtTime(0.0001, end);
+    o.connect(g).connect(into);
+    for (const src of [o, lfo]) {
+      src.start(at);
+      src.stop(end + 0.05);
+    }
+    // A breath under it: a little noise around its upper harmonics.
+    const breath = this.hiss(1, false), bg = ctx.createGain();
+    this.filtered(breath, 'bandpass', f * 3, 2).connect(bg).connect(into);
+    bg.gain.setValueAtTime(0.0001, at);
+    bg.gain.exponentialRampToValueAtTime(n.peak * 0.08, at + 0.02);
+    bg.gain.exponentialRampToValueAtTime(0.0001, end);
+    breath.start(at, Math.random());
+    breath.stop(end + 0.05);
   }
 
   private step(surface: Surface, now: number) {

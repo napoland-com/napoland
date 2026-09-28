@@ -4,9 +4,10 @@
  * out what the World has to say, each message to the players it is for: one player, or everyone on
  * one map. Nothing a client sends is trusted. It also stores players (now and then, and when they
  * leave), piles and marks (whenever one changes) and the Old Stone (whenever it is fed or falls asleep).
- * Friends, requests, blocks, private messages and reports go to social.ts, one player's in order.
- * On a server with sign-in, whoever says hello without it plays as a guest (a character that lives
- * in their browser, by its token); signing in later with that token keeps the character.
+ * Friends, requests, blocks, private messages and reports go to social.ts, one player's in order;
+ * what is said to chat.ts, and calls without words to calls.ts. On a server with sign-in, whoever
+ * says hello without it plays as a guest (a character that lives in their browser, by its token);
+ * signing in later with that token keeps the character.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
@@ -27,6 +28,7 @@ import {
 import { legacyAuth, type Auth } from './auth';
 import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
+import { Calls } from './calls';
 import { Chat } from './chat';
 import { Social, type SocialMsg } from './social';
 import type { DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord } from './storage';
@@ -171,6 +173,12 @@ export function attachNet(o: NetOptions): Net {
     blocks: id => social.blocks(id),
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
   });
+  const calls = new Calls({
+    world,
+    clock,
+    blocks: id => social.blocks(id),
+    send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
+  });
   /** Each player's social actions, one after another: each reads what the one before wrote. */
   const socialQueue = new Map<string, Promise<void>>();
 
@@ -312,6 +320,8 @@ export function attachNet(o: NetOptions): Net {
         return befriends(s.id, () => social.handle(s.id, msg as SocialMsg, s.guest));
       case 'say':
         return chat.say(s.id, msg.to, msg.text);
+      case 'call':
+        return calls.call(s.id, msg.kind);
       case 'hello':
         return fail(s, 'bad_message', 'Already said hello');
     }
