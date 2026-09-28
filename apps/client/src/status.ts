@@ -44,6 +44,8 @@ export interface StatusInput {
   quirks: string[];
   /** You play as a guest (the welcome said). */
   guest?: boolean;
+  /** Whose lantern lights where you stand (energy.ts, lanternLights): you tire half as fast in it. */
+  lantern?: string | null;
   /** What you spent of your merits (merits.ts): past level 20, the panel says how many are left and how far the next is. */
   merits?: MeritsView;
 }
@@ -159,6 +161,7 @@ export function statusView(s: StatusInput): StatusView {
   // Each effect working on you (a hand warmer), with its time left: it counts in Resists above.
   for (const f of s.effects ?? []) if (f.left > 0) rows.push({ label: s.items.get(f.item).name, text: effectText(f, s.items), tone: 'good' });
   if (s.wilds) rows.push({ label: 'Draining', text: drainText({ ...s, wet: s.body.wet, storm: s.storm?.phase === 'storm', season: s.season?.season }) ?? 'Just being out here', tone: 'bad' });
+  if (s.lantern) rows.push({ label: 'Lantern', text: `In ${s.lantern}'s lantern light: you tire half as fast.`, tone: 'good' });
   if (s.body.hitched) rows.push({ label: 'On you', text: 'Something clings to your back. Find a light, a fire or a roof.', tone: 'bad' });
   // The warmth of your own fire (comfort.ts): out in the wilds you tire slower while it lasts.
   const cozy = cozyText(s.body.cozy ?? 0, s.body.fireside);

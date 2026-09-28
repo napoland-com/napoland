@@ -159,6 +159,7 @@ const showStatus = () => {
     progress: game.progress, resists: resistText(game.myGear, items, game.myWorn, effects), effects, season: game.seasonNow(now),
     wear: wearText(game.myGear, game.myWorn, items), quirks: quirkNames(game.myWorn, items),
     storm: game.stormNow(now), flash: game.flashed(now), weather: game.weather, wilds: game.map.data.kind === 'wilds', guest: game.guest, merits: game.merits,
+    lantern: game.lanternOver(),
   }));
 };
 /**

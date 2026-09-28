@@ -452,8 +452,17 @@ export const WADERS_ICON = icon(`<path d="M10.6 9L9.2 3.6M21.4 9l1.4-5.4" stroke
   <path d="M9.5 13.2h13" stroke="#d9773a" stroke-width="1.1" stroke-dasharray="1.4 1"/>
   <path d="M7.7 26h5.5v2.7H6.3c0-1.5.6-2.7 1.4-2.7zM18.8 26h5.5c.8 0 1.4 1.2 1.4 2.7h-6.9z" fill="#3a2f24"/>`);
 
+/** A lantern: a scrap cage on a wire bail, green fused glass inside, and its warm light. */
+export const LANTERN_ICON = icon(`${halo(16, 18, 11, '#ffc56b')}
+  <path d="M11.4 9.6C11.4 5.2 20.6 5.2 20.6 9.6" stroke-width="1.6"/>
+  <path d="M10.6 10.2h10.8l-1.2 2.2h-8.4z" fill="#6d7780"/>
+  <path d="M12 12.4h8v11.2h-8z" fill="#7fd08a" opacity=".85"/>
+  <path d="M14.6 21.4c-1.6-2.4.6-4.2 1.4-6 .8 1.8 3 3.6 1.4 6z" fill="#ffd98a" stroke="none"/>
+  <path d="M12 12.4v11.2M20 12.4v11.2M16 12.4v2" stroke="#6d7780" stroke-width="1.3"/>
+  <path d="M10.4 23.6h11.2v2.6H10.4z" fill="#57636a"/>`);
+
 /** The drawing on each tool's button in the bag's header, by the icon its item names (TOOL_ICONS: every one is drawn). */
-export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON, radio: RADIO_ICON, cutters: CUTTERS_ICON, waders: WADERS_ICON };
+export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON, radio: RADIO_ICON, cutters: CUTTERS_ICON, waders: WADERS_ICON, lantern: LANTERN_ICON };
 
 /**
  * The drawing for an item: its own, or its slot's in its color for gear, a tool's by its icon (a paper map

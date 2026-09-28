@@ -14,7 +14,8 @@
  * - a flash discharging where you stand: a spark (electricity) or a fire flash (heat).
  * In winter the cold part of it is stronger (sky.ts, SEASONS: `chill`), so cold resistance matters more.
  * Far out (FAR_STEPS or more from home), a pathfinder's whole drain is gentler (feats.ts), and anywhere
- * out here, cozy from your own cabin's fire, so is everyone's (comfort.ts).
+ * out here, cozy from your own cabin's fire, so is everyone's (comfort.ts). In a deep region, standing in
+ * someone else's lantern light halves it (lanternLights).
  *
  * The server owns the numbers; the client only shows them (and counts between updates using `rate`).
  * Tuning targets: standing at the woods' edge in the rain, dry and light, empties a full bar in about
@@ -127,6 +128,27 @@ export interface Conditions {
   drain?: number;
   /** A light over you besides the street lights (a fire lookout's beam as it passes, lookout.ts): a surge does not reach you under it. */
   lit?: boolean;
+  /** Someone else's lantern lights you (lanternLights): the whole drain is LANTERN_DRAIN of itself. */
+  lantern?: boolean;
+}
+
+/** The tool that is a lantern (content/items.json). */
+export const LANTERN = 'lantern';
+/** Lanterns count in regions this deep or deeper, where the dark itself wears you down (the Burn). */
+export const LANTERN_DEPTH = 3;
+/** A lantern lights the ground this many tiles around whoever carries it, in a straight line. */
+export const LANTERN_REACH = 3;
+/** In someone else's lantern light you tire this much as fast: half. Your own lights the way for the others. */
+export const LANTERN_DRAIN = 0.5;
+
+/**
+ * Does the lantern carried at `by` light tile x,y of `map`, so whoever stands there tires slower? Only out
+ * in the wilds of a deep region. The caller never passes your own: a lantern helps the others, and more
+ * lanterns light more ground, so a group walks in a bigger light than anyone alone.
+ */
+export function lanternLights(map: TileMap, x: number, y: number, by: { x: number; y: number }): boolean {
+  if (map.data.kind !== 'wilds' || map.data.depth < LANTERN_DEPTH) return false;
+  return (by.x - x) ** 2 + (by.y - y) ** 2 <= LANTERN_REACH ** 2;
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -154,6 +176,7 @@ export function energyRate(map: TileMap, x: number, y: number, weather: Weather,
   }
   if (far >= FAR_STEPS) k *= c.farDrain ?? 1;
   k *= c.drain ?? 1;
+  if (c.lantern) k *= LANTERN_DRAIN;
   return -DRAIN_PER_SECOND * Math.max(1, map.data.depth) * (1 + far / DRAIN_GROWTH_STEPS) * k;
 }
 
