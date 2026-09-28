@@ -128,6 +128,8 @@ import {
   WHOLE_WEEK,
   FLASH_BURST_S,
   FLASH_GLOW_S,
+  GATE_PULLERS,
+  GATE_WINDOW_MS,
   GLIMPSES_PER_MAP,
   GLIMPSE_EVERY_S,
   GLIMPSE_KEPT_MS,
@@ -186,6 +188,8 @@ import {
   faces,
   featOf,
   fitPieces,
+  gateArrival,
+  gateAt,
   gather,
   gift,
   mendCost,
@@ -293,6 +297,7 @@ import {
   type LookKind,
   type LotView,
   type MapNote,
+  type MapObject,
   type MeritsView,
   type NotebookData,
   type NotebookEvent,
@@ -1034,6 +1039,8 @@ export class World {
   private readonly copies = new Map<string, Set<Zone>>();
   /** Copies whose last player left: they close at the next tick, unless someone came back meanwhile. */
   private readonly emptied = new Set<Zone>();
+  /** Who is pulling at a gate right now, by the copy of its map and the gate (pull): their id, and when. */
+  private readonly pulls = new Map<string, Array<{ id: string; at: number }>>();
   /** readyAt of players who left mid-step, so leaving and joining again cannot skip the wait. */
   private readonly resting = new Map<string, number>();
   private outbox: Outgoing[] = [];
@@ -2274,9 +2281,35 @@ export class World {
       this.remarked(p, o.id);
       this.moveStory(p, { talk: o.id });
     } else if (o?.kind === 'console') this.moveStory(p, { read: o.id });
+    const gate = gateAt(p.map.data, x, y);
+    if (gate) this.pull(p, gate, now);
     // Anything read like a sign may open a page of the field notes.
     const read = readableAt(p.map.data, x, y);
     if (read) for (const e of readEvents(p.map.data.id, read)) this.note(p, e);
+  }
+
+  /**
+   * The player pulls at one of NAPO's gates (A at it, from the row below it). It will not move for one: when
+   * GATE_PULLERS different people pull within GATE_WINDOW_MS, each still under it, it swings open and every
+   * one of them goes through, as if they had stepped onto an exit. The way back needs nobody (the far side's
+   * home exit). Pulls are kept by the copy of the map and the gate, only as long as they count.
+   */
+  private pull(p: Online, gate: Extract<MapObject, { kind: 'gate' }>, now: number): void {
+    const under = (q: Online | undefined): q is Online => !!q && q.zone === p.zone && q.rec.y === gate.y + 1 && q.rec.x >= gate.x && q.rec.x < gate.x + gate.w;
+    if (!under(p)) return;
+    const key = `${p.zone.key}|${gate.x},${gate.y}`;
+    const pullers = [...(this.pulls.get(key) ?? []).filter(q => now - q.at <= GATE_WINDOW_MS && q.id !== p.rec.id), { id: p.rec.id, at: now }]
+      .filter(q => under(this.players.get(q.id)));
+    if (pullers.length < GATE_PULLERS) return void this.pulls.set(key, pullers);
+    this.pulls.delete(key);
+    for (const { id } of pullers) {
+      const q = this.players.get(id)!;
+      // What they had queued was planned on this side of the gate.
+      q.queue.length = 0;
+      q.after = undefined;
+      if (this.advance(q, now) <= 0) this.collapse(q, now);
+      else this.cross(q, gateArrival(gate, q.rec.x), now);
+    }
   }
 
   /**

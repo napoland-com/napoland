@@ -336,6 +336,26 @@ export function stakeModel(s: { x: number; y: number }): THREE.Group {
   return g;
 }
 
+/**
+ * One of NAPO's gates, across its w tiles: a concrete post at each end, a heavy steel gate between them in
+ * a frame braced corner to corner, its top rail striped NAPO yellow and black, a pull handle on its south
+ * face over each tile (one for each who must pull), and its yellow plate in the middle.
+ */
+export function gateModel(o: { x: number; y: number; w: number }): THREE.Group {
+  const g = pivot(o.x + o.w / 2, 0, o.y + 0.5), W = o.w, H = 1.15;
+  for (const x of [-W / 2 + 0.08, W / 2 - 0.08]) g.add(box(0.2, H + 0.2, 0.26, CONCRETE, x, (H + 0.2) / 2, 0), box(0.24, 0.06, 0.3, '#5e6466', x, H + 0.23, 0, false));
+  const span = W - 0.36;
+  for (const y of [0.12, H / 2, H - 0.06]) g.add(box(span, 0.07, 0.07, STEEL, 0, y, 0));
+  for (let k = 0; k <= W * 3; k++) g.add(box(0.03, H - 0.12, 0.03, '#8e979b', -span / 2 + (span * k) / (W * 3), H / 2, 0, false));
+  const brace = box(Math.hypot(span, H - 0.18), 0.05, 0.05, STEEL, 0, H / 2, 0.02, false);
+  brace.rotation.z = Math.atan2(H - 0.18, span);
+  g.add(brace);
+  for (let k = 0; k < W * 4; k++) g.add(box(span / (W * 4), 0.09, 0.09, k % 2 ? INK : NAPO_YELLOW, -span / 2 + (span * (k + 0.5)) / (W * 4), H - 0.02, 0.01, false));
+  for (let t = 0; t < W; t++) g.add(box(0.05, 0.3, 0.05, INK, -W / 2 + t + 0.5, 0.62, 0.1, false), box(0.05, 0.05, 0.1, INK, -W / 2 + t + 0.5, 0.78, 0.06, false), box(0.05, 0.05, 0.1, INK, -W / 2 + t + 0.5, 0.46, 0.06, false));
+  g.add(box(0.36, 0.2, 0.02, NAPO_YELLOW, 0, 0.86, 0.06, 0.01), box(0.26, 0.03, 0.01, INK, 0, 0.9, 0.075, false), box(0.2, 0.03, 0.01, INK, 0, 0.83, 0.075, false));
+  return g;
+}
+
 /** NAPO's things that stand on a tile (its signs and buildings aside): null for anything else. */
 export function napoProp(o: MapObject): THREE.Object3D | null {
   switch (o.kind) {
@@ -343,6 +363,7 @@ export function napoProp(o: MapObject): THREE.Object3D | null {
     case 'pump': return pumpModel(o);
     case 'cage': return cageModel(o, HUM);
     case 'stake': return stakeModel(o);
+    case 'gate': return gateModel(o);
     case 'truck': return o.style === 'napo' ? napoTruck(o) : null;
     default: return null;
   }

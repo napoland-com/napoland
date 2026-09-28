@@ -155,6 +155,9 @@ const CREATURE_STEP_MS: Record<CreatureView['kind'], number> = { watcher: 420, s
 /** A creature as the game animates it: like a player, and what kind it is and whom it chases. */
 type Creature = Mover & { kind: CreatureView['kind']; chasing: string | undefined };
 
+/** What pulling at one of NAPO's gates alone feels like, before its plate. */
+export const GATE_PULLED = 'You pull at the gate. It gives a little, and no more: it will not move for one.';
+
 /** What a sign is called in the text box, by its style. */
 const SIGN_WHO = { plain: 'Sign', napo: 'NAPO sign', cardboard: 'Cardboard sign', mailbox: 'Mailbox' } as const;
 
@@ -168,6 +171,9 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'note') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', note: o }];
     // A jeep is bigger than one tile: its stencil reads from whichever end you face.
     if (o.kind === 'jeep') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO jeep', lines: o.text, kind: 'talk' }));
+    // A gate is pulled at from any of its tiles, and its plate read there: the server counts the pull, and
+    // when enough pull at once it takes them all through.
+    if (o.kind === 'gate') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO gate', lines: [GATE_PULLED, ...o.text], kind: 'talk' }));
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
