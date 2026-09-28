@@ -1,5 +1,5 @@
 {
-  "version": 32,
+  "version": 33,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -155,6 +155,7 @@
     {"item":"live-shard","map":"burn","steps":[40,999],"count":5,"respawn":[60,120],"when":"unstable"},
     {"item":"strange","map":"burn","steps":[50,999],"count":3,"respawn":[1200,2400]},
     {"item":"strange","map":"burn","steps":[40,999],"count":4,"respawn":[120,240],"when":"unstable"},
+    {"item":"battery","map":"burn","near":{"kinds":["antenna"],"radius":2.5},"count":1,"respawn":[1200,2400]},
     {"item":"fused-glass","map":"burn","around":{"x":29,"y":10,"r":9},"on":["lot"],"count":3,"respawn":[1200,2400]},
     {"item":"thermos","map":"burn-line-cabin","near":{"kinds":["fireplace","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"burn-map","map":"burn-line-cabin","near":{"kinds":["paper"],"radius":1.5},"count":1,"respawn":[60,120]},
