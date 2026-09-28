@@ -162,6 +162,14 @@ export const CEDAR_HEIGHT = 0.88;
 const CEDAR_TINT = new THREE.Color(1.12, 1.18, 0.9);
 /** Ferns under old growth: [wider, taller]. */
 export const DEEP_FERNS: readonly [number, number] = [1.3, 1.5];
+/**
+ * A burnt forest (MapData.forest 'burnt', the Burn): the same firs, standing bare and black, narrower and a
+ * little taller with their needles gone. Tinted and scaled like the cedars: no draw call of its own.
+ */
+export const SNAG_TINT = new THREE.Color(0.3, 0.26, 0.24);
+export const SNAG_SPREAD = 0.5;
+export const SNAG_HEIGHT = 1.12;
+
 /** Is the tree on this tile a cedar? The same on every visit. */
 export const isCedar = (x: number, y: number) => hash2(x * 17 + 5, y * 23 + 9) < CEDAR_SHARE;
 
@@ -496,7 +504,8 @@ export class WorldView {
         quad([a[0], y0, a[1]], [a[0], ny, a[1]], [b[0], ny, b[1]], [b[0], y0, b[1]], w);
       }
     }
-    const W = map.width, H = map.height, outerColor = '#1b271d';
+    // Past a burnt forest's edge the ground is ash too, so no line of green shows where the map ends.
+    const W = map.width, H = map.height, outerColor = map.data.forest === 'burnt' ? '#2b2826' : '#1b271d';
     // Where an exit leaves the map, its road or trail goes on outside and fades into the dark, so you can see the way on.
     const outer = new THREE.Color(outerColor);
     for (const [key, o] of this.openings) {
@@ -569,7 +578,7 @@ export class WorldView {
   private buildNature() {
     const { map } = this, W = map.width, H = map.height;
     // Old growth (the Far Woods): taller firs with cedars among them, and deeper ferns.
-    const old = map.data.forest === 'old';
+    const old = map.data.forest === 'old', burnt = map.data.forest === 'burnt';
     // `shade`: it casts a blob shadow. Deep in old growth nobody sees the ground under the crowns, so none
     // there: a block of only such trees costs one draw call less.
     type Tree = { x: number; y: number; z: number; s: number; v: number; cedar: boolean; shade: boolean };
@@ -601,10 +610,11 @@ export class WorldView {
       o.position.set(t.x, t.z, t.y);
       o.rotation.y = t.v * 6;
       if (t.cedar) o.scale.set(t.s * CEDAR_SPREAD, t.s * CEDAR_HEIGHT, t.s * CEDAR_SPREAD);
+      else if (burnt) o.scale.set(t.s * SNAG_SPREAD, t.s * SNAG_HEIGHT, t.s * SNAG_SPREAD);
       else o.scale.setScalar(t.s);
     };
     for (const block of blocks(trees)) {
-      this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); }, bodyMat, true);
+      this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); }, bodyMat, true);
       this.instanced(shell, block, place, OUTLINE_INSTANCED);
       // Outside the map the forest is only a backdrop, too dense to see the ground under it: no shadows, one draw call less a block.
       const shaded = block.filter(t => t.shade && map.inside(Math.floor(t.x), Math.floor(t.y)));

@@ -7,7 +7,7 @@ import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
 import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
 import {
-  CREATURE_STEP_MIN_MS, FRONTED, NOTE_AUTHORS, NOTE_ON, NOTE_WHEN, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, hangs, objectTiles, underfoot, watcherStepMs,
+  CREATURE_STEP_MIN_MS, FRONTED, GATE_PULLERS, NOTE_AUTHORS, NOTE_ON, NOTE_WHEN, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, gateArrival, hangs, objectTiles, underfoot, watcherStepMs,
   type MapData, type MapObject, type NpcLook, type TileKind,
 } from './map';
 import { DIRS, stepTarget } from './movement';
@@ -124,6 +124,14 @@ export function validateMap(data: MapData): Problem[] {
       else if (hangs(o.look) !== (map.kind(o.x, o.y) === 'wall')) err(`paper at ${o.x},${o.y}: a ${o.look} ${hangs(o.look) ? 'hangs on a wall tile' : 'lies on a table, on the floor'}`);
     }
     if ((o.kind === 'cage' || o.kind === 'jeep') && (!o.text?.length || o.text.some(t => !t.trim()))) err(`${o.kind} at ${o.x},${o.y} has nothing to read`);
+    if (o.kind === 'gate') {
+      // Pulled from below, one puller a tile: as wide as the pullers it takes, each with ground to stand on.
+      if (!o.text?.length || o.text.some(t => !t.trim())) err(`gate at ${o.x},${o.y} has nothing to read`);
+      if (data.kind !== 'wilds') err(`gate at ${o.x},${o.y}: NAPO's gates stand out in the wilds`);
+      if (!(Number.isInteger(o.w) && o.w >= GATE_PULLERS && o.w <= 4)) err(`gate at ${o.x},${o.y} is ${o.w} wide: ${GATE_PULLERS} to 4, one tile for each who pulls`);
+      else if (objectTiles(o).some(([x, y]) => !map.walkable(x, y + 1))) err(`gate at ${o.x},${o.y}: every tile below it is walkable ground, where people pull from`);
+      if (!Dir.safeParse(o.dir).success) err(`gate at ${o.x},${o.y}: dir must be up, down, left or right`);
+    }
     for (const [x, y] of objectTiles(o)) {
       if (!map.inside(x, y)) err(`${o.kind} at ${o.x},${o.y} reaches outside the map`);
       if (underfoot(o)) continue;
@@ -258,7 +266,7 @@ export function validateMap(data: MapData): Problem[] {
     for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (map.walkable(x, y) && map.homeSteps(x, y) < 0) lost++;
     if (lost) warn(`${lost} walkable tiles have no way to a home exit`);
   }
-  if (data.forest !== undefined && (data.forest !== 'old' || data.kind !== 'wilds')) err(`forest ${JSON.stringify(data.forest)}: only the wilds say how their forest grows, and it is old or left out`);
+  if (data.forest !== undefined && (!['old', 'burnt'].includes(data.forest) || data.kind !== 'wilds')) err(`forest ${JSON.stringify(data.forest)}: only the wilds say how their forest grows, and it is old, burnt or left out`);
   validateTallGrass(data, map, err, warn);
   const named = new Set<string>();
   for (const p of data.places ?? []) {
@@ -453,6 +461,18 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
       if (e.home && target.data.depth >= map.data.depth) out.push({ level: 'warning', map: map.data.id, message: `${where} is marked home but does not lead to a shallower map` });
       return undefined;
     });
+    // A gate leads on like an exit, deeper, and its far side's way home comes back to it.
+    for (const g of map.data.objects) {
+      if (g.kind !== 'gate') continue;
+      const where = `gate at ${g.x},${g.y} (to ${g.to})`, target = byId.get(g.to);
+      if (!target) { out.push({ level: 'error', map: map.data.id, message: `${where}: there is no map ${g.to}` }); continue; }
+      for (let x = g.x; x < g.x + g.w; x++) {
+        const a = gateArrival(g, x);
+        if (!target.walkable(a.x, a.y) || target.exitAt(a.x, a.y)) out.push({ level: 'error', map: map.data.id, message: `${where}: tile ${x} arrives on ${a.x},${a.y} in ${g.to}, which is not walkable ground (or is an exit)` });
+      }
+      if (target.data.kind !== 'wilds' || target.data.depth <= map.data.depth) out.push({ level: 'error', map: map.data.id, message: `${where}: a gate leads deeper into the wilds` });
+      if (!target.data.exits.some(e => e.home && e.to === map.data.id)) out.push({ level: 'error', map: map.data.id, message: `${where}: the way home from ${g.to} comes back here, so nobody is shut in behind it` });
+    }
   }
 
   // The owner's rule for the region right outside the home town: its shelter nearest to the way home
@@ -506,7 +526,9 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   const reached = new Set([homeId]);
   const queue = [homeId];
   for (let h = 0; h < queue.length; h++) {
-    for (const e of byId.get(queue[h]!)?.data.exits ?? []) if (byId.has(e.to) && !reached.has(e.to)) { reached.add(e.to); queue.push(e.to); }
+    const m = byId.get(queue[h]!)?.data;
+    const ways = [...(m?.exits ?? []), ...(m?.objects ?? []).filter(o => o.kind === 'gate')];
+    for (const e of ways) if (byId.has(e.to) && !reached.has(e.to)) { reached.add(e.to); queue.push(e.to); }
   }
   for (const id of byId.keys()) if (!reached.has(id)) out.push({ level: 'warning', map: id, message: `cannot be reached from ${homeId}` });
   return out;
