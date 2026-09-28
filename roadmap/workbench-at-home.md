@@ -2,7 +2,7 @@
 id: workbench-at-home
 title: The workbench at home
 status: done
-order: 230
+order: 270
 area: world
 depends: [equipment-resistances]
 ---
