@@ -118,6 +118,8 @@ export function statusView(s: StatusInput): StatusView {
  * guest (`guest`) would wear once signed in.
  */
 export function newsBanner(n: News, place: string, items?: Items, guest = false): { title: string; sub: string } | null {
+  // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where.
+  if (n.kind === 'call') return null;
   if (n.kind === 'parcel') return items ? parcelBanner(n.parcel, items, n.outfits) : null;
   if (n.kind === 'conditions') return n.names.length ? { title: 'A new day', sub: n.names.join('\n') } : null;
   if (n.kind === 'level') {

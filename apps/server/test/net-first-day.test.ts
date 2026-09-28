@@ -68,7 +68,9 @@ async function serverAt(at = Date.now(), more: Partial<ServerOptions> = {}) {
     await c.settle();
     return { c, id, welcome };
   };
+  /** The counts as the server answers when asked: what it sent unasked before (a count that went up) is left out. */
   const stats = async (c: Client) => {
+    await c.settle();
     c.send({ t: 'stats' });
     return (await c.next('stats')).stats;
   };
@@ -100,6 +102,19 @@ describe('the counts a first day keeps', () => {
     expect(w.storage.get(p.id)!.stats!.collapsed).toBe(1);
   });
 
+  it('tells the player at once, unasked, when gear made or a collapse adds to the counts: what people say about it is due now', async () => {
+    // Ten seconds into a calm stretch of the woods, so that no surge adds to the counts meanwhile.
+    const w = await serverAt((Math.floor(Date.now() / 1000 / SURGE.every) * SURGE.every + 10) * 1000);
+    const maker = await w.enter({ map: 'house', x: 1, y: 2, dir: 'up', stash: { items: { cloth: 9 }, out: {} } });
+    maker.c.send({ t: 'craft', x: 1, y: 1, recipe: 'coat' });
+    // Both pieces of one making, in one message.
+    expect(await maker.c.next('stats')).toEqual({ t: 'stats', stats: { made: 2 } });
+    expect((await maker.c.settle()).filter(m => m.t === 'stats')).toEqual([]);
+    const faller = await w.enter({ map: 'woods', x: 3, y: 6, energy: 1, stats: { made: 1 } });
+    w.later(5000);
+    expect(await faller.c.next('stats')).toEqual({ t: 'stats', stats: { made: 1, collapsed: 1 } });
+  });
+
   it('counts each surge that caught someone out in the wilds once, and none that found them indoors or in town', async () => {
     // One second before a surge starts.
     const round = Math.floor(Date.now() / 1000 / SURGE.every) * SURGE.every;
@@ -113,7 +128,8 @@ describe('the counts a first day keeps', () => {
     const home = await w.enter({ map: 'house', x: 2, y: 3 });
     const inTown = await w.enter({ map: 'town', x: 1, y: 2 });
     w.later(1000 + SURGE.sweep * 1000);
-    await new Promise(resolve => setTimeout(resolve, 100));
+    // Heard at once, unasked.
+    expect((await out.c.next('stats')).stats.surged).toBe(1);
     expect((await w.stats(out.c)).surged).toBe(1);
     // The same surge, still on: still one.
     w.later(20_000);

@@ -10,12 +10,13 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type OAuthProvider,
-  type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData, type MapRef,
+  type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
-import { detailView, type DetailRef } from './details';
+import { CALL_WORDS_UNTIL, CallButton, type BPress } from './calls';
+import { detailView } from './details';
 import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
@@ -27,12 +28,13 @@ import { Maps } from './maps';
 import { mapFor, paperMap } from './papermap';
 import { providerButton } from './providers';
 import { Connection, serverUrl } from './net';
-import { parcelNote } from './parcels';
+import { parcelNote, untold } from './parcels';
 import { goalText } from './said';
 import { Sound, type SoundSetting } from './sound';
 import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { Resolution } from './quality';
+import { heardFinds, nearest, radioOf, type RadioScene } from './radio';
 import { levelText, newsBanner, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
@@ -63,6 +65,9 @@ const soundSetting = ((): SoundSetting => {
   } catch { return { volume: 0.7, muted: false }; }
 })();
 const sound = new Sound(soundSetting);
+/** The radio's switch, as this browser keeps it: on unless it was turned off, so a radio just made is heard at once. */
+const RADIO_KEY = 'napoland.radio';
+let radioOn = store.get(RADIO_KEY) !== 'off';
 
 // Every map is bundled, so moving between them needs no download; the items too, so the bag can
 // name what it holds, and the story, for what people say and the journal. (Globs, not imports: a
@@ -121,6 +126,21 @@ const showStatus = () => {
  * (the bag, the workbench), so A and B answer it before anything else.
  */
 const boxUp = () => !!game.question || !!game.note;
+/** B held, a finger on it or Q: a tap is B, held with nothing open it is a call (calls.ts). */
+const callB = new CallButton();
+/**
+ * B held becomes a call only with no panel, card, text box or question open (nor the sign-in cards), on
+ * a map that is not fading away: whatever B would close or back out of, it closes, never a call.
+ */
+const callable = () => game.online && overlay.hidden && !arrival.dark && !panelOpen() && !hud.cardOpen && !hud.menuOpen && !boxUp() && !game.dialog;
+/** How many calls this browser has sung: the fan says them in words the first few times. */
+const CALLS_KEY = 'napoland.calls';
+let callsSung = Math.max(0, Math.floor(Number(store.get(CALLS_KEY)) || 0));
+/** What B does, pressed or let go: B as ever, or a call sung (counted, once it went). */
+const bDoes = (r: BPress) => {
+  if (r?.kind === 'b') controls.b();
+  else if (r?.kind === 'call' && game.call(r.call, performance.now())) store.set(CALLS_KEY, String(++callsSung));
+};
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
 const controls = {
   // While it asks, the stick answers the question, and the panel it was asked from stays open.
@@ -129,6 +149,11 @@ const controls = {
   a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.pressCard()) return; else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.crateOpen) hud.toggleCrate(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the text box first, then the About panel, then out of the status, a card or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressB(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
+  // B held and let go, where the finger is on the fan, 1, 2 or 3 while Q is held, and a hold taken away.
+  holdB: (on: boolean) => { const now = performance.now(); bDoes(on ? callB.press(now, callable()) : callB.release(now, callable())); },
+  pointB: (choice: CallKind | null) => callB.point(choice),
+  call: (kind: CallKind) => bDoes(callB.choose(kind, callable())),
+  cancelCall: () => callB.cancel(),
 };
 const hud = new Hud(screen, {
   ...controls,
@@ -157,8 +182,7 @@ const hud = new Hud(screen, {
   goal: () => {
     const next = game.nextGear();
     if (!next || !game.benchBeside()) return;
-    goalCard = { from: 'recipe', id: next.recipe.id };
-    game.openBench();
+    game.openBench({ from: 'recipe', id: next.recipe.id });
   },
   // The workbench's rows are recipes, mending ("mend:" and the slot) and upgrades ("up:" and the piece, upgradeId).
   craft: recipe => {
@@ -204,8 +228,18 @@ const hud = new Hud(screen, {
     }
   },
   map: () => openMap(),
-  // Any other tool of yours says what it is, in the text box (which the bag would cover).
-  tool: item => { hud.toggleBag(false); game.read(items.get(item).name, [items.get(item).text]); },
+  // A tool that listens (the radio) is switched on and off by its button, and the bag stays open to
+  // show its lamp; any other tool of yours says what it is, in the text box (which the bag would cover).
+  tool: item => {
+    const def = items.get(item);
+    if (def.senses) {
+      radioOn = !radioOn;
+      store.set(RADIO_KEY, radioOn ? 'on' : 'off');
+      return;
+    }
+    hud.toggleBag(false);
+    game.read(def.name, [def.text]);
+  },
   version: () => loadVersion(),
   sound: s => { sound.set(s); store.set(SOUND_KEY, JSON.stringify(s)); },
 });
@@ -646,8 +680,6 @@ let chestShown: typeof game.chest = null;
 let capacityShown = 0;
 /** The workbench and the gear worn, as their sheets show them. */
 let benchShown: typeof game.bench = null;
-/** The card the first goal asked the workbench to open with, once it has. */
-let goalCard: DetailRef | null = null;
 /** The crate as its sheet shows it, and when that was drawn: how long ago each thing was left moves on. */
 let crateShown: typeof game.cache = null;
 let crateAt = 0;
@@ -660,6 +692,17 @@ let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: nu
 /** The wardrobe as drawn: a guest's gate, or the outfits of a level, and the one worn. */
 let wardrobeShown = '';
 let toolsShown: string[] | null = null;
+let radioShown: boolean | null = null;
+/** Your radio (radioOf), and where the finds it listens for lie on this map: found again only when the finds or the weather change. */
+let radio: ReturnType<typeof radioOf>;
+let radioSpots: Array<{ x: number; y: number }> = [];
+let spotsFor: { loot: number; weather: Weather | null } = { loot: -1, weather: null };
+/**
+ * The radio as each frame's scene has it: two kept and taken in turn, so last frame's stays as it was
+ * for the soundscape to compare with (a switch), and a frame makes nothing new for the radio.
+ */
+const radioScenes: [RadioScene, RadioScene] = [{ on: false, senses: { loud: 0, faint: 0 }, near: Infinity }, { on: false, senses: { loud: 0, faint: 0 }, near: Infinity }];
+let radioTurn = 0;
 let progressShown: typeof game.progress | null = null;
 let storyShown = -1;
 /**
@@ -673,6 +716,16 @@ const toSay: News[] = [];
 let heard: Scene | undefined;
 /** The question and what the box says by itself, as last drawn (Game.boxChanges). */
 let boxShown = -1;
+/** The fan of calls over B as last drawn: '' while closed. */
+let fanShown = '';
+/** This frame's radio, in the one of radioScenes whose turn it is. */
+function radioScene(senses: Senses, near: number): RadioScene {
+  const r = radioScenes[(radioTurn ^= 1)];
+  r.on = radioOn;
+  r.senses = senses;
+  r.near = near;
+  return r;
+}
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
   requestAnimationFrame(frame);
@@ -683,8 +736,8 @@ function frame(now: number) {
   arrival.update(dt);
   game.held = arrival.leaving;
   game.update(dt, now);
-  // The letter home, and offers to thank someone, wait for the panels (and any card open in one), the menu and the fade.
-  game.idle(now, panelOpen() || hud.cardOpen || hud.menuOpen || arrival.dark > 0);
+  // The letter home, and offers to thank someone, wait for the panels (and any card open in one), the menu, the fan of calls and the fade.
+  game.idle(now, panelOpen() || hud.cardOpen || hud.menuOpen || callB.open || arrival.dark > 0);
   const me = game.me;
   if (game.lootChanges !== lootShown.changes || view !== lootShown.view) {
     lootShown = { changes: game.lootChanges, view };
@@ -735,7 +788,7 @@ function frame(now: number) {
   const body = game.online ? game.bodyNow(now) : null;
   hud.setBody(body);
   if (body) hud.setLoad(body.load);
-  const worldNews = game.news.splice(0);
+  const worldNews = game.takeNews(now);
   for (const n of worldNews) {
     // A dot on the menu until the journal is opened (it shows the chapter at once if it is open).
     if (n.kind === 'chapter') { toSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
@@ -775,9 +828,9 @@ function frame(now: number) {
   if (benchChanged) {
     if (game.bench && !benchShown) {
       hud.toggleBench(true);
-      if (goalCard) hud.cardOf('bench', goalCard);
+      const card = game.takeBenchCard();
+      if (card) hud.cardOf('bench', card);
     }
-    goalCard = null;
     if (!game.bench && benchShown) hud.toggleBench(false);
     benchShown = game.bench;
   }
@@ -804,7 +857,15 @@ function frame(now: number) {
     if (game.cache) hud.setCrate(crateView({ ...game.cache, items: game.cacheItemsNow(now) }, items, game.meId ?? ''));
   }
   // Your maps are one button, which opens the one for where you are; any other tool has its own, in the order you got them.
-  if (game.tools !== toolsShown) hud.setTools(toolViews((toolsShown = game.tools), items));
+  if (game.tools !== toolsShown || radioOn !== radioShown) {
+    radio = radioOf(game.tools, items);
+    hud.setTools(toolViews((toolsShown = game.tools), items, (radioShown = radioOn)));
+  }
+  // Every change to the finds counts in lootChanges, a new map's too.
+  if (radio && (game.lootChanges !== spotsFor.loot || weather !== spotsFor.weather)) {
+    spotsFor = { loot: game.lootChanges, weather };
+    radioSpots = heardFinds(game.finds.values(), radio.senses, weather);
+  }
   if (game.chest !== chestShown || game.progress !== progressShown) {
     if (game.chest && !chestShown) hud.toggleStash(true);
     if (!game.chest && chestShown) hud.toggleStash(false);
@@ -814,7 +875,12 @@ function frame(now: number) {
     hud.setLevel(game.progress.level);
   }
   // Open, the stash says once what came in the parcels since it last opened, and in one that comes while it is.
-  if (game.chest && game.parcels.length) hud.addParcels(game.takeParcels().map(p => parcelNote(p, items)));
+  if (game.chest && game.parcels.length) {
+    const told = game.takeParcels();
+    hud.addParcels(told.map(p => parcelNote(p, items)));
+    // A banner for them still waiting for the panel to close would only say it again.
+    toSay.splice(0, toSay.length, ...untold(toSay, told));
+  }
   // The first goal, in the bag and the chest; at the workbench, a tap on it opens its card (the Hud writes it only when it changed).
   const next = game.nextGear();
   hud.setGoal(next && { text: goalText(next, items), ready: next.ready, act: !!game.benchBeside() });
@@ -829,6 +895,7 @@ function frame(now: number) {
     // How far the front still has to come to reach your tile, as a share of its sweep.
     surge: surge && { phase: surge.phase, gap: rule && me && map.deepest ? ((surgeFront(rule, map.deepest, surge) ?? map.deepest) - map.homeSteps(me.tx, me.ty)) / map.deepest : 1 },
     caught, creatures: game.creatureViews(), flashes: game.flashesNow(now), live: !!game.meId && game.live.has(game.meId), news: worldNews,
+    radio: radio ? radioScene(radio.senses, me ? nearest(radioSpots, me.x, me.y) : Infinity) : null,
   };
   sound.update(soundscape(scene, heard));
   heard = scene;
@@ -844,6 +911,19 @@ function frame(now: number) {
     return [{ id: b.id, text: b.text, x: s.x, y: s.y }];
   }));
   hud.setFloats(game.floats.map(f => { const s = view.project(f.x, f.y, 1.3); return { ...f, x: s.x, y: s.y }; }));
+  // A note over the head of whoever called, where they stand now (the tile it came from, if they left).
+  hud.setCallNotes(game.calls.map(c => {
+    const p = game.players.get(c.who), s = view.project(p?.x ?? c.x, p?.y ?? c.y, 1.25);
+    return { id: c.n, kind: c.kind, color: p?.color ?? '#f1ece0', x: s.x, y: s.y, t: Math.max(0, now - c.at) / 1000 };
+  }));
+  // B held long enough with nothing open opens the fan; nobody calls into a map that is fading away.
+  if (arrival.dark > 0 && callB.open) callB.cancel();
+  callB.tick(now, callable());
+  const words = callsSung < CALL_WORDS_UNTIL, fan = callB.open ? `${callB.choice}|${words}` : '';
+  if (fan !== fanShown) {
+    fanShown = fan;
+    hud.setFan(callB.open ? { choice: callB.choice, words } : null);
+  }
   // A question, or what the box says by itself, is drawn again only when it changed.
   if (game.boxChanges !== boxShown) {
     boxShown = game.boxChanges;
