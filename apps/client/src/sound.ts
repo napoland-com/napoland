@@ -16,7 +16,7 @@ export interface SoundSetting {
 }
 
 /** How loud each loop is at level 1, against the others. */
-const LOOP_GAIN: Record<Loop, number> = { rain: 0.35, wind: 0.5, fire: 0.6, wires: 0.12, surge: 0.4, watcher: 0.45, skulker: 0.55, shimmer: 0.08 };
+const LOOP_GAIN: Record<Loop, number> = { rain: 0.35, wind: 0.5, fire: 0.6, wires: 0.12, surge: 0.4, watcher: 0.45, skulker: 0.55, shimmer: 0.08, radio: 0.45, hum: 0.16 };
 /** Loops ease to a new level with this time constant: most of the way in 0.3 s. */
 const EASE_S = 0.1;
 /** How loud a call beside you is, against the rest. */
@@ -119,6 +119,27 @@ export class Sound {
     for (const f of [1318, 1976.5]) this.osc('sine', f).connect(shimmer);
     this.wobble(shimmer.gain, 0.6, 0.4, 0.6);
     this.loop('shimmer', shimmer);
+    // The radio's crackle: static through a band, and clicks on top of it that come thicker and brighter
+    // the nearer it is to something strange (its level), like a counter.
+    const band = this.filtered(this.hiss(1.1), 'bandpass', 1500, 0.8), under = ctx.createGain(), clicks = this.clicks(), crackle = ctx.createGain();
+    under.gain.value = 0.35;
+    band.connect(under).connect(crackle);
+    clicks.connect(crackle);
+    this.loop('radio', crackle).set = (level, at) => {
+      clicks.playbackRate.setTargetAtTime(0.6 + 1.6 * level, at, 0.15);
+      band.frequency.setTargetAtTime(1200 + 1600 * level, at, 0.15);
+    };
+    // The hum the radio picks up everywhere: low and slow, in the Old Stone's voice (D, its octave a
+    // little apart so the two beat, and a faint fifth), swelling and ebbing.
+    const stone = this.filtered(null, 'lowpass', 600), swell = ctx.createGain();
+    for (const [f, g] of [[73.42, 0.6], [146.83, 0.4], [147.3, 0.3], [220, 0.1]] as const) {
+      const part = ctx.createGain();
+      part.gain.value = g;
+      this.osc('sine', f).connect(part).connect(stone);
+    }
+    stone.connect(swell);
+    this.wobble(swell.gain, 0.13, 0.3, 0.7);
+    this.loop('hum', swell);
   }
 
   /** A loop: `chain` wired in order, into its gain (silent to start), into the master. */
@@ -167,6 +188,20 @@ export class Sound {
     this.osc('sine', rate).connect(lfo).connect(param);
   }
 
+  /** The radio's clicks: two seconds of sparse ticks and a few longer pops, made once and looped. */
+  private clicks(): AudioBufferSourceNode {
+    const ctx = this.ctx!, buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let k = 0; k < 90; k++) {
+      const at = Math.floor(Math.random() * (d.length - 1200)), amp = 0.25 + Math.random() * 0.75, len = Math.random() < 0.2 ? 200 + Math.random() * 900 : 6 + Math.random() * 50;
+      for (let i = 0; i < len; i++) d[at + i]! += (Math.random() * 2 - 1) * amp * Math.exp(-i / (len / 4));
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.start(0, Math.random() * 2);
+    return src;
+  }
+
   /** A fire: a low roar with sparks snapping in it, three seconds made once and looped. */
   private crackles(): AudioNode[] {
     const ctx = this.ctx!, buf = ctx.createBuffer(1, ctx.sampleRate * 3, ctx.sampleRate), d = buf.getChannelData(0);
@@ -200,7 +235,45 @@ export class Sound {
       // Something bursting out of the ferns: a sharp rustle and a short cry falling away.
       case 'cry': this.burst(now, 'highpass', 1800, 0.35, 0.6); return this.tone(now + 0.05, 'sawtooth', 1300, 420, 0.4, 0.18);
       case 'call': return this.call(s, now);
+      case 'pulse': return this.pulse(now);
+      // The radio switched on: its click, and the static sweeping as it finds the hum.
+      case 'tune': this.click(now); return this.sweep(now + 0.03, 3200, 900, 0.4, 0.22);
+      case 'click': return this.click(now);
     }
+  }
+
+  /** The radio's switch. */
+  private click(now: number) {
+    this.burst(now, 'highpass', 2500, 0.018, 0.35);
+    this.tone(now, 'square', 1700, 1100, 0.02, 0.06);
+  }
+
+  /** Static through a band that sweeps from `f0` to `f1` Hz over `len` seconds, broken up as a weak signal is. */
+  private sweep(at: number, f0: number, f1: number, len: number, peak: number) {
+    const ctx = this.ctx!, src = this.hiss(1, false), band = this.filtered(src, 'bandpass', f0, 1.4), g = ctx.createGain(), chop = ctx.createGain();
+    // Longer than what is left of the noise after a random start: it goes round.
+    src.loop = true;
+    band.frequency.setValueAtTime(f0, at);
+    band.frequency.exponentialRampToValueAtTime(f1, at + len);
+    const lfo = ctx.createOscillator(), depth = ctx.createGain();
+    lfo.frequency.value = 17;
+    depth.gain.value = 0.45;
+    chop.gain.value = 0.55;
+    lfo.connect(depth).connect(chop.gain);
+    band.connect(chop).connect(g).connect(this.master!);
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(peak, at + Math.min(0.08, len / 3));
+    g.gain.exponentialRampToValueAtTime(0.0001, at + len);
+    src.start(at, Math.random());
+    lfo.start(at);
+    for (const n of [src, lfo]) n.stop(at + len + 0.05);
+  }
+
+  /** The Tower's pulse on the radio: one long burst of static that swells, breaks up and falls away, with a thump under it. */
+  private pulse(now: number) {
+    this.sweep(now, 2800, 600, 1.5, 0.4);
+    this.burst(now + 0.02, 'lowpass', 160, 0.5, 0.5);
+    for (let i = 0; i < 5; i++) this.burst(now + 0.1 + Math.random() * 1.1, 'highpass', 3000, 0.03, 0.3);
   }
 
   /**

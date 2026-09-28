@@ -229,7 +229,7 @@ describe('the sound of a call', () => {
   const scene = (s: Partial<Scene> = {}): Scene => ({
     map: 'woods', kind: 'wilds', weather: 'overcast', storm: false, lightning: false,
     me: { id: 'me', x: 5, y: 5, tx: 5, ty: 5, ground: 'grass' },
-    fires: [], poles: [], surge: null, caught: false, creatures: [], flashes: [], live: false, news: [], ...s,
+    fires: [], poles: [], surge: null, caught: false, creatures: [], flashes: [], live: false, news: [], radio: null, ...s,
   });
 
   it('plays each call heard, from its side and as loud as it is near; your own from the middle, full', () => {

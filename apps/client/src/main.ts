@@ -10,7 +10,7 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type OAuthProvider, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
@@ -30,6 +30,7 @@ import { Sound, type SoundSetting } from './sound';
 import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { Resolution } from './quality';
+import { heardFinds, nearest, radioOf, type RadioScene } from './radio';
 import { levelText, newsBanner, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
@@ -59,6 +60,9 @@ const soundSetting = ((): SoundSetting => {
   } catch { return { volume: 0.7, muted: false }; }
 })();
 const sound = new Sound(soundSetting);
+/** The radio's switch, as this browser keeps it: on unless it was turned off, so a radio just made is heard at once. */
+const RADIO_KEY = 'napoland.radio';
+let radioOn = store.get(RADIO_KEY) !== 'off';
 
 // Every map is bundled, so moving between them needs no download; the items too, so the bag can
 // name what it holds, and the story, for what people say and the journal. (Globs, not imports: a
@@ -191,8 +195,18 @@ const hud = new Hud(screen, {
     }
   },
   map: () => openMap(),
-  // Any other tool of yours says what it is, in the text box (which the bag would cover).
-  tool: item => { hud.toggleBag(false); game.read(items.get(item).name, [items.get(item).text]); },
+  // A tool that listens (the radio) is switched on and off by its button, and the bag stays open to
+  // show its lamp; any other tool of yours says what it is, in the text box (which the bag would cover).
+  tool: item => {
+    const def = items.get(item);
+    if (def.senses) {
+      radioOn = !radioOn;
+      store.set(RADIO_KEY, radioOn ? 'on' : 'off');
+      return;
+    }
+    hud.toggleBag(false);
+    game.read(def.name, [def.text]);
+  },
   version: () => loadVersion(),
   sound: s => { sound.set(s); store.set(SOUND_KEY, JSON.stringify(s)); },
 });
@@ -638,6 +652,17 @@ let prints: Array<{ map: string; x: number; y: number; dir: Dir; at: number }> =
 let humFor = -Infinity;
 let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: null };
 let toolsShown: string[] | null = null;
+let radioShown: boolean | null = null;
+/** Your radio (radioOf), and where the finds it listens for lie on this map: found again only when the finds or the weather change. */
+let radio: ReturnType<typeof radioOf>;
+let radioSpots: Array<{ x: number; y: number }> = [];
+let spotsFor: { loot: number; weather: Weather | null } = { loot: -1, weather: null };
+/**
+ * The radio as each frame's scene has it: two kept and taken in turn, so last frame's stays as it was
+ * for the soundscape to compare with (a switch), and a frame makes nothing new for the radio.
+ */
+const radioScenes: [RadioScene, RadioScene] = [{ on: false, senses: { loud: 0, faint: 0 }, near: Infinity }, { on: false, senses: { loud: 0, faint: 0 }, near: Infinity }];
+let radioTurn = 0;
 let progressShown: typeof game.progress | null = null;
 let storyShown = -1;
 /**
@@ -652,6 +677,14 @@ let heard: Scene | undefined;
 let boxShown = -1;
 /** The fan of calls over B as last drawn: '' while closed. */
 let fanShown = '';
+/** This frame's radio, in the one of radioScenes whose turn it is. */
+function radioScene(senses: Senses, near: number): RadioScene {
+  const r = radioScenes[(radioTurn ^= 1)];
+  r.on = radioOn;
+  r.senses = senses;
+  r.near = near;
+  return r;
+}
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
   requestAnimationFrame(frame);
@@ -758,7 +791,15 @@ function frame(now: number) {
     hud.setWearing(wornViews(game.myGear, items, game.myWorn));
   }
   // Your maps are one button, which opens the one for where you are; any other tool has its own, in the order you got them.
-  if (game.tools !== toolsShown) hud.setTools(toolViews((toolsShown = game.tools), items));
+  if (game.tools !== toolsShown || radioOn !== radioShown) {
+    radio = radioOf(game.tools, items);
+    hud.setTools(toolViews((toolsShown = game.tools), items, (radioShown = radioOn)));
+  }
+  // Every change to the finds counts in lootChanges, a new map's too.
+  if (radio && (game.lootChanges !== spotsFor.loot || weather !== spotsFor.weather)) {
+    spotsFor = { loot: game.lootChanges, weather };
+    radioSpots = heardFinds(game.finds.values(), radio.senses, weather);
+  }
   if (game.chest !== chestShown || game.progress !== progressShown) {
     if (game.chest && !chestShown) hud.toggleStash(true);
     if (!game.chest && chestShown) hud.toggleStash(false);
@@ -778,6 +819,7 @@ function frame(now: number) {
     // How far the front still has to come to reach your tile, as a share of its sweep.
     surge: surge && { phase: surge.phase, gap: rule && me && map.deepest ? ((surgeFront(rule, map.deepest, surge) ?? map.deepest) - map.homeSteps(me.tx, me.ty)) / map.deepest : 1 },
     caught, creatures: game.creatureViews(), flashes: game.flashesNow(now), live: !!game.meId && game.live.has(game.meId), news: worldNews,
+    radio: radio ? radioScene(radio.senses, me ? nearest(radioSpots, me.x, me.y) : Infinity) : null,
   };
   sound.update(soundscape(scene, heard));
   heard = scene;

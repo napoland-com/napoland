@@ -164,8 +164,11 @@ export const MAX_BAG = 16;
 export interface WornView { slot: Slot; name: string; icon: string; /** How worn down (1 new, 0 worn out), for gear that wears. */ cond?: number; /** Its quirk's name. */ quirk?: string }
 /** A row of the workbench: what a recipe makes (or a mend), what it needs against what your stash holds, and whether it can be done. */
 export interface RecipeView { id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean }
-/** A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or another tool of yours. */
-export interface ToolView { item: string | null; label: string; icon: string }
+/**
+ * A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or
+ * another tool of yours; `on` for one its button switches on and off (the radio), with a small lamp lit while it is on.
+ */
+export interface ToolView { item: string | null; label: string; icon: string; on?: boolean }
 
 /** One row of the status panel: a label, what it says, and a bar (0 to 1) when it has one. */
 export interface StatusRow { label: string; text: string; bar?: number; tone?: 'good' | 'bad' | 'plain' }
@@ -1064,7 +1067,7 @@ export class Hud {
 
   /** Your tools, as buttons in the bag's header (toolViews): the one map button, and a button for each other tool, in the order you got them. */
   setTools(tools: ToolView[]) {
-    const html = tools.map(t => `<button type="button" class="slot" ${t.item === null ? 'data-map' : `data-tool="${esc(t.item)}"`} aria-label="${esc(t.label)}">${t.icon}</button>`).join('');
+    const html = toolsHtml(tools);
     if (this.el.tools!.innerHTML !== html) this.el.tools!.innerHTML = html;
   }
 
@@ -1448,6 +1451,18 @@ export class Hud {
     }
     for (const [id, el] of this.floatEls) if (!seen.has(id)) { el.remove(); this.floatEls.delete(id); }
   }
+}
+
+/**
+ * The bag header's tool buttons: the map button, and each other tool's; a tool switched on and off by its
+ * button (the radio) says whether it is on (pressed, to a screen reader) and has a small lamp, lit while it is.
+ */
+export function toolsHtml(tools: readonly ToolView[]): string {
+  return tools.map(t => {
+    const which = t.item === null ? 'data-map' : `data-tool="${esc(t.item)}"`;
+    const switched = t.on === undefined ? '' : ` aria-pressed="${t.on}"${t.on ? ' data-on' : ''}`;
+    return `<button type="button" class="slot" ${which}${switched} aria-label="${esc(t.label)}">${t.icon}${t.on === undefined ? '' : '<i class="lamp" aria-hidden="true"></i>'}</button>`;
+  }).join('');
 }
 
 /** A bag slot's drawing and count; a live find gets its countdown ring (tickLive turns it). */

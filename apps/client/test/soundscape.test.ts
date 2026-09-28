@@ -7,7 +7,7 @@ import { lightningAt } from '../src/view/world';
 const scene = (s: Partial<Scene> = {}): Scene => ({
   map: 'woods', kind: 'wilds', weather: 'overcast', storm: false, lightning: false,
   me: { id: 'me', x: 5, y: 5, tx: 5, ty: 5, ground: 'grass' },
-  fires: [], poles: [], surge: null, caught: false, creatures: [], flashes: [], live: false, news: [], ...s,
+  fires: [], poles: [], surge: null, caught: false, creatures: [], flashes: [], live: false, news: [], radio: null, ...s,
 });
 /** A creature on 8,5 (3 tiles from you), unless `c` says otherwise. */
 const creature = (c: Partial<Scene['creatures'][number]> = {}): Scene['creatures'][number] => ({ id: '1', kind: 'watcher', x: 8, y: 5, moving: false, chasing: undefined, ...c });
