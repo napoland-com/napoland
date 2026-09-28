@@ -174,6 +174,17 @@ export const TENDED = 'Someone keeps this fire going. It needs nothing.';
 /** The map button where you carry no map of the area: farther out, a region's map is found, not given. */
 export const NO_MAP_YET = 'You have no map of this place yet.';
 
+/**
+ * What Walt says first on the Long Night: the fire by him is everyone's to feed until dawn, with how long
+ * it has (`left`, seconds of fuel; null when he does not know); or, once it went out, that it did.
+ */
+export function waltOnTheLongNight(out: boolean, left: number | null): string {
+  if (out) return 'It went out on us. Light it again if you\'ve got something that burns, but the woods will know it went out.';
+  const m = left === null || left <= 0 ? 0 : Math.ceil(left / 60);
+  const has = !m ? '' : m === 1 ? ' It\'s nearly out.' : ` There's about ${m} minutes in it.`;
+  return `Long Night tonight. Nobody keeps this fire alone tonight, not me either: it wants resin and cloth from whoever's about, till dawn.${has}`;
+}
+
 /** A fire that takes nothing more: "The fire is as full as it gets. It will burn 30 more minutes." */
 export function fullFire(left: number): string {
   return `The fire is as full as it gets. It will burn ${burnsOn(left)}.`;

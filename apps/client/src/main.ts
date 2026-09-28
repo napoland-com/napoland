@@ -881,8 +881,8 @@ function frame(now: number) {
     // the chest is open needs no banner, as the stash says what came (below). Arriving rested waits the same way.
     if (n.kind === 'parcel') { if (!game.chest) toSay.push(n); continue; }
     if (n.kind === 'rested') { toSay.push(n); continue; }
-    // The season turns at a dawn, with the new day's banner: it waits its turn.
-    if (n.kind === 'season') { toSay.push(n); continue; }
+    // The season turns at a dawn, with the new day's banner, and so does the Long Night, begun or over: they wait their turn.
+    if (n.kind === 'season' || n.kind === 'longNight') { toSay.push(n); continue; }
     // A lodestone's tug: a moment on the status panel (and a faint sound, soundscape.ts), never a banner.
     if (n.kind === 'tug') { hud.tug(items.quirk('lodestone').name); continue; }
     const b = newsBanner(n, game.map.data.name, items, game.guest);

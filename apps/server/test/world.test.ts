@@ -259,6 +259,8 @@ describe('World: turning, joining and leaving', () => {
       conditions: { today: [], week: null, next: null },
       // The first week after the epoch is a spring's, from three days before it: four days of it left at 0.
       season: { season: 'spring', left: 4 * 86_400 },
+      // The first Long Night is on the Saturday after the epoch, with its bonus: no fire went out before it.
+      longNight: { on: false, bonus: true, out: false },
       stats: {},
       // Nothing stashed yet: level 1, and the next level at 30 XP.
       progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: ENERGY_MAX },

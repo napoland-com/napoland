@@ -5,7 +5,7 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, WEAR_FADES, effectResist, itemIndex, liveEnds, liveXp, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, upgradable, upgradeChance, wearSeconds, type BagSlot, type EffectView, type Element, type Gear, type ItemDef,
+  BAG_SLOTS, SLOTS, WEAR_FADES, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, upgradable, upgradeChance, wearSeconds, type BagSlot, type EffectView, type Element, type Gear, type ItemDef,
   type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction, type Slot, type Upgrade, type Worn,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
@@ -27,6 +27,8 @@ export class Items {
   readonly conditions: ItemsData['conditions'];
   /** Where the keepsakes lie, and what the whole set home gives (notes.ts). */
   readonly keepsakes: ItemsData['keepsakes'];
+  /** What the Long Night's bonus does, in words ("wire and strange objects grow back twice as fast"); empty without one. */
+  readonly longNight: string;
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
 
   constructor(data: ItemsData | undefined) {
@@ -38,6 +40,7 @@ export class Items {
     this.upgrades = data?.upgrades;
     this.conditions = data?.conditions;
     this.keepsakes = data?.keepsakes;
+    this.longNight = longNightWords(data?.longNight, this.byId);
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
 

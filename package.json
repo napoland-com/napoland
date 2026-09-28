@@ -32,6 +32,7 @@
     "gen:interiors": "tsx tools/gen-interiors.ts",
     "validate": "tsx tools/validate-content.ts",
     "roadmap": "tsx tools/validate-roadmap.ts",
+    "clock": "tsx tools/clock.ts",
     "bot": "tsx tools/bot.ts",
     "check": "npm run typecheck && npm run validate && npm run roadmap && npm run test"
   },

@@ -91,6 +91,14 @@ describe('what people say once, after the first time you did something', () => {
     expect(storyLines(told(), 'what-glows', 'tom', ['Pull up a chair.'], { made: 1 })).toEqual(['Made that yourself?', 'Pull up a chair.', 'Go down the south road.']);
   });
 
+  it('comes before what they have to say about the day (Mira\'s word from the woods, Walt\'s on the Long Night), which comes before what they always say', () => {
+    const today = ['Long Night tonight.'];
+    expect(storyLines(told(), 'home', 'tom', ['Pull up a chair.'], { made: 1 }, today)).toEqual(['Made that yourself?', 'Long Night tonight.', 'Pull up a chair.']);
+    expect(storyLines(told(), 'the-lineman', 'tom', ['Pull up a chair.'], {}, today)).toEqual(['Go down the south road.', 'Long Night tonight.', 'Pull up a chair.']);
+    // Talking to them moves the story on: the hint still comes last.
+    expect(storyLines(told(), 'what-glows', 'tom', ['Pull up a chair.'], {}, today)).toEqual(['Long Night tonight.', 'Pull up a chair.', 'Go down the south road.']);
+  });
+
   it('is said once: talking to them keeps it told, a bit for each remark in its order', () => {
     const stats = { collapsed: 1, surged: 1, made: 1 };
     expect(remarksDue(told(), 'mira', stats).map(r => r.id)).toEqual(['first-collapse', 'first-surge']);

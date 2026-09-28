@@ -120,12 +120,13 @@ export function toldAfter(story: StoryData, npc: string, stats: Stats): number {
 
 /**
  * What a person says, in one order: the hint of the chapter you are in, if they have one; what they say
- * once about something you did for the first time (`stats`: remarksDue); then what they always say.
+ * once about something you did for the first time (`stats`: remarksDue); what they have to say about
+ * the day (`today`: Mira's word from the woods, Walt's on the Long Night); then what they always say.
  * When talking to them reaches the next chapter, that chapter's hint for them comes last instead (they
  * tell you, then point the way).
  */
-export function storyLines(story: StoryData, id: string | undefined, npc: string, lines: readonly string[], stats: Stats = {}): string[] {
-  const said = [...remarksDue(story, npc, stats).map(r => r.line), ...lines];
+export function storyLines(story: StoryData, id: string | undefined, npc: string, lines: readonly string[], stats: Stats = {}, today: readonly string[] = []): string[] {
+  const said = [...remarksDue(story, npc, stats).map(r => r.line), ...today, ...lines];
   const reached = reachedBy(story, id, { talk: npc });
   if (reached) return reached.hints?.[npc] ? [...said, reached.hints[npc]] : said;
   const hint = chapterOf(story, id)?.hints?.[npc];

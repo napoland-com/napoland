@@ -14,6 +14,9 @@
  * longer dusk in summer, storms twice as often in autumn, and in winter the cold bites harder, the rain
  * falls as snow and the water a map marks (`ice`) freezes hard enough to cross (SEASONS).
  *
+ * Once a week the Long Night: the game day that dawns on Saturday at 19:12 UTC is all night, under an
+ * aurora, for the whole world (longNightAt). The night of the week NAPO answered (DESIGN.md, the story).
+ *
  * A surge: a region is calm most of the time, then restless for a few minutes (rare finds show up,
  * and it is announced), then a surge sweeps it from its deepest tile toward the way home. Caught in it,
  * away from a street light, energy drains several times faster (energy.ts). Then it is calm again.
@@ -73,6 +76,39 @@ export const SEASONS: Readonly<Record<Season, SeasonDef>> = {
 /** A week in seconds; weeks turn on Monday at 00:00 UTC, three days after the epoch's Thursday. */
 const WEEK_S = 7 * 86400;
 const WEEK_SHIFT_S = 3 * 86400;
+/**
+ * Game days in a week (210), and the day of the week, counted from its first, that is the Long Night:
+ * the 25th of Saturday's, whose dawn is at 19:12 UTC.
+ */
+const WEEK_DAYS = WEEK_S / DAY_S;
+export const LONG_NIGHT_DAY = 5 * (86400 / DAY_S) + (19 * 3600 + 12 * 60) / DAY_S;
+
+/** Is game day `day` (dayIndex) the Long Night? */
+export function isLongNight(day: number): boolean {
+  return (((day + WEEK_SHIFT_S / DAY_S) % WEEK_DAYS) + WEEK_DAYS) % WEEK_DAYS === LONG_NIGHT_DAY;
+}
+
+/** When the Long Night of week `week` (weekIndex) begins, ms since the epoch: its dawn. It ends DAY_S later, at the next. */
+export function longNightFrom(week: number): number {
+  return (week * WEEK_DAYS - WEEK_SHIFT_S / DAY_S + LONG_NIGHT_DAY) * DAY_S * 1000;
+}
+
+/**
+ * The Long Night on the wall clock: whether it is on, the seconds until it ends (while on) or begins,
+ * and the week (weekIndex) of the one on or coming: this week's until it is over, then next week's.
+ */
+export interface LongNightTime {
+  on: boolean;
+  left: number;
+  week: number;
+}
+
+export function longNightAt(wallMs: number): LongNightTime {
+  const week = weekIndex(wallMs), from = longNightFrom(week);
+  if (wallMs < from) return { on: false, left: (from - wallMs) / 1000, week };
+  if (wallMs < from + DAY_S * 1000) return { on: true, left: (from + DAY_S * 1000 - wallMs) / 1000, week };
+  return { on: false, left: (longNightFrom(week + 1) - wallMs) / 1000, week: week + 1 };
+}
 
 /** The season at a wall time: the week's (weekIndex), in SEASON_ORDER. */
 export function seasonAt(wallMs: number): Season {
@@ -92,21 +128,25 @@ export function seasonView(wallMs: number): SeasonView {
 
 /**
  * The day at a wall time, the same everywhere: which day (dayIndex), seconds since its dawn, when its
- * night falls (later in summer), whether its night is an aurora, the season, and how long its rain lasts
- * against the regions' windows.
+ * night falls (later in summer; at its dawn on the Long Night, `long`, which is all night), whether its
+ * night is an aurora (the Long Night's always is), the season, and how long its rain lasts against the
+ * regions' windows.
  */
 export interface DayView {
   day: number;
   into: number;
   night: number;
   aurora: boolean;
+  long: boolean;
   season: Season;
   rain: number;
 }
 
 export function dayAt(wallMs: number): DayView {
-  const s = wallMs / 1000, day = Math.floor(s / DAY_S), season = seasonAt(wallMs), def = SEASONS[season];
-  return { day, into: s - day * DAY_S, night: NIGHT_FROM + def.dusk, aurora: day % AURORA_EVERY === AURORA_EVERY - 1, season, rain: def.rain };
+  const s = wallMs / 1000, day = Math.floor(s / DAY_S), season = seasonAt(wallMs), def = SEASONS[season], long = isLongNight(day);
+  return {
+    day, into: s - day * DAY_S, night: long ? 0 : NIGHT_FROM + def.dusk, aurora: long || day % AURORA_EVERY === AURORA_EVERY - 1, long, season, rain: def.rain,
+  };
 }
 
 /**

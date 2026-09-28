@@ -665,6 +665,24 @@ describe.skipIf(!url)('PgStorage', () => {
     }
   });
 
+  it('keeps the Long Night beside the Old Stone, and reads back nothing it did not write', async () => {
+    const fresh = await freshSchema();
+    const s = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await s.init();
+      expect(await s.loadLongNight()).toBeNull();
+      await s.saveStone({ charge: 3, awake: false, at: 1_800_000_000_000 });
+      await s.saveLongNight({ week: 2961, bonus: true, outAt: 1_791_055_620_000, out: false, over: false });
+      await s.saveLongNight({ week: 2961, bonus: true, outAt: 1_791_055_920_000, out: true, over: true });
+      expect(await s.loadLongNight()).toEqual({ week: 2961, bonus: true, outAt: 1_791_055_920_000, out: true, over: true });
+      expect(await s.loadStone()).toEqual({ charge: 3, awake: false, at: 1_800_000_000_000 });
+      await admin.query(`UPDATE ${fresh.schema}.world_state SET value = '{"week":"soon"}'::jsonb WHERE key = 'long_night'`);
+      expect(await s.loadLongNight()).toBeNull();
+    } finally {
+      await s.close();
+    }
+  });
+
   it('finds a character by who signed in with it, and lets each be claimed once, by an identity without one', async () => {
     const old = player('Pg Before Sign-in');
     const other = player('Pg Also Before');

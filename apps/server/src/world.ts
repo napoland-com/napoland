@@ -62,6 +62,12 @@
  * at once if online (a little energy out in the wilds, a line anywhere else), or in a letter when they
  * next walk into their home room. Who thanked whom is kept THANKS_KEPT_DAYS, in memory and in storage.
  *
+ * The Long Night (shared/sky.ts), once a week: a whole game day of aurora, when wire and strange objects
+ * grow back faster (items.json, `longNight`) if the lodge's fire lasted through the one before. That
+ * night nobody tends the lodge's fire (map.ts, a fireplace's `longNight`): it burns down like a shelter's
+ * and everyone's resin and cloth keep it going until dawn. Whether it went out, and so whether the next
+ * one keeps its bonus, is the whole world's, and kept across restarts (Writes.longNight).
+ *
  * Crates for whoever comes next (shared/caches.ts): where people rest by a fire out there, a crate holds
  * a few things anyone left. Each visit (in its room, or near one in the open) a player may leave one
  * thing from their bag and take one out; taking thanks whoever left it, and counts as taken out of the
@@ -186,6 +192,9 @@ import {
   levelOf,
   liveEnds,
   liveXp,
+  longNightAt,
+  longNightFrom,
+  longNightWords,
   markLifetime,
   maxEnergy,
   merge,
@@ -259,6 +268,7 @@ import {
   type ItemDef,
   type ItemsData,
   type KeepsakesData,
+  type LongNightView,
   type LookKind,
   type LotView,
   type MapNote,
@@ -304,8 +314,8 @@ import {
   type TileMap,
   type Weather,
 } from '@napoland/shared';
-import { FIRE_LOW_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, FirstRecord, LotRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
+import { FIRE_LOW_S, FIRE_MAX_S, Fires, type Fire } from './fires';
+import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
 
 // How often creatures step is their region's (map.ts, watcherStepMs, skulkerStepMs); these are the paces a rule leaves out.
 export { AURORA_WATCHER_STEP_MS, MARK_LIFETIME_MS, SKULKER_STEP_MS, WATCHER_STEP_MS };
@@ -359,6 +369,11 @@ export const STONE_SHARD_S = 30 * 60;
 export const FIRSTS_ON_BOARD = 3;
 /** The notice board counts collapses this far back. */
 const COLLAPSES_MS = 60 * 60 * 1000;
+/**
+ * The fuel in the lodge's fire as the Long Night begins: half of what a fire holds (FIRE_MAX_S), so it
+ * cannot last the night on one feeding, and the town has to come back to it at least twice.
+ */
+export const LODGE_FUEL_S = FIRE_MAX_S / 2;
 /**
  * For the field notes (notebook.ts), what counts as seen or heard: a watcher within sight (the camera
  * shows about this much around you), a flash near you, the ferns' rustle (as far as a client plays a
@@ -459,6 +474,8 @@ export interface Joined extends Scene {
   conditions: ConditionsView;
   /** The season, and how long is left of it. */
   season: SeasonView;
+  /** The Long Night, on or coming. */
+  longNight: LongNightView;
   stats: Stats;
   progress: ProgressView;
   /** The rest their time away was worth, since they were last seen (restFor): whether the cup had room for it or not. */
@@ -502,6 +519,8 @@ export interface Writes {
   caches: Array<{ id: number; item: CacheItemRecord | undefined }>;
   /** First finders since (firsts.ts): each kept once, for good. */
   firsts: FirstRecord[];
+  /** The Long Night, if it changed: it began, the lodge's fire was fed or went out, or dawn came. */
+  longNight?: LongNightRecord;
 }
 
 export interface WorldOptions {
@@ -531,6 +550,8 @@ export interface WorldOptions {
   lots?: LotRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
+  /** The Long Night as it was saved (storage.ts, cleanLongNight). */
+  longNight?: LongNightRecord | null;
   /**
    * Add to `now` for ms since the epoch. Piles and marks fade by the wall clock, which clients and the
    * database see, and the weather and the surges follow it, while `now` is game time, which must never
@@ -952,6 +973,18 @@ export class World {
   private readonly effects = new Map<string, Map<string, number>>();
   /** The season as everyone last heard it (sky.ts): a week each, and in winter the water that freezes is ice. */
   private season: Season;
+  /**
+   * The Long Night (sky.ts): the one on, or the last one the World (or the one before a restart) saw,
+   * none before the first. `nightOn` while it is on, as the ticks saw it. Written for storage whenever
+   * it changes (`nightWrite`).
+   */
+  private night: LongNightRecord | null = null;
+  private nightOn = false;
+  private nightWrite: LongNightRecord | undefined;
+  /** The fireplace nobody tends on the Long Night (map.ts, `longNight`: the lodge's), if the world has one. */
+  private readonly nightFire: { map: TileMap; x: number; y: number } | undefined;
+  /** What grows back faster on a Long Night with its bonus, and how many times as fast (items.json, `longNight`). */
+  private readonly nightRegrow: { items: ReadonlySet<string>; times: number; words: string } | undefined;
   /** Players sign in here: one nobody signed in with is a guest (WorldOptions.guests). */
   private readonly guests: boolean;
   /** Stashing earns this many times an item's XP: 1, but for play-tests (WorldOptions.xpTimes). */
@@ -1226,6 +1259,13 @@ export class World {
     }
     // In winter the pond and the brook are ice from the start.
     for (const m of this.maps.values()) m.freeze(SEASONS[this.season].frozen);
+
+    this.nightFire = [...this.maps.values()].flatMap(m => m.data.objects.flatMap(o => (o.kind === 'fireplace' && o.longNight ? [{ map: m, x: o.x, y: o.y }] : [])))[0];
+    this.nightRegrow = items.longNight && { items: new Set(items.longNight.items), times: items.longNight.regrow, words: longNightWords(items.longNight, this.items) };
+    this.night = options.longNight ? { ...options.longNight } : null;
+    // Started in the Long Night (a restart, most likely): the lodge's fire burns down from the start, as it was saved.
+    const night = longNightAt((options.now ?? 0) + this.epochOffset);
+    if (night.on) this.beginLongNight(night.week, options.now ?? 0, false);
   }
 
   /** The weather over the home town (where it is fixed, everywhere's). */
@@ -1417,7 +1457,8 @@ export class World {
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), weather: this.weatherOf(map), energy: energyView(p), body: this.bodyOf(p, now),
       bag: bagView(r.bag, now + this.epochOffset),
-      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), season: this.seasonNow(now), stats: { ...r.stats },
+      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), season: this.seasonNow(now),
+      longNight: this.longNightView(now), stats: { ...r.stats },
       progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
@@ -1654,6 +1695,7 @@ export class World {
     this.sendBag(p, now);
     // Whoever warms at it later may thank them (thanks.ts): at this copy's fire, the one they fed.
     fires.fedBy(fire, { id, name: p.rec.name });
+    this.fedLodge(fire, now);
     const burning = fires.view(fire, now);
     this.toZone(p.zone.key, { t: 'fire', fire: burning });
     // Each one counts for the fire keeper, as when they went in one press at a time.
@@ -2534,6 +2576,7 @@ export class World {
     this.closeEmptied();
     this.moveSeason(now);
     this.moveWeather(now);
+    this.moveLongNight(now);
     this.moveSurges(now);
     this.moveStorms(now);
     this.moveConditions(now);
@@ -2643,8 +2686,10 @@ export class World {
       credits: this.credits,
       caches: [...this.cacheWrites].map(([id, c]) => ({ id, item: c && { ...c } })),
       firsts: this.firstWrites,
+      ...(this.nightWrite ? { longNight: { ...this.nightWrite } } : {}),
     };
     this.firstWrites = [];
+    this.nightWrite = undefined;
     this.pileWrites.clear();
     this.saveNow.clear();
     this.markWrites.clear();
@@ -3344,6 +3389,116 @@ export class World {
     return { today: [...c.today], week: c.week, next: c.next };
   }
 
+  /** The Long Night as everyone heard it: on or not, its bonus (on: tonight's; else the next one's), and whether the lodge's fire went out tonight. */
+  private longNightView(now: number): LongNightView {
+    if (this.nightOn && this.night) return { on: true, bonus: this.night.bonus, out: this.night.out };
+    return { on: false, bonus: this.bonusFor(longNightAt(now + this.epochOffset).week), out: false };
+  }
+
+  /**
+   * Whether the Long Night of week `week` has its bonus (the faster regrowth): it does, unless the lodge's
+   * fire went out on the one the week before (and the one on keeps what it began with). A week with no
+   * Long Night the World saw before it (a new world, or the server was down through it) keeps it.
+   */
+  private bonusFor(week: number): boolean {
+    const r = this.night;
+    if (r?.week === week) return r.bonus;
+    return r?.week === week - 1 ? !wentOut(r) : true;
+  }
+
+  /** How many times as fast a find of `item` picked now grows back: faster on a Long Night with its bonus. */
+  private regrow(item: string): number {
+    const g = this.nightRegrow;
+    return g && this.nightOn && this.night?.bonus && g.items.has(item) ? g.times : 1;
+  }
+
+  /** The lodge's fire (the fireplace nobody tends on the Long Night) in the main copy of its room. */
+  private lodge(): { zone: Zone; fire: Fire } | undefined {
+    return this.lodgeFires()[0];
+  }
+
+  /**
+   * The lodge's fire in every open copy of its room, the main copy first. On the Long Night they are one
+   * fire the whole town keeps, whichever copy of the town a crowd put someone in (copyFor): the same fuel
+   * in each, fed in any of them, out in all of them at once.
+   */
+  private lodgeFires(): Array<{ zone: Zone; fire: Fire }> {
+    const f = this.nightFire;
+    if (!f) return [];
+    return [...this.copiesOf(f.map.data.id)].flatMap(zone => {
+      const fire = zone.fires.at(f.x, f.y);
+      return fire ? [{ zone, fire }] : [];
+    });
+  }
+
+  /**
+   * The Long Night (sky.ts) begins at its dawn and ends at the next: the whole day is an aurora (the
+   * weather follows it by itself). While it is on, the lodge's fire burns down like a shelter's, and
+   * when it goes out, it went out for the bonus too, lit again or not.
+   */
+  private moveLongNight(now: number): void {
+    const t = longNightAt(now + this.epochOffset);
+    if (this.nightOn && (!t.on || t.week !== this.night?.week)) this.endLongNight(now);
+    if (!this.nightOn && t.on) this.beginLongNight(t.week, now, true);
+    const r = this.night;
+    if (!this.nightOn || !r || r.out || !this.nightFire || r.outAt > now + this.epochOffset) return;
+    r.out = true;
+    this.nightWrite = { ...r };
+    this.outbox.push({ to: 'all', msg: { t: 'longNight', night: this.longNightView(now) } });
+  }
+
+  /**
+   * The Long Night of `week` begins: its bonus follows the last one's fire (bonusFor), and the lodge's
+   * fire, left untended, has LODGE_FUEL_S in it; or, after a restart in the night, what it had as saved
+   * (never more than a fire holds). A world without the lodge's fire has nothing to keep going: it lasts
+   * until dawn. `tell`: everyone online hears it, and everyone in the lodge sees the fire burn down from now.
+   */
+  private beginLongNight(week: number, now: number, tell: boolean): void {
+    const wall = now + this.epochOffset, saved = this.night;
+    this.night = saved?.week === week && !saved.over
+      ? { ...saved, outAt: Math.min(saved.outAt, wall + FIRE_MAX_S * 1000) }
+      : { week, bonus: this.bonusFor(week), outAt: this.nightFire ? wall + LODGE_FUEL_S * 1000 : longNightFrom(week) + DAY_S * 1000, out: false, over: false };
+    this.nightOn = true;
+    this.nightWrite = { ...this.night };
+    const lodges = this.lodgeFires();
+    for (const l of lodges) l.zone.fires.untend(l.fire, this.night.outAt - this.epochOffset);
+    if (!tell) return;
+    this.outbox.push({ to: 'all', msg: { t: 'longNight', night: this.longNightView(now) } });
+    for (const l of lodges) this.toZone(l.zone.key, { t: 'fire', fire: l.zone.fires.view(l.fire, now) });
+  }
+
+  /** Dawn after the Long Night: whether the lodge's fire lasted is kept for the next one, the fire is tended again, and everyone online hears it. */
+  private endLongNight(now: number): void {
+    const r = this.night!;
+    this.nightOn = false;
+    r.out = wentOut(r);
+    r.over = true;
+    this.nightWrite = { ...r };
+    for (const l of this.lodgeFires()) {
+      l.zone.fires.tend(l.fire);
+      this.toZone(l.zone.key, { t: 'fire', fire: l.zone.fires.view(l.fire, now) });
+      for (const p of l.zone.players) this.rerate(p, now);
+    }
+    this.outbox.push({ to: 'all', msg: { t: 'longNight', night: this.longNightView(now) } });
+  }
+
+  /**
+   * Someone fed `fire`: on the Long Night, if it is the lodge's (in any copy of its room), it is the one
+   * fire: the other copies' burn as long now (a fire lit again warms there too), and storage hears it.
+   */
+  private fedLodge(fire: Fire, now: number): void {
+    const r = this.night, lodges = this.lodgeFires();
+    if (!this.nightOn || !r || !lodges.some(l => l.fire === fire)) return;
+    r.outAt = fire.outAt + this.epochOffset;
+    this.nightWrite = { ...r };
+    for (const l of lodges) {
+      if (l.fire === fire) continue;
+      l.zone.fires.untend(l.fire, fire.outAt);
+      this.toZone(l.zone.key, { t: 'fire', fire: l.zone.fires.view(l.fire, now) });
+      for (const p of l.zone.players) this.rerate(p, now);
+    }
+  }
+
   /** The season as everyone heard it, and the seconds left of it (none once its week is over and no tick turned it yet). */
   private seasonNow(now: number): SeasonView {
     const v = seasonView(now + this.epochOffset);
@@ -3993,7 +4148,10 @@ export class World {
   /** The notice board: the weather, each region's surge clock, the fires that need feeding, recent collapses, the Old Stone. */
   private news(now: number): string[] {
     const lines = this.weatherLines(now);
+    // On the Long Night, what it does and the lodge's fire come first; any other time, when it comes follows the season.
+    if (this.nightOn) lines.push(...this.longNightLines(now));
     lines.push(this.seasonLine(now));
+    if (!this.nightOn) lines.push(...this.longNightLines(now));
     lines.push(...this.conditionLines(now));
     // The regions nearest town first: a board read on the way out says what comes first on it.
     const regions = [...this.maps.values()].sort((a, b) => a.data.depth - b.data.depth);
@@ -4011,17 +4169,18 @@ export class World {
       else if (s.phase === 'coming') lines.push(`${map.data.name}: a storm is coming ${about(s.left)}.`);
       else lines.push(`${map.data.name}: clear. The next storm comes ${about(s.left + rule.warn)}.`);
     }
-    // The fires of the world everyone shares: each map's main copy.
-    const low: string[] = [], out: string[] = [], fires = [...this.maps.values()].map(m => this.main(m).fires);
+    // The fires of the world everyone shares: each map's main copy. The lodge's, on the Long Night, has a line of its own.
+    const low: string[] = [], out: string[] = [], fires = [...this.maps.values()].map(m => this.main(m).fires), lodge = this.lodge()?.fire;
+    const burnsDown = (f: Fire) => !f.tended && f !== lodge;
     for (const zone of fires) for (const f of zone.all()) {
-      if (f.tended) continue;
+      if (!burnsDown(f)) continue;
       const left = zone.left(f, now);
       if (left <= 0) out.push(fireName(f));
       else if (left < FIRE_LOW_S * 2) low.push(fireName(f));
     }
     if (out.length) lines.push(`Gone out: ${listOf(out)}. Bring something that burns.`);
     if (low.length) lines.push(`Burning low: ${listOf(low)}.`);
-    if (!out.length && !low.length && fires.some(zone => zone.all().some(f => !f.tended))) lines.push('Every shelter fire is burning.');
+    if (!out.length && !low.length && fires.some(zone => zone.all().some(burnsDown))) lines.push('Every shelter fire is burning.');
     const recent = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
     if (recent.length) {
       const by = new Map<string, number>();
@@ -4050,7 +4209,7 @@ export class World {
     if (!this.cycle) return [`${WEATHER_WORDS[this.sky]}.`];
     // In winter the rain falls as snow (sky.ts, SEASONS).
     const wall = now + this.epochOffset, d = dayAt(wall), rain = SEASONS[this.season].snow ? 'snow' : 'rain';
-    if (d.into >= d.night) return [`${d.aurora ? 'An aurora night' : 'Night'}: no ${rain} anywhere. Dawn ${about(DAY_S - d.into)}.`];
+    if (d.into >= d.night) return [`${d.long ? 'The Long Night' : d.aurora ? 'An aurora night' : 'Night'}: no ${rain} anywhere. Dawn ${about(DAY_S - d.into)}.`];
     const lines = [`Night falls ${about(d.night - d.into)}.`];
     // The regions nearest town first, as you would walk out to them.
     const regions = [...this.maps.values()].filter(m => m.data.kind === 'wilds').sort((a, b) => a.data.depth - b.data.depth);
@@ -4061,6 +4220,30 @@ export class World {
       else lines.push(`${name}: dry for ${about(r.left, true)}, then ${rain}.`);
     }
     return lines;
+  }
+
+  /**
+   * The notice board on the Long Night: when the next one comes, and whether it keeps its bonus; while
+   * it is on, what it does, and how the lodge's fire stands ("The lodge's fire needs feeding tonight: 18
+   * minutes left.").
+   */
+  private longNightLines(now: number): string[] {
+    const wall = now + this.epochOffset, r = this.night, bonus = this.nightRegrow?.words;
+    if (!this.nightOn || !r) {
+      const t = longNightAt(wall);
+      if (!this.bonusFor(t.week)) return [`The Long Night comes ${about(t.left)}. The lodge's fire went out on the last one, so this one will only be long and dark.`];
+      return [`The Long Night comes ${about(t.left)}: an aurora from dawn to dawn${bonus ? `, and ${bonus}` : ''}.`];
+    }
+    const lines = [
+      r.bonus || !bonus
+        ? `Tonight ${bonus ? `${bonus}, and ` : ''}the watchers are restless.`
+        : 'Tonight is only long and dark, since the lodge\'s fire went out last week. The watchers are restless.',
+    ];
+    if (!this.nightFire) return lines;
+    if (r.out) return [...lines, 'The lodge\'s fire went out tonight: next week\'s Long Night will only be long and dark.'];
+    const m = Math.max(1, Math.ceil((r.outAt - wall) / 60_000));
+    const next = !bonus ? '' : r.bonus ? ' If it lasts until dawn, next week\'s Long Night keeps its bonus.' : ' If it lasts until dawn, next week\'s Long Night has its bonus again.';
+    return [...lines, `The lodge's fire needs feeding tonight: ${m} minute${m === 1 ? '' : 's'} left.${next}`];
   }
 
   /** The notice board on the season: which it is, how long is left of it, what it changes, and which comes next. */
@@ -4181,7 +4364,7 @@ export class World {
     p.rec.bag = again && double ? again.bag : r.bag;
     find.zone.finds.delete(find.tile);
     const [soonest, latest] = rule.respawn;
-    this.later(rule, find.zone, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
+    this.later(rule, find.zone, now + ((soonest + this.rng() * (latest - soonest)) * 1000) / this.regrow(rule.item.id), find.tile);
     this.got(p, [{ item: rule.item.id, count: double ? 2 : 1 }], 'find', now, double);
     this.toZone(find.zone.key, { t: 'findGone', id: find.id });
     if (wild) this.count(p, 'found', now);
@@ -4201,7 +4384,7 @@ export class World {
     if (this.owns(p, rule.item.id)) return this.refuse(p, 'pick', 'have_tool');
     find.zone.finds.delete(find.tile);
     const [soonest, latest] = rule.respawn;
-    this.later(rule, find.zone, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
+    this.later(rule, find.zone, now + ((soonest + this.rng() * (latest - soonest)) * 1000) / this.regrow(rule.item.id), find.tile);
     this.outbox.push({ to: p.rec.id, msg: { t: 'got', items: [{ item: rule.item.id, count: 1 }], from: 'tool' } });
     this.giveTool(p.rec.id, rule.item.id);
     this.toZone(find.zone.key, { t: 'findGone', id: find.id });
@@ -4757,6 +4940,9 @@ export class World {
       const f = d.map === map.data.id ? zone.fires.at(d.x, d.y) : undefined;
       if (f) zone.fires.douse(f, now);
     }
+    // On the Long Night a copy of the lodge that opens has the one fire the town keeps, as it burns now.
+    const lodge = this.nightOn && this.night && this.nightFire?.map === map ? zone.fires.at(this.nightFire.x, this.nightFire.y) : undefined;
+    if (lodge) zone.fires.untend(lodge, this.night!.outAt - this.epochOffset);
     for (const rule of this.rules) if (rule.open && rule.map === map) this.sow(rule, zone);
     this.cratesIn(map, copy);
     this.addWatchers(zone);
@@ -4928,6 +5114,14 @@ function about(seconds: number, plain = false): string {
   }
   const d = Math.round(seconds / 86400);
   return `${pre}about ${d} day${d === 1 ? '' : 's'}`;
+}
+
+/**
+ * The lodge's fire went out on a Long Night: someone saw it go out, or it was to run out before dawn as
+ * the server last heard of it (nobody could feed it while the server was down).
+ */
+function wentOut(r: LongNightRecord): boolean {
+  return r.out || r.outAt < longNightFrom(r.week) + DAY_S * 1000;
 }
 
 function listOf(names: string[]): string {

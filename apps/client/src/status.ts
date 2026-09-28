@@ -178,6 +178,21 @@ export function statusView(s: StatusInput): StatusView {
 }
 
 /**
+ * The Long Night's banners: as it begins (with its bonus, `does`, or only long and dark), and at dawn,
+ * whether the lodge's fire held (`bonus`: the next one keeps it) or went out.
+ */
+export function longNightBanner(on: boolean, bonus: boolean, does: string): { title: string; sub: string } {
+  if (on) {
+    return bonus
+      ? { title: 'The Long Night begins', sub: `An aurora from dawn to dawn${does ? `, and ${does}` : ''}.\nThe lodge's fire needs feeding until dawn: bring resin or cloth.` }
+      : { title: 'The Long Night begins', sub: 'Only long and dark this time: the lodge\'s fire went out last week.\nKeep it fed until dawn, and the next one has its bonus again.' };
+  }
+  return bonus
+    ? { title: 'Dawn. The lodge\'s fire held.', sub: `Next week's Long Night keeps its bonus${does ? `: ${does}` : ''}.` }
+    : { title: 'Dawn. The lodge\'s fire went out.', sub: 'Next week\'s Long Night will only be long and dark.' };
+}
+
+/**
  * The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a
  * feat, a level, a chapter of the story, a page of the field notes or a blank filled in on one, a keepsake
  * home, a parcel (which names what came: `items`, and with the welcome parcel, the outfits signing in
@@ -198,6 +213,7 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
   if (n.kind === 'parcel') return items ? parcelBanner(n.parcel, items, n.outfits) : null;
   if (n.kind === 'conditions') return n.names.length ? { title: 'A new day', sub: n.names.join('\n') } : null;
   if (n.kind === 'aurora') return { title: 'Lights in the sky', sub: 'An aurora: the old wires hum,\nand copper turns up by the poles.' };
+  if (n.kind === 'longNight') return longNightBanner(n.on, n.bonus, items?.longNight ?? '');
   if (n.kind === 'season') {
     // Winter names the water it freezes; the spring after it says the ice is gone.
     const ice = !n.frozen.length ? '' : n.season === 'winter' ? `\n${capital(listWords(n.frozen))} ${n.frozen.length > 1 ? 'are' : 'is'} frozen: you can walk across.` : n.season === 'spring' ? '\nThe ice is gone.' : '';
