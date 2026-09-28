@@ -378,6 +378,13 @@ describe('dev sign-in', () => {
     tab.set(TOKEN_KEY, LEGACY_TOKEN);
     const s = flow(DEV);
     await s.start();
+    // The email this tab kept signs in, not this page: the guest the tab keeps goes with it only when asked.
+    expect(await s.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'cid@example.test' });
+    await s.refused('need_name', 'Choose a name for your character');
+    expect(screen(s, 'keep')).toEqual({ kind: 'keep', who: 'cid@example.test' });
+    s.keepGuestCharacter();
+    expect(await s.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'cid@example.test', token: LEGACY_TOKEN });
+    // Its character is nobody's to claim any more: a name then, and the token still goes with it.
     await s.refused('need_name', 'Choose a name for your character');
     expect(screen(s, 'name')).toMatchObject({ signedIn: true, who: 'cid@example.test' });
     s.submitName('Cid');
@@ -439,6 +446,55 @@ describe('play first, sign in to keep it', () => {
     await back.start();
     expect(did).toEqual(['connect', 'connect']);
     expect(await back.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, token: GUEST_TOKEN });
+  });
+
+  it('never gives the guest away to a session this page did not sign in to: the keep card asks first', async () => {
+    // A session found here, which this page did not sign in to (a link with someone's session in it, or
+    // one kept from before), while the browser keeps a guest.
+    store.set(TOKEN_KEY, GUEST_TOKEN);
+    supabase.session_ = { token: 'theirs', email: 'someone@example.test' };
+    const s = flow(SUPABASE);
+    await s.start();
+    expect(did).toEqual(['connect']);
+    expect(await s.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'theirs' });
+    // Their account has no character: the guest is not taken for it unasked.
+    await s.refused('need_name', 'Choose a name for your character');
+    expect(screen(s, 'keep')).toEqual({ kind: 'keep', who: 'someone@example.test' });
+
+    // "Play as a guest instead": signed out of that account in this browser, the guest plays on, as it was.
+    await s.keepGuest();
+    expect(supabase.signOuts).toBe(1);
+    expect(await s.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, token: GUEST_TOKEN });
+
+    // "Keep it": only then does the guest's token go with the sign-in, which claims it.
+    supabase.session_ = { token: 'mine', email: 'wren@example.test' };
+    const again = flow(SUPABASE);
+    await again.start();
+    expect(await again.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'mine' });
+    await again.refused('need_name', 'Choose a name for your character');
+    again.keepGuestCharacter();
+    expect(await again.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'mine', token: GUEST_TOKEN });
+    again.welcomed(welcome({ claimed: true }));
+    expect(again.claimed).toBe(true);
+    // Claimed, a reconnect needs the token no more.
+    expect(await again.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'mine' });
+  });
+
+  it('plays the account\'s own character with a session kept from before, and never asks for a guest it does not keep', async () => {
+    supabase.session_ = { token: 'access-9', email: 'ann@example.test' };
+    const s = flow(SUPABASE);
+    await s.start();
+    expect(await s.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'access-9' });
+    // No guest here: an account without a character is asked for a name, as ever.
+    await s.refused('need_name', 'Choose a name for your character');
+    expect(screen(s, 'name')).toMatchObject({ signedIn: true, who: 'ann@example.test' });
+    // A guest set aside for the account's own character stays out too.
+    store.set(TOKEN_KEY, GUEST_TOKEN);
+    store.set(SET_ASIDE_KEY, GUEST_TOKEN);
+    const set = flow(SUPABASE);
+    await set.start();
+    await set.refused('need_name', 'Choose a name for your character');
+    expect(kind(set)).toBe('name');
   });
 
   it('takes a guest\'s name the server refuses (taken, too many new players) back to the play card, with its words', async () => {
