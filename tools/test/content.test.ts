@@ -59,7 +59,8 @@ describe('a parcel a day (roadmap/daily-parcels.md)', () => {
 });
 
 describe('a first goal on the first day (roadmap/first-day.md)', () => {
-  const woods = items.finds.filter(f => f.map === 'near-woods' && f.when === undefined && f.condition === undefined);
+  // What grows every day: not at a time, on a condition's day or in a season only.
+  const woods = items.finds.filter(f => f.map === 'near-woods' && f.when === undefined && f.condition === undefined && f.season === undefined);
   /** How many of an item lie out at once on rules that stay within the first 40 steps into the Near Woods, and on the rest. */
   const near = (item: string) => woods.filter(f => f.item === item && f.steps && f.steps[1] <= 40).reduce((n, f) => n + f.count, 0);
   const deeper = (item: string) => woods.filter(f => f.item === item && !(f.steps && f.steps[1] <= 40)).reduce((n, f) => n + f.count, 0);
@@ -232,7 +233,8 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
 
   it('stands in every place out there where people rest by a fire: the shelters, and by the fire in the open', () => {
     expect(shelters.map(m => m.data.id).sort()).toEqual([
-      'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'south-road-bunker', 'south-road-checkpoint', 'south-road-dormitory', 'south-road-laboratory',
+      'far-woods-trapper-cabin', 'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'south-road-bunker', 'south-road-checkpoint', 'south-road-dormitory',
+      'south-road-laboratory',
     ]);
     for (const m of shelters) expect(crates.filter(c => c.map === m), m.data.id).toHaveLength(1);
     expect(openFires.map(f => `${f.map.data.id} ${f.x},${f.y}`)).toEqual(['south-road 22,22']);
@@ -245,7 +247,7 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
   it('has a name each, for the letter of whoever left something in it', () => {
     expect(crates.map(c => c.o.kind === 'cache' && c.o.name).sort()).toEqual([
       'the bunker\'s crate', 'the checkpoint\'s crate', 'the crate at the leavers\' camp', 'the crate in the cabin at the end', 'the dormitory\'s crate',
-      'the laboratory\'s crate', 'the old cabin\'s crate', 'the ranger\'s crate',
+      'the laboratory\'s crate', 'the old cabin\'s crate', 'the ranger\'s crate', 'the trapper\'s crate',
     ]);
   });
 
@@ -356,12 +358,13 @@ describe('a field notebook (roadmap/field-notebook.md)', () => {
     expect(validateNotebook(notebook, all, items)).toEqual([]);
   });
 
-  it('has about 40 pages, across the three areas and anywhere, each with a count worth filling', () => {
-    expect(notebook.pages.length).toBeGreaterThanOrEqual(35);
-    expect(notebook.pages.length).toBeLessThanOrEqual(50);
+  // The notebook grows as the world does: about ten pages for each area it has (the Far Woods made it four and anywhere).
+  it('has about ten pages an area, across the four areas and anywhere, each with a count worth filling', () => {
     const areas = new Map<string, number>();
     for (const p of notebook.pages) areas.set(p.area, (areas.get(p.area) ?? 0) + 1);
-    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', ANYWHERE]);
+    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', ANYWHERE]);
+    expect(notebook.pages.length).toBeGreaterThanOrEqual(8 * areas.size);
+    expect(notebook.pages.length).toBeLessThanOrEqual(12 * areas.size);
     for (const [area, n] of areas) expect(n, area).toBeGreaterThanOrEqual(8);
   });
 
@@ -384,7 +387,7 @@ describe('a field notebook (roadmap/field-notebook.md)', () => {
 
   it('has a page for the main landmarks\' signs, NAPO\'s desks that tell no chapter, and what each family left to read', () => {
     const read = (map: string, o: MapObject) => opening({ read: { map, x: o.x, y: o.y } }).length + (o.kind === 'console' ? opening({ read: o.id }).length : 0);
-    for (const id of ['stonebrook', 'near-woods', 'south-road']) {
+    for (const id of ['stonebrook', 'near-woods', 'south-road', 'far-woods']) {
       const napo = maps.get(id)!.data.objects.filter(o => o.kind === 'sign' && o.style === 'napo');
       expect(napo.length, id).toBeGreaterThan(0);
       for (const o of napo) expect(read(id, o), `${id} ${o.x},${o.y}`).toBe(1);

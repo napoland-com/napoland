@@ -20,6 +20,8 @@ export type Standing = 'friend' | 'asked' | 'asking' | 'blocked' | 'none';
 export interface FriendsView {
   requestsOff: boolean;
   tradesOff: boolean;
+  /** You keep your name off your door and your window dark (guests too: it stands beside the others, and outside the list). */
+  doorOff: boolean;
   incoming: PersonView[];
   friends: Array<PersonView & { where: string; unread: boolean }>;
   outgoing: PersonView[];
@@ -48,7 +50,9 @@ export function standingOf(f: FriendsMsg | null, id: string): Standing {
 /** `s.guests`: who plays as a guest, among the players the game knows of; `s.tradeReach`: how near someone is to trade with. */
 export function friendsView(
   f: FriendsMsg | null,
-  s: { person: PersonView | null; talks: ReadonlyMap<string, readonly TalkLine[]>; unread: ReadonlySet<string>; guests?: ReadonlySet<string>; tradeReach?(id: string): TradeReach },
+  s: {
+    person: PersonView | null; talks: ReadonlyMap<string, readonly TalkLine[]>; unread: ReadonlySet<string>; guests?: ReadonlySet<string>; tradeReach?(id: string): TradeReach; doorOff?: boolean;
+  },
   nameOf: (map: string) => string | undefined,
 ): FriendsView {
   const friends = (f?.friends ?? [])
@@ -61,6 +65,7 @@ export function friendsView(
   return {
     requestsOff: f?.requestsOff ?? false,
     tradesOff: f?.tradesOff ?? false,
+    doorOff: s.doorOff ?? false,
     incoming: f?.incoming ?? [],
     friends,
     outgoing: f?.outgoing ?? [],

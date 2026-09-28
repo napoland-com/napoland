@@ -22,7 +22,8 @@ import { ENERGY_MAX, PROTOCOL_VERSION, STEP_MS, TileMap, lotDoors, validateMap, 
 import { setLogLevel } from '../src/log';
 import { startServer } from '../src/server';
 import { MemoryStorage, type LotRecord, type PlayerRecord } from '../src/storage';
-import { KNOCK_EVERY_MS, MOVE_EVERY_MS, World, colorFor, zoneKey, type Outgoing } from '../src/world';
+import { devAuth } from '../src/auth';
+import { DOOR_EVERY_MS, KNOCK_EVERY_MS, MOVE_EVERY_MS, World, colorFor, zoneKey, type Outgoing } from '../src/world';
 import { itemsData, townData, woodsData } from './fixtures';
 import { Client, loginTo, savedPlayer, serverDefaults, waitFor } from './helpers';
 
@@ -67,7 +68,7 @@ const rec = (id: string, map: string, x: number, y: number, dir: Dir = 'up', mor
 });
 /** A player who never came home since streets came: in their cabin, where they wake up. */
 const fresh = (id: string) => rec(id, 'house', 2, 2, 'down');
-const lot = (id: string, street: number, n: number): LotRecord => ({ id, name: id.toUpperCase(), street, lot: n });
+const lot = (id: string, street: number, n: number, off = false): LotRecord => ({ id, name: id.toUpperCase(), street, lot: n, ...(off && { off: true as const }) });
 
 function world(lots: LotRecord[] = [], friends: Record<string, string[]> = {}): World {
   const w = new World(maps(), 'town', 'overcast', { items: itemsData(), rng: () => 0, lots });
@@ -160,7 +161,7 @@ describe('knocking', () => {
     w.drain();
     w.knock('a', 6, 2, 1000);
     const out = w.drain();
-    expect(to(out, 'a')).toEqual([{ t: 'door', x: 6, y: 2, name: 'B', home: true }]);
+    expect(to(out, 'a')).toEqual([{ t: 'door', x: 6, y: 2, lot: { name: 'B', home: true } }]);
     expect(to(out, 'b')).toEqual([{ t: 'knocked', name: 'A' }]);
     expect(to(out, 'd')).toEqual([]);
     // Too soon for another; and at C's door, nobody answers.
@@ -169,13 +170,13 @@ describe('knocking', () => {
     w.knock('a', 10, 2, at);
     expect(of(to(w.drain(), 'a'), 'refused')).toEqual([{ t: 'refused', action: 'knock', reason: 'slow_down' }]);
     w.knock('a', 10, 2, 1000 + KNOCK_EVERY_MS);
-    expect(to(w.drain(), 'a')).toEqual([{ t: 'door', x: 10, y: 2, name: 'C', home: false }]);
+    expect(to(w.drain(), 'a')).toEqual([{ t: 'door', x: 10, y: 2, lot: { name: 'C' } }]);
     // A door nobody lives behind yet.
     const empty = world([lot('a', 1, 0)]);
     empty.join(rec('a', 'lane', 6, 3, 'up'), 0);
     empty.drain();
     empty.knock('a', 6, 2, 1000);
-    expect(to(empty.drain(), 'a')).toEqual([{ t: 'door', x: 6, y: 2, name: null, home: false }]);
+    expect(to(empty.drain(), 'a')).toEqual([{ t: 'door', x: 6, y: 2, lot: null }]);
   });
 
   it('never reaches someone who blocks the knocker, and is no knock from too far', () => {
@@ -186,7 +187,7 @@ describe('knocking', () => {
     w.drain();
     w.knock('a', 6, 2, 1000);
     const out = w.drain();
-    expect(to(out, 'a')).toEqual([{ t: 'door', x: 6, y: 2, name: 'B', home: true }]);
+    expect(to(out, 'a')).toEqual([{ t: 'door', x: 6, y: 2, lot: { name: 'B', home: true } }]);
     expect(to(out, 'b')).toEqual([]);
     w.knock('a', 10, 2, 9000);
     expect(to(w.drain(), 'a')).toEqual([{ t: 'refused', action: 'knock', reason: 'too_far' }]);
@@ -273,6 +274,177 @@ describe('moving next to a friend', () => {
   });
 });
 
+describe('a door kept to oneself', () => {
+  it('shows the street a resident: no name on the plate, never a lit window, and it follows the setting at once', () => {
+    const w = world([lot('a', 1, 0), lot('b', 1, 1)]);
+    w.join(rec('a', 'lane', 2, 3, 'up'), 0);
+    w.join(rec('b', 'house', 2, 2, 'down', { zone: 'b' }), 0);
+    w.drain();
+    w.takeWrites();
+    w.doorOff('b', true, 1000);
+    const out = w.drain();
+    expect(to(out, 'b')).toContainEqual({ t: 'doorOff', off: true });
+    expect(on(out, LANE(1))).toEqual([{ t: 'lot', lot: 1, view: {} }]);
+    // Saved at once, like the other settings.
+    expect(w.takeWrites().players.find(p => p.id === 'b')).toMatchObject({ doorOff: true });
+    // Changed again too soon: nothing changes, and b hears the setting as it stands.
+    w.doorOff('b', false, 1500);
+    expect(to(w.drain(), 'b')).toEqual([{ t: 'doorOff', off: true }]);
+    // Shown again: the name, and the window lit (b is home).
+    w.doorOff('b', false, 1000 + DOOR_EVERY_MS);
+    expect(on(w.drain(), LANE(1))).toEqual([{ t: 'lot', lot: 1, view: { name: 'B', home: true } }]);
+    expect(w.get('b')!.doorOff).toBeUndefined();
+  });
+
+  it('answers only friends: anyone else hears nobody answer, and the knock still reaches whoever is home', () => {
+    // c counts b a friend (the World asks both ways); a does not.
+    const w = world([lot('a', 1, 0), lot('b', 1, 1, true), lot('c', 1, 2)], { c: ['b'] });
+    w.join(rec('a', 'lane', 6, 3, 'up'), 0);
+    w.join(rec('c', 'lane', 6, 3, 'up'), 0);
+    w.join(rec('b', 'house', 2, 2, 'down', { zone: 'b', doorOff: true }), 0);
+    w.drain();
+    w.knock('a', 6, 2, 1000);
+    let out = w.drain();
+    expect(to(out, 'a')).toEqual([{ t: 'door', x: 6, y: 2, lot: {} }]);
+    expect(to(out, 'b')).toEqual([{ t: 'knocked', name: 'A' }]);
+    w.knock('c', 6, 2, 1000);
+    out = w.drain();
+    expect(to(out, 'c')).toEqual([{ t: 'door', x: 6, y: 2, lot: { name: 'B', home: true } }]);
+    expect(to(out, 'b')).toEqual([{ t: 'knocked', name: 'C' }]);
+  });
+
+  it('is kept for everyone, online or not, and goes with the player: into a new lot, a move and the welcome', () => {
+    // b keeps the door, offline: the street, loaded, sees a resident.
+    const w = world([lot('a', 1, 0), lot('b', 1, 1, true), lot('d', 2, 0)], { e: ['d'] });
+    expect(w.join(rec('a', 'lane', 2, 3, 'up'), 0).street).toEqual({ mine: 0, lots: [{ name: 'A' }, {}, null] });
+    // Someone new who chose it already (before coming home): their new lot is a resident's too.
+    const e = w.join(rec('e', 'lane', 10, 3, 'up', { doorOff: true }), 0);
+    expect(e).toMatchObject({ doorOff: true, street: { mine: 2, lots: [{ name: 'A' }, {}, {}] } });
+    // Moving next to a friend keeps it.
+    w.moveNextTo('e', 'd', 1000);
+    expect(w.get('e')).toMatchObject({ street: 2, lot: 1, doorOff: true });
+    expect(of(to(w.drain(), 'e'), 'zone')[0]!.street).toEqual({ mine: 1, lots: [{ name: 'D' }, {}, null] });
+    // Saved as anything but true, it is not kept.
+    w.join(rec('f', 'lane', 2, 3, 'up', { doorOff: 1 as unknown as true }), 0);
+    expect(w.get('f')!.doorOff).toBeUndefined();
+  });
+});
+
+describe('the letter about your street', () => {
+  it('comes the first time home, once, and says whether the door is kept to oneself', () => {
+    const w = world([lot('a', 1, 0), lot('b', 1, 1)]);
+    w.join(rec('a', 'lane', 2, 3, 'up'), 0);
+    w.drain();
+    w.takeWrites();
+    walk(w, 'a', ['up'], 1000);
+    expect(of(to(w.drain(), 'a'), 'streetLetter')).toEqual([{ t: 'streetLetter', doorOff: false }]);
+    expect(w.takeWrites().players.find(p => p.id === 'a')).toMatchObject({ streetTold: true });
+    // Out and back in: never again.
+    walk(w, 'a', ['down', 'up'], 2000);
+    expect(w.zoneOf('a')).toBe(zoneKey('house', 'a'));
+    expect(of(to(w.drain(), 'a'), 'streetLetter')).toEqual([]);
+    // Back in the game at home (net.ts says so once it knows whom they block), one who kept their door already reads it that way.
+    w.join(rec('b', 'house', 2, 2, 'down', { zone: 'b', doorOff: true }), 3000);
+    w.returned('b', 3000);
+    expect(of(to(w.drain(), 'b'), 'streetLetter')).toEqual([{ t: 'streetLetter', doorOff: true }]);
+    // Read before: not again.
+    w.join(rec('c', 'house', 2, 2, 'down', { zone: 'c', streetTold: true }), 3000);
+    w.returned('c', 3000);
+    expect(of(to(w.drain(), 'c'), 'streetLetter')).toEqual([]);
+  });
+
+  it('never comes where there is no street', () => {
+    const plain = new World([new TileMap(townData()), new TileMap({ ...home(), exits: [{ x: 2, y: 4, w: 1, h: 1, to: 'town', tx: 7, ty: 3, dir: 'down' }] }), new TileMap(woodsData())], 'town', 'overcast', { items: itemsData() });
+    plain.join(rec('a', 'house', 2, 2, 'down', { zone: 'a' }), 0);
+    plain.returned('a', 0);
+    expect(of(to(plain.drain(), 'a'), 'streetLetter')).toEqual([]);
+  });
+});
+
+describe('a door kept to oneself, over the network', () => {
+  it('can be set by anyone, guests too; the street sees a resident, knocks go unanswered but for friends, and it all lasts a restart', async () => {
+    setLogLevel('silent');
+    let now = 1_000_000;
+    const storage = new MemoryStorage();
+    const options = () => ({ ...serverDefaults(), storage, maps: maps(), items: itemsData(), weather: 'overcast' as const, clock: () => now, auth: devAuth() });
+    let server = await startServer(options());
+    const clients: Client[] = [];
+    // Everyone new wakes up at home, and reads the letter about their street there first.
+    const hello = async (hi: { auth?: string; name?: string }) => {
+      const c = await Client.open(server.port);
+      clients.push(c);
+      c.send({ t: 'hello', v: PROTOCOL_VERSION, ...hi });
+      const welcome = await c.next('welcome');
+      return { c, welcome, id: welcome.you };
+    };
+    const step = async (c: Client, dir: Dir) => {
+      now += STEP_MS + 10;
+      const n = ++seq;
+      c.send({ t: 'step', dir, seq: n });
+      return c.next('step', m => m.seq === n);
+    };
+    const go = async (c: Client, dirs: Dir[]) => {
+      for (const dir of dirs) await step(c, dir);
+    };
+    try {
+      const bob = await hello({ auth: 'bob@example.test', name: 'Bob' });
+      const ann = await hello({ auth: 'ann@example.test', name: 'Ann' });
+      const gus = await hello({ name: 'Gus' });
+      expect(gus.welcome.guest).toBe(true);
+      for (const p of [bob, ann, gus]) expect(await p.c.next('streetLetter')).toEqual({ t: 'streetLetter', doorOff: false });
+      await Promise.all([bob, ann, gus].map(p => p.c.settle()));
+
+      // A guest keeps his door to himself: saved at once.
+      gus.c.send({ t: 'doorOff', off: true });
+      expect(await gus.c.next('doorOff')).toEqual({ t: 'doorOff', off: true });
+      await waitFor(() => storage.get(gus.id)?.doorOff === true, 'the setting to be saved');
+
+      // Out on the street, Ann sees Bob home, and a resident where Gus lives.
+      await go(ann.c, ['down', 'down']);
+      const lane = await ann.c.next('zone');
+      expect(lane.street).toEqual({ mine: 1, lots: [{ name: 'Bob', home: true }, { name: 'Ann' }, {}] });
+      // Bob keeps his too: Ann sees his plate go blank and his window dark.
+      now += 10;
+      bob.c.send({ t: 'doorOff', off: true });
+      expect(await ann.c.next('lot', m => m.lot === 0)).toEqual({ t: 'lot', lot: 0, view: {} });
+
+      // Ann knocks at Bob's: nobody answers her, but Bob, at home, hears who knocked.
+      await go(ann.c, ['left', 'left', 'left', 'left']);
+      ann.c.send({ t: 'knock', x: 2, y: 2 });
+      expect(await ann.c.next('door')).toEqual({ t: 'door', x: 2, y: 2, lot: {} });
+      expect(await bob.c.next('knocked')).toEqual({ t: 'knocked', name: 'Ann' });
+      // Friends, she knocks again: Bob is home.
+      ann.c.send({ t: 'befriend', id: bob.id });
+      await bob.c.next('friends', m => m.incoming.length === 1);
+      bob.c.send({ t: 'answer', id: ann.id, yes: true });
+      await ann.c.next('friends', m => m.friends.length === 1);
+      now += KNOCK_EVERY_MS;
+      ann.c.send({ t: 'knock', x: 2, y: 2 });
+      expect(await ann.c.next('door')).toEqual({ t: 'door', x: 2, y: 2, lot: { name: 'Bob', home: true } });
+
+      // A restart: Bob and Gus stay away, and their doors stay kept. Ann, back on the street, sees two residents.
+      for (const c of clients.splice(0)) c.ws.terminate();
+      await waitFor(() => server.world.size === 0, 'everyone to leave');
+      await server.stop();
+      server = await startServer(options());
+      const back = await hello({ auth: 'ann@example.test' });
+      expect(back.welcome.street).toEqual({ mine: 1, lots: [{}, { name: 'Ann' }, {}] });
+      expect(back.welcome.doorOff).toBeUndefined();
+      // Home again: the letter was read before, and never comes twice.
+      await go(back.c, ['right', 'right', 'right', 'right', 'up']);
+      expect(await back.c.next('zone')).toMatchObject({ map: { id: 'house' } });
+      expect((await back.c.settle()).filter(m => m.t === 'streetLetter')).toEqual([]);
+      expect(storage.get(ann.id)).toMatchObject({ streetTold: true });
+      // Bob, back, finds his setting in his welcome.
+      const bobBack = await hello({ auth: 'bob@example.test' });
+      expect(bobBack.welcome.doorOff).toBe(true);
+    } finally {
+      for (const c of clients) c.ws.terminate();
+      await server.stop();
+    }
+  });
+});
+
 describe('streets over the network', () => {
   it('give lots, open a new street when one is full, take you home and out to the right places, and keep neighbors to their own street', async () => {
     setLogLevel('silent');
@@ -341,7 +513,7 @@ describe('streets over the network', () => {
       // Ann knocks at Cid's door: Cid, at home, hears it in his text box; Ann hears that Cid is home. The door stays Cid's.
       await go(a.c, ['right', 'right', 'right', 'right', 'right', 'right', 'right']);
       a.c.send({ t: 'knock', x: 10, y: 2 });
-      expect(await a.c.next('door')).toEqual({ t: 'door', x: 10, y: 2, name: 'Cid', home: true });
+      expect(await a.c.next('door')).toEqual({ t: 'door', x: 10, y: 2, lot: { name: 'Cid', home: true } });
       expect(await c.c.next('knocked')).toEqual({ t: 'knocked', name: 'Ann' });
       now += STEP_MS + 10;
       a.c.send({ t: 'step', dir: 'up', seq: ++seq });

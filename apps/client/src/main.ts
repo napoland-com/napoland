@@ -10,8 +10,8 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, inTheDark, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData, type MapRef,
-  type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, SEASONS, bagSlotsOf, inTheDark, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData,
+  type MapRef, type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
@@ -94,12 +94,22 @@ const renderer = createRenderer(canvas);
 const peek = (id: string) => maps.find(id);
 /** How sharp the world is drawn: a step coarser while a slow phone needs it (quality.ts). */
 const resolution = new Resolution();
-/** The view of the map you are on; replaced (and the old one freed) when you arrive somewhere else. */
+/** The view of the map you are on; replaced (and the old one freed) when you arrive somewhere else, or the season turns. */
 let view = new WorldView(renderer, maps.home(), peek);
 view.pixelScale = resolution.scale;
 /** Every view asks the game how big each fire burns, as it draws. */
 const watchFires = (v: WorldView) => v.setFires((x, y) => fireLevel(game.fireLeft(x, y, performance.now())));
-let weather: Weather = 'rain';
+/** The sky as the view draws it: the weather over your map (game.weather), and the view it was set on. */
+let skyShown: { weather: Weather | null; view: WorldView | null } = { weather: null, view: null };
+/** A new view of the map you are on, in the season's colors (the old one freed after, nextView): on arrival, and when the season turns. */
+function buildView() {
+  view = nextView(renderer, view, game.map, peek, game.season.view.season);
+  view.pixelScale = resolution.scale;
+  view.setWeather(game.weather);
+  skyShown = { weather: game.weather, view };
+  watchFires(view);
+  resize();
+}
 /** The server accepts game messages only after its welcome on the current connection. */
 let welcomed = false;
 /** The first welcome of this page shows where you are; later ones are reconnects. */
@@ -122,12 +132,12 @@ const wardrobeNow = (): WardrobeState => ({
 });
 /** The status panel, as the game stands now. */
 const showStatus = () => {
-  const now = performance.now();
+  const now = performance.now(), effects = game.effectsNow(now);
   hud.setStatus(statusView({
     energy: game.energy(now), body: game.bodyNow(now), surge: game.surgeNow(now), caught: game.caught(now), stone: game.stone, stats: game.stats, bag: game.bag, items,
-    progress: game.progress, resists: resistText(game.myGear, items, game.myWorn),
+    progress: game.progress, resists: resistText(game.myGear, items, game.myWorn, effects), effects, season: game.seasonNow(now),
     wear: wearText(game.myGear, game.myWorn, items), quirks: quirkNames(game.myWorn, items),
-    storm: game.stormNow(now), flash: game.flashed(now), weather, wilds: game.map.data.kind === 'wilds', guest: game.guest, merits: game.merits,
+    storm: game.stormNow(now), flash: game.flashed(now), weather: game.weather, wilds: game.map.data.kind === 'wilds', guest: game.guest, merits: game.merits,
   }));
 };
 /**
@@ -228,6 +238,7 @@ const hud = new Hud(screen, {
       case 'block': return game.social({ t: 'block', id: a.id, on: a.on });
       case 'requests': return game.social({ t: 'requests', off: a.off });
       case 'tradeRequests': return game.social({ t: 'tradeRequests', off: a.off });
+      case 'door': return game.setDoorOff(a.off);
       // Face to face only: from farther away, the card says so (the server checks it again).
       case 'trade': {
         const reach = game.tradeReach(a.id);
@@ -286,7 +297,7 @@ function openMap() {
   const item = mapFor(game.map.data.id, game.tools, t => items.get(t).chart, id => maps.find(id));
   const data = item ? maps.find(items.get(item).chart!) : undefined;
   const map = data && maps.get(data);
-  if (!map) return game.murmur('No map of this place');
+  if (!map) return game.noMap();
   hud.toggleBag(false);
   hud.showPaper(paperMap(map, id => maps.find(id)?.name));
 }
@@ -329,13 +340,7 @@ const arrival = new Arrival(held => {
     else if (msg.t === 'welcome') { collapsed = false; arrived = true; }
   }
   hud.setOnline(game.players.size);
-  if (view.map !== game.map) {
-    view = nextView(renderer, view, game.map, peek);
-    view.pixelScale = resolution.scale;
-    view.setWeather(weather);
-    watchFires(view);
-    resize();
-  }
+  if (view.map !== game.map || view.season !== game.season.view.season) buildView();
   if (collapsed) hud.showBanner('You collapsed from exhaustion', leftPile ? 'You woke up at home.\nWhat you carried lies where you fell. It fades in an hour.' : 'You woke up at home');
   else if (signedInNews) hud.showBanner(signedInNews.title, signedInNews.sub);
   else hud.showBanner(game.map.data.name);
@@ -610,8 +615,6 @@ conn.onMessage = (msg: ServerMsg) => {
       hud.setGuest(msg.guest);
       hud.setLogoutLabel(msg.guest ? 'Sign in' : authMode === 'legacy' ? 'Log out' : 'Sign out');
       hud.setConnection('online', ping);
-      weather = msg.weather;
-      view.setWeather(weather);
       break;
     case 'zone':
       if (!known(msg.map)) return outdated();
@@ -619,13 +622,6 @@ conn.onMessage = (msg: ServerMsg) => {
       // the collapse brings may come just before or just after it.
       if (msg.reason === 'collapse') leftPile = game.carrying(now);
       break;
-    case 'weather':
-      if (msg.weather === 'aurora' && weather !== 'aurora') hud.showBanner('Lights in the sky', 'An aurora: the old wires hum,\nand copper turns up by the poles.');
-      weather = msg.weather;
-      // Some notes people left show only at night, in the rain or on an aurora night.
-      game.weather = weather;
-      view.setWeather(weather);
-      return;
     case 'pong':
       ping = now - msg.at;
       hud.setConnection('online', ping);
@@ -852,6 +848,13 @@ function frame(now: number) {
       hud.showBanner('Your gear hums', `${game.map.data.name} grows restless in about a minute.`);
     }
   }
+  // The season turned (as the week did): the map is drawn again in its colors, its water frozen or not.
+  if (view.season !== game.season.view.season && !arrival.dark) buildView();
+  // The weather over your map (your region's, a room's the map outside it): the sky turns with it.
+  if (game.weather !== skyShown.weather || view !== skyShown.view) {
+    skyShown = { weather: game.weather, view };
+    view.setWeather(game.weather);
+  }
   view.setStone(game.stone.awake);
   const surge = game.surgeNow(now), caught = game.caught(now);
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
@@ -882,6 +885,8 @@ function frame(now: number) {
     // the chest is open needs no banner, as the stash says what came (below). Arriving rested waits the same way.
     if (n.kind === 'parcel') { if (!game.chest) toSay.push(n); continue; }
     if (n.kind === 'rested') { toSay.push(n); continue; }
+    // The season turns at a dawn, with the new day's banner, and so does the Long Night, begun or over: they wait their turn.
+    if (n.kind === 'season' || n.kind === 'longNight') { toSay.push(n); continue; }
     // A lodestone's tug: a moment on the status panel (and a faint sound, soundscape.ts), never a banner.
     if (n.kind === 'tug') { hud.tug(items.quirk('lodestone').name); continue; }
     const b = newsBanner(n, game.map.data.name, items, game.guest);
@@ -968,9 +973,9 @@ function frame(now: number) {
     hud.setTools(toolViews((toolsShown = game.tools), items, (radioShown = radioOn)));
   }
   // Every change to the finds counts in lootChanges, a new map's too.
-  if (radio && (game.lootChanges !== spotsFor.loot || weather !== spotsFor.weather)) {
-    spotsFor = { loot: game.lootChanges, weather };
-    radioSpots = heardFinds(game.finds.values(), radio.senses, weather);
+  if (radio && (game.lootChanges !== spotsFor.loot || game.weather !== spotsFor.weather)) {
+    spotsFor = { loot: game.lootChanges, weather: game.weather };
+    radioSpots = heardFinds(game.finds.values(), radio.senses, game.weather);
   }
   if (game.chest !== chestShown || game.progress !== progressShown) {
     if (game.chest && !chestShown) hud.toggleStash(true);
@@ -994,7 +999,7 @@ function frame(now: number) {
   hud.setGoal(next && { text: goalText(next, items), ready: next.ready, act: !!game.benchBeside() });
   // Uneasy, the screen's edges close in; where watchers roam, something may stand at the edge of the fog.
   hud.setUnease(game.unease);
-  const figure = me && game.online ? apparition.update(now, game.map, game.unease, inTheDark(weather), me.tx, me.ty, me.dir, edgeOf) : 0;
+  const figure = me && game.online ? apparition.update(now, game.map, game.unease, inTheDark(game.weather), me.tx, me.ty, me.dir, edgeOf) : 0;
   view.setApparition(apparition.x, apparition.y, figure);
   // Alone out in the wilds, someone's steps now and then: gone once anyone else is here, or you come near.
   const passing = game.passing, glimpsed = me && passing.active ? passing.update(now, me.x, me.y, game.players.size <= 1 && game.map.data.kind === 'wilds') : 0;
@@ -1003,8 +1008,8 @@ function frame(now: number) {
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;
   const scene: Scene = {
-    map: map.data.id, kind: map.data.kind, weather, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
-    me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty) } : null,
+    map: map.data.id, kind: map.data.kind, weather: game.weather, snow: SEASONS[game.season.view.season].snow, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
+    me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty), ice: map.frozenAt(me.tx, me.ty) } : null,
     fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),
     poles: map.data.objects.filter(o => o.kind === 'pole'),
     // How far the front still has to come to reach your tile, as a share of its sweep.

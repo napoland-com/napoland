@@ -8,8 +8,9 @@
  * to a small map of its own. Energy only comes back near a fireplace. See energy.ts.
  */
 import { comfortSize, underfootComfort, type Comfort } from './comfort';
+import { STEP_MS } from './movement';
 import type { Dir } from './protocol';
-import type { FlashRule, StormRule, SurgeRule } from './sky';
+import type { FlashRule, RainWindow, StormRule, SurgeRule } from './sky';
 
 /** One character per tile in MapData.tiles. */
 export const TILE_CHARS = {
@@ -68,7 +69,8 @@ export interface NpcLook {
 
 export type MapObject =
   | { kind: 'tree'; x: number; y: number; s: number; v: number }
-  | { kind: 'rock'; x: number; y: number; s: number; v: number }
+  /** A rock; with `hum`, one of the rocks deep in the woods that hum back: it glows faintly, the same day and night. */
+  | { kind: 'rock'; x: number; y: number; s: number; v: number; hum?: boolean }
   /**
    * A building you can enter: a wooden cabin (3 by 2, a gabled roof in `roof`), with style 'napo' one
    * of NAPO's concrete buildings (3 by 2 or bigger, a flat roof in `roof`), or with style 'mill' the
@@ -126,17 +128,29 @@ export type MapObject =
   | { kind: 'stone'; x: number; y: number }
   | { kind: 'npc'; x: number; y: number; id: string; name: string; dir: Dir; lines: string[]; look?: NpcLook }
   | { kind: 'shrooms'; x: number; y: number }
-  /** A tall radio mast, like the NAPO Tower's, with a red light blinking at the top. */
-  | { kind: 'antenna'; x: number; y: number }
+  /** A tall radio mast, like the NAPO Tower's, with a red light blinking at the top; `broken`: snapped halfway, its light long dead. */
+  | { kind: 'antenna'; x: number; y: number; broken?: boolean }
+  /** What is left of a logging camp's bunkhouse, w by h tiles: log walls fallen to a few rounds, no roof. Not a way in: it stands in the way. */
+  | { kind: 'ruin'; x: number; y: number; w: number; h: number }
+  /** The loggers' yarder, rusted where it stood: a boiler and a drum of steel cable on a sled of logs, two tiles by two. */
+  | { kind: 'yarder'; x: number; y: number }
+  /** A wooden cable spool on its side, the yarder's steel cable still wound on it. */
+  | { kind: 'spool'; x: number; y: number }
+  /** An old timber bridge over a creek, laid on the ford beneath it and walked over. `dir`: which way it runs, across the water. */
+  | { kind: 'bridge'; x: number; y: number; dir: 'h' | 'v' }
+  /** A trapper's things against a wall: steel traps on pegs, a pair of snowshoes, a coil of snare wire. */
+  | { kind: 'traps'; x: number; y: number }
   /** One of NAPO's desks with a screen, a radio or a log on it: you read it like a sign, under its `name`. `id` names it for the story. */
   | { kind: 'console'; x: number; y: number; id: string; name: string; text: string[] }
   /**
    * Stand on a tile next to it to recover energy while it burns. In town it is always tended; out in
    * the wilds (and in their shelters) it burns down unless someone feeds it, or `tended` says someone
    * out there keeps it going. `name`: what people call a fire in the open (the notice board says it),
-   * for example "the leavers' camp"; a fire in a room goes by the room's name.
+   * for example "the leavers' camp"; a fire in a room goes by the room's name. `longNight`: the lodge's
+   * fire, which nobody tends on the Long Night (sky.ts): it burns down like a shelter's until dawn, and
+   * the town keeps it going.
    */
-  | { kind: 'fireplace'; x: number; y: number; tended?: boolean; name?: string }
+  | { kind: 'fireplace'; x: number; y: number; tended?: boolean; name?: string; longNight?: boolean }
   /** A notice board: reading it tells how things stand out there (the server writes it). */
   | { kind: 'board'; x: number; y: number }
   /** Your stash: a chest at home. Everyone who opens it sees only their own things in it. */
@@ -230,6 +244,12 @@ export interface MapData {
   spawn: { x: number; y: number; dir: Dir };
   exits: MapExit[];
   objects: MapObject[];
+  /**
+   * Outdoors only (a town or the wilds): when it rains over this region, windows counted from dawn
+   * (sky.ts). None: the usual rain (DEFAULT_RAIN); an empty list: it never rains. A room hears the rain
+   * of the map its door opens onto.
+   */
+  rain?: RainWindow[];
   /** The wilds only: how this region surges (sky.ts). None: it never does. */
   surge?: SurgeRule;
   /** The wilds only: how often a storm rolls over this region (sky.ts). None: it never storms. */
@@ -263,12 +283,44 @@ export interface MapData {
   street?: true;
   /** The wilds only: skulkers, creatures that lie in the ferns and chase whoever they hear or see. */
   skulkers?: SkulkerRule;
+  /**
+   * The wilds only: how the forest grows. 'old': old growth, as deep in as the Far Woods, the firs older
+   * and taller with cedars among them, the ferns deep and the light under them dimmer. Left out: the
+   * younger woods nearer town.
+   */
+  forest?: 'old';
+  /**
+   * Outdoors only: the water that freezes in winter (sky.ts, SEASONS: `frozen`), each by what people call
+   * it and its tiles as [x, y]: while it is frozen it is ice, walked on like ground (TileMap.freeze). The
+   * pond in the Near Woods, the brook in Stonebrook. None: nothing here freezes.
+   */
+  ice?: FrozenWater[];
 }
 
-/** How many watchers roam a region at once, and how far from home (in steps) they wake up. */
+/** Water that freezes in winter: what people call it ("the pond"), and its tiles. */
+export interface FrozenWater {
+  name: string;
+  tiles: Array<[number, number]>;
+}
+
+/** A watcher takes a step this often, unless its region's rule says otherwise (WatcherRule.stepMs); players are faster. */
+export const WATCHER_STEP_MS = 520;
+/** ...and this often on aurora nights: watchers are restless then, everywhere by the same share (watcherStepMs). */
+export const AURORA_WATCHER_STEP_MS = 400;
+/** A skulker takes a step this often, unless its region's rule says otherwise: a quarter slower than a walking player, so moving away in time escapes it. */
+export const SKULKER_STEP_MS = 250;
+/**
+ * No creature is ever as quick as you: its pace (a step every so many ms, a watcher's on an aurora night
+ * too) is at least a tenth slower than a walking player's. Moving away in time escapes any of them.
+ */
+export const CREATURE_STEP_MIN_MS = Math.round(STEP_MS * 1.1);
+
+/** How many watchers roam a region at once, how far from home (in steps) they wake up, and how fast they are there. */
 export interface WatcherRule {
   count: number;
   steps: [number, number];
+  /** A step every this many ms (WATCHER_STEP_MS when left out): deeper regions keep quicker ones. */
+  stepMs?: number;
 }
 
 /**
@@ -279,6 +331,19 @@ export interface SkulkerRule {
   count: number;
   steps: [number, number];
   when: Array<'night' | 'storm'>;
+  /** A step every this many ms while it chases (SKULKER_STEP_MS when left out): deeper regions keep quicker ones. */
+  stepMs?: number;
+}
+
+/** How often a region's watchers step: its rule's pace, quicker on an aurora night by the share every watcher is. */
+export function watcherStepMs(rule: WatcherRule | undefined, aurora: boolean): number {
+  const pace = rule?.stepMs ?? WATCHER_STEP_MS;
+  return aurora ? Math.round((pace * AURORA_WATCHER_STEP_MS) / WATCHER_STEP_MS) : pace;
+}
+
+/** How often a region's skulkers step while they chase. */
+export function skulkerStepMs(rule: SkulkerRule | undefined): number {
+  return rule?.stepMs ?? SKULKER_STEP_MS;
 }
 
 /** Where an exit tile leads: the map, the tile you arrive on and your facing. */
@@ -295,12 +360,13 @@ const BLOCKING = new Set<MapObject['kind']>([
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
   'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache',
+  'ruin', 'yarder', 'spool', 'traps',
 ]);
 /**
  * Objects that are only drawn: you walk over or through them. A note is drawn on what it lies on,
  * which blocks the way itself.
  */
-export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'note']);
+export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'bridge', 'note']);
 
 /** Does this object stop anyone from walking onto its tiles? A comfort place does, but for the rug. */
 export function blocks(o: MapObject): boolean {
@@ -320,11 +386,12 @@ export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'ches
 /** How many tiles an object covers, across and down: houses, vehicles, log decks, beds, rugs and a few more are bigger than one. */
 export function footprint(o: MapObject): [number, number] {
   switch (o.kind) {
-    case 'house': case 'rug': case 'truck': case 'jeep': case 'logs': return [o.w, o.h];
+    case 'house': case 'rug': case 'truck': case 'jeep': case 'logs': case 'ruin': return [o.w, o.h];
     case 'car': return [o.w, o.h ?? 1];
     case 'carriage': return [o.w, 1];
     case 'bed': return [1, 2];
     case 'piano': return [2, 1];
+    case 'yarder': return [2, 2];
     case 'comfort': return comfortSize(o.what);
     default: return [1, 1];
   }
@@ -377,6 +444,14 @@ export class TileMap {
   private readonly warmTiles: Uint8Array;
   /** Steps from each tile to the nearest home exit (-1: no way there); all 0 in towns. */
   private readonly stepsHome: Int32Array;
+  /** The same with the ice walked on (null: nothing here freezes): the ways home in winter, which may be shorter. */
+  private readonly stepsHomeFrozen: Int32Array | null;
+  /** 1 on the water that freezes in winter (data.ice). */
+  private readonly iceTiles: Uint8Array;
+  /** Water here freezes in winter (data.ice lists some). */
+  readonly hasIce: boolean;
+  /** Frozen now: the ice is walked on. The server and the client set it as the season turns (freeze). */
+  private frozen = false;
   /** The most steps any tile is from home: where a surge starts. 0 in towns and insides. */
   readonly deepest: number;
 
@@ -414,29 +489,67 @@ export class TileMap {
     this.litTiles = this.around('lamp', LAMP_RADIUS);
     this.warmTiles = this.around('fireplace', FIRE_RADIUS);
 
-    // Distance home, walking: breadth-first from every home exit tile at once. Only the wilds
-    // measure it; towns and the insides of buildings are safe, so every tile there counts as 0.
-    this.stepsHome = new Int32Array(W * H).fill(data.kind === 'wilds' ? -1 : 0);
-    if (data.kind === 'wilds') {
-      const queue: number[] = [];
-      (data.exits ?? []).forEach(e => {
-        if (!e.home) return;
-        for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) {
-          if (this.walkable(x, y) && this.stepsHome[y * W + x] === -1) { this.stepsHome[y * W + x] = 0; queue.push(y * W + x); }
-        }
-      });
-      for (let head = 0; head < queue.length; head++) {
-        const i = queue[head]!, x = i % W, y = (i / W) | 0, d = this.stepsHome[i]! + 1;
-        for (const [nx, ny] of [[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]] as const) {
-          if (!this.walkable(nx, ny) || this.stepsHome[ny * W + nx] !== -1) continue;
-          this.stepsHome[ny * W + nx] = d;
-          queue.push(ny * W + nx);
-        }
-      }
-    }
+    this.iceTiles = new Uint8Array(W * H);
+    for (const water of data.ice ?? []) for (const [x, y] of water.tiles ?? []) if (this.inside(x, y) && this.kinds[y * W + x] === 'water') this.iceTiles[y * W + x] = 1;
+    this.hasIce = this.iceTiles.includes(1);
+
+    // Distance home, walking, the year round; and in winter, with the ice walked on too.
+    this.stepsHome = this.stepsFromHome();
+    this.frozen = this.hasIce;
+    this.stepsHomeFrozen = this.hasIce ? this.stepsFromHome() : null;
+    this.frozen = false;
     let deepest = 0;
     for (const v of this.stepsHome) if (v > deepest) deepest = v;
     this.deepest = deepest;
+  }
+
+  /**
+   * Distance home, walking, as the map is walkable now: breadth-first from every home exit tile at
+   * once. Only the wilds measure it; towns and the insides of buildings are safe, so every tile there
+   * counts as 0.
+   */
+  private stepsFromHome(): Int32Array {
+    const W = this.width, data = this.data;
+    const steps = new Int32Array(W * this.height).fill(data.kind === 'wilds' ? -1 : 0);
+    if (data.kind !== 'wilds') return steps;
+    const queue: number[] = [];
+    (data.exits ?? []).forEach(e => {
+      if (!e.home) return;
+      for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) {
+        if (this.walkable(x, y) && steps[y * W + x] === -1) { steps[y * W + x] = 0; queue.push(y * W + x); }
+      }
+    });
+    for (let head = 0; head < queue.length; head++) {
+      const i = queue[head]!, x = i % W, y = (i / W) | 0, d = steps[i]! + 1;
+      for (const [nx, ny] of [[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]] as const) {
+        if (!this.walkable(nx, ny) || steps[ny * W + nx] !== -1) continue;
+        steps[ny * W + nx] = d;
+        queue.push(ny * W + nx);
+      }
+    }
+    return steps;
+  }
+
+  /**
+   * Winter comes (true) or goes: the water marked as ice is walked on while frozen, and the ways home
+   * across it count. The same rule on the server and the client, which each set it as the season turns.
+   * True when that changed what can be walked on here.
+   */
+  freeze(on: boolean): boolean {
+    const frozen = on && this.hasIce;
+    if (frozen === this.frozen) return false;
+    this.frozen = frozen;
+    return true;
+  }
+
+  /** Is the water here ice now (frozen, and marked to freeze)? */
+  frozenAt(x: number, y: number): boolean {
+    return this.frozen && this.iceAt(x, y);
+  }
+
+  /** Is this water that freezes in winter, frozen now or not? */
+  iceAt(x: number, y: number): boolean {
+    return this.inside(x, y) && this.iceTiles[y * this.width + x] === 1;
   }
 
   /** Where walking onto this tile takes you, if it is an exit. */
@@ -469,9 +582,10 @@ export class TileMap {
     return out;
   }
 
-  /** Walking steps from this tile to the nearest home exit; 0 in towns and insides, -1 if there is no way. */
+  /** Walking steps from this tile to the nearest home exit (across the ice while it is frozen); 0 in towns and insides, -1 if there is no way. */
   homeSteps(x: number, y: number): number {
-    return this.inside(x, y) ? this.stepsHome[y * this.width + x]! : -1;
+    if (!this.inside(x, y)) return -1;
+    return (this.frozen && this.stepsHomeFrozen ? this.stepsHomeFrozen : this.stepsHome)[y * this.width + x]!;
   }
 
   inside(x: number, y: number): boolean {
@@ -486,12 +600,12 @@ export class TileMap {
     return this.inside(x, y) ? this.levels[y * this.width + x]! : 0;
   }
 
-  /** Where a watcher may wake, as y * width + x: where a creature may stand (creatureMayStand), `steps` from home. */
+  /** Where a watcher may wake, as y * width + x: where a creature may stand (creatureMayStand), `steps` from home, and never on ice, which thaws. */
   lairs(steps: readonly [number, number]): number[] {
     const out: number[] = [];
     for (let y = 0; y < this.height; y++) for (let x = 0; x < this.width; x++) {
       const s = this.homeSteps(x, y);
-      if (this.creatureMayStand(x, y) && s >= steps[0] && s <= steps[1]) out.push(y * this.width + x);
+      if (this.creatureMayStand(x, y) && !this.iceAt(x, y) && s >= steps[0] && s <= steps[1]) out.push(y * this.width + x);
     }
     return out;
   }
@@ -501,11 +615,11 @@ export class TileMap {
     return this.walkable(x, y) && !this.exitAt(x, y) && !this.lit(x, y) && !this.warm(x, y) && !hidden(this, x, y);
   }
 
-  /** Can a character stand on this tile? */
+  /** Can a character stand on this tile? Water, only where it is frozen now (winter's ice). */
   walkable(x: number, y: number): boolean {
     if (!Number.isInteger(x) || !Number.isInteger(y) || !this.inside(x, y)) return false;
     const i = y * this.width + x;
     const kind = this.kinds[i];
-    return this.blocked[i] === 0 && kind !== 'water' && kind !== 'forest' && kind !== 'wall' && this.levels[i] === 0;
+    return this.blocked[i] === 0 && (kind !== 'water' || (this.frozen && this.iceTiles[i] === 1)) && kind !== 'forest' && kind !== 'wall' && this.levels[i] === 0;
   }
 }

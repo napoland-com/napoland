@@ -2,7 +2,7 @@
 id: passing-glimpses
 title: Other people's steps
 status: done
-order: 520
+order: 560
 area: social
 depends: [survival-dynamics]
 ---

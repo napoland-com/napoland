@@ -1,7 +1,7 @@
 {
   "id": "south-road",
   "name": "The South Road",
-  "version": 4,
+  "version": 5,
   "kind": "wilds",
   "depth": 1,
   "width": 72,
@@ -452,6 +452,7 @@
     {"kind":"note","x":32,"y":30,"id":"barlow-cars","by":"barlows","name":"On the suitcases","text":["In the rain, white crayon shows on the wet paper:","ALL THE CARS ARE EMPTY. ONE HAS A DOG BLANKET AND NO DOG. I HOPE THE DOG WALKED TOO. W."],"when":"rain","faint":"The paper looks blank, and feels waxy. Wet, it might show something."},
     {"kind":"note","x":46,"y":46,"id":"walt-napo-line","by":"walt","name":"Nailed to the pole","text":["Ninth and last pole of NAPO's line. NAPO tags none of its poles, so I counted. Glass insulators the size of your head. W.P."]}
   ],
+  "rain": [{"from":1440,"length":360}],
   "places": [
     {"name":"the leavers' camp","x":22,"y":22},
     {"name":"the Tower","x":51,"y":47},

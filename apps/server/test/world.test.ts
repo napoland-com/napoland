@@ -54,8 +54,11 @@ const inTown = (id: string, x: number, y: number, dir: Dir = 'down', more: Parti
 const inWoods = (id: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'woods', ...more });
 const inHouse = (id: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'house', ...more });
 const viewOf = (id: string, x: number, y: number, dir: Dir) => ({ id, name: id.toUpperCase(), x, y, dir, color: colorFor(id), gear: {}, quirks: [] });
-/** What a zone lists besides players, finds and piles, in the fixture world: fires burn down at random levels, and nothing else is there. */
-const SCENE = { fires: expect.any(Array), marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, stats: expect.any(Object) };
+/**
+ * What a zone lists besides players, finds and piles, in the fixture world: fires burn down at random levels, and nothing else is
+ * there; and the weather over the new map, which these worlds keep overcast everywhere.
+ */
+const SCENE = { fires: expect.any(Array), marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, stats: expect.any(Object), weather: 'overcast' };
 /** The energy a player is told: value to 1 decimal, rate to 3. */
 const told = (value: number, rate: number): EnergyView => ({ value: Math.round(value * 10) / 10, max: ENERGY_MAX, rate: Math.round(rate * 1000) / 1000 });
 
@@ -249,11 +252,15 @@ describe('World: turning, joining and leaving', () => {
       bag: [],
       stash: [],
       // No fires, marks, creatures or flares here, and a town never surges. Rain soaks you in town too.
-      fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null,
+      fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, weather: 'rain',
       body: { wet: 0, wetRate: Math.round((1 / WET_SECONDS) * 1e5) / 1e5, load: 0, hitched: false, worn: {} },
       stone: { charge: 0, need: 20, awake: false, left: 0 },
       // No conditions in this world: every day is like the one before.
       conditions: { today: [], week: null, next: null },
+      // The first week after the epoch is a spring's, from three days before it: four days of it left at 0.
+      season: { season: 'spring', left: 4 * 86_400 },
+      // The first Long Night is on the Saturday after the epoch, with its bonus: no fire went out before it.
+      longNight: { on: false, bonus: true, out: false },
       stats: {},
       // Nothing stashed yet: level 1, and the next level at 30 XP.
       progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: ENERGY_MAX },

@@ -75,11 +75,13 @@ describe('what wears you down', () => {
 
 describe('the sky', () => {
   it('runs a day of overcast, rain, overcast and night, with an aurora every third night', () => {
-    expect(weatherAt(0)).toEqual({ weather: 'overcast', left: 12 * 60 });
-    expect(weatherAt(13 * 60_000)).toEqual({ weather: 'rain', left: 11 * 60 });
-    expect(weatherAt(33 * 60_000).weather).toBe('night');
-    expect(weatherAt(((AURORA_EVERY - 1) * DAY_S + 33 * 60) * 1000).weather).toBe('aurora');
-    expect(weatherAt((AURORA_EVERY * DAY_S + 33 * 60) * 1000).weather).toBe('night');
+    // The Monday of the third week after the epoch: autumn, whose rain and dusk are the usual ones (seasons: weather.test.ts).
+    const T = (2 * 7 - 3) * 86_400_000;
+    expect(weatherAt(T)).toEqual({ weather: 'overcast', left: 12 * 60 });
+    expect(weatherAt(T + 13 * 60_000)).toEqual({ weather: 'rain', left: 11 * 60 });
+    expect(weatherAt(T + 33 * 60_000).weather).toBe('night');
+    expect(weatherAt(T + ((AURORA_EVERY - 1) * DAY_S + 33 * 60) * 1000).weather).toBe('aurora');
+    expect(weatherAt(T + (AURORA_EVERY * DAY_S + 33 * 60) * 1000).weather).toBe('night');
   });
 
   it('runs a surge round: calm, restless, then a front sweeping from the deepest tile home', () => {

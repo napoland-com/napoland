@@ -3,13 +3,13 @@
  * can be tested; hud.ts shows it and main.ts asks for it.
  */
 import {
-  ELEMENTS, FEATS, GUEST_DAYS, LEVEL_MAX, MERIT_XP, RESTED_MAX, meritsLeft, outfitsOpening, rankOf, rankText, toNextMerit, type BagSlot, type BodyView, type Element, type EnergyView, type Feat,
-  type FlashKind, type MeritsView, type ProgressView, type Stats, type StoneView, type StormView, type SurgeView, type Weather,
+  ELEMENTS, FEATS, GUEST_DAYS, LEVEL_MAX, MERIT_XP, RESTED_MAX, SEASONS, meritsLeft, outfitsOpening, rankOf, rankText, toNextMerit, type BagSlot, type BodyView, type EffectView, type Element,
+  type EnergyView, type Feat, type FlashKind, type MeritsView, type ProgressView, type Season, type SeasonView, type Stats, type StoneView, type StormView, type SurgeView, type Weather,
 } from '@napoland/shared';
 import { listWords } from './details';
 import { minutes, type News } from './game';
 import type { FeatView, StatusView } from './hud';
-import type { Items } from './items';
+import { ELEMENT_WORDS, type Items } from './items';
 import { parcelBanner } from './parcels';
 import { cozyText, meritText, thousands } from './said';
 import { outfitWords } from './wardrobe';
@@ -31,8 +31,12 @@ export interface StatusInput {
   bag: readonly BagSlot[];
   items: Items;
   progress: ProgressView;
-  /** What your gear resists, in words (items.ts, resistText); null for nothing. */
+  /** What your gear and the effects working on you resist, in words (items.ts, resistText); null for nothing. */
   resists: string | null;
+  /** The effects working on you now (effects.ts), counted down: each shows with its time left. */
+  effects?: readonly EffectView[];
+  /** The season, and its time left counted down (sky.ts). */
+  season?: SeasonView;
   /** What you wear that is wearing down (items.ts, wearText); null when all of it is fine. */
   wear: string | null;
   /** The quirks of what you wear, by name. */
@@ -79,10 +83,49 @@ export function levelText(p: ProgressView): string {
   return p.to === null ? `Level ${p.level} · ${p.xp} XP, the top` : `Level ${p.level} · ${p.xp} XP, ${p.to - p.xp} to go`;
 }
 
-/** What wears you down out there now, element by element ("Cold: rain, wet · Wind: the storm"); null for nothing. */
-export function drainText(s: { weather: Weather; wet: number; storm: boolean; caught: boolean; flash: FlashKind | null }): string | null {
+const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+
+/** "4:05": minutes and seconds left of something short, an effect. */
+const minSec = (seconds: number) => {
+  const s = Math.max(0, Math.ceil(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+/** An effect working on you, in the status panel: what it gives and how long it still works ("Cold +40% for 4:05 more"). */
+export function effectText(f: EffectView, items: Items): string {
+  const gives = Object.entries(items.get(f.item).use?.resist ?? {}).map(([e, v]) => `${ELEMENT_WORDS[e as Element]} +${Math.round((v ?? 0) * 100)}%`);
+  return `${gives.join(', ')} for ${minSec(f.left)} more`;
+}
+
+/** What each season changes, in a few words (sky.ts, SEASONS; the glowcaps and the resin are find rules). */
+const SEASON_DOES: Record<Season, string> = {
+  spring: 'Longer rain, and more glowcaps out there.',
+  summer: 'Shorter rain, and light until later in the evening.',
+  autumn: 'More resin out there, and storms twice as often.',
+  winter: 'Colder out there, and snow instead of rain.',
+};
+
+/** "2 days", "5 hours", "20 minutes": how long a season still lasts, as the status panel says it. */
+function seasonLeft(seconds: number): string {
+  if (seconds >= 36 * 3600) return `${Math.round(seconds / 86400)} days`;
+  if (seconds >= 90 * 60) return `${Math.round(seconds / 3600)} hours`;
+  return minutes(seconds);
+}
+
+/** The season in the status panel: which, how long it lasts, and what it changes ("Winter, 2 days left. Colder out there, and snow instead of rain."). */
+export function seasonText(s: SeasonView): string {
+  return `${SEASONS[s.season].name}, ${seasonLeft(s.left)} left. ${SEASON_DOES[s.season]}`;
+}
+
+/**
+ * What wears you down out there now, element by element ("Cold: rain, wet · Wind: the storm"); null for
+ * nothing. In winter the cold is in it whatever the weather, and the rain falls as snow.
+ */
+export function drainText(s: { weather: Weather; wet: number; storm: boolean; caught: boolean; flash: FlashKind | null; season?: Season }): string | null {
   const by: Record<Element, string[]> = { heat: [], cold: [], wind: [], electricity: [], radiation: [] };
-  if (s.weather !== 'overcast') by.cold.push(s.weather === 'rain' ? 'rain' : 'night');
+  const winter = s.season === 'winter';
+  if (s.weather !== 'overcast') by.cold.push(s.weather === 'rain' ? (winter ? 'snow' : 'rain') : 'night');
+  if (winter) by.cold.push('winter');
   if (s.wet > 0.05) by.cold.push('wet');
   if (s.storm) { by.wind.push('the storm'); by.electricity.push('the storm'); }
   if (s.caught) { by.electricity.push('the surge'); by.radiation.push('the surge'); }
@@ -112,7 +155,9 @@ export function statusView(s: StatusInput): StatusView {
   if (s.wear) rows.push({ label: 'Wear', text: `${s.wear}. Mend it at the workbench at home.`, tone: s.wear.includes('worn out') ? 'bad' : 'plain' });
   if (s.quirks.length) rows.push({ label: 'Quirks', text: s.quirks.join(', '), tone: 'good' });
   rows.push({ label: 'Resists', text: s.resists ?? 'Nothing yet. Make gear at the workbench at home.', tone: s.resists ? 'good' : 'plain' });
-  if (s.wilds) rows.push({ label: 'Draining', text: drainText({ ...s, wet: s.body.wet, storm: s.storm?.phase === 'storm' }) ?? 'Just being out here', tone: 'bad' });
+  // Each effect working on you (a hand warmer), with its time left: it counts in Resists above.
+  for (const f of s.effects ?? []) if (f.left > 0) rows.push({ label: s.items.get(f.item).name, text: effectText(f, s.items), tone: 'good' });
+  if (s.wilds) rows.push({ label: 'Draining', text: drainText({ ...s, wet: s.body.wet, storm: s.storm?.phase === 'storm', season: s.season?.season }) ?? 'Just being out here', tone: 'bad' });
   if (s.body.hitched) rows.push({ label: 'On you', text: 'Something clings to your back. Find a light, a fire or a roof.', tone: 'bad' });
   // The warmth of your own fire (comfort.ts): out in the wilds you tire slower while it lasts.
   const cozy = cozyText(s.body.cozy ?? 0, s.body.fireside);
@@ -128,7 +173,23 @@ export function statusView(s: StatusInput): StatusView {
   if (s.flash) rows.push({ label: 'Flash', text: 'The ground under you is discharging. Step off it!', tone: 'bad' });
   const st = s.stone;
   if (st.need) rows.push({ label: 'Old Stone', text: st.awake ? `Awake for ${minutes(st.left)}. Surges are gentler.` : `Asleep. ${st.charge} of ${st.need} shards.`, tone: st.awake ? 'good' : 'plain' });
+  if (s.season) rows.push({ label: 'Season', text: seasonText(s.season), tone: 'plain' });
   return { rows, feats: FEATS.map(f => featView(f, s.stats[f.stat] ?? 0)), ...(s.guest && { guest: GUEST_NOTE }) };
+}
+
+/**
+ * The Long Night's banners: as it begins (with its bonus, `does`, or only long and dark), and at dawn,
+ * whether the lodge's fire held (`bonus`: the next one keeps it) or went out.
+ */
+export function longNightBanner(on: boolean, bonus: boolean, does: string): { title: string; sub: string } {
+  if (on) {
+    return bonus
+      ? { title: 'The Long Night begins', sub: `An aurora from dawn to dawn${does ? `, and ${does}` : ''}.\nThe lodge's fire needs feeding until dawn: bring resin or cloth.` }
+      : { title: 'The Long Night begins', sub: 'Only long and dark this time: the lodge\'s fire went out last week.\nKeep it fed until dawn, and the next one has its bonus again.' };
+  }
+  return bonus
+    ? { title: 'Dawn. The lodge\'s fire held.', sub: `Next week's Long Night keeps its bonus${does ? `: ${does}` : ''}.` }
+    : { title: 'Dawn. The lodge\'s fire went out.', sub: 'Next week\'s Long Night will only be long and dark.' };
 }
 
 /**
@@ -152,6 +213,13 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
   }
   if (n.kind === 'parcel') return items ? parcelBanner(n.parcel, items, n.outfits) : null;
   if (n.kind === 'conditions') return n.names.length ? { title: 'A new day', sub: n.names.join('\n') } : null;
+  if (n.kind === 'aurora') return { title: 'Lights in the sky', sub: 'An aurora: the old wires hum,\nand copper turns up by the poles.' };
+  if (n.kind === 'longNight') return longNightBanner(n.on, n.bonus, items?.longNight ?? '');
+  if (n.kind === 'season') {
+    // Winter names the water it freezes; the spring after it says the ice is gone.
+    const ice = !n.frozen.length ? '' : n.season === 'winter' ? `\n${capital(listWords(n.frozen))} ${n.frozen.length > 1 ? 'are' : 'is'} frozen: you can walk across.` : n.season === 'spring' ? '\nThe ice is gone.' : '';
+    return { title: SEASONS[n.season].name, sub: `${SEASON_DOES[n.season]}${ice}` };
+  }
   if (n.kind === 'cozy') return { title: 'Cozy', sub: `Out in the wilds you tire 10% slower\nfor ${n.minutes} minutes once you leave the fire.` };
   if (n.kind === 'level') {
     const opened = listWords(outfitsOpening(n.from, n.progress.level).map(o => `the ${outfitWords(o.name)}`));

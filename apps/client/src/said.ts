@@ -6,9 +6,9 @@
  */
 import {
   CACHE_SIZE, COZY_AFTER_S, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, comfortMax, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit,
-  type BagSlot, type Comfort, type Did, type Dir, type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
+  type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
 } from '@napoland/shared';
-import { oddsText, pieceName, type Items } from './items';
+import { ELEMENT_WORDS, oddsText, pieceName, type Items } from './items';
 
 // ---------- naming things in a sentence ----------
 
@@ -62,6 +62,11 @@ function burnsOn(left: number): string {
 const COMPASS: Readonly<Record<Dir, string>> = { up: 'north', down: 'south', left: 'west', right: 'east' };
 const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 
+/** What an effect gives while it works (effects.ts), in words: "cold resistance +40%", "... and radiation resistance +20%". */
+export function effectWords(def: ItemDef): string {
+  return listOf(Object.entries(def.use?.resist ?? {}).map(([e, v]) => `${ELEMENT_WORDS[e as Element].toLowerCase()} resistance +${Math.round((v ?? 0) * 100)}%`));
+}
+
 // ---------- the questions ----------
 
 /** A: at a fire. "Feed the fire resin?" (how many is asked beside it). */
@@ -77,11 +82,18 @@ export function stoneQuestion(def: ItemDef, n: number): string {
 /**
  * Use, in the bag: what it does, and a word when the bar has little room for what a drink gives. An
  * arrow shows `markS` seconds (a day, longer for a good neighbor: markLifetime). `lift`: a charm in the bag
- * that gives energy back as a glowcap is crushed (a pale moth), and how much.
+ * that gives energy back as a glowcap is crushed (a pale moth), and how much. An effect says what it gives
+ * and for how long, or, while one of the same still works (`running` seconds more), that this one only
+ * starts its time again.
  */
-export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000, lift?: { charm: ItemDef; energy: number }): string {
+export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000, lift?: { charm: ItemDef; energy: number }, running?: number): string {
   const u = def.use ?? {}, n = nounOf(def);
   if (u.identify) return `Look closely at the ${n}? It will be used up.`;
+  if (u.resist && u.lasts) {
+    const does = `${effectWords(def)} for ${howLong(u.lasts)}`;
+    if (running !== undefined && running > 0) return `Use ${aOf(def)}? The one before still works for ${howLong(running)}. This one starts the ${howLong(u.lasts)} again: it does not add up.`;
+    return `Use ${aOf(def)}? ${capital(does)}.`;
+  }
   if (u.energy) {
     const room = energy ? energy.max - energy.value : Infinity;
     if (u.energy > 0 && room < 0.5) return `Drink the ${n}? Your energy is full already.`;
@@ -159,6 +171,19 @@ const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 // ---------- why it cannot happen ----------
 
 export const TENDED = 'Someone keeps this fire going. It needs nothing.';
+/** The map button where you carry no map of the area: farther out, a region's map is found, not given. */
+export const NO_MAP_YET = 'You have no map of this place yet.';
+
+/**
+ * What Walt says first on the Long Night: the fire by him is everyone's to feed until dawn, with how long
+ * it has (`left`, seconds of fuel; null when he does not know); or, once it went out, that it did.
+ */
+export function waltOnTheLongNight(out: boolean, left: number | null): string {
+  if (out) return 'It went out on us. Light it again if you\'ve got something that burns, but the woods will know it went out.';
+  const m = left === null || left <= 0 ? 0 : Math.ceil(left / 60);
+  const has = !m ? '' : m === 1 ? ' It\'s nearly out.' : ` There's about ${m} minutes in it.`;
+  return `Long Night tonight. Nobody keeps this fire alone tonight, not me either: it wants resin and cloth from whoever's about, till dawn.${has}`;
+}
 
 /** A fire that takes nothing more: "The fire is as full as it gets. It will burn 30 more minutes." */
 export function fullFire(left: number): string {
@@ -379,6 +404,12 @@ export function didText(did: Did, items: Items): string {
       }
       if (did.flare !== undefined) said.push(`The ${n} hisses red. For ${howLong(did.flare)}, nothing comes near you.`);
       if (did.mark) said.push(`You crush the ${n}. An arrow glows where you stand, pointing ${COMPASS[did.mark.dir]}. Everyone sees it for ${howLong(did.mark.left)}.`);
+      if (did.effect) {
+        const lasts = howLong(did.effect.lasts);
+        said.push(did.effect.again
+          ? `You use the ${n}. The one before still worked: the ${lasts} start again, ${effectWords(def)}.`
+          : `You use the ${n}. ${capital(effectWords(def))} for ${lasts}.`);
+      }
       // A charm in your bag gave energy back as it happened (a pale moth).
       if (did.lift) said.push(`The ${nounOf(items.get(did.lift.item))} in your bag stirs: ${signed(did.lift.energy)} energy.`);
       return said.length ? said.join(' ') : `You use the ${n}.`;
@@ -428,9 +459,13 @@ export function didText(did: Did, items: Items): string {
 /** The name over the box at your own door. */
 export const YOUR_CABIN = 'Your cabin';
 
-/** The name over the box at a neighbor's door: whose cabin it is, or an empty one. */
-export function cabinWho(name: string | null): string {
-  return name ? `${name}'s cabin` : 'Empty cabin';
+/** On the plate of someone who keeps their name off their door (the setting in the menu). */
+export const RESIDENT = 'A resident';
+
+/** The name over the box at a neighbor's door: whose cabin it is, a resident's who keeps their name to themselves, or an empty one. */
+export function cabinWho(lot: LotView | null): string {
+  if (!lot) return 'Empty cabin';
+  return lot.name ? `${lot.name}'s cabin` : `${RESIDENT}'s cabin`;
 }
 
 /** While a knock waits for its answer. */
@@ -439,10 +474,26 @@ export const KNOCKING = 'You knock.';
 /** At a door nobody lives behind yet. */
 export const NOBODY_LIVES = 'Nobody lives here yet.';
 
-/** What a knock hears back: whether they are home. By name, never a pronoun. Visiting is for later. */
-export function doorText(name: string | null, home: boolean): string {
-  if (!name) return NOBODY_LIVES;
-  return home ? `${name} is home.` : 'Nobody answers.';
+/**
+ * What a knock hears back: whether they are home. By name, never a pronoun. Someone who keeps their door to
+ * themselves answers only friends: to anyone else, nobody answers. Visiting is for later.
+ */
+export function doorText(lot: LotView | null): string {
+  if (!lot) return NOBODY_LIVES;
+  return lot.name && lot.home ? `${lot.name} is home.` : 'Nobody answers.';
+}
+
+/** The setting beside friend and trade requests: whether your street sees your name on your door, and your window lit while you are home. */
+export const DOOR_SETTING = 'Show my name on my door and when I am home';
+
+/**
+ * The letter the first time you come home since streets came: what your street sees of you, and where to
+ * change it (`doorOff`: you keep both to yourself already).
+ */
+export function streetLetterLines(doorOff: boolean): string[] {
+  return doorOff
+    ? ['Your cabin stands on Residents\' Lane, among your neighbors\'. They see a resident\'s cabin: your name stays off your door, and your window dark, as you chose.', 'You can show both in the menu, under Friends.']
+    : ['Your cabin stands on Residents\' Lane, among your neighbors\'. They see your name on your door, and your window lit while you are home.', 'You can hide both in the menu, under Friends.'];
 }
 
 /** At home, when a neighbor knocks at your door. */

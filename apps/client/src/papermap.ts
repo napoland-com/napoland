@@ -15,6 +15,8 @@ const MAX_WIRE = 10;
 const DRIFT = 0.35;
 /** A pond is at least this many water tiles; smaller puddles get no name. */
 const POND_TILES = 6;
+/** What is written by the water that freezes in winter (a map's `ice`). */
+export const FROZEN = 'frozen in winter';
 /** How much room a word takes on the paper, in tiles: a letter's width, and a line's height. */
 const LETTER = 0.95;
 const LINE = 1.9;
@@ -68,14 +70,18 @@ export interface Sketch {
   stakes: Pt[];
   /** The logs across a skid road, each a short line across it. */
   skids: Array<[Pt, Pt]>;
+  /** What is left of a bunkhouse: its walls drawn broken, no roof. */
+  ruins: Array<{ x: number; y: number; w: number; h: number }>;
+  /** A bridge over a creek: its two rails, a tile of it at a time, along the way it runs. */
+  bridges: Array<[Pt, Pt]>;
   /** Small things left in the places, each with a mark of its own. */
   things: Array<{ at: Pt; kind: Thing }>;
   labels: Array<{ x: number; y: number; text: string }>;
 }
 
 /** The small things the paper map marks, each its own way. */
-type Thing = 'luggage' | 'boxes' | 'rocker' | 'piano' | 'bike' | 'birdcage' | 'pump' | 'cage' | 'mailbox';
-const THINGS = new Set<string>(['luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage']);
+type Thing = 'luggage' | 'boxes' | 'rocker' | 'piano' | 'bike' | 'birdcage' | 'pump' | 'cage' | 'mailbox' | 'yarder' | 'spool';
+const THINGS = new Set<string>(['luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage', 'yarder', 'spool']);
 
 /**
  * The area a map belongs to: the map itself; for a room, the place its door opens onto; for a street (and
@@ -110,7 +116,7 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
   const { width: W, height: H } = map;
   const s: Sketch = {
     title: map.data.name, width: W, height: H, forest: [], trees: [], ground: [], grass: [], water: [], roads: [], houses: [], poles: [], wires: [], masts: [], fences: [], cars: [], signs: [],
-    logs: [], stumps: [], stakes: [], skids: [], things: [], labels: [],
+    logs: [], stumps: [], stakes: [], skids: [], ruins: [], bridges: [], things: [], labels: [],
   };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const kind = map.kind(x, y), r = hash(x, y, 1);
@@ -139,7 +145,12 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
     else if (o.kind === 'stake') s.stakes.push(drift(o.x, o.y, 18));
     // Across the road, as the skid lies.
     else if (o.kind === 'skid') s.skids.push(o.dir === 'h' ? [[o.x + 0.5, o.y + 0.15], [o.x + 0.5, o.y + 0.85]] : [[o.x + 0.15, o.y + 0.5], [o.x + 0.85, o.y + 0.5]]);
-    else if (THINGS.has(o.kind)) s.things.push({ at: o.kind === 'piano' ? [o.x + 1, o.y + 0.5] : drift(o.x, o.y, 19), kind: o.kind as Thing });
+    else if (o.kind === 'ruin') s.ruins.push({ x: o.x, y: o.y, w: o.w, h: o.h });
+    // Its rails, with a steady hand: the tiles of a bridge join into one.
+    else if (o.kind === 'bridge') {
+      if (o.dir === 'v') s.bridges.push([[o.x + 0.1, o.y], [o.x + 0.1, o.y + 1]], [[o.x + 0.9, o.y], [o.x + 0.9, o.y + 1]]);
+      else s.bridges.push([[o.x, o.y + 0.1], [o.x + 1, o.y + 0.1]], [[o.x, o.y + 0.9], [o.x + 1, o.y + 0.9]]);
+    } else if (THINGS.has(o.kind)) s.things.push({ at: o.kind === 'piano' || o.kind === 'yarder' ? [o.x + 1, o.y + (o.kind === 'yarder' ? 1 : 0.5)] : drift(o.x, o.y, 19), kind: o.kind as Thing });
   }
   s.poles.forEach((a, i) => s.poles.slice(i + 1).forEach(b => { if (Math.hypot(a[0] - b[0], a[1] - b[1]) <= MAX_WIRE) s.wires.push([a, b]); }));
   // The ways out first, then the places people call by name, then the buildings by their doors: a name
@@ -161,6 +172,12 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
   rooms.forEach(exitLabel);
   const pond = biggest(map, 'water');
   if (!map.data.places && pond.length >= POND_TILES) labels.push({ x: pond.reduce((n, [x]) => n + x, 0) / pond.length + 0.5, y: pond.reduce((n, [, y]) => n + y, 0) / pond.length + 0.5, text: 'pond' });
+  // A note for the water that freezes, written after every name so it moves none: by the pond, the
+  // brook, whatever someone who walked it in winter wanted to remember.
+  for (const water of map.data.ice ?? []) {
+    const tiles = water.tiles;
+    if (tiles.length) labels.push({ x: tiles.reduce((n, [x]) => n + x, 0) / tiles.length + 0.5, y: tiles.reduce((n, [, y]) => n + y, 0) / tiles.length + 0.5, text: FROZEN });
+  }
   s.labels = apart(labels, W, H, [...s.masts.map(mastBox), ...s.signs.map(signBox)]);
   return s;
 }
@@ -213,7 +230,8 @@ function biggest(map: TileMap, kind: string): Pt[] {
 /**
  * A small thing, drawn the way a hand would mark it at px, py: a suitcase with its handle, a pair of
  * boxes, a rocking chair from the side, a piano with its keys, a bike's two wheels, a birdcage's dome,
- * NAPO's pump with its hose and its cages crosshatched, a mailbox on its post.
+ * NAPO's pump with its hose and its cages crosshatched, a mailbox on its post, the loggers' yarder (its
+ * boiler and its drum on a sled) and a cable spool from the side.
  */
 function thing(g: CanvasRenderingContext2D, kind: Thing, px: number, py: number) {
   g.beginPath();
@@ -227,6 +245,8 @@ function thing(g: CanvasRenderingContext2D, kind: Thing, px: number, py: number)
     case 'pump': g.rect(px - 2, py - 4, 4, 8); g.moveTo(px + 2, py - 2); g.quadraticCurveTo(px + 5, py, px + 3, py + 3); break;
     case 'cage': g.rect(px - 4, py - 4, 8, 8); g.moveTo(px - 4, py); g.lineTo(px + 4, py); g.moveTo(px, py - 4); g.lineTo(px, py + 4); break;
     case 'mailbox': g.rect(px - 2.5, py - 4, 5, 3); g.moveTo(px, py - 1); g.lineTo(px, py + 4); break;
+    case 'yarder': g.moveTo(px - 11, py + 6); g.lineTo(px + 11, py + 6); g.rect(px - 9, py - 7, 6, 13); g.moveTo(px + 9, py); g.arc(px + 5, py, 4, 0, Math.PI * 2); g.moveTo(px - 6, py - 7); g.lineTo(px - 6, py - 11); break;
+    case 'spool': g.moveTo(px + 4.5, py); g.arc(px, py, 4.5, 0, Math.PI * 2); g.moveTo(px + 1.5, py); g.arc(px, py, 1.5, 0, Math.PI * 2); break;
   }
   g.stroke();
 }
@@ -393,7 +413,14 @@ function draw(s: Sketch): HTMLCanvasElement {
   g.beginPath();
   for (const [x, y] of s.stumps) { g.moveTo(X(x) + 3, Y(y)); g.arc(X(x), Y(y), 3, 0, Math.PI * 2); }
   for (const [a, b] of s.skids) { g.moveTo(X(a[0]), Y(a[1])); g.lineTo(X(b[0]), Y(b[1])); }
+  for (const [a, b] of s.bridges) { g.moveTo(X(a[0]), Y(a[1])); g.lineTo(X(b[0]), Y(b[1])); }
   g.stroke();
+  // A bunkhouse fallen in: its walls in short broken strokes, and no roof over them.
+  g.setLineDash([5, 3]);
+  g.beginPath();
+  for (const r of s.ruins) g.rect(X(r.x + 0.15), Y(r.y + 0.15), (r.w - 0.3) * PX, (r.h - 0.3) * PX);
+  g.stroke();
+  g.setLineDash([]);
   for (const [x, y] of s.stumps) g.fillRect(X(x) - 0.75, Y(y) - 0.75, 1.5, 1.5);
   g.beginPath();
   for (const [x, y] of s.stakes) { g.moveTo(X(x), Y(y) + 4); g.lineTo(X(x), Y(y) - 5); g.lineTo(X(x) + 5, Y(y) - 3); g.lineTo(X(x), Y(y) - 1); }

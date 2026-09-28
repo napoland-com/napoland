@@ -2,7 +2,7 @@
 id: unease
 title: "Unease: fear that company calms"
 status: done
-order: 510
+order: 550
 area: gameplay
 depends: [survival-dynamics, creatures, sound]
 ---

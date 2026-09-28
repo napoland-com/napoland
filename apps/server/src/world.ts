@@ -68,6 +68,12 @@
  * at once if online (a little energy out in the wilds, a line anywhere else), or in a letter when they
  * next walk into their home room. Who thanked whom is kept THANKS_KEPT_DAYS, in memory and in storage.
  *
+ * The Long Night (shared/sky.ts), once a week: a whole game day of aurora, when wire and strange objects
+ * grow back faster (items.json, `longNight`) if the lodge's fire lasted through the one before. That
+ * night nobody tends the lodge's fire (map.ts, a fireplace's `longNight`): it burns down like a shelter's
+ * and everyone's resin and cloth keep it going until dawn. Whether it went out, and so whether the next
+ * one keeps its bonus, is the whole world's, and kept across restarts (Writes.longNight).
+ *
  * Crates for whoever comes next (shared/caches.ts): where people rest by a fire out there, a crate holds
  * a few things anyone left. Each visit (in its room, or near one in the open) a player may leave one
  * thing from their bag and take one out; taking thanks whoever left it, and counts as taken out of the
@@ -79,7 +85,9 @@
  * the player's own street, in front of their own door; the others' doors are knocked at, not walked into,
  * and a window is lit while its owner is home. At their own door a player may move their cabin next to a
  * friend's, onto the friend's street, if a lot is free there. Who lives where is kept for everyone, online
- * or not, loaded at start-up.
+ * or not, loaded at start-up. Anyone may keep their name off their door and their window dark (the setting
+ * in the menu): the street sees a resident then, and a knock is answered only for friends. The first time
+ * each player comes home since streets came, a letter says what the street sees of them.
  *
  * Crowds: a town square holds about TOWN_CROWD players, and a region of the wilds REGION_CROWD, before
  * another copy of it opens; the rooms off a place (its houses, its shelters) follow the copy they are
@@ -94,10 +102,14 @@ import {
   CACHE_SIZE,
   COZY_AFTER_S,
   COZY_MODS,
+  DAY_S,
   DIR_VEC,
+  AURORA_WATCHER_STEP_MS,
   MARK_LIFETIME_MS,
   NOTE_XP,
   QUIRKS,
+  SKULKER_STEP_MS,
+  WATCHER_STEP_MS,
   SLOTS,
   STARTER_GEAR,
   STARTER_TOOLS,
@@ -138,7 +150,13 @@ import {
   cleanNotebook,
   cleanRested,
   conditionsAt,
+  dayAt,
   dayIndex,
+  effectResist,
+  seasonAt,
+  seasonView,
+  SEASON_ORDER,
+  SEASONS,
   daysThisWeek,
   emptyNotebook,
   everyDaySoFar,
@@ -157,6 +175,8 @@ import {
   secretTitle,
   weekIndex,
   seeded,
+  skulkerStepMs,
+  watcherStepMs,
   charmsIn,
   chapterOf,
   comfortOf,
@@ -189,6 +209,9 @@ import {
   levelOf,
   liveEnds,
   liveXp,
+  longNightAt,
+  longNightFrom,
+  longNightWords,
   markLifetime,
   maxEnergy,
   merge,
@@ -230,6 +253,7 @@ import {
   uneaseLevel,
   untilSurge,
   utcDay,
+  rainAhead,
   weatherAt,
   weekdayOf,
   wetRate,
@@ -252,6 +276,7 @@ import {
   type Did,
   type Dir,
   type DropView,
+  type EffectView,
   type EnergyView,
   type FindView,
   type FindWhen,
@@ -264,6 +289,7 @@ import {
   type ItemDef,
   type ItemsData,
   type KeepsakesData,
+  type LongNightView,
   type LookKind,
   type LotView,
   type MapNote,
@@ -287,6 +313,9 @@ import {
   type ProgressView,
   type Recipe,
   type Refusal,
+  type Resist,
+  type Season,
+  type SeasonView,
   type Stash,
   type ServerMsg,
   type Stats,
@@ -306,10 +335,11 @@ import {
   type TileMap,
   type Weather,
 } from '@napoland/shared';
-import { FIRE_LOW_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, FirstRecord, LotRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
+import { FIRE_LOW_S, FIRE_MAX_S, Fires, type Fire } from './fires';
+import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
 
-export { MARK_LIFETIME_MS, faces };
+// How often creatures step is their region's (map.ts, watcherStepMs, skulkerStepMs); these are the paces a rule leaves out.
+export { AURORA_WATCHER_STEP_MS, MARK_LIFETIME_MS, SKULKER_STEP_MS, WATCHER_STEP_MS, faces };
 
 /** A step may start this much early: messages sent at a steady pace arrive bunched up. */
 export const STEP_TOLERANCE_MS = 40;
@@ -324,9 +354,6 @@ export const ENERGY_RATE_CHANGE = 0.1;
 export const MARKS_PER_PLAYER = 6;
 /** A pile keeps this many of the last steps its owner walked out there: their echo. */
 export const TRAIL_STEPS = 16;
-/** A watcher takes a step this often (on aurora nights, AURORA_WATCHER_STEP_MS); players are faster. */
-export const WATCHER_STEP_MS = 520;
-export const AURORA_WATCHER_STEP_MS = 400;
 /** A watcher goes after players at most this many steps away (as the crow walks), and freezes while any player this close faces it. */
 export const WATCHER_HUNT = 9;
 /** Someone carrying a live find glows: watchers come for them from this far. */
@@ -339,8 +366,6 @@ export const WATCHER_AWAY_S: [number, number] = [60, 150];
 export const WATCHER_WAKE_AWAY = 8;
 /** Watchers look this many tiles ahead for a way to you. */
 const WATCHER_PATH_NODES = 600;
-/** A skulker takes a step this often: a quarter slower than a walking player (STEP_MS), so moving away in time escapes it. */
-export const SKULKER_STEP_MS = 250;
 /** A skulker notices a player out in the open this close (as the crow walks): farther if they are walking (it hears them). */
 export const SKULKER_HEAR = 6;
 export const SKULKER_SEE = 3;
@@ -366,6 +391,11 @@ export const FIRSTS_ON_BOARD = 3;
 /** The notice board counts collapses this far back. */
 const COLLAPSES_MS = 60 * 60 * 1000;
 /**
+ * The fuel in the lodge's fire as the Long Night begins: half of what a fire holds (FIRE_MAX_S), so it
+ * cannot last the night on one feeding, and the town has to come back to it at least twice.
+ */
+export const LODGE_FUEL_S = FIRE_MAX_S / 2;
+/**
  * For the field notes (notebook.ts), what counts as seen or heard: a watcher within sight (the camera
  * shows about this much around you), a flash near you, the ferns' rustle (as far as a client plays a
  * skulker's chase) and the dead wires humming by a pole, center to center.
@@ -378,6 +408,8 @@ export const HUM_NEAR = 2;
 export const KNOCK_EVERY_MS = 3000;
 /** A player moves their cabin at most once in this long: every move is saved at once, and both streets hear of it. */
 export const MOVE_EVERY_MS = 10_000;
+/** A player's door setting changes at most once in this long: each change is saved at once, and their whole street hears of it. */
+export const DOOR_EVERY_MS = 1000;
 /**
  * A copy of a town square holds this many players (with those in its rooms) before another opens: about
  * as many as the square has room for without everyone walking through everyone else.
@@ -452,6 +484,8 @@ export interface Joined extends Scene {
   map: MapRef;
   /** Everyone in the player's zone, the player included. */
   players: PlayerView[];
+  /** The weather over their map (a room: the map outside its door). */
+  weather: Weather;
   energy: EnergyView;
   body: BodyView;
   bag: BagSlot[];
@@ -459,6 +493,10 @@ export interface Joined extends Scene {
   stash: BagSlot[];
   stone: StoneView;
   conditions: ConditionsView;
+  /** The season, and how long is left of it. */
+  season: SeasonView;
+  /** The Long Night, on or coming. */
+  longNight: LongNightView;
   stats: Stats;
   progress: ProgressView;
   /** The rest their time away was worth, since they were last seen (restFor): whether the cup had room for it or not. */
@@ -480,6 +518,8 @@ export interface Joined extends Scene {
   furniture?: string[];
   /** On their street: its lots, and which is theirs. */
   street?: StreetView;
+  /** They keep their name off their door and their window dark. */
+  doorOff?: true;
 }
 
 /** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
@@ -500,6 +540,8 @@ export interface Writes {
   caches: Array<{ id: number; item: CacheItemRecord | undefined }>;
   /** First finders since (firsts.ts): each kept once, for good. */
   firsts: FirstRecord[];
+  /** The Long Night, if it changed: it began, the lodge's fire was fed or went out, or dawn came. */
+  longNight?: LongNightRecord;
 }
 
 export interface WorldOptions {
@@ -529,6 +571,8 @@ export interface WorldOptions {
   lots?: LotRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
+  /** The Long Night as it was saved (storage.ts, cleanLongNight). */
+  longNight?: LongNightRecord | null;
   /**
    * Add to `now` for ms since the epoch. Piles and marks fade by the wall clock, which clients and the
    * database see, and the weather and the surges follow it, while `now` is game time, which must never
@@ -642,6 +686,8 @@ interface Online {
   knockAt: number;
   /** When they last moved their cabin (game time): once in MOVE_EVERY_MS. */
   movedAt: number;
+  /** When they last changed their door's setting (game time): once in DOOR_EVERY_MS. */
+  doorAt: number;
 }
 
 /** A player's lot: whose it is (their name goes on its plate), on which street, and which. */
@@ -650,6 +696,8 @@ interface Lot {
   name: string;
   street: number;
   lot: number;
+  /** Its owner keeps their name off the door and the window dark (PlayerRecord.doorOff): the street sees a resident, never home. */
+  off?: true;
 }
 
 /** Where a player stands with their own fire (comfort.ts): away, warming by it (under COZY_AFTER_S), or held there, cozy in full. */
@@ -686,6 +734,8 @@ interface Rule {
   when?: FindWhen;
   /** Only while this condition is on (sky.ts). */
   condition?: string;
+  /** Only in this season (sky.ts). */
+  season?: Season;
   open: boolean;
 }
 
@@ -792,12 +842,15 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 const flashView = (f: Flash, now: number): FlashView => ({ x: f.x, y: f.y, kind: f.kind, left: round((f.until - now) / 1000, 1) });
 const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), max: p.max, rate: round(p.rate, 3) });
 const copyWorn = (w: Worn | undefined): Worn => Object.fromEntries(Object.entries(w ?? {}).map(([s, p]) => [s, { ...p, cond: round(p.cond, 3) }]));
-/** The player's body as they hear it, `wall` ms since the epoch: with how long they stay cozy, and how long they stood by their own fire. */
-const bodyView = (p: Online, wall: number, by: boolean): BodyView => {
+/**
+ * The player's body as they hear it, `wall` ms since the epoch: with how long they stay cozy, how long they
+ * stood by their own fire, and the effects working on them.
+ */
+const bodyView = (p: Online, wall: number, by: boolean, effects: EffectView[]): BodyView => {
   const cozy = (p.rec.cozy ?? 0) - wall;
   return {
     wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched, worn: copyWorn(p.rec.worn),
-    ...(cozy > 0 ? { cozy: round(cozy / 1000, 1) } : {}), ...(by ? { fireside: round(p.fireside, 1) } : {}),
+    ...(cozy > 0 ? { cozy: round(cozy / 1000, 1) } : {}), ...(by ? { fireside: round(p.fireside, 1) } : {}), ...(effects.length ? { effects } : {}),
   };
 };
 /**
@@ -956,8 +1009,34 @@ export class World {
   /** readyAt of players who left mid-step, so leaving and joining again cannot skip the wait. */
   private readonly resting = new Map<string, number>();
   private outbox: Outgoing[] = [];
+  /** The weather everywhere, when it is fixed (not `cycle`): what setWeather last set. */
   private sky: Weather;
   private readonly cycle: boolean;
+  /**
+   * Each map's weather as its players last heard it (sky.ts): night comes to every map at once, rain to
+   * each region by its own windows, and a room has the weather of the map its door opens onto.
+   */
+  private readonly skies = new Map<string, Weather>();
+  /**
+   * Effects working on each player (effects.ts), by player id, then by the item that gives it: when it
+   * ends, on the game clock. Kept apart from who is online, so they run on while a player is away (a
+   * dropped connection loses nothing), and forgotten once over.
+   */
+  private readonly effects = new Map<string, Map<string, number>>();
+  /** The season as everyone last heard it (sky.ts): a week each, and in winter the water that freezes is ice. */
+  private season: Season;
+  /**
+   * The Long Night (sky.ts): the one on, or the last one the World (or the one before a restart) saw,
+   * none before the first. `nightOn` while it is on, as the ticks saw it. Written for storage whenever
+   * it changes (`nightWrite`).
+   */
+  private night: LongNightRecord | null = null;
+  private nightOn = false;
+  private nightWrite: LongNightRecord | undefined;
+  /** The fireplace nobody tends on the Long Night (map.ts, `longNight`: the lodge's), if the world has one. */
+  private readonly nightFire: { map: TileMap; x: number; y: number } | undefined;
+  /** What grows back faster on a Long Night with its bonus, and how many times as fast (items.json, `longNight`). */
+  private readonly nightRegrow: { items: ReadonlySet<string>; times: number; words: string } | undefined;
   /** Players sign in here: one nobody signed in with is a guest (WorldOptions.guests). */
   private readonly guests: boolean;
   /** Stashing earns this many times an item's XP: 1, but for play-tests (WorldOptions.xpTimes). */
@@ -1140,6 +1219,12 @@ export class World {
     this.onCollapse = options.onCollapse;
     this.rng = options.rng ?? Math.random;
     this.epochOffset = options.epochOffset ?? 0;
+    // Every map's weather from the start: the one given, where it is fixed; else the sky now, region by region.
+    for (const m of this.maps.values()) this.skies.set(m.data.id, this.cycle ? this.regionWeather(m, (options.now ?? 0) + this.epochOffset) : weather);
+    // The season now. Whatever froze before (maps outlive a World in the tests), what grows and where
+    // creatures wake is laid out off the ice, which thaws; winter freezes it at the end.
+    this.season = seasonAt((options.now ?? 0) + this.epochOffset);
+    for (const m of this.maps.values()) m.freeze(false);
     // Every map's main copy, the world everyone shares: its fires start burning now.
     for (const m of this.maps.values()) this.newZone(m, '', options.now ?? 0);
 
@@ -1171,8 +1256,10 @@ export class World {
       const item = this.items.get(f.item);
       if (!item) throw new Error(`a find rule on map ${f.map} grows ${f.item}, which is not an item`);
       const tiles = findTiles(map, f).map(t => t.y * map.width + t.x);
-      // Finds that only grow at certain times wait for the first tick to tell whether it is one.
-      this.rules.push({ item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, condition: f.condition, open: !f.when && !f.condition });
+      // Finds that only grow at certain times wait for the first tick to tell whether it is one; a season's grow in it from the start.
+      this.rules.push({
+        item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, condition: f.condition, season: f.season, open: !f.when && !f.condition && (!f.season || f.season === this.season),
+      });
     }
     // The piles first: finds never grow on a tile that has one.
     for (const d of options.drops ?? []) this.restore(d);
@@ -1190,7 +1277,7 @@ export class World {
     for (const l of options.lots ?? []) {
       if (!this.street || !Number.isInteger(l.street) || l.street < 1 || !Number.isInteger(l.lot) || l.lot < 0 || l.lot >= this.lotDoor.length) continue;
       if (this.lots.has(l.id) || this.streetLots(l.street)[l.lot]) continue;
-      this.settle({ id: l.id, name: l.name, street: l.street, lot: l.lot });
+      this.settle({ id: l.id, name: l.name, street: l.street, lot: l.lot, ...(l.off && { off: true as const }) });
     }
 
     // Where each map's creatures may wake is the same in every copy of it: worked out once.
@@ -1229,10 +1316,20 @@ export class World {
       // Awake, it kept burning while the server was down.
       this.stoneAt = saved.at - this.epochOffset;
     }
+    // In winter the pond and the brook are ice from the start.
+    for (const m of this.maps.values()) m.freeze(SEASONS[this.season].frozen);
+
+    this.nightFire = [...this.maps.values()].flatMap(m => m.data.objects.flatMap(o => (o.kind === 'fireplace' && o.longNight ? [{ map: m, x: o.x, y: o.y }] : [])))[0];
+    this.nightRegrow = items.longNight && { items: new Set(items.longNight.items), times: items.longNight.regrow, words: longNightWords(items.longNight, this.items) };
+    this.night = options.longNight ? { ...options.longNight } : null;
+    // Started in the Long Night (a restart, most likely): the lodge's fire burns down from the start, as it was saved.
+    const night = longNightAt((options.now ?? 0) + this.epochOffset);
+    if (night.on) this.beginLongNight(night.week, options.now ?? 0, false);
   }
 
+  /** The weather over the home town (where it is fixed, everywhere's). */
   get weather(): Weather {
-    return this.sky;
+    return this.weatherOf(this.home);
   }
 
   get size(): number {
@@ -1279,9 +1376,18 @@ export class World {
     return this.guests && r.authSub === null;
   }
 
-  /** What lies in a zone to pick up. */
-  findViews(zone: string): FindView[] {
-    return [...(this.zones.get(zone)?.finds.values() ?? [])].map(findView);
+  /**
+   * What lies in a zone to pick up; with `seer` (a player's id), as they see it: a tool they own lies
+   * there for someone else, so they never see it (sees).
+   */
+  findViews(zone: string, seer?: string): FindView[] {
+    const p = seer === undefined ? undefined : this.players.get(seer);
+    return [...(this.zones.get(zone)?.finds.values() ?? [])].filter(f => !p || this.sees(p, f)).map(findView);
+  }
+
+  /** Does a player see this find? Every one but a tool they own already: it lies there for whoever does not (pickTool). */
+  private sees(p: Online, f: Find): boolean {
+    return f.rule.item.kind !== 'tool' || !this.owns(p, f.rule.item.id);
   }
 
   /** The piles lying in a zone, open or not. */
@@ -1289,7 +1395,7 @@ export class World {
     return [...(this.pileTiles.get(zone)?.values() ?? [])].flat().map(dropView);
   }
 
-  /** Everything a zone holds besides players, as of `now`. */
+  /** Everything a zone holds besides players, as of `now`. A player hears its finds as they see them (findsFor). */
   scene(key: string, now: number): Scene {
     const zone = this.zones.get(key);
     return {
@@ -1345,6 +1451,10 @@ export class World {
     else delete r.furniture;
     // Where their cabin stands is what the World keeps of it (it may have been given to someone else meanwhile, or never saved).
     this.recordLot(r);
+    if (r.doorOff !== true) delete r.doorOff;
+    if (r.streetTold !== true) delete r.streetTold;
+    // Their door's setting is theirs: the lot kept for them follows it, and so does their street.
+    this.markDoor(r.id, r.doorOff === true);
     // Cozy is a time on the wall clock: it went on counting down while they were away.
     if (!(Number.isFinite(r.cozy) && r.cozy! > now + this.epochOffset)) delete r.cozy;
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
@@ -1355,6 +1465,8 @@ export class World {
       ({ map, x: r.x, y: r.y, dir: r.dir } = this.wakeUp);
       copy = this.copyFor(r, map);
     } else {
+      // Saved on ice that has thawed since: ashore, where they would have stepped.
+      if (!map.walkable(r.x, r.y) && map.iceAt(r.x, r.y)) Object.assign(r, ashore(map, r.x, r.y));
       if (!map.walkable(r.x, r.y) || map.exitAt(r.x, r.y)) toSpawn(r, map);
       copy = this.rejoin(r, map);
     }
@@ -1386,7 +1498,7 @@ export class World {
     const p: Online = {
       rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
       hitchAt: now, unease: 0, uneaseAt: now, uneaseLevel: 0, trail: [], walked: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
-      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity,
+      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity, doorAt: -Infinity,
     };
     this.refresh(p, now);
     this.revisit(p);
@@ -1402,8 +1514,10 @@ export class World {
     this.giveParcel(p, now);
     const here = zone.key, today = utcDay(now + this.epochOffset);
     return {
-      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: this.bodyOf(p, now), bag: bagView(r.bag, now + this.epochOffset),
-      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats },
+      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), weather: this.weatherOf(map), energy: energyView(p), body: this.bodyOf(p, now),
+      bag: bagView(r.bag, now + this.epochOffset),
+      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), season: this.seasonNow(now),
+      longNight: this.longNightView(now), stats: { ...r.stats },
       progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
@@ -1416,6 +1530,7 @@ export class World {
       finds: this.findsFor(r, zone),
       ...this.cabinOf(p),
       ...this.streetOf(p),
+      ...(r.doorOff && { doorOff: true as const }),
     };
   }
 
@@ -1549,7 +1664,8 @@ export class World {
     const gave = Math.round(p.rec.energy - was), charm = gave > 0 ? p.rec.bag.map(b => this.items.get(b.item)).find(d => d?.kind === 'charm' && (d.charm?.markEnergy ?? 0) > 0) : undefined;
     const lift = charm ? { item: charm.id, energy: gave } : undefined;
     if (use.flare) this.light(p, use.flare, now);
-    // The bar may have jumped, the bag got lighter: the client counts on from the new values.
+    const again = use.resist && use.lasts ? this.affect(id, def.id, use.lasts, now) : undefined;
+    // The bar may have jumped, the bag got lighter, an effect works: the client counts on from the new values.
     this.refresh(p, now);
     this.tell(p, now);
     this.sendBag(p, now);
@@ -1560,6 +1676,7 @@ export class World {
       ...(use.flare ? { flare: use.flare } : {}),
       ...(use.mark ? { mark: { dir: p.rec.dir, left: markLifetime(p.mods) / 1000 } } : {}),
       ...(into ? { into } : {}),
+      ...(again !== undefined ? { effect: { lasts: use.lasts!, ...(again ? { again: true as const } : {}) } } : {}),
       ...(lift ? { lift } : {}),
     });
     // Seen in the light, for the field notes: what it turned out to be comes into your hands like a find.
@@ -1637,6 +1754,7 @@ export class World {
     this.sendBag(p, now);
     // Whoever warms at it later may thank them (thanks.ts): at this copy's fire, the one they fed.
     fires.fedBy(fire, { id, name: p.rec.name });
+    this.fedLodge(fire, now);
     const burning = fires.view(fire, now);
     this.toZone(p.zone.key, { t: 'fire', fire: burning });
     // Each one counts for the fire keeper, as when they went in one press at a time.
@@ -2078,6 +2196,8 @@ export class World {
     p.rec.tools = [...(p.rec.tools ?? STARTER_TOOLS), item];
     this.saveNow.set(id, p.rec);
     this.outbox.push({ to: id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items) } });
+    // Another of it lying where they are is someone else's to find from now on: it goes from their sight.
+    for (const f of p.zone.finds.values()) if (f.rule.item.id === item) this.outbox.push({ to: id, msg: { t: 'findGone', id: f.id } });
     return true;
   }
 
@@ -2235,6 +2355,13 @@ export class World {
    */
   private homecoming(p: Online, now: number): void {
     p.gifts = 0;
+    // The first time home since streets came (a new player's too): a letter says what the street sees of
+    // them and where to hide it, once, before any thanks.
+    if (this.street && !p.rec.streetTold) {
+      p.rec.streetTold = true;
+      this.saveNow.set(p.rec.id, p.rec);
+      this.outbox.push({ to: p.rec.id, msg: { t: 'streetLetter', doorOff: p.rec.doorOff === true } });
+    }
     // Only what is still kept: one older than THANKS_KEPT_DAYS may wait for the tick that forgets it.
     const kept = now + this.epochOffset - THANKS_KEPT_MS;
     const unread = [...this.thanks.values()].filter(t => t.helper === p.rec.id && !t.told && t.at > kept).sort((a, b) => b.at - a.at);
@@ -2378,7 +2505,10 @@ export class World {
     if (now - p.knockAt < KNOCK_EVERY_MS) return this.refuse(p, 'knock', 'slow_down');
     p.knockAt = now;
     const them = owner && this.players.get(owner.id), home = !!them && this.ownCabin(them);
-    this.outbox.push({ to: id, msg: { t: 'door', x, y, name: owner?.name ?? null, home } });
+    // A door kept to oneself answers only friends (asked both ways): to anyone else, a resident, and nobody answers.
+    const answers = !!owner && (!owner.off || this.friends(id).has(owner.id) || this.friends(owner.id).has(id));
+    const view: LotView | null = !owner ? null : answers ? { name: owner.name, ...(home && { home: true as const }) } : {};
+    this.outbox.push({ to: id, msg: { t: 'door', x, y, lot: view } });
     // Someone who blocks the knocker hears nothing from them, and the knocker is not told (the lit window says they are home anyway).
     if (them && home && !this.blocks(them.rec.id).has(id)) this.outbox.push({ to: them.rec.id, msg: { t: 'knocked', name: p.rec.name } });
   }
@@ -2404,7 +2534,7 @@ export class World {
     p.movedAt = now;
     this.unsettle(mine);
     this.tellLot(mine.street, mine.lot);
-    const moved = this.settle({ id, name: p.rec.name, street: friend.street, lot });
+    const moved = this.settle({ id, name: p.rec.name, street: friend.street, lot, ...(p.rec.doorOff && { off: true as const }) });
     this.recordLot(p.rec);
     this.saveNow.set(id, p.rec);
     this.tellLot(moved.street, moved.lot);
@@ -2412,6 +2542,24 @@ export class World {
     this.place(p, this.zoneFor(this.street!, String(moved.street), now), at.x, at.y, 'down');
     this.arrive(p, from, 'exit', now);
     this.did(p, { kind: 'moved', name: friend.name });
+  }
+
+  /**
+   * The setting in the menu: the player keeps their name off their door and their window dark to their
+   * street (`off`), or shows both, as everyone does until they choose. Saved at once, and their street sees
+   * the change; they hear the setting back as it stands (unchanged, when it changed too soon before).
+   */
+  doorOff(id: string, off: boolean, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    if (off !== (p.rec.doorOff === true) && now - p.doorAt >= DOOR_EVERY_MS) {
+      p.doorAt = now;
+      if (off) p.rec.doorOff = true;
+      else delete p.rec.doorOff;
+      this.markDoor(id, off);
+      this.saveNow.set(id, p.rec);
+    }
+    this.outbox.push({ to: id, msg: { t: 'doorOff', off: p.rec.doorOff === true } });
   }
 
   /** Players deleted from storage (guests who stayed away): their lots are free again. */
@@ -2483,11 +2631,12 @@ export class World {
    * come grow. Call it often (every TICK_MS).
    */
   tick(now: number): void {
-    const wall = now + this.epochOffset;
     this.tickAt = now;
     // A copy nobody is in costs nothing from here on (its piles and marks stay, and so does storage's copy of them).
     this.closeEmptied();
-    if (this.cycle) this.setWeather(weatherAt(wall).weather, now);
+    this.moveSeason(now);
+    this.moveWeather(now);
+    this.moveLongNight(now);
     this.moveSurges(now);
     this.moveStorms(now);
     this.moveConditions(now);
@@ -2504,6 +2653,11 @@ export class World {
       }
       if (p.queue.length) this.runQueue(p, now);
       if (p.live) this.fadeLive(p, now);
+      // An effect that is over no longer counts: they hear their rates, and their body, without it.
+      if (this.endEffects(p.rec.id, now)) {
+        this.refresh(p, now);
+        this.tell(p, now);
+      }
       this.surged(p, now);
       this.hitch(p, now);
       this.unnerve(p, now);
@@ -2524,22 +2678,57 @@ export class World {
     this.fadePiles(now);
     this.fadeMarks(now);
     this.forgetThanks(now);
+    this.forgetEffects(now);
     this.forgetWalks(now);
     this.growFinds(now);
   }
 
-  /** Changes the weather everywhere. Energy rates follow: bad weather drains faster, and rain soaks. */
+  /**
+   * Fixes the weather everywhere (a fixed WEATHER, and the tests): every map has it until it is set
+   * again. Energy rates follow: bad weather drains faster, and rain soaks.
+   */
   setWeather(weather: Weather, now: number): void {
-    if (weather === this.sky) return;
-    const aurora = weather === 'aurora' || this.sky === 'aurora';
     this.sky = weather;
-    for (const z of this.zones.values()) if (z.players.size) this.outbox.push({ to: '*', map: z.key, msg: { t: 'weather', weather } });
-    if (aurora) for (const rule of this.rules) if (rule.when === 'aurora') this.openRule(rule, weather === 'aurora', now);
-    for (const p of this.players.values()) {
+    for (const map of this.maps.values()) this.turnWeather(map, weather, now);
+  }
+
+  /** With the weather cycling, every map follows its region's sky (sky.ts): the night everywhere at once, rain by the region's own windows. */
+  private moveWeather(now: number): void {
+    if (!this.cycle) return;
+    const wall = now + this.epochOffset;
+    for (const map of this.maps.values()) this.turnWeather(map, this.regionWeather(map, wall), now);
+  }
+
+  /**
+   * The weather over one map turns: everyone on it (in every copy of it) hears it, its aurora finds grow
+   * or go, and whoever is there drains at the new rate from now on (up to now, at the old one).
+   */
+  private turnWeather(map: TileMap, weather: Weather, now: number): void {
+    const was = this.weatherOf(map);
+    if (was === weather) return;
+    this.skies.set(map.data.id, weather);
+    for (const zone of this.copiesOf(map.data.id)) if (zone.players.size) this.toZone(zone.key, { t: 'weather', weather });
+    if (weather === 'aurora' || was === 'aurora') for (const rule of this.rules) if (rule.when === 'aurora' && rule.map === map) this.openRule(rule, weather === 'aurora', now);
+    for (const zone of this.copiesOf(map.data.id)) for (const p of [...zone.players]) {
       // Up to now at the rate of the old weather, which the player still has.
       if (this.advance(p, now) <= 0) this.collapse(p, now);
       else this.rerate(p, now);
     }
+  }
+
+  /** The map whose sky a map is under: a room hears the weather of the map its door opens onto. */
+  private outdoors(map: TileMap): TileMap {
+    return map.data.kind === 'inside' ? this.around.get(map.data.id) ?? map : map;
+  }
+
+  /** The weather over a map at a wall time, by its region's rain windows (sky.ts). */
+  private regionWeather(map: TileMap, wall: number): Weather {
+    return weatherAt(wall, this.outdoors(map).data.rain).weather;
+  }
+
+  /** The weather over a map now, as its players last heard it. */
+  private weatherOf(map: TileMap): Weather {
+    return this.skies.get(map.data.id) ?? this.sky;
   }
 
   /** Everything queued since the last drain, in order. */
@@ -2560,8 +2749,10 @@ export class World {
       credits: this.credits,
       caches: [...this.cacheWrites].map(([id, c]) => ({ id, item: c && { ...c } })),
       firsts: this.firstWrites,
+      ...(this.nightWrite ? { longNight: { ...this.nightWrite } } : {}),
     };
     this.firstWrites = [];
+    this.nightWrite = undefined;
     this.pileWrites.clear();
     this.saveNow.clear();
     this.markWrites.clear();
@@ -2617,7 +2808,7 @@ export class World {
       // The pack mule counts what the bag really weighs: a feel made lighter by its own ranks or a charm
       // must not slow the count toward its next rank.
       const real = bagLoad(p.rec.bag, this.items);
-      for (const stat of STEP_STATS) if (stepCounts(stat, p.map, x, y, this.sky, real)) this.count(p, stat, now);
+      for (const stat of STEP_STATS) if (stepCounts(stat, p.map, x, y, this.weatherOf(p.map), real)) this.count(p, stat, now);
     }
     const exit = p.map.exitAt(x, y);
     // Onto the way home (a home exit: no steps from home) out in the wilds: a walk others may glimpse ends here.
@@ -2853,8 +3044,8 @@ export class World {
     this.outbox.push({
       to: id,
       msg: {
-        t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), finds: this.findsFor(p.rec, p.zone), stats: { ...p.rec.stats }, reason,
-        ...this.cabinOf(p), ...this.streetOf(p),
+        t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), finds: this.findsFor(p.rec, p.zone), stats: { ...p.rec.stats },
+        weather: this.weatherOf(p.map), reason, ...this.cabinOf(p), ...this.streetOf(p),
       },
       // Where the network hears them from now on, when it is not the map's main copy (its key is the map's id).
       ...(p.zone.copy ? { zone: here } : {}),
@@ -2876,10 +3067,11 @@ export class World {
     p.load = bagLoad(p.rec.bag, this.items, p.mods.load);
     p.max = this.maxOf(p.rec);
     p.slots = bagSlotsOf(p.rec.gear ?? {}, this.items);
-    const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn);
+    // What they wear, and the effects working on them (a hand warmer), under the one cap.
+    const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn, this.boost(p.rec.id, now));
     const warmth = p.map.warm(x, y) ? p.zone.fires.warmth(x, y, now) : 0;
-    const storm = this.stormOf(p.map, now)?.phase === 'storm';
-    p.rate = energyRate(p.map, x, y, this.sky, {
+    const storm = this.stormOf(p.map, now)?.phase === 'storm', weather = this.weatherOf(p.map);
+    p.rate = energyRate(p.map, x, y, weather, {
       warmth: warmth * p.mods.warmth,
       wet: p.rec.wet,
       load: p.load,
@@ -2891,10 +3083,12 @@ export class World {
       flash: p.zone.flashes.find(f => flashHits(flashView(f, now), x, y))?.kind,
       resist,
       farDrain: p.mods.farDrain,
+      // In winter the cold bites harder (sky.ts, SEASONS).
+      chill: { weather: SEASONS[this.season].chill, wet: SEASONS[this.season].wet },
       drain: p.mods.drain,
     });
     // Wind resistance (a raincoat) keeps the rain out.
-    p.wetRate = wetRate(p.map.data.kind, this.sky, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
+    p.wetRate = wetRate(p.map.data.kind, weather, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
   }
 
   /**
@@ -2945,9 +3139,9 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'energy', energy: energyView(p), body: this.bodyOf(p, now) } });
   }
 
-  /** The player's body as they hear it now: how wet, their load and what clings to them, what they wear, and how cozy. */
+  /** The player's body as they hear it now: how wet, their load and what clings to them, what they wear, how cozy, and the effects working on them. */
   private bodyOf(p: Online, now: number): BodyView {
-    return bodyView(p, now + this.epochOffset, this.byOwnFire(p, now));
+    return bodyView(p, now + this.epochOffset, this.byOwnFire(p, now), this.effectViews(p.rec.id, now));
   }
 
   // ---------- a cozy cabin (comfort.ts) ----------
@@ -3029,7 +3223,8 @@ export class World {
   /** A find picked up, for the field notes: its kind, and when it was picked up, on an aurora night or in a storm. */
   private found(p: Online, item: string, now: number): void {
     this.note(p, { find: item });
-    if (this.sky === 'aurora') this.note(p, { find: item, during: 'aurora' });
+    // The aurora over where it was picked: each region has its own sky (a room, the one outside its door).
+    if (this.weatherOf(p.map) === 'aurora') this.note(p, { find: item, during: 'aurora' });
     if (this.stormOf(p.map, now)?.phase === 'storm') this.note(p, { find: item, during: 'storm' });
   }
 
@@ -3052,7 +3247,7 @@ export class World {
       if (this.stormOf(map, now)?.phase === 'storm') this.saw(p, inside ? 'roof' : 'storm');
     }
     if (inside) return;
-    if (this.sky === 'aurora') {
+    if (this.weatherOf(map) === 'aurora') {
       if (map.data.kind === 'wilds') this.saw(p, 'aurora');
       if (this.polesOf(map).some(([px, py]) => Math.hypot(px - x, py - y) <= HUM_NEAR)) this.saw(p, 'hum');
     }
@@ -3081,7 +3276,8 @@ export class World {
    * Saved at once, like a page of the field notes.
    */
   private readNote(p: Online, note: MapNote, now: number): void {
-    if (p.rec.notes?.includes(note.id) || !noteShows(note, this.sky, this.stormOf(p.map, now)?.phase === 'storm')) return;
+    // The weather over the note's own region: rain on the South Road shows a crayon note there, whatever the woods do.
+    if (p.rec.notes?.includes(note.id) || !noteShows(note, this.weatherOf(p.map), this.stormOf(p.map, now)?.phase === 'storm')) return;
     p.rec.notes = [...(p.rec.notes ?? []), note.id];
     this.saveNow.set(p.rec.id, p.rec);
     this.outbox.push({ to: p.rec.id, msg: { t: 'noteRead', id: note.id } });
@@ -3096,9 +3292,12 @@ export class World {
     }
   }
 
-  /** What lies in a zone for this player to pick up: the zone's finds, and the keepsakes lying on its map for them alone. */
+  /**
+   * What lies in a zone for this player to pick up: the zone's finds as they see them (no tool they own:
+   * findViews), and the keepsakes lying on its map for them alone.
+   */
   private findsFor(r: PlayerRecord, zone: Zone): FindView[] {
-    return [...this.findViews(zone.key), ...(this.keepsakes?.places ?? []).flatMap((k, i) => (k.map === zone.map.data.id && this.lying(r, k.item) ? [{ id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y }] : []))];
+    return [...this.findViews(zone.key, r.id), ...(this.keepsakes?.places ?? []).flatMap((k, i) => (k.map === zone.map.data.id && this.lying(r, k.item) ? [{ id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y }] : []))];
   }
 
   /** A keepsake lies where it was left for a player until they carry it, and for good once it is home. */
@@ -3239,7 +3438,7 @@ export class World {
       for (const rule of this.rules) if (rule.when === 'unstable' && rule.map === map) this.openRule(rule, s.phase !== 'calm', now);
     }
     // The first tick also opens aurora finds if the world starts on an aurora night.
-    for (const rule of this.rules) if (rule.when === 'aurora' && rule.open !== (this.sky === 'aurora')) this.openRule(rule, this.sky === 'aurora', now);
+    for (const rule of this.rules) if (rule.when === 'aurora' && rule.open !== (this.weatherOf(rule.map) === 'aurora')) this.openRule(rule, !rule.open, now);
   }
 
   /** A region's storm clock now (for an inside, the region around it), or null for a map that never storms. */
@@ -3267,6 +3466,176 @@ export class World {
   private conditionsNow(now: number): ConditionsView {
     const c = this.day === undefined ? conditionsAt(this.conditionsData, now + this.epochOffset) : this.conditions;
     return { today: [...c.today], week: c.week, next: c.next };
+  }
+
+  /** The Long Night as everyone heard it: on or not, its bonus (on: tonight's; else the next one's), and whether the lodge's fire went out tonight. */
+  private longNightView(now: number): LongNightView {
+    if (this.nightOn && this.night) return { on: true, bonus: this.night.bonus, out: this.night.out };
+    return { on: false, bonus: this.bonusFor(longNightAt(now + this.epochOffset).week), out: false };
+  }
+
+  /**
+   * Whether the Long Night of week `week` has its bonus (the faster regrowth): it does, unless the lodge's
+   * fire went out on the one the week before (and the one on keeps what it began with). A week with no
+   * Long Night the World saw before it (a new world, or the server was down through it) keeps it.
+   */
+  private bonusFor(week: number): boolean {
+    const r = this.night;
+    if (r?.week === week) return r.bonus;
+    return r?.week === week - 1 ? !wentOut(r) : true;
+  }
+
+  /** How many times as fast a find of `item` picked now grows back: faster on a Long Night with its bonus. */
+  private regrow(item: string): number {
+    const g = this.nightRegrow;
+    return g && this.nightOn && this.night?.bonus && g.items.has(item) ? g.times : 1;
+  }
+
+  /** The lodge's fire (the fireplace nobody tends on the Long Night) in the main copy of its room. */
+  private lodge(): { zone: Zone; fire: Fire } | undefined {
+    return this.lodgeFires()[0];
+  }
+
+  /**
+   * The lodge's fire in every open copy of its room, the main copy first. On the Long Night they are one
+   * fire the whole town keeps, whichever copy of the town a crowd put someone in (copyFor): the same fuel
+   * in each, fed in any of them, out in all of them at once.
+   */
+  private lodgeFires(): Array<{ zone: Zone; fire: Fire }> {
+    const f = this.nightFire;
+    if (!f) return [];
+    return [...this.copiesOf(f.map.data.id)].flatMap(zone => {
+      const fire = zone.fires.at(f.x, f.y);
+      return fire ? [{ zone, fire }] : [];
+    });
+  }
+
+  /**
+   * The Long Night (sky.ts) begins at its dawn and ends at the next: the whole day is an aurora (the
+   * weather follows it by itself). While it is on, the lodge's fire burns down like a shelter's, and
+   * when it goes out, it went out for the bonus too, lit again or not.
+   */
+  private moveLongNight(now: number): void {
+    const t = longNightAt(now + this.epochOffset);
+    if (this.nightOn && (!t.on || t.week !== this.night?.week)) this.endLongNight(now);
+    if (!this.nightOn && t.on) this.beginLongNight(t.week, now, true);
+    const r = this.night;
+    if (!this.nightOn || !r || r.out || !this.nightFire || r.outAt > now + this.epochOffset) return;
+    r.out = true;
+    this.nightWrite = { ...r };
+    this.outbox.push({ to: 'all', msg: { t: 'longNight', night: this.longNightView(now) } });
+  }
+
+  /**
+   * The Long Night of `week` begins: its bonus follows the last one's fire (bonusFor), and the lodge's
+   * fire, left untended, has LODGE_FUEL_S in it; or, after a restart in the night, what it had as saved
+   * (never more than a fire holds). A world without the lodge's fire has nothing to keep going: it lasts
+   * until dawn. `tell`: everyone online hears it, and everyone in the lodge sees the fire burn down from now.
+   */
+  private beginLongNight(week: number, now: number, tell: boolean): void {
+    const wall = now + this.epochOffset, saved = this.night;
+    this.night = saved?.week === week && !saved.over
+      ? { ...saved, outAt: Math.min(saved.outAt, wall + FIRE_MAX_S * 1000) }
+      : { week, bonus: this.bonusFor(week), outAt: this.nightFire ? wall + LODGE_FUEL_S * 1000 : longNightFrom(week) + DAY_S * 1000, out: false, over: false };
+    this.nightOn = true;
+    this.nightWrite = { ...this.night };
+    const lodges = this.lodgeFires();
+    for (const l of lodges) l.zone.fires.untend(l.fire, this.night.outAt - this.epochOffset);
+    if (!tell) return;
+    this.outbox.push({ to: 'all', msg: { t: 'longNight', night: this.longNightView(now) } });
+    for (const l of lodges) this.toZone(l.zone.key, { t: 'fire', fire: l.zone.fires.view(l.fire, now) });
+  }
+
+  /** Dawn after the Long Night: whether the lodge's fire lasted is kept for the next one, the fire is tended again, and everyone online hears it. */
+  private endLongNight(now: number): void {
+    const r = this.night!;
+    this.nightOn = false;
+    r.out = wentOut(r);
+    r.over = true;
+    this.nightWrite = { ...r };
+    for (const l of this.lodgeFires()) {
+      l.zone.fires.tend(l.fire);
+      this.toZone(l.zone.key, { t: 'fire', fire: l.zone.fires.view(l.fire, now) });
+      for (const p of l.zone.players) this.rerate(p, now);
+    }
+    this.outbox.push({ to: 'all', msg: { t: 'longNight', night: this.longNightView(now) } });
+  }
+
+  /**
+   * Someone fed `fire`: on the Long Night, if it is the lodge's (in any copy of its room), it is the one
+   * fire: the other copies' burn as long now (a fire lit again warms there too), and storage hears it.
+   */
+  private fedLodge(fire: Fire, now: number): void {
+    const r = this.night, lodges = this.lodgeFires();
+    if (!this.nightOn || !r || !lodges.some(l => l.fire === fire)) return;
+    r.outAt = fire.outAt + this.epochOffset;
+    this.nightWrite = { ...r };
+    for (const l of lodges) {
+      if (l.fire === fire) continue;
+      l.zone.fires.untend(l.fire, fire.outAt);
+      this.toZone(l.zone.key, { t: 'fire', fire: l.zone.fires.view(l.fire, now) });
+      for (const p of l.zone.players) this.rerate(p, now);
+    }
+  }
+
+  /** The season as everyone heard it, and the seconds left of it (none once its week is over and no tick turned it yet). */
+  private seasonNow(now: number): SeasonView {
+    const v = seasonView(now + this.epochOffset);
+    return { season: this.season, left: v.season === this.season ? Math.round(v.left) : 0 };
+  }
+
+  /**
+   * As the week turns, so does the season (sky.ts): everyone online hears it, its finds grow and the last
+   * one's go, the water freezes or thaws (whoever stands on thawing ice steps ashore), and everyone's drain
+   * follows (winter's cold, and the ways home across the ice).
+   */
+  private moveSeason(now: number): void {
+    const season = seasonAt(now + this.epochOffset);
+    if (season === this.season) return;
+    this.season = season;
+    for (const rule of this.rules) if (rule.season) this.openRule(rule, rule.season === season, now);
+    const frozen = SEASONS[season].frozen;
+    for (const m of this.maps.values()) if (m.freeze(frozen) && !frozen) this.thaw(m, now);
+    this.outbox.push({ to: 'all', msg: { t: 'season', season: this.seasonNow(now) } });
+    for (const p of [...this.players.values()]) {
+      if (this.advance(p, now) <= 0) this.collapse(p, now);
+      else this.rerate(p, now);
+    }
+  }
+
+  /**
+   * The ice on a map thaws: whoever stands on it steps ashore, onto the nearest ground, a creature on it
+   * slinks off, a pile on it washes up on the shore (every copy's, open or not), and an arrow painted on
+   * it goes with the ice.
+   */
+  private thaw(map: TileMap, now: number): void {
+    for (const d of [...this.piles.values()]) {
+      if (d.map !== map.data.id || !map.iceAt(d.x, d.y)) continue;
+      this.removePile(d);
+      const moved: DropRecord = { ...d, ...ashore(map, d.x, d.y) };
+      this.addPile(moved);
+      this.pileWrites.set(moved.owner, moved);
+      this.toZone(recordZone(moved), { t: 'drop', drop: dropView(moved) });
+    }
+    for (const m of [...this.marks.values()]) if (m.map === map.data.id && map.iceAt(m.x, m.y)) this.removeMark(m);
+    for (const zone of this.copiesOf(map.data.id)) {
+      for (const p of zone.players) {
+        if (!map.iceAt(p.rec.x, p.rec.y)) continue;
+        const to = ashore(map, p.rec.x, p.rec.y);
+        p.rec.x = to.x;
+        p.rec.y = to.y;
+        p.queue.length = 0;
+        p.after = undefined;
+        // A walk others may glimpse is steps: from ashore it starts again, never a jump over the water.
+        p.walked = [];
+        const { id, x, y, dir } = p.rec;
+        // Their steps planned over the ice are over: they are where the server says, as after a refused step.
+        this.outbox.push({ to: id, msg: { t: 'reject', seq: 0, x, y, dir } });
+        this.toZone(zone.key, { t: 'step', id, x, y, dir }, id);
+        this.revisit(p);
+      }
+      for (const w of [...zone.watchers, ...zone.skulkers]) if (w.awake && map.iceAt(w.x, w.y)) this.sendAway(w, now);
+    }
   }
 
   /**
@@ -3440,6 +3809,54 @@ export class World {
     return woke;
   }
 
+  // ---------- effects ----------
+
+  /**
+   * `item`'s effect starts on player `id` now, for `lasts` seconds (effects.ts). A second of the same
+   * while the first still works starts its time again: it never adds up. True when one still worked.
+   */
+  private affect(id: string, item: string, lasts: number, now: number): boolean {
+    let mine = this.effects.get(id);
+    if (!mine) this.effects.set(id, (mine = new Map()));
+    const again = (mine.get(item) ?? -Infinity) > now;
+    mine.set(item, now + lasts * 1000);
+    return again;
+  }
+
+  /** The effects working on player `id` now, with the seconds left of each (to a tenth, as the client counts them down). */
+  private effectViews(id: string, now: number, exact = false): EffectView[] {
+    const mine = this.effects.get(id);
+    if (!mine) return [];
+    return [...mine].flatMap(([item, until]) => {
+      const left = exact ? (until - now) / 1000 : round((until - now) / 1000, 1);
+      return left > 0 ? [{ item, left }] : [];
+    });
+  }
+
+  /** What the effects working on player `id` resist now, together (on top of their gear: resistOf caps the sum), to the last millisecond. */
+  private boost(id: string, now: number): Partial<Resist> {
+    return this.effects.has(id) ? effectResist(this.effectViews(id, now, true), this.items) : {};
+  }
+
+  /** Forgets player `id`'s effects that are over; true when one was. */
+  private endEffects(id: string, now: number): boolean {
+    const mine = this.effects.get(id);
+    if (!mine) return false;
+    let ended = false;
+    for (const [item, until] of mine) {
+      if (until > now) continue;
+      mine.delete(item);
+      ended = true;
+    }
+    if (!mine.size) this.effects.delete(id);
+    return ended;
+  }
+
+  /** The effects of players who are away run out on their own: forgotten once over (those online, in tick). */
+  private forgetEffects(now: number): void {
+    for (const id of this.effects.keys()) if (!this.players.has(id)) this.endEffects(id, now);
+  }
+
   // ---------- hitchhikers, flares, marks ----------
 
   /** In the dark, deep in and away from light, something may cling to you; light, a fire or a roof shakes it off. */
@@ -3452,7 +3869,7 @@ export class World {
       if (safe || this.nearFlare(p.zone, x, y, now)) this.unhitch(p);
       return;
     }
-    if (safe || !inTheDark(this.sky) || p.map.homeSteps(x, y) < HITCH_STEPS || this.nearFlare(p.zone, x, y, now)) return;
+    if (safe || !inTheDark(this.weatherOf(p.map)) || p.map.homeSteps(x, y) < HITCH_STEPS || this.nearFlare(p.zone, x, y, now)) return;
     if (this.rng() < 1 - Math.exp((-dt / HITCH_EVERY_S) * p.mods.hitch)) {
       p.hitched = true;
       this.outbox.push({ to: p.rec.id, msg: { t: 'hitch', on: true } });
@@ -3619,7 +4036,7 @@ export class World {
   private unnerve(p: Online, now: number): void {
     const dt = Math.max(0, now - p.uneaseAt) / 1000;
     p.uneaseAt = now;
-    const dark = p.map.data.kind === 'wilds' && inTheDark(this.sky) && this.exposed(p, now);
+    const dark = p.map.data.kind === 'wilds' && inTheDark(this.weatherOf(p.map)) && this.exposed(p, now);
     // Nothing builds, and nothing is left to lift.
     if (!dark && p.unease === 0) return;
     const { x, y } = p.rec;
@@ -3655,9 +4072,10 @@ export class World {
    * nothing to it.
    */
   private walkWatchers(now: number): void {
-    const every = this.sky === 'aurora' ? AURORA_WATCHER_STEP_MS : WATCHER_STEP_MS;
     for (const zone of this.zones.values()) {
       if (!zone.watchers.length || this.asleep.has(zone.map.data.id)) continue;
+      // Each region's own pace: deeper ones keep quicker watchers, and an aurora over it quickens them.
+      const every = watcherStepMs(zone.map.data.watchers, this.weatherOf(zone.map) === 'aurora');
       for (const w of zone.watchers) {
         // Asked again for each watcher: another one's touch may have just sent someone home.
         const here = [...zone.players];
@@ -3748,7 +4166,8 @@ export class World {
     w.x = t % w.map.width;
     w.y = Math.floor(t / w.map.width);
     w.awake = true;
-    w.readyAt = now + WATCHER_STEP_MS;
+    // Just awake, it waits a step of its region's watchers before it moves, whatever it is.
+    w.readyAt = now + watcherStepMs(w.map.data.watchers, false);
     this.toZone(w.zone.key, { t: 'creature', creature: creatureView(w) });
   }
 
@@ -3794,7 +4213,8 @@ export class World {
 
   /** Skulkers are out at night (aurora nights too) or in a storm, as their region's rule says. */
   private skulkersOut(map: TileMap, rule: SkulkerRule, now: number): boolean {
-    if (rule.when.includes('night') && (this.sky === 'night' || this.sky === 'aurora')) return true;
+    const sky = this.weatherOf(map);
+    if (rule.when.includes('night') && (sky === 'night' || sky === 'aurora')) return true;
     return rule.when.includes('storm') && this.stormOf(map, now)?.phase === 'storm';
   }
 
@@ -3820,7 +4240,7 @@ export class World {
           continue;
         }
         if (now < s.readyAt) continue;
-        s.readyAt = now + SKULKER_STEP_MS;
+        s.readyAt = now + skulkerStepMs(s.rule);
         if (this.nearFlare(zone, s.x, s.y, now)) {
           this.sendAway(s, now);
           continue;
@@ -3927,39 +4347,40 @@ export class World {
 
   /** The notice board: the weather, each region's surge clock, the fires that need feeding, recent collapses, the Old Stone. */
   private news(now: number): string[] {
-    const lines: string[] = [];
-    const wall = now + this.epochOffset;
-    if (this.cycle) {
-      const w = weatherAt(wall);
-      const next = weatherAt(wall + w.left * 1000 + 1000).weather;
-      lines.push(`${WEATHER_WORDS[this.sky]} now. ${capital(WEATHER_WORDS[next])} ${about(w.left)}.`);
-    } else lines.push(`${WEATHER_WORDS[this.sky]}.`);
+    const lines = this.weatherLines(now);
+    // On the Long Night, what it does and the lodge's fire come first; any other time, when it comes follows the season.
+    if (this.nightOn) lines.push(...this.longNightLines(now));
+    lines.push(this.seasonLine(now));
+    if (!this.nightOn) lines.push(...this.longNightLines(now));
     lines.push(...this.conditionLines(now));
-    for (const map of this.maps.values()) {
+    // The regions nearest town first: a board read on the way out says what comes first on it.
+    const regions = [...this.maps.values()].sort((a, b) => a.data.depth - b.data.depth);
+    for (const map of regions) {
       const s = this.surgeOf(map, now), rule = map.data.surge;
       if (!s || !rule) continue;
       if (s.phase === 'surge') lines.push(`${map.data.name}: a surge is on, ${about(s.left)} more. Get to a light.`);
       else if (s.phase === 'unstable') lines.push(`${map.data.name}: restless. A surge comes ${about(s.left)}.`);
       else lines.push(`${map.data.name}: calm. The next surge comes ${about(untilSurge(rule, s))}.`);
     }
-    for (const map of this.maps.values()) {
+    for (const map of regions) {
       const s = this.stormOf(map, now), rule = map.data.storm;
       if (!s || !rule) continue;
       if (s.phase === 'storm') lines.push(`${map.data.name}: a storm is on, ${about(s.left, true)} more. Get under a roof.`);
       else if (s.phase === 'coming') lines.push(`${map.data.name}: a storm is coming ${about(s.left)}.`);
       else lines.push(`${map.data.name}: clear. The next storm comes ${about(s.left + rule.warn)}.`);
     }
-    // The fires of the world everyone shares: each map's main copy.
-    const low: string[] = [], out: string[] = [], fires = [...this.maps.values()].map(m => this.main(m).fires);
+    // The fires of the world everyone shares: each map's main copy. The lodge's, on the Long Night, has a line of its own.
+    const low: string[] = [], out: string[] = [], fires = [...this.maps.values()].map(m => this.main(m).fires), lodge = this.lodge()?.fire;
+    const burnsDown = (f: Fire) => !f.tended && f !== lodge;
     for (const zone of fires) for (const f of zone.all()) {
-      if (f.tended) continue;
+      if (!burnsDown(f)) continue;
       const left = zone.left(f, now);
       if (left <= 0) out.push(fireName(f));
       else if (left < FIRE_LOW_S * 2) low.push(fireName(f));
     }
     if (out.length) lines.push(`Gone out: ${listOf(out)}. Bring something that burns.`);
     if (low.length) lines.push(`Burning low: ${listOf(low)}.`);
-    if (!out.length && !low.length && fires.some(zone => zone.all().some(f => !f.tended))) lines.push('Every shelter fire is burning.');
+    if (!out.length && !low.length && fires.some(zone => zone.all().some(burnsDown))) lines.push('Every shelter fire is burning.');
     const recent = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
     if (recent.length) {
       const by = new Map<string, number>();
@@ -3977,6 +4398,60 @@ export class World {
     });
     lines.push(...latest.slice(0, FIRSTS_ON_BOARD));
     return lines;
+  }
+
+  /**
+   * The notice board on the weather: the day or the night, one for the whole world, then each region out
+   * there on its own rain ("The Near Woods: rain for about 6 minutes more.", "The South Road: dry for about
+   * 12 minutes, then rain."). A fixed weather is said as it is.
+   */
+  private weatherLines(now: number): string[] {
+    if (!this.cycle) return [`${WEATHER_WORDS[this.sky]}.`];
+    // In winter the rain falls as snow (sky.ts, SEASONS).
+    const wall = now + this.epochOffset, d = dayAt(wall), rain = SEASONS[this.season].snow ? 'snow' : 'rain';
+    if (d.into >= d.night) return [`${d.long ? 'The Long Night' : d.aurora ? 'An aurora night' : 'Night'}: no ${rain} anywhere. Dawn ${about(DAY_S - d.into)}.`];
+    const lines = [`Night falls ${about(d.night - d.into)}.`];
+    // The regions nearest town first, as you would walk out to them.
+    const regions = [...this.maps.values()].filter(m => m.data.kind === 'wilds').sort((a, b) => a.data.depth - b.data.depth);
+    for (const map of regions) {
+      const r = rainAhead(wall, map.data.rain), name = map.data.name;
+      if (!r) lines.push(`${name}: dry until nightfall.`);
+      else if (r.raining) lines.push(`${name}: ${rain} for ${about(r.left, true)} more.`);
+      else lines.push(`${name}: dry for ${about(r.left, true)}, then ${rain}.`);
+    }
+    return lines;
+  }
+
+  /**
+   * The notice board on the Long Night: when the next one comes, and whether it keeps its bonus; while
+   * it is on, what it does, and how the lodge's fire stands ("The lodge's fire needs feeding tonight: 18
+   * minutes left.").
+   */
+  private longNightLines(now: number): string[] {
+    const wall = now + this.epochOffset, r = this.night, bonus = this.nightRegrow?.words;
+    if (!this.nightOn || !r) {
+      const t = longNightAt(wall);
+      if (!this.bonusFor(t.week)) return [`The Long Night comes ${about(t.left)}. The lodge's fire went out on the last one, so this one will only be long and dark.`];
+      return [`The Long Night comes ${about(t.left)}: an aurora from dawn to dawn${bonus ? `, and ${bonus}` : ''}.`];
+    }
+    const lines = [
+      r.bonus || !bonus
+        ? `Tonight ${bonus ? `${bonus}, and ` : ''}the watchers are restless.`
+        : 'Tonight is only long and dark, since the lodge\'s fire went out last week. The watchers are restless.',
+    ];
+    if (!this.nightFire) return lines;
+    if (r.out) return [...lines, 'The lodge\'s fire went out tonight: next week\'s Long Night will only be long and dark.'];
+    const m = Math.max(1, Math.ceil((r.outAt - wall) / 60_000));
+    const next = !bonus ? '' : r.bonus ? ' If it lasts until dawn, next week\'s Long Night keeps its bonus.' : ' If it lasts until dawn, next week\'s Long Night has its bonus again.';
+    return [...lines, `The lodge's fire needs feeding tonight: ${m} minute${m === 1 ? '' : 's'} left.${next}`];
+  }
+
+  /** The notice board on the season: which it is, how long is left of it, what it changes, and which comes next. */
+  private seasonLine(now: number): string {
+    const v = this.seasonNow(now), next = SEASON_ORDER[(SEASON_ORDER.indexOf(v.season) + 1) % SEASON_ORDER.length]!;
+    const frozen = [...this.maps.values()].flatMap(m => (m.data.ice ?? []).map(w => `${w.name} in ${m.data.name.replace(/^The /, 'the ')}`));
+    const does = v.season === 'winter' && frozen.length ? `${SEASON_WORDS.winter}, and ${listOf(frozen)} frozen hard enough to cross` : SEASON_WORDS[v.season];
+    return `${SEASONS[v.season].name}, for ${about(v.left, true)} more: ${does}. ${SEASONS[next].name} comes next.`;
   }
 
   /**
@@ -4089,7 +4564,7 @@ export class World {
     p.rec.bag = again && double ? again.bag : r.bag;
     find.zone.finds.delete(find.tile);
     const [soonest, latest] = rule.respawn;
-    this.later(rule, find.zone, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
+    this.later(rule, find.zone, now + ((soonest + this.rng() * (latest - soonest)) * 1000) / this.regrow(rule.item.id), find.tile);
     this.got(p, [{ item: rule.item.id, count: double ? 2 : 1 }], 'find', now, double);
     this.toZone(find.zone.key, { t: 'findGone', id: find.id });
     if (wild) this.count(p, 'found', now);
@@ -4110,7 +4585,7 @@ export class World {
     if (this.owns(p, rule.item.id)) return this.refuse(p, 'pick', 'have_tool');
     find.zone.finds.delete(find.tile);
     const [soonest, latest] = rule.respawn;
-    this.later(rule, find.zone, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
+    this.later(rule, find.zone, now + ((soonest + this.rng() * (latest - soonest)) * 1000) / this.regrow(rule.item.id), find.tile);
     this.outbox.push({ to: p.rec.id, msg: { t: 'got', items: [{ item: rule.item.id, count: 1 }], from: 'tool' } });
     this.giveTool(p.rec.id, rule.item.id);
     this.toZone(find.zone.key, { t: 'findGone', id: find.id });
@@ -4201,7 +4676,7 @@ export class World {
     for (let i = 0; i < rule.count; i++) {
       const find = this.put(rule, zone, undefined);
       if (!find) this.later(rule, zone, -Infinity, undefined);
-      else if (now !== undefined) this.toZone(zone.key, { t: 'find', find: findView(find) });
+      else if (now !== undefined) this.showFind(find);
     }
   }
 
@@ -4237,8 +4712,15 @@ export class World {
       const find = this.put(g.rule, g.zone, g.not);
       // Every tile it may grow on is taken (by other finds and by piles): it tries again a while later.
       if (!find) this.later(g.rule, g.zone, now + g.rule.respawn[0] * 1000, g.not);
-      else this.toZone(g.zone.key, { t: 'find', find: findView(find) });
+      else this.showFind(find);
     }
+  }
+
+  /** A find that grew: everyone in its zone hears it, but whoever owns the tool it is, for whom it lies there for someone else (sees). */
+  private showFind(find: Find): void {
+    const msg: ServerMsg = { t: 'find', find: findView(find) };
+    if (find.rule.item.kind !== 'tool') return this.toZone(find.zone.key, msg);
+    for (const p of find.zone.players) if (this.sees(p, find)) this.outbox.push({ to: p.rec.id, msg });
   }
 
   private later(rule: Rule, zone: Zone, at: number, not: number | undefined): void {
@@ -4520,7 +5002,7 @@ export class World {
     if (had) return had;
     let street = 1;
     while (!this.streetLots(street).includes(undefined)) street++;
-    const lot = this.settle({ id: r.id, name: r.name, street, lot: this.streetLots(street).indexOf(undefined) });
+    const lot = this.settle({ id: r.id, name: r.name, street, lot: this.streetLots(street).indexOf(undefined), ...(r.doorOff && { off: true as const }) });
     this.recordLot(r);
     this.saveNow.set(r.id, this.players.get(r.id)?.rec ?? r);
     this.tellLot(lot.street, lot.lot);
@@ -4551,8 +5033,19 @@ export class World {
   /** A lot as its street sees it: whose it is, and whether they are home (online, in their own cabin: a lit window). */
   private lotView(lot: Lot | undefined): LotView | null {
     if (!lot) return null;
+    // Kept to themselves: a resident, whose window never lights.
+    if (lot.off) return {};
     const owner = this.players.get(lot.id);
     return { name: lot.name, ...(owner && this.ownCabin(owner) ? { home: true as const } : {}) };
+  }
+
+  /** The lot kept for a player follows their door's setting; their street sees it at once if it changed. */
+  private markDoor(id: string, off: boolean): void {
+    const lot = this.lots.get(id);
+    if (!lot || !!lot.off === off) return;
+    if (off) lot.off = true;
+    else delete lot.off;
+    this.tellLot(lot.street, lot.lot);
   }
 
   /** Everyone on street `n` hears how a lot on it stands now (nobody is told when nobody is out on it). */
@@ -4649,6 +5142,9 @@ export class World {
       const f = d.map === map.data.id ? zone.fires.at(d.x, d.y) : undefined;
       if (f) zone.fires.douse(f, now);
     }
+    // On the Long Night a copy of the lodge that opens has the one fire the town keeps, as it burns now.
+    const lodge = this.nightOn && this.night && this.nightFire?.map === map ? zone.fires.at(this.nightFire.x, this.nightFire.y) : undefined;
+    if (lodge) zone.fires.untend(lodge, this.night!.outAt - this.epochOffset);
     for (const rule of this.rules) if (rule.open && rule.map === map) this.sow(rule, zone);
     this.cratesIn(map, copy);
     this.addWatchers(zone);
@@ -4733,6 +5229,23 @@ function less(all: readonly BagSlot[], left: readonly BagSlot[]): BagSlot[] {
   });
 }
 
+/** The nearest ground (walkable, no exit) to x,y, breadth-first: where someone on thawing ice steps. The map's spawn if there is none. */
+function ashore(map: TileMap, x: number, y: number): { x: number; y: number } {
+  const W = map.width, seen = new Set([y * W + x]), queue = [y * W + x];
+  for (let h = 0; h < queue.length; h++) {
+    const i = queue[h]!, cx = i % W, cy = Math.floor(i / W);
+    if (map.walkable(cx, cy) && !map.exitAt(cx, cy)) return { x: cx, y: cy };
+    for (const [nx, ny] of [[cx, cy - 1], [cx + 1, cy], [cx, cy + 1], [cx - 1, cy]] as const) {
+      const j = ny * W + nx;
+      if (map.inside(nx, ny) && !seen.has(j)) {
+        seen.add(j);
+        queue.push(j);
+      }
+    }
+  }
+  return { x: map.data.spawn.x, y: map.data.spawn.y };
+}
+
 function dirTo(dx: number, dy: number): Dir | undefined {
   if (dx === 0 && dy === -1) return 'up';
   if (dx === 0 && dy === 1) return 'down';
@@ -4770,10 +5283,16 @@ export function pathStep(
 }
 
 const WEATHER_WORDS: Record<Weather, string> = { overcast: 'Overcast', rain: 'Rain', night: 'Night', aurora: 'An aurora night' };
-const capital = (s: string) => s[0]!.toUpperCase() + s.slice(1);
+/** What each season changes, for the notice board (sky.ts, SEASONS; the glowcaps and the resin are find rules). */
+const SEASON_WORDS: Record<Season, string> = {
+  spring: 'longer rain, and more glowcaps out there',
+  summer: 'shorter rain, and light until later in the evening',
+  autumn: 'more resin out there, and storms twice as often',
+  winter: 'colder out there, and snow instead of rain',
+};
 const lower = (s: string) => s[0]!.toLowerCase() + s.slice(1);
 
-/** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours"). */
+/** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours", "about 3 days"). */
 function about(seconds: number, plain = false): string {
   const pre = plain ? '' : 'in ';
   if (seconds < 60) return plain ? 'under a minute' : 'in under a minute';
@@ -4781,8 +5300,20 @@ function about(seconds: number, plain = false): string {
     const m = Math.round(seconds / 60);
     return `${pre}about ${m} minute${m === 1 ? '' : 's'}`;
   }
-  const h = Math.round(seconds / 3600);
-  return `${pre}about ${h} hour${h === 1 ? '' : 's'}`;
+  if (seconds < 36 * 3600) {
+    const h = Math.round(seconds / 3600);
+    return `${pre}about ${h} hour${h === 1 ? '' : 's'}`;
+  }
+  const d = Math.round(seconds / 86400);
+  return `${pre}about ${d} day${d === 1 ? '' : 's'}`;
+}
+
+/**
+ * The lodge's fire went out on a Long Night: someone saw it go out, or it was to run out before dawn as
+ * the server last heard of it (nobody could feed it while the server was down).
+ */
+function wentOut(r: LongNightRecord): boolean {
+  return r.out || r.outAt < longNightFrom(r.week) + DAY_S * 1000;
 }
 
 function listOf(names: string[]): string {

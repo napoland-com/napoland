@@ -1,6 +1,7 @@
 /**
  * The fireplaces of one zone (a copy of a map, world.ts) and how long each burns. Fires in town (and in
- * town's houses) are tended: they never go out. Fires out in the wilds, and in the shelters out there,
+ * town's houses) are tended: they never go out, but for the lodge's on the Long Night, which the World
+ * leaves untended until dawn (untend, tend). Fires out in the wilds, and in the shelters out there,
  * burn down unless someone feeds them: a well-fed fire gives energy back at the full rate, a low one only
  * glows (EMBERS), and a dead one gives nothing until someone lights it again with something that burns
  * (the numbers are in shared/energy.ts, which the client shares to draw them). Each copy of a map has
@@ -93,6 +94,22 @@ export class Fires {
   /** `who` fed it just now: the first of its feeders, and each player only once. */
   fedBy(f: Fire, who: PersonView): void {
     f.fed = [{ id: who.id, name: who.name }, ...f.fed.filter(p => p.id !== who.id)].slice(0, FEEDERS_KEPT);
+  }
+
+  /**
+   * The Long Night: nobody tends this fire until dawn (world.ts). It burns down like a shelter's from
+   * now, going out at game time `outAt` unless someone feeds it.
+   */
+  untend(f: Fire, outAt: number): void {
+    f.tended = false;
+    f.outAt = outAt;
+  }
+
+  /** Dawn after the Long Night: someone keeps it going again, and it needs nothing; who fed it that night is forgotten. */
+  tend(f: Fire): void {
+    f.tended = true;
+    f.outAt = Infinity;
+    f.fed = [];
   }
 
   /** Puts a wild fire out now (a condition: it went out overnight); someone has to light it again. */

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { CacheItemView } from './caches';
 import { CALL_KINDS, type CallKind } from './calls';
 import { MAX_SAY_CHARS, type ChatTo } from './chat';
+import type { EffectView } from './effects';
 import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { FirstView } from './firsts';
@@ -16,12 +17,17 @@ import type { MeritsView } from './merits';
 import type { NotebookView } from './notebook';
 import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
-import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
+import type { ConditionsView, FlashView, SeasonView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
 import { OFFER_MAX } from './trade';
 
-/** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 28;
+/**
+ * Bump when a change breaks older clients; they reload to get the new version. 30: the weather is each
+ * region's (a `zone` says the new map's), and effects run for a while (BodyView.effects). 31: seasons,
+ * whose winter freezes water that is then walked on (a client that did not know would never step on it).
+ * 32: the Long Night (`longNight`, in the welcome too), whose lodge fire is fed like a shelter's.
+ */
+export const PROTOCOL_VERSION = 32;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -248,6 +254,11 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('knock'), x: z.number().int(), y: z.number().int() }),
   /** At your own door: move your cabin next to friend `to`'s, onto their street, where a lot must be free. It comes with you. */
   z.object({ t: z.literal('move'), to: z.uuid() }),
+  /**
+   * The setting in the menu: keep your name off your door and your window dark to your street (`off`), or
+   * show both (as everyone does until they choose). Anyone, guests too: a guest's name is on a door as well.
+   */
+  z.object({ t: z.literal('doorOff'), off: z.boolean() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -318,6 +329,17 @@ export interface FlareView {
   left: number;
 }
 
+/**
+ * The Long Night (sky.ts, longNightAt), as the server keeps it: whether it is on; whether it has its
+ * bonus, the faster regrowth (the one on, or else the next one: the lodge's fire lasted through the one
+ * before it); and while it is on, whether the lodge's fire went out, which loses the next one its bonus.
+ */
+export interface LongNightView {
+  on: boolean;
+  bonus: boolean;
+  out: boolean;
+}
+
 /** The Old Stone in town: fed shards wake it; awake, it calms every surge until its charge runs out. */
 export interface StoneView {
   /** Shards in it now. */
@@ -343,11 +365,15 @@ export type Did =
   /**
    * One `item` from your bag was used up: the energy it gave you (as much as your bar had room for), the
    * seconds a flare burns, the arrow painted (which way it points, and for how many seconds everyone sees
-   * it), what a strange object turned out to be (a piece of gear with its piece: its quirk is rolled), and
-   * the energy a charm in your bag gave on top (`lift`: which charm, and how much; a pale moth, as a
-   * glowcap is crushed).
+   * it), what a strange object turned out to be (a piece of gear with its piece: its quirk is rolled), the
+   * energy a charm in your bag gave on top (`lift`: which charm, and how much; a pale moth, as a glowcap is
+   * crushed), and the effect it started for `lasts` seconds (effects.ts; `again`: one of the same still
+   * worked, and its time started over instead of adding up).
    */
-  | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number } }
+  | {
+      kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number };
+      effect?: { lasts: number; again?: true };
+    }
   /**
    * The workbench made `count` of `item`, into your stash. A tool (its kind says so) went to your tools
    * instead, yours for good: your tools came before this in a `tools` message. Furniture went into its
@@ -384,6 +410,8 @@ export interface BodyView {
   hitched: boolean;
   /** What you wear, piece by piece: its condition (it wears down out in the wilds) and quirk. */
   worn: Worn;
+  /** Effects working on you (effects.ts), with the seconds left of each as sent; none: nothing works on you. */
+  effects?: EffectView[];
   /**
    * Cozy (comfort.ts): seconds of it left, as of this message. None: you are not. It holds while you stand
    * by your own fire long enough, and counts down from when you leave it.
@@ -493,10 +521,11 @@ export interface FriendView extends PersonView {
 
 /**
  * A lot on your street: whose cabin it is (their name, on the plate by its door) and whether they are home
- * (online, in their own cabin: its window is lit).
+ * (online, in their own cabin: its window is lit). No name: a resident who keeps both to themselves (the
+ * setting in the menu); their window never lights.
  */
 export interface LotView {
-  name: string;
+  name?: string;
   home?: true;
 }
 
@@ -600,6 +629,7 @@ export type ServerMsg =
       finds: FindView[];
       drops: DropView[];
       stepMs: number;
+      /** The weather over your map now (each region has its own rain; a room, the one of the map outside its door). */
       weather: Weather;
       energy: EnergyView;
       bag: BagSlot[];
@@ -620,6 +650,10 @@ export type ServerMsg =
       stone: StoneView;
       /** What the woods are like today, this week and next week (sky.ts, conditionsAt). */
       conditions: ConditionsView;
+      /** The season, and the seconds left of it (sky.ts): what freezes, how it rains, how the world looks. */
+      season: SeasonView;
+      /** The Long Night, on or coming. */
+      longNight: LongNightView;
       /** What you did so far that counts toward feats: each feat's rank follows from its count (feats.ts, rankOf). */
       stats: Stats;
       /** Your XP and level, and the rest saved up while you were away (progress.ts). */
@@ -651,15 +685,19 @@ export type ServerMsg =
       furniture?: string[];
       /** On your street: its lots, and which is yours. */
       street?: StreetView;
+      /** You keep your name off your door and your window dark (the setting in the menu). */
+      doorOff?: true;
       serverTime: number;
     }
   /**
    * You are on another map now, at x,y: you walked through an exit, or you collapsed and woke up at
-   * home. Forget the old map's players, finds, piles and pending steps; the lists are the new map's.
+   * home. Forget the old map's players, finds, piles and pending steps; the lists are the new map's, and
+   * so is the weather (each region has its own rain; a room, the one of the map outside its door).
    */
   | {
       t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; finds: FindView[]; drops: DropView[]; reason: 'exit' | 'collapse';
       fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
+      weather: Weather;
       /** In your own cabin: the furniture you made and set in its places (item ids). Nobody else is told. */
       furniture?: string[];
       /** On your street: its lots, and which is yours. */
@@ -675,12 +713,23 @@ export type ServerMsg =
   | { t: 'furniture'; furniture: string[] }
   /** On your street: a lot changed (someone moved in or away, came home or left it); null: nobody lives there now. */
   | { t: 'lot'; lot: number; view: LotView | null }
-  /** You knocked at the door on tile x,y of your street: whose it is (null: nobody lives there yet), and whether they are home. */
-  | { t: 'door'; x: number; y: number; name: string | null; home: boolean }
+  /**
+   * You knocked at the door on tile x,y of your street: whose it is and whether they are home, as it answers
+   * you (`lot`: null, nobody lives there yet; no name, a resident who keeps their door to themselves and
+   * answers only friends: to anyone else, nobody answers).
+   */
+  | { t: 'door'; x: number; y: number; lot: LotView | null }
   /** At your own door: the friends whose street has a lot free, whom you could move next to. */
   | { t: 'doorstep'; moves: PersonView[] }
   /** Someone (`name`) knocked at your door while you were home. */
   | { t: 'knocked'; name: string }
+  /** Your door's setting, as it stands now that you changed it (`off`: your name off it, your window dark). */
+  | { t: 'doorOff'; off: boolean }
+  /**
+   * The first time you come home since streets came: a letter about what your street sees of you (your name
+   * on your door, your window lit while you are home; `doorOff`: you keep both to yourself already). Once.
+   */
+  | { t: 'streetLetter'; doorOff: boolean }
   /**
    * You picked these up (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
    * A find that is a `tool` is yours for good instead, and your tools follow in a `tools` message.
@@ -759,6 +808,10 @@ export type ServerMsg =
   | { t: 'stone'; stone: StoneView }
   /** A new day's conditions (everyone hears them at dawn, and when the week turns). */
   | { t: 'conditions'; conditions: ConditionsView }
+  /** The season turned (everyone hears it, as the week turns): the new one, and the seconds left of it. */
+  | { t: 'season'; season: SeasonView }
+  /** The Long Night began, the lodge's fire went out in it, or it ended at dawn (everyone hears it): how it stands now. */
+  | { t: 'longNight'; night: LongNightView }
   /** The notice board, read: one line per thing worth knowing. */
   | { t: 'board'; lines: string[] }
   /** You reached rank `rank` (1 to RANKS) of a feat (feats.ts), told once; `stats` is where your counts stand now. */
@@ -816,6 +869,7 @@ export type ServerMsg =
   | { t: 'face'; id: string; dir: Dir }
   /** The server refused step seq; the player is really at x,y facing dir. */
   | { t: 'reject'; seq: number; x: number; y: number; dir: Dir }
+  /** The weather over your map turned (the night comes everywhere at once; rain, region by region). */
   | { t: 'weather'; weather: Weather }
   | { t: 'pong'; at: number; serverTime: number }
   /** The hello (or the game here) ended; `name` comes with has_character: the account's own character. */
