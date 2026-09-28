@@ -39,6 +39,8 @@ AWS_PROFILE=napoland node tools/deploy.mjs --version <tag>    # roll back to an 
 
 `curl https://www.napoland.com/health` shows the running version (`version` is the commit).
 
+Before releasing anything that changes what is saved (a migration, or new fields in the players' jsonb), take a backup (`/data/napoland/release/backup.sh`, Backups and restoring below), and restore it if you roll back past that release: an older release saves players with only what it knows.
+
 ## Looking at the server
 
 ```bash

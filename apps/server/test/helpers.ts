@@ -13,7 +13,7 @@ import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord, type Storage } from '../src/storage';
-import { colorFor } from '../src/world';
+import { World, colorFor } from '../src/world';
 import { chestMaps, fixtureMaps, itemsData } from './fixtures';
 
 export type Msg<T extends ServerMsg['t']> = Extract<ServerMsg, { t: T }>;
@@ -535,6 +535,34 @@ export async function keepsParcels(storage: Storage): Promise<void> {
   const other = `dev:${randomUUID()}@example.test`;
   await savedPlayer(storage, { tokenHash: null, authSub: other, parcels: { welcome: true, day: 20_000, days: 0b1000000 } });
   expect((await storage.findByAuthSub(other))!.parcels).toEqual({ welcome: true, day: 20_000, days: 0b1000000 });
+}
+
+/**
+ * What a newer release saved that this one does not know, through the World and `storage` (in memory,
+ * or a real database), as after a rollback to this release: items it has no definition of (in the bag,
+ * in the stash with their pieces and in `out`) and counts it does not keep are never shown and never
+ * lost: the player plays without them, and every save writes them back as they were, so the newer
+ * release, back, finds them. `items` are this release's items (they know moss and nails, not a lantern).
+ */
+export async function keepsWhatANewerReleaseSaved(storage: Storage, items: ItemsData): Promise<void> {
+  const lantern = { item: 'lantern', count: 1, piece: { cond: 0.5, glow: 3 } };
+  const { id, token } = await savedPlayer(storage, {
+    map: 'town', x: 0, y: 5,
+    bag: [{ item: 'moss', count: 2 }, lantern as BagSlot, { item: 'nail', count: 1 }],
+    stats: { found: 4, sparks: 9, charted: { woods: true } } as never,
+    stash: { items: { moss: 1, lantern: 2 }, out: { lantern: 1 }, pieces: { lantern: [{ cond: 1, glow: 1 }, { cond: 0.2, glow: 2 }] } } as never,
+  });
+  const world = new World(fixtureMaps(), 'town', 'overcast', { items });
+  const joined = world.join((await storage.findByTokenHash(hashToken(token)))!, 0);
+  // Played without it: nothing of it is shown.
+  expect(joined.bag).toEqual([{ item: 'moss', count: 2 }, { item: 'nail', count: 1 }]);
+  expect(joined.stash).toEqual([{ item: 'moss', count: 1 }]);
+  // A save of the player as they play writes it all back, as it was.
+  await storage.save(world.get(id)!);
+  const back = (await storage.findByTokenHash(hashToken(token)))!;
+  expect(back.bag).toEqual([{ item: 'moss', count: 2 }, { item: 'nail', count: 1 }, lantern]);
+  expect(back.stats).toEqual({ found: 4, sparks: 9, charted: { woods: true } });
+  expect(back.stash).toEqual({ items: { moss: 1, lantern: 2 }, out: { lantern: 1 }, pieces: { lantern: [{ cond: 1, glow: 1 }, { cond: 0.2, glow: 2 }] } });
 }
 
 /**

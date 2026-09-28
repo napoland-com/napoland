@@ -14,9 +14,10 @@ import { DROP_LIFETIME_MS, utcDay } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type CacheItemRecord, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
 import {
-  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsMerits, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsWholeRow, meritsKeptThroughARestart,
+  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsMerits, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsWhatANewerReleaseSaved, keepsWholeRow, meritsKeptThroughARestart,
   outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, signInAndClaim,
 } from './helpers';
+import { itemsData } from './fixtures';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -402,6 +403,10 @@ describe.skipIf(!url)('PgStorage', () => {
       old.id, 'stonebrook', 8, 21, 90, '[]', '{"items": {}, "out": {}}', new Date(old.lastSeenAt),
     ]);
     expect((await storage.findByTokenHash(old.tokenHash))!.tools).toEqual(['radio']);
+  });
+
+  it('keeps what a newer release saved that this one does not know, written back as it was saved', async () => {
+    await keepsWhatANewerReleaseSaved(storage, itemsData());
   });
 
   it('keeps the daily parcels: whether the welcome came, the day of the last one and the days of its week, never lost to a save without them', async () => {

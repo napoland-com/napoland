@@ -91,9 +91,22 @@ export interface PlayerRecord {
    */
   pattern?: string | null;
   badge?: string | null;
+  /**
+   * What a newer release saved that this one does not know, set aside when the player joins (World.join)
+   * and written back as it was with every save, so that coming back to the newer release (after a
+   * rollback to this one) finds it again: the bag's slots of items this release has no definition of.
+   * (Such items in the stash, and counts it does not know, stay where they are, as saved.) Never stored
+   * apart: a read has them back in the bag.
+   */
+  kept?: Kept;
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
+}
+
+/** What a newer release saved that this one does not know (PlayerRecord.kept), as it was. */
+export interface Kept {
+  bag: unknown[];
 }
 
 /** What a player carried when they last collapsed, lying where they fell. One per player. */
@@ -289,14 +302,17 @@ export interface Storage {
   close(): Promise<void>;
 }
 
-// A live find keeps when it was picked (`since`), so it goes on fading across a restart; a carried piece of gear keeps its piece.
-const copyBag = (bag: readonly BagSlot[]): BagSlot[] =>
-  bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}), ...(s.piece ? { piece: { ...s.piece } } : {}) }));
+// A live find keeps when it was picked (`since`), so it goes on fading across a restart; a carried piece of gear keeps its piece;
+// and a slot of what a newer release saved keeps whatever it has (PlayerRecord.kept).
+const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => structuredClone(s));
+/** The bag as storage keeps it: with the slots set aside as a newer release saved them (PlayerRecord.kept) back at its end. */
+const savedBag = (rec: PlayerRecord): BagSlot[] => [...rec.bag, ...((rec.kept?.bag ?? []) as BagSlot[])];
 const copyPieces = (p: Record<string, Piece[]>): Record<string, Piece[]> => Object.fromEntries(Object.entries(p).map(([id, list]) => [id, list.map(x => ({ ...x }))]));
 const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: copyPieces(s.pieces) } : {}) });
 const copyWorn = (w: Worn): Worn => Object.fromEntries(Object.entries(w).map(([slot, p]) => [slot, { ...p }]));
 const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
-  ...rec, bag: copyBag(rec.bag), ...(rec.stats ? { stats: { ...rec.stats } } : {}), ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
+  ...rec, bag: copyBag(rec.bag), ...(rec.kept ? { kept: { bag: structuredClone(rec.kept.bag) } } : {}), ...(rec.stats ? { stats: { ...rec.stats } } : {}),
+  ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
   ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
   ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}),
 });
@@ -313,6 +329,11 @@ const stored = (rec: PlayerRecord): PlayerRecord => tidy(withZone(copyRecord(rec
 const tidy = (out: PlayerRecord): PlayerRecord => {
   for (const k of ['outfit', 'pattern', 'badge', 'rested', 'meritsSpent'] as const) if (!out[k]) delete out[k];
   if (!out.looks?.length) delete out.looks;
+  // What a newer release saved goes back where it was saved: in the bag.
+  if (out.kept) {
+    out.bag = savedBag(out);
+    delete out.kept;
+  }
   return out;
 };
 /** The counts a save writes: all but the thanks received, which only creditThanks adds to. */
@@ -382,7 +403,7 @@ export class MemoryStorage implements Storage {
       // Like the database: the thanks received are only ever added to (creditThanks), never saved over.
       const thanked = cur.stats?.thanked;
       Object.assign(cur, {
-        map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(rec.bag), wet: rec.wet ?? 0,
+        map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(savedBag(rec)), wet: rec.wet ?? 0,
         stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) },
         xp: rec.xp ?? 0, rested: rec.rested ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
@@ -797,7 +818,7 @@ export class PgStorage implements Storage {
          $28::jsonb, $29, $30)
        ON CONFLICT DO NOTHING`,
       [
-        rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)),
+        rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
         rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.outfit ?? null,
         Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? 0, rec.looks?.length ? JSON.stringify(rec.looks) : null,
@@ -821,7 +842,7 @@ export class PgStorage implements Storage {
        merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
        badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, last_seen_at = $13 WHERE id = $1`,
       [
-        rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)), rec.xp ?? 0,
+        rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
         rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
         rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? null, rec.looks ? JSON.stringify(rec.looks) : null,

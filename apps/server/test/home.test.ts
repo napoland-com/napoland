@@ -117,7 +117,8 @@ describe('levels', () => {
   it('come from saved XP, and bad saves count as none', () => {
     const w = world(rec('a', 3, 2, { xp: -5, stash: { items: { moss: 2, gone: 4, shard: 1.5 }, out: { moss: -1 } } as never }));
     expect(w.get('a')!.xp).toBe(0);
-    expect(w.get('a')!.stash).toEqual({ items: { moss: 2 }, out: {} });
+    // An item this release does not know (`gone`: a newer release's, say) is kept as saved, for that release.
+    expect(w.get('a')!.stash).toEqual({ items: { moss: 2, gone: 4 }, out: {} });
   });
 });
 

@@ -638,7 +638,7 @@ const copyStash = (s: Stash): Stash => ({
   items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: Object.fromEntries(Object.entries(s.pieces).map(([id, l]) => [id, l.map(p => ({ ...p }))])) } : {}),
 });
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
-  ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
+  ...r, bag: copyBag(r.bag), ...(r.kept ? { kept: { bag: structuredClone(r.kept.bag) } } : {}), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
   ...(r.looks ? { looks: [...r.looks] } : {}),
 });
@@ -660,11 +660,18 @@ const isSlot = (s: unknown): s is BagSlot => {
 };
 /** Saved tools: item ids, each once, in the order they came. Anything but a list was never set (the starter tools). */
 const cleanTools = (t: unknown): string[] | undefined => (Array.isArray(t) ? [...new Set(t.filter((id): id is string => typeof id === 'string' && id !== ''))] : undefined);
-/** Saved counts, trusted only where they are whole numbers from 0. */
+/**
+ * Saved counts, trusted only where they are whole numbers from 0. One this release does not count (a
+ * newer release's) is kept as saved, like its tools: a save writes it back, and the newer release,
+ * back after a rollback to this one, finds it as it left it.
+ */
 const cleanStats = (s: unknown): Stats => {
   const out: Stats = {};
-  const raw = (typeof s === 'object' && s !== null ? s : {}) as Record<string, unknown>;
-  for (const k of STATS) if (Number.isInteger(raw[k]) && (raw[k] as number) > 0) out[k] = raw[k] as number;
+  const raw = (typeof s === 'object' && s !== null && !Array.isArray(s) ? s : {}) as Record<string, unknown>;
+  for (const [k, v] of Object.entries(raw)) {
+    if (!(STATS as readonly string[]).includes(k)) (out as Record<string, unknown>)[k] = structuredClone(v);
+    else if (Number.isInteger(v) && (v as number) > 0) out[k as (typeof STATS)[number]] = v as number;
+  }
   return out;
 };
 /** Saved parcels as the server writes them: anything else counts as none given. */
@@ -677,16 +684,22 @@ const cleanParcels = (s: unknown): ParcelState | undefined => {
     days: Number.isInteger(days) && (days as number) > 0 ? (days as number) & WHOLE_WEEK : 0,
   };
 };
-/** A saved stash as today's items fit it: counts that are whole numbers above 0, of items that still exist. */
+/**
+ * A saved stash as today's items fit it: counts that are whole numbers above 0. An item this release
+ * does not know (a newer release's, rolled back) is kept as saved, its pieces as they were, like the
+ * tools: never listed or used here, and written back with every save, so the newer release finds it.
+ */
 const cleanStash = (s: unknown, items: Map<string, ItemDef>): Stash => {
   const out = emptyStash();
   const raw = (typeof s === 'object' && s !== null ? s : {}) as Partial<Record<keyof Stash, unknown>>;
   for (const k of ['items', 'out'] as const) {
     const part = (typeof raw[k] === 'object' && raw[k] !== null ? raw[k] : {}) as Record<string, unknown>;
-    for (const [id, n] of Object.entries(part)) if (items.has(id) && Number.isInteger(n) && (n as number) > 0) out[k][id] = n as number;
+    for (const [id, n] of Object.entries(part)) if (Number.isInteger(n) && (n as number) > 0) out[k][id] = n as number;
   }
   const pieces = (typeof raw.pieces === 'object' && raw.pieces !== null ? raw.pieces : {}) as Record<string, unknown>;
-  for (const [id, list] of Object.entries(pieces)) if (Array.isArray(list)) (out.pieces ??= {})[id] = list.filter(isPiece).map(cleanPiece);
+  for (const [id, list] of Object.entries(pieces)) {
+    if (Array.isArray(list)) (out.pieces ??= {})[id] = items.has(id) ? list.filter(isPiece).map(cleanPiece) : structuredClone(list);
+  }
   return out;
 };
 const manhattan = (ax: number, ay: number, bx: number, by: number) => Math.abs(ax - bx) + Math.abs(ay - by);
@@ -1006,8 +1019,11 @@ export class World {
     const gear = this.cleanGear(rec.gear);
     // Time away since they were last seen fills the cup of rest (progress.ts), a guest's too.
     const away = now + this.epochOffset - rec.lastSeenAt;
+    // Slots of items this release does not know (a newer one's): set aside as saved, and written back with every save.
+    const kept = [...(rec.kept?.bag ?? []), ...(Array.isArray(rec.bag) ? rec.bag : []).filter(s => isSlot(s) && !this.items.has(s.item))];
     const r: PlayerRecord = {
       ...rec, gear, worn: this.cleanWorn(rec.worn, gear), bag: this.fitBag(rec.bag, bagSlotsOf(gear, this.items)), stats: cleanStats(rec.stats),
+      kept: kept.length ? { bag: structuredClone(kept) } : undefined,
       // Gear counted in the stash gets its pieces (all of it, for a stash saved before pieces existed).
       stash: fitPieces(cleanStash(rec.stash, this.items), this.items, this.rng),
       xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
