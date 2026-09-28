@@ -24,8 +24,8 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe, stepTarget,
-  storyLines, surgeFront, takeFromBag, toldAfter, DIR_VEC, type NextGear,
+  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe, outfitsFor,
+  stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, DIR_VEC, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
@@ -144,8 +144,8 @@ export type News =
   /** A new day's conditions, by name. */
   | { kind: 'conditions'; names: string[] }
   | { kind: 'chapter'; chapter: Chapter }
-  /** A parcel came into your chest. */
-  | { kind: 'parcel'; parcel: ParcelView };
+  /** A parcel came into your chest; the welcome parcel also names the outfits signing in gave you (their ids). */
+  | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -517,10 +517,13 @@ export class Game {
         if (msg.outfit) this.outfits.set(msg.id, msg.outfit);
         else this.outfits.delete(msg.id);
         break;
-      case 'parcel':
+      case 'parcel': {
         this.parcels = [...this.parcels, msg.parcel];
-        this.news.push({ kind: 'parcel', parcel: msg.parcel });
+        // The welcome parcel comes with the first sign-in, which opens the wardrobe too: its banner names what is new in it.
+        const outfits = msg.parcel.weekday === null ? this.newOutfits() : [];
+        this.news.push({ kind: 'parcel', parcel: msg.parcel, ...(outfits.length ? { outfits } : {}) });
         break;
+      }
       case 'bench': {
         this.stash = msg.stash;
         const b = this.benching;
@@ -925,6 +928,15 @@ export class Game {
   wearOutfit(outfit: string | null) {
     const c = this.chest;
     if (c && this.online) this.send({ t: 'outfit', x: c.x, y: c.y, outfit });
+  }
+
+  /**
+   * The outfits signing in just gave you, which the welcome parcel's banner names: all your level opens
+   * (the NAPO work suit first), as none were yours before. None for a guest, and none once you wear one:
+   * then the wardrobe is no news.
+   */
+  private newOutfits(): string[] {
+    return this.guest || this.myOutfit ? [] : outfitsFor(this.progress.level, true).map(o => o.id);
   }
 
   /**

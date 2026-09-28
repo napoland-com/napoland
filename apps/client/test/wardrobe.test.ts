@@ -3,15 +3,18 @@
  * everyone's outfit and asks the server for yours, what the level banner says about new outfits, and
  * which look an outfit draws (characters.ts) in how many draw calls.
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { OUTFITS, xpFor, type ClientMsg, type ItemsData, type MapData, type PlayerView } from '@napoland/shared';
+import { OUTFITS, xpFor, type ClientMsg, type ItemsData, type MapData, type ParcelView, type PlayerView } from '@napoland/shared';
 import { cardPress, detailView, refKey, type DetailState, type DetailView } from '../src/details';
 import { Game } from '../src/game';
 import { cardHtml } from '../src/hud';
 import { NO_OUTFIT_ICON, outfitIcon } from '../src/icons';
 import { Items, lookOf, refusalText } from '../src/items';
 import { Maps } from '../src/maps';
+import { parcelBanner } from '../src/parcels';
 import { newsBanner } from '../src/status';
 import { NO_OUTFIT, WARDROBE_GATE, outfitWords, wardrobeView, type WardrobeState } from '../src/wardrobe';
 import { OUTFIT_LOOKS, dressOf, makePlayer } from '../src/view/characters';
@@ -138,6 +141,43 @@ describe('outfits in plain words', () => {
     expect(newsBanner({ kind: 'level', progress: at(12), from: 3 }, 'Home')!.sub).toMatch(/\nNew in your wardrobe: the lineman's jacket and the survey rain cape\.$/);
     expect(newsBanner({ kind: 'level', progress: at(15), from: 14 }, 'Home', items, true)!.sub).toMatch(/\nSign in to wear the ranger's coat\.$/);
     expect(newsBanner({ kind: 'level', progress: at(7), from: 6 }, 'Home')!.sub).toBe('Your energy bar grows to 130.\nYou can go a little farther now.');
+  });
+});
+
+describe('the welcome parcel, which comes with the first sign-in', () => {
+  /** What players read comes from the real items and the real parcels, as in parcels.test.ts. */
+  const content = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData;
+  const real = new Items(content);
+  const WELCOME: ParcelView = { weekday: null, items: content.parcels!.welcome };
+
+  it('says in its banner what signing in put in the wardrobe, so the suit is not missed', () => {
+    expect(parcelBanner(WELCOME, real, ['napo-suit'])).toEqual({
+      title: 'A parcel waits in your chest', sub: 'A welcome from the residents:\n5 resin, 4 cloth, a thermos, 2 road flares\nand a NAPO work suit in your wardrobe',
+    });
+    expect(parcelBanner(WELCOME, real, ['napo-suit', 'lineman-jacket']).sub).toMatch(/\nand a NAPO work suit and a lineman's jacket in your wardrobe$/);
+    expect(newsBanner({ kind: 'parcel', parcel: WELCOME, outfits: ['napo-suit'] }, 'Home', real)).toEqual(parcelBanner(WELCOME, real, ['napo-suit']));
+  });
+
+  it('says nothing of the wardrobe without outfits to name, or on any other day', () => {
+    expect(parcelBanner(WELCOME, real).sub).toBe('A welcome from the residents:\n5 resin, 4 cloth, a thermos, 2 road flares');
+    expect(parcelBanner(WELCOME, real, ['top-hat']).sub).toBe(parcelBanner(WELCOME, real).sub);
+    expect(parcelBanner({ weekday: 1, items: content.parcels!.week[1]! }, real, ['napo-suit']).sub).toBe('Tuesday: a thermos, 2 scrap');
+  });
+
+  it('is named in the news with the outfits that are new: all the level opens, and none once you wear one, for a guest, or on another day', () => {
+    const at = (level: number) => ({ xp: xpFor(level), level, from: xpFor(level), to: xpFor(level + 1), maxEnergy: 100 });
+    const news = (o: { level?: number; guest?: boolean; outfit?: string; weekday?: number | null } = {}) => {
+      const g = new Game(new Maps([tinyTown()]), () => {}, items);
+      const me: PlayerView = { id: 'me', name: 'Aldo', x: 2, y: 2, dir: 'down', color: '#fff', gear: {}, quirks: [], ...(o.outfit ? { outfit: o.outfit } : {}) };
+      g.handle({ ...welcome(tinyTown(), [me], FULL, { progress: at(o.level ?? 1) }), guest: o.guest ?? false }, 0);
+      g.handle({ t: 'parcel', parcel: { ...WELCOME, weekday: o.weekday ?? null } }, 0);
+      return g.news;
+    };
+    expect(news()).toEqual([{ kind: 'parcel', parcel: WELCOME, outfits: ['napo-suit'] }]);
+    expect(news({ level: 7 })).toEqual([{ kind: 'parcel', parcel: WELCOME, outfits: ['napo-suit', 'lineman-jacket'] }]);
+    expect(news({ outfit: 'napo-suit' })).toEqual([{ kind: 'parcel', parcel: WELCOME }]);
+    expect(news({ guest: true })).toEqual([{ kind: 'parcel', parcel: WELCOME }]);
+    expect(news({ weekday: 2 })).toEqual([{ kind: 'parcel', parcel: { ...WELCOME, weekday: 2 } }]);
   });
 });
 

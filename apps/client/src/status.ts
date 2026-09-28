@@ -113,11 +113,12 @@ export function statusView(s: StatusInput): StatusView {
 
 /**
  * The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a
- * feat, a level, a chapter of the story, a parcel (which names what came: `items`). Null: nothing to say.
- * A level says the outfits it opens, which a guest (`guest`) would wear once signed in.
+ * feat, a level, a chapter of the story, a parcel (which names what came: `items`, and with the welcome
+ * parcel, the outfits signing in gave). Null: nothing to say. A level says the outfits it opens, which a
+ * guest (`guest`) would wear once signed in.
  */
 export function newsBanner(n: News, place: string, items?: Items, guest = false): { title: string; sub: string } | null {
-  if (n.kind === 'parcel') return items ? parcelBanner(n.parcel, items) : null;
+  if (n.kind === 'parcel') return items ? parcelBanner(n.parcel, items, n.outfits) : null;
   if (n.kind === 'conditions') return n.names.length ? { title: 'A new day', sub: n.names.join('\n') } : null;
   if (n.kind === 'level') {
     const opened = listWords(outfitsOpening(n.from, n.progress.level).map(o => `the ${outfitWords(o.name)}`));
