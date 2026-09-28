@@ -159,6 +159,8 @@ const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 // ---------- why it cannot happen ----------
 
 export const TENDED = 'Someone keeps this fire going. It needs nothing.';
+/** The map button where you carry no map of the area: farther out, a region's map is found, not given. */
+export const NO_MAP_YET = 'You have no map of this place yet.';
 
 /** A fire that takes nothing more: "The fire is as full as it gets. It will burn 30 more minutes." */
 export function fullFire(left: number): string {

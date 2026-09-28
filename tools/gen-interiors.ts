@@ -244,6 +244,67 @@ const ROOMS: readonly Room[] = [
     ],
   },
   {
+    // The one shelter of the Far Woods (gen-far-woods.ts), beyond the gorge: the trapper's bunk, his traps
+    // on their pegs, the wood he split, his tally on the table, and a fire nobody keeps: it burns down
+    // unless whoever passes feeds it. His map of these woods lies by the tally for whoever has none (a
+    // find: content/items.json). A crate for whoever comes next stands by the fire, last in the list.
+    id: 'far-woods-trapper-cabin', name: 'The trapper\'s cabin', version: 1, outside: 'far-woods', door: [15, 62],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      { kind: 'fireplace', x: 4, y: 1 },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'traps', x: 6, y: 1 },
+      { kind: 'shelf', x: 7, y: 1 },
+      { kind: 'woodpile', x: 7, y: 3 },
+      {
+        kind: 'paper', x: 2, y: 3, look: 'list', name: 'Tally in pencil',
+        text: [
+          'A trapper\'s tally in pencil, the seasons down the side: marten, fisher, and one lynx, underlined twice.',
+          'Along the bottom: "No sets past the split rock. Up there the traps come back sprung, and empty."',
+          'Pressed in hard under it: "Never alone past the gorge. Feed the fire going in. Leave wood for the next one."',
+        ],
+      },
+      { kind: 'crate', x: 7, y: 4 },
+      { kind: 'cache', x: 2, y: 1, name: 'the trapper\'s crate' },
+    ],
+  },
+  {
+    // NAPO's field post in the hollow of the Far Woods where the rocks hum back, further gone than the
+    // listening post by the ring of stones: a concrete room with no fire, a cot, the shelves and crates
+    // of its field kit, and the desk with the post's log, NAPO's last word from up here. Cold and dark.
+    id: 'far-woods-field-post', name: 'The NAPO field post', version: 1, outside: 'far-woods', door: [46, 8], style: 'napo',
+    rows: [
+      'xxxxxxx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xxxpxxx',
+    ],
+    things: [
+      { kind: 'shelf', x: 1, y: 1 },
+      {
+        kind: 'console', x: 3, y: 1, id: 'field-post-log', name: 'Field post log',
+        text: [
+          'NAPO · Field post, the hollow. It relays to the listening post by the ring of stones.',
+          'Week 38. The rocks here hum back louder than the ring\'s. North of here the needles will not settle.',
+          'After the answer: crews up in pairs, batteries changed every ten days. Nobody stays the night.',
+          'The last page, in pencil: "Relief did not come. Batteries in the crate for whoever does."',
+        ],
+      },
+      { kind: 'crate', x: 5, y: 1 },
+      { kind: 'bed', x: 5, y: 3 },
+      { kind: 'crate', x: 1, y: 4 },
+    ],
+  },
+  {
     // The NAPO Bunker, the first building down the South Road and its nearest shelter to town: bunks,
     // NAPO's rules for staff on the wall, and Ruth, who keeps the fire going, so it never goes out.
     id: 'south-road-bunker', name: 'The NAPO Bunker', version: 4, outside: 'south-road', door: [42, 15], style: 'napo',
@@ -699,6 +760,7 @@ function json(map: MapData): string {
 const GLYPH: Partial<Record<MapObject['kind'], string>> = {
   fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@',
   hearth: 'f', sheeted: 's', boxes: 'n', crib: 'C', clock: 'k', paper: '?', saw: 'S', carriage: '=', sawdust: ':', logs: 'l', luggage: 'u', cache: 'X',
+  traps: 't',
 };
 /** The places for furniture in a home (comfort.ts), in lower case: what stands there, spoiled until it is made. */
 const COMFORT_GLYPH: Record<Comfort, string> = { stove: 'o', bed: 'b', rug: '_', lamp: 'i', rack: 'r', shelf: 't' };
@@ -736,7 +798,9 @@ if (import.meta.main) {
   }
   // The other direction of doorInto: the door on the outside map must lead to the room's way in. It is
   // written by the outside map's generator, so after changing a room's size, run that one again too.
-  const GENERATOR: Record<string, string> = { stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'residents-lane': 'npm run gen:street' };
+  const GENERATOR: Record<string, string> = {
+    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', 'residents-lane': 'npm run gen:street',
+  };
   for (const room of ROOMS) {
     const outside = JSON.parse(readFileSync(resolve(import.meta.dirname, `../content/maps/${room.outside}.json`), 'utf8')) as MapData;
     const doors = outside.exits.filter(e => e.to === room.id), way = wayOut(room);

@@ -91,9 +91,12 @@ import {
   COZY_AFTER_S,
   COZY_MODS,
   DIR_VEC,
+  AURORA_WATCHER_STEP_MS,
   MARK_LIFETIME_MS,
   NOTE_XP,
   QUIRKS,
+  SKULKER_STEP_MS,
+  WATCHER_STEP_MS,
   SLOTS,
   STARTER_GEAR,
   STARTER_TOOLS,
@@ -144,6 +147,8 @@ import {
   secretTitle,
   weekIndex,
   seeded,
+  skulkerStepMs,
+  watcherStepMs,
   charmsIn,
   chapterOf,
   comfortOf,
@@ -290,7 +295,8 @@ import {
 import { FIRE_LOW_S, Fires, type Fire } from './fires';
 import type { CacheItemRecord, DropRecord, FirstRecord, LotRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
 
-export { MARK_LIFETIME_MS };
+// How often creatures step is their region's (map.ts, watcherStepMs, skulkerStepMs); these are the paces a rule leaves out.
+export { AURORA_WATCHER_STEP_MS, MARK_LIFETIME_MS, SKULKER_STEP_MS, WATCHER_STEP_MS };
 
 /** A step may start this much early: messages sent at a steady pace arrive bunched up. */
 export const STEP_TOLERANCE_MS = 40;
@@ -305,9 +311,6 @@ export const ENERGY_RATE_CHANGE = 0.1;
 export const MARKS_PER_PLAYER = 6;
 /** A pile keeps this many of the last steps its owner walked out there: their echo. */
 export const TRAIL_STEPS = 16;
-/** A watcher takes a step this often (on aurora nights, AURORA_WATCHER_STEP_MS); players are faster. */
-export const WATCHER_STEP_MS = 520;
-export const AURORA_WATCHER_STEP_MS = 400;
 /** A watcher goes after players at most this many steps away (as the crow walks), and freezes while any player this close faces it. */
 export const WATCHER_HUNT = 9;
 /** Someone carrying a live find glows: watchers come for them from this far. */
@@ -320,8 +323,6 @@ export const WATCHER_AWAY_S: [number, number] = [60, 150];
 export const WATCHER_WAKE_AWAY = 8;
 /** Watchers look this many tiles ahead for a way to you. */
 const WATCHER_PATH_NODES = 600;
-/** A skulker takes a step this often: a quarter slower than a walking player (STEP_MS), so moving away in time escapes it. */
-export const SKULKER_STEP_MS = 250;
 /** A skulker notices a player out in the open this close (as the crow walks): farther if they are walking (it hears them). */
 export const SKULKER_HEAR = 6;
 export const SKULKER_SEE = 3;
@@ -1230,9 +1231,18 @@ export class World {
     return this.guests && r.authSub === null;
   }
 
-  /** What lies in a zone to pick up. */
-  findViews(zone: string): FindView[] {
-    return [...(this.zones.get(zone)?.finds.values() ?? [])].map(findView);
+  /**
+   * What lies in a zone to pick up; with `seer` (a player's id), as they see it: a tool they own lies
+   * there for someone else, so they never see it (sees).
+   */
+  findViews(zone: string, seer?: string): FindView[] {
+    const p = seer === undefined ? undefined : this.players.get(seer);
+    return [...(this.zones.get(zone)?.finds.values() ?? [])].filter(f => !p || this.sees(p, f)).map(findView);
+  }
+
+  /** Does a player see this find? Every one but a tool they own already: it lies there for whoever does not (pickTool). */
+  private sees(p: Online, f: Find): boolean {
+    return f.rule.item.kind !== 'tool' || !this.owns(p, f.rule.item.id);
   }
 
   /** The piles lying in a zone, open or not. */
@@ -1240,7 +1250,7 @@ export class World {
     return [...(this.pileTiles.get(zone)?.values() ?? [])].flat().map(dropView);
   }
 
-  /** Everything a zone holds besides players, as of `now`. */
+  /** Everything a zone holds besides players, as of `now`. A player hears its finds as they see them (findsFor). */
   scene(key: string, now: number): Scene {
     const zone = this.zones.get(key);
     return {
@@ -2033,6 +2043,8 @@ export class World {
     p.rec.tools = [...(p.rec.tools ?? STARTER_TOOLS), item];
     this.saveNow.set(id, p.rec);
     this.outbox.push({ to: id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items) } });
+    // Another of it lying where they are is someone else's to find from now on: it goes from their sight.
+    for (const f of p.zone.finds.values()) if (f.rule.item.id === item) this.outbox.push({ to: id, msg: { t: 'findGone', id: f.id } });
     return true;
   }
 
@@ -3060,9 +3072,12 @@ export class World {
     }
   }
 
-  /** What lies in a zone for this player to pick up: the zone's finds, and the keepsakes lying on its map for them alone. */
+  /**
+   * What lies in a zone for this player to pick up: the zone's finds as they see them (no tool they own:
+   * findViews), and the keepsakes lying on its map for them alone.
+   */
   private findsFor(r: PlayerRecord, zone: Zone): FindView[] {
-    return [...this.findViews(zone.key), ...(this.keepsakes?.places ?? []).flatMap((k, i) => (k.map === zone.map.data.id && this.lying(r, k.item) ? [{ id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y }] : []))];
+    return [...this.findViews(zone.key, r.id), ...(this.keepsakes?.places ?? []).flatMap((k, i) => (k.map === zone.map.data.id && this.lying(r, k.item) ? [{ id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y }] : []))];
   }
 
   /** A keepsake lies where it was left for a player until they carry it, and for good once it is home. */
@@ -3500,9 +3515,10 @@ export class World {
    * nothing to it.
    */
   private walkWatchers(now: number): void {
-    const every = this.sky === 'aurora' ? AURORA_WATCHER_STEP_MS : WATCHER_STEP_MS;
     for (const zone of this.zones.values()) {
       if (!zone.watchers.length || this.asleep.has(zone.map.data.id)) continue;
+      // Each region's own pace: deeper ones keep quicker watchers, and an aurora quickens them all.
+      const every = watcherStepMs(zone.map.data.watchers, this.sky === 'aurora');
       for (const w of zone.watchers) {
         // Asked again for each watcher: another one's touch may have just sent someone home.
         const here = [...zone.players];
@@ -3593,7 +3609,8 @@ export class World {
     w.x = t % w.map.width;
     w.y = Math.floor(t / w.map.width);
     w.awake = true;
-    w.readyAt = now + WATCHER_STEP_MS;
+    // Just awake, it waits a step of its region's watchers before it moves, whatever it is.
+    w.readyAt = now + watcherStepMs(w.map.data.watchers, false);
     this.toZone(w.zone.key, { t: 'creature', creature: creatureView(w) });
   }
 
@@ -3665,7 +3682,7 @@ export class World {
           continue;
         }
         if (now < s.readyAt) continue;
-        s.readyAt = now + SKULKER_STEP_MS;
+        s.readyAt = now + skulkerStepMs(s.rule);
         if (this.nearFlare(zone, s.x, s.y, now)) {
           this.sendAway(s, now);
           continue;
@@ -3780,14 +3797,16 @@ export class World {
       lines.push(`${WEATHER_WORDS[this.sky]} now. ${capital(WEATHER_WORDS[next])} ${about(w.left)}.`);
     } else lines.push(`${WEATHER_WORDS[this.sky]}.`);
     lines.push(...this.conditionLines(now));
-    for (const map of this.maps.values()) {
+    // The regions nearest town first: a board read on the way out says what comes first on it.
+    const regions = [...this.maps.values()].sort((a, b) => a.data.depth - b.data.depth);
+    for (const map of regions) {
       const s = this.surgeOf(map, now), rule = map.data.surge;
       if (!s || !rule) continue;
       if (s.phase === 'surge') lines.push(`${map.data.name}: a surge is on, ${about(s.left)} more. Get to a light.`);
       else if (s.phase === 'unstable') lines.push(`${map.data.name}: restless. A surge comes ${about(s.left)}.`);
       else lines.push(`${map.data.name}: calm. The next surge comes ${about(untilSurge(rule, s))}.`);
     }
-    for (const map of this.maps.values()) {
+    for (const map of regions) {
       const s = this.stormOf(map, now), rule = map.data.storm;
       if (!s || !rule) continue;
       if (s.phase === 'storm') lines.push(`${map.data.name}: a storm is on, ${about(s.left, true)} more. Get under a roof.`);
@@ -4044,7 +4063,7 @@ export class World {
     for (let i = 0; i < rule.count; i++) {
       const find = this.put(rule, zone, undefined);
       if (!find) this.later(rule, zone, -Infinity, undefined);
-      else if (now !== undefined) this.toZone(zone.key, { t: 'find', find: findView(find) });
+      else if (now !== undefined) this.showFind(find);
     }
   }
 
@@ -4080,8 +4099,15 @@ export class World {
       const find = this.put(g.rule, g.zone, g.not);
       // Every tile it may grow on is taken (by other finds and by piles): it tries again a while later.
       if (!find) this.later(g.rule, g.zone, now + g.rule.respawn[0] * 1000, g.not);
-      else this.toZone(g.zone.key, { t: 'find', find: findView(find) });
+      else this.showFind(find);
     }
+  }
+
+  /** A find that grew: everyone in its zone hears it, but whoever owns the tool it is, for whom it lies there for someone else (sees). */
+  private showFind(find: Find): void {
+    const msg: ServerMsg = { t: 'find', find: findView(find) };
+    if (find.rule.item.kind !== 'tool') return this.toZone(find.zone.key, msg);
+    for (const p of find.zone.players) if (this.sees(p, find)) this.outbox.push({ to: p.rec.id, msg });
   }
 
   private later(rule: Rule, zone: Zone, at: number, not: number | undefined): void {

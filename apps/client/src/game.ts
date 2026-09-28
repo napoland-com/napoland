@@ -57,7 +57,7 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MOVES, NO_ROOM, RESIDENT, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, buyQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, buyQuestion,
   cabinWho, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn,
   openQuestion, placedAlready, sentence, shortOf, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
@@ -2121,6 +2121,11 @@ export class Game {
 
   private float(text: string, color: string, x: number, y: number, row = 0) {
     this.floats.push({ id: ++this.fid, text, color, x, y, t: 0, row });
+  }
+
+  /** The map button (or M) where you carry no map of the area: the text box says so, over the bag if it is open. */
+  noMap() {
+    this.inform('Map', NO_MAP_YET);
   }
 
   /** Says something short over your head, in the grey of "Nothing here". */

@@ -1,9 +1,10 @@
 /**
  * What the town and the people who left it left behind (roadmap/richer-places.md): the cars of the jam
- * and the town's old logging truck, the sawmill, the log decks, stumps and skids of the logging days,
- * and what the leavers could not fit in the cars (suitcases, boxes, a rocking chair, a piano under its
- * tarp, a child's bike, a birdcage), with the mailboxes that still carry their names, the cardboard sign
- * someone wrote and the curtains they drew. Plain builders of toon boxes for world.ts, which bakes them
+ * and the town's old logging truck, the sawmill, the log decks, stumps and skids of the logging days
+ * (and in the Far Woods their last camp: the bunkhouse fallen in, the yarder, its cable spools, the
+ * bridge over the gorge), and what the leavers could not fit in the cars (suitcases, boxes, a rocking
+ * chair, a piano under its tarp, a child's bike, a birdcage), with the mailboxes that still carry their
+ * names, the cardboard sign someone wrote and the curtains they drew. Plain builders of toon boxes for world.ts, which bakes them
  * with the other props: nothing here moves or glows (the cars' lamps excepted), so it all joins the few
  * meshes a map's props already are. NAPO's own things are in napo.ts.
  *
@@ -467,6 +468,135 @@ export function curtainPanels(g: THREE.Object3D, color: string, x: number, y: nu
   g.add(box(w + 0.02, h * 0.18, 0.02, fold, x, y + h * 0.45, z + 0.004, false));
 }
 
+const RUST_RED = '#7a4128';
+const CABLE = '#2b2a29';
+const IRON = '#46403c';
+
+/**
+ * The loggers' yarder, rusted where it stood (two tiles by two): a steam donkey on its sled of two logs,
+ * the boiler and its stack at one end, the two drums of steel cable at the other, a gear between, and a
+ * cable's end run out along the ground to where it last pulled from.
+ */
+export function yarderModel(o: { x: number; y: number }): THREE.Group {
+  const g = pivot(o.x + 1, 0, o.y + 1);
+  g.rotation.y = (hash2(o.x * 3, o.y * 5) - 0.5) * 0.3;
+  for (const z of [-0.55, 0.55]) {
+    const runner = pivot(0, 0, 0);
+    runner.rotation.y = Math.PI / 2;
+    logAlongZ(runner, 0.16, 1.9, BARK[Math.floor(hash2(o.x, o.y + z * 10) * BARK.length) % BARK.length]!, -z, 0.16, 0);
+    g.add(runner);
+  }
+  g.add(box(1.7, 0.06, 1.3, '#56432f', 0, 0.35, 0));
+  // The boiler, upright, rust over the rivets, and its stack.
+  g.add(part(flat(new THREE.CylinderGeometry(0.31, 0.33, 1.0, 10)), RUST_RED, -0.45, 0.88, 0, 0.02));
+  g.add(part(flat(new THREE.CylinderGeometry(0.34, 0.34, 0.06, 10)), IRON, -0.45, 1.4, 0, 0.015));
+  g.add(part(flat(new THREE.CylinderGeometry(0.07, 0.085, 0.72, 8)), IRON, -0.45, 1.78, 0, 0.015));
+  g.add(box(0.12, 0.1, 0.02, '#8a5230', -0.45, 0.72, 0.325, false), box(0.36, 0.03, 0.02, '#5a2e1a', -0.45, 1.08, 0.315, false));
+  // The drums, one over the other, the cable wound dark on them between rusted flanges.
+  for (const [x, y] of [[0.42, 0.62], [0.42, 1.02]] as const) {
+    g.add(part(flat(new THREE.CylinderGeometry(0.2, 0.2, 0.78, 10).rotateX(Math.PI / 2)), CABLE, x, y, 0, 0.018));
+    for (const z of [-0.41, 0.41]) g.add(part(new THREE.CylinderGeometry(0.27, 0.27, 0.05, 12).rotateX(Math.PI / 2), RUST_RED, x, y, z, 0.012));
+  }
+  g.add(box(0.08, 0.78, 1.0, IRON, 0.08, 0.76, 0, 0.015));
+  g.add(part(new THREE.CylinderGeometry(0.22, 0.22, 0.05, 12).rotateX(Math.PI / 2), '#5e3a24', 0.08, 1.02, 0.52, 0.012));
+  // The cable's end, run out over the ground.
+  const run = box(1.1, 0.03, 0.03, CABLE, 0.95, 0.03, 0.55, false);
+  run.rotation.y = -0.35;
+  g.add(run);
+  return g;
+}
+
+/** A wooden cable spool standing on its rims, the yarder's steel cable still wound on it and its end hanging loose. */
+export function spoolModel(o: { x: number; y: number }): THREE.Group {
+  const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+  g.rotation.y = hash2(o.x * 7, o.y * 3) * Math.PI;
+  const wood = '#6b5236';
+  for (const x of [-0.24, 0.24]) g.add(part(flat(new THREE.CylinderGeometry(0.38, 0.38, 0.06, 12).rotateZ(Math.PI / 2)), wood, x, 0.38, 0, 0.015));
+  g.add(part(flat(new THREE.CylinderGeometry(0.27, 0.27, 0.42, 12).rotateZ(Math.PI / 2)), CABLE, 0, 0.38, 0, false));
+  g.add(part(new THREE.CylinderGeometry(0.08, 0.08, 0.56, 8).rotateZ(Math.PI / 2), '#4a3726', 0, 0.38, 0, false));
+  const end = box(0.03, 0.03, 0.4, CABLE, 0.1, 0.12, 0.28, false);
+  end.rotation.x = 0.7;
+  g.add(end);
+  return g;
+}
+
+/**
+ * What is left of a logging camp's bunkhouse on its tiles: the log walls fallen to a few rounds, higher
+ * at the corners and gone in places (the doorway on the south side among them), no roof, two of its
+ * beams fallen in across the floor, and the rusted stove with its pipe still leaning up out of it.
+ */
+export function ruinModel(o: { x: number; y: number; w: number; h: number }): THREE.Group {
+  const g = pivot(0, 0, 0);
+  const x0 = o.x + 0.12, x1 = o.x + o.w - 0.12, z0 = o.y + 0.12, z1 = o.y + o.h - 0.12, r = 0.1;
+  /** A wall along one side, a round per 0.2 up, each tile of it as high as its hash says; a gap where it is none. */
+  const wall = (ax: number, az: number, bx: number, bz: number, door: number) => {
+    const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len));
+    for (let k = 0; k < n; k++) {
+      const t0 = k / n, t1 = (k + 1) / n, cx = ax + (bx - ax) * (t0 + t1) / 2, cz = az + (bz - az) * (t0 + t1) / 2;
+      const hv = hash2(Math.round(cx * 7), Math.round(cz * 11));
+      const corner = k === 0 || k === n - 1;
+      if (k === door || (!corner && hv < 0.2)) continue;
+      const rounds = corner ? 4 : 1 + Math.floor(hv * 3);
+      // Rounds of the wall: plain six-sided logs without their cut ends, which face along the wall
+      // and hide against the next round; a bunkhouse of them costs little more than a cabin.
+      for (let j = 0; j < rounds; j++) {
+        const lg = part(flat(new THREE.CylinderGeometry(r, r, (len / n) + 0.1, 6, 1, true).rotateX(Math.PI / 2)), BARK[(k + j) % BARK.length]!, cx, r + j * r * 1.8, cz, 0.014);
+        lg.rotation.y = Math.atan2(bx - ax, bz - az);
+        g.add(lg);
+      }
+    }
+  };
+  wall(x0, z0, x1, z0, -1);
+  wall(x0, z1, x1, z1, Math.floor(o.w / 2));
+  wall(x0, z0, x0, z1, -1);
+  wall(x1, z0, x1, z1, -1);
+  // Two roof beams fallen in, one end on a wall and the other on the floor.
+  for (const [k, turn] of [[0, 0.5], [1, -0.4]] as const) {
+    const beam = pivot(o.x + o.w * (0.35 + k * 0.3), 0.22, o.y + o.h / 2);
+    beam.rotation.set(0.25, turn, 0);
+    logAlongZ(beam, 0.09, o.h - 0.4, BARK[k]!, 0, 0, 0);
+    g.add(beam);
+  }
+  // The stove in a back corner, its pipe leaning.
+  const sx = o.x + o.w - 0.7, sz = o.y + 0.7;
+  g.add(box(0.36, 0.32, 0.3, '#2b2826', sx, 0.16, sz), box(0.24, 0.02, 0.2, '#4a2a1c', sx, 0.33, sz, false));
+  const pipe = part(flat(new THREE.CylinderGeometry(0.05, 0.05, 0.8, 6)), '#3a3634', sx - 0.05, 0.7, sz, 0.012);
+  pipe.rotation.z = 0.35;
+  g.add(pipe);
+  return g;
+}
+
+type Bridge = Pick<Extract<MapObject, { kind: 'bridge' }>, 'x' | 'y' | 'dir'>;
+
+/**
+ * Which sides of a bridge's tile carry its rail, across the way it runs: the side with no more bridge
+ * beside it. [the west side, the east side] of one that runs north to south, [the south side, the north
+ * side] of one that runs east to west, as bridgeModel turns them: a bridge two tiles wide has a rail
+ * down each edge and none down its middle.
+ */
+export function bridgeRails(o: Bridge, isBridge: (x: number, y: number) => boolean): [boolean, boolean] {
+  return o.dir === 'v' ? [!isBridge(o.x - 1, o.y), !isBridge(o.x + 1, o.y)] : [!isBridge(o.x, o.y + 1), !isBridge(o.x, o.y - 1)];
+}
+
+/**
+ * An old timber bridge laid over a ford (a tile of it, walked over): two stringer logs along the way it
+ * runs, planks across them, and on its outer sides (`rails`, bridgeRails) a low rail of poles.
+ */
+export function bridgeModel(o: Bridge, rails: readonly [boolean, boolean] = [true, true]): THREE.Group {
+  const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+  // Built running north to south, turned for one that runs east to west.
+  if (o.dir === 'h') g.rotation.y = Math.PI / 2;
+  const plank = ['#6e5a45', '#645240', '#766049'];
+  for (const x of [-0.3, 0.3]) logAlongZ(g, 0.09, 1.02, BARK[1]!, x, 0.03, 0);
+  for (let k = 0; k < 5; k++) g.add(box(0.98, 0.04, 0.17, plank[(k + o.x + o.y) % plank.length]!, (hash2(o.x * 5 + k, o.y) - 0.5) * 0.04, 0.13, -0.4 + k * 0.2, 0.01));
+  [-0.47, 0.47].forEach((x, side) => {
+    if (!rails[side]) return;
+    for (const z of [-0.42, 0.42]) g.add(box(0.06, 0.4, 0.06, '#4a3a2c', x, 0.3, z, false));
+    g.add(part(flat(new THREE.CylinderGeometry(0.035, 0.035, 1.0, 6).rotateX(Math.PI / 2)), '#5a4634', x, 0.46, 0, false));
+  });
+  return g;
+}
+
 /**
  * The things that stand on a tile anywhere, in town, out there or in a room, and are not furniture
  * (interior.ts) or NAPO's (napo.ts): null for anything else.
@@ -477,6 +607,9 @@ export function leftModel(o: MapObject): THREE.Object3D | null {
     case 'logs': return logDeck(o);
     case 'stump': return stumpModel(o);
     case 'skid': return skidModel(o);
+    case 'yarder': return yarderModel(o);
+    case 'spool': return spoolModel(o);
+    case 'ruin': return ruinModel(o);
     case 'luggage': return luggageModel(o);
     case 'boxes': return boxesModel(o);
     case 'rocker': return rockerModel(o);

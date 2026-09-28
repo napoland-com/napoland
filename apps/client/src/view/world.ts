@@ -27,10 +27,10 @@ import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
 } from './interior';
-import { cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
-import { ambience, assignLights, lightSources, type Ambience, type LightSource } from './lighting';
+import { bridgeModel, bridgeRails, cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
+import { ambience, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
-import { napoBuilding, napoProp, napoSign, towerModel } from './napo';
+import { HUM, napoBuilding, napoProp, napoSign, towerModel } from './napo';
 import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
 
 export interface Avatar {
@@ -136,6 +136,39 @@ const TREE_TRUNK = '#3b2c22';
 const TREE_L = TREE_LAYERS.reduce((sum, l) => sum + new THREE.Color(l[3]).getHSL({ h: 0, s: 0, l: 0 }).l, 0) / TREE_LAYERS.length;
 /** A tree's color factor: its lightness moved by up to 0.025 either way, the spread trees always had. */
 const treeShade = (v: number) => Math.max(0, (TREE_L + (v - 0.5) * 0.05) / TREE_L);
+
+/**
+ * Old growth (MapData.forest 'old', the Far Woods): about a third of the trees are cedars, the fir's
+ * shape spread wider and lower in a warmer, yellower green, and the ferns grow taller and wider. All of
+ * it is the same instanced meshes, scaled and tinted: old woods cost no more draw calls than young ones.
+ */
+export const CEDAR_SHARE = 0.34;
+export const CEDAR_SPREAD = 1.3;
+export const CEDAR_HEIGHT = 0.88;
+const CEDAR_TINT = new THREE.Color(1.12, 1.18, 0.9);
+/** Ferns under old growth: [wider, taller]. */
+export const DEEP_FERNS: readonly [number, number] = [1.3, 1.5];
+/** Is the tree on this tile a cedar? The same on every visit. */
+export const isCedar = (x: number, y: number) => hash2(x * 17 + 5, y * 23 + 9) < CEDAR_SHARE;
+
+/**
+ * How big a forest tile's tree is, from its hash `h` (0 to 1): 1 to 1.5 in young woods; in old growth
+ * 1.2 to 1.8 beside open ground, and the old giants, 1.6 to 2.4, only deep in (`deep`: forest all
+ * round the tile), where they stand in nobody's way and hide nobody from the camera.
+ */
+export function treeSize(h: number, old: boolean, deep: boolean): number {
+  if (!old) return 1 + h * 0.5;
+  return deep ? 1.6 + h * 0.8 : 1.2 + h * 0.6;
+}
+
+/** A forest tile with forest (or the map's edge) all round it: in old growth, where the giants stand. */
+export function deepInForest(map: TileMap, x: number, y: number): boolean {
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const k = map.kind(x + dx, y + dy);
+    if (k !== undefined && k !== 'forest') return false;
+  }
+  return true;
+}
 
 /**
  * A whole tree as one geometry (trunk and three cones, colored per vertex), so each tree is one
@@ -491,41 +524,56 @@ export class WorldView {
 
   private buildNature() {
     const { map } = this, W = map.width, H = map.height;
-    type Tree = { x: number; y: number; z: number; s: number; v: number };
-    const trees: Tree[] = this.objects('tree').map(t => ({ x: t.x + 0.5 + (hash2(t.x, t.y) - 0.5) * 0.2, y: t.y + 0.5, z: this.groundAt(t.x, t.y), s: t.s, v: t.v }));
+    // Old growth (the Far Woods): taller firs with cedars among them, and deeper ferns.
+    const old = map.data.forest === 'old';
+    // `shade`: it casts a blob shadow. Deep in old growth nobody sees the ground under the crowns, so none
+    // there: a block of only such trees costs one draw call less.
+    type Tree = { x: number; y: number; z: number; s: number; v: number; cedar: boolean; shade: boolean };
+    const trees: Tree[] = this.objects('tree').map(t => ({ x: t.x + 0.5 + (hash2(t.x, t.y) - 0.5) * 0.2, y: t.y + 0.5, z: this.groundAt(t.x, t.y), s: t.s, v: t.v, cedar: old && isCedar(t.x, t.y), shade: true }));
     // Forest tiles: one tree each, sized, turned and nudged by its position, so the woods look the same on every visit.
     for (let ty = 0; ty < H; ty++) for (let tx = 0; tx < W; tx++) {
       if (map.kind(tx, ty) !== 'forest') continue;
+      const deep = old && deepInForest(map, tx, ty);
       trees.push({
         x: tx + 0.5 + (hash2(tx * 7 + 1, ty * 3) - 0.5) * 0.24,
         y: ty + 0.5 + (hash2(tx * 3, ty * 7 + 1) - 0.5) * 0.24,
         z: this.groundAt(tx, ty),
-        s: 1 + hash2(tx * 13, ty * 5 + 3) * 0.5,
+        s: treeSize(hash2(tx * 13, ty * 5 + 3), old, deep),
         v: hash2(tx * 5 + 11, ty * 11),
+        cedar: old && isCedar(tx, ty),
+        shade: !deep,
       });
     }
     // The forest around the map, so its edge never shows. A room has none: it is black around.
     const rng = mulberry32(99);
     for (let y = -RING; y < H + RING && this.outdoors; y++) for (let x = -RING; x < W + RING; x++) {
       if (map.inside(x, y) || rng() >= 0.92) continue;
-      const t = { x: x + 0.5 + (rng() - 0.5) * 0.3, y: y + 0.5, z: 0, s: 1.1 + rng() * 0.5, v: rng() };
+      const t = { x: x + 0.5 + (rng() - 0.5) * 0.3, y: y + 0.5, z: 0, s: old ? treeSize(rng(), true, false) : 1.1 + rng() * 0.5, v: rng(), cedar: old && isCedar(x, y), shade: false };
       if (!this.openings.has(`${x},${y}`)) trees.push(t);
     }
     const body = treeGeometry(false), shell = treeGeometry(true), bodyMat = ownToon(0xffffff, { vertexColors: true });
-    const place = (t: Tree, o: THREE.Object3D) => { o.position.set(t.x, t.z, t.y); o.rotation.y = t.v * 6; o.scale.setScalar(t.s); };
+    // A cedar is the fir's shape spread wider and lower, in a warmer green: no draw call of its own.
+    const place = (t: Tree, o: THREE.Object3D) => {
+      o.position.set(t.x, t.z, t.y);
+      o.rotation.y = t.v * 6;
+      if (t.cedar) o.scale.set(t.s * CEDAR_SPREAD, t.s * CEDAR_HEIGHT, t.s * CEDAR_SPREAD);
+      else o.scale.setScalar(t.s);
+    };
     for (const block of blocks(trees)) {
-      this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); }, bodyMat, true);
+      this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); }, bodyMat, true);
       this.instanced(shell, block, place, OUTLINE_INSTANCED);
       // Outside the map the forest is only a backdrop, too dense to see the ground under it: no shadows, one draw call less a block.
-      if (block.some(t => map.inside(Math.floor(t.x), Math.floor(t.y)))) {
-        this.instanced(this.shadowGeo, block, (t, o) => { o.position.set(t.x, t.z + 0.012, t.y); o.scale.setScalar(0.46 * t.s); }, this.shadowMat);
-      }
+      const shaded = block.filter(t => t.shade && map.inside(Math.floor(t.x), Math.floor(t.y)));
+      if (shaded.length) this.instanced(this.shadowGeo, shaded, (t, o) => { o.position.set(t.x, t.z + 0.012, t.y); o.scale.setScalar(0.46 * t.s); }, this.shadowMat);
     }
 
     const rocks = this.objects('rock');
     const rockGeo = new THREE.DodecahedronGeometry(0.3, 0);
     const placeRock = (r: (typeof rocks)[number], o: THREE.Object3D) => { o.position.set(r.x + 0.5, this.groundAt(r.x, r.y) + 0.16 * r.s, r.y + 0.5); o.rotation.set(r.v * 3, r.v * 7, 0); o.scale.set(r.s * 1.1, r.s * 0.78, r.s); };
-    this.instanced(rockGeo, rocks, (r, o, c) => { placeRock(r, o); c.set('#6d6f70'); c.offsetHSL(0, 0, (r.v - 0.5) * 0.06); });
+    this.instanced(rockGeo, rocks.filter(r => !r.hum), (r, o, c) => { placeRock(r, o); c.set('#6d6f70'); c.offsetHSL(0, 0, (r.v - 0.5) * 0.06); });
+    // The rocks that hum back glow faintly, like the ones in NAPO's cages, the same day and night: one
+    // more draw call, only where there are any.
+    this.instanced(rockGeo, rocks.filter(r => r.hum), placeRock, HUM, false);
     this.instanced(rockGeo, rocks, (r, o) => { placeRock(r, o); o.scale.multiplyScalar(1.1); }, OUTLINE_INSTANCED);
 
     // Ferns: where skulkers lie. They rustle when something walks through: the warning one is coming.
@@ -543,7 +591,9 @@ export class WorldView {
       }
       fernTiles.push({ x: tx, y: ty, fronds });
     }
-    const placeFrond = (b: Frond, o: THREE.Object3D, wob = 0) => { o.rotation.order = 'YXZ'; o.position.set(b.x, 0, b.y); o.rotation.set(b.tilt + wob, b.r, 0); o.scale.set(1, 1 - Math.abs(wob) * 0.4, 1); };
+    // Deep ferns under old growth: taller and wider fronds, as high as a skulker lying in them.
+    const [fw, fh] = old ? DEEP_FERNS : [1, 1];
+    const placeFrond = (b: Frond, o: THREE.Object3D, wob = 0) => { o.rotation.order = 'YXZ'; o.position.set(b.x, 0, b.y); o.rotation.set(b.tilt + wob, b.r, 0); o.scale.set(fw, fh * (1 - Math.abs(wob) * 0.4), fw); };
     const frondMat = ownToon(0xffffff);
     /** For each fern tile: its block's mesh and where its fronds start in it. */
     const frondAt = new Map<number, { mesh: THREE.InstancedMesh; start: number; fronds: Frond[] }>();
@@ -770,10 +820,11 @@ export class WorldView {
     }
     if (wire.length) this.scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(wire), this.wireMat));
 
-    // Radio masts (napo.ts): their lights all blink together, a short flash every 1.6 seconds.
+    // Radio masts (napo.ts): their lights all blink together, a short flash every 1.6 seconds. A broken
+    // one has no light left to blink.
     const masts = this.objects('antenna');
-    for (const a of masts) still.push(towerModel(a.x, a.y, this.beaconMat));
-    if (masts.length) this.animate.push(t => { this.beaconMat.emissive.setHex(t % 1.6 < 0.3 ? 0xff3322 : 0x1a0604); });
+    for (const a of masts) still.push(towerModel(a.x, a.y, this.beaconMat, a.broken));
+    if (masts.some(a => !a.broken)) this.animate.push(t => { this.beaconMat.emissive.setHex(t % 1.6 < 0.3 ? 0xff3322 : 0x1a0604); });
 
     for (const st of this.objects('stone')) {
       const cx = st.x + 0.5, cz = st.y + 0.5;
@@ -818,8 +869,13 @@ export class WorldView {
     const { map } = this;
     // Furniture (interior.ts), what the town and the leavers left (left.ts) and NAPO's things (napo.ts):
     // wherever they stand, in a room or out of doors.
+    // A bridge's rails run along its outer sides only: it looks at the bridge beside it (bridgeRails).
+    const bridges = new Set(this.objects('bridge').map(b => `${b.x},${b.y}`));
     for (const o of map.data.objects) {
-      const m = o.kind === 'hearth' ? coldHearthModel(o.x, o.y) : o.kind === 'note' ? noteModel(o, map) : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
+      const m = o.kind === 'hearth' ? coldHearthModel(o.x, o.y)
+        : o.kind === 'bridge' ? bridgeModel(o, bridgeRails(o, (x, y) => bridges.has(`${x},${y}`)))
+        : o.kind === 'note' ? noteModel(o, map)
+        : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
       if (m) still.push(m);
     }
     const fireplaces = this.objects('fireplace');
@@ -934,7 +990,8 @@ export class WorldView {
   /** The weather everyone shares. Inside, only the windows (and the light they let in) show it. */
   setWeather(w: Weather) {
     this.weather = w;
-    const a = (this.amb = ambience(this.map.data.kind, w, this.warmRoom));
+    const plain = ambience(this.map.data.kind, w, this.warmRoom);
+    const a = (this.amb = this.map.data.forest === 'old' ? underOldGrowth(plain) : plain);
     this.hemi.color.set(a.hemi.sky);
     this.hemi.groundColor.set(a.hemi.ground);
     this.hemi.intensity = a.hemi.intensity * L;

@@ -106,13 +106,19 @@ export function napoSign(s: Sign): THREE.Group {
   return g;
 }
 
+/** How many of a mast's six sections still stand when it is broken: the rest lies at its foot. */
+const BROKEN_SECTIONS = 3;
+
 /**
  * The Tower: a lattice mast in red and white bands on a concrete pad, a dish on the north side turned
  * toward the woods, a small deck, and the light on top in `beacon`. It stands on one tile, like a pole.
+ * A `broken` mast (NAPO's field post in the Far Woods) stands only half as high, snapped where rust ate
+ * through its legs: its top lies across the ground beside it, the dish fallen on its back, and no light.
  */
-export function towerModel(x: number, y: number, beacon: THREE.Material): THREE.Group {
+export function towerModel(x: number, y: number, beacon: THREE.Material, broken = false): THREE.Group {
   const g = pivot(x + 0.5, 0, y + 0.5);
   g.add(box(0.96, 0.12, 0.96, '#6b6f70', 0, 0.06, 0));
+  if (broken) return brokenMast(g, x, y);
   const SECTIONS = 6, BASE = 0.34, TIP = 0.08, Y0 = 0.12, TOP = TOWER_H - 0.1;
   const half = (k: number) => BASE + ((TIP - BASE) * k) / SECTIONS;
   const at = (k: number) => Y0 + ((TOP - Y0) * k) / SECTIONS;
@@ -141,6 +147,52 @@ export function towerModel(x: number, y: number, beacon: THREE.Material): THREE.
   dish.rotation.x = -Math.PI / 2 + 0.35;
   g.add(dish, box(0.03, 0.03, 0.26, STEEL, 0, 2.78, -0.36, false));
   g.add(part(new THREE.BoxGeometry(0.12, 0.1, 0.12), beacon, 0, TOWER_H, 0, 0.015), box(0.16, 0.03, 0.16, STEEL, 0, TOWER_H - 0.065, 0, false));
+  return g;
+}
+
+/**
+ * The lower half of a mast (towerModel's `broken`), its bands gone to rust, bent stubs where the legs
+ * snapped, the section above hanging folded down its side, and the dish fallen on its back at its foot.
+ * All of it within its own tile, like a standing mast.
+ */
+function brokenMast(g: THREE.Group, x: number, y: number): THREE.Group {
+  const SECTIONS = 6, BASE = 0.34, TIP = 0.08, Y0 = 0.12, TOP = TOWER_H - 0.1;
+  const half = (k: number) => BASE + ((TIP - BASE) * k) / SECTIONS;
+  const at = (k: number) => Y0 + ((TOP - Y0) * k) / SECTIONS;
+  const up = new THREE.Vector3(0, 1, 0);
+  const bar = (root: THREE.Object3D, a: THREE.Vector3, b: THREE.Vector3, color: string, t: number) => {
+    const d = b.clone().sub(a), m = box(t, d.length(), t, color, 0, 0, 0, false);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(up, d.normalize());
+    root.add(m);
+  };
+  const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const;
+  /** Sections from..to of the lattice into `root`, in faded bands with rust through them. */
+  const lattice = (root: THREE.Object3D, from: number, to: number, lift: number) => {
+    for (let k = from; k < to; k++) {
+      const color = k % 2 ? '#b9ad98' : '#8a4632', h0 = at(k) - lift, h1 = at(k + 1) - lift, w0 = half(k), w1 = half(k + 1);
+      corners.forEach(([sx, sz], i) => {
+        const [nx, nz] = corners[(i + 1) % 4]!;
+        bar(root, new THREE.Vector3(sx * w0, h0, sz * w0), new THREE.Vector3(sx * w1, h1, sz * w1), color, 0.05);
+        bar(root, new THREE.Vector3(sx * w1, h1, sz * w1), new THREE.Vector3(nx * w1, h1, nz * w1), color, 0.035);
+        const [ax, az, bx, bz] = k % 2 ? [sx, sz, nx, nz] : [nx, nz, sx, sz];
+        bar(root, new THREE.Vector3(ax * w0, h0, az * w0), new THREE.Vector3(bx * w1, h1, bz * w1), color, 0.025);
+      });
+    }
+  };
+  lattice(g, 0, BROKEN_SECTIONS, 0);
+  // Where it snapped: each leg a bent stub, leaning out.
+  const snap = at(BROKEN_SECTIONS), w = half(BROKEN_SECTIONS);
+  corners.forEach(([sx, sz], i) => bar(g, new THREE.Vector3(sx * w, snap, sz * w), new THREE.Vector3(sx * (w + 0.1 + i * 0.03), snap + 0.18, sz * (w + 0.06)), '#6b3a26', 0.05));
+  // The next section still hangs by a leg, folded over and down the east side; the rest of it is gone.
+  const fallen = pivot(w, snap, 0);
+  fallen.rotation.set((hash2(x, y) - 0.5) * 0.4, 0, -2.0);
+  lattice(fallen, BROKEN_SECTIONS, BROKEN_SECTIONS + 1, snap);
+  g.add(fallen);
+  // The dish, down on its back at the foot of the pad.
+  const dish = part(flat(new THREE.CylinderGeometry(0.3, 0.1, 0.1, 12)), '#bdb8ac', -0.35, 0.08, 0.5, 0.015);
+  dish.rotation.x = 0.25;
+  g.add(dish);
   return g;
 }
 
