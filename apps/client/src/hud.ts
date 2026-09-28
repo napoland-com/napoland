@@ -71,6 +71,8 @@ export interface HudHandlers {
   map?(): void;
   /** The sound was muted or unmuted, or its volume moved. */
   sound?(s: SoundSetting): void;
+  /** A guest's Sign in button (in the status panel, the Status tab, the chat or the friends panel). */
+  signIn?(): void;
   a(): void;
   b(): void;
   dialogTap(): void;
@@ -149,12 +151,19 @@ export interface StatusRow { label: string; text: string; bar?: number; tone?: '
  * one is in words, and as a share for its bar (none at the top rank).
  */
 export interface FeatView { name: string; rank: number; does: string; next: string; progress?: number }
-/** The status panel: rows about you, then a card per feat. */
-export interface StatusView { rows: StatusRow[]; feats: FeatView[] }
+/** The status panel: what a guest should know first (with a Sign in button), rows about you, then a card per feat. */
+export interface StatusView { guest?: string; rows: StatusRow[]; feats: FeatView[] }
 
-/** The status panel's body: the rows about you, then the feats. */
+/** What the chat and the friends panel say to a guest, over a Sign in button, instead of what they cannot use yet. */
+export const CHAT_GATE = 'Sign in to chat with other players. Signing in keeps your character.';
+export const FRIENDS_GATE = 'Sign in to make friends and write to them. Signing in keeps your character.';
+/** A guest's card, as someone signed in sees it: no friends yet, but they can still be blocked and reported. */
+export const GUEST_CARD = 'They play as a guest. Once they sign in, you can be friends.';
+
+/** The status panel's body: what a guest should know first, the rows about you, then the feats. */
 export function statusHtml(v: StatusView): string {
   return [
+    v.guest ? `<div class="gate snote"><p>${esc(v.guest)}</p><button type="button" class="act go" data-signin>Sign in</button></div>` : '',
     ...v.rows.map(r => `<div class="srow" data-tone="${r.tone ?? 'plain'}"><span class="k">${esc(r.label)}</span><span class="v">${esc(r.text)}</span>${r.bar === undefined ? '' : `<span class="sbar"><i style="transform:translateX(${((Math.min(1, Math.max(0, r.bar)) - 1) * 100).toFixed(1)}%)"></i></span>`}</div>`),
     '<h3>Feats</h3>',
     `<div class="feats">${v.feats.map(featHtml).join('')}</div>`,
@@ -242,6 +251,8 @@ export class Hud {
   private asking = false;
   private versionAsked = false;
   private showSound: (s: SoundSetting) => void = () => {};
+  /** You play as a guest: the status panel says so, and chat and friends show what signing in opens. */
+  private guest = false;
 
   constructor(parent: HTMLElement, private h: HudHandlers) {
     this.root = document.createElement('div');
@@ -254,7 +265,8 @@ export class Hud {
       <div class="vignette" data-el="vignette"></div>
       <div class="fade" data-el="fade"></div>
       <div class="banner panel" data-el="banner" role="status" aria-live="polite"><b data-el="bannerTitle"></b><span data-el="bannerSub"></span></div>
-      <div class="status panel"><div class="name"><span><span data-el="name">...</span><span class="lvl" data-el="level" hidden></span></span><span data-el="online"></span></div>
+      <div class="status panel" data-el="status"><div class="name"><span><span data-el="name">...</span><span class="lvl" data-el="level" hidden></span></span><span data-el="online"></span></div>
+        <div class="guest" data-el="guest" hidden><span class="guest-tag">Guest</span><button type="button" class="signin" data-signin>Sign in</button></div>
         <div class="energy" data-el="energy" hidden>${ICON.bolt}<div class="bar" data-el="energyBar" role="meter" aria-label="Energy" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="energyFill"></div></div></div>
         <div class="wet" data-el="wet" hidden>${ICON.drop}<div class="bar" data-el="wetBar" role="meter" aria-label="Wet" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="wetFill"></div></div></div>
         <div class="cling" data-el="cling" hidden role="status">${ICON.cling}<span>Something clings to you</span></div>
@@ -314,10 +326,12 @@ export class Hud {
         <div class="log" data-el="chatLog" aria-live="polite"></div>
         <p class="note" data-el="chatNote" role="status" hidden></p>
         <form class="say" data-el="chatForm"><input data-el="chatText" maxlength="120" placeholder="Say something" autocomplete="off" enterkeyhint="send" aria-label="Say something"><button type="submit" class="act go">Say</button></form>
+        <div class="gate" data-el="chatGate" hidden><p>${CHAT_GATE}</p><button type="button" class="act go" data-signin>Sign in</button></div>
       </div>
       <div class="sheet panel friends-sheet" data-el="friendsSheet" data-open="false" role="dialog" aria-label="Friends">
         <div class="sheet-head"><button type="button" class="close" data-el="friendsBack" aria-label="Back to your friends" hidden>${ICON.back}</button><b data-el="friendsTitle">Friends</b><button type="button" class="close" data-el="friendsClose" aria-label="Close friends">${ICON.x}</button></div>
         <p class="note" data-el="friendsNote" role="status" hidden></p>
+        <div class="gate" data-el="friendsGate" hidden><p>${FRIENDS_GATE}</p><button type="button" class="act go" data-signin>Sign in</button></div>
         <div class="friends-list" data-el="friendsList">
           <form class="say" data-el="askForm"><input data-el="askName" maxlength="16" placeholder="A player's name" autocomplete="off" enterkeyhint="send" aria-label="Ask a player to be your friend, by name"><button type="submit" class="act go">Ask</button></form>
           <div data-el="friendsRows"></div>
@@ -381,6 +395,14 @@ export class Hud {
     stick.addEventListener('lostpointercapture', end);
     this.el.a!.addEventListener('click', () => this.h.a());
     this.el.b!.addEventListener('click', () => this.h.b());
+    // Every Sign in button a guest sees, wherever it is.
+    this.root.addEventListener('click', e => {
+      if ((e.target as Element).closest('[data-signin]')) this.h.signIn?.();
+    });
+    // The status panel opens the Status tab; its Sign in button is a target of its own.
+    this.el.status!.addEventListener('click', e => {
+      if (!(e.target as Element).closest('[data-signin]')) this.toggleStatus(true);
+    });
     this.el.dialog!.addEventListener('click', () => this.h.dialogTap());
     this.el.close!.addEventListener('click', () => this.toggleBag(false));
     this.el.menuBtn!.addEventListener('click', () => this.toggleMenu());
@@ -591,22 +613,30 @@ export class Hud {
     ].join('');
     if (rows !== this.shown.friends) { this.shown.friends = rows; this.el.friendsRows!.innerHTML = rows; }
     (this.el.requestsOn as HTMLInputElement).checked = !v.requestsOff;
+    this.el.friendsTitle!.textContent = p ? p.name : 'Friends';
+    // A guest has no friends yet: one card says what signing in opens, whoever's name tag brought them here.
+    this.el.friendsGate!.hidden = !this.guest;
+    const n = this.el.friendsNote!;
+    if (this.guest) {
+      this.el.friendsList!.hidden = this.el.personView!.hidden = this.el.friendsBack!.hidden = n.hidden = true;
+      return;
+    }
     this.el.friendsList!.hidden = !!p;
     this.el.personView!.hidden = !p;
     this.el.friendsBack!.hidden = !p;
-    this.el.friendsTitle!.textContent = p ? p.name : 'Friends';
-    const n = this.el.friendsNote!;
     n.hidden = !note;
     if (note && n.textContent !== note) n.textContent = note;
     if (!p) { this.el.reasons!.hidden = true; return; }
-    this.el.personWhere!.textContent = { friend: `Friends · ${p.where}`, asked: 'You asked them to be friends', asking: 'They asked to be your friend', blocked: 'Blocked: they cannot ask you or write to you', none: '' }[p.standing];
-    const acts = {
+    // Someone who plays as a guest cannot be asked yet, but can be blocked and reported like anyone.
+    const guestCard = p.guest && p.standing === 'none';
+    this.el.personWhere!.textContent = guestCard ? GUEST_CARD : { friend: `Friends · ${p.where}`, asked: 'You asked them to be friends', asking: 'They asked to be your friend', blocked: 'Blocked: they cannot ask you or write to you', none: '' }[p.standing];
+    const acts = (guestCard ? '' : {
       friend: btn('unfriend', null, 'Unfriend'),
       asked: btn('unfriend', null, 'Take back'),
       asking: btn('accept', null, 'Accept', 'go') + btn('decline', null, 'No'),
       blocked: btn('unblock', null, 'Unblock'),
       none: btn('befriend', null, 'Ask to be friends', 'go'),
-    }[p.standing] + (p.standing === 'blocked' ? '' : btn('block', null, 'Block', 'toss')) + btn('report', null, 'Report', 'toss');
+    }[p.standing]) + (p.standing === 'blocked' ? '' : btn('block', null, 'Block', 'toss')) + btn('report', null, 'Report', 'toss');
     if (acts !== this.shown.personActs) { this.shown.personActs = acts; this.el.personActs!.innerHTML = acts; }
     const talk = p.lines.map(l => `<p class="line"${l.mine ? ' data-mine' : ''}>${esc(l.text)}</p>`).join('') || (p.standing === 'friend' ? '<p class="hint">Messages wait for them until they read them.</p>' : '');
     if (talk !== this.shown.talk) {
@@ -783,7 +813,8 @@ export class Hud {
   back(): boolean {
     if (this.chatOpen) { this.toggleChat(false); return true; }
     if (this.friendsOpen) {
-      if (this.person) this.h.social?.({ a: 'back' });
+      // A guest sees the same card whoever it was opened for: B closes it at once.
+      if (this.person && !this.guest) this.h.social?.({ a: 'back' });
       else this.toggleFriends(false);
       return true;
     }
@@ -904,6 +935,20 @@ export class Hud {
   }
 
   setName(name: string) { this.el.name!.textContent = name; }
+
+  /**
+   * You play as a guest, or not (signed in): the Guest label and its Sign in button under your name,
+   * and in the chat and the friends panel, one card saying what signing in opens, in place of what
+   * a guest cannot use yet.
+   */
+  setGuest(on: boolean) {
+    this.guest = on;
+    this.el.guest!.hidden = !on;
+    this.el.chatForm!.hidden = on;
+    this.el.chatGate!.hidden = !on;
+    this.el.friendsGate!.hidden = !on;
+    if (on) this.el.friendsList!.hidden = this.el.personView!.hidden = this.el.friendsBack!.hidden = this.el.friendsNote!.hidden = true;
+  }
   /** The sound setting this browser keeps, on the menu's sound row. */
   setSound(s: SoundSetting) { this.showSound(s); }
   /** "Sign out" with sign-in; "Log out" without, where it forgets the character's token. */

@@ -29,6 +29,16 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .status { position: absolute; left: calc(var(--pad) + var(--safe-l)); top: calc(var(--pad) + var(--safe-t)); display: grid; gap: calc(var(--u) * .3); padding: calc(var(--u) * .55) calc(var(--u) * .9); min-width: calc(var(--u) * 12); }
 .status .name { display: flex; justify-content: space-between; gap: .8em; white-space: nowrap; font-size: calc(var(--u) * 1.2); font-weight: 600; }
 .status .sub { display: flex; justify-content: space-between; gap: .8em; font-size: calc(var(--u) * .92); color: #d3ccbb; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* A tap on the status panel opens the Status tab. */
+.status { pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+/* A guest: a small label under the name, and Sign in, a target of its own. The row stays for the whole
+   session, so nothing under it moves while playing, and it is no wider than the panel already is. */
+.status .guest { display: flex; align-items: center; justify-content: space-between; gap: .6em; }
+.status .guest-tag { padding: .06em .55em; border-radius: 99px; font-size: calc(var(--u) * .88); font-weight: 600; line-height: 1.2; color: #d9cfb8; background: rgba(217, 207, 184, .1); box-shadow: inset 0 0 0 1px rgba(217, 207, 184, .45); }
+.hud .status .signin { position: relative; display: block; width: auto; padding: .3em .8em; border-radius: 7px; border: 0; background: #e0873a; color: #1a0f04; box-shadow: inset 0 -2px 0 #a8591d;
+  font-size: calc(var(--u) * .95); font-weight: 600; line-height: 1.1; white-space: nowrap; }
+/* Bigger to a thumb than it looks, without making the row taller. */
+.hud .status .signin::after { content: ""; position: absolute; inset: -.6em -.7em; }
 .conn { display: inline-flex; align-items: center; gap: .35em; }
 .conn i { width: .7em; height: .7em; border-radius: 50%; display: inline-block; background: #f5cf3b; box-shadow: 0 0 0 2px #0c0f15; }
 .conn[data-state="online"] i { background: #4ade6b; }
@@ -252,6 +262,12 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .chat-sheet .cline[data-mine] b { color: #f2a65a; }
 .chat-sheet .say { display: flex; gap: calc(var(--u) * .5); flex: none; }
 .chat-sheet .say input { flex: 1; min-width: 0; font: 600 max(16px, calc(var(--u) * 1.2)) var(--font-text); padding: .45em .7em; border-radius: 9px; border: 1px solid #4a5468; background: #131820; color: #f1ece0; }
+/* What a guest sees in place of what needs sign-in (the chat's line, the friends panel, the top of the
+   Status tab): one card that says what signing in opens, with the button that does it. */
+.gate { flex: none; display: grid; justify-items: center; gap: calc(var(--u) * .7); padding: calc(var(--u) * .9) calc(var(--u) * 1.1); border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #8a7440;
+  text-align: center; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.2); line-height: 1.35; color: #e6dfcf; }
+.gate p { margin: 0; }
+.status-body .snote { margin-bottom: calc(var(--u) * .3); }
 /* A speech bubble over the head of whoever said something near you. */
 .bubble { position: absolute; left: 0; top: 0; max-width: calc(var(--u) * 16); padding: .35em .7em; border-radius: 10px; background: #f4efe2; color: #1c1a16; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1); line-height: 1.25; overflow-wrap: anywhere; box-shadow: 0 2px 0 #1c1a16, 0 0 0 2px #1c1a16; will-change: transform; }
 /* A player's name tag is a button: their card. */
@@ -358,6 +374,10 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 /* Small text buttons under a card: another code, another email, sign out. */
 .card .links { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; font-size: 14px; color: #9d978a; }
 .card .links .who { min-width: 0; overflow-wrap: anywhere; }
+.card .links.center { justify-content: center; }
+/* The first card with sign-in: the pitch, a name and a big Play now; signing in is the quiet link under it. */
+.card .pitch { color: #d3ccbb; }
+.card button.big { font-size: 22px; padding: 13px 14px; }
 .card button.link { background: none; padding: 6px 2px; font-family: var(--font-text); font-size: 14px; font-weight: 700; color: #d3ccbb; text-decoration: underline; text-underline-offset: 3px; }
 .card button.link:disabled { text-decoration: none; opacity: .55; }
 .card button:focus-visible { outline: 2px solid #ffcf5a; outline-offset: 2px; }
@@ -375,10 +395,12 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   .card { gap: 8px; padding: 12px 18px 12px; width: min(100%, 420px); }
   .card h1 { font-size: 24px; }
   .card .intro, .card .fine { display: none; }
+  .card .pitch { font-size: 13px; line-height: 1.35; }
   .card .err { min-height: 1.1em; font-size: 13px; }
   .card input { padding: 8px 12px; }
   .card input.code { font-size: 24px; padding: 6px 12px; }
   .card button { padding: 8px 14px; }
+  .card button.big { font-size: 20px; padding: 9px 14px; }
   .card .legal { padding-top: 4px; }
 }
 /* Narrow phones: less margin around the card, so its lines (the small print too) do not wrap.

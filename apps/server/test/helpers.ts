@@ -5,7 +5,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
-import { DROP_LIFETIME_MS, ENERGY_MAX, PROTOCOL_VERSION, type BagSlot, type ClientMsg, type DropView, type ServerMsg } from '@napoland/shared';
+import { DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, PROTOCOL_VERSION, type BagSlot, type ClientMsg, type DropView, type ServerMsg } from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
@@ -226,6 +226,96 @@ export async function signInAndClaim(storage: Storage): Promise<void> {
   }
 }
 
+/**
+ * Play first, sign in to keep it, on `storage` (in memory, or a real database), in dev mode: a name
+ * makes a guest whose token alone brings it back; signing in with that token keeps it (and from then
+ * on the token alone plays it no more); an account that has a character of its own is asked first,
+ * and the guest stays as it was.
+ */
+export async function playFirstThenSignIn(storage: Storage): Promise<void> {
+  setLogLevel('silent');
+  const server = await startServer({ ...serverDefaults(), storage, items: itemsData(), auth: devAuth() });
+  const clients: Client[] = [];
+  const say = async (hello: Partial<Extract<ClientMsg, { t: 'hello' }>>) => {
+    const c = await Client.open(server.port);
+    clients.push(c);
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, ...hello });
+    return c;
+  };
+  const gone = (id: string) => waitFor(() => !server.world.has(id), 'the player to leave');
+  try {
+    const name = newName();
+    const first = await say({ name });
+    const guest = await first.next('welcome');
+    expect(guest).toMatchObject({ name, guest: true, token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) });
+    expect(await storage.findByTokenHash(hashToken(guest.token!))).toMatchObject({ id: guest.you, authSub: null });
+    first.ws.close();
+    await gone(guest.you);
+
+    const back = await (await say({ token: guest.token })).next('welcome');
+    expect(back).toMatchObject({ you: guest.you, guest: true, token: guest.token });
+    // Seen as it came back: the cleanup of guests who stayed away counts from now.
+    expect((await storage.findByTokenHash(hashToken(guest.token!)))!.lastSeenAt).toBeGreaterThan(Date.now() - 60_000);
+
+    // An account that has a character already: it says so, and the guest is left as it was.
+    const theirs = await (await say({ auth: 'owner@example.test', name: newName() })).next('welcome');
+    const asked = await say({ auth: 'owner@example.test', token: guest.token });
+    expect(await asked.next('error')).toMatchObject({ code: 'has_character', name: theirs.name });
+    expect((await storage.findByTokenHash(hashToken(guest.token!)))!.authSub).toBeNull();
+
+    // An account without one keeps the guest: the claim, and it is no guest any more.
+    const kept = await (await say({ auth: 'wren@example.test', token: guest.token })).next('welcome');
+    expect(kept).toMatchObject({ you: guest.you, name, claimed: true, guest: false });
+    expect(kept.token).toBeUndefined();
+    expect(await storage.findByAuthSub('dev:wren@example.test')).toMatchObject({ id: guest.you, tokenHash: hashToken(guest.token!) });
+
+    // Its token alone plays it no more: only whoever signed in with it does.
+    const alone = await say({ token: guest.token });
+    expect(await alone.next('error')).toMatchObject({ code: 'sign_in_required' });
+    expect((await alone.closed).code).toBe(1000);
+  } finally {
+    for (const c of clients) c.ws.terminate();
+    await server.stop();
+  }
+}
+
+/**
+ * Guests who stayed away GUEST_DAYS are forgotten, on `storage` (in memory, or a real database, with
+ * nobody else in it): with their pile, marks, links and messages, and their name is free again. A guest
+ * seen since, and anyone signed in however long ago, stay. Returns who went, and who reported them.
+ */
+export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ away: string; reporter: string }> {
+  const now = Date.now(), cutoff = now - GUEST_DAYS * 86_400_000;
+  const away = await savedPlayer(storage, { lastSeenAt: cutoff - 1000 });
+  const lately = await savedPlayer(storage, { lastSeenAt: cutoff + 60_000 });
+  const signed = await savedPlayer(storage, { lastSeenAt: cutoff - 86_400_000, tokenHash: null, authSub: `dev:${randomUUID()}@example.test` });
+  const back = await savedPlayer(storage, { lastSeenAt: cutoff - 1000 });
+  await storage.saveDrop({ owner: away.id, name: away.name, map: 'woods', x: 3, y: 6, items: [{ item: 'moss', count: 1 }], droppedAt: now - 1000 });
+  await storage.saveMark({ id: 7_000_001, owner: away.id, name: away.name, color: '#fff', map: 'woods', x: 3, y: 5, dir: 'up', placedAt: now - 1000 });
+  await storage.setLink(away.id, signed.id, 'friend', true);
+  await storage.setLink(signed.id, away.id, 'friend', true);
+  await storage.addTell({ from: away.id, to: signed.id, text: 'see you out there', at: now - 1000 });
+  await storage.addReport({ reporter: signed.id, reported: away.id, reason: 'spam', quote: null, at: now - 1000 });
+  // Coming back counts: seen now, it stays.
+  expect(await storage.seen(back.id, now)).toBe(true);
+
+  expect(await storage.forgetGuests(cutoff)).toBe(1);
+  expect(await storage.findByTokenHash(hashToken(away.token))).toBeNull();
+  expect(await storage.nameTaken(away.name)).toBe(false);
+  expect((await storage.loadDrops(now - DROP_LIFETIME_MS)).map(d => d.owner)).not.toContain(away.id);
+  expect((await storage.loadMarks(now - 86_400_000)).map(m => m.owner)).not.toContain(away.id);
+  expect(await storage.linksOf(signed.id)).toEqual([]);
+  expect(await storage.tellsTo(signed.id)).toEqual([]);
+  expect(await storage.seen(away.id, now)).toBe(false);
+  for (const stays of [lately, signed, back]) expect(await storage.findPerson({ id: stays.id }), stays.name).not.toBeNull();
+  // Nobody else has stayed away that long.
+  expect(await storage.forgetGuests(cutoff)).toBe(0);
+  // The day this server began to delete guests is kept from the first time it is asked.
+  const began = await storage.guestsSince(now);
+  expect(await storage.guestsSince(now + 86_400_000)).toBe(began);
+  return { away: away.id, reporter: signed.id };
+}
+
 /** What every test server gets unless the test says otherwise: the fixture maps, home in the town. */
 export const serverDefaults = (): ServerOptions => ({
   host: '127.0.0.1', port: 0, storage: new MemoryStorage(), maps: fixtureMaps(), homeMap: 'town',
@@ -258,11 +348,15 @@ export function setup(options: Partial<ServerOptions> | (() => Partial<ServerOpt
     clients.push(c);
     return c;
   };
-  /** Says hello and takes the welcome, and the energy, friends list and unread messages that follow it, out of the inbox. */
+  /**
+   * Says hello and takes the welcome, and the energy, friends list and unread messages that follow it,
+   * out of the inbox. A guest gets no friends list and no messages: those wait for sign-in.
+   */
   const welcomed = async (c: Client, hello: ClientMsg) => {
     c.send(hello);
     const welcome = await c.next('welcome');
     expect(await c.next('energy')).toEqual({ t: 'energy', energy: welcome.energy, body: expect.any(Object) });
+    if (welcome.guest) return welcome;
     await c.next('friends');
     await c.next('tells');
     return welcome;
@@ -298,8 +392,11 @@ export function setup(options: Partial<ServerOptions> | (() => Partial<ServerOpt
  */
 export async function keepsFriendsAndMessages(storage: Storage): Promise<void> {
   const a = await savedPlayer(storage), b = await savedPlayer(storage);
-  expect(await storage.findPerson({ name: a.name.toUpperCase() })).toEqual({ id: a.id, name: a.name, requestsOff: false });
+  expect(await storage.findPerson({ name: a.name.toUpperCase() })).toEqual({ id: a.id, name: a.name, requestsOff: false, signedIn: false });
   expect(await storage.findPerson({ id: randomUUID() })).toBeNull();
+  // Whether anyone signed in with them: a guest cannot be asked to be friends.
+  const signed = await savedPlayer(storage, { tokenHash: null, authSub: `dev:${randomUUID()}@example.test` });
+  expect((await storage.findPerson({ id: signed.id }))?.signedIn).toBe(true);
   await storage.setRequestsOff(b.id, true);
   expect((await storage.findPerson({ id: b.id }))?.requestsOff).toBe(true);
 

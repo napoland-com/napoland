@@ -7,7 +7,7 @@ import '@fontsource-variable/fredoka';
 import '@fontsource-variable/nunito';
 import './style.css';
 import {
-  HUM_BEFORE_S, bagSlotsOf, surgeFront, type AuthConfig, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, bagSlotsOf, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
@@ -98,7 +98,7 @@ const showStatus = () => {
     energy: game.energy(now), body: game.bodyNow(now), surge: game.surgeNow(now), caught: game.caught(now), stone: game.stone, stats: game.stats, bag: game.bag, items,
     progress: game.progress, resists: resistText(game.myGear, items, game.myWorn),
     wear: wearText(game.myGear, game.myWorn, items), quirks: quirkNames(game.myWorn, items),
-    storm: game.stormNow(now), flash: game.flashed(now), weather, wilds: game.map.data.kind === 'wilds',
+    storm: game.stormNow(now), flash: game.flashed(now), weather, wilds: game.map.data.kind === 'wilds', guest: game.guest,
   }));
 };
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
@@ -111,7 +111,9 @@ const controls = {
 const hud = new Hud(screen, {
   ...controls,
   dialogTap: () => game.advanceDialog(),
-  logout: () => signOut(),
+  // A guest's account row signs in; anyone else's signs (or logs) out.
+  logout: () => (game.guest ? startSignIn() : signOut()),
+  signIn: () => startSignIn(),
   // Using something shows what it did over your head (and on the energy bar), so the bag closes.
   use: slot => { game.use(slot); hud.toggleBag(false); },
   discard: slot => game.discard(slot),
@@ -194,8 +196,8 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) keys.
 // ---------- arriving on another map ----------
 /** Set when a collapse arrives: you were carrying something, which now lies where you fell. */
 let leftPile = false;
-/** Said under the map's name when you arrive: this sign-in just made the character yours. */
-let claimNote = '';
+/** Said in place of the map's name when you arrive: you just signed in (signin.news). */
+let signedInNews: { title: string; sub: string } | null = null;
 /** On the black screen: apply what waited, build the new map's view (freeing the old one) and say where you are. */
 const arrival = new Arrival(held => {
   const now = performance.now();
@@ -214,25 +216,29 @@ const arrival = new Arrival(held => {
     resize();
   }
   if (collapsed) hud.showBanner('You collapsed from exhaustion', leftPile ? 'You woke up at home.\nWhat you carried lies where you fell. It fades in an hour.' : 'You woke up at home');
-  else hud.showBanner(game.map.data.name, claimNote);
-  claimNote = '';
+  else if (signedInNews) hud.showBanner(signedInNews.title, signedInNews.sub);
+  else hud.showBanner(game.map.data.name);
+  signedInNews = null;
 });
 
 // ---------- signing in, and status screens ----------
 // One card at a time over the game; signin.ts decides which (see Screen). More ways to sign in
 // (Google, Apple) will go on the email card, above the email. Every sign-in card ends with the
 // small print: the privacy policy, the legal notice and the source code, before anyone signs in.
+/** The game in one line, on the first cards. */
+const PITCH = 'Leave home, gather what glows, and get back before your energy runs out.';
 const overlay = document.createElement('div');
 overlay.className = 'overlay';
 overlay.innerHTML = `
   <form class="card panel" data-el="emailCard" novalidate hidden>
     <h1>napoland</h1>
-    <p class="intro">Leave home, gather what glows, and get back before your energy runs out.</p>
+    <p class="intro">${PITCH}</p>
     <label for="email" data-el="emailLabel">Your email</label>
     <input id="email" name="email" type="email" autocomplete="email" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" maxlength="254" placeholder="you@example.com" />
     <div class="err" data-el="emailErr" role="alert"></div>
     <button type="submit" data-el="emailBtn">Send me a code</button>
     <p class="fine" data-el="emailFine">We email you a ${CODE_LENGTH}-digit code to sign in. No password to remember.</p>
+    <div class="links center" data-el="emailLinks" hidden><button type="button" class="link" data-el="emailBack">Back</button></div>
     ${signInFooter()}
   </form>
   <form class="card panel" data-el="codeCard" novalidate hidden>
@@ -251,10 +257,18 @@ overlay.innerHTML = `
     <label for="name" data-el="nameLabel">Your name</label>
     <input id="name" name="name" autocomplete="nickname" autocapitalize="words" maxlength="16" enterkeyhint="go" placeholder="2 to 16 letters or numbers" />
     <div class="err" data-el="nameErr" role="alert"></div>
-    <button type="submit">Play</button>
+    <button type="submit" data-el="nameBtn">Play</button>
     <div class="links" data-el="nameLinks" hidden><span class="who" data-el="who"></span><button type="button" class="link" data-el="nameSignOut">Sign out</button></div>
+    <div class="links center" data-el="playLinks" hidden><button type="button" class="link" data-el="playSignIn">I have played before: sign in</button></div>
     ${signInFooter()}
   </form>
+  <div class="card panel" data-el="accountCard" hidden>
+    <h1>napoland</h1>
+    <p>This account already has a character, <b data-el="accountName"></b>.</p>
+    <p data-el="accountAsk"></p>
+    <button type="button" data-el="accountPlay"></button>
+    <div class="links center"><button type="button" class="link" data-el="accountBack">Keep playing as a guest</button></div>
+  </div>
   <div class="card panel" data-el="msg">
     <h1>napoland</h1>
     <p data-el="msgText">Loading...</p>
@@ -271,8 +285,17 @@ const nameInput = overlay.querySelector<HTMLInputElement>('#name')!;
 
 /** Set once the server has said how to sign in. */
 let signin: SignIn | undefined;
+/** How this server signs players in (its /auth-config), once it said. */
+let authMode: AuthMode = 'legacy';
+/** Signing out: the page loads again next, and connects only then. */
+let leaving = false;
 /** The kind of card shown, so a card that updates (an error, the resend wait) keeps what was typed and the focus. */
 let shown: Screen['kind'] | null = 'message';
+
+/** A guest's Sign in button (or the menu's row): the sign-in cards, over the game, which it leaves meanwhile. */
+function startSignIn() {
+  signin?.beginSignIn();
+}
 
 function render(s: Screen) {
   const first = s.kind !== shown;
@@ -280,7 +303,9 @@ function render(s: Screen) {
   overlay.hidden = s.kind === 'none';
   card('emailCard').hidden = s.kind !== 'email';
   card('codeCard').hidden = s.kind !== 'code';
-  card('nameCard').hidden = s.kind !== 'name';
+  // The play card is the name card, with the pitch kept on short screens and sign-in beside it.
+  card('nameCard').hidden = s.kind !== 'name' && s.kind !== 'play';
+  text('accountCard').hidden = s.kind !== 'account';
   text('msg').hidden = s.kind !== 'message';
   if (s.kind === 'message') {
     text('msgText').textContent = s.text;
@@ -294,6 +319,9 @@ function render(s: Screen) {
     btn.disabled = s.busy;
     text('emailFine').hidden = s.dev;
     text('emailErr').textContent = s.error;
+    text('emailLinks').hidden = !s.back;
+    button('emailBack').textContent = s.back ?? '';
+    button('emailBack').disabled = s.busy;
     if (first) { emailInput.value = s.email; focusSoon(emailInput); }
   } else if (s.kind === 'code') {
     text('codeEmail').textContent = s.email;
@@ -307,16 +335,29 @@ function render(s: Screen) {
     // A whole code that was wrong goes, so the next one can be typed (or pasted) straight in.
     if (first || (s.error && !s.busy && digits(codeInput.value).length === CODE_LENGTH)) codeInput.value = '';
     if (first || (s.error && !s.busy)) focusSoon(codeInput);
-  } else if (s.kind === 'name') {
+  } else if (s.kind === 'name' || s.kind === 'play') {
+    const play = s.kind === 'play', signedIn = s.kind === 'name' && s.signedIn;
     const intro = text('nameIntro');
-    intro.textContent = s.signedIn ? 'Choose a name for your character.' : 'Leave home, gather what glows, and get back before your energy runs out.';
-    // Without sign-in it is only the welcome, which a short screen can do without.
-    intro.classList.toggle('intro', !s.signedIn);
-    text('nameLabel').textContent = s.signedIn ? 'Name' : 'Your name';
-    text('nameErr').textContent = s.error;
-    text('nameLinks').hidden = !s.signedIn;
-    text('who').textContent = s.who ? `Signed in as ${s.who}` : '';
+    intro.textContent = signedIn ? 'Choose a name for your character.' : PITCH;
+    // Without sign-in it is only the welcome, which a short screen can do without; the first card of
+    // a game with sign-in keeps its pitch, smaller, since it is all a first visit is told.
+    intro.classList.toggle('intro', !signedIn && !play);
+    intro.classList.toggle('pitch', play);
+    text('nameLabel').textContent = signedIn ? 'Name' : 'Your name';
+    const btn = button('nameBtn');
+    btn.textContent = play ? 'Play now' : 'Play';
+    btn.classList.toggle('big', play);
+    const err = text('nameErr');
+    err.textContent = s.error || (play ? s.note : '');
+    err.classList.toggle('ok', play && !s.error && !!s.note);
+    text('nameLinks').hidden = !signedIn;
+    text('playLinks').hidden = !play;
+    text('who').textContent = s.kind === 'name' && s.who ? `Signed in as ${s.who}` : '';
     if (first) focusSoon(nameInput);
+  } else if (s.kind === 'account') {
+    text('accountName').textContent = s.name;
+    text('accountAsk').textContent = `Play as ${s.name}? Your guest character stays in this browser.`;
+    button('accountPlay').textContent = `Play as ${s.name}`;
   }
 }
 
@@ -338,7 +379,15 @@ setInterval(showResend, 500);
 
 card('emailCard').addEventListener('submit', e => { e.preventDefault(); void signin?.submitEmail(emailInput.value); });
 card('codeCard').addEventListener('submit', e => { e.preventDefault(); void signin?.submitCode(codeInput.value); });
-card('nameCard').addEventListener('submit', e => { e.preventDefault(); signin?.submitName(nameInput.value); });
+card('nameCard').addEventListener('submit', e => {
+  e.preventDefault();
+  if (signin?.screen.kind === 'play') signin.playAsGuest(nameInput.value);
+  else signin?.submitName(nameInput.value);
+});
+button('playSignIn').addEventListener('click', () => signin?.beginSignIn());
+button('emailBack').addEventListener('click', () => signin?.back());
+button('accountPlay').addEventListener('click', () => signin?.playAccount());
+button('accountBack').addEventListener('click', () => void signin?.keepGuest());
 // Typed, pasted ("123 456") or filled in from the email by the phone: digits only, and in it goes once whole.
 codeInput.addEventListener('input', () => {
   const d = digits(codeInput.value);
@@ -352,6 +401,8 @@ button('nameSignOut').addEventListener('click', () => signOut());
 /** "Sign out" (or "Log out" without sign-in): this browser forgets who plays here, and the page starts afresh. */
 function signOut() {
   if (!signin) return;
+  // The page starts afresh after this: it connects then, not before.
+  leaving = true;
   void signin.signOut().then(() => location.reload());
 }
 
@@ -390,8 +441,10 @@ conn.onMessage = (msg: ServerMsg) => {
       if (!known(msg.map) || msg.items !== items.version || msg.story.version !== story.version) return outdated();
       welcomed = true;
       signin?.welcomed(msg);
-      if (msg.claimed) claimNote = 'Your character is now linked to your account. Sign in anywhere to play it.';
+      signedInNews = signin?.news ?? null;
       hud.setName(msg.name);
+      hud.setGuest(msg.guest);
+      hud.setLogoutLabel(msg.guest ? 'Sign in' : authMode === 'legacy' ? 'Log out' : 'Sign out');
       hud.setConnection('online', ping);
       weather = msg.weather;
       view.setWeather(weather);
@@ -413,7 +466,7 @@ conn.onMessage = (msg: ServerMsg) => {
       return;
     case 'error':
       if (msg.code === 'bad_version') outdated();
-      else void signin?.refused(msg.code, msg.message);
+      else void signin?.refused(msg.code, msg.message, msg.name);
       return;
   }
   // A zone, and whatever comes after it, waits for the screen to go black (see arrival.ts).
@@ -424,11 +477,11 @@ conn.onMessage = (msg: ServerMsg) => {
     if (!arrived || view.map !== game.map) {
       arrived = true;
       arrival.cut();
-    } else if (claimNote) {
-      // Back on the same map (a reconnect): no fade, but the news still gets said.
-      hud.showBanner(game.map.data.name, claimNote);
+    } else if (signedInNews) {
+      // Back on the same map (a reconnect, or a guest who just signed in): no fade, but the news still gets said.
+      hud.showBanner(signedInNews.title, signedInNews.sub);
     }
-    claimNote = '';
+    signedInNews = null;
   }
 };
 setInterval(() => conn.send({ t: 'ping', at: performance.now() }), 5000);
@@ -448,12 +501,13 @@ async function boot() {
   if (config.mode === 'supabase') backend = (await import('./supabase')).supabaseBackend(config.url, config.publishableKey);
   signin = new SignIn({
     config, backend, store, tab: tabStore, now: () => Date.now(),
-    connect: () => conn.start(),
+    connect: () => { if (!leaving) conn.start(); },
     disconnect: () => conn.stop(),
     show: render,
     reload: () => location.reload(),
     serverMode: async () => (await loadAuthConfig()).mode,
   });
+  authMode = config.mode;
   hud.setLogoutLabel(config.mode === 'legacy' ? 'Log out' : 'Sign out');
   await signin.start();
 }
@@ -605,7 +659,8 @@ function frame(now: number) {
   }
   const news = `${game.socialNews}${game.chatNews}`;
   if (news !== newsShown) { newsShown = news; hud.setNews(game.socialNews, game.chatNews); }
-  if (hud.friendsOpen && now - friendsAskedAt > FRIENDS_REFRESH_MS) { friendsAskedAt = now; game.social({ t: 'friends' }); }
+  // (A guest has no list to ask for: it waits for sign-in.)
+  if (hud.friendsOpen && !game.guest && now - friendsAskedAt > FRIENDS_REFRESH_MS) { friendsAskedAt = now; game.social({ t: 'friends' }); }
   const benchChanged = game.bench !== benchShown;
   if (benchChanged) {
     if (game.bench && !benchShown) hud.toggleBench(true);

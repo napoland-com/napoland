@@ -6,7 +6,7 @@
  */
 import {
   BAG_SLOTS, SLOTS, itemIndex, liveEnds, liveXp, mendCost, resistOf, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type Quirk,
-  type Recipe, type Refusal, type Slot, type Worn,
+  type Recipe, type Refusal, type RefusedAction, type Slot, type Worn,
 } from '@napoland/shared';
 import type { RecipeView, WornView } from './hud';
 import type { Look } from './view/characters';
@@ -80,8 +80,8 @@ export function useLabel(item: ItemDef): string {
   return 'Use';
 }
 
-/** Why the server said no, in plain words, for a float over your head. */
-export function refusalText(reason: Refusal): string {
+/** Why the server said no, in plain words, for a float over your head (or the chat's or friends' note: `action` says which). */
+export function refusalText(reason: Refusal, action?: RefusedAction): string {
   switch (reason) {
     case 'bag_full': return 'Your bag is full';
     case 'too_far': return 'Too far';
@@ -104,7 +104,8 @@ export function refusalText(reason: Refusal): string {
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
     case 'slow_down': return 'Slow down a little';
-    case 'sign_in_first': return 'Sign in to talk';
+    case 'sign_in_first': return action === 'say' || action === undefined ? 'Sign in to talk' : 'Sign in to make friends';
+    case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'gear_stays': return 'Put gear on from the chest';
     case 'whole': return 'It needs no mending';
   }

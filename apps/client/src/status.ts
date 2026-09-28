@@ -3,8 +3,8 @@
  * can be tested; hud.ts shows it and main.ts asks for it.
  */
 import {
-  ELEMENTS, FEATS, rankOf, rankText, type BagSlot, type BodyView, type Element, type EnergyView, type Feat, type FlashKind, type ProgressView, type Stats, type StoneView, type StormView,
-  type SurgeView, type Weather,
+  ELEMENTS, FEATS, GUEST_DAYS, rankOf, rankText, type BagSlot, type BodyView, type Element, type EnergyView, type Feat, type FlashKind, type ProgressView, type Stats, type StoneView,
+  type StormView, type SurgeView, type Weather,
 } from '@napoland/shared';
 import { minutes, type News } from './game';
 import type { FeatView, StatusView } from './hud';
@@ -33,7 +33,12 @@ export interface StatusInput {
   wear: string | null;
   /** The quirks of what you wear, by name. */
   quirks: string[];
+  /** You play as a guest (the welcome said). */
+  guest?: boolean;
 }
+
+/** What the Status tab tells a guest, above everything else: where their progress lives, how long, and what keeps it. */
+export const GUEST_NOTE = `You are playing as a guest. Your progress lives in this browser: clearing its data loses it, and a guest who stays away for ${GUEST_DAYS} days is deleted. Signing in keeps everything.`;
 
 /** "12,345": a count with its thousands apart, the same in every language the browser speaks. */
 export function thousands(n: number): string {
@@ -100,7 +105,7 @@ export function statusView(s: StatusInput): StatusView {
   if (s.flash) rows.push({ label: 'Flash', text: 'The ground under you is discharging. Step off it!', tone: 'bad' });
   const st = s.stone;
   if (st.need) rows.push({ label: 'Old Stone', text: st.awake ? `Awake for ${minutes(st.left)}. Surges are gentler.` : `Asleep. ${st.charge} of ${st.need} shards.`, tone: st.awake ? 'good' : 'plain' });
-  return { rows, feats: FEATS.map(f => featView(f, s.stats[f.stat] ?? 0)) };
+  return { rows, feats: FEATS.map(f => featView(f, s.stats[f.stat] ?? 0)), ...(s.guest && { guest: GUEST_NOTE }) };
 }
 
 /** The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a feat, a level, a chapter of the story. Null: nothing to say. */

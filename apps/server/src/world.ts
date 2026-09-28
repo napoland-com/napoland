@@ -293,6 +293,11 @@ export interface WorldOptions {
   cycle?: boolean;
   /** Game time now, when the world starts: the fires out there start burning from here. */
   now?: number;
+  /**
+   * Players sign in on this server (dev or supabase), so one nobody signed in with (authSub null)
+   * plays as a guest, and everyone sees it (PlayerView.guest): no friends with them until they sign in.
+   */
+  guests?: boolean;
 }
 
 interface Online {
@@ -404,8 +409,9 @@ interface Flare {
 }
 
 const quirksOf = (w: Worn | undefined): Quirk[] => SLOTS.flatMap(s => (w?.[s]?.quirk ? [w[s]!.quirk!] : []));
-const view = (r: PlayerRecord, live = false): PlayerView => ({
+const view = (r: PlayerRecord, live = false, guest = false): PlayerView => ({
   id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn), ...(live ? { live: true as const } : {}),
+  ...(guest ? { guest: true as const } : {}),
 });
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
@@ -486,6 +492,8 @@ export class World {
   private outbox: Outgoing[] = [];
   private sky: Weather;
   private readonly cycle: boolean;
+  /** Players sign in here: one nobody signed in with is a guest (WorldOptions.guests). */
+  private readonly guests: boolean;
   private readonly onCollapse: WorldOptions['onCollapse'];
   private readonly items: Map<string, ItemDef>;
   /** The items in the order of content/items.json: a stash lists them so. */
@@ -575,6 +583,7 @@ export class World {
     this.home = home;
     this.sky = weather;
     this.cycle = options.cycle ?? false;
+    this.guests = options.guests ?? false;
     this.stepMs = options.stepMs ?? STEP_MS;
     this.onCollapse = options.onCollapse;
     this.rng = options.rng ?? Math.random;
@@ -666,7 +675,12 @@ export class World {
 
   /** Everyone on a map. */
   views(mapId: string): PlayerView[] {
-    return [...(this.onMap.get(mapId) ?? [])].map(p => view(p.rec, p.live > 0));
+    return [...(this.onMap.get(mapId) ?? [])].map(p => this.viewOf(p));
+  }
+
+  /** A player as everyone sees them. */
+  private viewOf(p: Online): PlayerView {
+    return view(p.rec, p.live > 0, this.guests && p.rec.authSub === null);
   }
 
   /** What lies on a map to pick up. */
@@ -733,7 +747,7 @@ export class World {
     this.refresh(p, now);
     this.players.set(r.id, p);
     this.onMap.get(map.data.id)!.add(p);
-    const player = view(r, p.live > 0);
+    const player = this.viewOf(p);
     this.toMap(map.data.id, { t: 'join', player }, r.id);
     // The welcome has the energy too; the message after it is what a client listens to from then on.
     this.tell(p, now);
@@ -1341,7 +1355,7 @@ export class World {
     const { id, x, y, dir } = p.rec;
     const here = p.map.data.id;
     this.toMap(from.data.id, { t: 'leave', id }, id);
-    this.toMap(here, { t: 'join', player: view(p.rec, p.live > 0) }, id);
+    this.toMap(here, { t: 'join', player: this.viewOf(p) }, id);
     this.outbox.push({
       to: id,
       msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), stats: { ...p.rec.stats }, reason },

@@ -5,6 +5,8 @@
  * one map. Nothing a client sends is trusted. It also stores players (now and then, and when they
  * leave), piles and marks (whenever one changes) and the Old Stone (whenever it is fed or falls asleep).
  * Friends, requests, blocks, private messages and reports go to social.ts, one player's in order.
+ * On a server with sign-in, whoever says hello without it plays as a guest (a character that lives
+ * in their browser, by its token); signing in later with that token keeps the character.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
@@ -51,6 +53,7 @@ const CLOSE_CODES: Record<ErrorCode, number> = {
   replaced: 1000,
   need_name: 1000,
   sign_in_required: 1000,
+  has_character: 1000,
   server_full: 1013,
 };
 const VERSION_TEXT = `This server speaks protocol version ${PROTOCOL_VERSION}; reload to update`;
@@ -98,6 +101,8 @@ interface Session {
   id: string;
   /** The map whose news this player hears, once in the world. */
   map: string;
+  /** Plays as a guest (nobody signed in with the character, on a server with sign-in): no chat, no friends. */
+  guest: boolean;
   /** Rate limit: a token bucket. */
   tokens: number;
   refilledAt: number;
@@ -111,7 +116,7 @@ type Hello = Extract<ClientMsg, { t: 'hello' }>;
 /** Who a hello turned out to be, and what their welcome says about how they got in. */
 interface Entry {
   rec: PlayerRecord;
-  /** Without sign-in: the token they logged in with, or the new player's new one. */
+  /** Without sign-in (legacy, or a guest): the token they logged in with, or the new player's new one. */
   token?: string;
   /** This sign-in just claimed the character of the hello's token. */
   claimed?: true;
@@ -148,9 +153,13 @@ export function attachNet(o: NetOptions): Net {
   const warnConnections = throttledLog('warn', 'too many connections from one address', clock);
   const warnNewPlayers = throttledLog('warn', 'too many new players from one address', clock);
   const warnCannotCheck = throttledLog('error', 'cannot check sign-ins (are Supabase\'s keys reachable?)', clock);
+  /** Players sign in on this server, so whoever has not plays as a guest. */
+  const guests = auth.mode !== 'legacy';
   const social = new Social({
     storage,
     clock,
+    guests,
+    isGuest: id => playing.get(id)?.guest ?? false,
     where: id => playing.get(id)?.map || undefined,
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
   });
@@ -192,6 +201,7 @@ export function attachNet(o: NetOptions): Net {
       state: 'hello',
       id: '',
       map: '',
+      guest: false,
       tokens: RATE_BURST,
       refilledAt: clock(),
       alive: true,
@@ -298,7 +308,8 @@ export function attachNet(o: NetOptions): Net {
       case 'report':
       case 'requests':
       case 'friends':
-        return befriends(s.id, () => social.handle(s.id, msg as SocialMsg));
+        // Whether they play as a guest is taken now: the action may run after they have left.
+        return befriends(s.id, () => social.handle(s.id, msg as SocialMsg, s.guest));
       case 'say':
         return chat.say(s.id, msg.to, msg.text);
       case 'hello':
@@ -333,14 +344,16 @@ export function attachNet(o: NetOptions): Net {
   }
 
   async function hello(s: Session, msg: Hello): Promise<void> {
-    const entry = auth.mode === 'legacy' ? await legacyHello(s, msg) : await signedInHello(s, msg);
+    const entry = auth.mode === 'legacy' ? await legacyHello(s, msg) : msg.auth === undefined ? await guestHello(s, msg) : await signedInHello(s, msg);
     if (!entry || s.state !== 'auth') return;
     // Signed in again while still online (another tab, or a reconnect before the old socket
-    // timed out): the old connection goes, and the freshest position comes with the player.
+    // timed out): the old connection goes, and the freshest position comes with the player. Whose
+    // character it is comes from storage: a guest may have been claimed just now.
     const old = playing.get(entry.rec.id);
     if (old) {
       send(old, { t: 'error', code: 'replaced', message: 'You are playing somewhere else' });
-      entry.rec = disconnect(old, CLOSE_CODES.replaced, 'replaced', false) ?? entry.rec;
+      const live = disconnect(old, CLOSE_CODES.replaced, 'replaced', false);
+      if (live) entry.rec = { ...live, authSub: entry.rec.authSub };
     }
     enter(s, entry);
   }
@@ -358,9 +371,32 @@ export function attachNet(o: NetOptions): Net {
   }
 
   /**
+   * On a server with sign-in, without it: a guest. The token this browser keeps plays its character,
+   * unless someone has signed in with it since (then only they play it, signed in); a name makes a
+   * new guest, held to the name rules and the limit of new players per address like anyone new.
+   */
+  async function guestHello(s: Session, msg: Hello): Promise<Entry | undefined> {
+    if (msg.token !== undefined) {
+      const rec = await storage.findByTokenHash(hashToken(msg.token));
+      if (s.state !== 'auth') return undefined;
+      if (!rec) return void fail(s, 'unknown_token', 'Unknown token: choose a name');
+      if (rec.authSub !== null) return void fail(s, 'sign_in_required', 'This character belongs to an account: sign in to play it');
+      // Seen before it plays: the cleanup of guests who stayed away, should it run meanwhile, spares it (or had taken it).
+      const here = await storage.seen(rec.id, Date.now());
+      if (s.state !== 'auth') return undefined;
+      if (!here) return void fail(s, 'unknown_token', 'Unknown token: choose a name');
+      return room(s, rec) ? { rec, token: msg.token } : undefined;
+    }
+    if (msg.name !== undefined) return newPlayer(s, msg.name, null);
+    return void fail(s, 'sign_in_required', 'Sign in, or choose a name to play as a guest');
+  }
+
+  /**
    * With sign-in: `auth` must prove who this is. They get their character; without one, the
-   * character of the hello's token if nobody has claimed it yet (made before sign-in, on this
-   * browser); without that, a new one with the hello's name; without a name, need_name.
+   * character of the hello's token if nobody has claimed it yet (a guest, or made before sign-in,
+   * on this browser); without that, a new one with the hello's name; without a name, need_name.
+   * One character per identity: an account that has one already never takes the guest of the
+   * hello's token, and says so (has_character) rather than play in its place unasked.
    */
   async function signedInHello(s: Session, msg: Hello): Promise<Entry | undefined> {
     const sub = await identify(s, msg.auth);
@@ -368,7 +404,14 @@ export function attachNet(o: NetOptions): Net {
     if (sub === undefined) return void fail(s, 'sign_in_required', 'Sign in to play');
     const mine = await storage.findByAuthSub(sub);
     if (s.state !== 'auth') return undefined;
-    if (mine) return room(s, mine) ? { rec: mine } : undefined;
+    if (mine) {
+      if (msg.token !== undefined && hashToken(msg.token) !== mine.tokenHash) {
+        const guest = await storage.findByTokenHash(hashToken(msg.token));
+        if (s.state !== 'auth') return undefined;
+        if (guest && guest.authSub === null) return void fail(s, 'has_character', 'This account already has a character', mine.name);
+      }
+      return room(s, mine) ? { rec: mine } : undefined;
+    }
     if (msg.token !== undefined) {
       const claimed = await claim(s, sub, msg.token);
       if (claimed || s.state !== 'auth') return claimed;
@@ -413,8 +456,8 @@ export function attachNet(o: NetOptions): Net {
   }
 
   /**
-   * A new player at the home map's spawn: with a new token without sign-in (`sub` null), or
-   * belonging to `sub`. Undefined if that failed the session.
+   * A new player at the home map's spawn: with a new token without sign-in (`sub` null: in legacy
+   * mode, or a guest), or belonging to `sub`. Undefined if that failed the session.
    */
   async function newPlayer(s: Session, name: string, sub: string | null): Promise<Entry | undefined> {
     if (isFull()) return void fail(s, 'server_full', FULL_TEXT);
@@ -442,7 +485,7 @@ export function attachNet(o: NetOptions): Net {
       // create() also refuses the name if another player took it since nameTaken().
       made = await storage.create(rec);
       if (made) {
-        log.info('player created', { id, name });
+        log.info('player created', { id, name, ...(guests && sub === null && { guest: true }) });
         entry = token === undefined ? { rec } : { rec, token };
       } else if (sub !== null) {
         // Or this identity got a character meanwhile (two tabs at once): then it plays that one.
@@ -462,6 +505,7 @@ export function attachNet(o: NetOptions): Net {
     const joined = world.join(rec, clock());
     s.state = 'play';
     s.id = rec.id;
+    s.guest = guests && rec.authSub === null;
     playing.set(rec.id, s);
     hear(s, joined.map.id);
     send(s, {
@@ -471,6 +515,7 @@ export function attachNet(o: NetOptions): Net {
       name: rec.name,
       ...(token !== undefined && { token }),
       ...(claimed && { claimed }),
+      guest: s.guest,
       map: joined.map,
       players: joined.players,
       finds: joined.finds,
@@ -497,15 +542,17 @@ export function attachNet(o: NetOptions): Net {
       serverTime: Date.now(),
     });
     flush();
-    befriends(rec.id, () => social.joined(rec.id));
-    log.info('player joined', { id: rec.id, name: rec.name, map: joined.map.id, online: world.size });
+    const guest = s.guest;
+    befriends(rec.id, () => social.joined(rec.id, guest));
+    log.info('player joined', { id: rec.id, name: rec.name, map: joined.map.id, online: world.size, ...(guest && { guest }) });
   }
 
   const isFull = () => world.size + joining >= o.maxPlayers;
 
-  function fail(s: Session, code: ErrorCode, message: string): void {
+  /** Ends the hello (or the game here) with an error; `name` goes with has_character. */
+  function fail(s: Session, code: ErrorCode, message: string, name?: string): void {
     if (s.state === 'closed') return;
-    send(s, { t: 'error', code, message });
+    send(s, { t: 'error', code, message, ...(name !== undefined && { name }) });
     disconnect(s, CLOSE_CODES[code], code);
   }
 
