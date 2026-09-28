@@ -2,7 +2,7 @@
 id: richer-places
 title: More of the story in the places, and tall grass to hide in
 status: done
-order: 300
+order: 390
 area: world
 depends: [south-road, creatures]
 ---
