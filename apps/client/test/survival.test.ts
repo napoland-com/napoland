@@ -6,7 +6,7 @@ import { Items, factsOf, refusalText, slotViews, useLabel } from '../src/items';
 import { Maps } from '../src/maps';
 import { drainText, newsBanner, statusView } from '../src/status';
 import { fireLevel } from '../src/view/fire';
-import { ASLEEP, DRY, FULL, itemsData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
+import { ASLEEP, DRY, FULL, boardView, itemsData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
 
 /**
  * A 7x7 patch of wilds that surges: a campfire at 3,1, the Old Stone at 5,3, a notice board at 1,3,
@@ -132,12 +132,21 @@ describe('A at a fire, the Old Stone and the notice board', () => {
     expect(g.note?.text).toBe('The Old Stone takes 2 shards: 9 of 20.');
   });
 
-  it('asks the server for the notice board, and shows what it says', () => {
+  it('asks the server for the notice board, and opens its panel with what it says; read again while open, and nothing once put away', () => {
     g.handle(welcome(camp(), [me(1, 4)]), now);
     g.pressA();
     expect(sent).toEqual([{ t: 'board', x: 1, y: 3 }]);
-    g.handle({ t: 'board', lines: ['Rain.', 'Nobody collapsed in the last hour.'] }, now);
-    expect(g.dialog).toMatchObject({ who: 'Notice board', lines: ['Rain.', 'Nobody collapsed in the last hour.'] });
+    const board = boardView();
+    g.handle({ t: 'board', board }, now);
+    expect(g.board).toEqual({ x: 1, y: 3, view: board, at: now });
+    expect(g.dialog).toBeNull();
+    // Read again while its panel is open (main.ts, every so often): the same board.
+    g.rereadBoard();
+    expect(sent.at(-1)).toEqual({ t: 'board', x: 1, y: 3 });
+    // Put away before it answered: the answer opens nothing.
+    g.closeBoard();
+    g.handle({ t: 'board', board }, now);
+    expect(g.board).toBeNull();
   });
 
   it('walks up to a fire that is tapped, and asks to feed it', () => {

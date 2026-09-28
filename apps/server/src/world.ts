@@ -132,7 +132,6 @@ import {
   THANKS_PER_TRIP,
   THANKS_REACH,
   UTC_CALENDAR,
-  WEEKDAYS,
   WHOLE_WEEK,
   FIRST_STEPS,
   FLASH_BURST_S,
@@ -153,7 +152,6 @@ import {
   activeConditions,
   addAllToBag,
   addToBag,
-  amount,
   bagLoad,
   bagShort,
   bagSlotsOf,
@@ -181,7 +179,6 @@ import {
   daysThisWeek,
   emptyNotebook,
   everyDaySoFar,
-  firstOnBoard,
   isKeepsake,
   keepsakeEnergy,
   keepsakeFindId,
@@ -259,7 +256,6 @@ import {
   openInStash,
   openSealed,
   outfitOf,
-  pluralOf,
   progressOf,
   rankOf,
   reachedBy,
@@ -297,13 +293,11 @@ import {
   weekdayOf,
   wetRate,
   whyNotBuy,
-  worksDays,
   keptOffer,
   offerFrom,
   swapOffers,
   traded,
   zoneDay,
-  thousands,
   gateOpen,
   popOf,
   reachedAt,
@@ -323,6 +317,10 @@ import {
   type OfferPick,
   type Arrival,
   type BagSlot,
+  type BoardLongNight,
+  type BoardRegion,
+  type BoardSky,
+  type BoardView,
   type BodyView,
   type Bundle,
   type CacheItemView,
@@ -2914,7 +2912,7 @@ export class World {
   }
 
   /**
-   * Reads the notice board on tile x,y (next to the player): how things stand out there, in plain words.
+   * Reads the notice board on tile x,y (next to the player): how things stand out there (board.ts).
    * Like a talk, it can come in while the steps sent before it still wait in the queue: then it is read
    * once they are walked, or the player would press A and see nothing.
    */
@@ -2929,7 +2927,7 @@ export class World {
   private readBoard(p: Online, x: number, y: number, now: number): void {
     const here = p.map.data.objects.some(o => o.kind === 'board' && o.x === x && o.y === y);
     if (!here || manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
-    this.outbox.push({ to: p.rec.id, msg: { t: 'board', lines: [...this.news(now), ...this.parcelLines(p, now)] } });
+    this.outbox.push({ to: p.rec.id, msg: { t: 'board', board: this.boardView(p, now) } });
   }
 
   /**
@@ -5672,191 +5670,78 @@ export class World {
     return map.data.kind === 'town' || (map.data.kind === 'inside' && this.outside.get(map.data.id) === 'town');
   }
 
-  /** The notice board: the weather, each region's surge clock, the fires that need feeding, recent collapses, the Old Stone. */
-  private news(now: number): string[] {
-    const lines = this.weatherLines(now);
-    // On the Long Night, what it does and the lodge's fire come first; any other time, when it comes follows the season.
-    if (this.nightOn) lines.push(...this.longNightLines(now));
-    lines.push(this.seasonLine(now));
-    if (!this.nightOn) lines.push(...this.longNightLines(now));
-    lines.push(...this.conditionLines(now));
-    // The regions nearest town first: a board read on the way out says what comes first on it.
-    const regions = [...this.maps.values()].sort((a, b) => a.data.depth - b.data.depth);
-    for (const map of regions) {
+  /**
+   * The notice board as data (board.ts), for whoever reads it: the day or the night, each region out
+   * there (its rain, its surge and storm clocks, a slab glowing), the season and the Long Night, the
+   * conditions, the lookouts' lamps, the places mended together, the fires that need feeding, the
+   * collapses of the last hour, the Old Stone, the town, the latest first finders, and their parcels.
+   */
+  private boardView(p: Online, now: number): BoardView {
+    const wall = now + this.epochOffset, d = dayAt(wall);
+    const sky: BoardSky = !this.cycle
+      ? { kind: 'fixed', weather: this.sky }
+      : d.into >= d.night
+        ? { kind: 'night', night: d.long ? 'long' : d.aurora ? 'aurora' : 'night', dawn: DAY_S - d.into }
+        : { kind: 'day', dusk: d.night - d.into };
+    // The regions nearest town first, as you would walk out to them: a board read on the way out says what comes first on it.
+    const regions = [...this.maps.values()].filter(m => m.data.kind === 'wilds').sort((a, b) => a.data.depth - b.data.depth).map((map): BoardRegion => {
+      const r: BoardRegion = { id: map.data.id, name: map.data.name, glowing: [] };
+      if (sky.kind === 'day') {
+        const rain = rainAhead(wall, map.data.rain);
+        r.rain = rain && { raining: rain.raining, left: rain.left };
+      }
       const s = this.surgeOf(map, now), rule = map.data.surge;
-      if (!s || !rule) continue;
-      if (s.phase === 'surge') lines.push(`${map.data.name}: a surge is on, ${about(s.left)} more. Get to a light.`);
-      else if (s.phase === 'unstable') lines.push(`${map.data.name}: restless. A surge comes ${about(s.left)}.`);
-      else lines.push(`${map.data.name}: calm. The next surge comes ${about(untilSurge(rule, s))}.`);
-      // Restless, the slab glows (slab.ts): two people there now can open it.
-      if (slabGlows(s)) for (const o of map.data.objects) if (o.kind === 'slab') lines.push(`${capital(o.name)} is glowing.`);
+      if (s && rule) {
+        r.surge = s.phase === 'calm' ? { phase: 'calm', next: untilSurge(rule, s) } : { phase: s.phase, left: s.left };
+        // Restless, the slab glows (slab.ts): two people there now can open it.
+        if (slabGlows(s)) r.glowing = map.data.objects.flatMap(o => (o.kind === 'slab' ? [o.name] : []));
+      }
+      const st = this.stormOf(map, now), storm = map.data.storm;
+      if (st && storm) r.storm = st.phase === 'clear' ? { phase: 'clear', next: st.left + storm.warn } : { phase: st.phase, left: st.left };
+      return r;
+    });
+    const season = this.seasonNow(now), night = this.night, next = longNightAt(wall);
+    const longNight: BoardLongNight = this.nightOn && night
+      ? { on: true, bonus: night.bonus, ...(this.nightFire ? { fire: night.out ? { out: true as const } : { out: false as const, left: Math.max(0, (night.outAt - wall) / 1000) } } : {}) }
+      : { on: false, in: next.left, bonus: this.bonusFor(next.week) };
+    // The fire lookouts' lamps of the world everyone shares, and the places mended together, each on the map it stands on.
+    const lamps = [...this.maps.values()].flatMap(map => this.lamps.in(map.data.id, map).map(l => ({ map: map.data.id, name: map.data.name, left: this.lamps.left(l, now) })));
+    const standsOn = (id: string) => [...this.maps.values()].find(m => m.data.objects.some(o => (o.kind === 'footbridge' && o.id === id) || (o.kind === 'lamp' && o.works === id)))?.data.id;
+    const works = [...this.works.defs.values()].map(def => ({ ...this.works.view(def.id), ...(standsOn(def.id) ? { map: standsOn(def.id)! } : {}) }));
+    // The fires of the world everyone shares: each map's main copy, a shelter's under the region its door opens onto. The lodge's, on the Long Night, is said with it.
+    const fires: BoardView['fires'] = { out: [], low: [], count: 0 }, lodge = this.lodge()?.fire;
+    for (const map of this.maps.values()) {
+      const zone = this.main(map).fires;
+      for (const f of zone.all()) {
+        if (f.tended || f === lodge) continue;
+        fires.count++;
+        const left = zone.left(f, now), at = { name: fireName(f), map: (map.data.kind === 'inside' && this.around.get(map.data.id)?.data.id) || map.data.id };
+        if (left <= 0) fires.out.push(at);
+        else if (left < FIRE_LOW_S * 2) fires.low.push(at);
+      }
     }
-    for (const map of regions) {
-      const s = this.stormOf(map, now), rule = map.data.storm;
-      if (!s || !rule) continue;
-      if (s.phase === 'storm') lines.push(`${map.data.name}: a storm is on, ${about(s.left, true)} more. Get under a roof.`);
-      else if (s.phase === 'coming') lines.push(`${map.data.name}: a storm is coming ${about(s.left)}.`);
-      else lines.push(`${map.data.name}: clear. The next storm comes ${about(s.left + rule.warn)}.`);
-    }
-    // The fire lookouts' lamps of the world everyone shares: how long each burns, or that it is out.
-    for (const map of this.maps.values()) for (const l of this.lamps.in(map.data.id, map)) {
-      const left = this.lamps.left(l, now), where = map.data.name.replace(/^The /, 'the ');
-      lines.push(left > 0
-        ? `The fire lookout in ${where}: its lamp burns for ${about(left, true)} more, and its beam sweeps the woods.`
-        : `The fire lookout in ${where}: its lamp is out. It burns resin: feed it at the foot of the ladder.`);
-    }
-    // The places mended together: whether each stands and for how long, or how far it is from standing again.
-    for (const def of this.works.defs.values()) lines.push(worksLine(def, this.works.view(def.id), this.items.get(def.item)));
-    // The fires of the world everyone shares: each map's main copy. The lodge's, on the Long Night, has a line of its own.
-    const low: string[] = [], out: string[] = [], fires = [...this.maps.values()].map(m => this.main(m).fires), lodge = this.lodge()?.fire;
-    const burnsDown = (f: Fire) => !f.tended && f !== lodge;
-    for (const zone of fires) for (const f of zone.all()) {
-      if (!burnsDown(f)) continue;
-      const left = zone.left(f, now);
-      if (left <= 0) out.push(fireName(f));
-      else if (left < FIRE_LOW_S * 2) low.push(fireName(f));
-    }
-    if (out.length) lines.push(`Gone out: ${listOf(out)}. Bring something that burns.`);
-    if (low.length) lines.push(`Burning low: ${listOf(low)}.`);
-    if (!out.length && !low.length && fires.some(zone => zone.all().some(burnsDown))) lines.push('Every shelter fire is burning.');
-    const recent = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
-    if (recent.length) {
-      const by = new Map<string, number>();
-      for (const c of recent) by.set(c.map, (by.get(c.map) ?? 0) + 1);
-      lines.push(`Collapsed in the last hour: ${[...by].map(([m, n]) => `${n} in ${this.maps.get(m)?.data.name ?? m}`).join(', ')}.`);
-    } else lines.push('Nobody collapsed in the last hour.');
-    if (this.stone) {
-      const st = this.stoneView(now);
-      lines.push(st.awake ? `The Old Stone is awake: surges are gentler for ${about(st.left, true)}.` : `The Old Stone sleeps. ${st.charge} of ${st.need} shards fed.`);
-    }
-    lines.push(...this.townLines());
-    // The latest three first finders, the latest first: something to talk about, and somewhere nobody has been.
-    const latest = [...this.firsts.values()].sort((a, b) => b.at - a.at).flatMap(f => {
+    const by = new Map<string, number>();
+    for (const c of this.collapses) if (now - c.at < COLLAPSES_MS) by.set(c.map, (by.get(c.map) ?? 0) + 1);
+    // The latest first finders, the latest first: something to talk about, and somewhere nobody has been.
+    const firsts = [...this.firsts.values()].sort((a, b) => b.at - a.at).flatMap(f => {
       const title = secretTitle(f.secret, this.notesById, this.items);
-      return title ? [firstOnBoard(firstView(f), title)] : [];
-    });
-    lines.push(...latest.slice(0, FIRSTS_ON_BOARD));
-    return lines;
-  }
-
-  /**
-   * The notice board on the town (town.ts): who came back, and since which of the Zone's days; what the
-   * works of the ledger at the lodge still want, or that they are done. Never how near a milestone is:
-   * the town finds that out when it happens.
-   */
-  private townLines(): string[] {
-    const t = this.townData;
-    if (!t) return [];
-    const done = new Map(this.town.done.map(d => [d.id, d]));
-    const back = t.milestones.filter(m => m.back && done.has(m.id)).map(m => `${m.back}, since day ${thousands(done.get(m.id)!.day)}`);
-    const want = t.works.filter(w => !done.has(w.id)).map(w => {
-      const left = workLeft(w, this.town.given[w.id]).flatMap(n => { const d = this.items.get(n.item); return d ? [amount(d, n.count)] : []; });
-      return `${listOf(left)} for ${lower(w.name)}`;
-    });
-    const fixed = t.works.filter(w => done.has(w.id)).map(w => lower(w.name));
-    return [
-      ...(back.length ? [`Back in town: ${listOf(back)}.`] : []),
-      ...(want.length ? [`The town's ledger at the lodge wants ${want.join('; ')}.`] : []),
-      ...(fixed.length ? [`Mended for good: ${listOf(fixed)}.`] : []),
-    ];
-  }
-
-  /**
-   * The notice board on the weather: the day or the night, one for the whole world, then each region out
-   * there on its own rain ("The Near Woods: rain for about 6 minutes more.", "The South Road: dry for about
-   * 12 minutes, then rain."). A fixed weather is said as it is.
-   */
-  private weatherLines(now: number): string[] {
-    if (!this.cycle) return [`${WEATHER_WORDS[this.sky]}.`];
-    // In winter the rain falls as snow (sky.ts, SEASONS).
-    const wall = now + this.epochOffset, d = dayAt(wall), rain = SEASONS[this.season].snow ? 'snow' : 'rain';
-    if (d.into >= d.night) return [`${d.long ? 'The Long Night' : d.aurora ? 'An aurora night' : 'Night'}: no ${rain} anywhere. Dawn ${about(DAY_S - d.into)}.`];
-    const lines = [`Night falls ${about(d.night - d.into)}.`];
-    // The regions nearest town first, as you would walk out to them.
-    const regions = [...this.maps.values()].filter(m => m.data.kind === 'wilds').sort((a, b) => a.data.depth - b.data.depth);
-    for (const map of regions) {
-      const r = rainAhead(wall, map.data.rain), name = map.data.name;
-      if (!r) lines.push(`${name}: dry until nightfall.`);
-      else if (r.raining) lines.push(`${name}: ${rain} for ${about(r.left, true)} more.`);
-      else lines.push(`${name}: dry for ${about(r.left, true)}, then ${rain}.`);
-    }
-    return lines;
-  }
-
-  /**
-   * The notice board on the Long Night: when the next one comes, and whether it keeps its bonus; while
-   * it is on, what it does, and how the lodge's fire stands ("The lodge's fire needs feeding tonight: 18
-   * minutes left.").
-   */
-  private longNightLines(now: number): string[] {
-    const wall = now + this.epochOffset, r = this.night, bonus = this.nightRegrow?.words;
-    if (!this.nightOn || !r) {
-      const t = longNightAt(wall);
-      if (!this.bonusFor(t.week)) return [`The Long Night comes ${about(t.left)}. The lodge's fire went out on the last one, so this one will only be long and dark.`];
-      return [`The Long Night comes ${about(t.left)}: an aurora from dawn to dawn${bonus ? `, and ${bonus}` : ''}.`];
-    }
-    const lines = [
-      r.bonus || !bonus
-        ? `Tonight ${bonus ? `${bonus}, and ` : ''}the watchers are restless.`
-        : 'Tonight is only long and dark, since the lodge\'s fire went out last week. The watchers are restless.',
-    ];
-    if (!this.nightFire) return lines;
-    if (r.out) return [...lines, 'The lodge\'s fire went out tonight: next week\'s Long Night will only be long and dark.'];
-    const m = Math.max(1, Math.ceil((r.outAt - wall) / 60_000));
-    const next = !bonus ? '' : r.bonus ? ' If it lasts until dawn, next week\'s Long Night keeps its bonus.' : ' If it lasts until dawn, next week\'s Long Night has its bonus again.';
-    return [...lines, `The lodge's fire needs feeding tonight: ${m} minute${m === 1 ? '' : 's'} left.${next}`];
-  }
-
-  /** The notice board on the season: which it is, how long is left of it, what it changes, and which comes next. */
-  private seasonLine(now: number): string {
-    const v = this.seasonNow(now), next = SEASON_ORDER[(SEASON_ORDER.indexOf(v.season) + 1) % SEASON_ORDER.length]!;
-    const frozen = [...this.maps.values()].flatMap(m => (m.data.ice ?? []).map(w => `${w.name} in ${m.data.name.replace(/^The /, 'the ')}`));
-    const does = v.season === 'winter' && frozen.length ? `${SEASON_WORDS.winter}, and ${listOf(frozen)} frozen hard enough to cross` : SEASON_WORDS[v.season];
-    return `${SEASONS[v.season].name}, for ${about(v.left, true)} more: ${does}. ${SEASONS[next].name} comes next.`;
-  }
-
-  /**
-   * The notice board on the parcels: this week's calendar with today marked, then to whoever reads it the
-   * days they came back this week (to a guest, that signing in brings them). None without sign-in.
-   */
-  private parcelLines(p: Online, now: number): string[] {
-    const data = this.parcels;
-    if (!data || !this.guests) return [];
-    const day = calendarDay(now + this.epochOffset, this.calendar), today = weekdayOf(day), last = WEEKDAYS.length - 1;
-    const short = (i: number) => WEEKDAYS[i]!.slice(0, 3);
-    const list = (slots: readonly BagSlot[] | undefined) => (slots ?? []).flatMap(s => { const d = this.items.get(s.item); return d ? [amount(d, s.count)] : []; }).join(', ');
-    const extra = list(data.allWeek);
-    const entry = (i: number) =>
-      `${short(i)}${i === today ? ' (today)' : ''}: ${list(data.week[i])}${i === last && extra ? `, and ${extra} for whoever came back on all seven days` : ''}`;
-    const lines = [`Parcels this week, from the town's stores. ${[0, 1, 2, 3].map(entry).join('. ')}.`, `${[4, 5, 6].map(entry).join('. ')}.`];
-    if (!this.signedIn(p)) return [...lines, 'Sign in to get the parcels.'];
-    const days = daysThisWeek(p.rec.parcels, day), sunday = WEEKDAYS[last];
-    if (days === WHOLE_WEEK) return [...lines, `You came back every day this week${extra ? `, and ${sunday}'s parcel held ${extra}` : ''}.`];
-    const came = WEEKDAYS.flatMap((_, i) => (days & (1 << i) ? [short(i)] : []));
-    // Today alone, on the first day they play this week or on their very first (the welcome parcel's): not "You came back Wed.".
-    const you = days === 1 << today ? 'You came home today.' : came.length ? `You came back ${came.join(', ')}.` : '';
-    const next = !extra ? '' : everyDaySoFar(days, day)
-      ? `Play every day this week and ${sunday}'s parcel holds ${extra}.`
-      : `A new week starts fresh on Monday: play every day and ${sunday}'s parcel holds ${extra}.`;
-    const said = [you, next].filter(Boolean).join(' ');
-    return said ? [...lines, said] : lines;
-  }
-
-  /** The notice board on the conditions: "Today in the Near Woods: thick fog.", what each means, and the weeks. */
-  private conditionLines(now: number): string[] {
-    const data = this.conditionsData;
-    if (!data) return [];
-    const view = this.conditionsNow(now);
-    const byId = new Map([...data.daily, ...data.weekly].map(c => [c.id, c]));
-    const today = view.today.flatMap(id => byId.get(id) ?? []);
-    const lines: string[] = [];
-    for (const map of new Set(today.map(c => c.map))) {
-      const here = today.filter(c => c.map === map);
-      lines.push(`Today in ${(this.maps.get(map)?.data.name ?? map).replace(/^The /, 'the ')}: ${listOf(here.map(c => lower(c.name)))}.`, ...here.map(c => c.text));
-    }
-    const week = view.week ? byId.get(view.week) : undefined, next = view.next ? byId.get(view.next) : undefined;
-    if (week) lines.push(`This week: ${lower(week.name)}. ${week.text}${next && next !== week ? ` Next week: ${lower(next.name)}.` : ''}`);
-    return lines;
+      return title ? [{ first: firstView(f), title }] : [];
+    }).slice(0, FIRSTS_ON_BOARD);
+    // The parcels (with sign-in on this server): today, and to whoever is signed in, the days they came back this week.
+    const day = calendarDay(wall, this.calendar), days = this.signedIn(p) ? daysThisWeek(p.rec.parcels, day) : undefined;
+    return {
+      sky, regions,
+      season: {
+        season: season.season, left: season.left, next: SEASON_ORDER[(SEASON_ORDER.indexOf(season.season) + 1) % SEASON_ORDER.length]!,
+        frozen: [...this.maps.values()].flatMap(m => (m.data.ice ?? []).map(w => `${w.name} in ${m.data.name.replace(/^The /, 'the ')}`)),
+      },
+      longNight, conditions: this.conditionsNow(now), lamps, works, fires,
+      collapses: [...by].map(([map, n]) => ({ map, name: this.maps.get(map)?.data.name ?? map, n })),
+      ...(this.stone ? { stone: this.stoneView(now) } : {}),
+      ...(this.townData ? { town: { done: this.town.done.map(t => ({ id: t.id, day: t.day })), given: this.town.given } } : {}),
+      firsts,
+      ...(this.parcels && this.guests ? { parcels: { today: weekdayOf(day), ...(days === undefined ? {} : { days, soFar: everyDaySoFar(days, day) }) } } : {}),
+    };
   }
 
   // ---------- bags, piles and finds ----------
@@ -6745,63 +6630,12 @@ export function pathStep(
   return null;
 }
 
-const WEATHER_WORDS: Record<Weather, string> = { overcast: 'Overcast', rain: 'Rain', night: 'Night', aurora: 'An aurora night' };
-/** What each season changes, for the notice board (sky.ts, SEASONS; the glowcaps and the resin are find rules). */
-const SEASON_WORDS: Record<Season, string> = {
-  spring: 'longer rain, and more glowcaps out there',
-  summer: 'shorter rain, and light until later in the evening',
-  autumn: 'more resin out there, and storms twice as often',
-  winter: 'colder out there, and snow instead of rain',
-};
-const lower = (s: string) => s[0]!.toLowerCase() + s.slice(1);
-const capital = (s: string) => s[0]!.toUpperCase() + s.slice(1);
-
-/**
- * A place mended together, on the notice board (works.ts): "The footbridge by the pond, in the Near Woods:
- * broken. 12 of 30 scrap given, 18 more and it stands again. Ana gave the most."
- */
-function worksLine(def: WorksDef, v: WorksView, item: ItemDef | undefined): string {
-  const what = `${def.name.charAt(0).toUpperCase()}${def.name.slice(1)} ${def.where}`, noun = item ? pluralOf(item) : def.item, light = def.build === 'light';
-  const top = v.top ? ` ${v.top} gave the most.` : ' Nobody has given anything yet.';
-  if (!v.standing) {
-    const down = light ? 'dark' : 'broken', again = light ? 'lights up again' : 'stands again';
-    return v.held > 0
-      ? `${what}: ${down}. ${v.held} of ${def.need} ${noun} given, ${def.need - v.held} more and it ${again}.${top}`
-      : `${what}: ${down}. It ${again} with ${def.need} ${noun}.${top}`;
-  }
-  const days = worksDays(def, v.held), up = light ? 'lit' : 'standing';
-  return days > 0
-    ? `${what}: ${up}. ${v.held} ${noun} put by, enough for ${days} more day${days === 1 ? '' : 's'} (it takes ${def.wear} a day).${top}`
-    : `${what}: ${up}, but not past today. It takes ${def.wear} ${noun} a day, and ${v.held ? `only ${v.held} ${v.held === 1 ? 'is' : 'are'}` : 'none is'} put by.${top}`;
-}
-
-/** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours", "about 3 days"). */
-function about(seconds: number, plain = false): string {
-  const pre = plain ? '' : 'in ';
-  if (seconds < 60) return plain ? 'under a minute' : 'in under a minute';
-  if (seconds < 90 * 60) {
-    const m = Math.round(seconds / 60);
-    return `${pre}about ${m} minute${m === 1 ? '' : 's'}`;
-  }
-  if (seconds < 36 * 3600) {
-    const h = Math.round(seconds / 3600);
-    return `${pre}about ${h} hour${h === 1 ? '' : 's'}`;
-  }
-  const d = Math.round(seconds / 86400);
-  return `${pre}about ${d} day${d === 1 ? '' : 's'}`;
-}
-
 /**
  * The lodge's fire went out on a Long Night: someone saw it go out, or it was to run out before dawn as
  * the server last heard of it (nobody could feed it while the server was down).
  */
 function wentOut(r: LongNightRecord): boolean {
   return r.out || r.outAt < longNightFrom(r.week) + DAY_S * 1000;
-}
-
-function listOf(names: string[]): string {
-  if (names.length <= 1) return names.join('');
-  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 }
 
 /** A shelter's fire is called after its shelter; a campfire after its region. */

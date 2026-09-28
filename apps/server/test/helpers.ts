@@ -7,7 +7,7 @@ import { request } from 'node:http';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
 import {
-  CALENDAR_DAY_MS, DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, SLUMP_S, utcDay, xpFor, type BagSlot, type ClientMsg, type DropView, type ItemsData,
+  CALENDAR_DAY_MS, DROP_LIFETIME_MS, boardLines, boardWords, type BoardView, ENERGY_MAX, GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, SLUMP_S, utcDay, xpFor, type BagSlot, type ClientMsg, type DropView, type ItemsData,
   type ServerMsg,
 } from '@napoland/shared';
 import { devAuth } from '../src/auth';
@@ -119,6 +119,11 @@ export async function nobodyCame(c: Client, move: (ms: number) => void): Promise
 
 let names = 0;
 export const newName = (): string => `Player ${++names}`;
+
+/** The notice board as it reads (board.ts, boardLines), in the words of the items the world was made with. */
+export function boardText(m: { board: BoardView }, items: ItemsData = itemsData()): string[] {
+  return boardLines(m.board, boardWords(items));
+}
 
 /**
  * A player saved in `storage` where the test wants them (in the town at the spawn, full, with an empty bag,

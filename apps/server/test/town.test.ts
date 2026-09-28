@@ -8,7 +8,7 @@ import { TileMap, xpFor, type Dir, type ItemsData, type MapData, type ServerMsg,
 import { MemoryStorage, type PlayerRecord, type TownRecord } from '../src/storage';
 import { STONE_NEED, STONE_SHARD_S, World, colorFor, type Outgoing, type WorldOptions } from '../src/world';
 import { houseData, townData, woodsData } from './fixtures';
-import { eventually, keepsTown, setup } from './helpers';
+import { boardText, eventually, keepsTown, setup } from './helpers';
 
 /**
  * The fixture town as it changes with the town (fixtures.ts has the rest):
@@ -310,13 +310,13 @@ describe('the town\'s ledger', () => {
     const saved: TownRecord = { since: 0, counts: { woke: 1 }, given: { lights: { wire: 1 } }, done: [{ id: 'edith-home', day: 3061, at: 1 }] };
     const w = world({ town: saved }, [rec('a', 'town', 5, 7, 'up')]);
     w.board('a', 5, 6, 1000);
-    const lines = of(to(w.drain(), 'a'), 'board')[0]!.lines;
+    const lines = boardText(of(to(w.drain(), 'a'), 'board')[0]!, ITEMS);
     expect(lines).toContain('Back in town: Edith, since day 3,061.');
     expect(lines).toContain('The town\'s ledger at the lodge wants 1 copper wire and 1 scrap for the street lights; 2 cloth for a roof over the board.');
     expect(lines.join(' ')).not.toMatch(/Mended/);
     const later = world({ town: { ...saved, done: [...saved.done, { id: 'roof', day: 3062, at: 2 }] } }, [rec('a', 'town', 5, 7, 'up')]);
     later.board('a', 5, 6, 1000);
-    const now = of(to(later.drain(), 'a'), 'board')[0]!.lines;
+    const now = boardText(of(to(later.drain(), 'a'), 'board')[0]!, ITEMS);
     expect(now).toContain('The town\'s ledger at the lodge wants 1 copper wire and 1 scrap for the street lights.');
     expect(now).toContain('Mended for good: a roof over the board.');
   });

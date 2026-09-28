@@ -10,6 +10,7 @@
  */
 import { BAG_SLOTS, RANKS, SLOTS, type BodyView, type CallKind, type Dir, type EnergyView, type LookKind, type Slot, type SurgeView } from '@napoland/shared';
 import { aboutBody, versionView } from './about';
+import { BOARD_TABS, BOARD_TAB_NAMES, type BoardPanel, type BoardTab } from './board';
 import { CALL_NOTE_S, CALL_WORDS, FAN, fanChoice } from './calls';
 import { DOUBLE_TAP_MS, DoubleTap, cardPress, morePress, refKey, statText, type DetailAct, type DetailRef, type DetailView } from './details';
 import type { FriendsView } from './friends';
@@ -95,6 +96,8 @@ export interface HudHandlers {
   crateTake?(id: number): void;
   crateLeave?(slot: number): void;
   crateClosed?(): void;
+  /** The notice board's panel was put away. */
+  boardClosed?(): void;
   /** In the bag, anywhere: put on the piece in bag slot `slot`, or take off what a slot wears into the bag. */
   wear?(slot: number): void;
   doff?(slot: Slot): void;
@@ -363,7 +366,7 @@ export class Hud {
   private shown = {
     fill: -1, level: '', refill: false, pct: -1, vignette: -1, unease: 0, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
     friends: '', personActs: '', talk: '', journal: '', field: '', notes: '', people: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', shop: '', badge: '', tradeMine: '', tradeTheirs: '',
-    tradeBag: '', slump: '', choices: '',
+    tradeBag: '', slump: '', choices: '', boardSky: '', boardOut: '', boardTown: '', boardWeek: '',
   };
   /** The chest's tab: the stash (with what came in parcels, the first goal and what you wear), or the wardrobe. */
   private chestTab: 'stash' | 'wardrobe' = 'stash';
@@ -372,6 +375,10 @@ export class Hud {
   private wardrobe: WardrobeView | null = null;
   /** The journal's part: the story's chapters, the field notes, or the notes people left. */
   private journalPart: JournalTab = 'story';
+  /** The notice board's tab, the cards opened on it (by region), and the day of the parcels' calendar picked (null: today). */
+  private boardTab: BoardTab = 'out';
+  private readonly boardCards = new Set<string>();
+  private boardDay: number | null = null;
   /**
    * What the dots say is new: among friends (a request, an unread message) and in the journal (a chapter,
    * a page of the field notes or a blank filled in, a note read), on the menu; in the chat (something
@@ -584,6 +591,13 @@ export class Hud {
         <div class="journal-body field-notes" data-el="notesBody" role="tabpanel" aria-label="Notes" hidden></div>
         <div class="journal-body field-notes" data-el="peopleBody" role="tabpanel" aria-label="People" hidden></div>
       </div>
+      <div class="sheet panel board-sheet" data-el="boardSheet" data-open="false" role="dialog" aria-label="Notice board">
+        <div class="sheet-head"><span class="chest-tabs" role="tablist" aria-label="Notice board">${BOARD_TABS.map(t => `<button type="button" role="tab" data-board="${t}" aria-selected="${t === 'out'}">${BOARD_TAB_NAMES[t]}</button>`).join('')}</span><button type="button" class="close" data-el="boardClose" aria-label="Step back from the notice board">${ICON.x}</button></div>
+        <div class="board-sky" data-el="boardSky"></div>
+        <div class="board-body" data-el="boardOut" role="tabpanel" aria-label="${BOARD_TAB_NAMES.out}"></div>
+        <div class="board-body" data-el="boardTown" role="tabpanel" aria-label="${BOARD_TAB_NAMES.town}" hidden></div>
+        <div class="board-body" data-el="boardWeek" role="tabpanel" aria-label="${BOARD_TAB_NAMES.week}" hidden></div>
+      </div>
       <div class="sheet panel about-sheet" data-el="aboutSheet" data-open="false" role="dialog" aria-label="About napoland">
         <div class="sheet-head"><b>About</b><button type="button" class="close" data-el="aboutClose" aria-label="Close About">${ICON.x}</button></div>
         ${aboutBody()}
@@ -700,6 +714,29 @@ export class Hud {
     this.el.menuStatus!.addEventListener('click', () => { this.toggleMenu(false); this.toggleStatus(true); });
     this.el.menuJournal!.addEventListener('click', () => { this.toggleMenu(false); this.toggleJournal(true); });
     this.el.journalClose!.addEventListener('click', () => this.toggleJournal(false));
+    this.el.boardClose!.addEventListener('click', () => this.toggleBoard(false));
+    // On the notice board: a tab, a chip that leads to a tab, a day of the parcels' calendar, or a region's card, opened or closed.
+    this.el.boardSheet!.addEventListener('click', e => {
+      const t = e.target as Element, tab = t.closest<HTMLElement>('[data-board]'), go = t.closest<HTMLElement>('[data-goto]');
+      const day = t.closest<HTMLElement>('[data-day]'), card = t.closest<HTMLElement>('[data-card]');
+      if (tab || go) return this.showBoardTab((tab?.dataset.board ?? go!.dataset.goto) as BoardTab);
+      if (day) {
+        this.boardDay = Number(day.dataset.day);
+        return this.showBoardDay();
+      }
+      if (!card) return;
+      const id = card.dataset.card!;
+      if (!this.boardCards.delete(id)) this.boardCards.add(id);
+      this.showBoardCards();
+    });
+    // A card has the focus: Enter or Space opens or closes it, and goes no further (not to the game's keys).
+    this.el.boardSheet!.addEventListener('keydown', e => {
+      const card = (e.target as Element).closest?.('[data-card]');
+      if (!card || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      (card as HTMLElement).click();
+    });
     this.el.journalSheet!.addEventListener('click', e => {
       const tab = (e.target as Element).closest<HTMLElement>('[data-journal]')?.dataset.journal;
       if (tab === 'story' || tab === 'field' || tab === 'notes' || tab === 'people') this.showJournalTab(tab);
@@ -845,7 +882,7 @@ export class Hud {
   toggleStatus(open = !this.statusOpen) {
     this.el.statusSheet!.dataset.open = String(open);
     // The bag, the stash, the status and the About panel open in the same place: one at a time.
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.h.status?.(); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleBoard(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.h.status?.(); }
   }
 
   get chatOpen(): boolean {
@@ -853,7 +890,7 @@ export class Hud {
   }
   /** Opens or closes the chat; with `type`, its line takes the keys (Enter on a keyboard). */
   toggleChat(open = !this.chatOpen, type = false) {
-    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.toggleFriends(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.toggleJournal(false); this.toggleBoard(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.toggleFriends(false); this.el.statusSheet!.dataset.open = 'false'; }
     const was = this.chatOpen, line = this.el.chatText as HTMLInputElement;
     this.el.chatSheet!.dataset.open = String(open);
     this.el.chatBtn!.setAttribute('aria-expanded', String(open));
@@ -902,7 +939,7 @@ export class Hud {
     return this.el.friendsSheet!.dataset.open === 'true';
   }
   toggleFriends(open = !this.friendsOpen) {
-    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.toggleChat(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.toggleJournal(false); this.toggleBoard(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.toggleChat(false); this.el.statusSheet!.dataset.open = 'false'; }
     const was = this.friendsOpen;
     this.el.friendsSheet!.dataset.open = String(open);
     if (open && !was) this.h.social?.({ a: 'opened' });
@@ -1022,7 +1059,7 @@ export class Hud {
     // It opens where the bag and the other panels do: one at a time.
     if (open) {
       this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false';
-      this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false);
+      this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.toggleBoard(false);
       this.showJournalTab(tab ?? (this.news.journal ? 'story' : this.news.field ? 'field' : this.news.notes ? 'notes' : this.news.people ? 'people' : 'story'));
     }
     this.el.journalSheet!.dataset.open = String(open);
@@ -1085,13 +1122,78 @@ export class Hud {
     this.el.journalBody!.innerHTML = html;
   }
 
+  get boardOpen(): boolean {
+    return this.el.boardSheet!.dataset.open === 'true';
+  }
+  /** The notice board's tab shown (or shown last). */
+  get boardShown(): BoardTab {
+    return this.boardTab;
+  }
+  /**
+   * Opens or closes the notice board's panel (board.ts), where the other panels open: opened, it starts on
+   * its first tab with every card closed; put away, it tells the game.
+   */
+  toggleBoard(open = !this.boardOpen) {
+    const was = this.boardOpen;
+    if (open) {
+      this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false';
+      this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false);
+    }
+    if (open && !was) {
+      this.boardCards.clear();
+      this.boardDay = null;
+      this.showBoardTab('out');
+    }
+    this.el.boardSheet!.dataset.open = String(open);
+    if (was && !open) this.h.boardClosed?.();
+  }
+
+  /** Shows one of the board's tabs, from its top. */
+  showBoardTab(tab: BoardTab) {
+    this.boardTab = tab;
+    for (const b of this.el.boardSheet!.querySelectorAll<HTMLElement>('[data-board]')) b.setAttribute('aria-selected', String(b.dataset.board === tab));
+    this.el.boardOut!.hidden = tab !== 'out';
+    this.el.boardTown!.hidden = tab !== 'town';
+    this.el.boardWeek!.hidden = tab !== 'week';
+    this.el.boardSheet!.scrollTop = 0;
+  }
+
+  /** The notice board as it was read (board.ts): each part written only when it changed, the cards opened and the day picked kept as they were. */
+  setBoard(p: BoardPanel) {
+    const parts = [['boardSky', p.sky], ['boardOut', p.out], ['boardTown', p.town], ['boardWeek', p.week]] as const;
+    for (const [el, html] of parts) {
+      if (html === this.shown[el]) continue;
+      this.shown[el] = html;
+      this.el[el]!.innerHTML = html;
+    }
+    this.showBoardCards();
+    this.showBoardDay();
+  }
+
+  /** Each region's card open or closed as it was tapped: open, its sentences show under it. */
+  private showBoardCards() {
+    for (const c of this.el.boardOut!.querySelectorAll<HTMLElement>('[data-card]')) {
+      const open = this.boardCards.has(c.dataset.card!), more = c.querySelector<HTMLElement>('.bmore');
+      c.setAttribute('aria-expanded', String(open));
+      if (more) more.hidden = !open;
+    }
+  }
+
+  /** The parcels' calendar: the day picked (today, until another is), and what its parcel holds under it. */
+  private showBoardDay() {
+    const days = [...this.el.boardWeek!.querySelectorAll<HTMLElement>('[data-day]')];
+    const today = days.find(d => d.hasAttribute('data-today'))?.dataset.day, day = this.boardDay === null ? today : String(this.boardDay);
+    for (const d of days) d.setAttribute('aria-pressed', String(d.dataset.day === day));
+    for (const l of this.el.boardWeek!.querySelectorAll<HTMLElement>('[data-dayline]')) l.hidden = l.dataset.dayline !== day;
+  }
+
   get stashOpen(): boolean {
     return this.el.stashSheet!.dataset.open === 'true';
   }
   /** Opens or closes the stash sheet (the chest at home), always without a card. Closing it tells the game. */
   toggleStash(open = !this.stashOpen) {
     const was = this.stashOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleBoard(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.el.statusSheet!.dataset.open = 'false'; }
     // It opens on the stash, at the top of the list, never on a card left from last time; closing, the card slides away with it.
     if (open && !was) { this.showChestTab('stash'); this.showWardrobePart('outfits'); this.el.stashBody!.scrollTop = 0; if (this.docked === 'stash') this.closeCard(); }
     else if (!open && this.card?.where === 'stash') this.forgetCard();
@@ -1107,7 +1209,7 @@ export class Hud {
   /** Opens or closes the workbench sheet, always without a card. Closing it tells the game. */
   toggleBench(open = !this.benchOpen) {
     const was = this.benchOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleCrate(false); this.toggleTrade(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleBoard(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleCrate(false); this.toggleTrade(false); this.el.statusSheet!.dataset.open = 'false'; }
     if (open && !was) { this.el.benchBody!.scrollTop = 0; if (this.docked === 'bench') this.closeCard(); }
     else if (!open && this.card?.where === 'bench') this.forgetCard();
     this.el.benchSheet!.dataset.open = String(open);
@@ -1120,7 +1222,7 @@ export class Hud {
   /** Opens or closes a crate's sheet, always without a card. Closing it tells the game. */
   toggleCrate(open = !this.crateOpen) {
     const was = this.crateOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleTrade(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleBoard(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleTrade(false); this.el.statusSheet!.dataset.open = 'false'; }
     if (open && !was) { this.el.crateBody!.scrollTop = 0; if (this.docked === 'crate') this.closeCard(); }
     else if (!open && this.card?.where === 'crate') this.forgetCard();
     this.el.crateSheet!.dataset.open = String(open);
@@ -1151,7 +1253,7 @@ export class Hud {
     const was = this.tradeOpen;
     if (open && !was) {
       this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false';
-      this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false);
+      this.toggleJournal(false); this.toggleBoard(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false);
       this.el.tradeBody!.scrollTop = 0;
       this.lookedAt.clear();
     }
@@ -1581,7 +1683,7 @@ export class Hud {
   toggleBag(open = !this.bagOpen) {
     const was = this.bagOpen;
     // The bag, the status and the About panel open in the same place: one at a time.
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleBoard(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); }
     // It opens on the whole bag, never on a card left from last time; closing, the card slides away with it.
     if (open && !was) { this.el.bagBody!.scrollTop = 0; if (this.docked === 'bag') this.closeCard(); }
     else if (!open && this.card?.where === 'bag') this.forgetCard();
@@ -1594,7 +1696,7 @@ export class Hud {
   }
   toggleAbout(open = !this.aboutOpen) {
     if (open && this.bagOpen) this.toggleBag(false);
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleBoard(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); }
     this.el.aboutSheet!.dataset.open = String(open);
     if (open && !this.versionAsked) {
       this.versionAsked = true;
@@ -1651,6 +1753,7 @@ export class Hud {
     }
     if (this.statusOpen) { this.toggleStatus(false); return true; }
     if (this.journalOpen) { this.toggleJournal(false); return true; }
+    if (this.boardOpen) { this.toggleBoard(false); return true; }
     // Out of a card first, then out of its panel: B backs out one step at a time.
     if (this.card) { this.closeCard(); return true; }
     if (this.stashOpen) { this.toggleStash(false); return true; }

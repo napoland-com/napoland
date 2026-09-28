@@ -56,7 +56,7 @@ import {
   BUBBLE_S, TILE_NEEDS, CACHE_SIZE, LANTERN_DEPTH, lanternLights, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf,
   cacheTakes, canRescue, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal,
   lotDoors, markLifetime, worksRoom, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf,
-  stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type ShopData, type ShopOpen,
+  stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type BoardView, type ShopData, type ShopOpen,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page, type Pass, BUNDLE, carriesFood, cookable,
   cooks, nearestCooking, whyNotEat, ledgerLines, levelOf, noTown, popOf, sceneDue, scenesAfter, stormAt, swapsFit, workWants, type SayContext, type TownView, LAMP_BURNS, LOOKOUT_UP_S, footOf, inBeam, ladderOf, lampTakes, lookoutAtFoot,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
@@ -490,6 +490,13 @@ export class Game {
    * `at`, and whether you left one thing and took one this visit; null while none is open.
    */
   cache: { x: number; y: number; items: CacheItemView[]; left: boolean; took: boolean; at: number } | null = null;
+  /**
+   * The notice board you read (board.ts): its tile, how the world stood as it said, and when that came
+   * (our clock), while its panel is open; null otherwise. The panel reads it again now and then while open.
+   */
+  board: { x: number; y: number; view: BoardView; at: number } | null = null;
+  /** The notice board last asked to be read, until it answers. */
+  private boardAsked: { x: number; y: number } | null = null;
   /** Parcels that came since the chest was last opened: it says what came in them, once (takeParcels). */
   parcels: ParcelView[] = [];
   /** What your stash holds, as the server last told it (the welcome, and every chest and workbench after); null before. */
@@ -1126,9 +1133,14 @@ export class Game {
         if (fresh) this.news.push({ kind: 'conditions', names: this.conditionNames(msg.conditions.today) });
         break;
       }
-      case 'board':
-        this.openDialog({ x: 0, y: 0, who: 'Notice board', lines: msg.lines, kind: 'board' });
+      case 'board': {
+        // An answer to a reading while the panel was closed again (walked away) opens nothing.
+        const at = this.boardAsked ?? this.board;
+        if (!at) break;
+        this.board = { x: at.x, y: at.y, view: msg.board, at: now };
+        this.boardAsked = null;
         break;
+      }
       case 'feat':
         this.stats = msg.stats;
         this.statsChanges++;
@@ -1684,10 +1696,7 @@ export class Game {
       for (const w of this.items.town?.works ?? []) for (const n of w.needs) this.queued.push(() => this.offerGift(w.id, n.item, t.x, t.y));
       return;
     }
-    if (t.kind === 'board') {
-      if (this.online) this.send({ t: 'board', x: t.x, y: t.y });
-      return;
-    }
+    if (t.kind === 'board') return this.readBoard(t.x, t.y);
     if (t.kind === 'fire') return this.tend(t.x, t.y);
     // A neighbor's chest and workbench are theirs alone.
     if ((t.kind === 'chest' || t.kind === 'bench') && this.visit) {
@@ -2283,6 +2292,24 @@ export class Game {
   /** Close the crate (its panel went away). */
   closeCache() {
     this.cache = null;
+  }
+
+  /** Read the notice board on tile x,y (next to you): the server answers with how the world stands, and its panel opens. */
+  readBoard(x: number, y: number) {
+    if (!this.online) return;
+    this.boardAsked = { x, y };
+    this.send({ t: 'board', x, y });
+  }
+
+  /** Read the open board again, so what it says keeps up while you stand reading it (the server answers only next to it). */
+  rereadBoard() {
+    if (this.board && !this.boardAsked) this.readBoard(this.board.x, this.board.y);
+  }
+
+  /** Step back from the notice board (its panel went away). */
+  closeBoard() {
+    this.board = null;
+    this.boardAsked = null;
   }
 
   /** What you wear. */

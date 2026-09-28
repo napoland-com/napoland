@@ -3,6 +3,7 @@
  * Everything the client sends is validated with these schemas; the server never trusts it.
  */
 import { z } from 'zod';
+import type { BoardView } from './board';
 import type { CacheItemView } from './caches';
 import { CALL_KINDS, type CallKind } from './calls';
 import { MAX_SAY_CHARS, type ChatTo } from './chat';
@@ -39,8 +40,9 @@ import type { WorksView } from './works';
  * 39: the town waking up: its milestones and ledger (`town`), townspeople's scenes, swaps and gifts, which an older page could not show.
  * 40: the fire lookout: climbing it and feeding its lamp (`climb`, `lamp`, `up`), and in the same release the woods mended
  *     together, the footbridge and the street light by the pond (`bring`, `works`), which an older page could not show or do.
+ * 41: the notice board as a panel: `board` carries how the world stands as data (board.ts), where an older page read lines.
  */
-export const PROTOCOL_VERSION = 40;
+export const PROTOCOL_VERSION = 41;
 
 /**
  * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
@@ -1069,8 +1071,8 @@ export type ServerMsg =
   | { t: 'season'; season: SeasonView }
   /** The Long Night began, the lodge's fire went out in it, or it ended at dawn (everyone hears it): how it stands now. */
   | { t: 'longNight'; night: LongNightView }
-  /** The notice board, read: one line per thing worth knowing. */
-  | { t: 'board'; lines: string[] }
+  /** The notice board, read: how the world stands (board.ts), which the client shows as a panel. */
+  | { t: 'board'; board: BoardView }
   /** You reached rank `rank` (1 to RANKS) of a feat (feats.ts), told once; `stats` is where your counts stand now. */
   | { t: 'feat'; id: string; rank: number; stats: Stats }
   /**

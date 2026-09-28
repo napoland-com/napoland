@@ -8,7 +8,7 @@ import { TileMap, keepsakeFindId, zoneDay, type Dir, type ItemsData, type MapDat
 import { MemoryStorage, type FirstRecord, type PlayerRecord } from '../src/storage';
 import { FIRSTS_ON_BOARD, World, colorFor, type Outgoing, type WorldOptions } from '../src/world';
 import { houseData, townData, woodsData } from './fixtures';
-import { keepsFirsts, setup, waitFor } from './helpers';
+import { boardText, keepsFirsts, setup, waitFor } from './helpers';
 
 const note = (id: string, x: number, y: number): MapObject => ({ kind: 'note', id, by: 'ranger', name: 'Nailed to the pole', x, y, text: [`${id}.`] });
 /** The fixture town with a note on a pole at 2,4 (read it from 2,5, facing up) and the notice board at 4,6 (read it from 4,7). */
@@ -90,7 +90,7 @@ describe('first finders', () => {
       firsts: [at('note:on-the-pole', 'Ana', 3040, 1), at('note:in-the-woods', 'Bo', 3045, 3), at('keepsake:compass', 'Cy', 3050, 4), at('note:written-later', 'Dee', 3051, 5)],
     }, rec('eve', 'town', 4, 7));
     w.board('eve', 4, 6, 1000);
-    const board = w.drain().flatMap(o => (o.msg.t === 'board' ? o.msg.lines : []));
+    const board = w.drain().flatMap(o => (o.msg.t === 'board' ? boardText(o.msg, ITEMS) : []));
     // A secret this release does not know is left out, and the three before it shown.
     expect(board.slice(-FIRSTS_ON_BOARD)).toEqual([
       'First to find the brass compass: Cy, on day 3,050.',

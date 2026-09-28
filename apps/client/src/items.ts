@@ -5,9 +5,9 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, WEAR_FADES, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, shopLookOf, upgradable, upgradeChance,
+  BAG_SLOTS, SLOTS, WEAR_FADES, boardWords, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, shopLookOf, upgradable, upgradeChance,
   wearSeconds, type BagSlot, type EffectView, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction,
-  type ShopData, type Slot, type Upgrade, type Worn, type WorksDef, slotKg,
+  type ShopData, type Slot, type Upgrade, type Worn, type WorksDef, type BoardWords, slotKg,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
 import type { Look } from './view/characters';
@@ -37,6 +37,8 @@ export class Items {
   readonly longNight: string;
   /** The places everyone mends together, by id (works.ts): what each takes, and how fast it wears. */
   readonly works: Map<string, WorksDef>;
+  /** What the notice board's words need (board.ts): what things are called, and what each place and work takes. */
+  readonly board: BoardWords;
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
 
   constructor(data: ItemsData | undefined) {
@@ -53,6 +55,7 @@ export class Items {
     this.swaps = data?.swaps ?? [];
     this.longNight = longNightWords(data?.longNight, this.byId);
     this.works = new Map((data?.works ?? []).map(w => [w.id, w]));
+    this.board = boardWords(data);
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
 

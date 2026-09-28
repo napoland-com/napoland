@@ -25,7 +25,7 @@ import { setLogLevel } from '../src/log';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { houseData, itemsData, townData } from './fixtures';
-import { Client, savedPlayer, serverDefaults, waitFor } from './helpers';
+import { Client, boardText, savedPlayer, serverDefaults, waitFor } from './helpers';
 
 const W = 12, H = 10;
 /** Midnight UTC, when a place pays its day's wear, and the start of a surge's round here (its rounds divide a day). */
@@ -121,7 +121,7 @@ async function serverAt(at: number, storage = new MemoryStorage(), more: Partial
 /** Reads the notice board in town (a player at 0,5): its lines about the places mended together. */
 async function board(c: Client): Promise<string[]> {
   c.send({ t: 'board', x: 0, y: 4 });
-  return (await c.next('board')).lines.filter(l => l.includes('the Woods'));
+  return boardText(await c.next('board'), items()).filter(l => l.includes('the Woods'));
 }
 
 describe('mending the woods together, over the network', () => {
