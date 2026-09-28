@@ -18,7 +18,7 @@ import * as THREE from 'three';
 import { DIR_VEC, hidden, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
-import { CROUCH_DROP, CROUCH_LEAN, GrassMaterial, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps } from './grass';
+import { CROUCH_DROP, CROUCH_LEAN, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial } from './grass';
 import { Creatures, Echoes, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
@@ -28,7 +28,7 @@ import { cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, le
 import { ambience, assignLights, lightSources, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
 import { napoBuilding, napoProp, napoSign, towerModel } from './napo';
-import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
+import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
 
 export interface Avatar {
   id: string;
@@ -167,6 +167,17 @@ function blocks<T extends { x: number; y: number }>(items: T[]): T[][] {
     b.push(it);
   }
   return [...out.values()];
+}
+
+/**
+ * The view of the map someone arrives on, in place of `old`: the new one is built (and its shaders
+ * compiled) before the old one is freed, so every program both draw with stays compiled and only what
+ * the new map needs that the old did not is compiled, behind the black screen of the arrival.
+ */
+export function nextView(renderer: THREE.WebGLRenderer, old: WorldView, map: TileMap, peek?: (id: string) => MapData | undefined): WorldView {
+  const view = new WorldView(renderer, map, peek);
+  old.dispose();
+  return view;
 }
 
 export class WorldView {
@@ -312,6 +323,8 @@ export class WorldView {
 
   /** Frees everything this view put on the GPU. The renderer and the shared toon materials stay for the next map. */
   dispose() {
+    // Whatever it drew with stays compiled for the maps that come later (toon.ts, keepPrograms).
+    keepPrograms(this.renderer, this.scene);
     for (const p of this.puffs) p.dispose();
     this.loot.dispose();
     this.marks.dispose();
@@ -542,7 +555,7 @@ export class WorldView {
     // per block of the trees' blocks, with one material that sways and parts them on the GPU.
     const clumps = this.outdoors ? grassClumps(map, this.ground) : [];
     if (clumps.length) {
-      const grass = (this.grass = new GrassMaterial());
+      const grass = (this.grass = sessionGrass());
       for (const [blades, tall] of [[TUFT_BLADES, false], [TALL_BLADES, true]] as const) {
         const mine = clumps.filter(c => c.tall === tall);
         if (!mine.length) continue;

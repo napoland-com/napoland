@@ -39,7 +39,7 @@ import { heardFinds, nearest, radioOf, type RadioScene } from './radio';
 import { levelText, newsBanner, restedLine, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
-import { WorldView, createRenderer, lightningAt } from './view/world';
+import { WorldView, createRenderer, lightningAt, nextView } from './view/world';
 import { wardrobeView, type WardrobeState } from './wardrobe';
 import { guardZoom } from './zoom';
 
@@ -301,8 +301,7 @@ const arrival = new Arrival(held => {
   }
   hud.setOnline(game.players.size);
   if (view.map !== game.map) {
-    view.dispose();
-    view = new WorldView(renderer, game.map, peek);
+    view = nextView(renderer, view, game.map, peek);
     view.pixelScale = resolution.scale;
     view.setWeather(weather);
     watchFires(view);
