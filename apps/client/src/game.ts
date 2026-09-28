@@ -14,7 +14,8 @@
  *   stash says what came in it the next time it opens;
  * - people and NAPO's desks are in the story (story.ts): what someone says follows the chapter you
  *   are in (and, once, what you did for the first time), and the server hears whom you talked to or
- *   what you read; it says when a chapter is reached;
+ *   what you read (a desk, a sign, a paper, a tag: where, never what it says); it says when a chapter
+ *   is reached, and when a page of your field notes opens or a blank on one fills in (notebook.ts);
  * - the bag and the chest say what gear you could make next (nextGear), from your stash as the server
  *   last told it;
  * - a crate for whoever comes next (A, facing it) opens a panel like the chest's: take one thing out
@@ -31,9 +32,9 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal,
-  markLifetime, mendCost, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, DIR_VEC, type CacheItemView,
-  type NextGear,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, emptyNotebook, energyAfter, findPath, fireTakes,
+  flashHits, inSurge, journal, markLifetime, mendCost, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay,
+  DIR_VEC, type Blank, type CacheItemView, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
@@ -165,11 +166,15 @@ export type News =
   /** Someone (`id`, you too) sang a call from tile x,y, heard `at` (our clock): the ears announce it (soundscape.ts), nothing is shown but the note over their head. */
   | { kind: 'call'; id: string; call: CallKind; x: number; y: number; at: number }
   | { kind: 'chapter'; chapter: Chapter }
+  /** A page of your field notes opened, or a blank on one filled in. */
+  | { kind: 'page'; page: Page } | { kind: 'blank'; page: Page; blank: Blank }
   /** A parcel came into your chest; the welcome parcel also names the outfits signing in gave you (their ids). */
   | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
+/** No field notes, the same way. */
+const NO_NOTEBOOK: NotebookData = { version: 0, pages: [] };
 
 /** Lines of chat a session keeps to scroll back through. */
 export const CHAT_LOG = 100;
@@ -239,6 +244,12 @@ export class Game {
   chapter = '';
   /** Counts every chapter reached, so the journal is redrawn only when it changed. */
   storyChanges = 0;
+  /** Your field notes, as the server said: the pages opened and the blanks filled. Replaced whole on every change. */
+  fieldNotes: NotebookState = emptyNotebook();
+  /** Pages opened since the field notes were last looked at: the journal marks them. */
+  freshPages = new Set<string>();
+  /** Counts every change to the field notes (and to which pages are fresh), so they are redrawn only then. */
+  notebookChanges = 0;
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
@@ -337,7 +348,9 @@ export class Game {
   /** A letter from home (thanks while you were away), until the text box is free to show it. */
   private letter: string[] | null = null;
 
-  constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY) {
+  constructor(
+    private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY, readonly notebook: NotebookData = NO_NOTEBOOK,
+  ) {
     this.current = maps.home();
     this.talkers = talkersOf(this.current);
   }
@@ -416,9 +429,13 @@ export class Game {
     switch (msg.t) {
       case 'welcome': {
         const map = this.maps.get(msg.map);
-        // A map we do not have, or other items or another story than the server's: this client is
-        // out of date and about to reload, so it must not play.
-        if (!map || msg.items !== this.items.version || msg.story.version !== this.story.version) { this.disconnected(now); break; }
+        // A map we do not have, or other items, another story or other field notes than the server's:
+        // this client is out of date and about to reload, so it must not play. (A server from before the
+        // field notes sends none: then there are none to keep.)
+        if (!map || msg.items !== this.items.version || msg.story.version !== this.story.version || (msg.notebook && msg.notebook.version !== this.notebook.version)) {
+          this.disconnected(now);
+          break;
+        }
         this.meId = msg.you;
         this.online = true;
         this.guest = msg.guest === true;
@@ -441,6 +458,8 @@ export class Game {
         this.wall = { now, ms: msg.serverTime };
         this.thankedDay = utcDay(msg.serverTime);
         this.thankedToday = new Set(msg.thanked ?? []);
+        this.fieldNotes = { pages: [...msg.notebook?.pages ?? []], blanks: [...msg.notebook?.blanks ?? []] };
+        this.notebookChanges++;
         break;
       }
       case 'zone': {
@@ -546,6 +565,23 @@ export class Game {
         this.chapter = msg.id;
         this.storyChanges++;
         if (chapter) this.news.push({ kind: 'chapter', chapter });
+        break;
+      }
+      case 'page': {
+        if (this.fieldNotes.pages.includes(msg.id)) break;
+        this.fieldNotes = { ...this.fieldNotes, pages: [...this.fieldNotes.pages, msg.id] };
+        this.freshPages.add(msg.id);
+        this.notebookChanges++;
+        const page = this.notebook.pages.find(p => p.id === msg.id);
+        if (page) this.news.push({ kind: 'page', page });
+        break;
+      }
+      case 'blank': {
+        if (this.fieldNotes.blanks.includes(msg.id)) break;
+        this.fieldNotes = { ...this.fieldNotes, blanks: [...this.fieldNotes.blanks, msg.id] };
+        this.notebookChanges++;
+        const on = blankOf(this.notebook, msg.id);
+        if (on) this.news.push({ kind: 'blank', ...on });
         break;
       }
       case 'chest': {
@@ -867,7 +903,8 @@ export class Game {
       // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
       const told = person ? toldAfter(this.story, person, this.stats) : undefined;
       if (told !== undefined && told !== (this.stats.told ?? 0)) { this.stats = { ...this.stats, told }; this.statsChanges++; }
-      if (t.story && this.online) this.send({ t: 'talk', x: t.x, y: t.y });
+      // Whom you talked to, or what you read and where (never what it says): the story, and the field notes, may follow.
+      if (this.online) this.send({ t: 'talk', x: t.x, y: t.y });
       return;
     }
     if (t.kind === 'board') {
@@ -1535,6 +1572,13 @@ export class Game {
   /** The chapters of the story you reached, first to latest: what the journal keeps. */
   reached(): Chapter[] {
     return journal(this.story, this.chapter);
+  }
+
+  /** The field notes were looked at: the pages opened since are no longer new. */
+  seenFieldNotes() {
+    if (!this.freshPages.size) return;
+    this.freshPages = new Set();
+    this.notebookChanges++;
   }
 
   /** Piles close enough to show whose they are. */

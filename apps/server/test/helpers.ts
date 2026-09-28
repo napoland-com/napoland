@@ -402,6 +402,31 @@ export async function keepsParcels(storage: Storage): Promise<void> {
 }
 
 /**
+ * The field notes kept with a player, on `storage` (in memory, or a real database): none for a new player,
+ * what a save writes, and a save of a record without them (the release before, which never writes them)
+ * leaves them as they are, as a save without a chapter leaves the story.
+ */
+export async function keepsNotebook(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: sub });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect(rec.notebook).toBeUndefined();
+  const noted = { ...rec, notebook: { pages: ['glowcaps', 'pop-23'], blanks: [] }, lastSeenAt: rec.lastSeenAt + 1000 };
+  await storage.save(noted);
+  expect((await load()).notebook).toEqual({ pages: ['glowcaps', 'pop-23'], blanks: [] });
+  const { notebook: _left, ...without } = noted;
+  await storage.save(without);
+  expect((await load()).notebook).toEqual({ pages: ['glowcaps', 'pop-23'], blanks: [] });
+  await storage.save({ ...noted, notebook: { pages: ['glowcaps', 'pop-23', 'watchers'], blanks: ['watcher-stops'] } });
+  expect((await load()).notebook).toEqual({ pages: ['glowcaps', 'pop-23', 'watchers'], blanks: ['watcher-stops'] });
+  // Made with them too.
+  const other = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: other, notebook: { pages: ['moss'], blanks: [] } });
+  expect((await storage.findByAuthSub(other))!.notebook).toEqual({ pages: ['moss'], blanks: [] });
+}
+
+/**
  * Tools, parcels and the outfit kept side by side in one player (on `storage`, in memory or a real
  * database): made with all three, saved with all three changed, and a save with none of them (a record
  * that never had them) loses none. Returns the player's identity and what was kept.
@@ -445,7 +470,7 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
     stats: { rainSteps: 40, fed: 3, made: 1, collapsed: 2, surged: 1, told: 0b101, thanked: 7 },
     xp: 120, stash: { items: { moss: 9, coat: 1 }, out: { moss: 2 }, pieces: { coat: [{ cond: 1, level: 1 }] } },
     gear: { shirt: 'coat' }, worn: { shirt: { cond: 0.75, level: 2 } }, story: 'the-lineman', tools: ['stonebrook-map', 'radio'],
-    parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
+    parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', notebook: { pages: ['glowcaps', 'watchers'], blanks: [] }, createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   };
   expect(await storage.create(rec)).toBe(true);
   const load = async () => (await storage.findByAuthSub(sub))!;
@@ -458,12 +483,12 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
   const later: PlayerRecord = {
     ...rec, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
     stash: { items: { moss: 11, coat: 1 }, out: {}, pieces: { coat: [{ cond: 1, level: 1 }] } }, worn: { shirt: { cond: 1, level: 2 } }, tools: [...rec.tools!, 'near-woods-map'],
-    parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', lastSeenAt: rec.lastSeenAt + 1000,
+    parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', notebook: { pages: ['glowcaps', 'watchers'], blanks: ['watcher-stops'] }, lastSeenAt: rec.lastSeenAt + 1000,
   };
   await storage.save(later);
   expect(await load()).toEqual({ ...later, stats: { ...later.stats, thanked: 8 } });
-  // A save that carries no tools, parcels or outfit (and no thanks received) keeps them all.
-  const { tools: _tools, parcels: _parcels, outfit: _outfit, ...none } = later;
+  // A save that carries no tools, parcels, outfit or field notes (and no thanks received) keeps them all.
+  const { tools: _tools, parcels: _parcels, outfit: _outfit, notebook: _notebook, ...none } = later;
   const { thanked: _thanked, ...counts } = later.stats!;
   await storage.save({ ...none, stats: counts, lastSeenAt: later.lastSeenAt + 1000 });
   const kept = await load();

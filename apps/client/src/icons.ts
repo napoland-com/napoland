@@ -137,6 +137,12 @@ export const RADIO_ICON = icon(`<path d="M21 11.5l3.6-8" stroke-width="1.6"/><ci
   <rect x="18" y="18.2" width="6.4" height="3.4" rx=".7" fill="#7ff0a8" stroke="none"/>
   <circle cx="21.2" cy="25.2" r="1.7" fill="#c9c2b0"/>`);
 
+/** A pocket notebook with its band and a pencil beside it: the field notes' button in the bag's header. */
+export const NOTEBOOK_ICON = icon(`<path d="M6.5 5.5c0-.8.7-1.5 1.5-1.5h12.5c.8 0 1.5.7 1.5 1.5v21c0 .8-.7 1.5-1.5 1.5H8c-.8 0-1.5-.7-1.5-1.5z" fill="#8a6440"/>
+  <path d="M9.5 4v24" stroke="#5c4029" stroke-width="1.6"/><path d="M18.5 4v24" stroke="#2e3440" stroke-width="1.8"/>
+  <path d="M11.5 9h5v3.5h-5z" fill="#e8dfc8" stroke="none"/>
+  <path d="M25 8.5h2.6v15.5L26.3 27 25 24z" fill="#d9a82b"/><path d="M25 11h2.6" stroke="#8a6a1f"/>`);
+
 /**
  * Outfits in the wardrobe (outfits.ts): a small figure in each, in the colors the world draws it in
  * (view/characters.ts, OUTFIT_LOOKS): what it wears on its head over a head, and the clothes below.

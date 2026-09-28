@@ -1,6 +1,6 @@
 import {
   PROTOCOL_VERSION, STEP_MS, type BagSlot, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type FlashView, type StormView, type ItemsData,
-  type MapData, type MarkView, type PlayerView, type ProgressView, type ServerMsg, type StoneView, type StoryData, type StoryView, type SurgeView, type ConditionsView,
+  type MapData, type MarkView, type NotebookView, type PlayerView, type ProgressView, type ServerMsg, type StoneView, type StoryData, type StoryView, type SurgeView, type ConditionsView,
 } from '@napoland/shared';
 import { Items } from '../src/items';
 
@@ -125,7 +125,7 @@ export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 export interface Extras {
   finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; stash?: BagSlot[]; items?: number;
   fires?: FireView[]; marks?: MarkView[]; creatures?: CreatureView[]; flares?: FlareView[]; flashes?: FlashView[]; surge?: SurgeView | null; storm?: StormView | null; body?: BodyView; stone?: StoneView;
-  progress?: ProgressView; tools?: string[]; story?: StoryView; conditions?: ConditionsView;
+  progress?: ProgressView; tools?: string[]; story?: StoryView; conditions?: ConditionsView; notebook?: NotebookView;
   /** Whom you thanked today (UTC), by id. */
   thanked?: string[];
 }
@@ -141,8 +141,9 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
     finds: extras.finds ?? [], drops: extras.drops ?? [], bag: extras.bag ?? [], stash: extras.stash ?? [], items: extras.items ?? ITEMS.version,
     fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], flashes: extras.flashes ?? [], surge: extras.surge ?? null, storm: extras.storm ?? null,
     body: extras.body ?? DRY, stone: extras.stone ?? ASLEEP, stats: {}, progress: extras.progress ?? START, tools: extras.tools ?? [],
-    // A game made without a story has none (version 0).
+    // A game made without a story has none (version 0), and without field notes none either.
     story: extras.story ?? { version: 0, chapter: '' },
+    notebook: extras.notebook ?? { version: 0, pages: [], blanks: [] },
     conditions: extras.conditions ?? { today: [], week: null, next: null },
     thanked: extras.thanked ?? [],
   };

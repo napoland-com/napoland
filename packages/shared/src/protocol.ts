@@ -10,6 +10,7 @@ import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { Gear, Quirk, Worn } from './gear';
 import type { BagSlot } from './items';
+import type { NotebookView } from './notebook';
 import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
@@ -179,7 +180,10 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('requests'), off: z.boolean() }),
   /** Send me my friends list again: who is online now, and where. */
   z.object({ t: z.literal('friends') }),
-  /** You talked to the person, or read the desk, on tile x,y next to you: the story may move on (story.ts). */
+  /**
+   * You talked to the person, or read the desk, sign, paper, tag or stencil, on tile x,y next to you: the
+   * story may move on (story.ts), and a page of your field notes may open (notebook.ts). Never what it says.
+   */
   z.object({ t: z.literal('talk'), x: z.number().int(), y: z.number().int() }),
   /** Send me my counts toward feats as they are now (the status panel opened): the answer is `stats`. */
   z.object({ t: z.literal('stats') }),
@@ -501,6 +505,8 @@ export type ServerMsg =
       story: StoryView;
       /** Whom you thanked today (UTC), by id: nobody is thanked twice in a day, so none of them is offered again. */
       thanked: string[];
+      /** Your field notes (notebook.ts): the pages opened and the blanks filled, with the version of content/notebook.json the server runs; a client with another version reloads. */
+      notebook: NotebookView;
       serverTime: number;
     }
   /**
@@ -590,6 +596,10 @@ export type ServerMsg =
   | { t: 'stats'; stats: Stats }
   /** You reached this chapter of the story (story.ts): it goes into your journal. */
   | { t: 'chapter'; id: string }
+  /** A page of your field notes opened (notebook.ts): you picked up, read or lived through what it is about. */
+  | { t: 'page'; id: string }
+  /** A blank on a page of your field notes filled in: you saw its answer happen. */
+  | { t: 'blank'; id: string }
   /** What is in your stash, whole, after you opened the chest or anything went in or out. */
   | { t: 'chest'; stash: BagSlot[] }
   /** A parcel came into your chest (parcels.ts): when you arrived signed in, or at midnight UTC while you played. */

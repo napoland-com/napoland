@@ -3,12 +3,13 @@
  * lead onto walkable ground in maps that exist, and every map can be reached from the home town.
  * Then content/items.json: every item well formed, and every find rule on a real map with room to grow.
  * Then content/story.json: the chapters, and that what reaches each one is about people, desks, maps
- * and items that exist.
+ * and items that exist. Then content/notebook.json: the pages of the field notes, what opens them and
+ * fills in their blanks, and that none says where anything is.
  * Warnings are printed; any error makes the exit code 1. Usage: npm run validate
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { validateItems, validateMap, validateStory, validateWorld, type ItemsData, type MapData, type StoryData } from '../packages/shared/src';
+import { validateItems, validateMap, validateNotebook, validateStory, validateWorld, type ItemsData, type MapData, type NotebookData, type StoryData } from '../packages/shared/src';
 
 /** The town where new players start and collapsed players wake up. */
 const HOME = 'stonebrook';
@@ -79,6 +80,21 @@ else {
     if (!problems.length) console.log(`${STORY}: ok (${data.chapters.length} chapters)`);
   } catch (err) {
     console.log(`${STORY}: error: cannot be checked: ${err instanceof Error ? err.message : String(err)}`);
+    errors++;
+  }
+}
+
+const NOTEBOOK = 'notebook.json';
+if (mapErrors) console.log(`${NOTEBOOK}: not checked until every map is valid`);
+else {
+  try {
+    const data = JSON.parse(readFileSync(resolve(import.meta.dirname, '../content', NOTEBOOK), 'utf8')) as NotebookData;
+    const problems = validateNotebook(data, maps, items);
+    for (const p of problems) console.log(`${NOTEBOOK}: ${p.level}: ${p.message}`);
+    errors += problems.filter(p => p.level === 'error').length;
+    if (!problems.length) console.log(`${NOTEBOOK}: ok (${data.pages.length} pages, ${data.pages.reduce((n, p) => n + (p.blanks?.length ?? 0), 0)} blanks)`);
+  } catch (err) {
+    console.log(`${NOTEBOOK}: error: cannot be checked: ${err instanceof Error ? err.message : String(err)}`);
     errors++;
   }
 }

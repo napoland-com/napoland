@@ -6,7 +6,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
-import type { BagSlot, Dir, Gear, ParcelState, Piece, ReportReason, Stash, Stats, ThanksFor, Worn } from '@napoland/shared';
+import type { BagSlot, Dir, Gear, NotebookState, ParcelState, Piece, ReportReason, Stash, Stats, ThanksFor, Worn } from '@napoland/shared';
 import { log } from './log';
 
 export interface PlayerRecord {
@@ -68,6 +68,11 @@ export interface PlayerRecord {
    * none). Loaded only when they wear one. A save without it keeps what was saved.
    */
   outfit?: string | null;
+  /**
+   * The player's field notes (notebook.ts): the pages opened and the blanks filled, in the order they
+   * came. None: nothing yet. It only grows, and a save without it keeps what was saved.
+   */
+  notebook?: NotebookState;
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
@@ -266,10 +271,11 @@ const copyBag = (bag: readonly BagSlot[]): BagSlot[] =>
 const copyPieces = (p: Record<string, Piece[]>): Record<string, Piece[]> => Object.fromEntries(Object.entries(p).map(([id, list]) => [id, list.map(x => ({ ...x }))]));
 const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: copyPieces(s.pieces) } : {}) });
 const copyWorn = (w: Worn): Worn => Object.fromEntries(Object.entries(w).map(([slot, p]) => [slot, { ...p }]));
+const copyNotebook = (n: NotebookState): NotebookState => ({ pages: [...n.pages], blanks: [...n.blanks] });
 const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...rec, bag: copyBag(rec.bag), ...(rec.stats ? { stats: { ...rec.stats } } : {}), ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
   ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
-  ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}),
+  ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.notebook ? { notebook: copyNotebook(rec.notebook) } : {}),
 });
 /** As the database keeps a player: no outfit at all when they wear none, so both storages read back the same. */
 const stored = (rec: PlayerRecord): PlayerRecord => {
@@ -348,7 +354,7 @@ export class MemoryStorage implements Storage {
         stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) },
         xp: rec.xp ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
-        ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), lastSeenAt: rec.lastSeenAt,
+        ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.notebook ? { notebook: copyNotebook(rec.notebook) } : {}), lastSeenAt: rec.lastSeenAt,
       });
       // Taken off (null) is none; a record without an outfit keeps what was saved, like the tools and parcels.
       if (rec.outfit) cur.outfit = rec.outfit;
@@ -574,6 +580,8 @@ interface PlayerRow {
   outfit: string | null;
   /** Thanks received (migration 015): only creditThanks adds to it. */
   thanked: number;
+  /** Null for a player whose field notes never opened a page (017_notebook.sql). */
+  notebook: unknown;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -638,6 +646,14 @@ const stash = (json: unknown): Stash => {
   return { items: rec(o.items), out: rec(o.out), ...(o.pieces && typeof o.pieces === 'object' ? { pieces: o.pieces as Record<string, Piece[]> } : {}) };
 };
 
+/** A jsonb notebook as the server wrote it, lists of ids, for the record; anything else reads as never set (the World checks it again). */
+const notebookOf = (json: unknown): { notebook?: NotebookState } => {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return {};
+  const { pages, blanks } = json as Partial<Record<keyof NotebookState, unknown>>;
+  const ids = (v: unknown) => (Array.isArray(v) ? v.filter((id): id is string => typeof id === 'string') : []);
+  return { notebook: { pages: ids(pages), blanks: ids(blanks) } };
+};
+
 const fromRow = (r: PlayerRow): PlayerRecord => ({
   id: r.id,
   name: r.name,
@@ -665,6 +681,7 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.parcel_welcome || r.parcel_day !== null ? { parcels: { welcome: r.parcel_welcome, day: r.parcel_day, days: r.parcel_days } } : {}),
   // What the World checks again when the player joins: an outfit they may not wear (or that no longer exists) shows as none.
   ...(r.outfit ? { outfit: r.outfit } : {}),
+  ...notebookOf(r.notebook),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -726,14 +743,14 @@ export class PgStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
-         parcel_welcome, parcel_day, parcel_days, outfit, thanked)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24)
+         parcel_welcome, parcel_day, parcel_days, outfit, thanked, notebook)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25::jsonb)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
         rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.outfit ?? null,
-        Math.max(0, Math.floor(rec.stats?.thanked ?? 0)),
+        Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.notebook ? JSON.stringify(rec.notebook) : null,
       ],
     );
     return r.rowCount === 1;
@@ -741,18 +758,20 @@ export class PgStorage implements Storage {
 
   async save(rec: PlayerRecord): Promise<void> {
     // A record without parcels (never had one) leaves the parcel columns as they are, as a save without a
-    // chapter leaves the story; so does one without an outfit, while null (taken off) saves none.
+    // chapter leaves the story; so does one without an outfit, while null (taken off) saves none, and
+    // one without field notes (the previous release's, which never writes them) leaves them alone.
     const p = rec.parcels;
     await this.pool.query(
       `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
        gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
        parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
-       parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, last_seen_at = $13 WHERE id = $1`,
+       parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END,
+       notebook = COALESCE($23::jsonb, notebook), last_seen_at = $13 WHERE id = $1`,
       [
         rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
         rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
-        rec.outfit !== undefined, rec.outfit ?? null,
+        rec.outfit !== undefined, rec.outfit ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null,
       ],
     );
   }

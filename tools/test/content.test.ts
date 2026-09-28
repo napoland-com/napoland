@@ -1,7 +1,10 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CACHE_NEAR, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, objectTiles, upgradable, upgradeChance, validateItems, type ItemsData, type MapData, type MapObject, type StoryData } from '@napoland/shared';
+import {
+  ANYWHERE, CACHE_NEAR, SIGHTS, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, objectTiles, opensOn, upgradable, upgradeChance, validateItems, validateNotebook, type ItemsData, type MapData,
+  type MapObject, type NotebookData, type Sight, type StoryData,
+} from '@napoland/shared';
 
 /** The content as it ships: content/items.json and every map. */
 const content = resolve(import.meta.dirname, '../../content');
@@ -250,6 +253,60 @@ describe('gear upgrades (roadmap/gear-upgrades.md)', () => {
     const gear = items.items.filter(i => i.kind === 'gear');
     expect(gear.filter(upgradable).map(i => i.tier).sort()).toEqual(expect.arrayContaining(['anomalous', 'expedition', 'rugged', 'sturdy']));
     for (const i of gear) expect(upgradable(i), i.id).toBe(i.tier !== 'worn' && i.slot !== 'bag');
+  });
+});
+
+describe('a field notebook (roadmap/field-notebook.md)', () => {
+  const notebook = JSON.parse(readFileSync(resolve(content, 'notebook.json'), 'utf8')) as NotebookData;
+  const all = [...maps.values()].map(m => m.data);
+  const opening = (e: object) => notebook.pages.filter(p => opensOn(p).some(o => JSON.stringify(o) === JSON.stringify(e)));
+
+  it('is sound: every page opened by something that exists, and none says where anything is', () => {
+    expect(validateNotebook(notebook, all, items)).toEqual([]);
+  });
+
+  it('has about 40 pages, across the three areas and anywhere, each with a count worth filling', () => {
+    expect(notebook.pages.length).toBeGreaterThanOrEqual(35);
+    expect(notebook.pages.length).toBeLessThanOrEqual(50);
+    const areas = new Map<string, number>();
+    for (const p of notebook.pages) areas.set(p.area, (areas.get(p.area) ?? 0) + 1);
+    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', ANYWHERE]);
+    for (const [area, n] of areas) expect(n, area).toBeGreaterThanOrEqual(8);
+  });
+
+  it('has a page for every kind of find, and for the charms a strange object turns out to be', () => {
+    const kinds = new Set(items.finds.map(f => f.item).filter(id => items.items.find(i => i.id === id)?.kind !== 'tool'));
+    for (const item of kinds) expect(opening({ find: item }).length, item).toBe(1);
+    for (const charm of items.items.filter(i => i.kind === 'charm')) expect(opening({ find: charm.id }).length, charm.id).toBe(1);
+  });
+
+  it('has a page for every kind of strange thing out there, and fills in a blank on what each does', () => {
+    const used = new Set(notebook.pages.flatMap(p => [...opensOn(p), ...(p.blanks ?? []).map(b => b.when)]).flatMap(e => ('saw' in e ? [e.saw] : [])));
+    expect([...SIGHTS].filter(s => !used.has(s))).toEqual([]);
+    const blank = (sight: Sight) => notebook.pages.flatMap(p => p.blanks ?? []).find(b => 'saw' in b.when && b.when.saw === sight)!;
+    // The ones the design names: facing a watcher, a hitchhiker letting go, a surge's drain stopping under a light, the ferns before a skulker.
+    expect([blank('froze').ask, blank('froze').fill]).toEqual(['It stops when... ?', 'It stops when someone looks at it.']);
+    expect(blank('let-go').fill).toMatch(/street light, a fire, a roof or a flare/);
+    expect(blank('lit').fill).toMatch(/street light/);
+    expect(blank('rustle').fill).toMatch(/ferns rustle/);
+  });
+
+  it('has a page for the main landmarks\' signs, NAPO\'s desks that tell no chapter, and what each family left to read', () => {
+    const read = (map: string, o: MapObject) => opening({ read: { map, x: o.x, y: o.y } }).length + (o.kind === 'console' ? opening({ read: o.id }).length : 0);
+    for (const id of ['stonebrook', 'near-woods', 'south-road']) {
+      const napo = maps.get(id)!.data.objects.filter(o => o.kind === 'sign' && o.style === 'napo');
+      expect(napo.length, id).toBeGreaterThan(0);
+      for (const o of napo) expect(read(id, o), `${id} ${o.x},${o.y}`).toBe(1);
+    }
+    for (const [id, x, y] of [['stonebrook', 13, 37], ['stonebrook', 17, 10], ['near-woods', 30, 74], ['near-woods', 27, 9], ['south-road', 37, 5]] as const) {
+      expect(opening({ read: { map: id, x, y } }).length, `${id} ${x},${y}`).toBe(1);
+    }
+    for (const room of ['stonebrook-okada-house', 'stonebrook-hale-house', 'stonebrook-dahl-house', 'stonebrook-lindqvist-house']) {
+      const paper = maps.get(room)!.data.objects.find(o => o.kind === 'paper')!;
+      expect(read(room, paper), room).toBe(1);
+    }
+    expect(opening({ read: 'station-radio' })).toHaveLength(1);
+    expect(opening({ read: 'checkpoint-log' })).toHaveLength(1);
   });
 });
 
