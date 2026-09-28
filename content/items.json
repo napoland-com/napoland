@@ -1,5 +1,5 @@
 {
-  "version": 20,
+  "version": 21,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -39,7 +39,12 @@
     {"id":"insulated-gloves","name":"Insulated gloves","kind":"gear","stack":1,"slot":"gloves","tier":"rugged","color":"#3a3a3a","weight":0.3,"resist":{"electricity":0.35,"cold":0.1},"text":"Lineman’s gloves wrapped in copper-threaded cloth. Electricity stings a third less."},
     {"id":"expedition-pack","name":"Expedition pack","kind":"gear","stack":1,"slot":"bag","tier":"expedition","color":"#8a3a2a","weight":1.6,"bag":16,"bonus":5,"text":"A frame pack for long trips. Sixteen things fit, and it carries so well you have 5 more energy."},
     {"id":"expedition-boots","name":"Expedition boots","kind":"gear","stack":1,"slot":"shoes","tier":"expedition","color":"#5a3a22","weight":1.2,"resist":{"electricity":0.25,"cold":0.15,"wind":0.1},"text":"Heavy boots with rubber soles and wool inside. Good against cold, wet and electricity alike."},
-    {"id":"shard-cap","name":"Shard-lined cap","kind":"gear","stack":1,"xp":40,"slot":"cap","tier":"anomalous","color":"#9a6cf0","weight":0.4,"resist":{"radiation":0.5,"electricity":0.2},"bonus":10,"text":"A cap lined with slivers of glass that hum against your skull. Half the glow of the anomalies never reaches you, and you have 10 more energy.","about":"Put it on from your bag: half the glow of the anomalies never reaches you."}
+    {"id":"shard-cap","name":"Shard-lined cap","kind":"gear","stack":1,"xp":40,"slot":"cap","tier":"anomalous","color":"#9a6cf0","weight":0.4,"resist":{"radiation":0.5,"electricity":0.2},"bonus":10,"text":"A cap lined with slivers of glass that hum against your skull. Half the glow of the anomalies never reaches you, and you have 10 more energy.","about":"Put it on from your bag: half the glow of the anomalies never reaches you."},
+    {"id":"old-photograph","name":"Old photograph","kind":"keepsake","stack":1,"xp":20,"text":"Stonebrook before: the sawmill running, the street full of people, and the Old Stone whole, without its crack."},
+    {"id":"brass-compass","name":"Brass compass","kind":"keepsake","stack":1,"xp":20,"text":"The ranger's brass compass, worn smooth where a thumb opened it. Its needle turns toward the woods, whichever way you hold it."},
+    {"id":"pole-tag","name":"Pole tag","kind":"keepsake","stack":1,"xp":20,"text":"A tin tag stamped N-16, off the last pole of the north line. W.P. is scratched into the back."},
+    {"id":"tin-whistle","name":"Tin whistle","kind":"keepsake","stack":1,"xp":20,"text":"Wren Barlow's whistle. The paint is worn off where small fingers held it, and it still carries."},
+    {"id":"staff-badge","name":"NAPO staff badge","noun":"NAPO staff badge","plural":"NAPO staff badges","kind":"keepsake","stack":1,"xp":20,"text":"BARLOW, D. · FIELD CREW DRIVER. The photo on it has faded to a pale square."}
   ],
   "finds": [
     {"item":"glowcap","map":"near-woods","on":["mud","ferns"],"steps":[15,50],"count":4,"respawn":[90,240]},
@@ -172,5 +177,15 @@
       [{"item":"resin","count":4},{"item":"thermos","count":1}]
     ],
     "allWeek": [{"item":"lockbox","count":1}]
+  },
+  "keepsakes": {
+    "energy": 5,
+    "places": [
+      {"item":"old-photograph","map":"stonebrook","x":15,"y":37},
+      {"item":"brass-compass","map":"near-woods","x":35,"y":25},
+      {"item":"pole-tag","map":"near-woods","x":47,"y":42},
+      {"item":"tin-whistle","map":"near-woods","x":56,"y":6},
+      {"item":"staff-badge","map":"south-road","x":45,"y":37}
+    ]
   }
 }

@@ -1,7 +1,7 @@
 {
   "id": "near-woods-end-cabin",
   "name": "The cabin at the end",
-  "version": 2,
+  "version": 3,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -36,6 +36,11 @@
     {"kind":"table","x":6,"y":3},
     {"kind":"bed","x":1,"y":4},
     {"kind":"crate","x":7,"y":5},
-    {"kind":"cache","x":5,"y":1,"name":"the crate in the cabin at the end"}
+    {"kind":"cache","x":5,"y":1,"name":"the crate in the cabin at the end"},
+    {"kind":"note","x":6,"y":1,"id":"barlow-oil","by":"barlows","name":"A list on the shelf","text":["Lamp oil: 2 cans. Matches, dry: 3 boxes. Flour. Wren's boots (too small by winter).","Dan in with the crews Monday, back Thursday. Keep the lamp lit every night he is gone.","Do not let Wren past the ferns. Do not let Wren past the ferns."]},
+    {"kind":"note","x":7,"y":1,"id":"ranger-lamp","by":"ranger","name":"A note on the shelf","text":["Ellen: if the lamp goes out, do not go for the matches in the dark. Sit where you can see the window, and watch it.","They come to the glass when the light is out, but not while somebody watches.","Keep Wren back from the ferns after dark. I will come by on the next clear day."],"when":"night","faint":"Written in something that glows. In this light it is only a greenish smear."},
+    {"kind":"note","x":6,"y":3,"id":"barlow-crews","by":"barlows","name":"A list on the table","text":["Lamp oil: half a can. Matches: 1 box. Flour: none. The crews have not come in two weeks.","Dan went down to the station to ask. Only Vera is there, he says, at her radio, and she does not know either.","We go when the weather turns. The ranger says the south road is calm. E."]},
+    {"kind":"note","x":1,"y":4,"id":"barlow-tall-ones","by":"barlows","name":"Under the pillow","text":["The tall ones only move when you do not look. I looked at one all day from the window and it did not move once.","Mom says do not look at them. I think you should look at them. That is the whole trick.","Dad says when the crews stop coming he takes the truck back to NAPO, and then we go. Wren, 9"]},
+    {"kind":"note","x":7,"y":5,"id":"barlow-ferns","by":"barlows","name":"Tucked in the crate","text":["The ferns rustle before one comes. Then it goes quiet, and the quiet is the bad part. Mom says get to the lamp.","I have a whistle. Mom has a whistle. The ranger has no whistle, only a compass that points one way."]}
   ]
 }

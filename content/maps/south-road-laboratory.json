@@ -1,7 +1,7 @@
 {
   "id": "south-road-laboratory",
   "name": "The NAPO Laboratory",
-  "version": 3,
+  "version": 4,
   "kind": "inside",
   "depth": 0,
   "width": 11,
@@ -44,7 +44,8 @@
     {"kind":"crate","x":1,"y":6},
     {"kind":"crate","x":9,"y":6},
     {"kind":"npc","id":"vera","name":"Vera","x":7,"y":2,"dir":"down","look":{"coat":"#d9d6cc","scarf":"#2f4a6b","hair":"#c9c2b0","skin":"#e0b793"},"lines":["Quietly, please. I'm listening.","The Old Stone hums, and so do the rocks deep in the woods. The same hum. They were answering each other long before we came.","We thought we could answer too. One night we sent it back from the Tower. You've seen what came back.","The Tower still pulses every forty minutes, and the woods surge on the same clock. We set that clock.","Switch the Tower off? Go and read the note on its panel first.","Bring the shards back to the Old Stone. It is taking back what we broke off it.","We called the tall ones observers. We watched the woods for years. Now something watches back.","If NAPO is still out there, it isn't answering my radio."]},
-    {"kind":"cache","x":3,"y":1,"name":"the laboratory's crate"}
+    {"kind":"cache","x":3,"y":1,"name":"the laboratory's crate"},
+    {"kind":"note","x":9,"y":4,"id":"ranger-vera","by":"ranger","name":"A note on the bench","text":["Vera: you asked what the woods were like before. Wind in the firs, the creek, deer at dusk. The stones hummed only in the cold.","Now the woods keep time with your Tower. I think you know that."]}
   ],
   "style": "napo"
 }

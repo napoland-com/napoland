@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-empty-house",
   "name": "The empty house",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -35,6 +35,8 @@
     {"kind":"crate","x":7,"y":2},
     {"kind":"crate","x":3,"y":3},
     {"kind":"table","x":1,"y":4},
-    {"kind":"crate","x":6,"y":5}
+    {"kind":"crate","x":6,"y":5},
+    {"kind":"note","x":1,"y":4,"id":"barlow-tins","by":"barlows","name":"A list on the table","text":["Slept here one night. Used two blankets, folded them back. Took four tins of beans. We will pay it back. E. Barlow"]},
+    {"kind":"note","x":2,"y":1,"id":"barlow-next-door","by":"barlows","name":"A note on the shelf","text":["There is a house next door with a light on. Mom says let them sleep. Wren"]}
   ]
 }

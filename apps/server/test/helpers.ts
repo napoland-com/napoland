@@ -563,6 +563,32 @@ export async function keepsNotebook(storage: Storage): Promise<void> {
 }
 
 /**
+ * The notes a player read and the keepsakes they brought home, on `storage` (in memory, or a real
+ * database): none for a new player, what a save writes, and a save of a record without them (the release
+ * before, which never writes them) leaves them as they are.
+ */
+export async function keepsNotes(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: sub });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect(rec.notes).toBeUndefined();
+  expect(rec.keepsakes).toBeUndefined();
+  const kept = { ...rec, notes: ['ranger-fires', 'walt-n8'], keepsakes: ['brass-compass'], lastSeenAt: rec.lastSeenAt + 1000 };
+  await storage.save(kept);
+  expect(await load()).toMatchObject({ notes: ['ranger-fires', 'walt-n8'], keepsakes: ['brass-compass'] });
+  const { notes: _notes, keepsakes: _keepsakes, ...without } = kept;
+  await storage.save(without);
+  expect(await load()).toMatchObject({ notes: ['ranger-fires', 'walt-n8'], keepsakes: ['brass-compass'] });
+  await storage.save({ ...kept, notes: [...kept.notes, 'barlow-oil'], keepsakes: [...kept.keepsakes, 'pole-tag'] });
+  expect(await load()).toMatchObject({ notes: ['ranger-fires', 'walt-n8', 'barlow-oil'], keepsakes: ['brass-compass', 'pole-tag'] });
+  // Made with them too.
+  const other = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: other, notes: ['walt-truck'], keepsakes: ['tin-whistle'] });
+  expect(await storage.findByAuthSub(other)).toMatchObject({ notes: ['walt-truck'], keepsakes: ['tin-whistle'] });
+}
+
+/**
  * Tools, parcels and the outfit kept side by side in one player (on `storage`, in memory or a real
  * database): made with all three, saved with all three changed, and a save with none of them (a record
  * that never had them) loses none. Returns the player's identity and what was kept.

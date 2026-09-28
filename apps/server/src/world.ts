@@ -69,6 +69,7 @@ import {
   CACHE_SIZE,
   DIR_VEC,
   MARK_LIFETIME_MS,
+  NOTE_XP,
   QUIRKS,
   SLOTS,
   STARTER_GEAR,
@@ -97,6 +98,7 @@ import {
   cacheTakes,
   calendarDay,
   canMake,
+  cleanIds,
   cleanNotebook,
   cleanRested,
   conditionsAt,
@@ -104,8 +106,13 @@ import {
   daysThisWeek,
   emptyNotebook,
   everyDaySoFar,
+  isKeepsake,
+  keepsakeEnergy,
+  keepsakeFindId,
+  noteAt,
   notebookIndex,
   noted,
+  noteShows,
   readableAt,
   readEvents,
   weekIndex,
@@ -199,7 +206,9 @@ import {
   type Gear,
   type ItemDef,
   type ItemsData,
+  type KeepsakesData,
   type LookKind,
+  type MapNote,
   type MeritsView,
   type NotebookData,
   type NotebookEvent,
@@ -382,6 +391,9 @@ export interface Joined extends Scene {
   /** Whom the player thanked today (UTC), by id. */
   thanked: string[];
   notebook: NotebookView;
+  /** The notes people left that the player read, and the keepsakes they brought home (notes.ts), by id. */
+  notes: string[];
+  keepsakes: string[];
 }
 
 /** What storage must hear: piles and marks to write (or remove: undefined), players to save now, and the Old Stone if it changed. */
@@ -667,7 +679,21 @@ const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
   ...(r.looks ? { looks: [...r.looks] } : {}),
   ...(r.notebook ? { notebook: { pages: [...r.notebook.pages], blanks: [...r.notebook.blanks] } } : {}),
+  ...(r.notes ? { notes: [...r.notes] } : {}), ...(r.keepsakes ? { keepsakes: [...r.keepsakes] } : {}),
 });
+/**
+ * A bag as a keepsake may be in it: one of each at most, and none that is home already (a save from
+ * before it came home, or two tabs at once). Everything else stays as it is.
+ */
+const oneOfEach = (bag: BagSlot[], items: Map<string, ItemDef>, home: readonly string[]): BagSlot[] => {
+  const seen = new Set<string>(home);
+  return bag.filter(s => {
+    if (!isKeepsake(items.get(s.item))) return true;
+    if (seen.has(s.item)) return false;
+    seen.add(s.item);
+    return true;
+  });
+};
 /** A saved piece as the server writes them: a condition from 0 to 1, a quirk the game knows (or none), a level up to UPGRADE_MAX (or none). */
 const isPiece = (p: unknown): p is Piece => {
   const { cond, quirk, level } = (typeof p === 'object' && p !== null ? p : {}) as Partial<Piece>;
@@ -847,6 +873,10 @@ export class World {
   private readonly notebook: NotebookIndex;
   /** Each map's poles, once asked for: on an aurora night the wires hum beside them. */
   private readonly poles = new Map<string, Array<[number, number]>>();
+  /** Where each keepsake lies (content/items.json), in order: a place's index names its find (keepsakeFindId). None: no keepsakes. */
+  private readonly keepsakes: KeepsakesData | undefined;
+  /** The tiles a keepsake lies on, by map: shared finds never grow there, so none ever lies under another. */
+  private readonly keepsakeTiles = new Map<string, Set<number>>();
 
   /** `maps` must fit together (validateWorld) and `items` must fit the maps (validateItems); `homeId` is a town. */
   constructor(maps: Iterable<TileMap>, homeId: string, weather: Weather, options: WorldOptions = {}) {
@@ -893,6 +923,15 @@ export class World {
     this.calendar = options.calendar ?? UTC_CALENDAR;
     this.story = options.story ?? { version: 0, chapters: [] };
     this.notebook = notebookIndex(options.notebook ?? { version: 0, pages: [] });
+    this.keepsakes = items.keepsakes;
+    for (const k of this.keepsakes?.places ?? []) {
+      // loadItems checks this and more (validateItems).
+      const map = this.maps.get(k.map);
+      if (!map || !this.items.get(k.item)) throw new Error(`the keepsake ${k.item} lies on map ${k.map}, but one of them does not exist`);
+      let tiles = this.keepsakeTiles.get(k.map);
+      if (!tiles) this.keepsakeTiles.set(k.map, (tiles = new Set()));
+      tiles.add(k.y * map.width + k.x);
+    }
     for (const f of items.finds) {
       // loadItems checks this and more (validateItems).
       const map = this.maps.get(f.map);
@@ -1051,7 +1090,12 @@ export class World {
       ...(rec.parcels !== undefined ? { parcels: cleanParcels(rec.parcels) } : {}),
       // Pages and blanks a newer notebook wrote stay too: the client shows the ones it knows.
       ...(rec.notebook !== undefined ? { notebook: cleanNotebook(rec.notebook) } : {}),
+      // So do the notes read and the keepsakes home: ids a newer release wrote are kept for it.
+      ...(rec.notes !== undefined ? { notes: cleanIds(rec.notes) } : {}),
+      ...(rec.keepsakes !== undefined ? { keepsakes: cleanIds(rec.keepsakes) } : {}),
     };
+    // A keepsake is carried once: never a second of it, and never one that is home already.
+    r.bag = oneOfEach(r.bag, this.items, r.keepsakes ?? []);
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
     // saved tile may be inside something new or part of an exit now (start at that map's spawn). Never
     // start inside a wall, or on an exit that would move you the moment you step.
@@ -1099,6 +1143,10 @@ export class World {
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
       thanked: [...this.thanks.values()].filter(t => t.giver === r.id && t.day === today).map(t => t.helper),
       notebook: { version: this.notebook.data.version, ...(r.notebook ?? emptyNotebook()) },
+      notes: [...(r.notes ?? [])],
+      keepsakes: [...(r.keepsakes ?? [])],
+      // Theirs alone, beside the zone's: the keepsakes lying here for them.
+      finds: this.findsFor(r, zone),
     };
   }
 
@@ -1171,6 +1219,8 @@ export class World {
     if (pile) return this.pickPile(p, pile, now);
     const find = p.map.inside(x, y) ? p.zone.finds.get(y * p.map.width + x) : undefined;
     if (find) return this.pickFind(p, find, now);
+    const kept = this.keepsakeAt(p.rec, p.map.data.id, x, y);
+    if (kept) return this.pickKeepsake(p, kept, now);
     this.refuse(p, 'pick', 'gone');
   }
 
@@ -1257,6 +1307,7 @@ export class World {
     const n = Math.min(thrown.count, Math.max(1, Math.floor(count)));
     p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), thrown.item, n);
     p.rec.bag = takeFromBag(p.rec.bag, slot, n);
+    this.keepsakeBack(p, thrown.item);
     this.sendBag(p, now);
     this.rerate(p, now);
     this.did(p, { kind: 'thrown', item: thrown.item, count: n, ...(thrown.piece?.level ? { level: thrown.piece.level } : {}) });
@@ -1337,11 +1388,20 @@ export class World {
     this.runQueue(p, now);
     this.advance(p, now);
     if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'store', 'too_far');
-    const going = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
-    if (!going.length) return this.refuse(p, 'store', 'empty_slot');
+    const all = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
+    if (!all.length) return this.refuse(p, 'store', 'empty_slot');
+    // A keepsake comes home apart from the stash, and stays: theirs for good, with its XP, once.
+    const home = all.filter(s => isKeepsake(this.items.get(s.item))), going = all.filter(s => !home.includes(s));
     // Live finds apart: gathering them would forget when each was picked, and each is worth what its age says.
     const wall = now + this.epochOffset;
     const r = store(p.rec.stash ?? emptyStash(), gather(going.filter(s => !this.items.get(s.item)?.live)), this.items);
+    const setBefore = keepsakeEnergy(this.keepsakes, p.rec.keepsakes), came: string[] = [];
+    for (const s of home) {
+      if (p.rec.keepsakes?.includes(s.item)) continue;
+      p.rec.keepsakes = [...(p.rec.keepsakes ?? []), s.item];
+      came.push(s.item);
+      r.xp += this.items.get(s.item)?.xp ?? 0;
+    }
     for (const s of going) {
       const l = this.liveNow(s, wall);
       if (!l?.into) continue;
@@ -1357,8 +1417,9 @@ export class World {
     this.sendBag(p, now);
     this.sendStash(p);
     this.earn(p, r.xp, true);
-    // A bigger bar: the player hears it (and at home, by the fire, it fills up).
-    if (levelOf(p.rec.xp ?? 0) !== before) this.refresh(p, now);
+    for (const item of came) this.outbox.push({ to: id, msg: { t: 'keepsake', item } });
+    // A bigger bar, from a level or the whole set of keepsakes home: the player hears it (and at home, by the fire, it fills up).
+    if (levelOf(p.rec.xp ?? 0) !== before || keepsakeEnergy(this.keepsakes, p.rec.keepsakes) !== setBefore) this.refresh(p, now);
     this.tell(p, now);
     this.moveStory(p, { store: true });
   }
@@ -1732,12 +1793,14 @@ export class World {
     if (!p) return;
     this.runQueue(p, now);
     if (p.queue.length) p.after = { t: 'talk', x, y };
-    else this.heard(p, x, y);
+    else this.heard(p, x, y, now);
   }
 
   /** Whom the player talked to, or what they read, on tile x,y: only from next to it. */
-  private heard(p: Online, x: number, y: number): void {
+  private heard(p: Online, x: number, y: number, now: number): void {
     if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
+    const note = noteAt(p.map.data, x, y);
+    if (note) this.readNote(p, note, now);
     const o = p.map.data.objects.find(o => o.x === x && o.y === y && (o.kind === 'npc' || o.kind === 'console'));
     if (o?.kind === 'npc') {
       this.remarked(p, o.id);
@@ -1931,6 +1994,7 @@ export class World {
     if (!c) return this.refuse(p, 'cacheLeave', 'too_far');
     const s = p.rec.bag[slot], def = s && this.items.get(s.item);
     if (!s || !def) return this.refuse(p, 'cacheLeave', 'empty_slot');
+    if (isKeepsake(def)) return this.refuse(p, 'cacheLeave', 'keepsake');
     if (!cacheTakes(def)) return this.refuse(p, 'cacheLeave', 'no_gear');
     const visit = this.visitAt(p, c);
     if (visit.left) return this.refuse(p, 'cacheLeave', 'left_one');
@@ -2094,7 +2158,7 @@ export class World {
     if (p.after && !p.queue.length) {
       const { t, x, y } = p.after;
       p.after = undefined;
-      if (t === 'talk') this.heard(p, x, y);
+      if (t === 'talk') this.heard(p, x, y, now);
       else this.readBoard(p, x, y, now);
     }
   }
@@ -2214,7 +2278,18 @@ export class World {
     if (old) this.removePile(old);
     if (!bag.length) return;
     const trail = p.map.data.kind === 'wilds' && slot === undefined ? p.trail.map(([tx, ty]) => [tx, ty] as [number, number]) : [];
-    const falls = slot === undefined ? bag : [bag[slot]!];
+    const dropped = slot === undefined ? bag : [bag[slot]!];
+    // A keepsake never falls into a pile, where someone else could take it: it goes back where it lay.
+    const falls = dropped.filter(s => !isKeepsake(this.items.get(s.item)));
+    if (falls.length < dropped.length) {
+      p.rec.bag = slot === undefined ? [] : bag.filter((_, i) => i !== slot);
+      for (const s of dropped) if (!falls.includes(s)) this.keepsakeBack(p, s.item);
+      if (!falls.length) {
+        this.sendBag(p, now);
+        this.saveNow.set(id, p.rec);
+        return;
+      }
+    }
     // Put down, a live find goes dim for good. A carried piece of gear falls in as it is.
     const items = gather(falls.map(s => {
       const into = this.items.get(s.item)?.live?.into;
@@ -2263,7 +2338,7 @@ export class World {
     this.toZone(here, { t: 'join', player: this.viewOf(p) }, id);
     this.outbox.push({
       to: id,
-      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), stats: { ...p.rec.stats }, reason },
+      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), finds: this.findsFor(p.rec, p.zone), stats: { ...p.rec.stats }, reason },
       // Where the network hears them from now on, when it is not the map's main copy (its key is the map's id).
       ...(p.zone.copy ? { zone: here } : {}),
     });
@@ -2418,6 +2493,67 @@ export class World {
     const { x, y } = p.rec;
     return p.zone.watchers.some(w => w.awake && manhattan(w.x, w.y, x, y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
       || p.zone.skulkers.some(s => s.awake && manhattan(s.x, s.y, x, y) <= SKULKER_HEAR);
+  }
+
+  // ---------- notes and keepsakes people left (notes.ts) ----------
+
+  /**
+   * The player read the note someone left on tile x,y: if it shows now (at night, in the rain or on an
+   * aurora night, for a note written so), the first read gives its XP, once, and the journal keeps it.
+   * Saved at once, like a page of the field notes.
+   */
+  private readNote(p: Online, note: MapNote, now: number): void {
+    if (p.rec.notes?.includes(note.id) || !noteShows(note, this.sky, this.stormOf(p.map, now)?.phase === 'storm')) return;
+    p.rec.notes = [...(p.rec.notes ?? []), note.id];
+    this.saveNow.set(p.rec.id, p.rec);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'noteRead', id: note.id } });
+    // Not stashing: no play-test multiple and no rest, only the note's own XP.
+    const before = levelOf(p.rec.xp ?? 0);
+    p.rec.xp = (p.rec.xp ?? 0) + NOTE_XP;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, p.rec.rested), gained: NOTE_XP } });
+    if (levelOf(p.rec.xp) !== before) {
+      this.refresh(p, now);
+      this.tell(p, now);
+    }
+  }
+
+  /** What lies in a zone for this player to pick up: the zone's finds, and the keepsakes lying on its map for them alone. */
+  private findsFor(r: PlayerRecord, zone: Zone): FindView[] {
+    return [...this.findViews(zone.key), ...(this.keepsakes?.places ?? []).flatMap((k, i) => (k.map === zone.map.data.id && this.lying(r, k.item) ? [{ id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y }] : []))];
+  }
+
+  /** A keepsake lies where it was left for a player until they carry it, and for good once it is home. */
+  private lying(r: PlayerRecord, item: string): boolean {
+    return !r.keepsakes?.includes(item) && !r.bag.some(s => s.item === item);
+  }
+
+  /** The keepsake lying on tile x,y of map `mapId` for this player, with its find id. */
+  private keepsakeAt(r: PlayerRecord, mapId: string, x: number, y: number): { item: string; id: number } | undefined {
+    const i = (this.keepsakes?.places ?? []).findIndex(k => k.map === mapId && k.x === x && k.y === y && this.lying(r, k.item));
+    return i < 0 ? undefined : { item: this.keepsakes!.places[i]!.item, id: keepsakeFindId(i) };
+  }
+
+  /** Picks up a keepsake lying for the player: into the bag if it fits. Gone for them alone; nobody else ever saw it. */
+  private pickKeepsake(p: Online, kept: { item: string; id: number }, now: number): void {
+    const r = addToBag(p.rec.bag, this.items.get(kept.item)!, 1, p.slots);
+    if (r.left) return this.refuse(p, 'pick', 'bag_full');
+    p.rec.bag = r.bag;
+    this.saveNow.set(p.rec.id, p.rec);
+    this.got(p, [{ item: kept.item, count: 1 }], 'find', now);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'findGone', id: kept.id } });
+    this.rerate(p, now);
+  }
+
+  /**
+   * A keepsake left the player's bag other than by coming home (thrown away, fallen, caught): it lies
+   * where it was left again, and they see it there if they are on that map.
+   */
+  private keepsakeBack(p: Online, item: string): void {
+    const i = (this.keepsakes?.places ?? []).findIndex(k => k.item === item);
+    const k = this.keepsakes?.places[i];
+    if (!k || !this.lying(p.rec, item)) return;
+    this.saveNow.set(p.rec.id, p.rec);
+    if (k.map === p.map.data.id) this.outbox.push({ to: p.rec.id, msg: { t: 'find', find: { id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y } } });
   }
 
   /** A map's poles (their tiles), found once. */
@@ -3370,8 +3506,8 @@ export class World {
   private freeTile(rule: Rule, zone: Zone, not: number | undefined): number | undefined {
     const { tiles } = rule;
     const finds = zone.finds;
-    const piles = this.pileTiles.get(zone.key);
-    const empty = (t: number) => !finds.has(t) && !piles?.has(t);
+    const piles = this.pileTiles.get(zone.key), kept = this.keepsakeTiles.get(zone.map.data.id);
+    const empty = (t: number) => !finds.has(t) && !piles?.has(t) && !kept?.has(t);
     // Finds are few next to the tiles they may grow on, so a few random tries nearly always hit a free one.
     for (let i = 0; i < 8 && tiles.length; i++) {
       const t = tiles[this.roll(tiles.length)]!;
@@ -3423,9 +3559,9 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, r.cup), gained: r.gained, ...(r.fromRest ? { fromRest: r.fromRest } : {}) } });
   }
 
-  /** A full bar: the level's, plus what the gear worn gives. */
+  /** A full bar: the level's, plus what the gear worn gives, and the keepsakes' when all of them are home. */
   private maxOf(r: PlayerRecord): number {
-    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items, r.worn);
+    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items, r.worn) + keepsakeEnergy(this.keepsakes, r.keepsakes);
   }
 
   /**

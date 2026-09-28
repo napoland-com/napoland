@@ -605,6 +605,8 @@ export function attachNet(o: NetOptions): Net {
       story: joined.story,
       thanked: joined.thanked,
       notebook: joined.notebook,
+      notes: joined.notes,
+      keepsakes: joined.keepsakes,
       serverTime: Date.now(),
     });
     flush();
