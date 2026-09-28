@@ -201,8 +201,9 @@ export function longNightBanner(on: boolean, bonus: boolean, does: string): { ti
  */
 export function newsBanner(n: News, place: string, items?: Items, guest = false): { title: string; sub: string } | null {
   // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where. A
-  // lodestone's tug is a pulse on the status panel and a faint sound: a banner would make it loud.
-  if (n.kind === 'call' || n.kind === 'tug' || n.kind === 'note') return null;
+  // lodestone's tug is a pulse on the status panel and a faint sound: a banner would make it loud. Steps
+  // that are not yours (unease.ts) are only ever heard: said out loud, they would be nothing.
+  if (n.kind === 'call' || n.kind === 'tug' || n.kind === 'note' || n.kind === 'stalk') return null;
   // One line, for everyone online.
   if (n.kind === 'first') return { title: n.text, sub: '' };
   if (n.kind === 'keepsake') {

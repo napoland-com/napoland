@@ -10,7 +10,7 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, SEASONS, bagSlotsOf, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, SEASONS, bagSlotsOf, inTheDark, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData,
   type MapRef, type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
@@ -33,6 +33,7 @@ import { parcelNote, untold } from './parcels';
 import { goalText } from './said';
 import { Sound, type SoundSetting } from './sound';
 import { reachText, tradePanel } from './trade';
+import { Apparition } from './unease';
 import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { Resolution } from './quality';
@@ -775,6 +776,9 @@ const mapName = (id: string) => maps.find(id)?.name;
 const toSay: News[] = [];
 /** The scene sound was mixed for last frame: what changed since is what makes a one-shot. */
 let heard: Scene | undefined;
+/** What may stand at the edge of the fog while you are uneasy (unease.ts), and where the view sees a tile on the screen. */
+const apparition = new Apparition();
+const edgeOf = (x: number, y: number) => view.edgeOf(x, y);
 /** The question and what the box says by itself, as last drawn (Game.boxChanges). */
 let boxShown = -1;
 /** The fan of calls over B as last drawn: '' while closed. */
@@ -998,6 +1002,10 @@ function frame(now: number) {
   // The first goal, in the bag and the chest; at the workbench, a tap on it opens its card (the Hud writes it only when it changed).
   const next = game.nextGear();
   hud.setGoal(next && { text: goalText(next, items), ready: next.ready, act: !!game.benchBeside() });
+  // Uneasy, the screen's edges close in; where watchers roam, something may stand at the edge of the fog.
+  hud.setUnease(game.unease);
+  const figure = me && game.online ? apparition.update(now, game.map, game.unease, inTheDark(game.weather), me.tx, me.ty, me.dir, edgeOf) : 0;
+  view.setApparition(apparition.x, apparition.y, figure);
   const t = (now - start) / 1000;
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;

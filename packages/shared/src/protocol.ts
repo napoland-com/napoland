@@ -781,6 +781,11 @@ export type ServerMsg =
   | { t: 'touched'; by: CreatureView['kind']; lost: string | null; level?: number }
   /** Something clung to your back, or let go of it. */
   | { t: 'hitch'; on: boolean }
+  /**
+   * How uneasy you are now (unease.ts): 0, not at all, to UNEASE_LEVELS, full (hitchhikers find you twice
+   * as often). Told only when the level changes; it is 0 whenever you come into the game.
+   */
+  | { t: 'unease'; level: number }
   /** On your map: someone lit a flare. */
   | { t: 'flare'; flare: FlareView }
   /** Your map's surge clock moved to another phase. */
