@@ -9,7 +9,8 @@ import { colorFor } from '../src/world';
 import { woodsData } from './fixtures';
 import { setup, waitFor, type Client } from './helpers';
 /** What a zone lists besides players, finds and piles, in the fixture world: fires burn down at random levels, and nothing else is there. */
-const SCENE = { fires: expect.any(Array), marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, stats: expect.any(Object) };
+/** What a zone lists besides players, finds and piles; its weather is the server's fixed one here (weather.test.ts has a region's own). */
+const SCENE = { fires: expect.any(Array), marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, stats: expect.any(Object), weather: expect.any(String) };
 
 const woods = new TileMap(woodsData());
 /** The energy a player is told: value to 1 decimal, rate to 3. */

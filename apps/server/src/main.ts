@@ -5,7 +5,7 @@
 import { dirname, join } from 'node:path';
 import { createAuth } from './auth';
 import { loadConfig } from './config';
-import { loadItems, loadMaps, loadStory, loadWords } from './content';
+import { loadItems, loadMaps, loadNotebook, loadStory, loadWords } from './content';
 import { flushLogs, log, setLogLevel } from './log';
 import { startServer } from './server';
 import { MemoryStorage, PgStorage, type Storage } from './storage';
@@ -33,6 +33,11 @@ async function main(): Promise<void> {
   });
   const story = loadStory(cfg.storyFile, maps.values(), items);
   log.info('story loaded', { file: cfg.storyFile, version: story.version, chapters: story.chapters.length });
+  // The field notes lie next to the story: the journal's other part.
+  const notebookFile = join(dirname(cfg.storyFile), 'notebook.json');
+  const notebook = loadNotebook(notebookFile, maps.values(), items);
+  if (notebook) log.info('field notes loaded', { file: notebookFile, version: notebook.version, pages: notebook.pages.length });
+  else log.warn('no field notes: nothing opens a page', { file: notebookFile });
 
   // The words chat masks lie next to the items.
   const words = loadWords(join(dirname(cfg.itemsFile), 'words.json'));
@@ -49,6 +54,7 @@ async function main(): Promise<void> {
     maps: maps.values(),
     items,
     story,
+    notebook,
     words,
     homeMap: cfg.homeMap,
     weather: cfg.weather,
@@ -61,8 +67,18 @@ async function main(): Promise<void> {
     maxConnectionsPerIp: cfg.maxConnectionsPerIp,
     newPlayersPerIpPerHour: cfg.newPlayersPerIpPerHour,
     clockShiftMs: cfg.clockShiftMs,
+    parcelDayMs: cfg.parcelDayMs,
+    xpMultiplier: cfg.xpMultiplier,
+    restedEveryMs: cfg.restedEveryMs,
+    ...(cfg.townCrowd || cfg.regionCrowd ? { crowd: { ...(cfg.townCrowd && { town: cfg.townCrowd }), ...(cfg.regionCrowd && { region: cfg.regionCrowd }) } } : {}),
+    glimpseEveryMs: cfg.glimpseEveryMs,
     auth,
   });
+  // Only ever in development (the configuration refuses it in production): nobody should wonder later why levels came so fast.
+  if (cfg.xpMultiplier !== 1) log.warn('XP_MULTIPLIER: stashing earns more XP than it should (play-tests only)', { times: cfg.xpMultiplier });
+  if (cfg.restedEveryMs) log.warn('RESTED_EVERY_MS: time away fills the cup of rest faster than it should (play-tests only)', { everyMs: cfg.restedEveryMs });
+  if (cfg.townCrowd || cfg.regionCrowd) log.warn('TOWN_CROWD, REGION_CROWD: places split into copies for fewer players than they should (play-tests only)', { town: cfg.townCrowd, region: cfg.regionCrowd });
+  if (cfg.glimpseEveryMs) log.warn('GLIMPSE_EVERY_MS: people\'s steps show more often than they should (play-tests only)', { everyMs: cfg.glimpseEveryMs });
   log.info('server started', {
     version: cfg.version,
     port: server.port,
@@ -81,6 +97,8 @@ async function main(): Promise<void> {
     // The mode and, with Supabase, the project's address (both public); never a key.
     signIn: cfg.auth.mode,
     supabase: cfg.auth.mode === 'supabase' ? cfg.auth.url : undefined,
+    // The buttons the sign-in card shows besides the email (AUTH_PROVIDERS).
+    providers: cfg.auth.mode === 'legacy' ? undefined : cfg.auth.providers,
   });
 
   let stopping = false;

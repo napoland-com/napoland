@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AuthConfig } from '@napoland/shared';
 import { createHttpServer } from '../src/http';
 
 interface Res {
@@ -187,17 +188,20 @@ describe('without a client folder', () => {
 describe('/auth-config with Supabase', () => {
   let server: Server;
   let port: number;
-  const auth = { mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_abc' } as const;
+  const auth: AuthConfig = { mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_abc', providers: ['google', 'apple'] };
   beforeAll(async () => {
     server = createHttpServer({ players: () => 0, auth });
     port = await listen(server);
   });
   afterAll(() => new Promise<void>(resolve => server.close(() => resolve())));
 
-  it('hands the client the project and its publishable key, even next to a built client', async () => {
+  it('hands the client the project, its publishable key and the providers it offers, even next to a built client', async () => {
     const res = await get(port, '/auth-config');
     expect([res.status, res.headers['cache-control']]).toEqual([200, 'no-store']);
-    expect(JSON.parse(res.body)).toEqual(auth);
+    expect(JSON.parse(res.body)).toEqual({ mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_abc', providers: ['google', 'apple'] });
+    // What the client reads from it, and what a page from before the providers reads: the same without them.
+    expect(AuthConfig.parse(JSON.parse(res.body))).toEqual(auth);
+    expect(AuthConfig.parse({ ...JSON.parse(res.body), providers: undefined })).toEqual({ ...auth, providers: [] });
     expect((await get(port, '/auth-config', {}, 'HEAD')).body).toBe('');
   });
 });

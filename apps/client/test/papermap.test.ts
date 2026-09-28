@@ -91,6 +91,70 @@ describe('the paper map', () => {
     for (const l of g.labels) expect(Math.abs(l.y - (grounds.places!.find(p => p.name === l.text)!.y + 0.5)), l.text).toBeCloseTo(1.9);
   });
 
+  it('hatches every tile of tall grass, a little off, and puts no ground dots there', () => {
+    const tall = woods();
+    tall.tiles = tall.tiles.map((r, y) => (y === 6 || y === 7 ? `${r.slice(0, 5)}hhh${r.slice(8)}` : r));
+    const g = sketchOf(new TileMap(tall), id => names[id]);
+    expect(g.grass).toHaveLength(6);
+    for (const [x, y] of g.grass) {
+      expect(x >= 5 && x <= 8 && y >= 6 && y <= 8, `${x},${y}`).toBe(true);
+      expect(Math.abs(x - Math.floor(x) - 0.5)).toBeLessThanOrEqual(0.35);
+    }
+    expect(g.ground.filter(([x, y]) => x > 5 && x < 8 && y > 6 && y < 8)).toEqual([]);
+    expect(s.grass).toEqual([]);
+  });
+
+  it('draws what the town, the leavers and NAPO left: the mill\'s sawtooth, vehicles by their size, log decks, stumps, stakes, skids and small things', () => {
+    const left: MapData = {
+      ...woods(), width: 30, height: 20, tiles: Array<string>(20).fill('g'.repeat(30)), levels: Array<string>(20).fill('0'.repeat(30)),
+      exits: [{ x: 5, y: 3, w: 1, h: 1, to: 'hut', tx: 1, ty: 1, dir: 'up' }],
+      objects: [
+        { kind: 'house', x: 2, y: 2, w: 6, h: 2, roof: '#7a4a2e', lit: 0, style: 'mill' },
+        { kind: 'car', x: 10, y: 2, w: 2 }, { kind: 'car', x: 14, y: 2, w: 1, h: 2, dir: 'down', door: true },
+        { kind: 'truck', x: 16, y: 2, w: 1, h: 3, dir: 'down', style: 'napo' }, { kind: 'jeep', x: 18, y: 2, w: 2, h: 1, dir: 'left', text: ['NAPO'] },
+        { kind: 'logs', x: 2, y: 8, w: 3, h: 2 }, { kind: 'stump', x: 7, y: 8, s: 1, v: 0.2 }, { kind: 'stake', x: 9, y: 8 },
+        { kind: 'skid', x: 11, y: 8, dir: 'h' }, { kind: 'piano', x: 13, y: 8 }, { kind: 'cage', x: 16, y: 8, text: ['NAPO'] },
+        { kind: 'sign', x: 18, y: 8, style: 'mailbox', text: ['DAHL'] }, { kind: 'sign', x: 20, y: 8, style: 'cardboard', text: ['PLEASE'] },
+      ],
+    };
+    const g = sketchOf(new TileMap(left), id => names[id]);
+    expect(g.houses.map(h => [h.flat, h.mill])).toEqual([[false, true]]);
+    expect(g.cars.map(c => [c.kind, c.w, c.h])).toEqual([['car', 2, 1], ['car', 1, 2], ['truck', 1, 3], ['jeep', 2, 1]]);
+    // Each by the middle of its tiles, a little off: a car standing north to south is drawn so.
+    for (const c of g.cars) expect(Math.abs(c.at[0] - (left.objects.find(o => o.kind === c.kind && o.x <= c.at[0] && c.at[0] <= o.x + c.w)!.x + c.w / 2))).toBeLessThanOrEqual(0.35);
+    expect(g.logs).toEqual([{ x: 2, y: 8, w: 3, h: 2 }]);
+    expect(g.stumps).toHaveLength(1);
+    expect(g.stakes).toHaveLength(1);
+    expect(g.skids).toEqual([[[11.5, 8.15], [11.5, 8.85]]]);
+    expect(g.things.map(t => t.kind)).toEqual(['piano', 'cage', 'mailbox']);
+    // A mailbox is a little thing by a door; the cardboard sign is a sign like any other.
+    expect(g.signs).toHaveLength(1);
+  });
+
+  it('writes a name once: a door named like a place gives its name to the place', () => {
+    const mill: MapData = { ...woods(), places: [{ name: 'the hut', x: 1, y: 1 }] };
+    const labels = sketchOf(new TileMap(mill), id => ({ ...names, hut: 'The hut' })[id]).labels.map(l => l.text);
+    expect(labels.filter(t => t.toLowerCase() === 'the hut')).toEqual(['the hut']);
+  });
+
+  it('writes the places before the doors, so a street of new houses never moves a name that was there, and a door\'s name that finds no room goes in front of it', () => {
+    const street: MapData = {
+      ...woods(), width: 40, height: 30, tiles: Array<string>(30).fill('g'.repeat(40)), levels: Array<string>(30).fill('0'.repeat(40)),
+      exits: [
+        { x: 11, y: 15, w: 1, h: 1, to: 'hut', tx: 1, ty: 1, dir: 'up' },
+        { x: 15, y: 15, w: 1, h: 1, to: 'far', tx: 1, ty: 1, dir: 'up' },
+      ],
+      objects: [{ kind: 'house', x: 10, y: 14, w: 3, h: 2, roof: '#555555', lit: 0 }, { kind: 'house', x: 14, y: 14, w: 3, h: 2, roof: '#555555', lit: 0 }],
+      places: [{ name: 'the notice board', x: 8, y: 11 }],
+    };
+    const g = sketchOf(new TileMap(street), id => ({ hut: 'The Lindqvist house', far: 'The Okada house' })[id]);
+    const at = (text: string) => g.labels.find(l => l.text === text)!;
+    // The place is written where it stands; the first door's name above its roof, the second in front of its door.
+    expect(at('the notice board').y).toBeCloseTo(11.5);
+    expect(at('The Lindqvist house').y).toBeLessThan(14);
+    expect(at('The Okada house').y).toBeGreaterThan(15);
+  });
+
   it('is the same drawing every time, and knows nothing of who looks at it', () => {
     expect(sketchOf(new TileMap(woods()), id => names[id])).toEqual(s);
     expect(sketchOf.length).toBe(2);

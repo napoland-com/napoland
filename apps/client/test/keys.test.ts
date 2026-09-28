@@ -109,3 +109,72 @@ describe('the keyboard', () => {
     expect(keyTarget(null)).toBe('page');
   });
 });
+
+describe('Q held, for a call', () => {
+  let said: string[];
+  let held: Keys;
+  beforeEach(() => {
+    said = [];
+    held = new Keys({
+      pad: d => said.push(`pad ${d}`), a: () => said.push('A'), b: () => said.push('B'), openChat: () => said.push('chat'), openMap: () => said.push('map'),
+      holdB: on => said.push(on ? 'hold' : 'let go'), call: k => said.push(`call ${k}`), cancelCall: () => said.push('cancel'),
+    });
+  });
+
+  it('holds B while Q is down, once however long it repeats, and lets it go with Q', () => {
+    expect(held.down('KeyQ', 'page')).toBe(true);
+    expect(held.down('KeyQ', 'page', true)).toBe(true);
+    held.up('KeyQ');
+    held.up('KeyQ');
+    expect(said).toEqual(['hold', 'let go']);
+  });
+
+  it('sings the call 1, 2 or 3 picks while Q is held, by where the digit sits, on the row or the keypad', () => {
+    held.down('KeyQ', 'page');
+    expect(held.down('Digit1', 'page', false, false, '&')).toBe(true);
+    held.down('Digit2', 'page');
+    held.down('Digit2', 'page', true);
+    held.down('Numpad3', 'page');
+    held.up('KeyQ');
+    expect(said).toEqual(['hold', 'call here', 'call come', 'call thanks', 'let go']);
+  });
+
+  it('leaves the digits to the page when Q is not held', () => {
+    expect(held.down('Digit1', 'page')).toBe(false);
+    expect(said).toEqual([]);
+  });
+
+  it('calls nothing when Escape comes while Q is held, or the window loses focus; Escape alone is B', () => {
+    held.down('KeyQ', 'page');
+    held.down('Escape', 'page');
+    held.up('KeyQ');
+    held.down('KeyQ', 'page');
+    held.clear();
+    held.up('KeyQ');
+    held.down('Escape', 'page');
+    expect(said).toEqual(['hold', 'cancel', 'let go', 'hold', 'cancel', 'B']);
+  });
+
+  it('keeps walking while Q is held: the stick and the call are two hands', () => {
+    held.down('KeyQ', 'page');
+    held.down('KeyW', 'page');
+    held.up('KeyW');
+    held.up('KeyQ');
+    expect(said).toEqual(['hold', 'pad up', 'pad null', 'let go']);
+  });
+
+  it('is B at once without a hold to feed, as it always was', () => {
+    held = new Keys({ pad: () => {}, a: () => said.push('A'), b: () => said.push('B'), openChat: () => {}, openMap: () => {} });
+    held.down('KeyQ', 'page');
+    held.up('KeyQ');
+    expect(held.down('Digit1', 'page')).toBe(false);
+    expect(said).toEqual(['B']);
+  });
+
+  it('leaves Q alone while typing, and with Ctrl, Alt or Cmd', () => {
+    expect(held.down('KeyQ', 'text')).toBe(false);
+    expect(held.down('KeyQ', 'page', false, true)).toBe(false);
+    held.up('KeyQ');
+    expect(said).toEqual([]);
+  });
+});

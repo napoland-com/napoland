@@ -1,8 +1,9 @@
 /**
  * Feats: small lasting perks earned by how you play, not bought with XP. The server counts what you
  * do out there (steps in the rain, in the dark, with a heavy bag and far from home, fires fed, pieces
- * mended, finds picked up); each feat climbs five ranks as its count grows, and every rank makes the
- * matching hardship a little lighter for good. Rank 1 comes in the first hours, rank 5 after months.
+ * mended, finds picked up, thanks received); each feat climbs five ranks as its count grows, and every
+ * rank makes the matching hardship a little lighter for good (or a help to others go farther: the good
+ * neighbor's arrows last longer). Rank 1 comes in the first hours, rank 5 after months.
  *
  * A rank is never stored: it follows from the count, with the one table below (FEATS), so the
  * server and the client always agree, and counts kept from before ranks existed are worth their rank
@@ -16,7 +17,8 @@ import type { Weather } from './protocol';
 
 /**
  * What wears you down, and what helps, as one set of values. Most are factors (1 changes nothing,
- * below 1 makes it gentler, above 1 stronger); `double` is a chance (0 never).
+ * below 1 makes it gentler, above 1 stronger); `double` is a chance (0 never); `markEnergy` an amount
+ * (0 none).
  */
 export interface Mods {
   /** How fast rain soaks you. */
@@ -33,23 +35,37 @@ export interface Mods {
   farDrain: number;
   /** The chance that a find out in the wilds comes up double. */
   double: number;
+  /** How long an arrow you paint lasts, against a day (thanks.ts, markLifetime). */
+  marks: number;
+  /** Energy back each time you crush a glowcap to paint a mark. */
+  markEnergy: number;
+  /** How hard the whole drain is out in the wilds (cozy, comfort.ts: you tire slower after warming at your own fire). */
+  drain: number;
 }
 
-export const NO_MODS: Readonly<Mods> = { wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0 };
-/** Every value in Mods; the chances among them add up as separate tries, the rest multiply. */
-export const MODS: readonly (keyof Mods)[] = ['wetting', 'load', 'hitch', 'warmth', 'wear', 'farDrain', 'double'];
+export const NO_MODS: Readonly<Mods> = { wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0, marks: 1, markEnergy: 0, drain: 1 };
+/** Every value in Mods; the chances among them add up as separate tries, the amounts add up, the rest multiply. */
+export const MODS: readonly (keyof Mods)[] = ['wetting', 'load', 'hitch', 'warmth', 'wear', 'farDrain', 'double', 'marks', 'markEnergy', 'drain'];
 export const CHANCES: readonly (keyof Mods)[] = ['double'];
+export const AMOUNTS: readonly (keyof Mods)[] = ['markEnergy'];
 
 /** Does value `v` of Mods key `k` change anything (a charm that does not is a mistake in the content)? */
 export function modChanges(k: keyof Mods, v: unknown): boolean {
   if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return false;
+  if (AMOUNTS.includes(k)) return true;
   return CHANCES.includes(k) ? v <= 1 : v !== 1;
 }
 
-/** What the server counts for feats. */
-export type Stat = 'rainSteps' | 'nightSteps' | 'heavySteps' | 'farSteps' | 'fed' | 'mended' | 'found';
+/**
+ * What the server counts: for feats, and for what people say once after the first time you did
+ * something (story.ts, remarks): gear made, collapses, and surges that caught you out in the wilds.
+ * `told` is not a count: it keeps which of those remarks were said, a bit each (story.ts, toldAfter).
+ * `thanked` (thanks received) is the one count others add to, often while its owner is offline: the
+ * server keeps it apart from the rest (storage.ts), so no save of a whole player can undo one.
+ */
+export type Stat = 'rainSteps' | 'nightSteps' | 'heavySteps' | 'farSteps' | 'fed' | 'mended' | 'found' | 'thanked' | 'made' | 'collapsed' | 'surged' | 'told';
 export type Stats = Partial<Record<Stat, number>>;
-export const STATS: readonly Stat[] = ['rainSteps', 'nightSteps', 'heavySteps', 'farSteps', 'fed', 'mended', 'found'];
+export const STATS: readonly Stat[] = ['rainSteps', 'nightSteps', 'heavySteps', 'farSteps', 'fed', 'mended', 'found', 'thanked', 'made', 'collapsed', 'surged', 'told'];
 /** The counts a step out in the wilds may add to (stepCounts). */
 export const STEP_STATS = ['rainSteps', 'nightSteps', 'heavySteps', 'farSteps'] as const satisfies readonly Stat[];
 
@@ -75,7 +91,10 @@ export interface Feat {
   /** The value of Mods it changes, and which way: less of it, more of it, or a chance of it. */
   mod: keyof Mods;
   way: 'less' | 'more' | 'chance';
-  /** What a rank does, in plain words; {n} is its share ("Rain soaks you {n} slower" for "Rain soaks you 20% slower"). */
+  /**
+   * What a rank does, in plain words; {n} is its share ("Rain soaks you {n} slower" for "Rain soaks you
+   * 20% slower"), {x} the factor it puts into Mods ("Your arrows last {x} days": an arrow lasts a day, times it).
+   */
   does: string;
   /** Rank 1 first; RANKS of them, each needing more and doing more than the one before. */
   ranks: readonly Rank[];
@@ -117,6 +136,12 @@ export const FEATS: readonly Feat[] = [
     does: `${FAR_STEPS} steps or more from home, you tire {n} slower`,
     ranks: ranks([500, 1_500, 5_000, 12_000, 30_000], [0.03, 0.06, 0.09, 0.12, 0.15]),
   },
+  {
+    // Counted by thanks received (thanks.ts): whoever others thank most leaves the arrows that last longest.
+    // An arrow lasts a day (MARK_LIFETIME_MS), so the factor is the days: 2, 3, 4, 5 and 7.
+    id: 'good-neighbor', name: 'Good neighbor', stat: 'thanked', counts: 'thanks', mod: 'marks', way: 'more', does: 'Your arrows last {x} days',
+    ranks: ranks([25, 75, 200, 500, 1_200], [1, 2, 3, 4, 6]),
+  },
 ];
 
 const BY_STAT = new Map(FEATS.map(f => [f.stat, f]));
@@ -139,19 +164,20 @@ export function rankValue(feat: Feat, rank: number): number {
   return feat.way === 'chance' ? by : feat.way === 'more' ? 1 + by : 1 - by;
 }
 
-/** What rank `rank` (from 1) of a feat does, in plain words, without a full stop: "Rain soaks you 30% slower". */
+/** What rank `rank` (from 1) of a feat does, in plain words, without a full stop: "Rain soaks you 30% slower", "Your arrows last 2 days". */
 export function rankText(feat: Feat, rank: number): string {
   const by = feat.ranks[rank - 1]?.by ?? 0;
-  return feat.does.replace('{n}', `${Math.round(by * 1000) / 10}%`);
+  return feat.does.replace('{n}', `${Math.round(by * 1000) / 10}%`).replace('{x}', String(Math.round(rankValue(feat, Math.max(1, rank)) * 10) / 10));
 }
 
-/** Puts one value into Mods: a chance adds up with the ones there as a separate try, a factor multiplies. */
+/** Puts one value into Mods: a chance adds up with the ones there as a separate try, an amount adds, a factor multiplies. */
 function put(out: Mods, k: keyof Mods, v: number): void {
   if (!Number.isFinite(v)) return;
-  out[k] = CHANCES.includes(k) ? 1 - (1 - out[k]) * (1 - Math.min(1, Math.max(0, v))) : out[k] * v;
+  if (AMOUNTS.includes(k)) out[k] += Math.max(0, v);
+  else out[k] = CHANCES.includes(k) ? 1 - (1 - out[k]) * (1 - Math.min(1, Math.max(0, v))) : out[k] * v;
 }
 
-/** Every rank reached and every charm carried, in one set of Mods. */
+/** Every rank reached and every charm carried (and anything else that changes them the same way: being cozy), in one set of Mods. */
 export function modsOf(stats: Stats, charms: ReadonlyArray<Partial<Mods>> = []): Mods {
   const out: Mods = { ...NO_MODS };
   for (const f of FEATS) {

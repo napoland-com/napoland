@@ -85,6 +85,12 @@ export function woodsData(): MapData {
 /** The town, the house and the woods, ready for a World (home: 'town'). */
 export const fixtureMaps = (): TileMap[] => [new TileMap(townData()), new TileMap(houseData()), new TileMap(woodsData())];
 
+/** The same, with a chest in the house at 3,1, beside the fireplace: stand at 3,2 facing up to reach it. */
+export const chestMaps = (): TileMap[] => {
+  const h = houseData();
+  return [new TileMap(townData()), new TileMap({ ...h, objects: [...h.objects, { kind: 'chest', x: 3, y: 1 }] }), new TileMap(woodsData())];
+};
+
 /** Where moss grows in the woods: the tiles next to the campfire. */
 export const MOSS_TILES = [{ x: 3, y: 1 }, { x: 4, y: 1 }, { x: 5, y: 1 }];
 

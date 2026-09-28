@@ -1,14 +1,15 @@
 /**
  * What the world does to you out there, drawn: arrows people painted on the ground, creatures, flares, flashes,
- * the echoes of people who collapsed walking their last steps again, the thing that clings to you at
- * night, and the notice board in town. Each is a small class or model that world.ts owns and
- * feeds from the game's lists; nothing here decides anything.
+ * the echoes of people who collapsed walking their last steps again, glimpses of other people's steps, the
+ * thing that clings to you at night, what stands at the edge of the fog when you are uneasy, and the notice
+ * board in town. Each is a small class or model that world.ts owns and feeds from the game's lists; nothing
+ * here decides anything.
  */
 import * as THREE from 'three';
 import { FLASH_BURST_S, FLASH_GLOW_S, FLASH_RADIUS, type Dir, type DropView, type FlashView, type MarkView } from '@napoland/shared';
-import { makePlayer } from './characters';
+import { makePlayer, type Rig } from './characters';
 import { Puffs } from './fire';
-import { OUTLINE, box, disposeTree, flat, ownToon, part, pivot, softTexture } from './toon';
+import { OUTLINE, box, disposeTree, flat, merge, ownToon, part, pivot, softTexture } from './toon';
 import type { CreatureAvatar } from './world';
 
 const TURN: Record<Dir, number> = { up: 0, right: -Math.PI / 2, down: Math.PI, left: Math.PI / 2 };
@@ -111,6 +112,55 @@ function watcherModel(eyes: THREE.Material): THREE.Group {
   g.add(head);
   for (const x of [-0.055, 0.055]) g.add(part(new THREE.BoxGeometry(0.035, 0.02, 0.01), eyes, x, 1.2, 0.14, false));
   return g;
+}
+
+/** How tall what stands at the edge of the fog is (FarFigure): a watcher's height, a head taller than you. */
+export const FAR_FIGURE_H = 1.4;
+/**
+ * How much of it shows at most. It is drawn unlit, so it would glow against the night: dimmer than it is
+ * pale, it reads as a shape out there rather than a thing lit up, and the fog takes a good part of the rest.
+ */
+const FAR_FIGURE_OPACITY = 0.62;
+
+/**
+ * What stands at the edge of the fog (unease.ts): a watcher's shape, tall and thin, in one pale see-through
+ * stuff with nothing on its face, too far to make out. It is drawn for you alone and is never a creature.
+ * One mesh, built with the map's view and always in its scene (hidden while nothing is there), so showing it
+ * compiles nothing (world.ts compiles it with the rest).
+ */
+export class FarFigure {
+  readonly root: THREE.Mesh;
+  private readonly mat = new THREE.MeshBasicMaterial({ color: 0xc8c2b4, transparent: true, opacity: 0, depthWrite: false });
+  private ground = 0;
+
+  constructor() {
+    // Its eyes go in the outlines' stuff, and are left out with them: from that far, the face is a blank.
+    const model = watcherModel(OUTLINE), parts: Array<[THREE.BufferGeometry, null]> = [];
+    model.updateMatrixWorld(true);
+    model.traverse(o => {
+      if (!(o instanceof THREE.Mesh) || o.material === OUTLINE) return;
+      parts.push([(o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone()).applyMatrix4(o.matrixWorld), null]);
+    });
+    disposeTree(model);
+    this.root = new THREE.Mesh(merge(parts), this.mat);
+  }
+
+  /** It stands on tile x,y, whose ground is `ground` high, showing `k` of itself (0: nothing there). */
+  set(x: number, y: number, k: number, ground: number) {
+    this.root.visible = k > 0;
+    if (!this.root.visible) return;
+    this.mat.opacity = FAR_FIGURE_OPACITY * k;
+    this.ground = ground;
+    this.root.position.set(x + 0.5, ground, y + 0.5);
+  }
+
+  /** Every frame it is there: it hangs a little over the ground as the watchers do, turned toward you at fx, fz. */
+  update(t: number, fx: number, fz: number) {
+    if (!this.root.visible) return;
+    const p = this.root.position;
+    p.y = this.ground + 0.06 + Math.sin(t * 1.3) * 0.03;
+    this.root.rotation.y = Math.atan2(fx - p.x, fz - p.z);
+  }
 }
 
 /**
@@ -367,12 +417,70 @@ const ECHO_STEP_S = 0.34;
 const ECHO_REST_S = 2.2;
 
 /**
+ * A see-through figure of someone, the size of the living (an echo, a glimpse): every part in one
+ * see-through stuff of its own, so each fades on its own, and no dark outlines, which would make it solid.
+ */
+function ghost(color: THREE.ColorRepresentation, opacity: number): { rig: Rig; mat: THREE.MeshBasicMaterial } {
+  const rig = makePlayer('#ffffff');
+  const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+  rig.root.traverse(o => {
+    if (!(o instanceof THREE.Mesh)) return;
+    if (o.material === OUTLINE) o.visible = false;
+    else o.material = mat;
+  });
+  return { rig, mat };
+}
+
+/** How much of a glimpse shows at most: as see-through as an echo, a little more for the color to read. */
+const GLIMPSE_OPACITY = 0.36;
+const PALE = new THREE.Color('#ffffff');
+
+/**
+ * A glimpse of someone's steps (glimpses.ts): the echoes' see-through figure in the walker's jacket color,
+ * a little paler, walking where they walked. One, built with the view of a map of the wilds and always in
+ * its scene (hidden while there is none), so showing it compiles nothing.
+ */
+export class Passer {
+  readonly root: THREE.Group;
+  private readonly rig: Rig;
+  private readonly mat: THREE.MeshBasicMaterial;
+  private color = '';
+  private walking = false;
+
+  constructor() {
+    ({ rig: this.rig, mat: this.mat } = ghost(0xffffff, 0));
+    this.root = this.rig.root;
+  }
+
+  /** It is at x,y (tiles), on ground `ground` high, heading `heading`, walking or not, in `color`, showing `k` of itself (0: none). */
+  set(x: number, y: number, ground: number, heading: number, walking: boolean, color: string, k: number) {
+    this.root.visible = k > 0;
+    if (!this.root.visible) return;
+    if (color !== this.color) {
+      this.color = color;
+      this.mat.color.set(color).lerp(PALE, 0.3);
+    }
+    this.mat.opacity = GLIMPSE_OPACITY * k;
+    this.root.position.set(x + 0.5, ground, y + 0.5);
+    this.root.rotation.y = heading;
+    this.walking = walking;
+  }
+
+  /** Every frame it shows: its legs and arms swing while it walks, as an echo's do. */
+  update(t: number) {
+    if (!this.root.visible) return;
+    const sw = this.walking ? Math.sin(t * 11) * 0.8 : 0, { legL, legR, armL, armR } = this.rig;
+    legL.rotation.x = sw; legR.rotation.x = -sw; armL.rotation.x = -sw * 0.7; armR.rotation.x = sw * 0.7;
+  }
+}
+
+/**
  * The echoes of people who collapsed: a pale see-through figure walking the last steps they took,
  * again and again, ending at their pile. You see how they got there, and where it went wrong.
  */
 export class Echoes {
   readonly root = new THREE.Group();
-  private readonly ghosts = new Map<string, { rig: ReturnType<typeof makePlayer>; trail: Array<[number, number]>; ph: number; mat: THREE.MeshBasicMaterial }>();
+  private readonly ghosts = new Map<string, { rig: Rig; trail: Array<[number, number]>; ph: number; mat: THREE.MeshBasicMaterial }>();
 
   /** The piles on the map; the ones near `focus` with a trail get an echo. */
   set(drops: Iterable<DropView>, focus: { x: number; y: number }) {
@@ -389,14 +497,8 @@ export class Echoes {
     }
     for (const d of near) {
       if (this.ghosts.has(d.id)) continue;
-      const rig = makePlayer('#ffffff');
-      // Every part in the pale see-through stuff (its own, so each fades on its own); the dark outlines would make it solid, so they go.
-      const mat = new THREE.MeshBasicMaterial({ color: 0xcfeaff, transparent: true, opacity: 0.3, depthWrite: false });
-      rig.root.traverse(o => {
-        if (!(o instanceof THREE.Mesh)) return;
-        if (o.material === OUTLINE) o.visible = false;
-        else o.material = mat;
-      });
+      // Pale blue-white: nobody's color any more.
+      const { rig, mat } = ghost(0xcfeaff, 0.3);
       this.root.add(rig.root);
       this.ghosts.set(d.id, { rig, trail: d.trail, ph: (d.x * 7 + d.y * 3) % 5, mat });
     }

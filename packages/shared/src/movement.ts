@@ -31,6 +31,20 @@ export function dirOf(dx: number, dy: number): Dir | null {
   return null;
 }
 
+/**
+ * Does someone at x,y facing `dir` look toward tile tx,ty? Anything on the side they face counts, however
+ * far to either side: a watcher freezes under it (the server), and what stands at the edge of the fog is
+ * gone under it (the client's unease).
+ */
+export function faces(x: number, y: number, dir: Dir, tx: number, ty: number): boolean {
+  switch (dir) {
+    case 'up': return ty < y;
+    case 'down': return ty > y;
+    case 'left': return tx < x;
+    case 'right': return tx > x;
+  }
+}
+
 /** The direction to face something at (dx, dy) from here: the larger axis wins. */
 export function dirToward(dx: number, dy: number): Dir {
   if (Math.abs(dx) >= Math.abs(dy)) return dx < 0 ? 'left' : 'right';

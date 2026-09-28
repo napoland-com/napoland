@@ -54,8 +54,11 @@ const inTown = (id: string, x: number, y: number, dir: Dir = 'down', more: Parti
 const inWoods = (id: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'woods', ...more });
 const inHouse = (id: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}) => rec(id, x, y, dir, { map: 'house', ...more });
 const viewOf = (id: string, x: number, y: number, dir: Dir) => ({ id, name: id.toUpperCase(), x, y, dir, color: colorFor(id), gear: {}, quirks: [] });
-/** What a zone lists besides players, finds and piles, in the fixture world: fires burn down at random levels, and nothing else is there. */
-const SCENE = { fires: expect.any(Array), marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, stats: expect.any(Object) };
+/**
+ * What a zone lists besides players, finds and piles, in the fixture world: fires burn down at random levels, and nothing else is
+ * there; and the weather over the new map, which these worlds keep overcast everywhere.
+ */
+const SCENE = { fires: expect.any(Array), marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, stats: expect.any(Object), weather: 'overcast' };
 /** The energy a player is told: value to 1 decimal, rate to 3. */
 const told = (value: number, rate: number): EnergyView => ({ value: Math.round(value * 10) / 10, max: ENERGY_MAX, rate: Math.round(rate * 1000) / 1000 });
 
@@ -243,23 +246,35 @@ describe('World: turning, joining and leaving', () => {
       players: [joined.player],
       // A town without a fireplace: energy holds.
       energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 },
-      // No items in this world: nothing lies around, and the bag is empty.
+      // No items in this world: nothing lies around, and the bag and the stash are empty.
       finds: [],
       drops: [],
       bag: [],
+      stash: [],
       // No fires, marks, creatures or flares here, and a town never surges. Rain soaks you in town too.
-      fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null,
+      fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, weather: 'rain',
       body: { wet: 0, wetRate: Math.round((1 / WET_SECONDS) * 1e5) / 1e5, load: 0, hitched: false, worn: {} },
       stone: { charge: 0, need: 20, awake: false, left: 0 },
       // No conditions in this world: every day is like the one before.
       conditions: { today: [], week: null, next: null },
+      // The first week after the epoch is a spring's, from three days before it: four days of it left at 0.
+      season: { season: 'spring', left: 4 * 86_400 },
+      // The first Long Night is on the Saturday after the epoch, with its bonus: no fire went out before it.
+      longNight: { on: false, bonus: true, out: false },
       stats: {},
       // Nothing stashed yet: level 1, and the next level at 30 XP.
       progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: ENERGY_MAX },
+      // Seen just before joining: no time away to rest in.
+      restedAway: 0,
+      // No merits spent and no looks bought.
+      merits: { spent: 0, owned: [] },
       // No items, so no paper map to carry.
       tools: [],
-      // No story in this world: no chapter to be in.
+      // No story in this world: no chapter to be in; and no field notes, so not a page yet.
       story: { version: 0, chapter: '' },
+      // Nobody thanked today.
+      thanked: [],
+      notebook: { version: 0, pages: [], blanks: [] }, notes: [], keepsakes: [], firsts: [],
     });
     expect(w.drain()).toEqual([
       { to: '*', map: 'test', except: 'a', msg: { t: 'join', player: joined.player } },
@@ -567,6 +582,8 @@ describe('World: collapsing', () => {
     expect(collapses).toEqual([]);
     w.tick(empty + 1);
     expect(w.drain()).toEqual([
+      // The count first, as each goes up (what Mira says waits on it); the zone carries it too.
+      { to: 'a', msg: { t: 'stats', stats: { collapsed: 1 } } },
       { to: '*', map: 'woods', except: 'a', msg: { t: 'leave', id: 'a' } },
       { to: '*', map: 'town', except: 'a', msg: { t: 'join', player: viewOf('a', 1, 2, 'down') } },
       {
@@ -583,7 +600,7 @@ describe('World: collapsing', () => {
   it('collapses instead of taking a step when the energy ran out before it', () => {
     const { w, collapses } = collapsing(inWoods('a', 3, 6, 'up', { energy: 0.1 }));
     w.step('a', 'up', 1, 1000);
-    expect(answers(w.drain(), 'a').map(m => m.t)).toEqual(['zone', 'energy']);
+    expect(answers(w.drain(), 'a').map(m => m.t)).toEqual(['stats', 'zone', 'energy']);
     expect(w.get('a')).toMatchObject({ map: 'town', x: 1, y: 2, energy: ENERGY_MAX });
     expect(collapses.map(([id]) => id)).toEqual(['a']);
   });
@@ -605,8 +622,9 @@ describe('World: collapsing', () => {
 
   it('saves a player whose energy runs out as they leave at home, full', () => {
     const { w, collapses } = collapsing(inWoods('a', 3, 6, 'up', { energy: 0.05 }), inWoods('c', 5, 5));
-    expect(w.leave('a', 1000)).toMatchObject({ map: 'town', x: 1, y: 2, dir: 'down', energy: ENERGY_MAX });
-    expect(w.drain()).toEqual([{ to: '*', map: 'woods', except: 'a', msg: { t: 'leave', id: 'a' } }]);
+    expect(w.leave('a', 1000)).toMatchObject({ map: 'town', x: 1, y: 2, dir: 'down', energy: ENERGY_MAX, stats: { collapsed: 1 } });
+    // The count, told as it goes up, finds nobody to hear it (net.ts): the welcome next time carries it.
+    expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'stats', stats: { collapsed: 1 } } }, { to: '*', map: 'woods', except: 'a', msg: { t: 'leave', id: 'a' } }]);
     expect(collapses).toEqual([['a', { map: 'woods', x: 3, y: 6 }]]);
     expect(w.views('town')).toEqual([]);
   });
@@ -675,7 +693,7 @@ describe('World: finds', () => {
     expect(w.get('a')!.bag).toEqual([{ item: 'moss', count: 1 }]);
     expect(w.findViews('woods')).toEqual([]);
     // Finds live in memory, and the bag is saved with the player later: nothing to write now.
-    expect(w.takeWrites()).toEqual({ drops: [], players: [], marks: [] });
+    expect(w.takeWrites()).toEqual({ drops: [], players: [], marks: [], thanks: [], credits: [], caches: [], firsts: [] });
   });
 
   it('reaches the four tiles next to the player, not across a corner or farther; an empty tile is gone', () => {
@@ -770,17 +788,19 @@ describe('World: finds', () => {
 });
 
 describe('World: the bag', () => {
-  it('uses a consumable: its energy, up to a full bar, and one unit is gone; the player hears the energy, then the bag', () => {
+  it('uses a consumable: its energy, up to a full bar, and one unit is gone; the player hears the energy, the bag, then what it did', () => {
     const w = itemsWorld({}, inTown('a', 0, 5, 'down', { energy: 50, bag: [{ item: 'tea', count: 2 }, { item: 'moss', count: 1 }] }));
     w.use('a', 0, 1000);
     expect(w.drain()).toEqual([
       { to: 'a', msg: { t: 'energy', energy: told(80, 0), body: expect.any(Object) } },
       { to: 'a', msg: { t: 'bag', bag: [{ item: 'tea', count: 1 }, { item: 'moss', count: 1 }] } },
+      { to: 'a', msg: { t: 'did', did: { kind: 'used', item: 'tea', energy: 30 } } },
     ]);
-    w.use('a', 0, 2000); // 80 + 30 is more than a full bar
+    w.use('a', 0, 2000); // 80 + 30 is more than a full bar: it gives what the bar has room for
     expect(w.drain()).toEqual([
       { to: 'a', msg: { t: 'energy', energy: told(ENERGY_MAX, 0), body: expect.any(Object) } },
       { to: 'a', msg: { t: 'bag', bag: [{ item: 'moss', count: 1 }] } },
+      { to: 'a', msg: { t: 'did', did: { kind: 'used', item: 'tea', energy: 20 } } },
     ]);
     expect(w.get('a')).toMatchObject({ energy: ENERGY_MAX, bag: [{ item: 'moss', count: 1 }] });
   });
@@ -791,6 +811,7 @@ describe('World: the bag', () => {
     expect(w.drain()).toEqual([
       { to: 'a', msg: { t: 'energy', energy: told(20 + 10 * edge + 30, edge), body: expect.any(Object) } },
       { to: 'a', msg: { t: 'bag', bag: [] } },
+      { to: 'a', msg: { t: 'did', did: { kind: 'used', item: 'tea', energy: 30 } } },
     ]);
     w.tick(11_000);
     expect(w.get('a')!.energy).toBeCloseTo(20 + 11 * edge + 30);
@@ -813,8 +834,22 @@ describe('World: the bag', () => {
     w.discard('a', 5, 1000);
     expect(w.drain()).toEqual([
       { to: 'a', msg: { t: 'bag', bag: [{ item: 'moss', count: 3 }, { item: 'tea', count: 1 }] } },
+      { to: 'a', msg: { t: 'did', did: { kind: 'thrown', item: 'nail', count: 2 } } },
       { to: 'a', msg: { t: 'refused', action: 'discard', reason: 'empty_slot' } },
     ]);
+  });
+
+  it('throws away as many of a slot as asked, never more than it holds; what came out of the stash is forgotten', () => {
+    const w = itemsWorld({}, inTown('a', 0, 5, 'down', { bag: [{ item: 'moss', count: 3 }], stash: { items: {}, out: { moss: 2 } } }));
+    w.discard('a', 0, 1000, 2);
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'bag', bag: [{ item: 'moss', count: 1 }] } },
+      { to: 'a', msg: { t: 'did', did: { kind: 'thrown', item: 'moss', count: 2 } } },
+    ]);
+    expect(w.get('a')!.stash).toEqual({ items: {}, out: {} });
+    w.discard('a', 0, 1000, 5);
+    expect(w.drain().at(-1)).toEqual({ to: 'a', msg: { t: 'did', did: { kind: 'thrown', item: 'moss', count: 1 } } });
+    expect(w.get('a')!.bag).toEqual([]);
   });
 
   it('fits a saved bag to today\'s items: what no longer exists goes, and a bag that no longer fits is packed again', () => {
@@ -834,7 +869,7 @@ describe('World: the bag', () => {
     const w = itemsWorld({}, inWoods('a', 3, 6, 'up', { energy: 0.5, bag: [{ item: 'tea', count: 1 }] }));
     w.use('a', 0, 5000);
     const out = answers(w.drain(), 'a');
-    expect(out.map(m => m.t)).toEqual(['bag', 'zone', 'energy', 'refused']);
+    expect(out.map(m => m.t)).toEqual(['bag', 'stats', 'zone', 'energy', 'refused']);
     expect(out.at(-1)).toEqual({ t: 'refused', action: 'use', reason: 'empty_slot' });
     expect(w.dropViews('woods')).toMatchObject([{ id: 'a', x: 3, y: 6 }]);
   });
@@ -851,6 +886,7 @@ describe('World: piles', () => {
     expect(noEnergy(w.drain())).toEqual([
       { to: '*', map: 'woods', msg: { t: 'drop', drop } },
       { to: 'a', msg: { t: 'bag', bag: [] } },
+      { to: 'a', msg: { t: 'stats', stats: { collapsed: 1 } } },
       { to: '*', map: 'woods', except: 'a', msg: { t: 'leave', id: 'a' } },
       { to: '*', map: 'town', except: 'a', msg: { t: 'join', player: viewOf('a', 1, 2, 'down') } },
       {
@@ -888,7 +924,7 @@ describe('World: piles', () => {
       { to: '*', map: 'woods', msg: { t: 'dropGone', id: 'a' } },
     ]);
     expect(w.dropViews('woods')).toEqual([]);
-    expect(w.takeWrites()).toEqual({ drops: [{ owner: 'a', drop: undefined }], players: [w.get('a')], marks: [] });
+    expect(w.takeWrites()).toEqual({ drops: [{ owner: 'a', drop: undefined }], players: [w.get('a')], marks: [], thanks: [], credits: [], caches: [], firsts: [] });
   });
 
   it('leaves in the pile what does not fit in the owner\'s bag (the map hears it again), and refuses when nothing fits', () => {
@@ -906,7 +942,7 @@ describe('World: piles', () => {
     w.pick('a', 4, 5, 2000);
     expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'refused', action: 'pick', reason: 'bag_full' } }]);
     expect(w.dropViews('woods')).toEqual([dropOf(pile)]);
-    expect(w.takeWrites()).toEqual({ drops: [], players: [], marks: [] });
+    expect(w.takeWrites()).toEqual({ drops: [], players: [], marks: [], thanks: [], credits: [], caches: [], firsts: [] });
     // With two slots free, the rest comes back and the pile is gone.
     w.discard('a', 0, 3000);
     w.discard('a', 0, 3000);
@@ -930,7 +966,7 @@ describe('World: piles', () => {
       { to: 'b', msg: { t: 'bag', bag: got.items } },
       { to: '*', map: 'woods', msg: { t: 'dropGone', id: 'a' } },
     ]);
-    expect(w.takeWrites()).toEqual({ drops: [{ owner: 'a', drop: undefined }], players: [w.get('b')], marks: [] });
+    expect(w.takeWrites()).toEqual({ drops: [{ owner: 'a', drop: undefined }], players: [w.get('b')], marks: [], thanks: [], credits: [], caches: [], firsts: [] });
     // The owner comes too late.
     w.pick('a', 4, 5, 2000);
     expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'refused', action: 'pick', reason: 'gone' } }]);

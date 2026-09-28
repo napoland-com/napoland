@@ -12,7 +12,9 @@
  * - something clinging to your back at night (a hitchhiker), until you reach light or a roof,
  * - a storm (sky.ts): wind and lightning, and being wet in its wind chills you more,
  * - a flash discharging where you stand: a spark (electricity) or a fire flash (heat).
- * Far out (FAR_STEPS or more from home), a pathfinder's whole drain is gentler (feats.ts).
+ * In winter the cold part of it is stronger (sky.ts, SEASONS: `chill`), so cold resistance matters more.
+ * Far out (FAR_STEPS or more from home), a pathfinder's whole drain is gentler (feats.ts), and anywhere
+ * out here, cozy from your own cabin's fire, so is everyone's (comfort.ts).
  *
  * The server owns the numbers; the client only shows them (and counts between updates using `rate`).
  * Tuning targets: standing at the woods' edge in the rain, dry and light, empties a full bar in about
@@ -64,6 +66,21 @@ export function fireHeat(left: number | null): number {
   return left >= FIRE_LOW_S ? 1 : left > 0 ? EMBERS : 0;
 }
 
+/** A fire with `left` seconds of fuel takes nothing more: within a second of FIRE_MAX_S (fuel is told in whole seconds). */
+export function fireFull(left: number): boolean {
+  return left >= FIRE_MAX_S - 1;
+}
+
+/**
+ * How many of an item that burns `fuel` seconds a fire with `left` seconds takes, one after another,
+ * before it is full: each goes in while the fire is not full yet, and the last may top it up past what
+ * it holds (the rest of that one burns away). The server feeds them so; the client asks how many.
+ */
+export function fireTakes(left: number, fuel: number): number {
+  if (!(fuel > 0)) return 0;
+  return Math.max(0, Math.ceil((FIRE_MAX_S - 1 - Math.max(0, left)) / fuel));
+}
+
 /** Seconds of steady rain to soak you through, dry to wet 1. */
 export const WET_SECONDS = 150;
 /** Seconds to dry off completely: by a burning fire, under a roof, outdoors when it does not rain. */
@@ -100,6 +117,14 @@ export interface Conditions {
   resist?: Partial<Resist>;
   /** How hard the whole drain is FAR_STEPS or more from home (the pathfinder's ranks, feats.ts); nearer home it is as ever. Default 1. */
   farDrain?: number;
+  /**
+   * The season's cold (sky.ts, SEASONS): `weather` more of every weather's extra drain (dry days are
+   * cold too), and being wet `wet` times worse. Cold resistance cuts both, like the rest of the cold.
+   * Default none.
+   */
+  chill?: { weather: number; wet: number };
+  /** How hard the whole drain is anywhere out here (cozy after your own fire: comfort.ts, COZY_DRAIN). Default 1. */
+  drain?: number;
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -113,9 +138,9 @@ export function energyRate(map: TileMap, x: number, y: number, weather: Weather,
   const steps = map.homeSteps(x, y);
   const far = steps < 0 ? 3 * DRAIN_GROWTH_STEPS : steps;
   const r = (e: keyof Resist) => clamp01(c.resist?.[e] ?? 0);
-  const cold = r('cold');
-  const weatherK = 1 + (WEATHER_DRAIN[weather] - 1) * (1 - cold);
-  const chill = c.storm ? STORM_CHILL : 1;
+  const cold = r('cold'), season = c.chill ?? { weather: 0, wet: 1 };
+  const weatherK = 1 + (WEATHER_DRAIN[weather] - 1 + season.weather) * (1 - cold);
+  const chill = (c.storm ? STORM_CHILL : 1) * season.wet;
   let k = weatherK * (1 + LOAD_DRAIN * clamp01(c.load ?? 0)) * (1 + WET_DRAIN * chill * clamp01(c.wet ?? 0) * (1 - cold));
   if (c.hitched) k *= HITCH_DRAIN;
   if (c.storm) k *= 1 + (STORM_DRAIN - 1) * (1 - (r('wind') + r('electricity')) / 2);
@@ -126,6 +151,7 @@ export function energyRate(map: TileMap, x: number, y: number, weather: Weather,
     k *= 1 + ((c.surgeDrain ?? SURGE_DRAIN) - 1) * (1 - shield);
   }
   if (far >= FAR_STEPS) k *= c.farDrain ?? 1;
+  k *= c.drain ?? 1;
   return -DRAIN_PER_SECOND * Math.max(1, map.data.depth) * (1 + far / DRAIN_GROWTH_STEPS) * k;
 }
 

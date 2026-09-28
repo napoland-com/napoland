@@ -1,0 +1,39 @@
+{
+  "id": "stonebrook-dahl-house",
+  "name": "The Dahl house",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 9,
+  "height": 6,
+  "tiles": [
+    "xxxxxxxxx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xxxxpxxxx"
+  ],
+  "levels": [
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000"
+  ],
+  "spawn": {"x":4,"y":4,"dir":"up"},
+  "exits": [
+    {"x":4,"y":5,"w":1,"h":1,"to":"stonebrook","tx":21,"ty":28,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"shelf","x":1,"y":1},
+    {"kind":"crib","x":3,"y":1},
+    {"kind":"bed","x":6,"y":1},
+    {"kind":"sheeted","x":1,"y":3},
+    {"kind":"paper","x":4,"y":3,"look":"note","name":"Note on the table","text":["Mom, they came by at nine. Our street goes tonight, so we go tonight.","We took the baby's things and the photographs. The crib would not fit with the car seat in, so it stays.","Key is under the blue pot. Water the fern if you get the chance. Kari"]},
+    {"kind":"boxes","x":1,"y":4},
+    {"kind":"boxes","x":2,"y":4},
+    {"kind":"boxes","x":7,"y":4}
+  ]
+}

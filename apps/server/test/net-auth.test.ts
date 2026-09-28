@@ -25,26 +25,27 @@ describe('signing in with Supabase', () => {
   });
   afterAll(() => project?.close());
   const { ctx, open, refused, welcomed } = setup(() => ({
-    auth: supabaseAuth({ url: project.url, publishableKey: PUBLISHABLE_KEY, jwtSecret: JWT_SECRET }),
+    auth: supabaseAuth({ url: project.url, publishableKey: PUBLISHABLE_KEY, jwtSecret: JWT_SECRET, providers: ['google', 'apple'] }),
     items: itemsData(),
   }));
   let users = 0;
   /** A token for a user of its own (or for `sub`). */
   const tokenFor = (o: TokenOptions = {}) => project.token({ sub: `user-${++users}`, ...o });
 
-  it('tells the client on /auth-config to sign in with the project, and never lets it be cached', async () => {
+  it('tells the client on /auth-config to sign in with the project and its providers, and never lets it be cached', async () => {
     const res = await fetch(`http://127.0.0.1:${ctx.server.port}/auth-config`);
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
-    expect(await res.json()).toEqual({ mode: 'supabase', url: project.url, publishableKey: PUBLISHABLE_KEY });
+    expect(await res.json()).toEqual({ mode: 'supabase', url: project.url, publishableKey: PUBLISHABLE_KEY, providers: ['google', 'apple'] });
   });
 
-  it('asks to sign in when the hello proves nobody: no auth, only a saved token or a name', async () => {
+  it('plays a guest without an auth (a saved token, or a name), and asks to sign in a hello with nothing to go on', async () => {
     const old = await savedPlayer(ctx.storage);
     await refused(hello({}), 'sign_in_required', 1000);
-    await refused(hello({ token: old.token }), 'sign_in_required', 1000);
-    await refused(hello({ name: newName() }), 'sign_in_required', 1000);
+    // More about guests in net-guests.test.ts: here, only that no auth claims nothing.
+    expect(await welcomed(await open(), hello({ token: old.token }))).toMatchObject({ you: old.id, guest: true, token: old.token });
+    expect(await welcomed(await open(), hello({ name: newName() }))).toMatchObject({ guest: true, token: expect.any(String) });
     expect((await ctx.storage.findByTokenHash(hashToken(old.token)))!.authSub).toBeNull();
   });
 
@@ -102,14 +103,23 @@ describe('signing in with Supabase', () => {
     expect(ctx.storage.get(old.id)!.authSub).toBe(sub);
   });
 
-  it('gives a user their own character, whatever token comes with the hello', async () => {
+  it('gives a user their own character, but first says so when the hello brings a guest the account cannot keep', async () => {
     const auth = await tokenFor();
     const mine = await welcomed(await open(), hello({ auth, name: newName() }));
     const unclaimed = await savedPlayer(ctx.storage);
-    const again = await welcomed(await open(), hello({ auth, token: unclaimed.token, name: newName() }));
-    expect(again.you).toBe(mine.you);
+    // One character per account: theirs wins, and the client is told before it plays in the guest's place.
+    const asked = await open();
+    asked.send(hello({ auth, token: unclaimed.token, name: newName() }));
+    expect(await asked.next('error')).toEqual({ t: 'error', code: 'has_character', message: expect.any(String), name: mine.name });
+    expect((await asked.closed).code).toBe(1000);
+    // Without the guest's token: their own character, and the guest stays as it was.
+    const again = await welcomed(await open(), hello({ auth }));
+    expect(again).toMatchObject({ you: mine.you, guest: false });
     expect(again.claimed).toBeUndefined();
     expect(ctx.storage.get(unclaimed.id)!.authSub).toBeNull();
+    // The token of a character someone signed in with is no guest: nothing to ask.
+    const taken = await savedPlayer(ctx.storage, { authSub: `user-${++users}` });
+    expect((await welcomed(await open(), hello({ auth, token: taken.token }))).you).toBe(mine.you);
   });
 
   it('holds new characters to the name rules', async () => {
@@ -171,7 +181,7 @@ describe('dev sign-in', () => {
 
   it('tells the client on /auth-config that an email is enough', async () => {
     const res = await fetch(`http://127.0.0.1:${ctx.server.port}/auth-config`);
-    expect(await res.json()).toEqual({ mode: 'dev' });
+    expect(await res.json()).toEqual({ mode: 'dev', providers: [] });
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
@@ -185,8 +195,9 @@ describe('dev sign-in', () => {
     expect((await welcomed(await open(), hello({ auth: 'CID@Example.test' }))).you).toBe(welcome.you);
   });
 
-  it('asks to sign in when the hello has no email, or not an email', async () => {
-    await refused(hello({ name: newName() }), 'sign_in_required', 1000);
+  it('asks to sign in when the hello has nothing to go on, or an auth that is not an email', async () => {
+    // (A hello with only a name makes a guest: net-guests.test.ts.)
+    await refused(hello({}), 'sign_in_required', 1000);
     await refused(hello({ auth: 'not an email', name: newName() }), 'sign_in_required', 1000);
   });
 

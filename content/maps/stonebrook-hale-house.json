@@ -1,0 +1,39 @@
+{
+  "id": "stonebrook-hale-house",
+  "name": "The Hale house",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 9,
+  "height": 6,
+  "tiles": [
+    "xxxxxxxxx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xxxxpxxxx"
+  ],
+  "levels": [
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000"
+  ],
+  "spawn": {"x":4,"y":4,"dir":"up"},
+  "exits": [
+    {"x":4,"y":5,"w":1,"h":1,"to":"stonebrook","tx":19,"ty":16,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"paper","x":2,"y":0,"look":"drawing","name":"A child's drawing","text":["Crayon on the back of a NAPO form: black trees, and green lights coming up between them.","Across the top, in careful capitals: \"THE LIGHTS IN THE WOODS. BY NORA, AGE 7.\"","On the other side, the form is filled in halfway: \"Hale, D. Motor pool.\""]},
+    {"kind":"bed","x":1,"y":1},
+    {"kind":"boxes","x":3,"y":1},
+    {"kind":"sheeted","x":7,"y":1},
+    {"kind":"rug","x":3,"y":2,"w":3,"h":2},
+    {"kind":"sheeted","x":6,"y":3},
+    {"kind":"table","x":1,"y":4},
+    {"kind":"boxes","x":6,"y":4}
+  ]
+}

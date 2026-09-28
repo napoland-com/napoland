@@ -7,7 +7,7 @@ import { lightningAt } from '../src/view/world';
 const scene = (s: Partial<Scene> = {}): Scene => ({
   map: 'woods', kind: 'wilds', weather: 'overcast', storm: false, lightning: false,
   me: { id: 'me', x: 5, y: 5, tx: 5, ty: 5, ground: 'grass' },
-  fires: [], poles: [], surge: null, caught: false, creatures: [], flashes: [], live: false, news: [], ...s,
+  fires: [], poles: [], surge: null, caught: false, creatures: [], flashes: [], live: false, news: [], radio: null, ...s,
 });
 /** A creature on 8,5 (3 tiles from you), unless `c` says otherwise. */
 const creature = (c: Partial<Scene['creatures'][number]> = {}): Scene['creatures'][number] => ({ id: '1', kind: 'watcher', x: 8, y: 5, moving: false, chasing: undefined, ...c });
@@ -85,6 +85,11 @@ describe('soundscape', () => {
     expect(soundscape({ ...step, map: 'cabin' }, was).shots).toEqual([]);
   });
 
+  it('swishes for each step into or through tall grass', () => {
+    const into = scene({ me: { id: 'me', x: 5, y: 5, tx: 5, ty: 4, ground: 'tallgrass' } });
+    expect(soundscape(into, scene()).shots).toEqual([{ kind: 'step', surface: 'swish' }]);
+  });
+
   it('thunders once for each blink, only in a storm outdoors', () => {
     const blink = scene({ storm: true, lightning: true });
     expect(soundscape(blink, scene({ storm: true })).shots).toEqual([{ kind: 'thunder' }]);
@@ -112,7 +117,7 @@ describe('soundscape', () => {
 
 describe('stepSurface', () => {
   it('has a sound for every kind of tile', () => {
-    const want = { grass: 'soft', ferns: 'soft', lot: 'soft', forest: 'soft', road: 'road', mud: 'mud', water: 'water', floor: 'floor', wall: 'floor' };
+    const want = { grass: 'soft', ferns: 'soft', tallgrass: 'swish', lot: 'soft', forest: 'soft', road: 'road', mud: 'mud', water: 'water', floor: 'floor', wall: 'floor' };
     for (const kind of Object.values(TILE_CHARS)) expect(stepSurface(kind), kind).toBe(want[kind]);
     expect(stepSurface(undefined)).toBe('soft');
   });

@@ -4,13 +4,17 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { AUTH_MODES, Weather } from '@napoland/shared';
+import { AUTH_MODES, OAUTH_PROVIDERS, Weather, isOAuthProvider, type OAuthProvider } from '@napoland/shared';
 import { LOG_LEVELS, type LogLevel } from './log';
 
-/** How players sign in (auth.ts has what each mode means). */
+/**
+ * How players sign in (auth.ts has what each mode means). `providers` (AUTH_PROVIDERS): Google and
+ * Apple, once the Supabase project has them set up (docs/OPERATIONS.md), in the order the sign-in
+ * card offers them; in dev mode they only show their buttons.
+ */
 export type AuthSettings =
   | { mode: 'legacy' }
-  | { mode: 'dev' }
+  | { mode: 'dev'; providers: OAuthProvider[] }
   | {
       mode: 'supabase';
       /** The project's address, like https://abcd.supabase.co (no trailing slash). */
@@ -19,6 +23,7 @@ export type AuthSettings =
       publishableKey: string;
       /** Only for projects that still sign access tokens with a shared secret (HS256). */
       jwtSecret: string | undefined;
+      providers: OAuthProvider[];
     };
 
 export interface Config {
@@ -54,6 +59,24 @@ export interface Config {
   version: string;
   /** Development only: the world's clock runs this many ms ahead (or behind), to play-test a dawn or a surge without waiting for it. */
   clockShiftMs: number;
+  /** Development only: the parcels' days last this many ms (0: real calendar days), to play-test a week of parcels in minutes. */
+  parcelDayMs: number;
+  /** Development only: stashing earns this many times the XP, to play-test the levels (and the outfits they open) without the trips. */
+  xpMultiplier: number;
+  /** Development only: the time away (ms) that fills one XP of rest (0: 20 minutes, as it should), to play-test the cup of rest without days away. */
+  restedEveryMs: number;
+  /**
+   * Development only: how many players make a crowd in a copy of a town square, and of a region of the
+   * wilds (0: as many as they should, TOWN_CROWD and REGION_CROWD in world.ts), to play-test crowded
+   * copies with a few tabs.
+   */
+  townCrowd: number;
+  regionCrowd: number;
+  /**
+   * Development only: whoever is alone out in the wilds glimpses someone's walk this often (ms; 0: every
+   * minute or two, as it should), to play-test glimpses without the wait.
+   */
+  glimpseEveryMs: number;
   auth: AuthSettings;
 }
 
@@ -140,16 +163,52 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
     else if (get('NODE_ENV') === 'production' && Number(shift) !== 0) errors.push('CLOCK_SHIFT_MS moves the whole world\'s clock, so it is refused when NODE_ENV=production');
     else clockShiftMs = Number(shift);
   }
+  let parcelDayMs = 0;
+  const parcelDay = get('PARCEL_DAY_MS');
+  // 0 is the real calendar, as when it is not set, anywhere. Anything else is a day for everyone's
+  // parcels: a live server must follow the real calendar.
+  if (parcelDay !== undefined && !/^0+$/.test(parcelDay)) {
+    if (get('NODE_ENV') === 'production') errors.push('PARCEL_DAY_MS shortens the days of everyone\'s parcels, so it is refused when NODE_ENV=production');
+    else parcelDayMs = int('PARCEL_DAY_MS', 0, 5000, 86_400_000);
+  }
+  const xpMultiplier = int('XP_MULTIPLIER', 1, 1, 100_000);
+  // Levels are earned by bringing things home, for everyone alike: a live server never hands them out.
+  if (get('NODE_ENV') === 'production' && xpMultiplier !== 1) errors.push('XP_MULTIPLIER hands out levels, so it is refused when NODE_ENV=production');
+  let restedEveryMs = 0;
+  if (get('RESTED_EVERY_MS') !== undefined) {
+    // Rest is a gift for real time away: a live server never fills it faster.
+    if (get('NODE_ENV') === 'production') errors.push('RESTED_EVERY_MS fills everyone\'s rest faster than time away does, so it is refused when NODE_ENV=production');
+    else restedEveryMs = int('RESTED_EVERY_MS', 0, 100, 3_600_000);
+  }
+  // How many make a crowd is the same everywhere, for everyone: a live server never splits a handful of players apart.
+  const crowd = (name: string): number => {
+    if (get(name) === undefined) return 0;
+    if (get('NODE_ENV') === 'production') {
+      errors.push(`${name} splits places into copies for a few players, so it is refused when NODE_ENV=production`);
+      return 0;
+    }
+    return int(name, 0, 1, 100_000);
+  };
+  const townCrowd = crowd('TOWN_CROWD'), regionCrowd = crowd('REGION_CROWD');
+  let glimpseEveryMs = 0;
+  if (get('GLIMPSE_EVERY_MS') !== undefined) {
+    // How often people's steps show is the same for everyone: a live server never hurries them.
+    if (get('NODE_ENV') === 'production') errors.push('GLIMPSE_EVERY_MS shows people\'s steps more often than it should, so it is refused when NODE_ENV=production');
+    else glimpseEveryMs = int('GLIMPSE_EVERY_MS', 0, 1000, 3_600_000);
+  }
 
   let auth: AuthSettings = { mode: 'legacy' };
   const authMode = oneOf('AUTH_MODE', AUTH_MODES, 'legacy');
   const allowDevAuth = bool('ALLOW_DEV_AUTH', false);
+  // Checked in every mode, so a misspelt name stops the server the day it is written, not the day
+  // sign-in is switched on (without sign-in the list is not used).
+  const providers = oauthProviders(get('AUTH_PROVIDERS'), errors);
   if (authMode === 'dev') {
     // Anyone can be anyone in dev mode: a production server must not end up in it by a slip.
     if (get('NODE_ENV') === 'production' && !allowDevAuth) {
       errors.push('AUTH_MODE=dev lets anyone sign in as anyone with just an email, so it is refused when NODE_ENV=production; set ALLOW_DEV_AUTH=1 only on a test server');
     }
-    auth = { mode: 'dev' };
+    auth = { mode: 'dev', providers };
   } else if (authMode === 'supabase') {
     const rawUrl = get('SUPABASE_URL');
     const url = rawUrl === undefined ? undefined : projectUrl(rawUrl);
@@ -170,14 +229,29 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
     }
     const jwtSecret = get('SUPABASE_JWT_SECRET');
     if (jwtSecret !== undefined && jwtSecret.length < 32) errors.push('SUPABASE_JWT_SECRET must be the project\'s JWT secret (at least 32 characters)');
-    auth = { mode: 'supabase', url: url ?? '', publishableKey: key ?? '', jwtSecret };
+    auth = { mode: 'supabase', url: url ?? '', publishableKey: key ?? '', jwtSecret, providers };
   }
 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
     port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, storyFile: storyFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
-    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, auth,
+    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, restedEveryMs, townCrowd, regionCrowd, glimpseEveryMs, auth,
   };
+}
+
+/**
+ * AUTH_PROVIDERS ("google,apple", "apple" or nothing): the sign-ins the card offers besides the email
+ * code, in this order. A name the game does not offer stops the server, so a misspelt "gogle" never
+ * quietly leaves its button out.
+ */
+function oauthProviders(raw: string | undefined, errors: string[]): OAuthProvider[] {
+  const names = (raw ?? '').split(',').map(name => name.trim()).filter(Boolean);
+  const unknown = names.filter(name => !isOAuthProvider(name));
+  if (unknown.length) {
+    errors.push(`AUTH_PROVIDERS takes ${OAUTH_PROVIDERS.join(', ')} (comma-separated), not ${unknown.map(name => `"${name}"`).join(', ')}`);
+    return [];
+  }
+  return [...new Set(names.filter(isOAuthProvider))];
 }
 
 /** A Supabase project's address as clients and tokens name it (the origin), or undefined if it is not one. */

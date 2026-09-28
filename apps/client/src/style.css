@@ -19,6 +19,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   --u: clamp(8px, 2.5cqmin, 15px); --pad: calc(var(--u) * 1.1);
   --dp: clamp(112px, calc(var(--u) * 12), 170px); --ab: clamp(54px, calc(var(--u) * 5.8), 78px);
   --btn: clamp(40px, calc(var(--u) * 3.4), 50px);
+  /* The text box's buttons (YES, NO, − and +): never smaller than a fingertip. */
+  --hit: max(44px, calc(var(--u) * 3.6));
   --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px); --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
   font-size: calc(var(--u) * 1.05); line-height: 1.2; }
 .panel { background: rgba(14, 17, 23, .9); border: 2px solid #d9cfb8; border-radius: 10px; box-shadow: inset 0 0 0 2px #0c0f15, inset 0 0 0 3px #3e4658; }
@@ -29,6 +31,16 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .status { position: absolute; left: calc(var(--pad) + var(--safe-l)); top: calc(var(--pad) + var(--safe-t)); display: grid; gap: calc(var(--u) * .3); padding: calc(var(--u) * .55) calc(var(--u) * .9); min-width: calc(var(--u) * 12); }
 .status .name { display: flex; justify-content: space-between; gap: .8em; white-space: nowrap; font-size: calc(var(--u) * 1.2); font-weight: 600; }
 .status .sub { display: flex; justify-content: space-between; gap: .8em; font-size: calc(var(--u) * .92); color: #d3ccbb; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* A tap on the status panel opens the Status tab. */
+.status { pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+/* A guest: a small label under the name, and Sign in, a target of its own. The row stays for the whole
+   session, so nothing under it moves while playing, and it is no wider than the panel already is. */
+.status .guest { display: flex; align-items: center; justify-content: space-between; gap: .6em; }
+.status .guest-tag { padding: .06em .55em; border-radius: 99px; font-size: calc(var(--u) * .88); font-weight: 600; line-height: 1.2; color: #d9cfb8; background: rgba(217, 207, 184, .1); box-shadow: inset 0 0 0 1px rgba(217, 207, 184, .45); }
+.hud .status .signin { position: relative; display: block; width: auto; padding: .3em .8em; border-radius: 7px; border: 0; background: #e0873a; color: #1a0f04; box-shadow: inset 0 -2px 0 #a8591d;
+  font-size: calc(var(--u) * .95); font-weight: 600; line-height: 1.1; white-space: nowrap; }
+/* Bigger to a thumb than it looks, without making the row taller. */
+.hud .status .signin::after { content: ""; position: absolute; inset: -.6em -.7em; }
 .conn { display: inline-flex; align-items: center; gap: .35em; }
 .conn i { width: .7em; height: .7em; border-radius: 50%; display: inline-block; background: #f5cf3b; box-shadow: 0 0 0 2px #0c0f15; }
 .conn[data-state="online"] i { background: #4ade6b; }
@@ -55,6 +67,11 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .cling { display: flex; align-items: center; gap: .4em; max-width: calc(var(--u) * 16); padding: .2em .55em; border-radius: 7px; font-size: calc(var(--u) * .95); font-weight: 600; line-height: 1.2;
   color: #e6dcff; background: rgba(40, 30, 64, .8); box-shadow: inset 0 0 0 1px #7e68b8; }
 .cling[hidden] { display: none; }
+/* A lodestone tugs: its name, a moment on the status panel, in the quirks' violet. */
+.tug { display: flex; align-items: center; gap: .4em; justify-self: start; padding: .15em .55em; border-radius: 7px; font-size: calc(var(--u) * .95); font-weight: 600; line-height: 1.2;
+  color: #e6dcff; background: rgba(40, 30, 64, .8); box-shadow: inset 0 0 0 1px #7e68b8; }
+.tug[hidden] { display: none; }
+.tug i { font-style: normal; color: #c79bff; text-shadow: 0 0 6px rgba(199, 155, 255, .8); }
 .cling svg { width: calc(var(--u) * 1.15); height: calc(var(--u) * 1.15); flex: none; color: #d9c8ff; }
 /* The surge clock: a strip in the status panel, so it never covers anything else. */
 .surge-pill { margin-top: calc(var(--u) * .15); padding: .25em .6em; border-radius: 7px; max-width: calc(var(--u) * 16); font-size: calc(var(--u) * .95); font-weight: 600; line-height: 1.25;
@@ -74,6 +91,17 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 @keyframes energy-pulse { 50% { opacity: .4; } }
 @keyframes energy-glint { 50% { opacity: .3; } }
 
+/* Unease closes the edges in: colder than low energy's, and slow, since a feeling creeps in and lifts
+   again (the level says how far: hud.ts). Its visibility waits for the fade out. Full, the edges breathe. */
+.unease { position: absolute; inset: 0; pointer-events: none; visibility: hidden; opacity: 0; transform: scale(1.4); will-change: opacity, transform;
+  transition: opacity 2.5s ease, transform 2.5s ease, visibility 0s linear 2.5s; }
+.unease[data-on] { visibility: visible; transition: opacity 2.5s ease, transform 2.5s ease, visibility 0s; }
+.unease i { position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 42%, rgba(8, 10, 18, 0) 36%, rgba(8, 10, 18, .5) 62%, rgba(3, 4, 10, .9) 86%, rgba(1, 2, 5, .97) 100%); }
+@media (prefers-reduced-motion: no-preference) {
+  .unease[data-breathe] i { animation: unease-breathe 5.5s ease-in-out infinite; }
+}
+@keyframes unease-breathe { 50% { transform: scale(1.07); } }
 /* Low energy darkens the screen edges. Under the panels and controls, and never in the way of a touch. */
 .vignette { position: absolute; inset: 0; pointer-events: none; visibility: hidden; opacity: 0; will-change: opacity, transform;
   background: radial-gradient(ellipse at 50% 45%, rgba(4, 3, 6, 0) 32%, rgba(4, 3, 6, .7) 60%, rgba(2, 1, 3, .97) 90%); }
@@ -110,7 +138,37 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .ab button { position: absolute; width: var(--ab); height: var(--ab); background: #9c2b4e; border-color: #f3d6de; font-family: var(--font-ui); font-weight: 700; font-size: calc(var(--ab) * .42); color: #fff4f7; box-shadow: inset 0 -4px 0 #6e1a36, 0 0 0 2px #0c0f15; }
 .hud .ab .a { right: 0; top: 0; }
 .hud .ab .b { left: 0; bottom: 0; }
-.hud .ab button:active { transform: translateY(2px); box-shadow: inset 0 -1px 0 #6e1a36, 0 0 0 2px #0c0f15; }
+.hud .ab button:active, .hud .ab .b[data-held] { transform: translateY(2px); box-shadow: inset 0 -1px 0 #6e1a36, 0 0 0 2px #0c0f15; }
+/* B held: the fan of calls (calls.ts). It opens up and to the left of B, from B's center, clear of A up
+   and to its right and of the stick; its notes sit FAN_RADIUS of B's diameters out, at the angles FAN
+   gives (--a). Nothing in it takes a touch: the finger stays B's and slides over it. */
+.fan { position: absolute; left: calc(var(--ab) * .5); bottom: calc(var(--ab) * .5); width: 0; height: 0; pointer-events: none; visibility: hidden; transition: visibility 0s .12s;
+  --fan-d: max(calc(var(--ab) * .62), 28px); --fan-r: max(calc(var(--ab) * 1.7), 78px); }
+.fan[data-open] { visibility: visible; transition: none; }
+.fan .call { position: absolute; left: 0; top: 0; width: var(--fan-d); height: var(--fan-d); margin: calc(var(--fan-d) / -2) 0 0 calc(var(--fan-d) / -2);
+  opacity: 0; transform: rotate(var(--a)) translateX(calc(var(--fan-r) * .3)) rotate(calc(-1 * var(--a))) scale(.5); transition: transform .12s ease-in, opacity .12s ease-in; }
+.fan .dot { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; color: #f1ece0; background: rgba(14, 17, 23, .9); border: 2px solid #d9cfb8;
+  box-shadow: inset 0 0 0 2px #0c0f15, 0 0 0 2px rgba(12, 15, 21, .55); transition: transform .1s ease-out; }
+.fan .dot svg { width: 60%; height: 60%; }
+.fan[data-open] .call { opacity: 1; transform: rotate(var(--a)) translateX(var(--fan-r)) rotate(calc(-1 * var(--a))); transition: transform .16s cubic-bezier(.2, .9, .3, 1.25), opacity .1s ease-out; }
+.fan[data-open] .call:nth-child(2) { transition-delay: .03s; }
+.fan[data-open] .call:nth-child(3) { transition-delay: .06s; }
+/* The call under the finger is lit (its note grows, its words stay where they are); off the fan, where
+   letting go sings nothing, all of them dim. */
+.fan .call[data-on] .dot { color: #ffcf5a; border-color: #ffcf5a; box-shadow: inset 0 0 0 2px #0c0f15, 0 0 0 3px rgba(255, 207, 90, .35); transform: scale(1.14); }
+.fan[data-open][data-off] .call { opacity: .5; }
+/* With a mouse and a keyboard, each note carries the digit that sings it while Q is held. */
+@media (hover: hover) and (pointer: fine) {
+  .fan .dot { position: relative; }
+  .fan .dot::after { content: attr(data-key); position: absolute; left: -12%; top: -12%; min-width: 1.35em; padding: 0 .25em; border-radius: 6px; background: #0c0f15; box-shadow: inset 0 0 0 1px #d9cfb8;
+    font-size: max(10px, calc(var(--u) * .9)); font-weight: 600; line-height: 1.35; text-align: center; color: #f1ece0; }
+}
+/* Words under the notes, the first few times: then the notes alone. */
+.fan .w { position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%); padding: .08em .5em .12em; border-radius: 99px; background: rgba(12, 15, 21, .8);
+  font-size: max(10.5px, calc(var(--u) * 1.05)); font-weight: 600; line-height: 1.2; white-space: nowrap; color: #f1ece0; }
+.fan:not([data-words]) .w { display: none; }
+.fan .call[data-on] .w { color: #ffcf5a; }
+@media (prefers-reduced-motion: reduce) { .fan .call, .fan[data-open] .call, .fan .dot { transition: none; } }
 
 .labels, .floats { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .tag { position: absolute; left: 0; top: 0; padding: .1em .5em; border-radius: 99px; background: rgba(12, 15, 21, .72); font-size: calc(var(--u) * .95); font-weight: 600; white-space: nowrap; will-change: transform; }
@@ -119,7 +177,13 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .tag.pile::before { content: ""; display: inline-block; width: .9em; height: .9em; margin-right: .3em; vertical-align: -.12em; background: currentColor;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat; }
+/* A cabin's name plate on your street: a small painted board, square-cornered, so it is not taken for a person. */
+.tag.plate { border-radius: .2em; background: rgba(74, 52, 32, .9); color: #f4e2bf; font-size: calc(var(--u) * .82); font-weight: 700; letter-spacing: .02em; box-shadow: 0 0 0 1px rgba(226, 190, 130, .4); }
 .float { position: absolute; left: 0; top: 0; font-weight: 700; font-size: calc(var(--u) * 1.4); white-space: nowrap; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; will-change: transform, opacity; }
+/* The note rising over a caller's head, in their jacket color, edged dark to read over any ground. */
+.call-note { position: absolute; left: 0; top: 0; width: calc(var(--u) * 2.3); height: calc(var(--u) * 2.3); transform-origin: 50% 100%; will-change: transform, opacity;
+  filter: drop-shadow(0 1px 0 #0c0f15) drop-shadow(0 0 1.5px #0c0f15); }
+.call-note svg { width: 100%; height: 100%; display: block; }
 
 .dialog { position: absolute; left: calc(var(--pad) + var(--safe-l)); right: calc(var(--pad) + var(--safe-r)); bottom: calc(var(--pad) * 3.2 + var(--dp) + var(--pad) + var(--safe-b)); min-height: calc(var(--u) * 7.4); padding: calc(var(--u) * 1.2) calc(var(--u) * 1.5) calc(var(--u) * 1.4); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.35); line-height: 1.4; pointer-events: auto; cursor: pointer; display: none; }
 .hud.talking .dialog { display: block; }
@@ -127,6 +191,35 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .dialog .more { position: absolute; right: calc(var(--u) * 1.1); bottom: calc(var(--u) * .45); color: #e0873a; font-size: calc(var(--u) * 1); }
 @media (prefers-reduced-motion: no-preference) { .dialog .more { animation: bob .9s steps(2, jump-none) infinite; } }
 @keyframes bob { 50% { transform: translateY(3px); } }
+.dialog .who:empty, .dialog[data-mode="ask"] .more, .dialog[data-mode="note"] .more { display: none; }
+
+/* Asking first (ask.ts), and saying what it did. The box then stands above the panels it was asked
+   from (the bag, the workbench), over a scrim that takes a tap anywhere else; A, B and the stick stay
+   above the scrim. It keeps the height of a question, so answering never makes it jump. */
+.scrim { position: absolute; inset: 0; z-index: 3; pointer-events: auto; }
+.hud.asking .dialog, .hud.asking .ab, .hud.asking .stick { z-index: 4; }
+.hud.asking .dialog { background: #0e1117; cursor: default; min-height: calc(var(--hit) * 2 + var(--u) * 3.5 + 4px); }
+.hud.asking .dialog .who { background: #0e1117; }
+.hud.talking .dialog[data-mode="ask"] { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto 1fr; column-gap: calc(var(--u) * 1.2); row-gap: calc(var(--u) * .6); }
+.dialog[data-mode="ask"] .line { grid-column: 1; grid-row: 1; }
+/* How many: − ×3 +, under the question. */
+.dialog .count { grid-column: 1; grid-row: 2; align-self: end; display: flex; align-items: center; gap: calc(var(--u) * .5); }
+.hud .dialog .step { width: var(--hit); height: var(--hit); flex: none; }
+.hud .dialog .step svg { width: 44%; height: 44%; stroke-width: 2.6; }
+.hud .dialog .step[aria-disabled="true"] { opacity: .35; }
+.hud .dialog .step:active:not([aria-disabled="true"]) { background: #262d3a; }
+.dialog .count .n { min-width: 2.7em; text-align: center; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.6); line-height: 1; color: #ffcf5a; font-variant-numeric: tabular-nums; }
+/* YES over NO, in a frame of their own at the right, the chosen one gold with a caret before it. */
+.dialog .choices { grid-column: 2; grid-row: 1 / span 2; align-self: center; display: grid; gap: calc(var(--u) * .2); padding: calc(var(--u) * .35); border-radius: 8px; }
+.hud .dialog .choices button { display: flex; align-items: center; justify-content: flex-start; gap: .5em; width: 100%; min-width: 5.4em; height: var(--hit); padding: 0 1em 0 .6em;
+  border: 0; border-radius: 6px; background: none; box-shadow: none; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.35); letter-spacing: .08em; color: #d3ccbb; }
+.hud .dialog .choices button::before { content: ""; flex: none; width: .5em; height: .62em; background: currentColor; clip-path: polygon(0 0, 100% 50%, 0 100%); visibility: hidden; }
+.hud .dialog .choices button[data-on] { color: #ffcf5a; background: rgba(255, 207, 90, .12); }
+.hud .dialog .choices button[data-on]::before { visibility: visible; }
+@media (hover: hover) { .hud .dialog .choices button:hover:not([data-on]) { background: rgba(217, 207, 184, .08); } }
+/* What the box says by itself closes on its own: a thin line along its bottom runs out meanwhile. */
+.dialog .timer { position: absolute; left: calc(var(--u) * 1.5); right: calc(var(--u) * 1.5); bottom: calc(var(--u) * .5); height: 2px; border-radius: 1px; background: rgba(217, 207, 184, .4); transform-origin: left; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .dialog .timer { display: none; } }
 
 /* The bag. --sheet-h is the most height it can have (the whole screen in landscape; above the
    controls in portrait); --detail-h what the details under the slots need. */
@@ -139,9 +232,18 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .sheet-head b { font-weight: inherit; flex: 1; color: #ffcf5a; }
 .sheet-head .room { font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.1); color: #b9b2a2; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hud .close { width: var(--btn); height: var(--btn); flex: none; }
-/* Tools ride in the bag's header, as big as its close button. */
-.sheet-head .tools { display: flex; gap: calc(var(--u) * .5); }
+/* Tools ride in the bag's header, as big as its close button, one for each you own. The room line sits
+   under the title, so the buttons never squeeze it and the header stays one button high: four fit beside
+   it on any phone held upright, five in landscape. Past that the room line ends in "...". */
+.sheet-head .tools { display: flex; gap: calc(var(--u) * .5); flex: none; }
 .sheet-head .tools .slot { width: var(--btn); height: var(--btn); }
+/* A tool its button switches on and off (the radio): a small lamp in its top left corner (the aerial
+   takes the right), lit green while it is on. */
+.sheet-head .tools .lamp { position: absolute; top: 9%; left: 9%; width: 22%; height: 22%; border-radius: 50%; background: #262e22; box-shadow: 0 0 0 1.5px #0c0f15; }
+.sheet-head .tools [data-on] .lamp { background: #7ff0a8; box-shadow: 0 0 0 1.5px #0c0f15, 0 0 6px 1px rgba(127, 240, 168, .75); }
+.bag-head .heading { flex: 1; min-width: 0; display: grid; gap: .1em; }
+/* Tall enough a line that clipping it (for the ellipsis, with many tools on a small phone) cuts no letter. */
+.bag-head .room { overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
 /* A paper map over everything, as big as the screen allows in either orientation; B or the X puts it away. */
 .paper-view { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; pointer-events: auto; background: rgba(6, 8, 11, .9);
   padding: calc(var(--pad) + var(--safe-t)) calc(var(--pad) + var(--safe-r)) calc(var(--pad) + var(--safe-b)) calc(var(--pad) + var(--safe-l)); }
@@ -169,6 +271,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   -webkit-mask: radial-gradient(closest-side, transparent 84%, #000 86%); mask: radial-gradient(closest-side, transparent 84%, #000 86%); }
 .slot .ring[data-fading] { background: conic-gradient(#b48cff calc(var(--left) * 360deg), rgba(255, 255, 255, .08) 0); }
 .slot .n { position: absolute; right: 8%; bottom: 5%; font-size: calc(var(--u) * 1.1); font-weight: 700; line-height: 1; color: #f1ece0; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; font-variant-numeric: tabular-nums; }
+/* A piece's level, in gold at its slot's top left: the bottom holds how much is left, the top right its quirk. */
+.slot .n.up { top: 6%; left: 9%; right: auto; bottom: auto; color: #ffcf5a; }
+.hud .slot .lbl b { font-weight: 700; color: #ffcf5a; }
 /* Under the slots: what the chosen one holds and what can be done with it, or a hint. */
 .sheet .detail { flex: none; min-height: var(--detail-h); display: flex; flex-direction: column; gap: calc(var(--u) * .7); }
 .sheet .hint { margin: 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.2); line-height: 1.35; color: #b9b2a2; }
@@ -180,25 +285,26 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .detail .count { font-size: .8em; color: #d3ccbb; font-variant-numeric: tabular-nums; }
 .detail .words p { margin: .2em 0 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.25); line-height: 1.35; color: #e6dfcf; }
 .detail .acts { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--u) * .6); }
-.detail .ask { margin-right: auto; font-size: calc(var(--u) * 1.25); font-weight: 600; }
 .hud .act { display: inline-block; width: auto; border-radius: 9px; padding: .45em 1em; font-size: calc(var(--u) * 1.25); font-weight: 600; background: #1c222c; border: 1px solid #4a5468; box-shadow: none; }
 .hud .act.go { background: #e0873a; border-color: #f3b27a; color: #1a0f04; }
 .hud .act.toss { color: #ffb4a0; }
-.hud .act.toss.sure { background: #9c2b3a; border-color: #f3a6b0; color: #fff4f4; }
 
 /* What you wear, in the stash sheet: six slots, each with its name under the piece. */
 .sheet .grid.wear { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .hud .slot .lbl { position: absolute; left: 0; right: 0; bottom: 4%; text-align: center; font-size: calc(var(--u) * .78); font-weight: 600; color: #b9b2a2; text-transform: capitalize; }
 .hud .slot[data-wear][data-empty="true"] { background: #131820; box-shadow: inset 0 0 0 2px #232a36; }
 .hud .grid.wear .slot svg { width: 64%; height: 64%; margin-bottom: 18%; }
-/* The workbench: a recipe per row, what it makes, what it needs, and Make. */
+/* The workbench: a row for each mend and recipe, what it makes, what it needs; a tap opens its card. */
 .bench-sheet .hint, .bench-sheet .recipes { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .recipes { display: grid; gap: calc(var(--u) * .6); }
-.recipe { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: calc(var(--u) * .7); padding: .5em .6em; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.bench-sheet .bench-title { margin: calc(var(--u) * .4) 0 0; font-weight: 600; font-size: calc(var(--u) * 1.1); color: #ffcf5a; }
+.bench-sheet .bench-title:first-child { margin-top: 0; }
+.hud .recipe { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; place-items: center stretch; gap: calc(var(--u) * .7); width: 100%; padding: .5em .6em; border: 0; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; text-align: left; }
+.hud .recipe[data-picked] { background: #1d2430; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
 .recipe .big { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); display: grid; place-items: center; border-radius: 8px; background: #1c222c; }
 .recipe .big svg { width: 80%; height: 80%; }
-.recipe .words { display: grid; gap: .15em; min-width: 0; font-family: "Nunito", system-ui, sans-serif; font-weight: 700; }
-.recipe .words b { font-family: "Fredoka", system-ui, sans-serif; font-weight: 600; color: #ffcf5a; font-size: calc(var(--u) * 1.15); }
+.recipe .words { display: grid; gap: .15em; min-width: 0; font-family: var(--font-text); font-weight: 700; }
+.recipe .words b { font-family: var(--font-ui); font-weight: 600; color: #ffcf5a; font-size: calc(var(--u) * 1.15); }
 .recipe .rfacts { color: #b9b2a2; font-size: calc(var(--u) * .95); }
 .recipe .needs { display: flex; flex-wrap: wrap; gap: .3em .6em; }
 .recipe .need { display: inline-flex; align-items: center; gap: .15em; font-size: calc(var(--u) * .95); color: #cfe9c3; }
@@ -206,14 +312,161 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .recipe .need svg { width: calc(var(--u) * 1.5); height: calc(var(--u) * 1.5); }
 .recipe .need i { font-style: normal; font-variant-numeric: tabular-nums; }
 .recipe[data-short] .words b { color: #d3ccbb; }
-/* The stash (the chest at home): your bag above, to put things away; the stash below, to take them out. */
+.recipe .more { display: flex; align-items: center; gap: .35em; color: #8a8474; }
+.recipe .more svg { width: calc(var(--u) * 1.3); height: calc(var(--u) * 1.3); }
+.recipe .ready { font-style: normal; padding: .12em .45em .1em; border-radius: 6px; font-size: calc(var(--u) * .78); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #b8f0a8; background: #22362a; box-shadow: inset 0 0 0 1px rgba(184, 240, 168, .35); }
+
+/* The stash and the workbench: the head stays, the list scrolls, and the card a tap opens (details.ts)
+   docks under the list, inside the panel: it never leaves the panel, so it never covers A and B. */
+.sheet.docked { overflow: hidden; }
+.sheet-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); overflow: hidden auto; overscroll-behavior: contain; }
+.dock { flex: none; display: flex; flex-direction: column; min-height: 0; max-height: calc(var(--sheet-h) * .58); padding-top: var(--gap); border-top: 2px solid #2a3240; }
+.sheet .dock .detail { flex: 1 1 auto; min-height: 0; width: 100%; max-width: var(--col); margin-inline: auto; gap: calc(var(--u) * .6); }
+.dock .about { min-height: 0; overflow: hidden auto; overscroll-behavior: contain; }
+.dock .acts { flex: none; }
+/* The card's button fills the row; a second one (throw away, take out) sits beside it, never pressed by A. */
+.hud .dock .act { flex: 1 1 auto; min-width: 0; text-align: center; }
+.hud .dock .act.go { flex-basis: 62%; }
+.hud .act .then { font-weight: 500; }
+@media (prefers-reduced-motion: no-preference) { .dock:not([hidden]) { animation: dock-in .18s ease-out; } }
+@keyframes dock-in { from { opacity: 0; transform: translateY(calc(var(--u) * 1.2)); } }
+/* A card's words, after the bag's: the tier, the slot, a chip for what it gives, how worn, its quirk, what it takes. */
+.detail .title { flex-wrap: wrap; row-gap: .15em; }
+.detail .tier { align-self: center; padding: .12em .5em .1em; border-radius: 6px; font-size: calc(var(--u) * .78); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; line-height: 1.2;
+  color: #d3ccbb; background: #262d3a; box-shadow: inset 0 0 0 1px rgba(211, 204, 187, .3); }
+.detail .tier[data-tier="sturdy"] { color: #b8f0a8; background: #22362a; box-shadow: inset 0 0 0 1px rgba(184, 240, 168, .35); }
+.detail .tier[data-tier="rugged"] { color: #a9d6ff; background: #1f3148; box-shadow: inset 0 0 0 1px rgba(169, 214, 255, .35); }
+.detail .tier[data-tier="expedition"] { color: #ffc98a; background: #3f2c19; box-shadow: inset 0 0 0 1px rgba(255, 201, 138, .35); }
+.detail .tier[data-tier="anomalous"] { color: #dcc6ff; background: #33244d; box-shadow: inset 0 0 0 1px rgba(220, 198, 255, .4); }
+.detail .words p.slotname { margin-top: .05em; font-family: var(--font-ui); font-weight: 500; font-size: calc(var(--u) * 1); color: #b9b2a2; }
+.detail .stats { display: flex; flex-wrap: wrap; gap: .35em; margin: .45em 0 0; padding: 0; list-style: none; font-family: var(--font-ui); font-weight: 500; font-size: calc(var(--u) * 1.05); }
+.detail .stats li { --dot: #d9cfb8; display: inline-flex; align-items: center; gap: .35em; padding: .18em .6em .18em .45em; border-radius: 99px; background: #1c222c; box-shadow: inset 0 0 0 1px #3a4356; color: #f1ece0; }
+.detail .stats li::before { content: ""; width: .6em; height: .6em; border-radius: 50%; background: var(--dot); box-shadow: 0 0 5px var(--dot); }
+.detail .stats li[data-kind="heat"] { --dot: #ff8a5c; }
+.detail .stats li[data-kind="cold"] { --dot: #8cc8ff; }
+.detail .stats li[data-kind="wind"] { --dot: #9fe0cf; }
+.detail .stats li[data-kind="electricity"] { --dot: #ffe066; }
+.detail .stats li[data-kind="radiation"] { --dot: #b5e86b; }
+.detail .stats li[data-kind="energy"] { --dot: #ffcf5a; color: #ffe3a1; }
+.detail .stats li[data-kind="none"] { --dot: #4a5468; color: #b9b2a2; }
+.detail .stats s { color: #8a8474; }
+/* On an upgrade's card: what the next level gives, after what it gives now; and how long it lasts out there. */
+.detail .stats .next { font-weight: 600; color: #ffe3a1; }
+.detail .stats li[data-kind="wear"] { --dot: #cfe9c3; }
+.detail .condition { display: flex; align-items: center; gap: .55em; margin-top: .5em; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.05); line-height: 1.3; color: #cfe9c3; }
+.detail .condition[data-low="true"] { color: #ffae98; }
+.detail .cbar { position: relative; flex: none; width: calc(var(--u) * 6.5); height: max(5px, calc(var(--u) * .5)); border-radius: 99px; overflow: hidden; background: #1c222c; box-shadow: inset 0 0 0 1px #0c0f15, 0 0 0 1px #3e4658; }
+.detail .cbar i { position: absolute; inset: 0; border-radius: inherit; background: #8fd98a; transform-origin: left; }
+.detail .condition[data-low="true"] .cbar i { background: #ff6b4a; }
+.detail .words p.quirk { font-size: calc(var(--u) * 1.1); color: #dcd0f5; }
+.detail .quirk b { font-family: var(--font-ui); font-weight: 600; color: #c79bff; text-shadow: 0 0 6px rgba(199, 155, 255, .5); }
+.detail .costs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .3em .8em; margin-top: .5em; font-family: var(--font-ui); font-weight: 500; font-size: calc(var(--u) * 1.02); }
+.detail .ctitle { grid-column: 1 / -1; color: #b9b2a2; }
+.detail .cost { display: flex; align-items: center; gap: .35em; min-width: 0; color: #cfe9c3; }
+.detail .cost[data-short] { color: #ffae98; }
+.detail .cost svg { flex: none; width: calc(var(--u) * 1.6); height: calc(var(--u) * 1.6); }
+.detail .cname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6dfcf; }
+.detail .cost i { font-style: normal; font-variant-numeric: tabular-nums; }
+.detail .words p.note { font-size: calc(var(--u) * 1.1); color: #d3ccbb; }
+.detail .words p.note[data-tone="bad"] { color: #ffae98; }
+/* The stash (the chest at home): your bag above, to put things away; the stash below, to take them out.
+   The bag: what you carry, then what you wear. */
 .hud .slot[hidden] { display: none; }
-.stash-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
-.stash-sheet .hint, .stash-sheet .acts { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.stash-sheet .stash-title, .bag-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.stash-sheet .hint, .stash-sheet .acts, .stash-sheet .gate, .bag-sheet .hint { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint[hidden] { display: none; }
-.hud .act:disabled { opacity: .45; cursor: default; }
+/* The chest's two tabs stand where its title was: the stash (with what you wear) and the wardrobe. They
+   keep their width; the XP beside them takes what is left, and goes where too little is (a card beside
+   the list on a small screen on its side). */
+.stash-sheet .sheet-head { container: chest-head / inline-size; }
+.chest-tabs { flex: none; display: flex; gap: calc(var(--u) * .2); }
+.stash-sheet .sheet-head .room { flex: 1 1 0; text-align: right; }
+@container chest-head (max-width: 18em) { .stash-sheet .sheet-head .room { visibility: hidden; } }
+.hud .chest-tabs button { position: relative; min-height: var(--btn); padding: 0 .5em; border: 0; border-radius: 8px; background: none; box-shadow: none; font-size: inherit; font-weight: 600; color: #8a8474; white-space: nowrap; }
+.hud .chest-tabs button[aria-selected="true"] { color: #ffcf5a; }
+.hud .chest-tabs button[aria-selected="true"]::after { content: ""; position: absolute; left: .5em; right: .5em; bottom: calc(var(--u) * .35); height: 2px; border-radius: 1px; background: #ffcf5a; }
+.stash-sheet .sheet-head .room { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chest-part { flex: none; display: flex; flex-direction: column; gap: var(--gap); }
+/* The wardrobe: three tiles a row, each a small figure in its outfit with its name under it; a locked
+   one is dim and says the level that opens it, the one worn has a tick. */
+.sheet .grid.outfits { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.hud .slot.outfit svg { width: 60%; height: 60%; margin-bottom: 22%; }
+.hud .slot.outfit .lbl { bottom: 5%; padding-inline: 5%; font-size: calc(var(--u) * .92); line-height: 1.1; text-transform: none; color: #d3ccbb; }
+.hud .slot.outfit[data-locked] { background: #131820; box-shadow: inset 0 0 0 2px #232a36; }
+.hud .slot.outfit[data-locked] svg { opacity: .35; filter: grayscale(.7); }
+.hud .slot.outfit[data-locked] .lbl { color: #8a8474; }
+.hud .slot.outfit[data-worn] { box-shadow: inset 0 0 0 2px #8fd98a; }
+.hud .slot.outfit[data-picked] { background: #262d3a; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
+.slot.outfit .on { position: absolute; right: 6%; top: 6%; width: max(14px, calc(var(--u) * 1.5)); height: max(14px, calc(var(--u) * 1.5)); border-radius: 50%; background: #8fd98a; }
+.slot.outfit .on::after { content: ""; position: absolute; left: 36%; top: 20%; width: 24%; height: 44%; border: solid #12301a; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+/* The wardrobe's three parts, each behind a tab of its own: outfits, and the patterns and badges merits buy. */
+.stash-sheet .wardrobe-tabs { flex: none; display: flex; gap: calc(var(--u) * .5); width: 100%; max-width: var(--col); margin-inline: auto; }
+.hud .wardrobe-tabs button { position: relative; flex: 1; min-width: 0; min-height: var(--btn); padding: 0 .6em; border-radius: 9px; border: 1px solid #3a4356; background: #131820; box-shadow: none;
+  font-size: calc(var(--u) * 1.1); font-weight: 600; color: #b9b2a2; white-space: nowrap; }
+.hud .wardrobe-tabs button[aria-selected="true"] { background: #262d3a; border-color: #ffcf5a; color: #ffcf5a; }
+/* Over the patterns and the badges: the merits there are to spend, or how they come. */
+.stash-sheet .merit-note { flex: none; width: 100%; max-width: var(--col); margin: 0 auto; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #ffe3a1; }
+.stash-sheet .merit-note[hidden] { display: none; }
+/* A look not yours yet shows its price: bright while merits can buy it. */
+.hud .slot.outfit[data-buy] .lbl { color: #ffcf5a; }
+.hud .slot.outfit[data-buy] { box-shadow: inset 0 0 0 2px #8a7440; }
+/* A badge (merits.ts) before a name, on a name tag and in the status panel, as tall as the letters. */
+.tag .badge, .status .name .badge { display: inline-block; width: 1.2em; height: 1.2em; margin-right: .25em; vertical-align: -.25em; }
+.tag .badge svg, .status .name .badge svg { display: block; width: 100%; height: 100%; }
+.status .name .badge[hidden] { display: none; }
+/* Rested: while the cup holds any, the stash says how much more of what comes home counts double. */
+.stash-sheet .rest-note { flex: none; width: 100%; max-width: var(--col); margin: 0 auto; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #b8f0a8; }
+.stash-sheet .rest-note[hidden] { display: none; }
+/* What came in the parcels since the chest last opened, said once, at the top of the stash. */
+.stash-sheet .parcel-note { flex: none; display: grid; gap: .25em; width: 100%; max-width: var(--col); margin-inline: auto; padding: calc(var(--u) * .6) calc(var(--u) * .9);
+  border-radius: 10px; background: #1d2230; box-shadow: inset 0 0 0 1px #8a7440; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #ffe3a1; }
+.stash-sheet .parcel-note p { margin: 0; }
+.stash-sheet .parcel-note[hidden] { display: none; }
+/* The first goal: the nearest gear you could make, in the bag and the chest; green when the stash can pay for it. At the workbench it opens its card. */
+.hud .sheet .goal { display: block; flex: none; width: 100%; max-width: var(--col); margin: 0 auto; padding: .4em .7em; border: 0; border-radius: 9px; background: #151a22; box-shadow: inset 0 0 0 1px #3a4356;
+  text-align: left; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.1); line-height: 1.35; color: #e6dfcf; cursor: default; }
+.hud .sheet .goal[data-ready] { box-shadow: inset 0 0 0 1px #5c8f58; color: #cfe9c3; }
+.hud .sheet .goal[data-act] { cursor: pointer; box-shadow: inset 0 0 0 1px #8a7440; }
+.hud .sheet .goal[hidden] { display: none; }
+/* A crate for whoever comes next: a row for each thing in it (what, who left it and when), your bag below
+   to leave one; like the stash, a tap opens the card and the card docks in the panel. */
+.crate-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.crate-sheet .hint, .crate-sheet .recipes { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.crate-sheet .hint[hidden], .crate-sheet .recipes[hidden] { display: none; }
+.hud .act:disabled, .hud .act[aria-disabled="true"] { opacity: .45; cursor: default; }
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }
+/* A trade (trade.ts): where it stands, what each side gives (a row each), your bag to give from, and
+   Ready and Trade at the foot, which stays in sight while the rest scrolls. It opens where the bag does. */
+.trade-sheet { overflow: hidden; }
+.trade-sheet .trade-line, .trade-sheet .offer, .trade-sheet .stash-title, .trade-sheet .hint, .trade-foot { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.trade-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; }
+.trade-line { margin: 0; padding: .45em .75em; border-radius: 9px; background: #151a22; box-shadow: inset 0 0 0 1px #3a4356; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #ffe3a1; }
+.offer { display: grid; gap: calc(var(--u) * .45); }
+.offer .hint { margin: 0; }
+.orow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: calc(var(--u) * .6); padding: .35em .5em; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.orow .big { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); display: grid; place-items: center; border-radius: 8px; background: #1c222c; }
+.orow .big svg { width: 80%; height: 80%; }
+.hud .orow .words { display: grid; gap: .1em; justify-items: start; min-width: 0; width: 100%; padding: .2em 0; border: 0; border-radius: 6px; background: none; box-shadow: none; text-align: left; font-family: var(--font-text); font-weight: 700; }
+.orow .words b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.15); color: #ffcf5a; }
+.orow .ofacts { font-size: calc(var(--u) * .95); line-height: 1.3; color: #b9b2a2; }
+.orow .ocount { display: flex; align-items: center; gap: calc(var(--u) * .35); }
+.hud .orow .step { width: var(--hit); height: var(--hit); flex: none; }
+.hud .orow .step svg { width: 44%; height: 44%; stroke-width: 2.6; }
+.hud .orow .step[aria-disabled="true"] { opacity: .35; }
+.orow .n { min-width: 2.4em; text-align: center; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.3); color: #f1ece0; font-variant-numeric: tabular-nums; }
+.orow .otext { grid-column: 1 / -1; margin: 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.05); line-height: 1.35; color: #d3ccbb; }
+/* Your bag in a trade: what you give is ringed in gold, with a tick in its corner. */
+.hud .trade-sheet .slot[data-given] { background: #262d3a; box-shadow: inset 0 0 0 2px #ffcf5a; }
+.slot .given { position: absolute; left: 7%; top: 7%; width: max(12px, calc(var(--u) * 1.3)); height: max(12px, calc(var(--u) * 1.3)); border-radius: 50%; background: #ffcf5a; }
+.slot .given::after { content: ""; position: absolute; left: 36%; top: 20%; width: 24%; height: 44%; border: solid #1a0f04; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.trade-foot { display: grid; gap: calc(var(--u) * .4); padding-top: var(--gap); border-top: 2px solid #2a3240; }
+.trade-foot .acts { display: flex; gap: calc(var(--u) * .6); }
+.hud .trade-foot .act { flex: 1 1 0; min-width: 0; min-height: var(--hit); text-align: center; }
+.hud .trade-foot .act.ready[data-on] { background: #22362a; border-color: #8fd98a; color: #cfe9c3; }
+.hud .trade-foot .act.ready[data-on]::before { content: "✓ "; }
+.hud .trade-foot .act.go[data-pressed] { background: #3a3024; border-color: #8a7440; color: #ffe3a1; }
+.trade-foot .fine { margin: 0; text-align: center; font-family: var(--font-text); font-weight: 700; font-size: max(11px, calc(var(--u) * .95)); color: #8a8474; }
 /* The status panel: rows about you, then the feats. It sits where the bag does. */
 /* Friends: the list, someone's card and a conversation. Text you type is at least 16px, so iPhone Safari never zooms in. */
 .friends-sheet .note { margin: 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); color: #ffb4a0; }
@@ -229,6 +482,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .friends-sheet .say input { flex: 1; min-width: 0; font: 600 max(16px, calc(var(--u) * 1.2)) var(--font-text); padding: .45em .7em; border-radius: 9px; border: 1px solid #4a5468; background: #131820; color: #f1ece0; }
 .friends-sheet .setting { display: flex; align-items: center; gap: .5em; color: #d3ccbb; }
 .friends-sheet .setting input { width: 1.2em; height: 1.2em; accent-color: #e0873a; }
+/* The door's setting stands outside the list (a guest sees it too): the list's type, and its room above. */
+.friends-sheet > .setting { margin-top: calc(var(--u) * .6); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); }
 .person .where { margin: 0; color: #b9b2a2; }
 .person .acts { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--u) * .5); }
 .person .ask { font-weight: 700; }
@@ -252,6 +507,12 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .chat-sheet .cline[data-mine] b { color: #f2a65a; }
 .chat-sheet .say { display: flex; gap: calc(var(--u) * .5); flex: none; }
 .chat-sheet .say input { flex: 1; min-width: 0; font: 600 max(16px, calc(var(--u) * 1.2)) var(--font-text); padding: .45em .7em; border-radius: 9px; border: 1px solid #4a5468; background: #131820; color: #f1ece0; }
+/* What a guest sees in place of what needs sign-in (the chat's line, the friends panel, the top of the
+   Status tab): one card that says what signing in opens, with the button that does it. */
+.gate { flex: none; display: grid; justify-items: center; gap: calc(var(--u) * .7); padding: calc(var(--u) * .9) calc(var(--u) * 1.1); border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #8a7440;
+  text-align: center; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.2); line-height: 1.35; color: #e6dfcf; }
+.gate p { margin: 0; }
+.status-body .snote { margin-bottom: calc(var(--u) * .3); }
 /* A speech bubble over the head of whoever said something near you. */
 .bubble { position: absolute; left: 0; top: 0; max-width: calc(var(--u) * 16); padding: .35em .7em; border-radius: 10px; background: #f4efe2; color: #1c1a16; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1); line-height: 1.25; overflow-wrap: anywhere; box-shadow: 0 2px 0 #1c1a16, 0 0 0 2px #1c1a16; will-change: transform; }
 /* A player's name tag is a button: their card. */
@@ -291,6 +552,26 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .chapter p { margin: 0; color: #e6dfcf; }
 .chapter[data-latest] { box-shadow: inset 0 0 0 1px #8a7440; }
 .chapter[data-latest] h3 { color: #ffcf5a; }
+/* Its three parts under tabs, like the chest's: the story, the field notes (area by area, each with its count) and the notes people left. */
+.journal-sheet .sheet-head .chest-tabs { flex: 1; min-width: 0; }
+.journal-body[hidden] { display: none; }
+.field-notes { gap: calc(var(--u) * 1); }
+.field-notes .area { display: grid; gap: calc(var(--u) * .5); }
+.field-notes .area h3 { margin: 0; font-family: var(--font-ui); font-weight: 600; font-size: 1.05em; line-height: 1.25; color: #ffcf5a; font-variant-numeric: tabular-nums; }
+.field-notes .page { padding: .55em .8em; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.field-notes .page h4 { margin: 0 0 .25em; font-family: var(--font-ui); font-weight: 600; font-size: 1.05em; line-height: 1.2; color: #d3ccbb; }
+.field-notes .page p { margin: 0; color: #e6dfcf; }
+/* A blank reads as a question, dim, until it is seen; then as what was seen. */
+.field-notes .page .blank { margin-top: .35em; color: #8a8474; font-style: italic; }
+.field-notes .page .blank[data-filled] { color: #cfe9c3; font-style: normal; }
+.field-notes .page[data-fresh] { box-shadow: inset 0 0 0 1px #8a7440; }
+.field-notes .page[data-fresh] h4 { color: #ffcf5a; }
+.field-notes .none { margin: 0; color: #8a8474; }
+/* The notes people left (the third part, by who wrote them): where each lies, dim under its name, then its lines. */
+.field-notes .page .where { margin: -.1em 0 .3em; font-size: .85em; color: #8a8474; }
+.field-notes .note .where + p ~ p { margin-top: .35em; }
+/* Who found it first on the server (firsts.ts), dim under it. */
+.field-notes .page .first { margin-top: .35em; font-size: .85em; color: #b9a36a; }
 /* About (about.ts): who makes the game, and where its code and rules are. It opens where the bag does.
    Its words never go below 11 to 12px, so a small phone can still read the small print. */
 .about-sheet .sheet-head { font-size: max(14px, calc(var(--u) * 1.35)); }
@@ -328,6 +609,14 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   .hud.talking .stick { visibility: hidden; }
   .sheet { left: 0; top: 0; bottom: 0; width: min(calc(100% - var(--pad) * 2.6 - var(--ab) * 2.25 - var(--safe-r)), 440px); border-radius: 0 18px 18px 0; padding-left: calc(var(--u) * 1.2 + var(--safe-l)); }
   .sheet[data-open="false"] { transform: translateX(-105%); }
+  /* A card opens beside the list here, not under it, where it would leave the list no height: the
+     panel grows toward A and B, never over them, and the list stays where it was under the finger. */
+  .sheet.docked[data-card] { --card-w: calc(var(--u) * 30); width: min(calc(100% - var(--pad) * 2.6 - var(--ab) * 2.25 - var(--safe-r)), calc(440px + var(--card-w) + var(--gap)));
+    display: grid; grid-template-columns: minmax(0, 1fr) min(var(--card-w), 46%); grid-template-rows: auto minmax(0, 1fr); }
+  .sheet.docked[data-card] > .sheet-head { grid-area: 1 / 1; }
+  .sheet.docked[data-card] > .sheet-body { grid-area: 2 / 1; }
+  .sheet.docked[data-card] > .dock { grid-area: 1 / 2 / 3 / 3; max-height: none; padding: 0 0 0 var(--gap); border-top: 0; border-left: 2px solid #2a3240; }
+  .sheet.docked[data-card] .dock .detail { max-width: none; }
   /* The menu stays short enough to clear A and B: two buttons a row, the slider beside the mute button. */
   .menu-panel { grid-template-columns: 1fr 1fr; }
   .menu-panel .sound-row, .hud .menu-panel [data-el="menuLogout"] { grid-column: 1 / -1; }
@@ -358,6 +647,28 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 /* Small text buttons under a card: another code, another email, sign out. */
 .card .links { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; font-size: 14px; color: #9d978a; }
 .card .links .who { min-width: 0; overflow-wrap: anywhere; }
+.card .links.center { justify-content: center; }
+/* Google and Apple on the email card, each as its maker's guidelines draw it (providers.ts): white,
+   since the card is dark, the same height and pill shape for both, logo and words centred together.
+   Google's words are Roboto Medium on white with its grey edge; Apple's are the system font, black
+   on white. Under a pointer or a finger both darken a touch, as Google's own button does. Their words
+   never wrap or shorten: the card keeps room for them whole. */
+.card .providers { display: grid; gap: 10px; }
+.card button.provider { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 0; height: 44px; padding: 0 16px; border-radius: 22px;
+  background: #fff; font-size: 16px; font-weight: 500; line-height: 1.2; white-space: nowrap; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.card button.provider svg { flex: none; }
+.card button.google { border: 1px solid #747775; color: #1f1f1f; font-family: Roboto, Arial, sans-serif; letter-spacing: .25px; }
+.card button.google svg { width: 20px; height: 20px; }
+.card button.apple { border: 1px solid #fff; color: #000; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, "Segoe UI", Roboto, sans-serif; }
+.card button.apple svg { width: 17px; height: 17px; margin-top: -2px; }
+@media (hover: hover) { .card button.provider:not(:disabled):hover { background: #f1f1f1; } }
+.card button.provider:not(:disabled):active { background: #e3e3e3; }
+/* With them, the email field's label is the quiet line between the two ways in: "or with your email". */
+.card label.or { display: flex; align-items: center; gap: 10px; margin-top: 2px; font-family: var(--font-text); font-weight: 700; font-size: 13px; color: #9d978a; text-align: center; }
+.card label.or::before, .card label.or::after { content: ""; flex: 1 1 16px; height: 1px; background: #3a4150; }
+/* The first card with sign-in: the pitch, a name and a big Play now; signing in is the quiet link under it. */
+.card .pitch { color: #d3ccbb; }
+.card button.big { font-size: 22px; padding: 13px 14px; }
 .card button.link { background: none; padding: 6px 2px; font-family: var(--font-text); font-size: 14px; font-weight: 700; color: #d3ccbb; text-decoration: underline; text-underline-offset: 3px; }
 .card button.link:disabled { text-decoration: none; opacity: .55; }
 .card button:focus-visible { outline: 2px solid #ffcf5a; outline-offset: 2px; }
@@ -375,11 +686,21 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   .card { gap: 8px; padding: 12px 18px 12px; width: min(100%, 420px); }
   .card h1 { font-size: 24px; }
   .card .intro, .card .fine { display: none; }
+  .card .pitch { font-size: 13px; line-height: 1.35; }
   .card .err { min-height: 1.1em; font-size: 13px; }
   .card input { padding: 8px 12px; }
   .card input.code { font-size: 24px; padding: 6px 12px; }
   .card button { padding: 8px 14px; }
+  .card button.big { font-size: 20px; padding: 9px 14px; }
   .card .legal { padding-top: 4px; }
+  .card button.provider { height: 40px; padding: 0 14px; border-radius: 20px; font-size: 15px; }
+  .card label.or { margin-top: 0; }
+}
+/* A phone on its side: Google and Apple side by side on a wider card, a little closer together, so the
+   email and the line that says a sign-in did not finish still fit under them. */
+@media (max-height: 520px) and (min-width: 560px) {
+  .card.with-providers { width: min(100%, 560px); gap: 6px; }
+  .card .providers { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 }
 /* Narrow phones: less margin around the card, so its lines (the small print too) do not wrap.
    After the short screens' rules, so this side padding holds on a small screen that is both. */

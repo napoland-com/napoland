@@ -6,6 +6,7 @@
  * Browsers only let sound start after a gesture, so the AudioContext is made on the first tap or key.
  * Without Web Audio, Sound does nothing.
  */
+import { CALL_SONGS, type CallNote, type CallSound } from './calls';
 import type { Loop, Mix, Shot, Surface } from './soundscape';
 
 export interface SoundSetting {
@@ -15,9 +16,14 @@ export interface SoundSetting {
 }
 
 /** How loud each loop is at level 1, against the others. */
-const LOOP_GAIN: Record<Loop, number> = { rain: 0.35, wind: 0.5, fire: 0.6, wires: 0.12, surge: 0.4, watcher: 0.45, skulker: 0.55, shimmer: 0.08 };
+const LOOP_GAIN: Record<Loop, number> = { rain: 0.35, wind: 0.5, fire: 0.6, wires: 0.12, surge: 0.4, watcher: 0.45, skulker: 0.55, shimmer: 0.08, radio: 0.45, hum: 0.16 };
 /** Loops ease to a new level with this time constant: most of the way in 0.3 s. */
 const EASE_S = 0.1;
+/** How loud a call beside you is, against the rest. */
+const CALL_PEAK = 0.5;
+/** Steps that are not yours begin this long after they are due (s), and come this far apart, a little more now and then. */
+const STALK_AFTER_S = 0.28;
+const STALK_PACE_S = 0.42;
 
 interface Voice {
   gain: GainNode;
@@ -30,6 +36,8 @@ export class Sound {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private noise: AudioBuffer | null = null;
+  /** The timbre every call is sung in: a soft note with a little of its octave and twelfth, like a hum through cupped hands. */
+  private voice: PeriodicWave | null = null;
   private loops = new Map<Loop, Voice>();
 
   constructor(private setting: SoundSetting) {
@@ -74,6 +82,9 @@ export class Sound {
     const noise = (this.noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate));
     const n = noise.getChannelData(0);
     for (let i = 0; i < n.length; i++) n[i] = Math.random() * 2 - 1;
+    try {
+      this.voice = ctx.createPeriodicWave(new Float32Array([0, 0, 0, 0]), new Float32Array([0, 1, 0.3, 0.1]));
+    } catch { /* a triangle, then */ }
 
     this.loop('rain', this.filtered(this.hiss(), 'highpass', 1200, 0.5), this.filtered(null, 'lowpass', 7000));
     // Wind: noise through a band that wanders slowly, gusting.
@@ -111,6 +122,27 @@ export class Sound {
     for (const f of [1318, 1976.5]) this.osc('sine', f).connect(shimmer);
     this.wobble(shimmer.gain, 0.6, 0.4, 0.6);
     this.loop('shimmer', shimmer);
+    // The radio's crackle: static through a band, and clicks on top of it that come thicker and brighter
+    // the nearer it is to something strange (its level), like a counter.
+    const band = this.filtered(this.hiss(1.1), 'bandpass', 1500, 0.8), under = ctx.createGain(), clicks = this.clicks(), crackle = ctx.createGain();
+    under.gain.value = 0.35;
+    band.connect(under).connect(crackle);
+    clicks.connect(crackle);
+    this.loop('radio', crackle).set = (level, at) => {
+      clicks.playbackRate.setTargetAtTime(0.6 + 1.6 * level, at, 0.15);
+      band.frequency.setTargetAtTime(1200 + 1600 * level, at, 0.15);
+    };
+    // The hum the radio picks up everywhere: low and slow, in the Old Stone's voice (D, its octave a
+    // little apart so the two beat, and a faint fifth), swelling and ebbing.
+    const stone = this.filtered(null, 'lowpass', 600), swell = ctx.createGain();
+    for (const [f, g] of [[73.42, 0.6], [146.83, 0.4], [147.3, 0.3], [220, 0.1]] as const) {
+      const part = ctx.createGain();
+      part.gain.value = g;
+      this.osc('sine', f).connect(part).connect(stone);
+    }
+    stone.connect(swell);
+    this.wobble(swell.gain, 0.13, 0.3, 0.7);
+    this.loop('hum', swell);
   }
 
   /** A loop: `chain` wired in order, into its gain (silent to start), into the master. */
@@ -159,6 +191,20 @@ export class Sound {
     this.osc('sine', rate).connect(lfo).connect(param);
   }
 
+  /** The radio's clicks: two seconds of sparse ticks and a few longer pops, made once and looped. */
+  private clicks(): AudioBufferSourceNode {
+    const ctx = this.ctx!, buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let k = 0; k < 90; k++) {
+      const at = Math.floor(Math.random() * (d.length - 1200)), amp = 0.25 + Math.random() * 0.75, len = Math.random() < 0.2 ? 200 + Math.random() * 900 : 6 + Math.random() * 50;
+      for (let i = 0; i < len; i++) d[at + i]! += (Math.random() * 2 - 1) * amp * Math.exp(-i / (len / 4));
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.start(0, Math.random() * 2);
+    return src;
+  }
+
   /** A fire: a low roar with sparks snapping in it, three seconds made once and looped. */
   private crackles(): AudioNode[] {
     const ctx = this.ctx!, buf = ctx.createBuffer(1, ctx.sampleRate * 3, ctx.sampleRate), d = buf.getChannelData(0);
@@ -191,13 +237,129 @@ export class Sound {
       case 'dawn': this.tone(now, 'sine', 392, 392, 1.6, 0.12); return this.tone(now + 0.3, 'sine', 587, 587, 2, 0.1);
       // Something bursting out of the ferns: a sharp rustle and a short cry falling away.
       case 'cry': this.burst(now, 'highpass', 1800, 0.35, 0.6); return this.tone(now + 0.05, 'sawtooth', 1300, 420, 0.4, 0.18);
+      case 'call': return this.call(s, now);
+      case 'pulse': return this.pulse(now);
+      // The radio switched on: its click, and the static sweeping as it finds the hum.
+      case 'tune': this.click(now); return this.sweep(now + 0.03, 3200, 900, 0.4, 0.22);
+      case 'click': return this.click(now);
+      // A lodestone's tug: two low, soft beats, the same in both ears, so it never says which way.
+      case 'tug': this.tone(now, 'sine', 110, 82, 0.34, 0.1); return this.tone(now + 0.17, 'sine', 98, 74, 0.3, 0.07);
+      case 'stalk': return this.stalk(s.surface, s.steps, now);
     }
+  }
+
+  /**
+   * Steps that are not yours (unease.ts): a moment after, slower than you run and a little uneven, heavier
+   * than yours and muffled, as what is behind you sounds. The same in both ears: they never say where.
+   */
+  private stalk(surface: Surface, steps: number, now: number) {
+    const [, f, , len, g] = STEPS[surface];
+    let at = now + STALK_AFTER_S;
+    for (let i = 0; i < steps; i++) {
+      this.burst(at, 'lowpass', Math.min(f, 900) * (0.5 + Math.random() * 0.1), len * 1.4, g * 0.5, 0.012);
+      // Weight under it: a soft thud your own steps do not have.
+      this.tone(at, 'sine', 92, 58, 0.09, 0.07);
+      at += STALK_PACE_S + Math.random() * 0.09;
+    }
+  }
+
+  /** The radio's switch. */
+  private click(now: number) {
+    this.burst(now, 'highpass', 2500, 0.018, 0.35);
+    this.tone(now, 'square', 1700, 1100, 0.02, 0.06);
+  }
+
+  /** Static through a band that sweeps from `f0` to `f1` Hz over `len` seconds, broken up as a weak signal is. */
+  private sweep(at: number, f0: number, f1: number, len: number, peak: number) {
+    const ctx = this.ctx!, src = this.hiss(1, false), band = this.filtered(src, 'bandpass', f0, 1.4), g = ctx.createGain(), chop = ctx.createGain();
+    // Longer than what is left of the noise after a random start: it goes round.
+    src.loop = true;
+    band.frequency.setValueAtTime(f0, at);
+    band.frequency.exponentialRampToValueAtTime(f1, at + len);
+    const lfo = ctx.createOscillator(), depth = ctx.createGain();
+    lfo.frequency.value = 17;
+    depth.gain.value = 0.45;
+    chop.gain.value = 0.55;
+    lfo.connect(depth).connect(chop.gain);
+    band.connect(chop).connect(g).connect(this.master!);
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(peak, at + Math.min(0.08, len / 3));
+    g.gain.exponentialRampToValueAtTime(0.0001, at + len);
+    src.start(at, Math.random());
+    lfo.start(at);
+    for (const n of [src, lfo]) n.stop(at + len + 0.05);
+  }
+
+  /** The Tower's pulse on the radio: one long burst of static that swells, breaks up and falls away, with a thump under it. */
+  private pulse(now: number) {
+    this.sweep(now, 2800, 600, 1.5, 0.4);
+    this.burst(now + 0.02, 'lowpass', 160, 0.5, 0.5);
+    for (let i = 0; i < 5; i++) this.burst(now + 0.1 + Math.random() * 1.1, 'highpass', 3000, 0.03, 0.3);
+  }
+
+  /**
+   * A call (calls.ts): the caller's note, in the shape of its kind, from where it came: panned to its
+   * side, and dulled and quietened by the distance. Its nodes are made for it and let go once it ends.
+   */
+  private call(s: CallSound, now: number) {
+    const ctx = this.ctx!, air = this.filtered(null, 'lowpass', s.tone, 0.5), level = ctx.createGain();
+    level.gain.value = s.gain * CALL_PEAK;
+    air.connect(level);
+    // Without a stereo panner (an old Safari) it plays from the middle.
+    if (typeof ctx.createStereoPanner === 'function') {
+      const side = ctx.createStereoPanner();
+      side.pan.value = s.pan;
+      level.connect(side).connect(this.master!);
+    } else level.connect(this.master!);
+    for (const n of CALL_SONGS[s.call]) this.sing(air, now + n.at, n, s.pitch);
+  }
+
+  /** One note of a call at `f` Hz into `into`: it scoops up into its pitch as a voice does, holds with a slow vibrato, and may rise. */
+  private sing(into: AudioNode, at: number, n: CallNote, f: number) {
+    const ctx = this.ctx!, end = at + n.len, o = ctx.createOscillator(), g = ctx.createGain();
+    if (this.voice) o.setPeriodicWave(this.voice);
+    else o.type = 'triangle';
+    o.frequency.setValueAtTime(f * 0.96, at);
+    o.frequency.exponentialRampToValueAtTime(f, at + 0.05);
+    if (n.rise && n.hold !== undefined) {
+      o.frequency.setValueAtTime(f, at + n.hold);
+      o.frequency.exponentialRampToValueAtTime(f * n.rise, end - 0.05);
+    }
+    // The vibrato comes in once the note is held, in cents, so it sways as much on a high voice as a low one.
+    const lfo = ctx.createOscillator(), sway = ctx.createGain();
+    lfo.frequency.value = 5.2;
+    sway.gain.setValueAtTime(0, at);
+    sway.gain.setValueAtTime(0, at + 0.12);
+    sway.gain.linearRampToValueAtTime(14, at + 0.35);
+    lfo.connect(sway).connect(o.detune);
+    const fade = Math.min(0.2, n.len * 0.5);
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(n.peak, at + 0.03);
+    g.gain.setValueAtTime(n.peak, end - fade);
+    g.gain.exponentialRampToValueAtTime(0.0001, end);
+    o.connect(g).connect(into);
+    for (const src of [o, lfo]) {
+      src.start(at);
+      src.stop(end + 0.05);
+    }
+    // A breath under it: a little noise around its upper harmonics.
+    const breath = this.hiss(1, false), bg = ctx.createGain();
+    this.filtered(breath, 'bandpass', f * 3, 2).connect(bg).connect(into);
+    bg.gain.setValueAtTime(0.0001, at);
+    bg.gain.exponentialRampToValueAtTime(n.peak * 0.08, at + 0.02);
+    bg.gain.exponentialRampToValueAtTime(0.0001, end);
+    breath.start(at, Math.random());
+    breath.stop(end + 0.05);
   }
 
   private step(surface: Surface, now: number) {
     const [type, f, q, len, g] = STEPS[surface];
-    this.burst(now, type, f * (0.85 + Math.random() * 0.3), len, g, 0, q);
+    // Tall grass swells in rather than thuds: the blades brush your legs, and a lighter rustle follows.
+    const swish = surface === 'swish';
+    this.burst(now, type, f * (0.85 + Math.random() * 0.3), len, g, swish ? 0.06 : 0, q);
     if (surface === 'floor') this.tone(now, 'sine', 110, 70, 0.08, 0.25);
+    if (surface === 'ice') this.tone(now + 0.02, 'triangle', 260 + Math.random() * 60, 180, 0.12, 0.05);
+    if (swish) this.burst(now + 0.08 + Math.random() * 0.04, 'highpass', 4200, 0.14, g * 0.45, 0.02);
   }
 
   /** A burst of filtered noise from `at`, dying away over `len` seconds (after `attack` rising). */
@@ -233,4 +395,7 @@ const STEPS: Record<Surface, [BiquadFilterType, number, number, number, number]>
   mud: ['lowpass', 380, 2, 0.14, 0.45],
   floor: ['bandpass', 600, 3, 0.07, 0.35],
   water: ['bandpass', 1300, 2.5, 0.16, 0.4],
+  swish: ['bandpass', 2600, 0.8, 0.2, 0.32],
+  // Ice: a short, hard, high tap, and a faint creak under it (step).
+  ice: ['highpass', 3200, 1.5, 0.04, 0.4],
 };

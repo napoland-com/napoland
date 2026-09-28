@@ -9,14 +9,19 @@
  * house's door, facing down; you come in on the tile above it, facing up (also the room's spawn). A
  * fireplace stands against the top wall with floor in front: the tiles around it are where energy
  * comes back. A room without one is cold and dark. Rooms stay small so the camera shows all of one.
+ * Every shelter out in the wilds whose fire people rest by keeps a crate for whoever comes next (a
+ * `cache`, caches.ts), added last in its list so that nothing placed before it ever moves. The notes
+ * people left (notes-left.ts) come after even that, each lying on a table, a shelf, a crate or a bed.
  *
- * The outside generators (gen-map.ts, gen-woods.ts) put the exit on each house's door with doorInto,
- * which fails if the room expects its house somewhere else. This script checks the other direction, so
- * run it after them: each door on the outside maps must lead to its room's way in.
+ * The outside generators (gen-map.ts, gen-woods.ts, gen-street.ts) put the exit on each house's door with
+ * doorInto, which fails if the room expects its house somewhere else. This script checks the other
+ * direction, so run it after them: each door on the outside maps must lead to its room's way in. Your own
+ * cabin is behind every door of Residents' Lane (`lots`): each player's own, whichever lot is theirs.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DECOR, TileMap, doorOf, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { TileMap, doorOf, hangs, objectTiles, underfoot, validateMap, type Comfort, type Dir, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { noteAt } from './notes-left';
 
 type House = Extract<MapObject, { kind: 'house' }>;
 
@@ -32,8 +37,18 @@ interface Room {
   door: readonly [number, number];
   rows: readonly string[];
   things: readonly MapObject[];
-  /** One of NAPO's rooms (concrete): its house outside must be one of NAPO's buildings too. */
-  style?: 'napo';
+  /** One of NAPO's rooms (concrete), or the mill's floor (boards): its house outside must be of the same style. */
+  style?: 'napo' | 'mill';
+  /** A home of one's own (a room with the chest): each player who walks in is in a copy of it of their own. */
+  private?: true;
+  /** Where you wake up in it, by the fire: as a new player, and after a collapse. */
+  wake?: { x: number; y: number; dir: Dir };
+  /**
+   * Behind every door of its street (gen-street.ts), not one house's: each lot's cabin is this room, its
+   * owner's own copy of it. `door` is then the first lot's, where its way out leads unless the server says
+   * otherwise (it takes each player out in front of their own door).
+   */
+  lots?: true;
 }
 
 /** The camera shows about six tiles around you: a room this size fits on any screen. */
@@ -41,9 +56,18 @@ const MAX_W = 11, MAX_H = 8;
 
 const ROOMS: readonly Room[] = [
   {
-    // Where you wake up: the spawn is at its door. A small warm room, and the fire never goes out.
-    // The chest by the fire is your stash: what you put in it earns XP.
-    id: 'stonebrook-home', name: 'Home', version: 2, outside: 'stonebrook', door: [8, 20],
+    // Your cabin, a home of your own: whoever walks in through its door is in a copy of it that is theirs
+    // alone. You wake up here, in front of the fire and facing the room (the door beyond the rug): the
+    // first time you play, and after every collapse. The spawn is at its door. A small warm room, and
+    // the fire never goes out. Side by side along the back wall, where this camera sees them whole: the
+    // fire, the chest (your stash: what you put in it earns XP) and the workbench, which makes gear from
+    // what the chest holds. The chest's front is warm, so you thaw out while you put things away, and the
+    // workbench is one step on. The middle stays open from the door to the fire.
+    // Years of damp spoiled the rest (comfort.ts): an iron stove in the corner, a shelf, a drying rack
+    // by the fire, the bed, the rug and the lamp on the table stand spoiled in their places until you
+    // make each again at the workbench, which sets it there at once.
+    // Its door is every cabin's on Residents' Lane (gen-street.ts): the server lets each player in through their own.
+    id: 'stonebrook-home', name: 'Home', version: 6, outside: 'residents-lane', door: [6, 20], lots: true, private: true, wake: { x: 4, y: 2, dir: 'down' },
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -55,18 +79,20 @@ const ROOMS: readonly Room[] = [
     ],
     things: [
       { kind: 'fireplace', x: 4, y: 1 },
-      { kind: 'rug', x: 3, y: 2, w: 3, h: 2 },
-      { kind: 'shelf', x: 1, y: 1 },
-      { kind: 'shelf', x: 2, y: 1 },
-      { kind: 'bed', x: 7, y: 1 },
-      { kind: 'table', x: 2, y: 4 },
-      { kind: 'chest', x: 6, y: 1 },
+      { kind: 'chest', x: 5, y: 1 },
+      { kind: 'workbench', x: 6, y: 1 },
+      { kind: 'comfort', x: 1, y: 1, what: 'stove' },
+      { kind: 'comfort', x: 2, y: 1, what: 'shelf' },
+      { kind: 'comfort', x: 3, y: 1, what: 'rack' },
+      { kind: 'comfort', x: 7, y: 1, what: 'bed' },
+      { kind: 'comfort', x: 3, y: 2, what: 'rug' },
+      { kind: 'comfort', x: 2, y: 4, what: 'lamp' },
     ],
   },
   {
     // Whoever lived next door left with the others and never came back: no fire, dust, what they
     // could not carry. The only dark room in town.
-    id: 'stonebrook-empty-house', name: 'The empty house', version: 1, outside: 'stonebrook', door: [15, 20],
+    id: 'stonebrook-empty-house', name: 'The empty house', version: 2, outside: 'stonebrook', door: [15, 20],
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -84,14 +110,18 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 3, y: 3 },
       { kind: 'table', x: 1, y: 4 },
       { kind: 'crate', x: 6, y: 5 },
+      // The Barlows slept here one night on their way out (notes-left.ts).
+      noteAt('barlow-tins', 1, 4),
+      noteAt('barlow-next-door', 2, 1),
     ],
   },
   {
     // Where the town gathers: the biggest room, long tables, and the fire in the middle of the back wall.
-    // The workbench against the east wall makes gear from what you keep in your stash. Walt Pruitt sits
-    // by the fire: he kept the north line for the power company and then NAPO's, and remembers how it
-    // all went wrong.
-    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 3, outside: 'stonebrook', door: [8, 31],
+    // Its firewood is stacked against the east wall, split the way the town split it when it still
+    // logged the woods. Walt Pruitt sits by the fire: he kept the north line for the power company and
+    // then NAPO's, and remembers how it all went wrong. On the Long Night nobody tends that fire, and the
+    // town keeps it going until dawn (longNight).
+    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 5, outside: 'stonebrook', door: [8, 31],
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -103,7 +133,7 @@ const ROOMS: readonly Room[] = [
       'xxxxxpxxxxx',
     ],
     things: [
-      { kind: 'fireplace', x: 5, y: 1 },
+      { kind: 'fireplace', x: 5, y: 1, longNight: true },
       { kind: 'rug', x: 4, y: 2, w: 3, h: 2 },
       { kind: 'shelf', x: 1, y: 1 },
       { kind: 'shelf', x: 2, y: 1 },
@@ -115,7 +145,7 @@ const ROOMS: readonly Room[] = [
       { kind: 'table', x: 8, y: 4 },
       { kind: 'barrel', x: 1, y: 6 },
       { kind: 'barrel', x: 9, y: 6 },
-      { kind: 'workbench', x: 9, y: 3 },
+      { kind: 'woodpile', x: 9, y: 3 },
       {
         kind: 'npc', id: 'walt', name: 'Walt', x: 3, y: 2, dir: 'down',
         look: { coat: '#5a4a3a', scarf: '#c98a2b', hair: '#9a958d', skin: '#c68b62', hat: '#d9a82b' },
@@ -134,7 +164,7 @@ const ROOMS: readonly Room[] = [
     // The Near Woods' first shelter, past the crossroads, and the nearest to town. Abandoned once; now
     // somebody keeps the fire going, so it never goes out: a new player always has one safe fire (the
     // other shelters' fires burn down). A bunk, crates, not much else.
-    id: 'near-woods-old-cabin', name: 'The old cabin', version: 2, outside: 'near-woods', door: [47, 38],
+    id: 'near-woods-old-cabin', name: 'The old cabin', version: 4, outside: 'near-woods', door: [47, 38],
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -151,11 +181,16 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 1, y: 3 },
       { kind: 'crate', x: 6, y: 3 },
       { kind: 'crate', x: 7, y: 3 },
+      // A crate for whoever comes next, by the fire (caches.ts). Last, so nothing before it moves.
+      { kind: 'cache', x: 2, y: 1, name: 'the old cabin\'s crate' },
+      noteAt('ranger-fires', 6, 1),
+      noteAt('ranger-deer', 7, 3),
+      noteAt('barlow-old-cabin', 1, 3),
     ],
   },
   {
     // Behind the lonely lamp, the refuge of the west loop: one room, a bunk, the fire, a ranger's things.
-    id: 'near-woods-ranger-hut', name: 'The ranger\'s hut', version: 1, outside: 'near-woods', door: [30, 6],
+    id: 'near-woods-ranger-hut', name: 'The ranger\'s hut', version: 3, outside: 'near-woods', door: [30, 6],
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -170,12 +205,19 @@ const ROOMS: readonly Room[] = [
       { kind: 'bed', x: 5, y: 1 },
       { kind: 'table', x: 1, y: 3 },
       { kind: 'crate', x: 5, y: 4 },
+      { kind: 'cache', x: 2, y: 3, name: 'the ranger\'s crate' },
+      // Hers: the logbook on the shelf, the note on the table, one in the crate that only shows in the
+      // dark, and under the pillow one that only shows on a green night.
+      noteAt('ranger-rocks', 1, 1),
+      noteAt('ranger-tall-ones', 1, 3),
+      noteAt('ranger-dark', 5, 4),
+      noteAt('ranger-green', 5, 1),
     ],
   },
   {
     // The deepest shelter, at the end of the east trail: the cabin whose light was always on. Somebody
     // lived here longer than anywhere else in the woods.
-    id: 'near-woods-end-cabin', name: 'The cabin at the end', version: 1, outside: 'near-woods', door: [55, 4],
+    id: 'near-woods-end-cabin', name: 'The cabin at the end', version: 3, outside: 'near-woods', door: [55, 4],
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -193,12 +235,80 @@ const ROOMS: readonly Room[] = [
       { kind: 'table', x: 6, y: 3 },
       { kind: 'bed', x: 1, y: 4 },
       { kind: 'crate', x: 7, y: 5 },
+      { kind: 'cache', x: 5, y: 1, name: 'the crate in the cabin at the end' },
+      // The Barlows' home: Ellen's lists, Wren's notes, and the ranger's, in the ink that shows in the dark.
+      noteAt('barlow-oil', 6, 1),
+      noteAt('ranger-lamp', 7, 1),
+      noteAt('barlow-crews', 6, 3),
+      noteAt('barlow-tall-ones', 1, 4),
+      noteAt('barlow-ferns', 7, 5),
+    ],
+  },
+  {
+    // The one shelter of the Far Woods (gen-far-woods.ts), beyond the gorge: the trapper's bunk, his traps
+    // on their pegs, the wood he split, his tally on the table, and a fire nobody keeps: it burns down
+    // unless whoever passes feeds it. His map of these woods lies by the tally for whoever has none (a
+    // find: content/items.json). A crate for whoever comes next stands by the fire, last in the list.
+    id: 'far-woods-trapper-cabin', name: 'The trapper\'s cabin', version: 1, outside: 'far-woods', door: [15, 62],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      { kind: 'fireplace', x: 4, y: 1 },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'traps', x: 6, y: 1 },
+      { kind: 'shelf', x: 7, y: 1 },
+      { kind: 'woodpile', x: 7, y: 3 },
+      {
+        kind: 'paper', x: 2, y: 3, look: 'list', name: 'Tally in pencil',
+        text: [
+          'A trapper\'s tally in pencil, the seasons down the side: marten, fisher, and one lynx, underlined twice.',
+          'Along the bottom: "No sets past the split rock. Up there the traps come back sprung, and empty."',
+          'Pressed in hard under it: "Never alone past the gorge. Feed the fire going in. Leave wood for the next one."',
+        ],
+      },
+      { kind: 'crate', x: 7, y: 4 },
+      { kind: 'cache', x: 2, y: 1, name: 'the trapper\'s crate' },
+    ],
+  },
+  {
+    // NAPO's field post in the hollow of the Far Woods where the rocks hum back, further gone than the
+    // listening post by the ring of stones: a concrete room with no fire, a cot, the shelves and crates
+    // of its field kit, and the desk with the post's log, NAPO's last word from up here. Cold and dark.
+    id: 'far-woods-field-post', name: 'The NAPO field post', version: 1, outside: 'far-woods', door: [46, 8], style: 'napo',
+    rows: [
+      'xxxxxxx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xxxpxxx',
+    ],
+    things: [
+      { kind: 'shelf', x: 1, y: 1 },
+      {
+        kind: 'console', x: 3, y: 1, id: 'field-post-log', name: 'Field post log',
+        text: [
+          'NAPO · Field post, the hollow. It relays to the listening post by the ring of stones.',
+          'Week 38. The rocks here hum back louder than the ring\'s. North of here the needles will not settle.',
+          'After the answer: crews up in pairs, batteries changed every ten days. Nobody stays the night.',
+          'The last page, in pencil: "Relief did not come. Batteries in the crate for whoever does."',
+        ],
+      },
+      { kind: 'crate', x: 5, y: 1 },
+      { kind: 'bed', x: 5, y: 3 },
+      { kind: 'crate', x: 1, y: 4 },
     ],
   },
   {
     // The NAPO Bunker, the first building down the South Road and its nearest shelter to town: bunks,
     // NAPO's rules for staff on the wall, and Ruth, who keeps the fire going, so it never goes out.
-    id: 'south-road-bunker', name: 'The NAPO Bunker', version: 2, outside: 'south-road', door: [42, 15], style: 'napo',
+    id: 'south-road-bunker', name: 'The NAPO Bunker', version: 4, outside: 'south-road', door: [42, 15], style: 'napo',
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -234,13 +344,15 @@ const ROOMS: readonly Room[] = [
           'The road ends at the checkpoint. Nobody has kept it in years. Don\'t go looking past the barrier.',
         ],
       },
+      { kind: 'cache', x: 1, y: 3, name: 'the bunker\'s crate' },
+      noteAt('ranger-ruth', 2, 1),
     ],
   },
   {
     // The NAPO Laboratory, in the research station's main building: benches, the station's log and a
     // radio still on, a stove against the back wall (it burns down unless someone feeds it), and Vera,
     // the last of NAPO's researchers, who never left.
-    id: 'south-road-laboratory', name: 'The NAPO Laboratory', version: 2, outside: 'south-road', door: [23, 42], style: 'napo',
+    id: 'south-road-laboratory', name: 'The NAPO Laboratory', version: 4, outside: 'south-road', door: [23, 42], style: 'napo',
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -292,12 +404,14 @@ const ROOMS: readonly Room[] = [
           'If NAPO is still out there, it isn\'t answering my radio.',
         ],
       },
+      { kind: 'cache', x: 3, y: 1, name: 'the laboratory\'s crate' },
+      noteAt('ranger-vera', 9, 4),
     ],
   },
   {
     // NAPO's dormitory: bunks for the crews who stopped coming, and a fire that burns down unless
     // someone feeds it.
-    id: 'south-road-dormitory', name: 'The dormitory', version: 1, outside: 'south-road', door: [28, 41], style: 'napo',
+    id: 'south-road-dormitory', name: 'The dormitory', version: 2, outside: 'south-road', door: [28, 41], style: 'napo',
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -315,6 +429,7 @@ const ROOMS: readonly Room[] = [
       { kind: 'rug', x: 3, y: 2, w: 3, h: 1 },
       { kind: 'crate', x: 1, y: 4 },
       { kind: 'crate', x: 7, y: 4 },
+      { kind: 'cache', x: 5, y: 3, name: 'the dormitory\'s crate' },
     ],
   },
   {
@@ -345,7 +460,7 @@ const ROOMS: readonly Room[] = [
   {
     // The Tower's shed: the panel that works the Tower, with a note taped over its switch, and crates of
     // spare parts. No fire.
-    id: 'south-road-tower-shed', name: 'The tower shed', version: 2, outside: 'south-road', door: [46, 44], style: 'napo',
+    id: 'south-road-tower-shed', name: 'The tower shed', version: 3, outside: 'south-road', door: [46, 44], style: 'napo',
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -367,12 +482,13 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 5, y: 1 },
       { kind: 'shelf', x: 1, y: 3 },
       { kind: 'crate', x: 5, y: 4 },
+      noteAt('walt-tower', 1, 3),
     ],
   },
   {
     // The checkpoint's booth on the quarantine line, at the end of the South Road: a stove that burns
     // down, a cot, and the log the last guard kept.
-    id: 'south-road-checkpoint', name: 'The checkpoint', version: 2, outside: 'south-road', door: [40, 83], style: 'napo',
+    id: 'south-road-checkpoint', name: 'The checkpoint', version: 4, outside: 'south-road', door: [40, 83], style: 'napo',
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -395,6 +511,167 @@ const ROOMS: readonly Room[] = [
       { kind: 'bed', x: 5, y: 1 },
       { kind: 'table', x: 1, y: 3 },
       { kind: 'crate', x: 5, y: 4 },
+      { kind: 'cache', x: 2, y: 3, name: 'the checkpoint\'s crate' },
+      noteAt('barlow-checkpoint', 1, 3),
+    ],
+  },
+  // The houses of four families who left Stonebrook when NAPO said two weeks, and never came back
+  // (gen-map.ts puts them on its streets, dark behind their curtains). Each room is as they left it
+  // the night their street's turn came: cold, dust sheets over what they could not take, and one thing
+  // to read that says a little of that night. Nothing burns in any of them.
+  {
+    // An older couple, and tidy: everything under a sheet, the boxes they packed and could not take
+    // stacked by the door, and the calendar still on the month they left.
+    id: 'stonebrook-okada-house', name: 'The Okada house', version: 1, outside: 'stonebrook', door: [5, 15],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      {
+        kind: 'paper', x: 2, y: 0, look: 'calendar', name: 'Calendar',
+        text: [
+          'A calendar from the feed store, still on the month they left.',
+          'One day is circled in red pencil: "Our turn. At the verge by six."',
+          'Two weeks on, in the same pencil: "Home."',
+        ],
+      },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'hearth', x: 4, y: 1 },
+      { kind: 'shelf', x: 7, y: 1 },
+      { kind: 'sheeted', x: 6, y: 2 },
+      { kind: 'sheeted', x: 3, y: 3 },
+      { kind: 'boxes', x: 1, y: 4 },
+      { kind: 'boxes', x: 2, y: 4 },
+      { kind: 'table', x: 6, y: 4 },
+    ],
+  },
+  {
+    // A family with a girl of seven: her bed and her drawing of the lights in the woods pinned above it,
+    // the toys they got as far as boxing, the rest under sheets.
+    id: 'stonebrook-hale-house', name: 'The Hale house', version: 1, outside: 'stonebrook', door: [19, 15],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      {
+        kind: 'paper', x: 2, y: 0, look: 'drawing', name: 'A child\'s drawing',
+        text: [
+          'Crayon on the back of a NAPO form: black trees, and green lights coming up between them.',
+          'Across the top, in careful capitals: "THE LIGHTS IN THE WOODS. BY NORA, AGE 7."',
+          'On the other side, the form is filled in halfway: "Hale, D. Motor pool."',
+        ],
+      },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'boxes', x: 3, y: 1 },
+      { kind: 'sheeted', x: 7, y: 1 },
+      { kind: 'rug', x: 3, y: 2, w: 3, h: 2 },
+      { kind: 'sheeted', x: 6, y: 3 },
+      { kind: 'table', x: 1, y: 4 },
+      { kind: 'boxes', x: 6, y: 4 },
+    ],
+  },
+  {
+    // A young couple with a baby. They went the night their street was called, in a hurry: boxes half
+    // packed, the crib left because it would not fit, and a note on the table for her mother.
+    id: 'stonebrook-dahl-house', name: 'The Dahl house', version: 1, outside: 'stonebrook', door: [21, 27],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      { kind: 'shelf', x: 1, y: 1 },
+      { kind: 'crib', x: 3, y: 1 },
+      { kind: 'bed', x: 6, y: 1 },
+      { kind: 'sheeted', x: 1, y: 3 },
+      {
+        kind: 'paper', x: 4, y: 3, look: 'note', name: 'Note on the table',
+        text: [
+          'Mom, they came by at nine. Our street goes tonight, so we go tonight.',
+          'We took the baby\'s things and the photographs. The crib would not fit with the car seat in, so it stays.',
+          'Key is under the blue pot. Water the fern if you get the chance. Kari',
+        ],
+      },
+      { kind: 'boxes', x: 1, y: 4 },
+      { kind: 'boxes', x: 2, y: 4 },
+      { kind: 'boxes', x: 7, y: 4 },
+    ],
+  },
+  {
+    // The family by the mill: the father filed its saws. Their clock stopped on the mantel wall, the
+    // rug still down, and the list of what to take and what to leave (the piano and the rocker are on
+    // the verge by the south road, where the town waited its turn).
+    id: 'stonebrook-lindqvist-house', name: 'The Lindqvist house', version: 1, outside: 'stonebrook', door: [25, 27],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      { kind: 'clock', x: 1, y: 1 },
+      { kind: 'hearth', x: 4, y: 1 },
+      { kind: 'shelf', x: 7, y: 1 },
+      { kind: 'rug', x: 3, y: 2, w: 3, h: 1 },
+      { kind: 'sheeted', x: 7, y: 2 },
+      { kind: 'sheeted', x: 2, y: 3 },
+      {
+        kind: 'paper', x: 5, y: 3, look: 'list', name: 'List on the table',
+        text: [
+          'TAKE: papers, pills, the photo albums, Dad\'s saw files, the good blankets, the cat.',
+          'LEAVE: the piano (ask about a truck), the rocker, the bird?',
+          'Under it, in another pen: "No truck. Mrs. Okada says let the bird go."',
+        ],
+      },
+      { kind: 'boxes', x: 1, y: 4 },
+      { kind: 'bed', x: 7, y: 3 },
+    ],
+  },
+  {
+    // The old sawmill's floor, dark since it closed: the head saw against the back wall, the carriage on
+    // its rails in front of it with the last log still dogged on, belts up to the line shaft, sawdust
+    // drifted where it fell, and a few logs that were never cut. No fire, nobody.
+    id: 'stonebrook-sawmill', name: 'The sawmill', version: 1, outside: 'stonebrook', door: [36, 28], style: 'mill',
+    rows: [
+      'xxxxxxxxxxx',
+      'xpppppppppx',
+      'xpppppppppx',
+      'xpppppppppx',
+      'xpppppppppx',
+      'xpppppppppx',
+      'xxxxxpxxxxx',
+    ],
+    things: [
+      { kind: 'shelf', x: 1, y: 1 },
+      { kind: 'barrel', x: 3, y: 1 },
+      { kind: 'crate', x: 4, y: 1 },
+      { kind: 'saw', x: 5, y: 1 },
+      { kind: 'crate', x: 6, y: 1 },
+      { kind: 'barrel', x: 7, y: 1 },
+      { kind: 'shelf', x: 9, y: 1 },
+      { kind: 'carriage', x: 3, y: 2, w: 5 },
+      { kind: 'sawdust', x: 4, y: 3 },
+      { kind: 'sawdust', x: 6, y: 3 },
+      { kind: 'sawdust', x: 7, y: 4 },
+      { kind: 'logs', x: 1, y: 4, w: 2, h: 1 },
+      { kind: 'crate', x: 9, y: 4 },
+      { kind: 'crate', x: 9, y: 5 },
+      { kind: 'sawdust', x: 3, y: 5 },
     ],
   },
 ];
@@ -412,10 +689,10 @@ export function doorInto(id: string, outside: string, house: House): MapExit {
   const room = ROOMS.find(r => r.id === id);
   if (!room) throw new Error(`there is no room ${id} in tools/gen-interiors.ts`);
   const d = doorOf(house);
-  if (room.outside !== outside || room.door[0] !== d.x || room.door[1] !== d.y) {
+  if (room.outside !== outside || (!room.lots && (room.door[0] !== d.x || room.door[1] !== d.y))) {
     throw new Error(`the room ${id} expects its door at ${room.door.join(',')} in ${room.outside}, but this house's door is at ${d.x},${d.y} in ${outside}`);
   }
-  if ((room.style ?? null) !== (house.style ?? null)) throw new Error(`the room ${id} is ${room.style ? 'one of NAPO\'s' : 'a cabin\'s'}, but its house is ${house.style ? 'one of NAPO\'s buildings' : 'a cabin'}`);
+  if ((room.style ?? null) !== (house.style ?? null)) throw new Error(`the room ${id} is ${room.style ?? 'a cabin\'s'} style, but its house is ${house.style ?? 'a cabin'}`);
   const way = wayOut(room);
   return { x: d.x, y: d.y, w: 1, h: 1, to: id, tx: way.x, ty: way.y - 1, dir: 'up' };
 }
@@ -431,6 +708,8 @@ function build(room: Room): MapData {
     exits: [{ x: way.x, y: way.y, w: 1, h: 1, to: room.outside, tx: room.door[0], ty: room.door[1] + 1, dir: 'down' }],
     objects: [...room.things],
     ...(room.style && { style: room.style }),
+    ...(room.private && { private: room.private }),
+    ...(room.wake && { wake: { ...room.wake } }),
   };
 }
 
@@ -449,8 +728,11 @@ function planProblems(room: Room, map: MapData): string[] {
   });
   const tm = new TileMap(map);
   for (const o of room.things) {
-    if (objectTiles(o).some(([x, y]) => room.rows[y]?.[x] !== 'p')) out.push(`the ${o.kind} at ${o.x},${o.y} is not on the floor`);
-    if (o.kind === 'fireplace' && (o.y !== 1 || !tm.walkable(o.x, o.y + 1))) out.push(`the fireplace at ${o.x},${o.y} must stand against the top wall with floor in front`);
+    // A calendar or a drawing hangs on the back wall, over the floor it is read from (validateMap checks the rest).
+    const hung = o.kind === 'paper' && hangs(o.look);
+    if (hung && (o.y !== 0 || room.rows[1]?.[o.x] !== 'p')) out.push(`the ${o.look} at ${o.x},${o.y} must hang on the top wall, over the floor`);
+    else if (!hung && objectTiles(o).some(([x, y]) => room.rows[y]?.[x] !== 'p')) out.push(`the ${o.kind} at ${o.x},${o.y} is not on the floor`);
+    if ((o.kind === 'fireplace' || o.kind === 'hearth') && (o.y !== 1 || !tm.walkable(o.x, o.y + 1))) out.push(`the ${o.kind} at ${o.x},${o.y} must stand against the top wall with floor in front`);
   }
   return out;
 }
@@ -465,6 +747,8 @@ function json(map: MapData): string {
     '  "tiles": [', map.tiles.map(r => `    ${JSON.stringify(r)}`).join(',\n'), '  ],',
     '  "levels": [', map.levels.map(r => `    ${JSON.stringify(r)}`).join(',\n'), '  ],',
     `  "spawn": ${JSON.stringify(map.spawn)},`,
+    ...(map.private ? ['  "private": true,'] : []),
+    ...(map.wake ? [`  "wake": ${JSON.stringify(map.wake)},`] : []),
     '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
     '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), `  ]${map.style ? ',' : ''}`,
     ...(map.style ? [`  "style": ${JSON.stringify(map.style)}`] : []),
@@ -473,18 +757,25 @@ function json(map: MapData): string {
   ].join('\n');
 }
 
-/** A glance at a room: # wall, . floor, + warm floor (next to the fire), v the way out, letters for furniture. */
-const GLYPH: Partial<Record<MapObject['kind'], string>> = { fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@' };
+/** A glance at a room: # wall, . floor, + warm floor (next to the fire), v the way out, z where you wake up, letters for furniture. */
+const GLYPH: Partial<Record<MapObject['kind'], string>> = {
+  fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@',
+  hearth: 'f', sheeted: 's', boxes: 'n', crib: 'C', clock: 'k', paper: '?', saw: 'S', carriage: '=', sawdust: ':', logs: 'l', luggage: 'u', cache: 'X',
+  traps: 't',
+};
+/** The places for furniture in a home (comfort.ts), in lower case: what stands there, spoiled until it is made. */
+const COMFORT_GLYPH: Record<Comfort, string> = { stove: 'o', bed: 'b', rug: '_', lamp: 'i', rack: 'r', shelf: 't' };
 function glance(map: MapData): string[] {
   const tm = new TileMap(map);
   const things = new Map<string, string>();
   // Solid things first, so a rug under a table shows the table.
-  for (const o of [...map.objects].sort((a, b) => Number(DECOR.has(b.kind)) - Number(DECOR.has(a.kind)))) {
-    for (const [x, y] of objectTiles(o)) things.set(`${x},${y}`, GLYPH[o.kind] ?? '?');
+  for (const o of [...map.objects].sort((a, b) => Number(underfoot(b)) - Number(underfoot(a)))) {
+    for (const [x, y] of objectTiles(o)) things.set(`${x},${y}`, o.kind === 'comfort' ? COMFORT_GLYPH[o.what] : GLYPH[o.kind] ?? '?');
   }
   const exit = map.exits[0]!;
   return map.tiles.map((row, y) => [...row].map((c, x) => {
     if (x === exit.x && y === exit.y) return 'v';
+    if (map.wake && x === map.wake.x && y === map.wake.y) return 'z';
     const thing = things.get(`${x},${y}`);
     if (thing && thing !== '_') return thing;
     if (c === 'x') return '#';
@@ -508,11 +799,14 @@ if (import.meta.main) {
   }
   // The other direction of doorInto: the door on the outside map must lead to the room's way in. It is
   // written by the outside map's generator, so after changing a room's size, run that one again too.
-  const GENERATOR: Record<string, string> = { stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south' };
+  const GENERATOR: Record<string, string> = {
+    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', 'residents-lane': 'npm run gen:street',
+  };
   for (const room of ROOMS) {
     const outside = JSON.parse(readFileSync(resolve(import.meta.dirname, `../content/maps/${room.outside}.json`), 'utf8')) as MapData;
-    const door = outside.exits.find(e => e.to === room.id), way = wayOut(room);
-    if (door?.x === room.door[0] && door.y === room.door[1] && door.tx === way.x && door.ty === way.y - 1) continue;
+    const doors = outside.exits.filter(e => e.to === room.id), way = wayOut(room);
+    const first = doors[0], inside = doors.every(e => e.tx === way.x && e.ty === way.y - 1);
+    if (first?.x === room.door[0] && first.y === room.door[1] && inside && (room.lots || doors.length === 1)) continue;
     console.log(`error: ${room.outside}.json has no door at ${room.door.join(',')} into ${room.id}'s way in (${way.x},${way.y - 1}): run ${GENERATOR[room.outside] ?? `the generator of ${room.outside}`} again`);
     failed = true;
   }

@@ -98,14 +98,17 @@ describe('finds, piles and the bag', () => {
     expect(texts()).toEqual(['+1 Fir cone']);
   });
 
-  it('floats a plain no when the server refuses', () => {
+  it('floats a plain no when the server refuses a pick, and says it in the text box for what it asked first', () => {
     start(3, 3);
     g.handle({ t: 'refused', action: 'pick', reason: 'bag_full' }, now);
     g.handle({ t: 'refused', action: 'pick', reason: 'too_far' }, now);
     g.handle({ t: 'refused', action: 'pick', reason: 'gone' }, now);
+    expect(texts()).toEqual(['Your bag is full', 'Too far', 'Someone got there first']);
     g.handle({ t: 'refused', action: 'use', reason: 'not_usable' }, now);
+    expect(g.note).toMatchObject({ text: 'That cannot be used.', waiting: false });
     g.handle({ t: 'refused', action: 'discard', reason: 'empty_slot' }, now);
-    expect(texts()).toEqual(['Your bag is full', 'Too far', 'Someone got there first', 'That cannot be used', 'That slot is empty']);
+    expect(g.note?.text).toBe('That slot is empty.');
+    expect(texts()).toHaveLength(3);
   });
 });
 
@@ -243,35 +246,87 @@ describe('tapping a find or a pile', () => {
 });
 
 describe('using and throwing away', () => {
-  it('uses a slot, and floats what it did once the bag shows it went through', () => {
+  const used = () => sent.filter(m => m.t === 'use' || m.t === 'discard');
+
+  it('asks before using a slot, and says what it did from the server\'s answer, not over your head', () => {
+    start(3, 3, { bag: [{ item: 'glowcap', count: 3 }, { item: 'thermos', count: 2 }] });
+    let closed = 0;
+    g.use(1, () => closed++);
+    expect(g.askView()).toEqual({ who: 'Thermos', text: 'Drink the thermos? Your energy is full already.', choice: 'yes', count: null });
+    expect(used()).toEqual([]);
+    g.pressA();
+    expect(used()).toEqual([{ t: 'use', slot: 1 }]);
+    expect(closed).toBe(1);
+    g.handle({ t: 'bag', bag: [{ item: 'glowcap', count: 3 }, { item: 'thermos', count: 1 }] }, now);
+    g.handle({ t: 'did', did: { kind: 'used', item: 'thermos', energy: 0 } }, now);
+    expect(g.note).toMatchObject({ who: 'Thermos', text: 'You drink the thermos, but your energy was full already.' });
+    expect(texts()).toEqual([]);
+  });
+
+  it('uses nothing on NO, B or a tap outside the box', () => {
+    start(3, 3, { bag: [{ item: 'thermos', count: 2 }] });
+    let closed = 0;
+    g.use(0, () => closed++);
+    g.padChange('down', now);
+    expect(g.askView()?.choice).toBe('no');
+    g.pressA();
+    g.use(0, () => closed++);
+    g.pressB();
+    g.use(0, () => closed++);
+    g.dismiss();
+    g.use(0, () => closed++);
+    g.answer('no');
+    expect([used(), closed, g.question, g.note]).toEqual([[], 0, null, null]);
+  });
+
+  it('says in the box what the server refused, and forgets a question it never answered', () => {
+    start(3, 3, { bag: [{ item: 'thermos', count: 2 }] });
+    g.use(0);
+    g.pressA();
+    g.handle({ t: 'refused', action: 'use', reason: 'not_usable' }, now);
+    expect(g.note).toMatchObject({ who: 'Thermos', text: 'That cannot be used.', waiting: false });
+    expect(texts()).toEqual([]);
+    run(8000);
+    expect(g.note).toBeNull();
+    g.use(0);
+    g.pressA();
+    expect(g.note?.waiting).toBe(true);
+    run(3000);
+    expect(g.note).toBeNull();
+  });
+
+  it('asks how many to throw away, from one up to the whole slot', () => {
+    start(3, 3, { bag: [{ item: 'glowcap', count: 3 }, { item: 'shard', count: 1 }] });
+    g.discard(0);
+    expect(g.askView()).toEqual({ who: 'Glowcap', text: 'Throw away a glowcap? It is gone for good.', choice: 'yes', count: { n: 1, min: 1, max: 3 } });
+    g.padChange('right', now);
+    g.padChange(null, now);
+    expect(g.question?.text).toBe('Throw away 2 glowcaps? They are gone for good.');
+    g.pressA();
+    expect(used()).toEqual([{ t: 'discard', slot: 0, count: 2 }]);
+    g.handle({ t: 'did', did: { kind: 'thrown', item: 'glowcap', count: 2 } }, now);
+    expect(g.note?.text).toBe('You throw away 2 glowcaps.');
+    g.pressA();
+    g.discard(1);
+    expect(g.askView()).toMatchObject({ text: 'Throw away the anomaly shard? It is gone for good.', count: null });
+    g.pressA();
+    expect(used().at(-1)).toEqual({ t: 'discard', slot: 1, count: 1 });
+  });
+
+  it('goes to wherever the item lies when the bag changed while it asked, or says it is gone', () => {
     start(3, 3, { bag: [{ item: 'glowcap', count: 3 }, { item: 'thermos', count: 2 }] });
     g.use(1);
-    expect(sent).toContainEqual({ t: 'use', slot: 1 });
-    expect(texts()).toEqual([]);
-    g.handle({ t: 'bag', bag: [{ item: 'glowcap', count: 3 }, { item: 'thermos', count: 1 }] }, now);
-    expect(texts()).toEqual(['+30 energy']);
-  });
-
-  it('floats nothing for a use the server refused, even when the bag changes later', () => {
-    start(3, 3, { bag: [{ item: 'thermos', count: 2 }] });
-    g.use(0);
-    g.handle({ t: 'refused', action: 'use', reason: 'not_usable' }, now);
-    g.handle({ t: 'bag', bag: [{ item: 'thermos', count: 1 }] }, now);
-    expect(texts()).toEqual(['That cannot be used']);
-  });
-
-  it('forgets a use that was never answered', () => {
-    start(3, 3, { bag: [{ item: 'thermos', count: 2 }] });
-    g.use(0);
-    run(3000);
-    g.handle({ t: 'bag', bag: [{ item: 'thermos', count: 1 }] }, now);
-    expect(texts()).toEqual([]);
-  });
-
-  it('throws a slot away', () => {
-    start(3, 3, { bag: [{ item: 'glowcap', count: 3 }, { item: 'shard', count: 1 }] });
-    g.discard(1);
-    expect(sent).toContainEqual({ t: 'discard', slot: 1 });
+    // Something took the glowcaps meanwhile: the thermos is in the first slot now.
+    g.handle({ t: 'bag', bag: [{ item: 'thermos', count: 2 }] }, now);
+    g.pressA();
+    expect(used()).toEqual([{ t: 'use', slot: 0 }]);
+    g.handle({ t: 'did', did: { kind: 'used', item: 'thermos', energy: 30 } }, now);
+    g.pressA();
+    g.discard(0);
+    g.handle({ t: 'bag', bag: [] }, now);
+    g.pressA();
+    expect(used()).toHaveLength(1);
+    expect(g.note?.text).toBe('It is not in your bag any more.');
   });
 
   it('asks nothing for an empty slot, or while offline', () => {
@@ -281,7 +336,8 @@ describe('using and throwing away', () => {
     g.disconnected(now);
     g.use(0);
     g.discard(0);
-    expect(sent.filter(m => m.t === 'use' || m.t === 'discard')).toEqual([]);
+    expect(g.question).toBeNull();
+    expect(used()).toEqual([]);
   });
 });
 

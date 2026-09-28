@@ -2,14 +2,20 @@
  * Content checks for maps. Run on every change (npm run validate) so a broken map never ships.
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
+import { COMFORTS, type Comfort } from './comfort';
 import { MODS, modChanges, type Mods } from './feats';
-import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
-import { STARTER_TOOLS, findTiles, type ItemsData } from './items';
-import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type NpcLook, type TileKind } from './map';
+import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
+import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
+import {
+  CREATURE_STEP_MIN_MS, FRONTED, NOTE_AUTHORS, NOTE_ON, NOTE_WHEN, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, hangs, objectTiles, underfoot, watcherStepMs,
+  type MapData, type MapObject, type NpcLook, type TileKind,
+} from './map';
 import { DIRS, stepTarget } from './movement';
+import { ANYWHERE, DURING, SIGHTS, opensOn, readableAt, type NotebookData, type NotebookEvent } from './notebook';
+import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
-import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
-import { STORY_EVENTS, type StoryData } from './story';
+import { FLASH_BURST_S, FLASH_GLOW_S, NIGHT_FROM, SEASON_ORDER, stormAt, surgeAt, type Season } from './sky';
+import { MAX_REMARKS, MILESTONES, STORY_EVENTS, type StoryData } from './story';
 
 export interface Problem {
   level: 'error' | 'warning';
@@ -21,11 +27,27 @@ const ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** What a townsperson's look may set (map.ts, NpcLook). */
 const NPC_LOOK = ['coat', 'scarf', 'hair', 'skin', 'hat'] as const satisfies ReadonlyArray<keyof NpcLook>;
+/** The styles a building and a sign come in besides the plain one (map.ts, MapObject). */
+const HOUSE_STYLES = ['napo', 'mill'] as const;
+const SIGN_STYLES = ['napo', 'cardboard', 'mailbox'] as const;
+/** How long each vehicle is, in tiles, from the shortest to the longest: always one tile across. */
+const VEHICLE_LENGTH = { car: [2, 2], jeep: [2, 2], truck: [2, 4] } as const;
+const COLOR = /^#[0-9a-f]{6}$/i;
+/** What a style of building is called, and a room of that style. */
+const BUILDING = { napo: 'a NAPO building', mill: 'the mill', none: 'a cabin' } as const;
+const ROOM = { napo: 'one of NAPO\'s rooms', mill: 'the mill\'s floor', none: 'a cabin\'s room' } as const;
+/** Why a sealed thing may not be where content puts it (validateItems): it comes only in a parcel, and stays in the stash until opened. */
+const NO_BAG = 'those never go in a bag';
+const OPENED = 'those are only ever opened';
+/** Why furniture may not be where content puts it: it is made for its place in the cabin and set there at once (comfort.ts). */
+const PLACED = 'furniture stands in its place in the cabin, never in a bag or a stash';
 
 export function validateMap(data: MapData): Problem[] {
   const out: Problem[] = [];
   const err = (message: string) => out.push({ level: 'error', message });
   const warn = (message: string) => out.push({ level: 'warning', message });
+  // The server tells the copies of a map apart by its id and a key after it (world.ts, zoneKey).
+  if (!ID.test(data.id ?? '')) err(`its id is lowercase words joined by hyphens, not ${JSON.stringify(data.id)}`);
   if (data.tiles.length !== data.height) err(`tiles has ${data.tiles.length} rows, expected ${data.height}`);
   if (data.levels.length !== data.height) err(`levels has ${data.levels.length} rows, expected ${data.height}`);
   data.tiles.forEach((row, y) => {
@@ -41,7 +63,8 @@ export function validateMap(data: MapData): Problem[] {
   else if (data.kind !== 'wilds' && data.depth !== 0) err(`${data.kind === 'town' ? 'a town' : 'an inside'} has depth 0`);
   else if (data.kind === 'wilds' && data.depth < 1) err('the wilds have depth 1 or more');
   if (!Array.isArray(data.exits)) err('exits must be a list (it may be empty)');
-  if (data.style !== undefined && (data.style !== 'napo' || data.kind !== 'inside')) err(`style ${JSON.stringify(data.style)}: only an inside has a style, and it is napo (one of NAPO's rooms)`);
+  if (data.style !== undefined && (!(HOUSE_STYLES as readonly string[]).includes(data.style) || data.kind !== 'inside')) err(`style ${JSON.stringify(data.style)}: only an inside has a style, and it is napo (one of NAPO's rooms) or mill (the sawmill's floor)`);
+  if (data.street !== undefined && (data.street !== true || data.kind !== 'town')) err('street: only a town is a street of cabins, and then it is true');
   if (out.some(p => p.level === 'error')) return out;
 
   const map = new TileMap(data);
@@ -67,36 +90,93 @@ export function validateMap(data: MapData): Problem[] {
       const d = doorOf(o);
       if (!exitTiles.has(`${d.x},${d.y}`)) err(`house at ${o.x},${o.y}: its door ${d.x},${d.y} is not an exit, but every building must lead inside`);
       if (!map.walkable(d.x, d.y + 1)) err(`house at ${o.x},${o.y}: the tile in front of its door (${d.x},${d.y + 1}) is not walkable`);
-      // A cabin is drawn 3 by 2; NAPO's buildings are drawn to their size.
-      if (o.style !== undefined && o.style !== 'napo') err(`house at ${o.x},${o.y}: style is napo or left out, not ${JSON.stringify(o.style)}`);
-      else if (!o.style && (o.w !== 3 || o.h !== 2)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a cabin is 3 by 2 (only NAPO's buildings come in other sizes)`);
+      // A cabin is drawn 3 by 2; NAPO's buildings and the mill are drawn to their size.
+      if (o.style !== undefined && !(HOUSE_STYLES as readonly string[]).includes(o.style)) err(`house at ${o.x},${o.y}: style is napo, mill or left out, not ${JSON.stringify(o.style)}`);
+      else if (!o.style && (o.w !== 3 || o.h !== 2)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a cabin is 3 by 2 (only NAPO's buildings and the mill come in other sizes)`);
       else if (o.style === 'napo' && !(o.w >= 3 && o.w <= 9 && o.h >= 2 && o.h <= 5)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a NAPO building is 3 to 9 wide and 2 to 5 deep`);
+      else if (o.style === 'mill' && !(o.w >= 5 && o.w <= 9 && o.h >= 2 && o.h <= 4)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: the mill is long and low, 5 to 9 wide and 2 to 4 deep`);
+      // Curtains are what the people who left drew behind them: never in a lit house, a mill or NAPO's.
+      if (o.curtains && (o.style || o.lit)) err(`house at ${o.x},${o.y}: curtains are drawn only in a cabin nobody lives in (no style, not lit)`);
+      // On a street every cabin is a lot, with its owner's name by the door; its window lights while they are home.
+      if (data.street && (!o.plate || o.style || o.curtains || o.lit)) err(`house at ${o.x},${o.y}: on a street every house is a plain cabin with a name plate (plate), unlit and without curtains`);
+      if (!data.street && o.plate !== undefined) err(`house at ${o.x},${o.y}: only a cabin on a street has a name plate`);
     }
+    if (o.kind === 'car' || o.kind === 'truck' || o.kind === 'jeep') validateVehicle(o, map, err);
+    if ((o.kind === 'logs' || o.kind === 'carriage') && !footprint(o).every(n => Number.isInteger(n) && n >= 1 && n <= (o.kind === 'logs' ? 4 : 9))) {
+      err(`${o.kind} at ${o.x},${o.y} is ${footprint(o).join(' by ')}: ${o.kind === 'logs' ? 'a log deck is 1 to 4 tiles each way' : 'a carriage runs 1 to 9 tiles'}`);
+    }
+    if (o.kind === 'ruin' && !(Number.isInteger(o.w) && Number.isInteger(o.h) && o.w >= 2 && o.w <= 6 && o.h >= 2 && o.h <= 4)) {
+      err(`ruin at ${o.x},${o.y} is ${o.w} by ${o.h}: what is left of a bunkhouse is 2 to 6 wide and 2 to 4 deep`);
+    }
+    if (o.kind === 'bridge') {
+      // Laid on the ford it crosses: you walk on the ground under it, and the creek runs by on either side of it.
+      const across: Array<[number, number]> = o.dir === 'v' ? [[o.x - 1, o.y], [o.x + 1, o.y]] : [[o.x, o.y - 1], [o.x, o.y + 1]];
+      if (o.dir !== 'h' && o.dir !== 'v') err(`bridge at ${o.x},${o.y}: dir is h (it runs east to west) or v (north to south)`);
+      else if (!map.walkable(o.x, o.y) || !across.some(([x, y]) => map.kind(x, y) === 'water')) err(`bridge at ${o.x},${o.y}: it lies on a ford you can walk, with the water beside it`);
+    }
+    if ((o.kind === 'rock' && o.hum !== undefined && typeof o.hum !== 'boolean') || (o.kind === 'antenna' && o.broken !== undefined && typeof o.broken !== 'boolean')) {
+      err(`${o.kind} at ${o.x},${o.y}: ${o.kind === 'rock' ? 'hum' : 'broken'} is true, false or left out`);
+    }
+    if (o.kind === 'paper') {
+      if (!o.name?.trim() || !o.text?.length || o.text.some(t => !t.trim())) err(`paper at ${o.x},${o.y} needs a name and something to read`);
+      if (!(PAPER_LOOKS as readonly string[]).includes(o.look)) err(`paper at ${o.x},${o.y}: looks like ${PAPER_LOOKS.join(', ')}, not ${JSON.stringify(o.look)}`);
+      // A calendar or a drawing hangs on a wall; a note or a list lies on a table on the floor.
+      else if (hangs(o.look) !== (map.kind(o.x, o.y) === 'wall')) err(`paper at ${o.x},${o.y}: a ${o.look} ${hangs(o.look) ? 'hangs on a wall tile' : 'lies on a table, on the floor'}`);
+    }
+    if ((o.kind === 'cage' || o.kind === 'jeep') && (!o.text?.length || o.text.some(t => !t.trim()))) err(`${o.kind} at ${o.x},${o.y} has nothing to read`);
     for (const [x, y] of objectTiles(o)) {
       if (!map.inside(x, y)) err(`${o.kind} at ${o.x},${o.y} reaches outside the map`);
-      if (DECOR.has(o.kind)) continue;
+      if (underfoot(o)) continue;
       const key = `${x},${y}`;
       const other = used.get(key);
       if (other) err(`${o.kind} at ${o.x},${o.y} overlaps ${other} on tile ${key}`);
       used.set(key, `${o.kind} at ${o.x},${o.y}`);
     }
     if (o.kind === 'sign' && (!o.text.length || o.text.some(t => !t.trim()))) err(`sign at ${o.x},${o.y} has no text`);
-    if (o.kind === 'sign' && o.style !== undefined && o.style !== 'napo') err(`sign at ${o.x},${o.y}: style is napo or left out, not ${JSON.stringify(o.style)}`);
+    if (o.kind === 'sign' && o.style !== undefined && !(SIGN_STYLES as readonly string[]).includes(o.style)) err(`sign at ${o.x},${o.y}: style is ${SIGN_STYLES.join(', ')} or left out, not ${JSON.stringify(o.style)}`);
     if (o.kind === 'console' && (!o.name?.trim() || !o.text?.length || o.text.some(t => !t.trim()))) err(`console at ${o.x},${o.y} needs a name and something to read`);
     if (o.kind === 'console' && !ID.test(o.id ?? '')) err(`console at ${o.x},${o.y}: its id is lowercase words joined by hyphens (the story names it by it)`);
     if (o.kind === 'fireplace' && o.name !== undefined && !o.name.trim()) err(`fireplace at ${o.x},${o.y}: a name says something, or is left out`);
+    if (o.kind === 'fireplace' && o.longNight !== undefined && (o.longNight !== true || o.tended === true || data.kind !== 'inside')) {
+      err(`fireplace at ${o.x},${o.y}: longNight is true or left out, on a fire in a room in town that nobody marked tended`);
+    }
+    if (o.kind === 'cache' && !o.name?.trim()) err(`cache at ${o.x},${o.y} needs a name: what a letter calls it ("the old cabin's crate")`);
+    if (o.kind === 'comfort') {
+      // Each player's cabin is theirs alone: only there does furniture wait to be made again (comfort.ts).
+      if (!(COMFORTS as readonly string[]).includes(o.what)) err(`comfort at ${o.x},${o.y}: it is a place for ${COMFORTS.join(', ')}, not ${JSON.stringify(o.what)}`);
+      else if (data.private !== true) err(`comfort at ${o.x},${o.y}: a place for furniture is only in a home of one's own (private)`);
+      else if (data.objects.filter(p => p.kind === 'comfort' && p.what === o.what).length > 1) err(`comfort at ${o.x},${o.y}: a home has one place for its ${o.what}`);
+    }
     if (o.kind === 'npc' && !o.lines.length) err(`npc ${o.id} has nothing to say`);
     if (o.kind === 'npc') for (const [k, c] of Object.entries(o.look ?? {})) {
       if (!(NPC_LOOK as readonly string[]).includes(k)) err(`npc ${o.id}: a look has ${NPC_LOOK.join(', ')}, not ${k}`);
       else if (typeof c !== 'string' || !/^#[0-9a-f]{6}$/i.test(c)) err(`npc ${o.id}: ${k} is a color, #rrggbb`);
     }
-    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board' || o.kind === 'chest' || o.kind === 'workbench' || o.kind === 'console') {
+    if (FRONTED.has(o.kind)) {
       const front = stepTarget(o.x, o.y, 'down');
       if (!map.walkable(front.x, front.y)) err(`${o.kind} at ${o.x},${o.y}: the tile in front (below) is not walkable, so nobody can talk to it`);
     }
+    if (o.kind === 'note') validateNote(o, data, map, err);
+  }
+  const noteTiles = new Set<string>();
+  for (const o of data.objects) {
+    if (o.kind !== 'note') continue;
+    if (noteTiles.has(`${o.x},${o.y}`)) err(`two notes lie on ${o.x},${o.y}: facing it, only one could be read`);
+    noteTiles.add(`${o.x},${o.y}`);
   }
   const s = data.spawn;
   if (!map.walkable(s.x, s.y)) err(`spawn ${s.x},${s.y} is not walkable`);
+  // A home of one's own: only a room with the chest, where each player's stash is, is private.
+  if (data.private !== undefined && (data.private !== true || data.kind !== 'inside' || !data.objects.some(o => o.kind === 'chest'))) {
+    err('private: only a room with a chest (a home) is private, and then it is true');
+  }
+  if (data.wake !== undefined) {
+    const w = data.wake;
+    if (data.private !== true) err('wake: only a private room (a home) has a place to wake up in');
+    if (!Dir.safeParse(w.dir).success) err('wake: dir must be up, down, left or right');
+    if (!map.walkable(w.x, w.y) || map.exitAt(w.x, w.y)) err(`wake ${w.x},${w.y} is not a walkable tile of the room (an exit is none either)`);
+    else if (!map.warm(w.x, w.y)) err(`wake ${w.x},${w.y} is not by the fire: you wake up where it warms you`);
+  }
 
   // Every walkable tile should be reachable from the spawn; islands usually mean a blocked road.
   if (map.walkable(s.x, s.y)) {
@@ -133,6 +213,13 @@ export function validateMap(data: MapData): Problem[] {
     else if (r.warn + r.length >= r.every) err('storm: warn and length must leave clear time in every round');
     if (r.offset !== undefined && !Number.isFinite(r.offset)) err('storm: offset is a number of seconds');
   }
+  if (data.rain !== undefined) validateRain(data, err);
+  if (data.ice !== undefined) validateIce(data, map, err, warn);
+  // Storms come between surges in every season, the autumn's twice-as-many too (stormAt).
+  if (data.surge && data.storm && !out.some(p => p.level === 'error' && /^(surge|storm):/.test(p.message))) {
+    const clash = stormsClash(data);
+    if (clash) err(`storm: in ${clash.season} a storm (or its warning) blows while the region is restless or surging, ${clash.at} seconds into the round: move it (offset) to between the surges`);
+  }
   if (data.flashes) {
     const f = data.flashes;
     if (data.kind !== 'wilds') err('flashes happen only in the wilds');
@@ -144,17 +231,22 @@ export function validateMap(data: MapData): Problem[] {
     if (data.kind !== 'wilds') err('watchers live only in the wilds');
     if (!Number.isInteger(w.count) || w.count < 1) err('watchers: count must be a whole number from 1');
     if (!(w.steps?.length === 2 && w.steps[0] >= 0 && w.steps[0] <= w.steps[1])) err('watchers: steps is [nearest, farthest], from 0');
+    // Quicker on an aurora night, and even then slower than you: you get away by walking.
+    if (w.stepMs !== undefined && !(Number.isInteger(w.stepMs) && watcherStepMs(w, true) >= CREATURE_STEP_MIN_MS)) {
+      err(`watchers: stepMs is whole ms, slow enough that on an aurora night they still step no quicker than every ${CREATURE_STEP_MIN_MS} ms`);
+    }
   }
   if (data.skulkers) {
     const s = data.skulkers;
     if (data.kind !== 'wilds') err('skulkers live only in the wilds');
     if (!Number.isInteger(s.count) || s.count < 1) err('skulkers: count must be a whole number from 1');
+    if (s.stepMs !== undefined && !(Number.isInteger(s.stepMs) && s.stepMs >= CREATURE_STEP_MIN_MS)) err(`skulkers: stepMs is whole ms, at least ${CREATURE_STEP_MIN_MS}: walking away gets you out`);
     if (!(s.steps?.length === 2 && s.steps[0] >= 0 && s.steps[0] <= s.steps[1])) err('skulkers: steps is [nearest, farthest], from 0');
     else {
       let lairs = 0;
       for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
         const d = map.homeSteps(x, y);
-        if (map.kind(x, y) === 'ferns' && map.walkable(x, y) && !map.lit(x, y) && !map.warm(x, y) && d >= s.steps[0] && d <= s.steps[1]) lairs++;
+        if (map.kind(x, y) === 'ferns' && map.creatureMayStand(x, y) && d >= s.steps[0] && d <= s.steps[1]) lairs++;
       }
       if (!lairs) err('skulkers: no ferns to lie in that far from home, out of the light and away from fires');
     }
@@ -166,6 +258,8 @@ export function validateMap(data: MapData): Problem[] {
     for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (map.walkable(x, y) && map.homeSteps(x, y) < 0) lost++;
     if (lost) warn(`${lost} walkable tiles have no way to a home exit`);
   }
+  if (data.forest !== undefined && (data.forest !== 'old' || data.kind !== 'wilds')) err(`forest ${JSON.stringify(data.forest)}: only the wilds say how their forest grows, and it is old or left out`);
+  validateTallGrass(data, map, err, warn);
   const named = new Set<string>();
   for (const p of data.places ?? []) {
     if (!p.name?.trim()) err(`the place at ${p.x},${p.y} needs a name`);
@@ -174,6 +268,137 @@ export function validateMap(data: MapData): Problem[] {
     if (!Number.isInteger(p.x) || !Number.isInteger(p.y) || !map.inside(p.x, p.y)) err(`the place ${p.name} at ${p.x},${p.y} is not on the map`);
   }
   return out;
+}
+
+/**
+ * A region's rain (sky.ts): windows of whole seconds counted from dawn, each over by nightfall (the
+ * night is dry everywhere), none overlapping another (one long window says it plainly). Only outdoors:
+ * a room hears the rain of the map its door opens onto.
+ */
+function validateRain(data: MapData, err: (message: string) => void): void {
+  const rain = data.rain;
+  if (!Array.isArray(rain)) return void err('rain: a list of windows, each {from, length} in seconds after dawn (an empty list: it never rains)');
+  if (data.kind === 'inside') err('rain: a room hears the rain of the map its door opens onto, so it has none of its own');
+  if (!rain.every(w => Number.isInteger(w?.from) && w.from >= 0 && Number.isInteger(w?.length) && w.length > 0)) {
+    return void err('rain: each window starts some whole seconds after dawn, from 0, and lasts whole seconds above 0');
+  }
+  for (const w of rain) if (w.from + w.length > NIGHT_FROM) err(`rain: the window from ${w.from} runs past nightfall (${NIGHT_FROM} seconds after dawn), and the night is dry`);
+  const sorted = [...rain].sort((a, b) => a.from - b.from);
+  for (let i = 1; i < sorted.length; i++) if (sorted[i]!.from < sorted[i - 1]!.from + sorted[i - 1]!.length) err(`rain: the windows from ${sorted[i - 1]!.from} and ${sorted[i]!.from} overlap: make them one`);
+}
+
+/**
+ * The water that freezes in winter (`ice`): each by a name people say ("the pond") and its tiles, which
+ * are water on the map, each once; only outdoors. Ice nobody can step onto from the shore would be ice
+ * nobody crosses, which is worth a warning.
+ */
+function validateIce(data: MapData, map: TileMap, err: (message: string) => void, warn: (message: string) => void): void {
+  const ice = data.ice;
+  if (!Array.isArray(ice)) return void err('ice: a list of the water that freezes in winter, each {name, tiles}');
+  if (data.kind === 'inside') err('ice: only water outdoors freezes');
+  const seen = new Set<string>();
+  for (const water of ice) {
+    const name = typeof water?.name === 'string' && water.name.trim() ? water.name : '';
+    if (!name) err('ice: each frozen water has a name people say, like "the pond"');
+    if (!Array.isArray(water?.tiles) || !water.tiles.length) { err(`ice: ${name || 'a frozen water'} has no tiles`); continue; }
+    let shore = false;
+    for (const t of water.tiles) {
+      const [x, y] = Array.isArray(t) ? t : [NaN, NaN];
+      if (!Number.isInteger(x) || !Number.isInteger(y) || !map.inside(x!, y!)) { err(`ice: ${JSON.stringify(t)} is not a tile of the map`); continue; }
+      if (map.kind(x!, y!) !== 'water') err(`ice: ${x},${y} is not water`);
+      if (seen.has(`${x},${y}`)) err(`ice: ${x},${y} is listed twice`);
+      seen.add(`${x},${y}`);
+      if (DIRS.some(d => { const n = stepTarget(x!, y!, d); return map.walkable(n.x, n.y); })) shore = true;
+    }
+    if (!shore) warn(`ice: ${name || 'a frozen water'} has no shore to step onto it from, so nobody can cross it`);
+  }
+}
+
+/**
+ * The first moment, if any, in some season, when a storm or its warning blows over a region while it is
+ * restless or surging: over whole rounds of both clocks (a day at most), a second at a time.
+ */
+function stormsClash(data: MapData): { season: Season; at: number } | undefined {
+  const surge = data.surge!, storm = data.storm!;
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  const round = Math.min(86_400, (surge.every / gcd(surge.every, storm.every)) * storm.every);
+  for (const season of SEASON_ORDER) {
+    for (let t = 0; t < round; t++) {
+      if (stormAt(storm, t * 1000, season).phase !== 'clear' && surgeAt(surge, t * 1000).phase !== 'calm') return { season, at: t };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * A car, a truck or a jeep: one tile across and as long as its kind is, its nose pointing along it,
+ * in a real color. A jeep is read from beside it, so somebody must be able to stand there.
+ */
+function validateVehicle(o: Extract<MapObject, { kind: 'car' | 'truck' | 'jeep' }>, map: TileMap, err: (message: string) => void): void {
+  const [w, h] = footprint(o), [shortest, longest] = VEHICLE_LENGTH[o.kind], long = Math.max(w, h);
+  const where = `${o.kind} at ${o.x},${o.y}`;
+  if (!(Number.isInteger(w) && Number.isInteger(h) && Math.min(w, h) === 1 && long >= shortest && long <= longest)) {
+    err(`${where} is ${w} by ${h}: ${shortest === longest ? `a ${o.kind} is ${long} by 1 or 1 by ${long}` : `a ${o.kind} is one tile across and ${shortest} to ${longest} long`}`);
+    return;
+  }
+  const dir = o.dir ?? 'right', across = w > h ? ['left', 'right'] : ['up', 'down'];
+  if (!across.includes(dir)) err(`${where}: its nose points along it, ${across.join(' or ')}, not ${JSON.stringify(dir)}`);
+  if (o.kind === 'car' && o.paint !== undefined && !COLOR.test(o.paint)) err(`${where}: paint is a color, #rrggbb`);
+  if (o.kind === 'truck' && o.style !== undefined && o.style !== 'napo') err(`${where}: style is napo or left out, not ${JSON.stringify(o.style)}`);
+  if (o.kind === 'jeep' && !objectTiles(o).some(([x, y]) => DIRS.some(d => { const n = stepTarget(x, y, d); return map.walkable(n.x, n.y); }))) {
+    err(`${where}: nobody can stand beside it to read it`);
+  }
+}
+
+/** A note says something in a few lines the text box shows one at a time. */
+export const NOTE_LINE_MAX = 140;
+
+/**
+ * A note someone left (notes.ts): named for good, by someone who left notes, saying something; it lies
+ * on something it can lie on (a table, a pole, a car...), and somebody can stand beside that to read it.
+ * Wax only shows on paper the rain reaches: a rain note lies out of doors. `faint` says what shows at
+ * the wrong time, so only a note with a time has it.
+ */
+function validateNote(o: Extract<MapObject, { kind: 'note' }>, data: MapData, map: TileMap, err: (message: string) => void): void {
+  const where = `note ${JSON.stringify(o.id)} at ${o.x},${o.y}`;
+  if (!ID.test(o.id ?? '')) err(`${where}: its id is lowercase words joined by hyphens (what players read is kept by it)`);
+  if (!(NOTE_AUTHORS as readonly string[]).includes(o.by)) err(`${where}: by is ${NOTE_AUTHORS.join(', ')}, not ${JSON.stringify(o.by)}`);
+  if (!o.name?.trim()) err(`${where} needs a name: what the text box calls it`);
+  if (!Array.isArray(o.text) || !o.text.length || o.text.some(t => typeof t !== 'string' || !t.trim())) err(`${where} has nothing to read`);
+  else for (const t of o.text) if (t.length > NOTE_LINE_MAX) err(`${where}: a line is ${t.length} characters, ${NOTE_LINE_MAX} at most`);
+  if (o.when !== undefined && !(NOTE_WHEN as readonly string[]).includes(o.when)) err(`${where}: when is ${NOTE_WHEN.join(', ')} or left out, not ${JSON.stringify(o.when)}`);
+  if (o.faint !== undefined && (o.when === undefined || typeof o.faint !== 'string' || !o.faint.trim())) err(`${where}: faint says what shows at the wrong time, so only a note with a when has it`);
+  if (o.when === 'rain' && data.kind === 'inside') err(`${where}: only rain shows it, and no rain falls inside`);
+  const under = data.objects.find(u => (NOTE_ON as readonly string[]).includes(u.kind) && objectTiles(u).some(([x, y]) => x === o.x && y === o.y));
+  if (!under) err(`${where} lies on nothing: it lies on a ${NOTE_ON.join(', a ')}`);
+  if (!DIRS.some(d => { const n = stepTarget(o.x, o.y, d); return map.walkable(n.x, n.y); })) err(`${where}: nobody can stand beside it to read it`);
+}
+
+/**
+ * Tall grass (hidden) is ground you wade into: never under something that stands there, never raised,
+ * never an exit. The tiles in front of a door and of what you read or talk to stay plain ground, so
+ * nobody comes out of a shelter or reads a sign crouched in the grass. It only hides you from
+ * creatures, and they live in the wilds, out of the light and away from fires: anywhere else it is
+ * only grass, which is worth a warning.
+ */
+function validateTallGrass(data: MapData, map: TileMap, err: (message: string) => void, warn: (message: string) => void): void {
+  const fronts = new Map<string, string>();
+  for (const o of data.objects) {
+    if (o.kind === 'house') { const d = doorOf(o); fronts.set(`${d.x},${d.y + 1}`, `the door of the house at ${o.x},${o.y}`); }
+    if (FRONTED.has(o.kind)) fronts.set(`${o.x},${o.y + 1}`, `the ${o.kind} at ${o.x},${o.y}`);
+  }
+  let tiles = 0, lit = 0;
+  for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
+    if (map.kind(x, y) !== 'tallgrass') continue;
+    tiles++;
+    if (!map.walkable(x, y)) err(`tall grass at ${x},${y} cannot be walked into: something stands there, or it is raised`);
+    else if (map.exitAt(x, y)) err(`tall grass at ${x},${y} is on an exit`);
+    const front = fronts.get(`${x},${y}`);
+    if (front) err(`tall grass at ${x},${y} is in front of ${front}: that tile stays plain ground`);
+    if (map.lit(x, y) || map.warm(x, y)) lit++;
+  }
+  if (tiles && data.kind !== 'wilds') warn(`${tiles} tiles of tall grass in ${data.kind === 'town' ? 'a town' : 'an inside'}, where no creature comes: it hides nobody from anything`);
+  if (lit) warn(`${lit} tiles of tall grass in a street light or by a fire, where creatures never come anyway`);
 }
 
 /**
@@ -190,17 +415,30 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   }
   const home = byId.get(homeId);
   if (!home) return [...out, { level: 'error', map: homeId, message: `the home map ${homeId} does not exist` }];
-  if (home.data.kind !== 'town') out.push({ level: 'error', map: homeId, message: 'the home map must be a town (collapsed players wake up there)' });
+  if (home.data.kind !== 'town') out.push({ level: 'error', map: homeId, message: 'the home map must be a town (players start there, or in the home off it, and wake up there after a collapse)' });
 
+  // A street of cabins (Residents' Lane): one at most, whose every door leads into one home of one's own,
+  // each player's own cabin; it is reached through a house in the home town (the way onto your street).
+  const streets = [...byId.values()].filter(m => m.data.street);
+  if (streets.length > 1) out.push({ level: 'error', map: streets[1]!.data.id, message: `street: ${streets.map(m => m.data.id).join(' and ')} are both streets, but every player's cabin stands on the one` });
+  for (const street of streets) {
+    const rooms = new Set(street.data.objects.flatMap(o => (o.kind === 'house' ? [street.exitAt(doorOf(o).x, doorOf(o).y)?.to ?? ''] : [])));
+    const room = rooms.size === 1 ? byId.get([...rooms][0]!) : undefined;
+    if (!room?.data.private) out.push({ level: 'error', map: street.data.id, message: 'street: every cabin on it leads into the one home of one\'s own (a private room): its owner\'s own cabin' });
+    if (!street.data.exits.some(e => e.to === homeId)) out.push({ level: 'error', map: street.data.id, message: `street: its end leads back to the home town (${homeId})` });
+  }
   for (const map of byId.values()) {
-    // A door leads into a building: its exit must go to an inside, not to another town or the wilds.
+    // A door leads into a building: its exit must go to an inside, not to another town or the wilds (but
+    // for the house whose door is the way onto your street).
     for (const o of map.data.objects) {
       if (o.kind !== 'house') continue;
       const d = doorOf(o), into = map.exitAt(d.x, d.y), target = into && byId.get(into.to);
-      if (target && target.data.kind !== 'inside') out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: its door leads to ${into!.to}, which is not an inside` });
-      // Concrete outside, concrete inside: one of NAPO's buildings leads into one of its rooms, a cabin into a cabin's.
+      if (target?.data.street && map.data.id !== homeId) out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: the way onto the street is a house in the home town (${homeId})` });
+      else if (target && target.data.kind !== 'inside' && !target.data.street) out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: its door leads to ${into!.to}, which is not an inside` });
+      // Concrete outside, concrete inside: one of NAPO's buildings leads into one of its rooms, the mill
+      // onto its floor, a cabin into a cabin's.
       else if (target && (o.style ?? null) !== (target.data.style ?? null)) {
-        out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: ${o.style === 'napo' ? 'a NAPO building' : 'a cabin'} leads into ${into!.to}, which is ${target.data.style === 'napo' ? 'one of NAPO\'s rooms' : 'a cabin\'s room'}` });
+        out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: ${BUILDING[o.style ?? 'none']} leads into ${into!.to}, which is ${ROOM[target.data.style ?? 'none']}` });
       }
     }
     map.data.exits.forEach((e, i) => {
@@ -234,6 +472,37 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
     }
   }
 
+  // Where new players start and collapsed ones wake up: one home, off the home town or off the street
+  // there (every player's own cabin), so it is never in doubt.
+  const wakes = [...byId.values()].filter(m => m.data.wake);
+  const offTown = (m: TileMap) => m.data.exits.some(e => e.to === homeId || (byId.get(e.to)?.data.street && byId.get(e.to)!.data.exits.some(x => x.to === homeId)));
+  for (const m of wakes) {
+    if (!offTown(m)) out.push({ level: 'error', map: m.data.id, message: `wake: only the home off the home town (${homeId}), or off its street, is where you wake up, and this room's door opens elsewhere` });
+  }
+  if (wakes.length > 1) out.push({ level: 'error', map: wakes[1]!.data.id, message: `wake: ${wakes.map(m => m.data.id).join(' and ')} both have one, but everyone wakes up in the same home` });
+
+  // The Long Night's fire (the lodge's) is one, in a room off the home town, and never the home's: the
+  // home fire stays tended, so a new player always has a safe fire.
+  const nights = [...byId.values()].filter(m => m.data.objects.some(o => o.kind === 'fireplace' && o.longNight));
+  for (const m of nights) {
+    const off = m.data.exits.some(e => e.to === homeId);
+    if (!off || m.data.wake || m.data.private || m.data.objects.some(o => o.kind === 'chest')) {
+      out.push({ level: 'error', map: m.data.id, message: `longNight: the fire nobody tends on the Long Night is in a room off ${homeId} that is not the home` });
+    }
+  }
+  if (nights.length > 1 || nights.some(m => m.data.objects.filter(o => o.kind === 'fireplace' && o.longNight).length > 1)) {
+    out.push({ level: 'error', map: nights.at(-1)!.data.id, message: 'longNight: one fire in the world goes untended on the Long Night, the lodge\'s' });
+  }
+
+  // What a player read is kept by the note's id, whichever map it lies on.
+  const notes = new Map<string, string>();
+  for (const map of byId.values()) for (const o of map.data.objects) {
+    if (o.kind !== 'note') continue;
+    const other = notes.get(o.id);
+    if (other) out.push({ level: 'error', map: map.data.id, message: `note ${JSON.stringify(o.id)} at ${o.x},${o.y}: ${other} has that id too` });
+    else notes.set(o.id, `the note at ${o.x},${o.y} of ${map.data.id}`);
+  }
+
   const reached = new Set([homeId]);
   const queue = [homeId];
   for (let h = 0; h < queue.length; h++) {
@@ -246,7 +515,9 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
 /**
  * content/items.json: every item well formed, and every find rule pointing at a real item and map,
  * with enough tiles to grow on (at least as many as `count`, and a warning below three times that,
- * because a picked find grows back somewhere else and needs room to move).
+ * because a picked find grows back somewhere else and needs room to move). A recipe or a find whose
+ * item is a tool gives that tool (World.giveTool): a tool is owned once and never used up, so such a
+ * recipe makes one, and nothing is paid with a tool, mended with one or turns into one.
  */
 export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
   const out: Problem[] = [];
@@ -261,12 +532,42 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     ids.add(i.id);
     if (!i.name?.trim()) err(`${name} has no name`);
     if (!i.text?.trim()) err(`${name} has no text`);
-    if (!['resource', 'consumable', 'charm', 'gear', 'tool'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear or tool`);
+    for (const [field, v] of [['noun', i.noun], ['plural', i.plural], ['about', i.about]] as const) {
+      if (v !== undefined && !(typeof v === 'string' && v.trim())) err(`${name}: ${field}, when given, says something`);
+    }
+    if (!['resource', 'consumable', 'charm', 'gear', 'tool', 'sealed', 'keepsake', 'furniture'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear, tool, sealed, keepsake or furniture`);
+    if (i.kind === 'keepsake') {
+      if (i.stack !== 1) err(`${name}: a keepsake is one of a kind, one to a slot`);
+      if (i.use || i.weight || i.fuel || i.charge || i.live || i.reveals) err(`${name}: a keepsake is only brought home: never used, burned or fed, and it weighs nothing to speak of`);
+    }
+    if (i.kind === 'furniture') {
+      if (!(COMFORTS as readonly string[]).includes(i.furnishes as string)) err(`${name}: furniture furnishes a place in the cabin: ${COMFORTS.join(', ')}`);
+      if (!(Number.isInteger(i.comfort) && i.comfort! >= 1 && i.comfort! <= 10)) err(`${name}: furniture adds comfort, a whole number from 1 to 10`);
+      if (!i.spoiled?.trim()) err(`${name}: furniture needs the words for what stands spoiled in its place until it is made (spoiled)`);
+      if (i.stack !== 1) err(`${name}: furniture stacks one to a slot`);
+      if (i.use || i.weight || i.xp || i.fuel || i.charge || i.live || i.reveals) err(`${name}: furniture stands in its place: it is never used, carried or stashed, and earns no XP`);
+    } else if (i.furnishes !== undefined || i.comfort !== undefined || i.spoiled !== undefined || i.dries !== undefined) err(`${name}: only furniture furnishes a place, adds comfort, has spoiled words or dries you`);
+    if (i.kind === 'sealed') {
+      if (!i.holds?.length) err(`${name}: a sealed thing holds something`);
+      if (i.use || i.xp || i.fuel || i.charge || i.reveals) err(`${name}: a sealed thing is only opened, at the chest, and earns no XP`);
+    } else if (i.holds || i.seal !== undefined) err(`${name}: only a sealed thing holds something`);
+    if (i.seal !== undefined && !(typeof i.seal === 'string' && i.seal.trim())) err(`${name}: seal, when given, says something`);
     if (i.kind === 'tool') {
       if (i.stack !== 1) err(`${name}: a tool stacks one to a slot`);
-      if (i.use || i.weight || i.xp || i.fuel || i.charge) err(`${name}: a tool is never used up, weighs nothing and earns no XP`);
+      if (i.use || i.weight || i.xp || i.fuel || i.charge || i.live) err(`${name}: a tool is never used up, weighs nothing and earns no XP`);
       if (i.chart !== undefined && !maps.some(m => m.id === i.chart)) err(`${name}: charts ${i.chart}, which is not a map`);
-    } else if (i.chart !== undefined) err(`${name}: only a tool charts a map`);
+      if (!TOOL_ICONS.includes(i.icon!)) err(`${name}: a tool needs an icon for its button in the bag's header (${TOOL_ICONS.join(', ')})`);
+    } else {
+      if (i.chart !== undefined) err(`${name}: only a tool charts a map`);
+      if (i.icon !== undefined) err(`${name}: only a tool has an icon (everything else is drawn by its id)`);
+      if (i.senses !== undefined) err(`${name}: only a tool listens (senses)`);
+    }
+    if (i.senses !== undefined) {
+      const { loud, faint, finds } = i.senses;
+      if (!(typeof loud === 'number' && loud > 0 && typeof faint === 'number' && faint > loud)) err(`${name}: it hears loud within some tiles above 0, and faint within more`);
+      if (!Array.isArray(finds) || !finds.length) err(`${name}: it listens for nothing`);
+      for (const f of Array.isArray(finds) ? finds : []) if (f.when !== undefined && f.when !== 'aurora') err(`${name}: it hears ${f.item} always, or only on aurora nights (when: aurora)`);
+    }
     if (i.kind === 'gear') {
       if (!SLOTS.includes(i.slot!)) err(`${name}: gear needs a slot (${SLOTS.join(', ')})`);
       if (i.tier !== undefined && !TIERS.includes(i.tier)) err(`${name}: tier is one of ${TIERS.join(', ')}`);
@@ -291,12 +592,25 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       if (v !== undefined && !(typeof v === 'number' && v > 0)) err(`${name}: ${field} must be a number above 0`);
     }
     if (i.use?.flare !== undefined && !(i.use.flare > 0)) err(`${name}: a flare burns for some seconds above 0`);
+    if (i.use && (i.use.resist !== undefined || i.use.lasts !== undefined)) {
+      // An effect (effects.ts): what it resists, and for how long, always together.
+      const { resist, lasts } = i.use;
+      if (i.kind !== 'consumable') err(`${name}: only a consumable gives an effect for a while (resist, lasts)`);
+      if (!(Number.isInteger(lasts) && lasts! > 0)) err(`${name}: an effect lasts some whole seconds above 0`);
+      if (!resist || typeof resist !== 'object' || !Object.keys(resist).length) err(`${name}: an effect resists something (resist)`);
+      for (const [e, v] of Object.entries(resist ?? {})) {
+        if (!ELEMENTS.includes(e as Element)) err(`${name}: its effect resists an unknown element ${e}`);
+        else if (!(typeof v === 'number' && v > 0 && v <= 1)) err(`${name}: its effect's resistance is a share above 0, at most 1`);
+      }
+    }
     if (i.use?.identify && !i.reveals?.length) err(`${name} can be identified but reveals nothing`);
     if (i.reveals && !i.use?.identify) err(`${name} reveals things but cannot be identified`);
     if (i.live) {
       const into = data.items.find(d => d.id === i.live!.into);
       if (!into) err(`${name}: turns into ${i.live.into}, which is not an item`);
       else if (into.live) err(`${name}: turns into ${into.id}, which is live too`);
+      else if (into.kind === 'sealed') err(`${name}: turns into ${into.id}, a sealed thing: ${NO_BAG}`);
+      else if (into.kind === 'furniture') err(`${name}: turns into ${into.id}: ${PLACED}`);
       if (!(typeof i.live.xp === 'number' && i.live.xp > (into?.xp ?? 0))) err(`${name}: live, it is worth more XP than what it turns into`);
       if (!(i.live.fresh > 0) || !(i.live.fade > 0)) err(`${name}: live, it stays fresh and fades by numbers above 0`);
       if (i.stack !== 1) err(`${name}: a live item stacks one to a slot`);
@@ -308,9 +622,36 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!def) err(`the starter gear ${g} is not an item`);
     else if (def.kind !== 'gear') err(`the starter gear ${g} is not gear`);
   }
+  // Once there are tools at all, whoever never got one of their own carries the starter tools: they must be tools.
+  const tools = new Set(data.items.filter(i => i.kind === 'tool').map(i => i.id));
+  // A sealed thing comes only in a parcel and stays in the stash until it is opened there (World.open):
+  // nothing may put one in a bag, make one, or pay with one unopened.
+  const sealed = new Set(data.items.filter(i => i.kind === 'sealed').map(i => i.id));
+  // A keepsake lies in one place for each player (keepsakes, below) until they bring it home, where it
+  // stays: nothing grows, makes, holds or pays with one.
+  const keepsakes = new Set(data.items.filter(i => i.kind === 'keepsake').map(i => i.id));
+  const KEPT = 'those lie in one place each, and stay home once brought there';
+  // Furniture is made at the workbench for its place in the cabin and set there at once (World.craft): it
+  // never lies in a bag or a stash, so nothing may put it in one, and nothing is paid with it.
+  const furniture = data.items.filter(i => i.kind === 'furniture');
+  const placed = new Set(furniture.map(i => i.id));
+  const homes = maps.filter(m => m.private === true);
+  const furnished = new Map<string, string>();
+  for (const f of furniture) {
+    const what = f.furnishes as Comfort;
+    const other = furnished.get(what);
+    if (other) err(`item ${JSON.stringify(f.id)}: ${other} furnishes the ${what} already, and a cabin has one place for it`);
+    furnished.set(what, f.id);
+    if ((COMFORTS as readonly string[]).includes(what) && !homes.some(m => m.objects.some(o => o.kind === 'comfort' && o.what === what))) {
+      err(`item ${JSON.stringify(f.id)}: furnishes the ${what}, but no home has a place for one`);
+    }
+    if (!(data.recipes ?? []).some(r => r.make === f.id)) warn(`item ${JSON.stringify(f.id)}: nothing makes it at the workbench`);
+  }
+  for (const m of homes) for (const o of m.objects) if (o.kind === 'comfort' && !furnished.has(o.what)) warn(`${m.id}: the place for the ${o.what} at ${o.x},${o.y} has no furniture to make for it`);
   for (const t of STARTER_TOOLS) {
     const def = data.items.find(i => i.id === t);
     if (def && def.kind !== 'tool') err(`the starter tool ${t} is not a tool`);
+    else if (!def && tools.size) err(`the starter tool ${t} is not an item`);
   }
   for (const [tier, s] of Object.entries(data.wear ?? {})) {
     if (!TIERS.includes(tier as never)) err(`wear: ${tier} is not a tier`);
@@ -321,9 +662,28 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!cost?.length) err(`mend: mending ${tier} gear costs nothing`);
     for (const n of cost ?? []) {
       if (!ids.has(n.item)) err(`mend: ${tier} needs ${n.item}, which is not an item`);
+      else if (tools.has(n.item)) err(`mend: ${tier} needs ${n.item}, a tool: tools are never used up`);
+      else if (sealed.has(n.item)) err(`mend: ${tier} needs ${n.item}, a sealed thing: ${OPENED}`);
+      else if (placed.has(n.item)) err(`mend: ${tier} needs ${n.item}: ${PLACED}`);
+      else if (keepsakes.has(n.item)) err(`mend: ${tier} needs ${n.item}, a keepsake: ${KEPT}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`mend: each need is a whole number from 1`);
     }
   }
+  if (data.upgrades !== undefined && !Array.isArray(data.upgrades)) err('upgrades: a list, what each level costs, +1 first');
+  else if ((data.upgrades?.length ?? 0) > UPGRADE_MAX) err(`upgrades: at most ${UPGRADE_MAX} levels`);
+  (Array.isArray(data.upgrades) ? data.upgrades : []).forEach((u, i) => {
+    const name = `upgrades: +${i + 1}`;
+    if (!u?.needs?.length) err(`${name} costs nothing`);
+    for (const n of u?.needs ?? []) {
+      if (!ids.has(n.item)) err(`${name} needs ${n.item}, which is not an item`);
+      else if (tools.has(n.item)) err(`${name} needs ${n.item}, a tool: tools are never used up`);
+      else if (sealed.has(n.item)) err(`${name} needs ${n.item}, a sealed thing: ${OPENED}`);
+      else if (placed.has(n.item)) err(`${name} needs ${n.item}: ${PLACED}`);
+      else if (keepsakes.has(n.item)) err(`${name} needs ${n.item}, a keepsake: ${KEPT}`);
+      if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
+    }
+    if (u?.chance !== undefined && !(typeof u.chance === 'number' && u.chance > 0 && u.chance <= 1)) err(`${name}: chance is a share above 0, at most 1`);
+  });
   for (const q of data.quirks ?? []) {
     if (!QUIRKS.includes(q.id)) err(`quirk ${q.id}: the game knows ${QUIRKS.join(', ')}`);
     if (!q.name?.trim() || !q.text?.trim()) err(`quirk ${q.id} needs a name and a text`);
@@ -336,17 +696,87 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (recipeIds.has(r.id)) err(`${name} is defined twice`);
     recipeIds.add(r.id);
     if (!ids.has(r.make)) err(`${name} makes ${r.make}, which is not an item`);
+    else if (sealed.has(r.make)) err(`${name} makes ${r.make}, a sealed thing: those come only in parcels`);
+    // Furniture is set in its one place at once: one at a time.
+    else if (placed.has(r.make) && r.count !== undefined && r.count !== 1) err(`${name} makes ${r.make}, furniture, which has one place: count is 1 or left out`);
+    else if (keepsakes.has(r.make)) err(`${name} makes ${r.make}, a keepsake: ${KEPT}`);
     if (r.count !== undefined && !(Number.isInteger(r.count) && r.count >= 1)) err(`${name}: count is a whole number from 1`);
+    // What it makes goes by its kind: a tool to the player's tools (World.giveTool), anything else to the stash.
+    else if (tools.has(r.make) && r.count !== undefined && r.count !== 1) err(`${name} makes ${r.make}, a tool, which is yours once: count is 1 or left out`);
     if (!r.needs?.length) err(`${name} needs nothing`);
     for (const n of r.needs ?? []) {
       if (!ids.has(n.item)) err(`${name} needs ${n.item}, which is not an item`);
+      else if (tools.has(n.item)) err(`${name} needs ${n.item}, a tool: tools are never used up`);
+      else if (sealed.has(n.item)) err(`${name} needs ${n.item}, a sealed thing: ${OPENED}`);
+      else if (placed.has(n.item)) err(`${name} needs ${n.item}: ${PLACED}`);
+      else if (keepsakes.has(n.item)) err(`${name} needs ${n.item}, a keepsake: ${KEPT}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
     }
   }
+  // What a radio listens for must be something that lies out there.
+  for (const i of data.items) for (const f of Array.isArray(i.senses?.finds) ? i.senses.finds : []) {
+    if (!ids.has(f.item)) err(`item ${JSON.stringify(i.id)} listens for ${f.item}, which is not an item`);
+    else if (!data.finds.some(r => r.item === f.item)) warn(`item ${JSON.stringify(i.id)} listens for ${f.item}, which grows nowhere`);
+  }
   for (const i of data.items) for (const r of i.reveals ?? []) {
     if (!ids.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, which is not an item`);
+    else if (tools.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a tool: tools are made at the workbench or found`);
+    else if (sealed.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a sealed thing: ${NO_BAG}`);
+    else if (placed.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}: ${PLACED}`);
+    else if (keepsakes.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a keepsake: ${KEPT}`);
     if (r.item === i.id) err(`item ${JSON.stringify(i.id)} reveals itself`);
     if (!Number.isInteger(r.count) || r.count < 1 || !(r.weight > 0)) err(`item ${JSON.stringify(i.id)}: a reveal needs a count from 1 and a weight above 0`);
+    // Looking closely says what it turned out to be and what that is good for: the `about` line.
+    const into = data.items.find(d => d.id === r.item);
+    if (into && !into.about?.trim()) warn(`item ${JSON.stringify(r.item)}: ${i.id} may turn out to be it, but it has no about line to say what it is good for`);
+  }
+  // What goes into the stash from a lockbox or a parcel: things that lie in a stash (not tools), and never another sealed thing inside a sealed one.
+  const stashable = (id: string, where: string, sealed = false) => {
+    const def = data.items.find(d => d.id === id);
+    if (!def) return err(`${where}: ${id} is not an item`);
+    if (def.kind === 'tool') err(`${where}: ${id} is a tool, which never lies in a stash`);
+    if (def.kind === 'furniture') err(`${where}: ${id}: ${PLACED}`);
+    if (def.kind === 'keepsake') err(`${where}: ${id} is a keepsake: ${KEPT}`);
+    if (sealed && def.kind === 'sealed') err(`${where}: ${id} is sealed too`);
+  };
+  const slotsOf = (list: unknown, where: string, sealed = false) => {
+    if (!Array.isArray(list) || !list.length) return err(`${where}: a list of items and counts, not empty`);
+    for (const s of list as BagSlot[]) {
+      stashable(s?.item, where, sealed);
+      if (!(Number.isInteger(s?.count) && s.count >= 1)) err(`${where}: each count is a whole number from 1`);
+    }
+  };
+  for (const i of data.items) if (i.holds !== undefined && !Array.isArray(i.holds)) err(`item ${JSON.stringify(i.id)}: holds is a list`);
+  for (const i of data.items) (Array.isArray(i.holds) ? i.holds : []).forEach((h, n) => {
+    const where = `item ${JSON.stringify(i.id)}: holding ${n + 1}`;
+    if (typeof h !== 'object' || h === null) return err(`${where}: it is a weight, and some items or any one of a kind`);
+    if (!(typeof h.weight === 'number' && h.weight > 0)) err(`${where}: its weight is above 0`);
+    if ((h.items === undefined) === (h.any === undefined)) return err(`${where}: it is some items, or any one of a kind`);
+    if (h.items !== undefined) {
+      slotsOf(h.items, where, true);
+      // Opening one says what was inside and, when it is one thing, what that is good for.
+      const one = Array.isArray(h.items) && h.items.length === 1 ? data.items.find(d => d.id === h.items![0]?.item) : undefined;
+      if (one && !one.about?.trim()) warn(`item ${JSON.stringify(one.id)}: ${i.id} may hold it, but it has no about line to say what it is good for`);
+    } else if (!(['resource', 'consumable', 'charm'] as const).includes(h.any as never)) err(`${where}: any is resource, consumable or charm`);
+    else if (!data.items.some(d => d.kind === h.any)) err(`${where}: any ${h.any}, but there is none`);
+  });
+  const p = data.parcels;
+  if (p) {
+    slotsOf(p.welcome, 'parcels: the welcome parcel');
+    if (!Array.isArray(p.week) || p.week.length !== WEEKDAYS.length) err(`parcels: week is a parcel for each of the ${WEEKDAYS.length} days, Monday first`);
+    else p.week.forEach((day, n) => slotsOf(day, `parcels: ${WEEKDAYS[n]}'s parcel`));
+    if (p.allWeek !== undefined) slotsOf(p.allWeek, 'parcels: allWeek');
+  }
+  const night = data.longNight;
+  if (night) {
+    if (!Array.isArray(night.items) || !night.items.length) err('longNight: items lists what grows back faster that night');
+    for (const id of Array.isArray(night.items) ? night.items : []) {
+      if (!ids.has(id)) err(`longNight: there is no item ${id}`);
+      else if (!data.finds.some(f => f.item === id)) warn(`longNight: ${id} grows back faster, but no find grows it`);
+    }
+    if (Array.isArray(night.items) && new Set(night.items).size !== night.items.length) err('longNight: an item is listed twice');
+    // Faster, and not so fast that a find is back before anyone has walked on.
+    if (!(typeof night.regrow === 'number' && night.regrow > 1 && night.regrow <= 4)) err('longNight: regrow is how many times as fast, above 1 and at most 4');
   }
   const byId = new Map(maps.map(m => [m.id, m]));
   const conditionIds = validateConditions(data, byId, err);
@@ -354,6 +784,9 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
   data.finds.forEach((f, n) => {
     const name = `find ${n} (${f.item} in ${f.map})`;
     if (!ids.has(f.item)) err(`${name}: there is no item ${f.item}`);
+    else if (sealed.has(f.item)) err(`${name}: ${f.item} is a sealed thing: ${NO_BAG}`);
+    else if (placed.has(f.item)) err(`${name}: ${f.item}: ${PLACED}`);
+    else if (keepsakes.has(f.item)) err(`${name}: ${f.item} is a keepsake: ${KEPT}`);
     const mapData = byId.get(f.map);
     if (!mapData) return err(`${name}: there is no map ${f.map}`);
     if (!Number.isInteger(f.count) || f.count < 1) err(`${name}: count must be a whole number from 1`);
@@ -368,6 +801,10 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       if (!conditionIds.has(f.condition)) err(`${name}: grows while ${f.condition} is on, which is not a condition`);
       if (f.when !== undefined) err(`${name}: grows with a condition or at a time (when), not both`);
     }
+    if (f.season !== undefined) {
+      if (!(SEASON_ORDER as readonly string[]).includes(f.season)) err(`${name}: grows in ${JSON.stringify(f.season)}, which is not a season (${SEASON_ORDER.join(', ')})`);
+      if (f.when !== undefined || f.condition !== undefined) err(`${name}: grows in a season, or with a condition or at a time (when): one of them`);
+    }
     if (f.around) {
       const { x, y, r } = f.around;
       const room = new TileMap(mapData);
@@ -380,7 +817,40 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     else if (room < f.count * 3) warn(`${name}: only ${room} tiles fit the rule for ${f.count} finds; they have little room to move`);
     return undefined;
   });
+  validateKeepsakes(data, keepsakes, byId, err);
   return out;
+}
+
+/**
+ * Where the keepsakes lie (notes.ts): each keepsake in exactly one place, on a tile somebody can walk
+ * onto and pick it up from (not an exit, which would carry them off), never two on one tile; and the
+ * whole set home makes the bar bigger by a whole number.
+ */
+function validateKeepsakes(data: ItemsData, keepsakes: Set<string>, maps: Map<string, MapData>, err: (message: string) => void): void {
+  const k = data.keepsakes;
+  if (k === undefined) {
+    if (keepsakes.size) err(`keepsakes: ${[...keepsakes].join(', ')} lie nowhere`);
+    return;
+  }
+  if (!(Number.isInteger(k.energy) && k.energy >= 1)) err('keepsakes: energy is a whole number from 1, what the whole set home adds to the bar');
+  if (!Array.isArray(k.places)) return err('keepsakes: places is a list');
+  const placed = new Set<string>(), tiles = new Set<string>();
+  k.places.forEach((p, n) => {
+    const where = `keepsakes: place ${n + 1} (${p?.item})`;
+    if (!keepsakes.has(p?.item)) return err(`${where}: ${p?.item} is not a keepsake`);
+    if (placed.has(p.item)) err(`${where}: ${p.item} lies in two places`);
+    placed.add(p.item);
+    const mapData = maps.get(p.map);
+    if (!mapData) return err(`${where}: there is no map ${p.map}`);
+    const map = new TileMap(mapData);
+    if (!map.walkable(p.x, p.y)) err(`${where}: ${p.x},${p.y} on ${p.map} is not walkable`);
+    else if (map.exitAt(p.x, p.y)) err(`${where}: ${p.x},${p.y} on ${p.map} is an exit`);
+    const tile = `${p.map} ${p.x},${p.y}`;
+    if (tiles.has(tile)) err(`${where}: another keepsake lies on ${tile}`);
+    tiles.add(tile);
+    return undefined;
+  });
+  for (const id of keepsakes) if (!placed.has(id)) err(`keepsakes: ${id} lies nowhere`);
 }
 
 /**
@@ -428,6 +898,20 @@ export function validateStory(story: StoryData, maps: MapData[], items?: ItemsDa
       else if (typeof line !== 'string' || !line.trim()) err(`${name}: ${who}'s hint says nothing`);
     }
   });
+  // What people say once after something done for the first time: which were said is kept a bit each, in this order.
+  const remarkIds = new Set<string>(), remarks = story.remarks ?? [];
+  if (!Array.isArray(remarks)) err('remarks is a list');
+  else remarks.forEach((r, i) => {
+    if (typeof r !== 'object' || r === null) return err(`remark ${i + 1}: a remark has an id, who says it, after what, and the line`);
+    const name = `remark ${i + 1} (${JSON.stringify(r.id)})`;
+    if (!ID.test(r.id ?? '')) err(`${name}: an id is lowercase words joined by hyphens`);
+    if (remarkIds.has(r.id)) err(`${name} is there twice`);
+    remarkIds.add(r.id);
+    if (!people.has(r.who)) err(`${name}: nobody has the id ${String(r.who)}`);
+    if (!MILESTONES.includes(r.after)) err(`${name}: after is one of ${MILESTONES.join(', ')}`);
+    if (typeof r.line !== 'string' || !r.line.trim()) err(`${name} says nothing`);
+  });
+  if (Array.isArray(remarks) && remarks.length > MAX_REMARKS) err(`there are ${remarks.length} remarks, and which were said is kept for at most ${MAX_REMARKS}`);
   return out;
 }
 
@@ -466,4 +950,95 @@ function validateConditions(data: ItemsData, byId: Map<string, MapData>, err: (m
     }
   }
   return ids;
+}
+
+/** A page is short: a few lines in the journal. */
+const PAGE_TITLE_MAX = 32;
+const PAGE_TEXT_MAX = 300;
+/**
+ * Words that say where something is, which a page never does (the world is learned by walking it): the
+ * compass, a count of steps or tiles, a tile's two numbers. "The South Road" is a name, not a way.
+ */
+const WHERE = [/\b(north|south|east|west)(east|west|ern|wards?)?\b/i, /\b\d+ (steps?|tiles?)\b/i, /\b\d{1,2} ?, ?\d{1,2}\b/];
+export const saysWhere = (text: string): boolean => WHERE.some(re => re.test(text.replace(/\bSouth Road\b/g, '')));
+
+/**
+ * content/notebook.json: pages with ids, areas, titles and texts, each opened by what a player picks up,
+ * reads or lives through, about finds, readable things and sights that exist, and never saying where
+ * anything is; blanks with a question, its answer and what fills it in.
+ */
+export function validateNotebook(data: NotebookData, maps: MapData[], items?: ItemsData): Problem[] {
+  const out: Problem[] = [];
+  const err = (message: string) => out.push({ level: 'error', message });
+  const warn = (message: string) => out.push({ level: 'warning', message });
+  if (!Number.isInteger(data.version) || data.version < 1) err('version must be a whole number from 1');
+  if (!Array.isArray(data.pages) || !data.pages.length) {
+    err('there are no pages');
+    return out;
+  }
+  const byId = new Map(maps.map(m => [m.id, m]));
+  const areas = new Set([ANYWHERE, ...maps.filter(m => m.kind !== 'inside').map(m => m.id)]);
+  // What can be picked up: what finds grow, and what a strange object may turn out to be.
+  const found = new Set([...(items?.finds ?? []).map(f => f.item), ...(items?.items ?? []).flatMap(i => (i.reveals ?? []).map(r => r.item))]);
+  // What has an id of its own to be read by: NAPO's desks.
+  const named = new Set<string>();
+  for (const m of maps) for (const o of m.objects) if (o.kind === 'console') named.add(o.id);
+  const event = (e: NotebookEvent, name: string) => {
+    const kinds = typeof e === 'object' && e !== null ? Object.keys(e).filter(k => k !== 'during') : [];
+    if (kinds.length !== 1 || !['find', 'read', 'saw'].includes(kinds[0]!)) return err(`${name}: an event is one of find, read or saw`);
+    if ('during' in e && !('find' in e)) err(`${name}: only a find has a during`);
+    if ('find' in e) {
+      if (!found.has(e.find)) err(`${name}: nothing out there is ${String(e.find)}: no find grows it and nothing turns out to be it`);
+      if (e.during !== undefined && !(DURING as readonly string[]).includes(e.during)) err(`${name}: during is ${DURING.join(' or ')}`);
+    } else if ('read' in e) {
+      if (typeof e.read === 'string') {
+        if (!named.has(e.read)) err(`${name}: nothing to read has the id ${e.read}`);
+      } else {
+        const m = byId.get(e.read?.map);
+        const o = m && readableAt(m, e.read.x, e.read.y);
+        if (!m) err(`${name}: there is no map ${String(e.read?.map)}`);
+        else if (!o) err(`${name}: nothing to read at ${e.read.x},${e.read.y} in ${e.read.map}`);
+        else if (o.x !== e.read.x || o.y !== e.read.y) err(`${name}: the ${o.kind} at ${e.read.x},${e.read.y} in ${e.read.map} is named by its first tile, ${o.x},${o.y}`);
+      }
+    } else if (!(SIGHTS as readonly string[]).includes(e.saw)) err(`${name}: saw is one of ${SIGHTS.join(', ')}`);
+    return undefined;
+  };
+  const words = (text: unknown, name: string, max: number) => {
+    if (typeof text !== 'string' || !text.trim()) return err(`${name} says nothing`);
+    if (text.length > max) err(`${name} is ${text.length} characters: a page is short, ${max} at most`);
+    if (saysWhere(text)) err(`${name} says where something is: "${text}". A page never does`);
+    return undefined;
+  };
+  const pageIds = new Set<string>(), blankIds = new Set<string>();
+  data.pages.forEach((p, i) => {
+    const name = `page ${i + 1} (${JSON.stringify(p?.id)})`;
+    if (typeof p !== 'object' || p === null) return err(`${name}: a page has an id, an area, a title, a text and what opens it`);
+    if (!ID.test(p.id ?? '')) err(`${name}: an id is lowercase words joined by hyphens`);
+    if (pageIds.has(p.id)) err(`${name} is there twice`);
+    pageIds.add(p.id);
+    if (!areas.has(p.area)) err(`${name}: its area is a town or a region (${[...areas].filter(a => a !== ANYWHERE).join(', ')}), or ${ANYWHERE}`);
+    words(p.title, `${name}: its title`, PAGE_TITLE_MAX);
+    words(p.text, `${name}: its text`, PAGE_TEXT_MAX);
+    const opens = p.when === undefined ? [] : opensOn(p);
+    if (!opens.length) err(`${name}: nothing opens it`);
+    opens.forEach((e, k) => event(e, `${name}: what opens it${opens.length > 1 ? ` (${k + 1})` : ''}`));
+    if (p.blanks !== undefined && !Array.isArray(p.blanks)) return err(`${name}: blanks is a list`);
+    (p.blanks ?? []).forEach((b, k) => {
+      const where = `${name}: blank ${k + 1} (${JSON.stringify(b?.id)})`;
+      if (typeof b !== 'object' || b === null) return err(`${where}: a blank has an id, a question, its answer and what fills it in`);
+      if (!ID.test(b.id ?? '')) err(`${where}: an id is lowercase words joined by hyphens`);
+      if (blankIds.has(b.id)) err(`${where} is there twice`);
+      blankIds.add(b.id);
+      words(b.ask, `${where}: its question`, PAGE_TITLE_MAX * 2);
+      if (typeof b.ask === 'string' && !b.ask.trim().endsWith('?')) err(`${where}: its question ends in "?"`);
+      words(b.fill, `${where}: its answer`, PAGE_TEXT_MAX / 2);
+      if (b.when === undefined) return err(`${where}: nothing fills it in`);
+      event(b.when, `${where}: what fills it in`);
+      // It would fill in as the page opens, and never read as a question.
+      if (opens.some(e => JSON.stringify(e) === JSON.stringify(b.when))) warn(`${where}: filled in by what opens its page, so it never reads as a question`);
+      return undefined;
+    });
+    return undefined;
+  });
+  return out;
 }

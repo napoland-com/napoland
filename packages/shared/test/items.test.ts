@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  TileMap, addAllToBag, addToBag, findTiles, halfOf, itemIndex, liveEnds, liveXp, merge, takeFromBag, validateItems,
+  CACHE_NEAR, CACHE_SIZE, STARTER_TOOLS, TileMap, addAllToBag, addToBag, cacheTakes, findTiles, halfOf, itemIndex, liveEnds, liveXp, merge, takeFromBag, takeItem, toolsOf, validateItems,
   type ItemDef, type ItemsData, type MapData,
 } from '../src';
 
@@ -47,6 +47,21 @@ describe('the bag', () => {
     expect(takeFromBag(bag, 1)).toEqual([{ item: 'glowcap', count: 4 }]);
     expect(takeFromBag(bag, 5)).toEqual(bag);
   });
+  it('takes several of one item: from the slot asked for, then from the others that hold it, never more than there is', () => {
+    const bag = [{ item: 'glowcap', count: 4 }, { item: 'thermos', count: 1 }, { item: 'glowcap', count: 10 }, { item: 'glowcap', count: 2 }];
+    expect(takeItem(bag, 0, 3)).toEqual({ bag: [{ item: 'glowcap', count: 1 }, ...bag.slice(1)], taken: 3 });
+    expect(takeItem(bag, 2, 12)).toEqual({ bag: [{ item: 'glowcap', count: 2 }, { item: 'thermos', count: 1 }, { item: 'glowcap', count: 2 }], taken: 12 });
+    expect(takeItem(bag, 3, 99)).toEqual({ bag: [{ item: 'thermos', count: 1 }], taken: 16 });
+    expect(takeItem(bag, 1, 5)).toEqual({ bag: [bag[0], bag[2], bag[3]], taken: 1 });
+    // Nothing asked, or nothing there: nothing taken, and the bag it was given is left alone.
+    expect(takeItem(bag, 0, 0).taken).toBe(0);
+    expect(takeItem(bag, 9, 3)).toEqual({ bag, taken: 0 });
+    expect(bag).toEqual([{ item: 'glowcap', count: 4 }, { item: 'thermos', count: 1 }, { item: 'glowcap', count: 10 }, { item: 'glowcap', count: 2 }]);
+    // A live one keeps when it was picked, whatever is taken around it.
+    const live = [{ item: 'shard', count: 1, since: 5 }, { item: 'shard', count: 1, since: 9 }];
+    expect(takeItem(live, 1, 1)).toEqual({ bag: [{ item: 'shard', count: 1, since: 5 }], taken: 1 });
+  });
+
   it('joins equal items', () => {
     expect(merge([{ item: 'a', count: 2 }, { item: 'b', count: 1 }, { item: 'a', count: 3 }, { item: 'c', count: 0 }])).toEqual([{ item: 'a', count: 5 }, { item: 'b', count: 1 }]);
   });
@@ -91,6 +106,22 @@ describe('where finds grow', () => {
   });
 });
 
+describe('the tools a player owns', () => {
+  const tool = (id: string): ItemDef => ({ id, name: id, kind: 'tool', stack: 1, icon: 'map', text: 'Yours.' });
+  const known = itemIndex({ version: 1, items: [tool('stonebrook-map'), tool('near-woods-map'), tool('south-road-map'), tool('radio'), glowcap], finds: [] });
+
+  it('are the starter tools for someone who never got one of their own, as far as they are tools here', () => {
+    expect(toolsOf(undefined, known)).toEqual([...STARTER_TOOLS]);
+    expect(toolsOf(undefined, itemIndex({ version: 1, items: [tool('near-woods-map')], finds: [] }))).toEqual(['near-woods-map']);
+  });
+
+  it('are the saved list otherwise, in the order they came, without what is no tool here (a newer release\'s, kept in the save)', () => {
+    expect(toolsOf(['near-woods-map', 'radio', 'stonebrook-map'], known)).toEqual(['near-woods-map', 'radio', 'stonebrook-map']);
+    expect(toolsOf(['stonebrook-map', 'bolt-cutters', 'glowcap', 'radio'], known)).toEqual(['stonebrook-map', 'radio']);
+    expect(toolsOf([], known)).toEqual([]);
+  });
+});
+
 describe('live finds', () => {
   const plain: ItemDef = { id: 'shard', name: 'Anomaly shard', kind: 'resource', stack: 5, xp: 12, text: 'Warm.' };
   const live: ItemDef = { id: 'live-shard', name: 'Live shard', kind: 'resource', stack: 1, xp: 12, text: 'Burning.', live: { xp: 40, fresh: 240, fade: 5, into: 'shard' } };
@@ -119,13 +150,73 @@ describe('live finds', () => {
 });
 
 describe('validateItems', () => {
-  it('checks tools: one to a slot, never used up, weightless, charting a real map', () => {
-    const errors = (tool: ItemDef) => validateItems({ version: 1, items: [tool], finds: [] }, [woods()]).filter(p => p.level === 'error').map(p => p.message);
-    const map: ItemDef = { id: 'near-woods-map', name: 'Map', kind: 'tool', stack: 1, chart: 'woods', text: 'Old.' };
+  /** A paper map of the test woods, as the starter tools are. */
+  const mapOf = (id: string): ItemDef => ({ id, name: 'Map', kind: 'tool', stack: 1, chart: 'woods', icon: 'map', text: 'Old.' });
+  /** The two starter tools besides the one a test looks at: once there are tools at all, they must be there. */
+  const starters = [mapOf('stonebrook-map'), mapOf('south-road-map')];
+
+  it('checks tools: one to a slot, never used up, weightless, charting a real map, with an icon for their button', () => {
+    const errors = (tool: ItemDef) => validateItems({ version: 1, items: [tool, ...starters], finds: [] }, [woods()]).filter(p => p.level === 'error').map(p => p.message);
+    const map = mapOf('near-woods-map');
     expect(errors(map)).toEqual([]);
     expect(errors({ ...map, chart: 'nowhere' })).toEqual(['item "near-woods-map": charts nowhere, which is not a map']);
     expect(errors({ ...map, weight: 0.1 })).toEqual(['item "near-woods-map": a tool is never used up, weighs nothing and earns no XP']);
-    expect(errors({ ...map, kind: 'resource' })).toEqual(['item "near-woods-map": only a tool charts a map', 'the starter tool near-woods-map is not a tool']);
+    expect(errors({ ...map, live: { xp: 40, fresh: 60, fade: 5, into: 'stonebrook-map' } })).toContain('item "near-woods-map": a tool is never used up, weighs nothing and earns no XP');
+    expect(errors({ ...map, kind: 'resource' })).toEqual([
+      'item "near-woods-map": only a tool charts a map', 'item "near-woods-map": only a tool has an icon (everything else is drawn by its id)', 'the starter tool near-woods-map is not a tool',
+    ]);
+    // Its button in the bag's header needs a drawing the client has.
+    const noIcon = ['item "near-woods-map": a tool needs an icon for its button in the bag\'s header (map, radio)'];
+    expect(errors({ ...map, icon: undefined })).toEqual(noIcon);
+    expect(errors({ ...map, icon: 'lantern' as never })).toEqual(noIcon);
+    expect(errors({ ...map, icon: 'radio' })).toEqual([]);
+    // A tool needs a name and words, like every item.
+    expect(errors({ ...map, name: ' ', text: '' })).toEqual(['item "near-woods-map" has no name', 'item "near-woods-map" has no text']);
+  });
+
+  it('wants every starter tool once there are tools at all: whoever never got one of their own carries them', () => {
+    const radio: ItemDef = { id: 'radio', name: 'Radio', kind: 'tool', stack: 1, icon: 'map', text: 'It crackles.' };
+    const errors = validateItems({ version: 1, items: [radio], finds: [] }, [woods()]).map(p => p.message);
+    expect(errors).toEqual(['the starter tool stonebrook-map is not an item', 'the starter tool near-woods-map is not an item', 'the starter tool south-road-map is not an item']);
+    expect(validateItems({ version: 1, items: [radio, mapOf('near-woods-map'), ...starters], finds: [] }, [woods()])).toEqual([]);
+  });
+
+  it('lets a recipe and a find give a tool, one at a time, and never pays with a tool or turns something into one', () => {
+    const radio: ItemDef = { id: 'radio', name: 'Radio', kind: 'tool', stack: 1, icon: 'map', text: 'It crackles.' };
+    const strange: ItemDef = { id: 'strange', name: 'Strange object', kind: 'resource', stack: 1, text: 'Odd.', use: { identify: true }, reveals: [{ item: 'shard', count: 1, weight: 1 }] };
+    const base: ItemsData = {
+      version: 1,
+      items: [shard, strange, radio, mapOf('near-woods-map'), ...starters],
+      finds: [{ item: 'radio', map: 'woods', count: 1, respawn: [60, 120] }],
+      recipes: [{ id: 'radio', make: 'radio', needs: [{ item: 'shard', count: 2 }] }],
+      mend: { sturdy: [{ item: 'shard', count: 1 }] },
+    };
+    const errors = (data: Partial<ItemsData>) => validateItems({ ...base, ...data }, [woods()]).filter(p => p.level === 'error').map(p => p.message);
+    expect(errors({})).toEqual([]);
+    expect(errors({ recipes: [{ id: 'radio', make: 'radio', count: 1, needs: [{ item: 'shard', count: 2 }] }] })).toEqual([]);
+    expect(errors({ recipes: [{ id: 'radio', make: 'radio', count: 2, needs: [{ item: 'shard', count: 2 }] }] })).toEqual(['recipe "radio" makes radio, a tool, which is yours once: count is 1 or left out']);
+    expect(errors({ recipes: [{ id: 'shards', make: 'shard', needs: [{ item: 'radio', count: 1 }] }] })).toEqual(['recipe "shards" needs radio, a tool: tools are never used up']);
+    expect(errors({ mend: { sturdy: [{ item: 'near-woods-map', count: 1 }] } })).toEqual(['mend: sturdy needs near-woods-map, a tool: tools are never used up']);
+    expect(errors({ items: [shard, { ...strange, reveals: [{ item: 'radio', count: 1, weight: 1 }] }, radio, mapOf('near-woods-map'), ...starters] }))
+      .toEqual(['item "strange" reveals radio, a tool: tools are made at the workbench or found']);
+  });
+
+  it('checks what a tool listens for: only a tool listens, loud nearer than faint, for items that lie out there, always or on aurora nights', () => {
+    const senses = { finds: [{ item: 'shard' }, { item: 'glowcap', when: 'aurora' as const }], loud: 6, faint: 15 };
+    const radio: ItemDef = { id: 'radio', name: 'Radio', kind: 'tool', stack: 1, icon: 'radio', text: 'It crackles.', senses };
+    const finds: ItemsData['finds'] = [{ item: 'shard', map: 'woods', count: 1, respawn: [60, 120] }, { item: 'glowcap', map: 'woods', count: 1, respawn: [60, 120] }];
+    const problems = (r: Partial<ItemDef>, data: Partial<ItemsData> = {}) =>
+      validateItems({ version: 1, items: [shard, glowcap, thermos, { ...radio, ...r }, mapOf('near-woods-map'), ...starters], finds, ...data }, [woods()]).map(p => `${p.level}: ${p.message}`);
+    expect(problems({})).toEqual([]);
+    const reach = ['error: item "radio": it hears loud within some tiles above 0, and faint within more'];
+    expect(problems({ senses: { ...senses, faint: 6 } })).toEqual(reach);
+    expect(problems({ senses: { ...senses, loud: 0 } })).toEqual(reach);
+    expect(problems({ senses: { ...senses, finds: [] } })).toEqual(['error: item "radio": it listens for nothing']);
+    expect(problems({ senses: { ...senses, finds: [{ item: 'shard', when: 'storm' as never }] } })).toEqual(['error: item "radio": it hears shard always, or only on aurora nights (when: aurora)']);
+    expect(problems({ senses: { ...senses, finds: [{ item: 'ghost' }] } })).toEqual(['error: item "radio" listens for ghost, which is not an item']);
+    // Something that never lies out there can be listened for, but it will never be heard.
+    expect(problems({ senses: { ...senses, finds: [{ item: 'thermos' }] } })).toEqual(['warning: item "radio" listens for thermos, which grows nowhere']);
+    expect(problems({ kind: 'resource', icon: undefined })).toContain('error: item "radio": only a tool listens (senses)');
   });
 
   const good: ItemsData = {
@@ -156,5 +247,18 @@ describe('validateItems', () => {
     expect(msgs).toMatch(/there is no map nowhere/);
     expect(msgs).toMatch(/respawn is \[shortest, longest\]/);
     expect(msgs).toMatch(/warning: find 3 .*only 3 tiles fit the rule for 2 finds/);
+  });
+});
+
+describe('a crate for whoever comes next', () => {
+  it('takes what you find and make, never gear or a tool; six things at most', () => {
+    const coat: ItemDef = { id: 'coat', name: 'Coat', kind: 'gear', stack: 1, slot: 'shirt', text: 'Warm.' };
+    const chart: ItemDef = { id: 'woods-map', name: 'Map of the woods', kind: 'tool', stack: 1, text: 'Folded.' };
+    const pebble: ItemDef = { id: 'pebble', name: 'Warm pebble', kind: 'charm', stack: 1, text: 'Warm.', charm: { wetting: 0.6 } };
+    const lockbox: ItemDef = { id: 'lockbox', name: 'NAPO lockbox', kind: 'sealed', stack: 1, text: 'Locked.', holds: [{ weight: 1, items: [{ item: 'glowcap', count: 2 }] }] };
+    expect([glowcap, thermos, pebble].map(cacheTakes)).toEqual([true, true, true]);
+    // A piece of gear carries its own condition and quirk, a tool is yours for good, and a lockbox is opened at the chest.
+    expect([coat, chart, lockbox, undefined].map(cacheTakes)).toEqual([false, false, false, false]);
+    expect([CACHE_SIZE, CACHE_NEAR]).toEqual([6, 3]);
   });
 });

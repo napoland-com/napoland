@@ -49,10 +49,29 @@ function logs(g: THREE.Object3D, z: number, embers: THREE.Material, seed: number
  * sooty mouth with the fire in it, a mantel with a jar and a box, and a slab in front.
  */
 export function hearthModel(x: number, y: number, embers: THREE.Material): { model: THREE.Group; spot: Omit<FireSpot, 'ph'> } {
+  const g = hearthStones(x, y), fire = 0.34;
+  logs(g, fire, embers, x * 7 + y);
+  return { model: g, spot: { x: x + 0.5, y: 0.06, z: y + fire, hearth: true } };
+}
+
+/** A hearth nobody lights any more: the same stones, cold ash in the mouth and the charred ends of the last fire. */
+export function coldHearthModel(x: number, y: number): THREE.Group {
+  const g = hearthStones(x, y);
+  g.add(box(0.44, 0.04, 0.2, '#57534e', 0, 0.02, 0.3, false), box(0.3, 0.05, 0.12, '#6b6762', -0.05, 0.03, 0.26, false));
+  for (const [yaw, dz] of [[0.3, 0.28], [-0.5, 0.32]] as const) {
+    const l = part(flat(new THREE.CylinderGeometry(0.04, 0.045, 0.3, 6)), '#1f1a17', 0, 0.06, dz, 0.012);
+    l.rotation.set(0, yaw, Math.PI / 2);
+    g.add(l);
+  }
+  return g;
+}
+
+/** A hearth's stones, mantel and slab, without its fire: what a lit hearth and a cold one share. */
+function hearthStones(x: number, y: number): THREE.Group {
   const g = pivot(x + 0.5, 0, y);
   // The camera looks down steeply, so the mouth is tall, the mantel high and the fire at the front
   // of the mouth: otherwise the lintel and the mantel hide the flames.
-  const width = 0.96, depth = 0.42, mouthW = 0.58, mouthH = 0.68, back = 0.14, jamb = (width - mouthW) / 2, stone = '#66615b', fire = 0.34;
+  const width = 0.96, depth = 0.42, mouthW = 0.58, mouthH = 0.68, back = 0.14, jamb = (width - mouthW) / 2, stone = '#66615b';
   g.add(box(width, WALL_TALL - mouthH, depth, stone, 0, mouthH + (WALL_TALL - mouthH) / 2, depth / 2));
   for (const s of [-1, 1]) g.add(box(jamb, mouthH, depth, stone, s * (mouthW + jamb) / 2, mouthH / 2, depth / 2));
   g.add(box(mouthW, mouthH, back, '#15100d', 0, mouthH / 2, back / 2, false));
@@ -71,8 +90,7 @@ export function hearthModel(x: number, y: number, embers: THREE.Material): { mod
   g.add(part(flat(new THREE.CylinderGeometry(0.05, 0.05, 0.13, 7)), '#7f9383', -0.36, 1.1, depth + 0.03, 0.012));
   g.add(box(0.13, 0.16, 0.09, '#6e5a3e', 0.33, 1.115, depth + 0.03, 0.012));
   g.add(box(1.04, 0.05, 0.3, '#56514b', 0, 0.025, depth + 0.15, 0.015));
-  logs(g, fire, embers, x * 7 + y);
-  return { model: g, spot: { x: x + 0.5, y: 0.06, z: y + fire, hearth: true } };
+  return g;
 }
 
 /** A fire in the open on tile x,y: a ring of stones around crossed logs. */

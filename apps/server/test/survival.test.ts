@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, STEP_MS, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, findTiles, weatherAt,
+  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, STEP_MS, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, findTiles, fireTakes, hidden, weatherAt,
   type ConditionDef, type ConditionsData, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather,
 } from '@napoland/shared';
 import { loadMaps } from '../src/content';
@@ -19,7 +19,7 @@ import { EMBERS, FIRE_LOW_S, FIRE_MAX_S } from '../src/fires';
 import type { MarkRecord, PlayerRecord } from '../src/storage';
 import {
   HITCH_STEPS, MARKS_PER_PLAYER, MARK_LIFETIME_MS, SKULKER_CATCH, SKULKER_CHASE_MS, SKULKER_STEP_MS, STONE_NEED, STONE_SHARD_S, TRAIL_STEPS, WATCHER_HUNT, WATCHER_HUNT_LIVE, WATCHER_STEP_MS, WATCHER_TOUCH, World, colorFor, faces,
-  type Outgoing, type WorldOptions,
+  pathStep, type Outgoing, type WorldOptions,
 } from '../src/world';
 import { fixtureMaps, houseData, townData } from './fixtures';
 
@@ -34,6 +34,11 @@ function fieldData(h = 12, more: Partial<MapData> = {}): MapData {
     objects: [],
     ...more,
   };
+}
+
+/** The map with tall grass on the tiles `at`. */
+function tallAt(d: MapData, at: Array<[number, number]>): MapData {
+  return { ...d, tiles: d.tiles.map((r, y) => [...r].map((c, x) => (at.some(([tx, ty]) => tx === x && ty === y) ? 'h' : c)).join('')) };
 }
 
 /** The fixture town, with the Old Stone at 3,3 and a notice board at 0,4. */
@@ -52,6 +57,7 @@ const ITEMS: ItemsData = {
     { id: 'shard', name: 'Shard', kind: 'resource', stack: 5, text: 'Warm.', charge: 1 },
     { id: 'odd', name: 'Strange object', kind: 'resource', stack: 1, text: 'What is it?', use: { identify: true }, reveals: [{ item: 'feather', count: 1, weight: 1 }] },
     { id: 'feather', name: 'Feather', kind: 'charm', stack: 1, text: 'Light.', charm: { load: 0.5 } },
+    { id: 'coat', name: 'Coat', kind: 'gear', stack: 1, text: 'Warm.', slot: 'shirt', tier: 'sturdy', weight: 1 },
   ],
   finds: [],
 };
@@ -114,11 +120,52 @@ describe('fires out there', () => {
     expect([...to(w.drain(), 'a'), ...[]].filter(m => m.t === 'refused')).toEqual([{ t: 'refused', action: 'feed', reason: 'not_fuel' }]);
     w.feed('a', 4, 4, 0, out + 5000);
     const heard = w.drain();
-    expect(onMap(heard, 'field')).toContainEqual({ t: 'fire', fire: { x: 4, y: 4, left: 120 } });
+    // With who fed it: whoever warms at it later may thank them.
+    expect(onMap(heard, 'field')).toContainEqual({ t: 'fire', fire: { x: 4, y: 4, left: 120, fed: [{ id: 'a', name: 'A' }] } });
     expect(of(to(heard, 'a'), 'bag').at(-1)).toEqual({ t: 'bag', bag: [{ item: 'twig', count: 1 }, { item: 'rock', count: 1 }] });
     // Lit again, it warms whoever stands by it (low: 120 s is under FIRE_LOW_S).
     expect(lastEnergy(heard, 'a')?.energy.rate).toBe(r3(REFILL_PER_SECOND * EMBERS));
     expect(w.get('a')!.stats).toEqual({ fed: 1 });
+  });
+
+  it('take as many as asked, one by one while not full, from every slot of it; the player hears how many went in and how long it burns', () => {
+    // rng 0: it starts half full. At 1 s, 899 s are left: twigs burn 120 s, so eight go in (the eighth tops it up).
+    expect(fireTakes(899, 120)).toBe(8);
+    const w = world(withFire(), 'overcast', {}, rec('a', 'field', 4, 5, 'up', { bag: [{ item: 'twig', count: 5 }, { item: 'rock', count: 1 }, { item: 'twig', count: 10 }] }));
+    w.feed('a', 4, 4, 0, 1000, 20);
+    const heard = w.drain();
+    expect(onMap(heard, 'field')).toContainEqual({ t: 'fire', fire: { x: 4, y: 4, left: FIRE_MAX_S, fed: [{ id: 'a', name: 'A' }] } });
+    // What it did comes last, after everything it changed.
+    expect(to(heard, 'a').at(-1)).toEqual({ t: 'did', did: { kind: 'fire', item: 'twig', count: 8, left: FIRE_MAX_S } });
+    // From the slot asked for first, then from the other one of twigs; each counts for the fire keeper.
+    expect(w.get('a')!.bag).toEqual([{ item: 'rock', count: 1 }, { item: 'twig', count: 7 }]);
+    expect(w.get('a')!.stats).toEqual({ fed: 8 });
+    // Full: none go in, and nothing is spent.
+    w.feed('a', 4, 4, 1, 1000, 3);
+    expect(to(w.drain(), 'a')).toEqual([{ t: 'refused', action: 'feed', reason: 'fire_full' }]);
+    expect(w.get('a')!.bag).toEqual([{ item: 'rock', count: 1 }, { item: 'twig', count: 7 }]);
+  });
+
+  it('say so when one that went out catches again, and take no more than you carry', () => {
+    const w = world(withFire(), 'overcast', {}, rec('a', 'field', 4, 5, 'up', { bag: [{ item: 'twig', count: 2 }] }));
+    const out = (FIRE_MAX_S / 2 + 10) * 1000;
+    w.tick(out);
+    w.drain();
+    w.feed('a', 4, 4, 0, out, 5);
+    expect(of(to(w.drain(), 'a'), 'did')).toEqual([{ t: 'did', did: { kind: 'fire', item: 'twig', count: 2, left: 240, lit: true } }]);
+    expect(w.get('a')!.bag).toEqual([]);
+  });
+
+  it('remember the last three who fed them, the latest first, each once, until a restart', () => {
+    const twigs = { bag: [{ item: 'twig', count: 3 }] };
+    const w = world(withFire(), 'overcast', {}, ...['a', 'b', 'c', 'd'].map(id => rec(id, 'field', 4, 5, 'up', twigs)));
+    // Out, so each twig goes in.
+    const t = (FIRE_MAX_S / 2 + 10) * 1000;
+    for (const id of ['a', 'b', 'a', 'c', 'd']) w.feed(id, 4, 4, 0, t);
+    w.drain();
+    expect(w.scene('field', t).fires).toEqual([{ x: 4, y: 4, left: 5 * 120, fed: [{ id: 'd', name: 'D' }, { id: 'c', name: 'C' }, { id: 'a', name: 'A' }] }]);
+    // A fire in town is fed by nobody: it tells no names.
+    expect(w.scene('house', t).fires).toEqual([{ x: 2, y: 1, left: null }]);
   });
 
   it('never needs feeding in town, and never burns past full', () => {
@@ -219,6 +266,25 @@ describe('surges', () => {
     expect(lastEnergy(later, 'near')?.energy.rate).toBe(r3(SURGE_DRAIN * energyRate(field, 4, 9, 'overcast')));
     // The one in the light drains as ever (repeated every few seconds, the same rate).
     for (const m of of(to(later, 'lit'), 'energy')) expect(m.energy.rate).toBe(r3(energyRate(field, 1, 3, 'overcast')));
+  });
+
+  it('the Old Stone takes as many shards as asked, from every slot of them; the giver hears how it stands, and that it woke', () => {
+    const fives = Array.from({ length: 4 }, () => ({ item: 'shard', count: 5 }));
+    const w = world(data(), 'overcast', {}, rec('s', 'town', 3, 4, 'up', { bag: [...fives, { item: 'twig', count: 1 }, { item: 'shard', count: 2 }] }), rec('d', 'field', 8, 1));
+    w.feed('s', 3, 3, 0, 1000, 7);
+    const first = w.drain();
+    expect(to(first, 's').at(-1)).toEqual({ t: 'did', did: { kind: 'stone', item: 'shard', count: 7, stone: { charge: 7, need: STONE_NEED, awake: false, left: 0 } } });
+    expect(of(to(first, 'd'), 'stone')).toEqual([{ t: 'stone', stone: { charge: 7, need: STONE_NEED, awake: false, left: 0 } }]);
+    expect(w.get('s')!.bag).toEqual([{ item: 'shard', count: 3 }, { item: 'shard', count: 5 }, { item: 'shard', count: 5 }, { item: 'twig', count: 1 }, { item: 'shard', count: 2 }]);
+    // More than it needs: it takes them all, and wakes; awake, it takes more and stays awake longer.
+    w.feed('s', 3, 3, 0, 1000, 14);
+    expect(to(w.drain(), 's').at(-1)).toEqual({ t: 'did', did: { kind: 'stone', item: 'shard', count: 14, stone: { charge: 21, need: STONE_NEED, awake: true, left: 21 * STONE_SHARD_S }, woke: true } });
+    w.feed('s', 3, 3, 1, 1000, 30);
+    expect(to(w.drain(), 's').at(-1)).toEqual({ t: 'did', did: { kind: 'stone', item: 'shard', count: 1, stone: { charge: 22, need: STONE_NEED, awake: true, left: 22 * STONE_SHARD_S } } });
+    expect(w.get('s')!.bag).toEqual([{ item: 'twig', count: 1 }]);
+    // What does not wake it is refused, and stays.
+    w.feed('s', 3, 3, 0, 1000, 1);
+    expect(to(w.drain(), 's')).toEqual([{ t: 'refused', action: 'feed', reason: 'not_fuel' }]);
   });
 
   it('is gentler while the Old Stone is awake; it wakes on enough shards and sleeps when they burn away', () => {
@@ -349,6 +415,18 @@ describe('watchers', () => {
     expect(w.scene('field', t * WATCHER_STEP_MS).creatures).toEqual([]);
   });
 
+  it('may take a piece of gear you carry: it is gone, like anything a watcher takes', () => {
+    const w = world(data(), 'overcast', {}, rec('a', 'field', 4, 6, 'down', { bag: [{ item: 'coat', count: 1, piece: { cond: 0.5 } }] }));
+    let touched: Extract<ServerMsg, { t: 'touched' }> | undefined;
+    for (let t = 0; t < 40 && !touched; t++) {
+      w.tick(t * WATCHER_STEP_MS);
+      touched = of(to(w.drain(), 'a'), 'touched')[0];
+    }
+    expect(touched).toEqual({ t: 'touched', by: 'watcher', lost: 'coat' });
+    expect(w.get('a')).toMatchObject({ bag: [], gear: {} });
+    expect(w.takeWrites().drops).toEqual([]);
+  });
+
   it('keep off a flare and slink away from one lit near them; a friend facing it holds it too', () => {
     // It wakes at 1,1: 8 steps from a, 11 from b, who faces up toward it.
     const w = world(data(), 'overcast', {}, rec('a', 'field', 4, 6, 'down', { bag: [{ item: 'flare', count: 1 }] }), rec('b', 'field', 5, 8, 'up'));
@@ -362,9 +440,42 @@ describe('watchers', () => {
     w.tick(7 * WATCHER_STEP_MS);
     expect(of(onMap(w.drain(), 'field'), 'creature').length).toBeGreaterThan(0);
     w.use('a', 0, 8 * WATCHER_STEP_MS);
-    const lit = onMap(w.drain(), 'field');
+    const out = w.drain(), lit = onMap(out, 'field');
     expect(lit).toContainEqual({ t: 'flare', flare: { x: 4, y: 6, left: 30 } });
     expect(lit).toContainEqual({ t: 'creatureGone', id: 1 });
+    expect(of(to(out, 'a'), 'did')).toEqual([{ t: 'did', did: { kind: 'used', item: 'flare', flare: 30 } }]);
+  });
+
+  it('never come for someone crouched in tall grass, however long their back is turned; out of it, they come', () => {
+    const w = world(tallAt(data(), [[3, 6], [4, 6]]), 'overcast', {}, rec('a', 'field', 4, 6, 'down'));
+    w.tick(0);
+    expect(onMap(w.drain(), 'field')).toContainEqual({ t: 'creature', creature: { id: 1, kind: 'watcher', x: 1, y: 1, dir: 'down' } });
+    for (let t = 1; t < 20; t++) w.tick(t * WATCHER_STEP_MS);
+    expect(of(onMap(w.drain(), 'field'), 'creature')).toEqual([]);
+    // 5,6 is grass: a is out in the open again, back still turned.
+    w.step('a', 'right', 1, 20 * WATCHER_STEP_MS);
+    w.tick(21 * WATCHER_STEP_MS);
+    expect(of(onMap(w.drain(), 'field'), 'creature')).toHaveLength(1);
+  });
+
+  it('never step into tall grass: they go round a band of it by its gap, and find no way where it closes the way', () => {
+    // Tall grass across row 4 but for its right end, 8,4. The watcher wakes at 1,1, above it; a stands below it.
+    const d = tallAt(data(), [1, 2, 3, 4, 5, 6, 7].map((x): [number, number] => [x, 4])), map = new TileMap(d);
+    const w = world(d, 'overcast', {}, rec('a', 'field', 4, 6, 'down', { bag: [{ item: 'rock', count: 1 }] }));
+    const seen: Array<{ x: number; y: number }> = [];
+    let touched = false;
+    for (let t = 0; t < 60 && !touched; t++) {
+      w.tick(t * WATCHER_STEP_MS);
+      const out = w.drain();
+      seen.push(...of(onMap(out, 'field'), 'creature').map(m => m.creature));
+      touched = of(to(out, 'a'), 'touched').length > 0;
+    }
+    expect(touched).toBe(true);
+    expect(seen).toContainEqual(expect.objectContaining({ x: 8, y: 4 }));
+    expect(seen.filter(c => hidden(map, c.x, c.y))).toEqual([]);
+    const closed = new TileMap(tallAt(d, [[8, 4]]));
+    expect(pathStep(closed, 1, 1, 4, 6, (x, y) => closed.creatureMayStand(x, y))).toBeNull();
+    expect(pathStep(map, 1, 1, 4, 6, (x, y) => map.creatureMayStand(x, y))).not.toBeNull();
   });
 
   it('look where you face: anything on that side of you', () => {
@@ -549,9 +660,20 @@ describe('skulkers', () => {
     expect(creatures(run(w, 1650, 50_000))).toEqual([]);
   });
 
+  it('knock a piece of gear you carry into your pile as it is, to pick up again so', () => {
+    const piece = { cond: 0.4, quirk: 'hum' as const };
+    const w = night(rec('a', 'field', 4, 6, 'up', { bag: [{ item: 'coat', count: 1, piece }] }));
+    const out = run(w, 50, 1500);
+    expect(of(to(out, 'a'), 'touched')).toEqual([{ t: 'touched', by: 'skulker', lost: 'coat' }]);
+    expect(w.takeWrites().drops).toMatchObject([{ owner: 'a', drop: { items: [{ item: 'coat', count: 1, piece }] } }]);
+    w.pick('a', 4, 6, 1600);
+    expect(w.get('a')!.bag).toEqual([{ item: 'coat', count: 1, piece }]);
+  });
+
   it.each([
     ['a street light', 13, { objects: [{ kind: 'lamp', x: 4, y: 14 }] as MapObject[] }],
     ['a burning fire', 13, { objects: [{ kind: 'fireplace', x: 4, y: 14 }] as MapObject[] }],
+    ['tall grass', 13, { tiles: fieldData(40).tiles.map((r, y) => (y === 13 ? 'thhhhhhhht' : r)) }],
     ['the end of its range', 36, {}],
   ])('give up when you reach %s, and never follow you there', (_, stop, more) => {
     const d = data(40, more), map = new TileMap(d);
@@ -562,7 +684,33 @@ describe('skulkers', () => {
     const seen = creatures(out);
     expect(seen[0]).toMatchObject({ chasing: 'a' });
     expect(seen.find(c => !c.chasing)).toBeDefined();
-    for (const c of seen) expect(map.lit(c.x, c.y) || map.warm(c.x, c.y) || map.homeSteps(c.x, c.y) < 8).toBe(false);
+    // Never in the light, by a fire, in tall grass or on an exit, and never out of its range.
+    for (const c of seen) expect(!map.creatureMayStand(c.x, c.y) || map.homeSteps(c.x, c.y) < 8).toBe(false);
+  });
+
+  it('never notice someone in tall grass, standing near their ferns or walking by', () => {
+    const d = data(40, { tiles: fieldData(40).tiles.map((r, y) => (y === 6 || y === 9 || y === 10 ? 'thhhhhhhht' : r)) });
+    // Standing 3 away would be seen, and walking 6 away heard, were it not for the grass.
+    expect(creatures(run(night(rec('a', 'field', 4, 6), d), 50, 3000))).toEqual([]);
+    const w = night(rec('a', 'field', 3, 9), d);
+    expect(creatures(run(w, 50, 3000, t => (t === 800 ? 'right' : t === 1000 ? 'down' : undefined)))).toEqual([]);
+    expect(w.get('a')).toMatchObject({ x: 4, y: 10 });
+  });
+
+  it('give up the moment their prey crouches in tall grass, and go back to their lair', () => {
+    const d = data(40, { tiles: fieldData(40).tiles.map((r, y) => (y === 12 ? 'thhhhhhhht' : r)) });
+    const w = night(rec('a', 'field', 3, 9), d);
+    // Heard at 800, then down into the grass: 4,12 at 1400, and still there.
+    const out = run(w, 50, 8000, noticed(() => w.get('a')!.y < 12));
+    expect(w.get('a')).toMatchObject({ x: 4, y: 12 });
+    expect(of(to(out, 'a'), 'touched')).toEqual([]);
+    const seen = creatures(out), quit = seen.findIndex(c => !c.chasing);
+    expect(seen[0]).toMatchObject({ chasing: 'a' });
+    expect(quit).toBeGreaterThan(0);
+    // It gave up within a step of its own after a reached the grass, then turned back uphill, to 4,3.
+    expect(quit).toBeLessThanOrEqual(3);
+    expect(seen.slice(quit + 1).every(c => c.dir === 'up')).toBe(true);
+    expect(seen.at(-1)).toMatchObject({ x: 4, y: 3 });
   });
 
   it(`give up after ${SKULKER_CHASE_MS / 1000} seconds of chasing, and go back to its lair`, () => {
@@ -601,6 +749,29 @@ describe('skulkers', () => {
   });
 });
 
+describe('tall grass', () => {
+  it('hides you from creatures only: you tire and get wet in it as anywhere, a hitchhiker still clings, a flash still finds you', () => {
+    // Deep enough for a hitchhiker: tall grass up the column x = 3, a in it and b on the grass as far from home.
+    const h = HITCH_STEPS + 4;
+    const d = tallAt(fieldData(h, { flashes: { every: 30, steps: [3, 999] } }), Array.from({ length: h - 2 }, (_, k): [number, number] => [3, k + 1]));
+    const w = world(d, 'rain', {}, rec('a', 'field', 3, 1), rec('b', 'field', 5, 1));
+    for (let t = 0; t <= 20_000; t += 1000) w.tick(t);
+    const a = w.get('a')!, b = w.get('b')!;
+    expect(a.energy).toBeLessThan(ENERGY_MAX);
+    expect(a.energy).toBeCloseTo(b.energy, 6);
+    expect(a.wet).toBeGreaterThan(0);
+    expect(a.wet).toBeCloseTo(b.wet!, 6);
+    w.drain();
+    w.setWeather('night', 21_000);
+    w.tick(22_000);
+    expect(of(to(w.drain(), 'a'), 'hitch')).toEqual([{ t: 'hitch', on: true }]);
+    // The first flash starts near whoever is out there: with these dice, a, in the grass.
+    w.tick(31_000);
+    const [flash] = of(onMap(w.drain(), 'field'), 'flash');
+    expect(Math.max(Math.abs(flash!.flash.x - 3), Math.abs(flash!.flash.y - 1))).toBeLessThanOrEqual(2);
+  });
+});
+
 describe('hitchhikers', () => {
   // Tall enough to be HITCH_STEPS from home: 4,1 is h - 2 steps away.
   const data = () => fieldData(HITCH_STEPS + 4, { objects: [{ kind: 'lamp', x: 7, y: 2 }] });
@@ -631,11 +802,13 @@ describe('marks', () => {
   it('paint an arrow where you stand, pointing where you face, for everyone on the map, for a day', () => {
     const w = world(fieldData(), 'overcast', {}, rec('a', 'field', 3, 5, 'left', { bag: [{ item: 'cap', count: 3 }] }), rec('b', 'field', 6, 6));
     w.use('a', 0, 1000);
-    const mark = { id: 1, x: 3, y: 5, dir: 'left', color: colorFor('a'), name: 'A', until: 1000 + MARK_LIFETIME_MS };
+    const mark = { id: 1, x: 3, y: 5, dir: 'left', color: colorFor('a'), owner: 'a', name: 'A', until: 1000 + MARK_LIFETIME_MS };
     const heard = w.drain();
     expect(onMap(heard, 'field')).toContainEqual({ t: 'mark', mark });
     expect(of(to(heard, 'a'), 'bag').at(-1)).toEqual({ t: 'bag', bag: [{ item: 'cap', count: 2 }] });
-    expect(w.takeWrites().marks).toEqual([{ id: 1, mark: { id: 1, owner: 'a', name: 'A', color: colorFor('a'), map: 'field', x: 3, y: 5, dir: 'left', placedAt: 1000 } }]);
+    // The painter hears which way it points and how long everyone sees it.
+    expect(of(to(heard, 'a'), 'did')).toEqual([{ t: 'did', did: { kind: 'used', item: 'cap', mark: { dir: 'left', left: MARK_LIFETIME_MS / 1000 } } }]);
+    expect(w.takeWrites().marks).toEqual([{ id: 1, mark: { id: 1, owner: 'a', name: 'A', color: colorFor('a'), map: 'field', x: 3, y: 5, dir: 'left', placedAt: 1000, until: 1000 + MARK_LIFETIME_MS } }]);
     // One per tile.
     w.use('a', 0, 2000);
     expect(of(to(w.drain(), 'a'), 'refused')).toEqual([{ t: 'refused', action: 'use', reason: 'marked' }]);
@@ -657,6 +830,21 @@ describe('marks', () => {
     expect(marks.map(m => m.x)).toEqual([2, 3, 4, 5, 6, 7]);
   });
 
+  it('last longer for a good neighbor: two days at rank 1, a week at rank 5', () => {
+    const w = world(fieldData(), 'overcast', {}, rec('a', 'field', 3, 5, 'up', { bag: [{ item: 'cap', count: 3 }], stats: { thanked: 25 } }), rec('e', 'field', 5, 5, 'up', { bag: [{ item: 'cap', count: 1 }], stats: { thanked: 1_200 } }));
+    w.use('a', 0, 1000);
+    w.use('e', 0, 1000);
+    const heard = w.drain();
+    expect(of(to(heard, 'a'), 'did')).toEqual([{ t: 'did', did: { kind: 'used', item: 'cap', mark: { dir: 'up', left: 2 * MARK_LIFETIME_MS / 1000 } } }]);
+    expect(of(to(heard, 'e'), 'did')).toEqual([{ t: 'did', did: { kind: 'used', item: 'cap', mark: { dir: 'up', left: 7 * MARK_LIFETIME_MS / 1000 } } }]);
+    expect(w.scene('field', 1000).marks.map(m => [m.owner, m.until])).toEqual([['a', 1000 + 2 * MARK_LIFETIME_MS], ['e', 1000 + 7 * MARK_LIFETIME_MS]]);
+    // A day on, both still show; two days on, only the week's.
+    w.tick(1000 + MARK_LIFETIME_MS);
+    expect(w.scene('field', 1000 + MARK_LIFETIME_MS).marks).toHaveLength(2);
+    w.tick(1000 + 2 * MARK_LIFETIME_MS);
+    expect(w.scene('field', 1000 + 2 * MARK_LIFETIME_MS).marks.map(m => m.owner)).toEqual(['e']);
+  });
+
   it('come back after a restart, and new ones get new ids', () => {
     const saved: MarkRecord = { id: 41, owner: 'z', name: 'Z', color: '#fff', map: 'field', x: 2, y: 2, dir: 'up', placedAt: 0 };
     const w = world(fieldData(), 'overcast', { marks: [saved, { ...saved, id: 42, map: 'gone' }] }, rec('a', 'field', 5, 5, 'up', { bag: [{ item: 'cap', count: 1 }] }));
@@ -673,8 +861,10 @@ describe('strange objects, charms and feats', () => {
     expect(of(to(w.drain(), 'out'), 'refused')).toEqual([{ t: 'refused', action: 'use', reason: 'not_here' }]);
     w.use('in', 0, 0);
     const heard = to(w.drain(), 'in');
-    expect(of(heard, 'got')).toEqual([{ t: 'got', items: [{ item: 'feather', count: 1 }], from: 'identify' }]);
+    // What it turned out to be is said once, in the text box: nothing floats as picked up.
+    expect(of(heard, 'got')).toEqual([]);
     expect(of(heard, 'bag').at(-1)).toEqual({ t: 'bag', bag: [{ item: 'feather', count: 1 }] });
+    expect(heard.at(-1)).toEqual({ t: 'did', did: { kind: 'used', item: 'odd', into: { item: 'feather', count: 1 } } });
   });
 
   it('earn a feat for good once its count is reached, and tell the player', () => {
@@ -714,6 +904,10 @@ describe('echoes and the notice board', () => {
     const lines = of(to(w.drain(), 'a'), 'board')[0]!.lines;
     expect(lines).toEqual([
       'Rain.',
+      // The first week after the epoch is a spring's, four days of it left (sky.ts, seasons).
+      'Spring, for about 4 days more: longer rain, and more glowcaps out there. Summer comes next.',
+      // The first Long Night is on the Saturday, at 19:12 UTC; this world grows nothing faster on it.
+      'The Long Night comes in about 3 days: an aurora from dawn to dawn.',
       expect.stringMatching(/^The Field: /),
       'Gone out: the campfire in the Field. Bring something that burns.',
       'Nobody collapsed in the last hour.',
@@ -889,8 +1083,11 @@ describe('what the woods are like today', () => {
     const [week, next] = view.week === 'copper' ? ['copper week. Wire by every pole, all week.', 'quiet woods'] : ['quiet woods. The watchers sleep all week.', 'copper week'];
     const w = world(fieldData(12), 'rain', { items: { ...ITEMS, conditions }, epochOffset: now }, rec('a', 'town', 0, 5));
     w.board('a', 0, 4, 0);
-    expect(of(to(w.drain(), 'a'), 'board')[0]!.lines.slice(0, 4)).toEqual([
+    expect(of(to(w.drain(), 'a'), 'board')[0]!.lines.slice(0, 6)).toEqual([
       'Rain.',
+      // Day 20000 is in a winter's week, with two days of it left; nothing freezes in the Field.
+      'Winter, for about 2 days more: colder out there, and snow instead of rain. Spring comes next.',
+      'The Long Night comes in about 27 hours: an aurora from dawn to dawn.',
       'Today in the Field: thick fog.',
       'You will not see far.',
       `This week: ${week} Next week: ${next}.`,

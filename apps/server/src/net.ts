@@ -1,10 +1,15 @@
 /**
  * The WebSocket side: one connection per player. Holds each address to its limits, checks the
  * hello (and with it who is signing in, see auth.ts), feeds client messages to the World and sends
- * out what the World has to say, each message to the players it is for: one player, or everyone on
- * one map. Nothing a client sends is trusted. It also stores players (now and then, and when they
- * leave), piles and marks (whenever one changes) and the Old Stone (whenever it is fed or falls asleep).
- * Friends, requests, blocks, private messages and reports go to social.ts, one player's in order.
+ * out what the World has to say, each message to the players it is for: one player, or everyone in
+ * one zone (a copy of a map). Nothing a client sends is trusted. It also stores players (now and then,
+ * and when they leave), piles and marks (whenever one changes), thanks (whenever one is given or told,
+ * with one more thanks received for its helper), what lies in the crates (whenever a thing is left or
+ * taken) and the Old Stone (whenever it is fed or falls asleep).
+ * Friends, requests, blocks, private messages and reports go to social.ts, and trades between friends
+ * to trade.ts, one player's in order; what is said to chat.ts, and calls without words to calls.ts. On
+ * a server with sign-in, whoever says hello without it plays as a guest (a character that lives in
+ * their browser, by its token); signing in later with that token keeps the character.
  */
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { STATUS_CODES, type IncomingMessage, type Server } from 'node:http';
@@ -25,9 +30,11 @@ import {
 import { legacyAuth, type Auth } from './auth';
 import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
+import { Calls } from './calls';
 import { Chat } from './chat';
 import { Social, type SocialMsg } from './social';
-import type { DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
+import { Trades, type TradeMsg } from './trade';
 import { colorFor, type World } from './world';
 
 const HELLO_TIMEOUT_MS = 5000;
@@ -51,12 +58,14 @@ const CLOSE_CODES: Record<ErrorCode, number> = {
   replaced: 1000,
   need_name: 1000,
   sign_in_required: 1000,
+  has_character: 1000,
   server_full: 1013,
 };
 const VERSION_TEXT = `This server speaks protocol version ${PROTOCOL_VERSION}; reload to update`;
 const NAME_TEXT = 'Names are 2 to 16 letters, digits, spaces, - or _';
 const TOO_MANY_NEW_TEXT = 'Too many new players from your network. Try again later.';
 const FULL_TEXT = 'The server is full, try again soon';
+const CLAIMED_TEXT = 'This character belongs to an account: sign in to play it';
 
 export interface NetOptions {
   server: Server;
@@ -96,8 +105,12 @@ interface Session {
   state: 'hello' | 'auth' | 'play' | 'closed';
   /** The player's id, once in the world. */
   id: string;
-  /** The map whose news this player hears, once in the world. */
+  /** The zone whose news this player hears, once in the world (its key: a map's id for its main copy). */
+  zone: string;
+  /** The map of that zone, which is all anyone else is told of where they are (friends). */
   map: string;
+  /** Plays as a guest (nobody signed in with the character, on a server with sign-in): no chat, no friends. */
+  guest: boolean;
   /** Rate limit: a token bucket. */
   tokens: number;
   refilledAt: number;
@@ -111,7 +124,7 @@ type Hello = Extract<ClientMsg, { t: 'hello' }>;
 /** Who a hello turned out to be, and what their welcome says about how they got in. */
 interface Entry {
   rec: PlayerRecord;
-  /** Without sign-in: the token they logged in with, or the new player's new one. */
+  /** Without sign-in (legacy, or a guest): the token they logged in with, or the new player's new one. */
   token?: string;
   /** This sign-in just claimed the character of the hello's token. */
   claimed?: true;
@@ -129,16 +142,29 @@ export function attachNet(o: NetOptions): Net {
   const conns = new Set<Session>();
   /** Sessions whose player is in the world, by player id. */
   const playing = new Map<string, Session>();
-  /** The same sessions by the map they hear, for messages to everyone on a map. */
+  /** The same sessions by the zone they hear, for messages to everyone in a zone. */
   const audiences = new Map<string, Set<Session>>();
   /** New players between the capacity check and world.join (creating them takes a database round trip). */
   let joining = 0;
   /** The last save started for each player, while it runs. */
   const pendingSaves = new Map<string, Promise<void>>();
+  /**
+   * What each player who left took with them, until all their saves are written: a hello meanwhile (a
+   * quick reconnect while the database is busy) plays this, never the older row storage still reads, or
+   * what fell into their pile or went into a crate on the way out would be theirs twice.
+   */
+  const leftWith = new Map<string, PlayerRecord>();
   /** The same for each player's pile, each mark and the Old Stone. */
   const pendingDrops = new Map<string, Promise<void>>();
   const pendingMarks = new Map<number, Promise<void>>();
+  /** The same for each thanks (by giver, helper and day), and each helper's count of thanks received. */
+  const pendingThanks = new Map<string, Promise<void>>();
+  const pendingCredits = new Map<string, Promise<void>>();
+  /** The same for each thing left in a crate. */
+  const pendingCaches = new Map<number, Promise<void>>();
+  const pendingFirsts = new Map<string, Promise<void>>();
   let pendingStone: Promise<void> = Promise.resolve();
+  let pendingNight: Promise<void> = Promise.resolve();
   let saving = false;
   let closing = false;
   /** Open sockets per client address. */
@@ -148,11 +174,28 @@ export function attachNet(o: NetOptions): Net {
   const warnConnections = throttledLog('warn', 'too many connections from one address', clock);
   const warnNewPlayers = throttledLog('warn', 'too many new players from one address', clock);
   const warnCannotCheck = throttledLog('error', 'cannot check sign-ins (are Supabase\'s keys reachable?)', clock);
+  /** Players sign in on this server, so whoever has not plays as a guest. */
+  const guests = auth.mode !== 'legacy';
+  const trades = new Trades({
+    world,
+    clock,
+    friends: async (a, b) => (await storage.linksOf(a)).some(l => l.from === a && l.to === b && l.kind === 'friend'),
+    person: async id => {
+      const p = await storage.findPerson({ id });
+      return p && { name: p.name, tradesOff: p.tradesOff };
+    },
+    send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
+    flush: () => flush(),
+    saveTogether: ids => void persistTogether(ids.flatMap(id => world.get(id) ?? [])),
+  });
   const social = new Social({
     storage,
     clock,
+    guests,
+    isGuest: id => playing.get(id)?.guest ?? false,
     where: id => playing.get(id)?.map || undefined,
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
+    unlinked: (a, b) => trades.unlinked(a, b),
   });
   const chat = new Chat({
     world,
@@ -162,6 +205,15 @@ export function attachNet(o: NetOptions): Net {
     blocks: id => social.blocks(id),
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
   });
+  const calls = new Calls({
+    world,
+    clock,
+    blocks: id => social.blocks(id),
+    send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
+  });
+  // Someone who blocks a player hears no thanks from them either, nor a knock at their door; and a friend's street is one to move to.
+  world.blocks = id => social.blocks(id);
+  world.friends = id => social.friends(id);
   /** Each player's social actions, one after another: each reads what the one before wrote. */
   const socialQueue = new Map<string, Promise<void>>();
 
@@ -191,7 +243,9 @@ export function attachNet(o: NetOptions): Net {
       ip,
       state: 'hello',
       id: '',
+      zone: '',
       map: '',
+      guest: false,
       tokens: RATE_BURST,
       refilledAt: clock(),
       alive: true,
@@ -251,16 +305,16 @@ export function attachNet(o: NetOptions): Net {
         world.use(s.id, msg.slot, now);
         return flush();
       case 'discard':
-        world.discard(s.id, msg.slot, now);
+        world.discard(s.id, msg.slot, now, msg.count);
         return flush();
       case 'feed':
-        world.feed(s.id, msg.x, msg.y, msg.slot, now);
+        world.feed(s.id, msg.x, msg.y, msg.slot, now, msg.count);
         return flush();
       case 'board':
         world.board(s.id, msg.x, msg.y, now);
         return flush();
       case 'chest':
-        world.chest(s.id, msg.x, msg.y);
+        world.chest(s.id, msg.x, msg.y, now);
         return flush();
       case 'store':
         world.store(s.id, msg.x, msg.y, msg.slot, now);
@@ -271,23 +325,71 @@ export function attachNet(o: NetOptions): Net {
       case 'mend':
         world.mend(s.id, msg.x, msg.y, msg.slot, now);
         return flush();
+      case 'upgrade':
+        world.upgrade(s.id, msg.x, msg.y, msg.of, now);
+        return flush();
       case 'unequip':
         world.unequip(s.id, msg.x, msg.y, msg.slot, now);
         return flush();
+      case 'wear':
+        world.wear(s.id, msg.slot, now);
+        return flush();
+      case 'doff':
+        world.doff(s.id, msg.slot, now);
+        return flush();
+      case 'outfit':
+        world.outfit(s.id, msg.x, msg.y, msg.outfit, now);
+        return flush();
+      case 'buy':
+        world.buy(s.id, msg.x, msg.y, msg.look, now);
+        return flush();
+      case 'pattern':
+        world.pattern(s.id, msg.x, msg.y, msg.pattern, now);
+        return flush();
+      case 'badge':
+        world.badge(s.id, msg.x, msg.y, msg.badge, now);
+        return flush();
       case 'bench':
-        world.bench(s.id, msg.x, msg.y);
+        world.bench(s.id, msg.x, msg.y, now);
         return flush();
       case 'craft':
         world.craft(s.id, msg.x, msg.y, msg.recipe, now);
         return flush();
       case 'take':
-        world.take(s.id, msg.x, msg.y, msg.item, msg.count, now);
+        world.take(s.id, msg.x, msg.y, msg.item, msg.count, now, msg.n);
+        return flush();
+      case 'open':
+        world.open(s.id, msg.x, msg.y, msg.item, now);
         return flush();
       case 'talk':
         world.talk(s.id, msg.x, msg.y, now);
         return flush();
       case 'stats':
         world.stats(s.id);
+        return flush();
+      case 'thank':
+        // Guests too: a thanks carries no words.
+        world.thank(s.id, msg.who, msg.what, now);
+        return flush();
+      case 'cache':
+        world.openCache(s.id, msg.x, msg.y, now);
+        return flush();
+      case 'cacheLeave':
+        world.cacheLeave(s.id, msg.x, msg.y, msg.slot, now);
+        return flush();
+      case 'cacheTake':
+        world.cacheTake(s.id, msg.x, msg.y, msg.id, now);
+        return flush();
+      case 'knock':
+        // Guests too: a knock carries no words.
+        world.knock(s.id, msg.x, msg.y, now);
+        return flush();
+      case 'move':
+        world.moveNextTo(s.id, msg.to, now);
+        return flush();
+      case 'doorOff':
+        // Guests too: a guest's name is on a door as well.
+        world.doorOff(s.id, msg.off, now);
         return flush();
       case 'befriend':
       case 'answer':
@@ -297,10 +399,24 @@ export function attachNet(o: NetOptions): Net {
       case 'block':
       case 'report':
       case 'requests':
+      case 'tradeRequests':
       case 'friends':
-        return befriends(s.id, () => social.handle(s.id, msg as SocialMsg));
+        // Whether they play as a guest is taken now: the action may run after they have left.
+        return befriends(s.id, () => social.handle(s.id, msg as SocialMsg, s.guest));
+      case 'tradeOpen':
+      case 'tradeAnswer':
+      case 'tradeOffer':
+      case 'tradeReady':
+      case 'tradeConfirm':
+      case 'tradeCancel': {
+        // In the same queue as the friends' actions: an ask reads storage, and what comes after it waits for it.
+        const guest = s.guest;
+        return befriends(s.id, () => trades.handle(s.id, msg as TradeMsg, guest));
+      }
       case 'say':
         return chat.say(s.id, msg.to, msg.text);
+      case 'call':
+        return calls.call(s.id, msg.kind);
       case 'hello':
         return fail(s, 'bad_message', 'Already said hello');
     }
@@ -333,14 +449,25 @@ export function attachNet(o: NetOptions): Net {
   }
 
   async function hello(s: Session, msg: Hello): Promise<void> {
-    const entry = auth.mode === 'legacy' ? await legacyHello(s, msg) : await signedInHello(s, msg);
+    const entry = auth.mode === 'legacy' ? await legacyHello(s, msg) : msg.auth === undefined ? await guestHello(s, msg) : await signedInHello(s, msg);
     if (!entry || s.state !== 'auth') return;
+    const old = playing.get(entry.rec.id), left = leftWith.get(entry.rec.id);
+    // Someone signed in with this character since this hello read it (a claim in another tab, playing
+    // now or a moment ago): a guest's hello, by its token alone, plays it no more, and the account's
+    // session stays where it is.
+    const signedIn = old ? world.get(entry.rec.id)?.authSub ?? null : left?.authSub ?? null;
+    if (guests && entry.rec.authSub === null && signedIn !== null) return fail(s, 'sign_in_required', CLAIMED_TEXT);
     // Signed in again while still online (another tab, or a reconnect before the old socket
-    // timed out): the old connection goes, and the freshest position comes with the player.
-    const old = playing.get(entry.rec.id);
+    // timed out): the old connection goes, and the freshest position comes with the player. Whose
+    // character it is is the newer word of storage (a guest claimed just now) and the World: never back to nobody's.
     if (old) {
       send(old, { t: 'error', code: 'replaced', message: 'You are playing somewhere else' });
-      entry.rec = disconnect(old, CLOSE_CODES.replaced, 'replaced', false) ?? entry.rec;
+      const live = disconnect(old, CLOSE_CODES.replaced, 'replaced', false);
+      if (live) entry.rec = { ...live, authSub: entry.rec.authSub ?? live.authSub };
+    } else if (left) {
+      // Back before the saves of their last visit were all written: they come back as they left. Only
+      // whose character it is and the thanks received (others add to them) are storage's to say.
+      entry.rec = fresher(left, entry.rec);
     }
     enter(s, entry);
   }
@@ -358,9 +485,38 @@ export function attachNet(o: NetOptions): Net {
   }
 
   /**
+   * On a server with sign-in, without it: a guest. The token this browser keeps plays its character,
+   * unless someone has signed in with it since (then only they play it, signed in); a name makes a
+   * new guest, held to the name rules and the limit of new players per address like anyone new.
+   */
+  async function guestHello(s: Session, msg: Hello): Promise<Entry | undefined> {
+    if (msg.token !== undefined) {
+      const rec = await storage.findByTokenHash(hashToken(msg.token));
+      if (s.state !== 'auth') return undefined;
+      if (!rec) return void fail(s, 'unknown_token', 'Unknown token: choose a name');
+      if (rec.authSub !== null) return void fail(s, 'sign_in_required', CLAIMED_TEXT);
+      // Seen before it plays: the cleanup of guests who stayed away, should it run meanwhile, spares it
+      // (or had taken it). Only a guest is seen so: one someone signed in with meanwhile is not.
+      const here = await storage.seen(rec.id, Date.now());
+      if (s.state !== 'auth') return undefined;
+      if (!here) {
+        const now = await storage.findByTokenHash(hashToken(msg.token));
+        if (s.state !== 'auth') return undefined;
+        if (now && now.authSub !== null) return void fail(s, 'sign_in_required', CLAIMED_TEXT);
+        return void fail(s, 'unknown_token', 'Unknown token: choose a name');
+      }
+      return room(s, rec) ? { rec, token: msg.token } : undefined;
+    }
+    if (msg.name !== undefined) return newPlayer(s, msg.name, null);
+    return void fail(s, 'sign_in_required', 'Sign in, or choose a name to play as a guest');
+  }
+
+  /**
    * With sign-in: `auth` must prove who this is. They get their character; without one, the
-   * character of the hello's token if nobody has claimed it yet (made before sign-in, on this
-   * browser); without that, a new one with the hello's name; without a name, need_name.
+   * character of the hello's token if nobody has claimed it yet (a guest, or made before sign-in,
+   * on this browser); without that, a new one with the hello's name; without a name, need_name.
+   * One character per identity: an account that has one already never takes the guest of the
+   * hello's token, and says so (has_character) rather than play in its place unasked.
    */
   async function signedInHello(s: Session, msg: Hello): Promise<Entry | undefined> {
     const sub = await identify(s, msg.auth);
@@ -368,7 +524,14 @@ export function attachNet(o: NetOptions): Net {
     if (sub === undefined) return void fail(s, 'sign_in_required', 'Sign in to play');
     const mine = await storage.findByAuthSub(sub);
     if (s.state !== 'auth') return undefined;
-    if (mine) return room(s, mine) ? { rec: mine } : undefined;
+    if (mine) {
+      if (msg.token !== undefined && hashToken(msg.token) !== mine.tokenHash) {
+        const guest = await storage.findByTokenHash(hashToken(msg.token));
+        if (s.state !== 'auth') return undefined;
+        if (guest && guest.authSub === null) return void fail(s, 'has_character', 'This account already has a character', mine.name);
+      }
+      return room(s, mine) ? { rec: mine } : undefined;
+    }
     if (msg.token !== undefined) {
       const claimed = await claim(s, sub, msg.token);
       if (claimed || s.state !== 'auth') return claimed;
@@ -413,8 +576,9 @@ export function attachNet(o: NetOptions): Net {
   }
 
   /**
-   * A new player at the home map's spawn: with a new token without sign-in (`sub` null), or
-   * belonging to `sub`. Undefined if that failed the session.
+   * A new player, where everyone wakes up (World.wakeUp: at home, by the fire): with a new token
+   * without sign-in (`sub` null: in legacy mode, or a guest), or belonging to `sub`. Undefined if that
+   * failed the session.
    */
   async function newPlayer(s: Session, name: string, sub: string | null): Promise<Entry | undefined> {
     if (isFull()) return void fail(s, 'server_full', FULL_TEXT);
@@ -434,15 +598,16 @@ export function attachNet(o: NetOptions): Net {
       const token = sub === null ? randomBytes(32).toString('base64url') : undefined;
       const id = randomUUID();
       const now = Date.now();
-      const { id: map, spawn } = world.home.data;
+      // Where everyone wakes up: at home, by the fire (the World puts them in a copy of the home of their own).
+      const { map, x, y, dir } = world.wakeUp;
       const rec: PlayerRecord = {
-        id, name, tokenHash: token === undefined ? null : hashToken(token), authSub: sub, map, x: spawn.x, y: spawn.y, dir: spawn.dir,
+        id, name, tokenHash: token === undefined ? null : hashToken(token), authSub: sub, map: map.data.id, x, y, dir,
         color: colorFor(id), energy: ENERGY_MAX, bag: [], wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} }, createdAt: now, lastSeenAt: now,
       };
       // create() also refuses the name if another player took it since nameTaken().
       made = await storage.create(rec);
       if (made) {
-        log.info('player created', { id, name });
+        log.info('player created', { id, name, ...(guests && sub === null && { guest: true }) });
         entry = token === undefined ? { rec } : { rec, token };
       } else if (sub !== null) {
         // Or this identity got a character meanwhile (two tabs at once): then it plays that one.
@@ -460,10 +625,13 @@ export function attachNet(o: NetOptions): Net {
 
   function enter(s: Session, { rec, token, claimed }: Entry): void {
     const joined = world.join(rec, clock());
+    // In the world again: from here on the World has the freshest record.
+    leftWith.delete(rec.id);
     s.state = 'play';
     s.id = rec.id;
+    s.guest = guests && rec.authSub === null;
     playing.set(rec.id, s);
-    hear(s, joined.map.id);
+    hear(s, world.zoneOf(rec.id)!, joined.map.id);
     send(s, {
       t: 'welcome',
       v: PROTOCOL_VERSION,
@@ -471,14 +639,16 @@ export function attachNet(o: NetOptions): Net {
       name: rec.name,
       ...(token !== undefined && { token }),
       ...(claimed && { claimed }),
+      guest: s.guest,
       map: joined.map,
       players: joined.players,
       finds: joined.finds,
       drops: joined.drops,
       stepMs: world.stepMs,
-      weather: world.weather,
+      weather: joined.weather,
       energy: joined.energy,
       bag: joined.bag,
+      stash: joined.stash,
       fires: joined.fires,
       marks: joined.marks,
       creatures: joined.creatures,
@@ -489,23 +659,43 @@ export function attachNet(o: NetOptions): Net {
       body: joined.body,
       stone: joined.stone,
       conditions: joined.conditions,
+      season: joined.season,
+      longNight: joined.longNight,
       stats: joined.stats,
       progress: joined.progress,
+      ...(joined.restedAway > 0 && { restedAway: joined.restedAway }),
+      merits: joined.merits,
       tools: joined.tools,
       items: world.itemsVersion,
       story: joined.story,
+      thanked: joined.thanked,
+      notebook: joined.notebook,
+      notes: joined.notes,
+      keepsakes: joined.keepsakes,
+      firsts: joined.firsts,
+      ...(joined.furniture && { furniture: joined.furniture }),
+      ...(joined.street && { street: joined.street }),
+      ...(joined.doorOff && { doorOff: true }),
       serverTime: Date.now(),
     });
     flush();
-    befriends(rec.id, () => social.joined(rec.id));
-    log.info('player joined', { id: rec.id, name: rec.name, map: joined.map.id, online: world.size });
+    const guest = s.guest;
+    // Once whom they block is known, a player back in the game at home reads their letter (World.returned).
+    befriends(rec.id, async () => {
+      await social.joined(rec.id, guest);
+      if (playing.get(rec.id) !== s) return;
+      world.returned(rec.id, clock());
+      flush();
+    });
+    log.info('player joined', { id: rec.id, name: rec.name, map: joined.map.id, online: world.size, ...(guest && { guest }) });
   }
 
   const isFull = () => world.size + joining >= o.maxPlayers;
 
-  function fail(s: Session, code: ErrorCode, message: string): void {
+  /** Ends the hello (or the game here) with an error; `name` goes with has_character. */
+  function fail(s: Session, code: ErrorCode, message: string, name?: string): void {
     if (s.state === 'closed') return;
-    send(s, { t: 'error', code, message });
+    send(s, { t: 'error', code, message, ...(name !== undefined && { name }) });
     disconnect(s, CLOSE_CODES[code], code);
   }
 
@@ -522,10 +712,14 @@ export function attachNet(o: NetOptions): Net {
     if (!s.id || playing.get(s.id) !== s) return undefined;
     playing.delete(s.id);
     social.left(s.id);
-    hear(s, '');
+    hear(s, '', '');
     const rec = world.leave(s.id, clock());
     flush();
-    if (rec && save) void persist(rec);
+    trades.left(s.id);
+    if (rec && save) {
+      leftWith.set(rec.id, rec);
+      void persist(rec);
+    }
     log.info('player left', { id: s.id, online: world.size });
     return rec;
   }
@@ -547,9 +741,32 @@ export function attachNet(o: NetOptions): Net {
       .then(() => storage.save(snapshot))
       .catch((err: unknown) => log.error('saving a player failed', { id: rec.id, err }))
       .finally(() => {
-        if (pendingSaves.get(rec.id) === done) pendingSaves.delete(rec.id);
+        if (pendingSaves.get(rec.id) !== done) return;
+        pendingSaves.delete(rec.id);
+        // All written: storage has what they left with now.
+        leftWith.delete(rec.id);
       });
     pendingSaves.set(rec.id, done);
+    return done;
+  }
+
+  /**
+   * Saves snapshots of several players in one step (two who just traded), after the saves of each that
+   * started earlier; their next saves wait for it, as persist() does for one player.
+   */
+  function persistTogether(recs: PlayerRecord[]): Promise<void> {
+    const at = Date.now(), snapshots = recs.map(rec => ({ ...rec, lastSeenAt: at }));
+    const done = Promise.all(recs.map(rec => pendingSaves.get(rec.id) ?? Promise.resolve()))
+      .then(() => storage.saveTogether(snapshots))
+      .catch((err: unknown) => log.error('saving a trade failed', { ids: recs.map(r => r.id), err }))
+      .finally(() => {
+        for (const rec of recs) {
+          if (pendingSaves.get(rec.id) !== done) continue;
+          pendingSaves.delete(rec.id);
+          leftWith.delete(rec.id);
+        }
+      });
+    for (const rec of recs) pendingSaves.set(rec.id, done);
     return done;
   }
 
@@ -577,28 +794,90 @@ export function attachNet(o: NetOptions): Net {
     return done;
   }
 
+  /** Stores a thanks as it is now. One thanks's writes run in order (given, then told), like persist(). */
+  function persistThanks(t: ThanksRecord): Promise<void> {
+    const key = `${t.giver} ${t.helper} ${t.day}`;
+    const done = (pendingThanks.get(key) ?? Promise.resolve())
+      .then(() => storage.saveThanks(t))
+      .catch((err: unknown) => log.error('saving a thanks failed', { giver: t.giver, helper: t.helper, err }))
+      .finally(() => {
+        if (pendingThanks.get(key) === done) pendingThanks.delete(key);
+      });
+    pendingThanks.set(key, done);
+    return done;
+  }
+
+  /** One more thanks received by `helper`, added in storage on its own (the save of a player never writes it). */
+  function persistCredit(helper: string): Promise<void> {
+    const done = (pendingCredits.get(helper) ?? Promise.resolve())
+      .then(() => storage.creditThanks(helper))
+      .catch((err: unknown) => log.error('counting a thanks failed', { helper, err }))
+      .finally(() => {
+        if (pendingCredits.get(helper) === done) pendingCredits.delete(helper);
+      });
+    pendingCredits.set(helper, done);
+    return done;
+  }
+
+  /** Stores a thing left in a crate, or forgets it (taken). One thing's writes run in order, like persist(). */
+  function persistCache(id: number, item: CacheItemRecord | undefined): Promise<void> {
+    const done = (pendingCaches.get(id) ?? Promise.resolve())
+      .then(() => (item ? storage.saveCacheItem(item) : storage.removeCacheItem(id)))
+      .catch((err: unknown) => log.error('saving a crate failed', { id, err }))
+      .finally(() => {
+        if (pendingCaches.get(id) === done) pendingCaches.delete(id);
+      });
+    pendingCaches.set(id, done);
+    return done;
+  }
+
+  /** A first finder, kept once: storage never writes over the first (Storage.saveFirst). */
+  function persistFirst(f: FirstRecord): Promise<void> {
+    const done = (pendingFirsts.get(f.secret) ?? Promise.resolve())
+      .then(() => storage.saveFirst(f))
+      .catch((err: unknown) => log.error('saving a first finder failed', { secret: f.secret, err }))
+      .finally(() => {
+        if (pendingFirsts.get(f.secret) === done) pendingFirsts.delete(f.secret);
+      });
+    pendingFirsts.set(f.secret, done);
+    return done;
+  }
+
   function persistStone(stone: StoneRecord): Promise<void> {
     pendingStone = pendingStone.then(() => storage.saveStone(stone)).catch((err: unknown) => log.error('saving the Old Stone failed', { err }));
     return pendingStone;
   }
 
-  /** Starts the writes the World asked for: every pile and mark that changed, the players whose bag changed with one, the Old Stone. */
+  /** The Long Night, in order like the Old Stone: the last write is how it stands. */
+  function persistNight(night: LongNightRecord): Promise<void> {
+    pendingNight = pendingNight.then(() => storage.saveLongNight(night)).catch((err: unknown) => log.error('saving the Long Night failed', { err }));
+    return pendingNight;
+  }
+
+  /** Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag changed with one, the Old Stone, the Long Night. */
   function store(): void {
-    const { drops, players, marks, stone } = world.takeWrites();
+    const { drops, players, marks, stone, thanks, credits, caches, firsts, longNight } = world.takeWrites();
     // Players first: a pile or a mark belongs to a player who must exist in the database.
     for (const rec of players) void persist(rec);
     for (const { owner, drop } of drops) void persistDrop(owner, drop);
     for (const { id, mark } of marks) void persistMark(id, mark);
+    for (const { id, item } of caches) void persistCache(id, item);
+    for (const t of thanks) void persistThanks(t);
+    for (const helper of credits) void persistCredit(helper);
+    for (const f of firsts) void persistFirst(f);
     if (stone) void persistStone(stone);
+    if (longNight) void persistNight(longNight);
   }
 
   /**
    * Sends everything the World has queued, in order, and starts the writes it asked for. Runs after
-   * every World call. A message for a map goes to the players on it at that point of the queue: a
-   * player who changes maps hears the new map from their `zone` message on, even when several
-   * players moved in the same tick.
+   * every World call. A message for a zone goes to the players in it at that point of the queue: a
+   * player who changes zones hears the new one from their `zone` message on (a copy's key comes with it,
+   * never to the client), even when several players moved in the same tick. A trade hears of it too: a
+   * player in another zone is out of it, and a bag that changed keeps its side to what it still holds.
    */
   function flush(): void {
+    const bags = new Set<string>();
     for (const out of world.drain()) {
       const data = encode(out.msg);
       if (out.to === 'all') {
@@ -611,24 +890,28 @@ export function attachNet(o: NetOptions): Net {
       }
       const s = playing.get(out.to);
       if (!s) continue;
-      if (out.msg.t === 'zone') hear(s, out.msg.map.id);
+      if (out.msg.t === 'zone') hear(s, ('zone' in out ? out.zone : undefined) ?? out.msg.map.id, out.msg.map.id);
       sendRaw(s, data);
+      if (out.msg.t === 'zone') trades.moved(out.to, out.msg.reason);
+      else if (out.msg.t === 'bag') bags.add(out.to);
     }
     store();
+    for (const id of bags) trades.bagChanged(id);
   }
 
-  /** Makes a session hear the news of another map ('' for none). */
-  function hear(s: Session, map: string): void {
-    if (s.map) {
-      const old = audiences.get(s.map);
+  /** Makes a session hear the news of another zone, on `map` ('' for none). */
+  function hear(s: Session, zone: string, map: string): void {
+    if (s.zone) {
+      const old = audiences.get(s.zone);
       old?.delete(s);
-      if (old?.size === 0) audiences.delete(s.map);
+      if (old?.size === 0) audiences.delete(s.zone);
     }
+    s.zone = zone;
     s.map = map;
-    if (!map) return;
-    const audience = audiences.get(map);
+    if (!zone) return;
+    const audience = audiences.get(zone);
     if (audience) audience.add(s);
-    else audiences.set(map, new Set([s]));
+    else audiences.set(zone, new Set([s]));
   }
 
   function send(s: Session, msg: ServerMsg): void {
@@ -650,6 +933,7 @@ export function attachNet(o: NetOptions): Net {
     tick() {
       world.tick(clock());
       flush();
+      trades.tick(clock());
     },
 
     async saveAll() {
@@ -672,7 +956,7 @@ export function attachNet(o: NetOptions): Net {
       for (const s of conns) {
         if (s.id && playing.get(s.id) === s) {
           playing.delete(s.id);
-          hear(s, '');
+          hear(s, '', '');
           const rec = world.leave(s.id, now);
           if (rec) recs.push(rec);
         }
@@ -685,7 +969,10 @@ export function attachNet(o: NetOptions): Net {
       store();
       for (const rec of recs) void persist(rec);
       // Includes writes for players who left just before, so storage can be closed after this.
-      await Promise.all([...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), pendingStone]);
+      await Promise.all([
+        ...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), ...pendingCaches.values(), ...pendingFirsts.values(), pendingStone,
+        pendingNight,
+      ]);
       // Clients get a moment to answer the close; then their sockets are cut.
       const force = setTimeout(() => {
         for (const ws of wss.clients) ws.terminate();
@@ -695,6 +982,15 @@ export function attachNet(o: NetOptions): Net {
       clearTimeout(force);
     },
   };
+}
+
+/**
+ * A player as they left (`left`, their saves still on the way), with what storage says that only
+ * storage knows (`read`): whose character it is (a claim) and the thanks others gave them meanwhile.
+ */
+function fresher(left: PlayerRecord, read: PlayerRecord): PlayerRecord {
+  const thanked = Math.max(left.stats?.thanked ?? 0, read.stats?.thanked ?? 0);
+  return { ...left, authSub: read.authSub ?? left.authSub, stats: { ...left.stats, ...(thanked ? { thanked } : {}) } };
 }
 
 function text(data: RawData): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chapterOf, journal, nextChapter, reachedBy, storyLines, validateStory, type ItemsData, type MapData, type MapObject, type StoryData } from '../src';
+import { MAX_REMARKS, TALK_TURN, chapterOf, journal, linesInTurn, nextChapter, reachedBy, remarksDue, storyLines, toldAfter, validateStory, type ItemsData, type MapData, type MapObject, type Remark, type StoryData } from '../src';
 
 /** A short story: home, then bring something home, then talk to Tom, then read the station's log. */
 function story(): StoryData {
@@ -70,6 +70,75 @@ describe('the story', () => {
   });
 });
 
+describe('what people say once, after the first time you did something', () => {
+  const REMARKS: Remark[] = [
+    { id: 'first-collapse', who: 'mira', after: 'collapsed', line: 'You went down out there.' },
+    { id: 'first-surge', who: 'mira', after: 'surged', line: 'A surge caught you.' },
+    { id: 'first-made', who: 'tom', after: 'made', line: 'Made that yourself?' },
+  ];
+  const told = (): StoryData => ({ ...story(), remarks: REMARKS });
+
+  it('comes after the chapter\'s hint and before what they always say, once something was done for the first time', () => {
+    expect(storyLines(told(), 'home', 'mira', ['Heading out?'])).toEqual(['Bring something home.', 'Heading out?']);
+    expect(storyLines(told(), 'home', 'mira', ['Heading out?'], { collapsed: 1 })).toEqual(['Bring something home.', 'You went down out there.', 'Heading out?']);
+    expect(storyLines(told(), 'home', 'mira', ['Heading out?'], { collapsed: 3, surged: 1 })).toEqual(['Bring something home.', 'You went down out there.', 'A surge caught you.', 'Heading out?']);
+    // Only from whoever says it.
+    expect(storyLines(told(), 'home', 'tom', ['Pull up a chair.'], { collapsed: 1 })).toEqual(['Pull up a chair.']);
+    expect(storyLines(told(), 'home', 'tom', ['Pull up a chair.'], { made: 2 })).toEqual(['Made that yourself?', 'Pull up a chair.']);
+  });
+
+  it('comes before what they always say when talking to them moves the story on, whose hint comes last', () => {
+    expect(storyLines(told(), 'what-glows', 'tom', ['Pull up a chair.'], { made: 1 })).toEqual(['Made that yourself?', 'Pull up a chair.', 'Go down the south road.']);
+  });
+
+  it('comes before what they have to say about the day (Mira\'s word from the woods, Walt\'s on the Long Night), which comes before what they always say', () => {
+    const today = ['Long Night tonight.'];
+    expect(storyLines(told(), 'home', 'tom', ['Pull up a chair.'], { made: 1 }, today)).toEqual(['Made that yourself?', 'Long Night tonight.', 'Pull up a chair.']);
+    expect(storyLines(told(), 'the-lineman', 'tom', ['Pull up a chair.'], {}, today)).toEqual(['Go down the south road.', 'Long Night tonight.', 'Pull up a chair.']);
+    // Talking to them moves the story on: the hint still comes last.
+    expect(storyLines(told(), 'what-glows', 'tom', ['Pull up a chair.'], {}, today)).toEqual(['Long Night tonight.', 'Pull up a chair.', 'Go down the south road.']);
+  });
+
+  it('is said once: talking to them keeps it told, a bit for each remark in its order', () => {
+    const stats = { collapsed: 1, surged: 1, made: 1 };
+    expect(remarksDue(told(), 'mira', stats).map(r => r.id)).toEqual(['first-collapse', 'first-surge']);
+    const afterMira = toldAfter(told(), 'mira', stats);
+    expect(afterMira).toBe(0b011);
+    expect(remarksDue(told(), 'mira', { ...stats, told: afterMira })).toEqual([]);
+    expect(storyLines(told(), 'home', 'mira', ['Heading out?'], { ...stats, told: afterMira })).toEqual(['Bring something home.', 'Heading out?']);
+    // Tom's is still his to say; talking to him keeps Mira's told too.
+    expect(toldAfter(told(), 'tom', { ...stats, told: afterMira })).toBe(0b111);
+    // Nothing due: nothing changes.
+    expect(toldAfter(told(), 'tom', { collapsed: 1 })).toBe(0);
+    expect(toldAfter(story(), 'mira', stats)).toBe(0);
+  });
+
+  it('is checked with the story: people who exist, what counts, a line, ids kept, and few enough to keep', () => {
+    const errors = (remarks: Remark[]) => validateStory({ ...story(), remarks }, world(), items).map(p => p.message);
+    expect(errors(REMARKS)).toEqual([]);
+    expect(errors([
+      { id: 'a', who: 'ghost', after: 'collapsed', line: 'Boo.' },
+      { id: 'b', who: 'mira', after: 'fed' as never, line: 'Warm?' },
+      { id: 'c', who: 'mira', after: 'made', line: ' ' },
+      { id: 'c', who: 'tom', after: 'made', line: 'Again.' },
+      { id: 'Not An Id', who: 'tom', after: 'surged', line: 'Hm.' },
+    ])).toEqual([
+      'remark 1 ("a"): nobody has the id ghost',
+      'remark 2 ("b"): after is one of collapsed, surged, made',
+      'remark 3 ("c") says nothing',
+      'remark 4 ("c") is there twice',
+      'remark 5 ("Not An Id"): an id is lowercase words joined by hyphens',
+    ]);
+    const many = Array.from({ length: MAX_REMARKS + 1 }, (_, i): Remark => ({ id: `r-${i}`, who: 'mira', after: 'made', line: 'Hm.' }));
+    expect(errors(many)).toEqual([`there are ${MAX_REMARKS + 1} remarks, and which were said is kept for at most ${MAX_REMARKS}`]);
+    // One that is not a remark at all is said to be so, and the rest are checked as ever.
+    expect(errors([null as never, REMARKS[0]!, 'Boo.' as never])).toEqual([
+      'remark 1: a remark has an id, who says it, after what, and the line',
+      'remark 3: a remark has an id, who says it, after what, and the line',
+    ]);
+  });
+});
+
 describe('validateStory', () => {
   const errors = (s: StoryData, maps = world()) => validateStory(s, maps, items).map(p => p.message).join('\n');
 
@@ -120,5 +189,23 @@ describe('validateStory', () => {
     expect(msgs).toMatch(/2 people have the id tom/);
     expect(msgs).toMatch(/2 desks have the id station-log/);
     expect(errors({ version: 0, chapters: [] })).toMatch(/version must be a whole number from 1\nthere are no chapters/);
+  });
+});
+
+describe('what someone always says, a few lines a talk', () => {
+  const eight = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  it('says TALK_TURN lines a talk, in order, up to the last, then starts over', () => {
+    expect(TALK_TURN).toBe(3);
+    expect(linesInTurn(eight, 0)).toEqual({ lines: ['a', 'b', 'c'], next: 3 });
+    expect(linesInTurn(eight, 3)).toEqual({ lines: ['d', 'e', 'f'], next: 6 });
+    expect(linesInTurn(eight, 6)).toEqual({ lines: ['g', 'h'], next: 0 });
+    // Lines taken away since (another release): from the start.
+    expect(linesInTurn(eight.slice(0, 5), 6)).toEqual({ lines: ['a', 'b', 'c'], next: 3 });
+  });
+
+  it('says all of it every time when there is little more than a talk\'s worth', () => {
+    expect(linesInTurn(['a', 'b', 'c', 'd'], 0)).toEqual({ lines: ['a', 'b', 'c', 'd'], next: 0 });
+    expect(linesInTurn(['a'], 5)).toEqual({ lines: ['a'], next: 0 });
+    expect(linesInTurn([], 0)).toEqual({ lines: [], next: 0 });
   });
 });
