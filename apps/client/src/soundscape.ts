@@ -17,7 +17,7 @@ const SKULKER_HEARD = 8;
 /** A flash crackles and pops this close to you. */
 const FLASH_HEARD = 6;
 
-export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water' | 'swish';
+export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water' | 'swish' | 'ice';
 export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'skulker' | 'shimmer' | 'radio' | 'hum';
 export type Shot =
   | { kind: 'step'; surface: Surface }
@@ -39,11 +39,13 @@ export interface Scene {
   map: string;
   kind: MapKind;
   weather: Weather;
+  /** The rain falls as snow (winter): it hushes rather than patters. */
+  snow?: boolean;
   storm: boolean;
   /** The lightning blink (lightningAt); it only strikes in a storm, outdoors. */
   lightning: boolean;
-  /** You: your id, where you are drawn, and the tile you are on or stepping onto, and its kind. */
-  me: { id: string; x: number; y: number; tx: number; ty: number; ground: TileKind | undefined } | null;
+  /** You: your id, where you are drawn, and the tile you are on or stepping onto, its kind, and whether it is ice now (winter's). */
+  me: { id: string; x: number; y: number; tx: number; ty: number; ground: TileKind | undefined; ice?: boolean } | null;
   /** The fireplaces on this map, with the fuel they have left (null: tended; see Game.fireLeft). */
   fires: Array<{ x: number; y: number; left: number | null | undefined }>;
   poles: Array<{ x: number; y: number }>;
@@ -61,8 +63,9 @@ export interface Scene {
   news: News[];
 }
 
-/** What your feet sound like on this kind of tile. */
-export function stepSurface(kind: TileKind | undefined): Surface {
+/** What your feet sound like on this kind of tile (and on water frozen to ice). */
+export function stepSurface(kind: TileKind | undefined, ice = false): Surface {
+  if (ice) return 'ice';
   switch (kind) {
     case 'road': return 'road';
     case 'mud': return 'mud';
@@ -87,7 +90,8 @@ export function soundscape(s: Scene, was?: Scene): Mix {
 
   const surge = s.caught ? 1 : s.surge?.phase === 'unstable' ? 0.15 : s.surge?.phase === 'surge' ? 0.3 + 0.4 * (1 - Math.min(1, Math.max(0, s.surge.gap))) : 0;
   const loops: Record<Loop, number> = {
-    rain: outdoors ? (s.storm ? 0.9 : wet ? 0.6 : 0) : s.weather === 'rain' ? 0.15 : 0,
+    // Snow falls with a hush: much softer than rain on the leaves.
+    rain: outdoors ? (s.storm ? 0.9 : wet ? (s.snow ? 0.15 : 0.6) : 0) : s.weather === 'rain' ? (s.snow ? 0.04 : 0.15) : 0,
     wind: !outdoors ? 0 : s.storm ? 0.6 : s.kind === 'wilds' ? 0.25 : 0,
     fire: loudest(s.fires, FIRE_HEARD, i => fireLevel(s.fires[i]!.left)),
     wires: s.weather === 'aurora' ? loudest(s.poles, WIRES_HEARD) : 0,
@@ -103,7 +107,7 @@ export function soundscape(s: Scene, was?: Scene): Mix {
   const shots: Shot[] = [];
   const same = was?.map === s.map;
   // Only your own steps, and not the one that brings you onto another map.
-  if (me && same && was.me && (me.tx !== was.me.tx || me.ty !== was.me.ty)) shots.push({ kind: 'step', surface: stepSurface(me.ground) });
+  if (me && same && was.me && (me.tx !== was.me.tx || me.ty !== was.me.ty)) shots.push({ kind: 'step', surface: stepSurface(me.ground, me.ice) });
   if (s.storm && outdoors && s.lightning && !(same && was.lightning)) shots.push({ kind: 'thunder' });
   for (const f of s.flashes) {
     if (dist(f) > FLASH_HEARD) continue;

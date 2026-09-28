@@ -287,6 +287,18 @@ export interface MapData {
    * younger woods nearer town.
    */
   forest?: 'old';
+  /**
+   * Outdoors only: the water that freezes in winter (sky.ts, SEASONS: `frozen`), each by what people call
+   * it and its tiles as [x, y]: while it is frozen it is ice, walked on like ground (TileMap.freeze). The
+   * pond in the Near Woods, the brook in Stonebrook. None: nothing here freezes.
+   */
+  ice?: FrozenWater[];
+}
+
+/** Water that freezes in winter: what people call it ("the pond"), and its tiles. */
+export interface FrozenWater {
+  name: string;
+  tiles: Array<[number, number]>;
 }
 
 /** A watcher takes a step this often, unless its region's rule says otherwise (WatcherRule.stepMs); players are faster. */
@@ -430,6 +442,14 @@ export class TileMap {
   private readonly warmTiles: Uint8Array;
   /** Steps from each tile to the nearest home exit (-1: no way there); all 0 in towns. */
   private readonly stepsHome: Int32Array;
+  /** The same with the ice walked on (null: nothing here freezes): the ways home in winter, which may be shorter. */
+  private readonly stepsHomeFrozen: Int32Array | null;
+  /** 1 on the water that freezes in winter (data.ice). */
+  private readonly iceTiles: Uint8Array;
+  /** Water here freezes in winter (data.ice lists some). */
+  readonly hasIce: boolean;
+  /** Frozen now: the ice is walked on. The server and the client set it as the season turns (freeze). */
+  private frozen = false;
   /** The most steps any tile is from home: where a surge starts. 0 in towns and insides. */
   readonly deepest: number;
 
@@ -467,29 +487,67 @@ export class TileMap {
     this.litTiles = this.around('lamp', LAMP_RADIUS);
     this.warmTiles = this.around('fireplace', FIRE_RADIUS);
 
-    // Distance home, walking: breadth-first from every home exit tile at once. Only the wilds
-    // measure it; towns and the insides of buildings are safe, so every tile there counts as 0.
-    this.stepsHome = new Int32Array(W * H).fill(data.kind === 'wilds' ? -1 : 0);
-    if (data.kind === 'wilds') {
-      const queue: number[] = [];
-      (data.exits ?? []).forEach(e => {
-        if (!e.home) return;
-        for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) {
-          if (this.walkable(x, y) && this.stepsHome[y * W + x] === -1) { this.stepsHome[y * W + x] = 0; queue.push(y * W + x); }
-        }
-      });
-      for (let head = 0; head < queue.length; head++) {
-        const i = queue[head]!, x = i % W, y = (i / W) | 0, d = this.stepsHome[i]! + 1;
-        for (const [nx, ny] of [[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]] as const) {
-          if (!this.walkable(nx, ny) || this.stepsHome[ny * W + nx] !== -1) continue;
-          this.stepsHome[ny * W + nx] = d;
-          queue.push(ny * W + nx);
-        }
-      }
-    }
+    this.iceTiles = new Uint8Array(W * H);
+    for (const water of data.ice ?? []) for (const [x, y] of water.tiles ?? []) if (this.inside(x, y) && this.kinds[y * W + x] === 'water') this.iceTiles[y * W + x] = 1;
+    this.hasIce = this.iceTiles.includes(1);
+
+    // Distance home, walking, the year round; and in winter, with the ice walked on too.
+    this.stepsHome = this.stepsFromHome();
+    this.frozen = this.hasIce;
+    this.stepsHomeFrozen = this.hasIce ? this.stepsFromHome() : null;
+    this.frozen = false;
     let deepest = 0;
     for (const v of this.stepsHome) if (v > deepest) deepest = v;
     this.deepest = deepest;
+  }
+
+  /**
+   * Distance home, walking, as the map is walkable now: breadth-first from every home exit tile at
+   * once. Only the wilds measure it; towns and the insides of buildings are safe, so every tile there
+   * counts as 0.
+   */
+  private stepsFromHome(): Int32Array {
+    const W = this.width, data = this.data;
+    const steps = new Int32Array(W * this.height).fill(data.kind === 'wilds' ? -1 : 0);
+    if (data.kind !== 'wilds') return steps;
+    const queue: number[] = [];
+    (data.exits ?? []).forEach(e => {
+      if (!e.home) return;
+      for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) {
+        if (this.walkable(x, y) && steps[y * W + x] === -1) { steps[y * W + x] = 0; queue.push(y * W + x); }
+      }
+    });
+    for (let head = 0; head < queue.length; head++) {
+      const i = queue[head]!, x = i % W, y = (i / W) | 0, d = steps[i]! + 1;
+      for (const [nx, ny] of [[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]] as const) {
+        if (!this.walkable(nx, ny) || steps[ny * W + nx] !== -1) continue;
+        steps[ny * W + nx] = d;
+        queue.push(ny * W + nx);
+      }
+    }
+    return steps;
+  }
+
+  /**
+   * Winter comes (true) or goes: the water marked as ice is walked on while frozen, and the ways home
+   * across it count. The same rule on the server and the client, which each set it as the season turns.
+   * True when that changed what can be walked on here.
+   */
+  freeze(on: boolean): boolean {
+    const frozen = on && this.hasIce;
+    if (frozen === this.frozen) return false;
+    this.frozen = frozen;
+    return true;
+  }
+
+  /** Is the water here ice now (frozen, and marked to freeze)? */
+  frozenAt(x: number, y: number): boolean {
+    return this.frozen && this.iceAt(x, y);
+  }
+
+  /** Is this water that freezes in winter, frozen now or not? */
+  iceAt(x: number, y: number): boolean {
+    return this.inside(x, y) && this.iceTiles[y * this.width + x] === 1;
   }
 
   /** Where walking onto this tile takes you, if it is an exit. */
@@ -522,9 +580,10 @@ export class TileMap {
     return out;
   }
 
-  /** Walking steps from this tile to the nearest home exit; 0 in towns and insides, -1 if there is no way. */
+  /** Walking steps from this tile to the nearest home exit (across the ice while it is frozen); 0 in towns and insides, -1 if there is no way. */
   homeSteps(x: number, y: number): number {
-    return this.inside(x, y) ? this.stepsHome[y * this.width + x]! : -1;
+    if (!this.inside(x, y)) return -1;
+    return (this.frozen && this.stepsHomeFrozen ? this.stepsHomeFrozen : this.stepsHome)[y * this.width + x]!;
   }
 
   inside(x: number, y: number): boolean {
@@ -539,12 +598,12 @@ export class TileMap {
     return this.inside(x, y) ? this.levels[y * this.width + x]! : 0;
   }
 
-  /** Where a watcher may wake, as y * width + x: where a creature may stand (creatureMayStand), `steps` from home. */
+  /** Where a watcher may wake, as y * width + x: where a creature may stand (creatureMayStand), `steps` from home, and never on ice, which thaws. */
   lairs(steps: readonly [number, number]): number[] {
     const out: number[] = [];
     for (let y = 0; y < this.height; y++) for (let x = 0; x < this.width; x++) {
       const s = this.homeSteps(x, y);
-      if (this.creatureMayStand(x, y) && s >= steps[0] && s <= steps[1]) out.push(y * this.width + x);
+      if (this.creatureMayStand(x, y) && !this.iceAt(x, y) && s >= steps[0] && s <= steps[1]) out.push(y * this.width + x);
     }
     return out;
   }
@@ -554,11 +613,11 @@ export class TileMap {
     return this.walkable(x, y) && !this.exitAt(x, y) && !this.lit(x, y) && !this.warm(x, y) && !hidden(this, x, y);
   }
 
-  /** Can a character stand on this tile? */
+  /** Can a character stand on this tile? Water, only where it is frozen now (winter's ice). */
   walkable(x: number, y: number): boolean {
     if (!Number.isInteger(x) || !Number.isInteger(y) || !this.inside(x, y)) return false;
     const i = y * this.width + x;
     const kind = this.kinds[i];
-    return this.blocked[i] === 0 && kind !== 'water' && kind !== 'forest' && kind !== 'wall' && this.levels[i] === 0;
+    return this.blocked[i] === 0 && (kind !== 'water' || (this.frozen && this.iceTiles[i] === 1)) && kind !== 'forest' && kind !== 'wall' && this.levels[i] === 0;
   }
 }

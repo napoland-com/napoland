@@ -42,14 +42,14 @@
  * - the weather is your region's: the server says it as you arrive (welcome, zone) and when it turns.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, SEASONS, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter,
   emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf,
   nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView,
-  type StreetView, type TradeEnd, type TradeView, type Weather,
+  type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type Season,
+  type SeasonView, type StormView, type StreetView, type TradeEnd, type TradeView, type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -193,6 +193,8 @@ export type News =
   | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView }
   /** The night over your map turned into an aurora: lights in the sky. */
   | { kind: 'aurora' }
+  /** The season turned (as the week did); `frozen`: where water freezes, named, for the winter's word. */
+  | { kind: 'season'; season: Season; frozen: string[] }
   /** A new level: where it stands now, and the level before (one stash can climb several). */
   | { kind: 'level'; progress: ProgressView; from: number }
   /** You arrive rested: time away filled the cup, which holds `xp` of doubled stashing now. */
@@ -277,6 +279,8 @@ export class Game {
   storm: { view: StormView; at: number } | null = null;
   /** The weather over your map, as the server last said it: your region's (a room, the map outside its door). Some notes need it to be read. */
   weather: Weather = 'rain';
+  /** The season as the server last said it, and when (our clock): it counts down from there. */
+  season: { view: SeasonView; at: number } = { view: { season: 'spring', left: 0 }, at: 0 };
   /** Flashes on this map, until when they are over (our clock). */
   flashes: Array<{ x: number; y: number; kind: FlashKind; until: number }> = [];
   /** How wet you are, your load and whether something clings to you, as told and when. */
@@ -510,6 +514,20 @@ export class Game {
     return trophiesIn(this.stash ?? [], id => this.items.get(id));
   }
 
+  /** The season right now, its time left counted down from the server's last word. */
+  seasonNow(now: number): SeasonView {
+    const s = this.season;
+    return { season: s.view.season, left: Math.max(0, s.view.left - Math.max(0, now - s.at) / 1000) };
+  }
+
+  /** The season, as the server says it: in winter the water the maps mark as ice is walked on here too (TileMap.freeze), as on the server. */
+  private setSeason(view: SeasonView, now: number, news: boolean) {
+    const turned = view.season !== this.season.view.season;
+    this.season = { view, at: now };
+    this.maps.freeze(SEASONS[view.season].frozen);
+    if (news && turned) this.news.push({ kind: 'season', season: view.season, frozen: this.maps.icy() });
+  }
+
   /** The effects working on you right now (a hand warmer), counted down from the server's last report; none offline. */
   effectsNow(now: number): EffectView[] {
     return this.online ? effectsAfter(this.body.view.effects, Math.max(0, now - this.body.at) / 1000) : [];
@@ -585,6 +603,7 @@ export class Game {
         this.socialChanges++;
         this.scene(msg, now);
         this.weather = msg.weather;
+        this.setSeason(msg.season, now, false);
         this.bag = msg.bag;
         this.bagAt = now;
         this.stash = msg.stash ?? null;
@@ -646,6 +665,9 @@ export class Game {
       case 'weather':
         if (msg.weather === 'aurora' && this.weather !== 'aurora') this.news.push({ kind: 'aurora' });
         this.weather = msg.weather;
+        break;
+      case 'season':
+        this.setSeason(msg.season, now, true);
         break;
       case 'fire':
         this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now, fed: msg.fire.fed ?? [] });

@@ -12,7 +12,7 @@ import type { Comfort } from './comfort';
 import type { Mods } from './feats';
 import type { Element, Piece, Quirk, Recipe, Slot, Tier, Upgrade } from './gear';
 import type { ParcelsData } from './parcels';
-import type { ConditionsData } from './sky';
+import type { ConditionsData, Season } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 import type { KeepsakesData } from './notes';
 
@@ -162,6 +162,8 @@ export interface FindRule {
   condition?: string;
   /** Only within `r` tiles (center to center) of tile x,y: crates by the pond. */
   around?: { x: number; y: number; r: number };
+  /** Only in this season (sky.ts), and gone when it is over: more glowcaps in spring, more resin in autumn. Never with `when` or `condition`. */
+  season?: Season;
 }
 
 export type FindWhen = 'unstable' | 'aurora' | 'storm';
@@ -453,13 +455,13 @@ export function halfOf(items: readonly BagSlot[], rng: () => number): BagSlot[] 
   return gather(units.slice(0, keep));
 }
 
-/** Every tile a find may grow on: walkable, not an exit, and fitting the rule's tiles, steps, nearness and place. */
+/** Every tile a find may grow on: walkable, not an exit, never ice (it thaws), and fitting the rule's tiles, steps, nearness and place. */
 export function findTiles(map: TileMap, rule: FindRule): Array<{ x: number; y: number }> {
   const out: Array<{ x: number; y: number }> = [];
   // Measured from every tile an object covers, so a cabin or a car is near from all sides alike.
   const near = rule.near ? map.data.objects.filter(o => rule.near!.kinds.includes(o.kind)).flatMap(objectTiles) : [];
   for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
-    if (!map.walkable(x, y) || map.exitAt(x, y)) continue;
+    if (!map.walkable(x, y) || map.exitAt(x, y) || map.iceAt(x, y)) continue;
     if (rule.on && !rule.on.includes(map.kind(x, y)!)) continue;
     if (rule.steps) {
       const s = map.homeSteps(x, y);

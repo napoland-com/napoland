@@ -192,6 +192,8 @@ function round(v: number) { return Math.round(v * 1000) / 1000; }
 // it stands on open grass, off the roads, the lot and the tiles in front of doors and of what you
 // read, and nothing may cut anyone off from the rest of the town.
 const leftBehind: MapObject[] = [];
+/** The brook's water: it freezes in winter, hard enough to cross (the map's `ice`). */
+const brook: Array<[number, number]> = [];
 {
   const SPAWN = { x: 8, y: 21 };
   /** Tiles that stay open: in front of every door and of everything you read or talk to. */
@@ -234,6 +236,7 @@ const leftBehind: MapObject[] = [];
   for (let x = 34; x <= 39; x++) {
     if (blocked[30]![x] || (tile[30]![x] !== 'g' && tile[30]![x] !== 'm')) throw new Error(`the brook needs open ground at ${x},30`);
     tile[30]![x] = 'w';
+    brook.push([x, 30]);
   }
   for (const [x, y] of [[34, 29], [35, 29], [36, 29], [37, 29], [38, 29], [37, 31], [38, 31], [39, 31]] as const) {
     if (tile[y]![x] === 'g' && !blocked[y]![x]) tile[y]![x] = 'm';
@@ -281,7 +284,7 @@ const leftBehind: MapObject[] = [];
 }
 
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 12, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 13, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
@@ -295,6 +298,8 @@ const map: MapData = {
   objects,
   // The town's rain, the same as the Near Woods' up its north road: from 12 minutes after dawn, for 12.
   rain: [{ from: 12 * 60, length: 12 * 60 }],
+  // The brook freezes in winter, from the edge of the woods to where it runs into the pond.
+  ice: [{ name: 'the brook', tiles: brook }],
   // What the town calls these spots, for its paper map (Home, the lodge, the houses and the roads out
   // are named by their doors and exits). The newer names come after, so the paper map writes the older
   // ones where it always did.
@@ -319,6 +324,7 @@ const json = [
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
   '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
   `  "rain": ${JSON.stringify(map.rain)},`,
+  `  "ice": ${JSON.stringify(map.ice)},`,
   '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ]',
   '}',
   '',

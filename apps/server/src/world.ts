@@ -132,6 +132,10 @@ import {
   dayAt,
   dayIndex,
   effectResist,
+  seasonAt,
+  seasonView,
+  SEASON_ORDER,
+  SEASONS,
   daysThisWeek,
   emptyNotebook,
   everyDaySoFar,
@@ -279,6 +283,8 @@ import {
   type Recipe,
   type Refusal,
   type Resist,
+  type Season,
+  type SeasonView,
   type Stash,
   type ServerMsg,
   type Stats,
@@ -451,6 +457,8 @@ export interface Joined extends Scene {
   stash: BagSlot[];
   stone: StoneView;
   conditions: ConditionsView;
+  /** The season, and how long is left of it. */
+  season: SeasonView;
   stats: Stats;
   progress: ProgressView;
   /** The rest their time away was worth, since they were last seen (restFor): whether the cup had room for it or not. */
@@ -653,6 +661,8 @@ interface Rule {
   when?: FindWhen;
   /** Only while this condition is on (sky.ts). */
   condition?: string;
+  /** Only in this season (sky.ts). */
+  season?: Season;
   open: boolean;
 }
 
@@ -940,6 +950,8 @@ export class World {
    * dropped connection loses nothing), and forgotten once over.
    */
   private readonly effects = new Map<string, Map<string, number>>();
+  /** The season as everyone last heard it (sky.ts): a week each, and in winter the water that freezes is ice. */
+  private season: Season;
   /** Players sign in here: one nobody signed in with is a guest (WorldOptions.guests). */
   private readonly guests: boolean;
   /** Stashing earns this many times an item's XP: 1, but for play-tests (WorldOptions.xpTimes). */
@@ -1117,6 +1129,10 @@ export class World {
     this.epochOffset = options.epochOffset ?? 0;
     // Every map's weather from the start: the one given, where it is fixed; else the sky now, region by region.
     for (const m of this.maps.values()) this.skies.set(m.data.id, this.cycle ? this.regionWeather(m, (options.now ?? 0) + this.epochOffset) : weather);
+    // The season now. Whatever froze before (maps outlive a World in the tests), what grows and where
+    // creatures wake is laid out off the ice, which thaws; winter freezes it at the end.
+    this.season = seasonAt((options.now ?? 0) + this.epochOffset);
+    for (const m of this.maps.values()) m.freeze(false);
     // Every map's main copy, the world everyone shares: its fires start burning now.
     for (const m of this.maps.values()) this.newZone(m, '', options.now ?? 0);
 
@@ -1148,8 +1164,10 @@ export class World {
       const item = this.items.get(f.item);
       if (!item) throw new Error(`a find rule on map ${f.map} grows ${f.item}, which is not an item`);
       const tiles = findTiles(map, f).map(t => t.y * map.width + t.x);
-      // Finds that only grow at certain times wait for the first tick to tell whether it is one.
-      this.rules.push({ item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, condition: f.condition, open: !f.when && !f.condition });
+      // Finds that only grow at certain times wait for the first tick to tell whether it is one; a season's grow in it from the start.
+      this.rules.push({
+        item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, condition: f.condition, season: f.season, open: !f.when && !f.condition && (!f.season || f.season === this.season),
+      });
     }
     // The piles first: finds never grow on a tile that has one.
     for (const d of options.drops ?? []) this.restore(d);
@@ -1206,6 +1224,8 @@ export class World {
       // Awake, it kept burning while the server was down.
       this.stoneAt = saved.at - this.epochOffset;
     }
+    // In winter the pond and the brook are ice from the start.
+    for (const m of this.maps.values()) m.freeze(SEASONS[this.season].frozen);
   }
 
   /** The weather over the home town (where it is fixed, everywhere's). */
@@ -1346,6 +1366,8 @@ export class World {
       ({ map, x: r.x, y: r.y, dir: r.dir } = this.wakeUp);
       copy = this.copyFor(r, map);
     } else {
+      // Saved on ice that has thawed since: ashore, where they would have stepped.
+      if (!map.walkable(r.x, r.y) && map.iceAt(r.x, r.y)) Object.assign(r, ashore(map, r.x, r.y));
       if (!map.walkable(r.x, r.y) || map.exitAt(r.x, r.y)) toSpawn(r, map);
       copy = this.rejoin(r, map);
     }
@@ -1395,7 +1417,7 @@ export class World {
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), weather: this.weatherOf(map), energy: energyView(p), body: this.bodyOf(p, now),
       bag: bagView(r.bag, now + this.epochOffset),
-      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats },
+      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), season: this.seasonNow(now), stats: { ...r.stats },
       progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
@@ -2510,6 +2532,7 @@ export class World {
     this.tickAt = now;
     // A copy nobody is in costs nothing from here on (its piles and marks stay, and so does storage's copy of them).
     this.closeEmptied();
+    this.moveSeason(now);
     this.moveWeather(now);
     this.moveSurges(now);
     this.moveStorms(now);
@@ -2936,6 +2959,8 @@ export class World {
       flash: p.zone.flashes.find(f => flashHits(flashView(f, now), x, y))?.kind,
       resist,
       farDrain: p.mods.farDrain,
+      // In winter the cold bites harder (sky.ts, SEASONS).
+      chill: { weather: SEASONS[this.season].chill, wet: SEASONS[this.season].wet },
       drain: p.mods.drain,
     });
     // Wind resistance (a raincoat) keeps the rain out.
@@ -3317,6 +3342,64 @@ export class World {
   private conditionsNow(now: number): ConditionsView {
     const c = this.day === undefined ? conditionsAt(this.conditionsData, now + this.epochOffset) : this.conditions;
     return { today: [...c.today], week: c.week, next: c.next };
+  }
+
+  /** The season as everyone heard it, and the seconds left of it (none once its week is over and no tick turned it yet). */
+  private seasonNow(now: number): SeasonView {
+    const v = seasonView(now + this.epochOffset);
+    return { season: this.season, left: v.season === this.season ? Math.round(v.left) : 0 };
+  }
+
+  /**
+   * As the week turns, so does the season (sky.ts): everyone online hears it, its finds grow and the last
+   * one's go, the water freezes or thaws (whoever stands on thawing ice steps ashore), and everyone's drain
+   * follows (winter's cold, and the ways home across the ice).
+   */
+  private moveSeason(now: number): void {
+    const season = seasonAt(now + this.epochOffset);
+    if (season === this.season) return;
+    this.season = season;
+    for (const rule of this.rules) if (rule.season) this.openRule(rule, rule.season === season, now);
+    const frozen = SEASONS[season].frozen;
+    for (const m of this.maps.values()) if (m.freeze(frozen) && !frozen) this.thaw(m, now);
+    this.outbox.push({ to: 'all', msg: { t: 'season', season: this.seasonNow(now) } });
+    for (const p of [...this.players.values()]) {
+      if (this.advance(p, now) <= 0) this.collapse(p, now);
+      else this.rerate(p, now);
+    }
+  }
+
+  /**
+   * The ice on a map thaws: whoever stands on it steps ashore, onto the nearest ground, a creature on it
+   * slinks off, a pile on it washes up on the shore (every copy's, open or not), and an arrow painted on
+   * it goes with the ice.
+   */
+  private thaw(map: TileMap, now: number): void {
+    for (const d of [...this.piles.values()]) {
+      if (d.map !== map.data.id || !map.iceAt(d.x, d.y)) continue;
+      this.removePile(d);
+      const moved: DropRecord = { ...d, ...ashore(map, d.x, d.y) };
+      this.addPile(moved);
+      this.pileWrites.set(moved.owner, moved);
+      this.toZone(recordZone(moved), { t: 'drop', drop: dropView(moved) });
+    }
+    for (const m of [...this.marks.values()]) if (m.map === map.data.id && map.iceAt(m.x, m.y)) this.removeMark(m);
+    for (const zone of this.copiesOf(map.data.id)) {
+      for (const p of zone.players) {
+        if (!map.iceAt(p.rec.x, p.rec.y)) continue;
+        const to = ashore(map, p.rec.x, p.rec.y);
+        p.rec.x = to.x;
+        p.rec.y = to.y;
+        p.queue.length = 0;
+        p.after = undefined;
+        const { id, x, y, dir } = p.rec;
+        // Their steps planned over the ice are over: they are where the server says, as after a refused step.
+        this.outbox.push({ to: id, msg: { t: 'reject', seq: 0, x, y, dir } });
+        this.toZone(zone.key, { t: 'step', id, x, y, dir }, id);
+        this.revisit(p);
+      }
+      for (const w of [...zone.watchers, ...zone.skulkers]) if (w.awake && map.iceAt(w.x, w.y)) this.sendAway(w, now);
+    }
   }
 
   /**
@@ -3910,6 +3993,7 @@ export class World {
   /** The notice board: the weather, each region's surge clock, the fires that need feeding, recent collapses, the Old Stone. */
   private news(now: number): string[] {
     const lines = this.weatherLines(now);
+    lines.push(this.seasonLine(now));
     lines.push(...this.conditionLines(now));
     // The regions nearest town first: a board read on the way out says what comes first on it.
     const regions = [...this.maps.values()].sort((a, b) => a.data.depth - b.data.depth);
@@ -3964,18 +4048,27 @@ export class World {
    */
   private weatherLines(now: number): string[] {
     if (!this.cycle) return [`${WEATHER_WORDS[this.sky]}.`];
-    const wall = now + this.epochOffset, d = dayAt(wall);
-    if (d.into >= d.night) return [`${d.aurora ? 'An aurora night' : 'Night'}: no rain anywhere. Dawn ${about(DAY_S - d.into)}.`];
+    // In winter the rain falls as snow (sky.ts, SEASONS).
+    const wall = now + this.epochOffset, d = dayAt(wall), rain = SEASONS[this.season].snow ? 'snow' : 'rain';
+    if (d.into >= d.night) return [`${d.aurora ? 'An aurora night' : 'Night'}: no ${rain} anywhere. Dawn ${about(DAY_S - d.into)}.`];
     const lines = [`Night falls ${about(d.night - d.into)}.`];
     // The regions nearest town first, as you would walk out to them.
     const regions = [...this.maps.values()].filter(m => m.data.kind === 'wilds').sort((a, b) => a.data.depth - b.data.depth);
     for (const map of regions) {
       const r = rainAhead(wall, map.data.rain), name = map.data.name;
       if (!r) lines.push(`${name}: dry until nightfall.`);
-      else if (r.raining) lines.push(`${name}: rain for ${about(r.left, true)} more.`);
-      else lines.push(`${name}: dry for ${about(r.left, true)}, then rain.`);
+      else if (r.raining) lines.push(`${name}: ${rain} for ${about(r.left, true)} more.`);
+      else lines.push(`${name}: dry for ${about(r.left, true)}, then ${rain}.`);
     }
     return lines;
+  }
+
+  /** The notice board on the season: which it is, how long is left of it, what it changes, and which comes next. */
+  private seasonLine(now: number): string {
+    const v = this.seasonNow(now), next = SEASON_ORDER[(SEASON_ORDER.indexOf(v.season) + 1) % SEASON_ORDER.length]!;
+    const frozen = [...this.maps.values()].flatMap(m => (m.data.ice ?? []).map(w => `${w.name} in ${m.data.name.replace(/^The /, 'the ')}`));
+    const does = v.season === 'winter' && frozen.length ? `${SEASON_WORDS.winter}, and ${listOf(frozen)} frozen hard enough to cross` : SEASON_WORDS[v.season];
+    return `${SEASONS[v.season].name}, for ${about(v.left, true)} more: ${does}. ${SEASONS[next].name} comes next.`;
   }
 
   /**
@@ -4748,6 +4841,23 @@ function less(all: readonly BagSlot[], left: readonly BagSlot[]): BagSlot[] {
   });
 }
 
+/** The nearest ground (walkable, no exit) to x,y, breadth-first: where someone on thawing ice steps. The map's spawn if there is none. */
+function ashore(map: TileMap, x: number, y: number): { x: number; y: number } {
+  const W = map.width, seen = new Set([y * W + x]), queue = [y * W + x];
+  for (let h = 0; h < queue.length; h++) {
+    const i = queue[h]!, cx = i % W, cy = Math.floor(i / W);
+    if (map.walkable(cx, cy) && !map.exitAt(cx, cy)) return { x: cx, y: cy };
+    for (const [nx, ny] of [[cx, cy - 1], [cx + 1, cy], [cx, cy + 1], [cx - 1, cy]] as const) {
+      const j = ny * W + nx;
+      if (map.inside(nx, ny) && !seen.has(j)) {
+        seen.add(j);
+        queue.push(j);
+      }
+    }
+  }
+  return { x: map.data.spawn.x, y: map.data.spawn.y };
+}
+
 /** Does someone at x,y facing `dir` look toward tile tx,ty? Anything on the side they face counts. */
 export function faces(x: number, y: number, dir: Dir, tx: number, ty: number): boolean {
   switch (dir) {
@@ -4795,9 +4905,16 @@ export function pathStep(
 }
 
 const WEATHER_WORDS: Record<Weather, string> = { overcast: 'Overcast', rain: 'Rain', night: 'Night', aurora: 'An aurora night' };
+/** What each season changes, for the notice board (sky.ts, SEASONS; the glowcaps and the resin are find rules). */
+const SEASON_WORDS: Record<Season, string> = {
+  spring: 'longer rain, and more glowcaps out there',
+  summer: 'shorter rain, and light until later in the evening',
+  autumn: 'more resin out there, and storms twice as often',
+  winter: 'colder out there, and snow instead of rain',
+};
 const lower = (s: string) => s[0]!.toLowerCase() + s.slice(1);
 
-/** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours"). */
+/** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours", "about 3 days"). */
 function about(seconds: number, plain = false): string {
   const pre = plain ? '' : 'in ';
   if (seconds < 60) return plain ? 'under a minute' : 'in under a minute';
@@ -4805,8 +4922,12 @@ function about(seconds: number, plain = false): string {
     const m = Math.round(seconds / 60);
     return `${pre}about ${m} minute${m === 1 ? '' : 's'}`;
   }
-  const h = Math.round(seconds / 3600);
-  return `${pre}about ${h} hour${h === 1 ? '' : 's'}`;
+  if (seconds < 36 * 3600) {
+    const h = Math.round(seconds / 3600);
+    return `${pre}about ${h} hour${h === 1 ? '' : 's'}`;
+  }
+  const d = Math.round(seconds / 86400);
+  return `${pre}about ${d} day${d === 1 ? '' : 's'}`;
 }
 
 function listOf(names: string[]): string {

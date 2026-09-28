@@ -257,6 +257,8 @@ describe('World: turning, joining and leaving', () => {
       stone: { charge: 0, need: 20, awake: false, left: 0 },
       // No conditions in this world: every day is like the one before.
       conditions: { today: [], week: null, next: null },
+      // The first week after the epoch is a spring's, from three days before it: four days of it left at 0.
+      season: { season: 'spring', left: 4 * 86_400 },
       stats: {},
       // Nothing stashed yet: level 1, and the next level at 30 XP.
       progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: ENERGY_MAX },

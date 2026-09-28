@@ -1,5 +1,5 @@
 {
-  "version": 25,
+  "version": 26,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -147,7 +147,11 @@
     {"item":"flare","map":"near-woods","near":{"kinds":["car"],"radius":2},"count":3,"respawn":[300,600],"condition":"flares-in-the-car"},
     {"item":"shard","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"steps":[20,60],"count":2,"respawn":[600,1200],"condition":"shards-shallow"},
     {"item":"scrap","map":"near-woods","near":{"kinds":["car"],"radius":3},"count":4,"respawn":[240,480],"condition":"scrap-by-the-car"},
-    {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"count":8,"respawn":[120,300],"condition":"copper-week"}
+    {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"count":8,"respawn":[120,300],"condition":"copper-week"},
+    {"item":"glowcap","map":"near-woods","on":["mud","ferns","grass"],"steps":[5,90],"count":6,"respawn":[90,240],"season":"spring"},
+    {"item":"glowcap","map":"south-road","on":["mud","ferns"],"steps":[20,999],"count":4,"respawn":[90,240],"season":"spring"},
+    {"item":"resin","map":"near-woods","on":["grass"],"steps":[10,95],"count":5,"respawn":[120,300],"season":"autumn"},
+    {"item":"resin","map":"south-road","on":["grass"],"steps":[20,999],"count":3,"respawn":[150,360],"season":"autumn"}
   ],
   "recipes": [
     {"id":"radio","make":"radio","needs":[{"item":"wire","count":2},{"item":"scrap","count":1}]},

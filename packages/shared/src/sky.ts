@@ -9,6 +9,11 @@
  * (`rain`, rain windows counted from dawn), so the South Road can be dry while the Near Woods pour.
  * Rain falls only by day; the night is dry everywhere.
  *
+ * Seasons follow the wall clock too, a week each (Monday 00:00 UTC, the conditions' week), in the
+ * order spring, summer, autumn, winter, round and round: longer rain in spring, shorter rain and a
+ * longer dusk in summer, storms twice as often in autumn, and in winter the cold bites harder, the rain
+ * falls as snow and the water a map marks (`ice`) freezes hard enough to cross (SEASONS).
+ *
  * A surge: a region is calm most of the time, then restless for a few minutes (rare finds show up,
  * and it is announced), then a surge sweeps it from its deepest tile toward the way home. Caught in it,
  * away from a street light, energy drains several times faster (energy.ts). Then it is calm again.
@@ -36,28 +41,84 @@ export interface RainWindow {
 /** The rain of a map that says nothing about it: 12 minutes of it, from 12 minutes after dawn (Stonebrook's and the Near Woods'). */
 export const DEFAULT_RAIN: readonly RainWindow[] = [{ from: 12 * 60, length: 12 * 60 }];
 
-/** The day at a wall time, the same everywhere: which day (dayIndex), seconds since its dawn, when its night falls, and whether its night is an aurora. */
+/** The seasons, in the order they come round: one a week. */
+export const SEASON_ORDER = ['spring', 'summer', 'autumn', 'winter'] as const;
+export type Season = (typeof SEASON_ORDER)[number];
+
+/** What a season changes, kept small so it can be learned. More glowcaps in spring and more resin in autumn are find rules (items.ts, `season`). */
+export interface SeasonDef {
+  name: string;
+  /** Rain lasts this many times as long as a region's windows say, from where they start (never past nightfall). */
+  rain: number;
+  /** Night falls this many seconds later: the dusk light lasts longer. */
+  dusk: number;
+  /** Storms come this many times as often: 1, or 2 (stormAt). */
+  storms: number;
+  /** The cold part of the drain (energy.ts, Conditions.chill): this much more of every weather's extra drain, and being wet this many times worse. Cold resistance cuts both. */
+  chill: number;
+  wet: number;
+  /** Rain falls as snow: it looks and sounds like snow, and wets you like rain. */
+  snow: boolean;
+  /** The water a map marks as freezing (its `ice`) is ice you can walk on. */
+  frozen: boolean;
+}
+
+export const SEASONS: Readonly<Record<Season, SeasonDef>> = {
+  spring: { name: 'Spring', rain: 1.5, dusk: 0, storms: 1, chill: 0, wet: 1, snow: false, frozen: false },
+  summer: { name: 'Summer', rain: 0.5, dusk: 4 * 60, storms: 1, chill: 0, wet: 1, snow: false, frozen: false },
+  autumn: { name: 'Autumn', rain: 1, dusk: 0, storms: 2, chill: 0, wet: 1, snow: false, frozen: false },
+  winter: { name: 'Winter', rain: 1, dusk: 0, storms: 1, chill: 0.2, wet: 1.5, snow: true, frozen: true },
+};
+
+/** A week in seconds; weeks turn on Monday at 00:00 UTC, three days after the epoch's Thursday. */
+const WEEK_S = 7 * 86400;
+const WEEK_SHIFT_S = 3 * 86400;
+
+/** The season at a wall time: the week's (weekIndex), in SEASON_ORDER. */
+export function seasonAt(wallMs: number): Season {
+  return SEASON_ORDER[((weekIndex(wallMs) % SEASON_ORDER.length) + SEASON_ORDER.length) % SEASON_ORDER.length]!;
+}
+
+/** A season and how many seconds are left of it (until the week turns). */
+export interface SeasonView {
+  season: Season;
+  left: number;
+}
+
+export function seasonView(wallMs: number): SeasonView {
+  const s = wallMs / 1000;
+  return { season: seasonAt(wallMs), left: (weekIndex(wallMs) + 1) * WEEK_S - WEEK_SHIFT_S - s };
+}
+
+/**
+ * The day at a wall time, the same everywhere: which day (dayIndex), seconds since its dawn, when its
+ * night falls (later in summer), whether its night is an aurora, the season, and how long its rain lasts
+ * against the regions' windows.
+ */
 export interface DayView {
   day: number;
   into: number;
   night: number;
   aurora: boolean;
+  season: Season;
+  rain: number;
 }
 
 export function dayAt(wallMs: number): DayView {
-  const s = wallMs / 1000, day = Math.floor(s / DAY_S);
-  return { day, into: s - day * DAY_S, night: NIGHT_FROM, aurora: day % AURORA_EVERY === AURORA_EVERY - 1 };
+  const s = wallMs / 1000, day = Math.floor(s / DAY_S), season = seasonAt(wallMs), def = SEASONS[season];
+  return { day, into: s - day * DAY_S, night: NIGHT_FROM + def.dusk, aurora: day % AURORA_EVERY === AURORA_EVERY - 1, season, rain: def.rain };
 }
 
 /**
- * A region's rain windows on a day, as [start, end) seconds after dawn: in order, joined where they
- * touch or overlap, and cut at nightfall, since the night is dry everywhere.
+ * A region's rain windows on a day, as [start, end) seconds after dawn: each as long as the season
+ * makes it, in order, joined where they touch or overlap, and cut at nightfall, since the night is dry
+ * everywhere.
  */
 export function rainOf(rain: readonly RainWindow[] | undefined, day: DayView): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   const windows = [...(rain ?? DEFAULT_RAIN)].sort((a, b) => a.from - b.from);
   for (const w of windows) {
-    const a = Math.max(0, w.from), b = Math.min(day.night, w.from + w.length);
+    const a = Math.max(0, w.from), b = Math.min(day.night, w.from + w.length * day.rain);
     if (b <= a) continue;
     const last = out.at(-1);
     if (last && a <= last[1]) last[1] = Math.max(last[1], b);
@@ -161,9 +222,16 @@ export interface StormView {
 
 const STORM_PHASE: Record<SurgePhase, StormPhase> = { calm: 'clear', unstable: 'coming', surge: 'storm' };
 
-/** A storm round has the same shape as a surge's: clear, then the warning, then the storm. */
-export function stormAt(rule: StormRule, wallMs: number): StormView {
-  const s = surgeAt({ every: rule.every, unstable: rule.warn, surge: rule.length, sweep: rule.length, offset: rule.offset }, wallMs);
+/**
+ * A storm round has the same shape as a surge's: clear, then the warning, then the storm. In a season
+ * of more storms (autumn) the round is half as long and moved on by a quarter of the usual one, so a
+ * storm that came halfway between two surges comes twice, a quarter of the round either side of where
+ * it was, still clear of them (validateMap checks every season).
+ */
+export function stormAt(rule: StormRule, wallMs: number, season: Season = seasonAt(wallMs)): StormView {
+  const twice = SEASONS[season].storms > 1;
+  const every = twice ? rule.every / 2 : rule.every, offset = (rule.offset ?? 0) + (twice ? rule.every / 4 : 0);
+  const s = surgeAt({ every, unstable: rule.warn, surge: rule.length, sweep: rule.length, offset }, wallMs);
   return { phase: STORM_PHASE[s.phase], left: s.left };
 }
 

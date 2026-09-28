@@ -13,22 +13,28 @@
  * parts around them on the GPU.
  * Inside a building (a map of kind 'inside') there is no weather and no world around the room, only
  * black: see interior.ts for the room, fire.ts for the fire and lighting.ts for the light.
+ * A view is built in a season (sky.ts): its colors graded into the ground, the plants and the firs as
+ * they are built (grass.ts, GRADES), its light tinted, its rain snow in winter, and the water that
+ * freezes drawn as ice. The season turns once a week; then the view is built again (main.ts).
  */
 import * as THREE from 'three';
 import {
-  DIR_VEC, hidden, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather,
+  DIR_VEC, hidden, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Season, type TileKind, type TileMap,
+  type Weather,
 } from '@napoland/shared';
 import { comfortModel, comfortShadow, lampLight } from './cabin';
 import { Afterglows, LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
-import { CROUCH_DROP, CROUCH_LEAN, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial } from './grass';
+import {
+  CROUCH_DROP, CROUCH_LEAN, GRADES, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial,
+} from './grass';
 import { Creatures, Echoes, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
 } from './interior';
 import { bridgeModel, bridgeRails, cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
-import { ambience, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
+import { SNOW, ambience, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
 import { HUM, napoBuilding, napoProp, napoSign, towerModel } from './napo';
 import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
@@ -115,6 +121,12 @@ const MAX_WIRE = 10;
 const MIST_TILES = 190;
 /** Blob shadows and the tap marker lie just above rugs (whose tops are at most 0.026), which lie on the floor. */
 const BLOB_Y = 0.036;
+/** Winter's ice lies this high: a little under the ground around it, over the water under it. */
+export const ICE_Y = -0.05;
+/** How the firs take a season: their green toward this, that far (a frost in winter). */
+const TREE_GRADE: Readonly<Record<Season, [string, number]>> = {
+  spring: ['#2f6a3a', 0.18], summer: ['#4a5530', 0.1], autumn: ['#5c4a26', 0.14], winter: ['#b4c4c2', 0.32],
+};
 /** A house's doorway: its width and height, and how deep it goes in (the front wall's thickness). */
 const DOOR_W = 0.6;
 const DOOR_H = 0.84;
@@ -172,13 +184,14 @@ export function deepInForest(map: TileMap, x: number, y: number): boolean {
 
 /**
  * A whole tree as one geometry (trunk and three cones, colored per vertex), so each tree is one
- * instance instead of four. Each cone is turned a little so the facets do not line up. With
- * `outline` it is the dark shell instead: the cones a little bigger, drawn from behind.
+ * instance instead of four. Each cone is turned a little so the facets do not line up; its green is the
+ * season's (TREE_GRADE). With `outline` it is the dark shell instead: the cones a little bigger, drawn from behind.
  * The body has no caps: from a camera that always looks down, a cone's bottom faces away and the
  * trunk's ends hide in the ground and the lowest cone, and thousands of trees add up. The shell
  * keeps its caps, which draw the dark line under each tier.
  */
-function treeGeometry(outline: boolean): THREE.BufferGeometry {
+function treeGeometry(outline: boolean, season?: Season): THREE.BufferGeometry {
+  const grade = season && TREE_GRADE[season];
   const parts: Array<[THREE.BufferGeometry, THREE.Color | null]> = [];
   if (!outline) {
     const trunk = flat(new THREE.CylinderGeometry(0.06, 0.1, 0.6, 6, 1, true));
@@ -190,7 +203,7 @@ function treeGeometry(outline: boolean): THREE.BufferGeometry {
     if (outline) g.scale(1.07, 1.07, 1.07);
     g.rotateY(k);
     g.translate(0, y, 0);
-    parts.push([g, outline ? null : new THREE.Color(color)]);
+    parts.push([g, outline ? null : grade ? new THREE.Color(color).lerp(new THREE.Color(grade[0]), grade[1]) : new THREE.Color(color)]);
   });
   return merge(parts);
 }
@@ -208,12 +221,13 @@ function blocks<T extends { x: number; y: number }>(items: T[]): T[][] {
 }
 
 /**
- * The view of the map someone arrives on, in place of `old`: the new one is built (and its shaders
- * compiled) before the old one is freed, so every program both draw with stays compiled and only what
- * the new map needs that the old did not is compiled, behind the black screen of the arrival.
+ * The view of the map someone arrives on (or the same map as the season turns, `season`), in place of
+ * `old`: the new one is built (and its shaders compiled) before the old one is freed, so every program
+ * both draw with stays compiled and only what the new map needs that the old did not is compiled, behind
+ * the black screen of the arrival.
  */
-export function nextView(renderer: THREE.WebGLRenderer, old: WorldView, map: TileMap, peek?: (id: string) => MapData | undefined): WorldView {
-  const view = new WorldView(renderer, map, peek);
+export function nextView(renderer: THREE.WebGLRenderer, old: WorldView, map: TileMap, peek?: (id: string) => MapData | undefined, season?: Season): WorldView {
+  const view = new WorldView(renderer, map, peek, season);
   old.dispose();
   return view;
 }
@@ -280,6 +294,10 @@ export class WorldView {
   private hasStone = false;
   /** Rain, mist and wisps: only outdoors. */
   private rain: THREE.LineSegments | null = null;
+  /** What falls is snow (winter): it drifts down slowly, in short flakes. */
+  private snowing = false;
+  /** Seconds the snow has drifted, for its sway. */
+  private drift = 0;
   private rainMat = new THREE.LineBasicMaterial({ color: 0xaebfcc, transparent: true, opacity: 0.38, depthWrite: false });
   private mistMat = new THREE.MeshBasicMaterial({ map: softTexture(0.5), color: 0xc9d6dc, transparent: true, opacity: 0.12, depthWrite: false });
   private wispMat = new THREE.SpriteMaterial({ map: softTexture(0.25), color: 0x9ef6ff, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -329,11 +347,16 @@ export class WorldView {
   private tmp = new THREE.Vector3();
   private tmp2 = new THREE.Vector2();
 
-  /** `peek` finds another map's data by id: a house smokes when the room behind its door keeps a fire. */
-  constructor(private readonly renderer: THREE.WebGLRenderer, readonly map: TileMap, private readonly peek: (id: string) => MapData | undefined = () => undefined) {
+  /**
+   * `peek` finds another map's data by id: a house smokes when the room behind its door keeps a fire.
+   * `season`: the one it is built in (its colors, its light, its snow, its ice: `map` frozen or not).
+   */
+  constructor(
+    private readonly renderer: THREE.WebGLRenderer, readonly map: TileMap, private readonly peek: (id: string) => MapData | undefined = () => undefined, readonly season: Season = 'spring',
+  ) {
     this.outdoors = map.data.kind !== 'inside';
     this.warmRoom = !this.outdoors && hasFire(map.data);
-    this.amb = ambience(map.data.kind, this.weather, this.warmRoom);
+    this.amb = ambience(map.data.kind, this.weather, this.warmRoom, season);
     this.scene.background = new THREE.Color('#4c5961');
     // Inside too, only pushed out of reach: a scene with fog and one without would need different shaders.
     this.scene.fog = new THREE.Fog('#4c5961', 30, 50);
@@ -391,9 +414,9 @@ export class WorldView {
     this.puffs = [];
   }
 
-  /** Height of the ground a character stands on. */
+  /** Height of the ground a character stands on: on water frozen over, the ice. */
   private topY(x: number, y: number): number {
-    return this.map.level(x, y) * 0.55 + (this.map.kind(x, y) === 'water' ? -0.34 : 0);
+    return this.map.level(x, y) * 0.55 + (this.map.kind(x, y) === 'water' ? (this.map.frozenAt(x, y) ? ICE_Y : -0.34) : 0);
   }
   private groundAt(x: number, y: number): number {
     return Math.max(0, this.topY(Math.floor(x), Math.floor(y)));
@@ -420,14 +443,22 @@ export class WorldView {
       const corners = [a, b, c, a, c, d], colors = [ca, cb, cc, ca, cc, cd];
       for (let i = 0; i < 6; i++) { const p = corners[i]!, k = colors[i]!; pos.push(p[0], p[1], p[2]); col.push(k.r, k.g, k.b); }
     };
-    // The ground's color flows from corner to corner (grass.ts): no checkerboard, the same on every visit.
-    const ground = (this.ground = new Ground(map)), corner = [new THREE.Color(), new THREE.Color(), new THREE.Color(), new THREE.Color()] as const;
-    /** A tile's top at height y0, each corner colored; `fade` takes it toward `toward` (the dark past the map's edge). */
+    // The ground's color flows from corner to corner (grass.ts): no checkerboard, the same on every visit,
+    // and graded by the season it is built in.
+    const ground = (this.ground = new Ground(map, this.season)), corner = [new THREE.Color(), new THREE.Color(), new THREE.Color(), new THREE.Color()] as const;
+    /** A tile's top at height y0, each corner colored; `fade` takes it toward `toward` (the dark past the map's edge). Water frozen over is ice. */
     const top = (kind: TileKind, tx: number, ty: number, y0: number, raised: boolean, fade = 0, toward?: THREE.Color) => {
-      ground.color(kind, tx, ty, tx, ty, raised, corner[0]);
-      ground.color(kind, tx, ty + 1, tx, ty, raised, corner[1]);
-      ground.color(kind, tx + 1, ty + 1, tx, ty, raised, corner[2]);
-      ground.color(kind, tx + 1, ty, tx, ty, raised, corner[3]);
+      if (kind === 'water' && map.frozenAt(tx, ty)) {
+        ground.iceColor(tx, ty, tx, ty, corner[0]);
+        ground.iceColor(tx, ty + 1, tx, ty, corner[1]);
+        ground.iceColor(tx + 1, ty + 1, tx, ty, corner[2]);
+        ground.iceColor(tx + 1, ty, tx, ty, corner[3]);
+      } else {
+        ground.color(kind, tx, ty, tx, ty, raised, corner[0]);
+        ground.color(kind, tx, ty + 1, tx, ty, raised, corner[1]);
+        ground.color(kind, tx + 1, ty + 1, tx, ty, raised, corner[2]);
+        ground.color(kind, tx + 1, ty, tx, ty, raised, corner[3]);
+      }
       if (toward) for (const c of corner) c.lerp(toward, fade);
       quad([tx, y0, ty], [tx, y0, ty + 1], [tx + 1, y0, ty + 1], [tx + 1, y0, ty], corner[0], corner[1], corner[2], corner[3]);
     };
@@ -444,7 +475,8 @@ export class WorldView {
       for (const [ox, oy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
         const ny = map.inside(tx + ox, ty + oy) ? this.topY(tx + ox, ty + oy) : 0;
         if (ny >= y0 - 0.001) continue;
-        const w = new THREE.Color(raised ? '#4f4336' : kind === 'mud' ? '#4a4034' : '#3f3529');
+        // The edge of the ice over open water is ice too.
+        const w = new THREE.Color(map.frozenAt(tx, ty) ? '#8aa9b5' : raised ? '#4f4336' : kind === 'mud' ? '#4a4034' : '#3f3529');
         w.offsetHSL(0, 0, (hash2(tx + ox * 7, ty + oy * 11) - 0.5) * 0.05);
         let a: [number, number], b: [number, number];
         if (oy === -1) { a = [tx, ty]; b = [tx + 1, ty]; } else if (oy === 1) { a = [tx + 1, ty + 1]; b = [tx, ty + 1]; }
@@ -551,7 +583,7 @@ export class WorldView {
       const t = { x: x + 0.5 + (rng() - 0.5) * 0.3, y: y + 0.5, z: 0, s: old ? treeSize(rng(), true, false) : 1.1 + rng() * 0.5, v: rng(), cedar: old && isCedar(x, y), shade: false };
       if (!this.openings.has(`${x},${y}`)) trees.push(t);
     }
-    const body = treeGeometry(false), shell = treeGeometry(true), bodyMat = ownToon(0xffffff, { vertexColors: true });
+    const body = treeGeometry(false, this.season), shell = treeGeometry(true), bodyMat = ownToon(0xffffff, { vertexColors: true });
     // A cedar is the fir's shape spread wider and lower, in a warmer green: no draw call of its own.
     const place = (t: Tree, o: THREE.Object3D) => {
       o.position.set(t.x, t.z, t.y);
@@ -570,7 +602,9 @@ export class WorldView {
     const rocks = this.objects('rock');
     const rockGeo = new THREE.DodecahedronGeometry(0.3, 0);
     const placeRock = (r: (typeof rocks)[number], o: THREE.Object3D) => { o.position.set(r.x + 0.5, this.groundAt(r.x, r.y) + 0.16 * r.s, r.y + 0.5); o.rotation.set(r.v * 3, r.v * 7, 0); o.scale.set(r.s * 1.1, r.s * 0.78, r.s); };
-    this.instanced(rockGeo, rocks.filter(r => !r.hum), (r, o, c) => { placeRock(r, o); c.set('#6d6f70'); c.offsetHSL(0, 0, (r.v - 0.5) * 0.06); });
+    // Rocks take a frost in winter, like the ground (grass.ts, GRADES: the paved ground's share).
+    const frost = GRADES[this.season];
+    this.instanced(rockGeo, rocks.filter(r => !r.hum), (r, o, c) => { placeRock(r, o); c.set('#6d6f70').lerp(frost.tint, frost.paved); c.offsetHSL(0, 0, (r.v - 0.5) * 0.06); });
     // The rocks that hum back glow faintly, like the ones in NAPO's cages, the same day and night: one
     // more draw call, only where there are any.
     this.instanced(rockGeo, rocks.filter(r => r.hum), placeRock, HUM, false);
@@ -598,7 +632,7 @@ export class WorldView {
     /** For each fern tile: its block's mesh and where its fronds start in it. */
     const frondAt = new Map<number, { mesh: THREE.InstancedMesh; start: number; fronds: Frond[] }>();
     for (const block of blocks(fernTiles)) {
-      const mesh = this.instanced(frondGeo, block.flatMap(t => t.fronds), (b, o, c) => { placeFrond(b, o); c.set(['#2f4f33', '#39603d', '#2a4a30'][b.k % 3]!); }, frondMat, true);
+      const mesh = this.instanced(frondGeo, block.flatMap(t => t.fronds), (b, o, c) => { placeFrond(b, o); this.ground.plant(c.set(['#2f4f33', '#39603d', '#2a4a30'][b.k % 3]!)); }, frondMat, true);
       block.forEach((t, i) => frondAt.set(t.y * W + t.x, { mesh, start: i * PER, fronds: t.fronds }));
     }
     const rustle = new Map<number, number>(), bo = new THREE.Object3D();
@@ -967,13 +1001,16 @@ export class WorldView {
     this.scene.add(rain);
     this.animateRain = (focus, dt) => {
       if (!rain.visible) return;
+      // Snow falls a sixth as fast as rain, in short flakes that sway as they come down.
+      const snow = this.snowing, fall = snow ? 0.16 : 1, len = snow ? 0.06 : 0.45, lean = snow ? 0.02 : 0.07;
+      this.drift += dt;
       for (let i = 0; i < RAIN; i++) {
         const d = drops[i]!;
-        d.y -= d.s * dt;
+        d.y -= d.s * fall * dt;
         if (d.y < 0) { d.y += 12; d.x = rng() * 30 - 15; d.z = rng() * 30 - 15; }
-        const X = focus.x + d.x, Z = focus.y + d.z, o = i * 6;
-        rainPos[o] = X; rainPos[o + 1] = d.y + 0.45; rainPos[o + 2] = Z;
-        rainPos[o + 3] = X + 0.07; rainPos[o + 4] = d.y; rainPos[o + 5] = Z + 0.03;
+        const X = focus.x + d.x + (snow ? Math.sin(this.drift * 0.9 + i) * 0.35 : 0), Z = focus.y + d.z, o = i * 6;
+        rainPos[o] = X; rainPos[o + 1] = d.y + len; rainPos[o + 2] = Z;
+        rainPos[o + 3] = X + lean; rainPos[o + 4] = d.y; rainPos[o + 5] = Z + lean * 0.4;
       }
       (rainGeo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
     };
@@ -990,7 +1027,7 @@ export class WorldView {
   /** The weather everyone shares. Inside, only the windows (and the light they let in) show it. */
   setWeather(w: Weather) {
     this.weather = w;
-    const plain = ambience(this.map.data.kind, w, this.warmRoom);
+    const plain = ambience(this.map.data.kind, w, this.warmRoom, this.season);
     const a = (this.amb = this.map.data.forest === 'old' ? underOldGrowth(plain) : plain);
     this.hemi.color.set(a.hemi.sky);
     this.hemi.groundColor.set(a.hemi.ground);
@@ -1008,7 +1045,10 @@ export class WorldView {
     this.tailMat.emissive.set(a.carLights ? '#c8281c' : '#000000');
     this.capMat.emissive.set(a.capGlow);
     if (this.rain) this.rain.visible = !!a.rain || this.storm;
-    if (a.rain) { this.rainMat.color.set(a.rain.color); this.rainMat.opacity = a.rain.opacity; }
+    // In winter it snows, and a storm drives snow too.
+    const falls = a.snow ? SNOW : a.rain;
+    if (falls) { this.rainMat.color.set(falls.color); this.rainMat.opacity = falls.opacity; }
+    this.snowing = a.snow;
     if (a.mist) { this.mistMat.color.set(a.mist.color); this.mistMat.opacity = a.mist.opacity; }
     this.wispMat.opacity = a.wisps;
     this.smoke?.puffs.color.set(a.smoke);
