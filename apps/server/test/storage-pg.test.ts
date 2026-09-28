@@ -16,7 +16,7 @@ import { PgStorage, type CacheItemRecord, type DropRecord, type MarkRecord, type
 import {
   forgetsGuestsWhoStayedAway, keepsFirsts, keepsFriendsAndMessages, keepsMerits, keepsBests, keepsNotebook, keepsNotes, keepsParcels, keepsPurchases, keepsRested,
   keepsToolsParcelsAndOutfit, keepsTheWornOutMark, keepsWhatANewerReleaseSaved, keepsWholeRow, meritsKeptThroughARestart, outfitsKeptThroughARestart, parcelsThroughRestarts,
-  playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, savesATradeTogether, shopKeptThroughARestart, signInAndClaim,
+  playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, savesATradeTogether, shopKeptThroughARestart, signInAndClaim, keepsReturns,
 } from './helpers';
 import { itemsData } from './fixtures';
 
@@ -298,6 +298,10 @@ describe.skipIf(!url)('PgStorage', () => {
       await first.close();
       await second.close();
     }
+  });
+
+  it('keeps what was carried back to the lodge until it is in its owner\'s chest, and what a pile owed (030_returns.sql)', async () => {
+    await keepsReturns(storage);
   });
 
   it('keeps the cup of rest: none for a new player, what a save writes, none once spent; and the previous release\'s saves leave it alone', async () => {

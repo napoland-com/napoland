@@ -341,8 +341,11 @@ export interface FanView { choice: CallKind | null; words: boolean }
 export interface CallNoteView { id: number; kind: CallKind; color: string; x: number; y: number; t: number }
 /** Someone's lines in the text box, as far as they are typed out (`done`: the whole line is). */
 export interface DialogView { who: string; text: string; done: boolean }
-/** A question in the text box (ask.ts): its words, the choice highlighted, and how many (null: it does not ask how many). */
-export interface AskView { who: string; text: string; choice: 'yes' | 'no'; count: { n: number; min: number; max: number } | null }
+/**
+ * A question in the text box (ask.ts): its words, the choice highlighted, and how many (null: it does not
+ * ask how many); `labels`, words on the two choices where they are not YES and NO.
+ */
+export interface AskView { who: string; text: string; choice: 'yes' | 'no'; count: { n: number; min: number; max: number } | null; labels?: { yes: string; no: string } }
 /** What the text box says by itself: it stays up `ms` more (a thin line along its bottom runs out), or it waits for the server. */
 export interface NoteView { who: string; text: string; ms: number; waiting: boolean }
 
@@ -1933,10 +1936,14 @@ export class Hud {
     // A question comes anew with every change (setAsk), so the same one is never drawn twice.
     if (ask === s.ask) return;
     s.ask = ask;
+    // Two things to choose between: their words on the buttons, which then stand under the question.
+    this.el.dialog!.toggleAttribute('data-labels', !!ask?.labels);
     for (const b of this.el.choices!.querySelectorAll<HTMLElement>('[data-choice]')) {
       const on = b.dataset.choice === ask?.choice;
       b.toggleAttribute('data-on', on);
       b.setAttribute('aria-pressed', String(on));
+      const word = ask?.labels ? ask.labels[b.dataset.choice as 'yes' | 'no'] : b.dataset.choice === 'yes' ? 'YES' : 'NO';
+      if (b.textContent !== word) b.textContent = word;
     }
     const c = ask?.count;
     this.el.count!.hidden = !c;

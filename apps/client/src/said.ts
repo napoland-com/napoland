@@ -9,12 +9,14 @@ import {
   toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type Refusal, type ShopLook, type StoneView,
   type Upgrade,
 } from '@napoland/shared';
-import { ELEMENT_WORDS, oddsText, pieceName, type Items } from './items';
+import { ELEMENT_WORDS, bundleText, kgText, oddsText, pieceName, thingsOf, type Items } from './items';
 
 // ---------- naming things in a sentence ----------
 
 // How items are named is shared: the notice board, which the server writes, names them the same way.
 export { aOf, amount, nounOf, pluralOf };
+// A bundle's words are the bag's (items.ts), said here too.
+export { bundleText, kgText, thingsOf };
 
 /** Always with its number, for a list of what something takes: "1 scrap", "8 cloth", "2 shards". */
 export function counted(def: ItemDef, n: number): string {
@@ -360,6 +362,60 @@ export function raisedText(name: string, thanked = false): string {
   return `${name} gives you ${RESCUE_ENERGY} energy, and you are back on your feet.${thanked ? ` You thank ${name}.` : ''}`;
 }
 
+// ---------- the lost and found (lostfound.ts) ----------
+
+/** "Ana's things", "Ana's things and Bo's things": whose things, each once. */
+const thingsOfAll = (names: readonly string[]): string => listOf([...new Set(names)].map(thingsOf));
+/** "Ana gets", "Ana and Bo get": whoever gets their things back, by name. */
+const gets = (names: readonly string[]): string => `${listOf([...new Set(names)])} ${new Set(names).size > 1 ? 'get' : 'gets'}`;
+
+/** A at someone else's pile: what to do with it. The two answers are TAKE_HALF and carryLabel. */
+export function pileQuestion(name: string): string {
+  return `What do you do with ${thingsOf(name)}?`;
+}
+/** The first answer at someone else's pile: the rule as ever, a random half, the rest lost. */
+export const TAKE_HALF = 'Take half';
+/** The second: all of it, tied up to carry to the lodge. */
+export function carryLabel(name: string): string {
+  return `Carry it to the lodge for ${name}`;
+}
+
+/** Why a bundle is not put away, left in a crate or thrown away: it is someone else's. */
+export function bundleNotYours(name: string): string {
+  return `${thingsOf(name)} are not yours to keep. Leave the bundle in the lost and found box in Stonebrook Lodge, and it goes home to ${name}.`;
+}
+
+/** The box in the lodge, carrying nothing: its sign. */
+export const LOST_AND_FOUND = 'Lost and found';
+export const LOST_AND_FOUND_LINES = [
+  "A battered wooden box. On the sign propped against it, in Walt's hand: LOST AND FOUND.",
+  'Find what someone lost out there, carry it back and leave it here: it goes home to whoever lost it.',
+];
+/** A at the box, carrying bundles: it asks first, since they leave your bag. */
+export function handInQuestion(names: readonly string[]): string {
+  return `Leave ${thingsOfAll(names)} in the lost and found box? ${gets(names)} it all back at home.`;
+}
+
+/** What it did: "You carry Ana's things now." */
+function carriedText(names: readonly string[]): string {
+  return `You carry ${thingsOfAll(names)} now. Leave it all in the lost and found box in Stonebrook Lodge, by Walt, and it goes home.`;
+}
+/** What it did: "You leave Ana's things in the box. Ana gets it all back at home. You earn 12 XP." */
+function handedInText(names: readonly string[], xp: number): string {
+  return `You leave ${thingsOfAll(names)} in the box. ${gets(names)} it all back at home.${xp > 0 ? ` You earn ${xp} XP.` : ''}`;
+}
+
+/**
+ * What you lost came back: "Bo carried what you lost by the pond back to the lodge." (`where` by landmark,
+ * set off by commas when it says how far a door is too: "by the pond, 36 steps from the old cabin, back";
+ * someone you block goes unnamed.)
+ */
+export function returnedLine(by: string | null, where: string): string {
+  return `${by ?? 'Someone'} carried what you lost ${where}${where.includes(',') ? ',' : ''} back to the lodge.`;
+}
+/** Said with it, once it is in your chest. */
+export const IN_YOUR_CHEST = 'It is in your chest.';
+
 // ---------- merits ----------
 
 /** "12,345": a count with its thousands apart, the same in every language the browser speaks (firsts.ts). */
@@ -427,6 +483,8 @@ export function didWho(did: Did, items: Items): string {
     case 'bought': return 'Wardrobe';
     case 'moved': return YOUR_CABIN;
     case 'rescued': return did.name;
+    case 'carried': return thingsOf(did.names[0] ?? 'Someone');
+    case 'handedIn': return LOST_AND_FOUND;
   }
 }
 
@@ -439,6 +497,8 @@ export function didText(did: Did, items: Items): string {
   // Nor does a move: your cabin, next to the friend's, by name.
   if (did.kind === 'moved') return `Your cabin stands next to ${did.name}'s now.`;
   if (did.kind === 'rescued') return `You give ${did.name} ${RESCUE_ENERGY} of your energy. ${did.name} is back up.`;
+  if (did.kind === 'carried') return carriedText(did.names);
+  if (did.kind === 'handedIn') return handedInText(did.names, did.xp);
   const def = items.get(did.item);
   switch (did.kind) {
     case 'fire': {

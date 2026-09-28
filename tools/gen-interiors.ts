@@ -152,8 +152,10 @@ const ROOMS: readonly Room[] = [
     // Its firewood is stacked against the east wall, split the way the town split it when it still
     // logged the woods. Walt Pruitt sits by the fire: he kept the north line for the power company and
     // then NAPO's, and remembers how it all went wrong. On the Long Night nobody tends that fire, and the
-    // town keeps it going until dawn (longNight).
-    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 5, outside: 'stonebrook', door: [8, 31],
+    // town keeps it going until dawn (longNight). At his elbow stands the lost and found box
+    // (lostfound.ts), where whatever someone carries back for a stranger is left: its front, 2,3, is
+    // beside where you stand to talk to him.
+    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 6, outside: 'stonebrook', door: [8, 31],
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -188,8 +190,11 @@ const ROOMS: readonly Room[] = [
           'The night they switched the Tower on, the woods lit up like a town and the Old Stone cracked. You can still see the crack.',
           'Every forty minutes since, the woods surge. Regular as a clock. You\'d think something out there was keeping time.',
           'NAPO said two weeks, and I went with the rest. Came back for my truck, up where the north road gives out. It never started again, so I stayed.',
+          'Folks leave what they find here. Somebody\'s always glad of it.',
         ],
       },
+      // The lost and found box, at Walt's elbow. Last, so nothing placed before it moves.
+      { kind: 'lostfound', x: 2, y: 2 },
     ],
   },
   {
@@ -858,7 +863,7 @@ function json(map: MapData): string {
 const GLYPH: Partial<Record<MapObject['kind'], string>> = {
   fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@',
   hearth: 'f', sheeted: 's', boxes: 'n', crib: 'C', clock: 'k', paper: '?', saw: 'S', carriage: '=', sawdust: ':', logs: 'l', luggage: 'u', cache: 'X',
-  traps: 't', teleport: 'N',
+  traps: 't', teleport: 'N', lostfound: 'Y',
 };
 /** The places for furniture in a home (comfort.ts), in lower case: what stands there, spoiled until it is made. */
 const COMFORT_GLYPH: Record<Comfort, string> = { stove: 'o', bed: 'b', rug: '_', lamp: 'i', rack: 'r', shelf: 't' };

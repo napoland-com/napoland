@@ -6,6 +6,7 @@ import { COMFORTS, type Comfort } from './comfort';
 import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
 import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
+import { BUNDLE } from './lostfound';
 import {
   CREATURE_STEP_MIN_MS, FRONTED, GATE_PULLERS, NOTE_AUTHORS, NOTE_ON, NOTE_WHEN, PAPER_LOOKS, TILE_CHARS, TILE_NEEDS, TileMap, doorOf, footprint, gateArrival, hangs, objectTiles,
   teleportArrival, underfoot, watcherStepMs,
@@ -42,6 +43,8 @@ const NO_BAG = 'those never go in a bag';
 const OPENED = 'those are only ever opened';
 /** Why furniture may not be where content puts it: it is made for its place in the cabin and set there at once (comfort.ts). */
 const PLACED = 'furniture stands in its place in the cabin, never in a bag or a stash';
+/** Why a bundle may not be where content puts it: only someone's pile, carried to the lodge, makes one (lostfound.ts). */
+const PACKED = 'only a pile carried to the lodge makes one';
 
 export function validateMap(data: MapData): Problem[] {
   const out: Problem[] = [];
@@ -589,7 +592,9 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     for (const [field, v] of [['noun', i.noun], ['plural', i.plural], ['about', i.about]] as const) {
       if (v !== undefined && !(typeof v === 'string' && v.trim())) err(`${name}: ${field}, when given, says something`);
     }
-    if (!['resource', 'consumable', 'charm', 'gear', 'tool', 'sealed', 'keepsake', 'furniture'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear, tool, sealed, keepsake or furniture`);
+    if (!['resource', 'consumable', 'charm', 'gear', 'tool', 'sealed', 'keepsake', 'furniture', 'bundle'].includes(i.kind)) {
+      err(`${name}: kind must be resource, consumable, charm, gear, tool, sealed, keepsake, furniture or bundle`);
+    }
     if (i.kind === 'keepsake') {
       if (i.stack !== 1) err(`${name}: a keepsake is one of a kind, one to a slot`);
       if (i.use || i.weight || i.fuel || i.charge || i.live || i.reveals) err(`${name}: a keepsake is only brought home: never used, burned or fed, and it weighs nothing to speak of`);
@@ -601,6 +606,12 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       if (i.stack !== 1) err(`${name}: furniture stacks one to a slot`);
       if (i.use || i.weight || i.xp || i.fuel || i.charge || i.live || i.reveals) err(`${name}: furniture stands in its place: it is never used, carried or stashed, and earns no XP`);
     } else if (i.furnishes !== undefined || i.comfort !== undefined || i.spoiled !== undefined || i.dries !== undefined) err(`${name}: only furniture furnishes a place, adds comfort, has spoiled words or dries you`);
+    if (i.kind === 'bundle') {
+      // The server packs every bundle as this one item, and a bundle weighs what it holds.
+      if (i.id !== BUNDLE) err(`${name}: the one bundle is ${JSON.stringify(BUNDLE)}`);
+      if (i.stack !== 1) err(`${name}: a bundle stacks one to a slot`);
+      if (i.use || i.xp || i.weight || i.fuel || i.charge || i.live || i.reveals) err(`${name}: a bundle is only carried and handed in: it weighs what it holds and earns nothing itself`);
+    }
     if (i.kind === 'sealed') {
       if (!i.holds?.length) err(`${name}: a sealed thing holds something`);
       if (i.use || i.xp || i.fuel || i.charge || i.reveals) err(`${name}: a sealed thing is only opened, at the chest, and earns no XP`);
@@ -665,6 +676,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (into.live) err(`${name}: turns into ${into.id}, which is live too`);
       else if (into.kind === 'sealed') err(`${name}: turns into ${into.id}, a sealed thing: ${NO_BAG}`);
       else if (into.kind === 'furniture') err(`${name}: turns into ${into.id}: ${PLACED}`);
+      else if (into.kind === 'bundle') err(`${name}: turns into ${into.id}, a bundle: ${PACKED}`);
       if (!(typeof i.live.xp === 'number' && i.live.xp > (into?.xp ?? 0))) err(`${name}: live, it is worth more XP than what it turns into`);
       if (!(i.live.fresh > 0) || !(i.live.fade > 0)) err(`${name}: live, it stays fresh and fades by numbers above 0`);
       if (i.stack !== 1) err(`${name}: a live item stacks one to a slot`);
@@ -702,6 +714,8 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!(data.recipes ?? []).some(r => r.make === f.id)) warn(`item ${JSON.stringify(f.id)}: nothing makes it at the workbench`);
   }
   for (const m of homes) for (const o of m.objects) if (o.kind === 'comfort' && !furnished.has(o.what)) warn(`${m.id}: the place for the ${o.what} at ${o.x},${o.y} has no furniture to make for it`);
+  // Nothing in content gives a bundle: only a pile carried to the lodge is one.
+  const bundles = new Set(data.items.filter(i => i.kind === 'bundle').map(i => i.id));
   for (const t of STARTER_TOOLS) {
     const def = data.items.find(i => i.id === t);
     if (def && def.kind !== 'tool') err(`the starter tool ${t} is not a tool`);
@@ -720,6 +734,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (sealed.has(n.item)) err(`mend: ${tier} needs ${n.item}, a sealed thing: ${OPENED}`);
       else if (placed.has(n.item)) err(`mend: ${tier} needs ${n.item}: ${PLACED}`);
       else if (keepsakes.has(n.item)) err(`mend: ${tier} needs ${n.item}, a keepsake: ${KEPT}`);
+      else if (bundles.has(n.item)) err(`mend: ${tier} needs ${n.item}, a bundle: ${PACKED}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`mend: each need is a whole number from 1`);
     }
   }
@@ -734,6 +749,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (sealed.has(n.item)) err(`${name} needs ${n.item}, a sealed thing: ${OPENED}`);
       else if (placed.has(n.item)) err(`${name} needs ${n.item}: ${PLACED}`);
       else if (keepsakes.has(n.item)) err(`${name} needs ${n.item}, a keepsake: ${KEPT}`);
+      else if (bundles.has(n.item)) err(`${name} needs ${n.item}, a bundle: ${PACKED}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
     }
     if (u?.chance !== undefined && !(typeof u.chance === 'number' && u.chance > 0 && u.chance <= 1)) err(`${name}: chance is a share above 0, at most 1`);
@@ -754,6 +770,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     // Furniture is set in its one place at once: one at a time.
     else if (placed.has(r.make) && r.count !== undefined && r.count !== 1) err(`${name} makes ${r.make}, furniture, which has one place: count is 1 or left out`);
     else if (keepsakes.has(r.make)) err(`${name} makes ${r.make}, a keepsake: ${KEPT}`);
+    else if (bundles.has(r.make)) err(`${name} makes ${r.make}, a bundle: ${PACKED}`);
     if (r.count !== undefined && !(Number.isInteger(r.count) && r.count >= 1)) err(`${name}: count is a whole number from 1`);
     // What it makes goes by its kind: a tool to the player's tools (World.giveTool), anything else to the stash.
     else if (tools.has(r.make) && r.count !== undefined && r.count !== 1) err(`${name} makes ${r.make}, a tool, which is yours once: count is 1 or left out`);
@@ -764,6 +781,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (sealed.has(n.item)) err(`${name} needs ${n.item}, a sealed thing: ${OPENED}`);
       else if (placed.has(n.item)) err(`${name} needs ${n.item}: ${PLACED}`);
       else if (keepsakes.has(n.item)) err(`${name} needs ${n.item}, a keepsake: ${KEPT}`);
+      else if (bundles.has(n.item)) err(`${name} needs ${n.item}, a bundle: ${PACKED}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
     }
   }
@@ -788,6 +806,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     else if (sealed.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a sealed thing: ${NO_BAG}`);
     else if (placed.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}: ${PLACED}`);
     else if (keepsakes.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a keepsake: ${KEPT}`);
+    else if (bundles.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a bundle: ${PACKED}`);
     if (r.item === i.id) err(`item ${JSON.stringify(i.id)} reveals itself`);
     if (!Number.isInteger(r.count) || r.count < 1 || !(r.weight > 0)) err(`item ${JSON.stringify(i.id)}: a reveal needs a count from 1 and a weight above 0`);
     // Looking closely says what it turned out to be and what that is good for: the `about` line.
@@ -801,6 +820,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (def.kind === 'tool') err(`${where}: ${id} is a tool, which never lies in a stash`);
     if (def.kind === 'furniture') err(`${where}: ${id}: ${PLACED}`);
     if (def.kind === 'keepsake') err(`${where}: ${id} is a keepsake: ${KEPT}`);
+    if (def.kind === 'bundle') err(`${where}: ${id} is a bundle: ${PACKED}`);
     if (sealed && def.kind === 'sealed') err(`${where}: ${id} is sealed too`);
   };
   const slotsOf = (list: unknown, where: string, sealed = false) => {
@@ -851,6 +871,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     else if (sealed.has(f.item)) err(`${name}: ${f.item} is a sealed thing: ${NO_BAG}`);
     else if (placed.has(f.item)) err(`${name}: ${f.item}: ${PLACED}`);
     else if (keepsakes.has(f.item)) err(`${name}: ${f.item} is a keepsake: ${KEPT}`);
+    else if (bundles.has(f.item)) err(`${name}: ${f.item} is a bundle: ${PACKED}`);
     const mapData = byId.get(f.map);
     if (!mapData) return err(`${name}: there is no map ${f.map}`);
     if (!Number.isInteger(f.count) || f.count < 1) err(`${name}: count must be a whole number from 1`);

@@ -162,7 +162,8 @@ describe('piles', () => {
     expect(await a.c.next('zone')).toMatchObject({ map: { id: 'town' }, reason: 'collapse', drops: [] });
     // The pile and the emptied bag are stored right away.
     await waitFor(() => ctx.storage.drop(a.id) !== undefined && ctx.storage.get(a.id)!.bag.length === 0, 'the pile and the empty bag to be stored');
-    expect(ctx.storage.drop(a.id)).toEqual({ owner: a.id, map: 'woods', x: 3, y: 6, items: bag, droppedAt: drop.until - DROP_LIFETIME_MS, trail: [] });
+    // Nothing in it came out of the stash, so nothing is owed (lostfound.ts).
+    expect(ctx.storage.drop(a.id)).toEqual({ owner: a.id, map: 'woods', x: 3, y: 6, items: bag, droppedAt: drop.until - DROP_LIFETIME_MS, trail: [], owed: {} });
 
     await walk(a.c, ...TO_THE_WOODS);
     expect(await a.c.next('zone', m => m.reason === 'exit')).toMatchObject({ map: { id: 'woods' }, x: 3, y: 6, drops: [drop] });

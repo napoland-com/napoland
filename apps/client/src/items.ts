@@ -5,9 +5,9 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, WEAR_FADES, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, shopLookOf, upgradable, upgradeChance, wearSeconds,
-  type BagSlot, type EffectView, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction, type ShopData, type Slot,
-  type Upgrade, type Worn,
+  BAG_SLOTS, SLOTS, WEAR_FADES, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, shopLookOf, upgradable, upgradeChance,
+  wearSeconds, type BagSlot, type EffectView, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction,
+  type ShopData, type Slot, type Upgrade, type Worn, slotKg,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
 import type { Look } from './view/characters';
@@ -145,6 +145,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'down': return 'You are down. You cannot move until someone comes';
     case 'too_tired': return 'You need more energy than that';
     case 'padlocked': return 'A padlock, rusted shut';
+    case 'not_yours': return 'That is someone else\'s bundle: carry it to the lost and found box in the lodge';
   }
 }
 
@@ -176,6 +177,19 @@ export interface SlotView {
   live?: { def: ItemDef; into?: ItemDef; age: number };
 }
 
+/** "Ana's things": what a bundle is (lostfound.ts), as the bag names it. */
+export const thingsOf = (name: string): string => `${name}'s things`;
+
+/** What a bundle says about itself in the bag: whose things, and where they go. */
+export function bundleText(name: string): string {
+  return `${thingsOf(name)}, tied up to carry. Leave the bundle in the lost and found box in Stonebrook Lodge, by Walt, and it goes home to ${name}.`;
+}
+
+/** A weight as the bag says it: "2.4 kg", "350 g". */
+export function kgText(kg: number): string {
+  return kg >= 0.95 ? `${Math.round(kg * 10) / 10} kg` : `${Math.round(kg * 1000)} g`;
+}
+
 export function slotViews(bag: readonly BagSlot[], items: Items): SlotView[] {
   const nth = new Map<string, number>();
   return bag.map(s => {
@@ -184,6 +198,8 @@ export function slotViews(bag: readonly BagSlot[], items: Items): SlotView[] {
       item: s.item, name: def.name, text: def.text, count: s.count, usable: !!def.use, useLabel: useLabel(def), facts: factsOf(def), icon: iconFor(def),
       ...(def.slot ? { slot: def.slot } : {}), ...(def.live && s.age !== undefined ? { live: { def, into: items.has(def.live.into) ? items.get(def.live.into) : undefined, age: s.age } } : {}),
     };
+    // Someone else's things: named for them, as heavy as what it holds, and nothing to do with it but carry it.
+    if (s.bundle) return { ...base, name: thingsOf(s.bundle.name), text: bundleText(s.bundle.name), usable: false, facts: [kgText(slotKg(s, items.byId)), `Carried for ${s.bundle.name}`] };
     if (!p) return base;
     const n = nth.get(s.item) ?? 0;
     nth.set(s.item, n + 1);

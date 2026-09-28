@@ -39,7 +39,7 @@ import { Chat } from './chat';
 import type { ShopSettings } from './config';
 import { Shop, type WebhookAnswer } from './shop';
 import { Social, type SocialMsg } from './social';
-import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, MarkRecord, PlayerRecord, ReturnRecord, Storage, StoneRecord, ThanksRecord } from './storage';
 import type { Fetch } from './stripe';
 import { Trades, type TradeMsg } from './trade';
 import { colorFor, type World } from './world';
@@ -178,6 +178,8 @@ export function attachNet(o: NetOptions): Net {
   /** The same for each thing left in a crate. */
   const pendingCaches = new Map<number, Promise<void>>();
   const pendingFirsts = new Map<string, Promise<void>>();
+  /** The same for each thing carried back to the lodge. */
+  const pendingReturns = new Map<number, Promise<void>>();
   let pendingStone: Promise<void> = Promise.resolve();
   let pendingNight: Promise<void> = Promise.resolve();
   let saving = false;
@@ -428,6 +430,13 @@ export function attachNet(o: NetOptions): Net {
       case 'rescue':
         // Guests too: help carries no words.
         world.rescue(s.id, msg.who, now);
+        return flush();
+      case 'carry':
+        // Guests too, like everything that only helps (lostfound.ts).
+        world.carry(s.id, msg.x, msg.y, msg.owner, now);
+        return flush();
+      case 'handIn':
+        world.handIn(s.id, msg.x, msg.y, now);
         return flush();
       case 'doorOff':
         // Guests too: a guest's name is on a door as well.
@@ -887,6 +896,18 @@ export function attachNet(o: NetOptions): Net {
     return done;
   }
 
+  /** Stores a thing carried back to the lodge, or its being told. One thing's writes run in order, like persist(). */
+  function persistReturn(r: ReturnRecord): Promise<void> {
+    const done = (pendingReturns.get(r.id) ?? Promise.resolve())
+      .then(() => storage.saveReturn(r))
+      .catch((err: unknown) => log.error('saving a thing carried back failed', { id: r.id, owner: r.owner, err }))
+      .finally(() => {
+        if (pendingReturns.get(r.id) === done) pendingReturns.delete(r.id);
+      });
+    pendingReturns.set(r.id, done);
+    return done;
+  }
+
   /** A first finder, kept once: storage never writes over the first (Storage.saveFirst). */
   function persistFirst(f: FirstRecord): Promise<void> {
     const done = (pendingFirsts.get(f.secret) ?? Promise.resolve())
@@ -912,12 +933,13 @@ export function attachNet(o: NetOptions): Net {
 
   /** Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag changed with one, the Old Stone, the Long Night. */
   function store(): void {
-    const { drops, players, marks, stone, thanks, credits, caches, firsts, longNight } = world.takeWrites();
+    const { drops, players, marks, stone, thanks, credits, caches, firsts, returns, longNight } = world.takeWrites();
     // Players first: a pile or a mark belongs to a player who must exist in the database.
     for (const rec of players) void persist(rec);
     for (const { owner, drop } of drops) void persistDrop(owner, drop);
     for (const { id, mark } of marks) void persistMark(id, mark);
     for (const { id, item } of caches) void persistCache(id, item);
+    for (const r of returns) void persistReturn(r);
     for (const t of thanks) void persistThanks(t);
     for (const helper of credits) void persistCredit(helper);
     for (const f of firsts) void persistFirst(f);
@@ -1030,8 +1052,8 @@ export function attachNet(o: NetOptions): Net {
       for (const rec of recs) void persist(rec);
       // Includes writes for players who left just before, so storage can be closed after this.
       await Promise.all([
-        ...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), ...pendingCaches.values(), ...pendingFirsts.values(), pendingStone,
-        pendingNight,
+        ...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), ...pendingCaches.values(), ...pendingFirsts.values(),
+        ...pendingReturns.values(), pendingStone, pendingNight,
       ]);
       // Clients get a moment to answer the close; then their sockets are cut.
       const force = setTimeout(() => {

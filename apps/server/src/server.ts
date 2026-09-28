@@ -141,9 +141,13 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // Who lives where on the streets, online or not: after the guests who stayed away are gone, their lots with them.
   const lots = await o.storage.loadLots();
   if (lots.length) log.info('lots loaded', { lots: lots.length });
+  // What was carried back to the lodge waits for its owner's chest, and its letter, as long as it takes; then THANKS_KEPT_DAYS.
+  const returns = await o.storage.loadReturns(Date.now() - THANKS_KEPT_MS);
+  if (returns.length) log.info('things carried back loaded', { things: returns.length });
   const forgetThanks = async () => {
     try {
       await o.storage.forgetThanks(Date.now() - THANKS_KEPT_MS);
+      await o.storage.forgetReturns(Date.now() - THANKS_KEPT_MS);
     } catch (err) {
       // Housekeeping: it never keeps the game from running, and it runs again within the hour.
       log.error('deleting old thanks failed', { err });
@@ -161,6 +165,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     cacheItems,
     firsts,
     lots,
+    returns,
     stone,
     longNight,
     now: clock(),

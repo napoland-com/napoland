@@ -57,13 +57,13 @@ import {
   canRescue, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors,
   markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf, stepTarget,
   linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type ShopData, type ShopOpen, type CacheItemView,
-  type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page, type Pass,
+  type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page, type Pass, BUNDLE,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type LongNightView, type MapNote, type OfferPick, type ParcelView, type RefusedAction,
   type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type VisitView, type Weather,
 } from '@napoland/shared';
-import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
+import { Question, Repeat, noteMs, type Answer, type Ask } from './ask';
 import { BEAM_IN_S, BEAM_OUT_S, padFor, popAt } from './beam';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
 import { pieceAt, type DetailRef } from './details';
@@ -72,17 +72,17 @@ import { Passing } from './glimpses';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, FIRST_STEPS_DONE, FIRST_STEPS_TITLE, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TELEPORT, TENDED, TOOK_ONE,
-  TOO_DARK, YOUR_CABIN, YOU_ARE_DOWN, buyQuestion, cabinWho, checkoutQuestion, comfortLines, didText, didWho, doorText, downLine, feedQuestion, fullFire, haveTool, knockedText,
-  leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, FIRST_WAKE, placedAlready, raisedText, rescueQuestion,
-  rescueRefusal, rescueTooTired, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, visitedText, visitWho,
-  waltOnTheLongNight, padlocked,
+  CRATE_FULL, CRATE_NO_GEAR, FIRST_STEPS_DONE, FIRST_STEPS_TITLE, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TELEPORT,
+  TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, YOU_ARE_DOWN, buyQuestion, cabinWho, checkoutQuestion, comfortLines, didText, didWho, doorText, downLine, feedQuestion, fullFire, haveTool,
+  knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, FIRST_WAKE, placedAlready, raisedText,
+  rescueQuestion, rescueRefusal, rescueTooTired, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, visitedText,
+  visitWho, waltOnTheLongNight, padlocked, IN_YOUR_CHEST, LOST_AND_FOUND, LOST_AND_FOUND_LINES, TAKE_HALF, bundleNotYours, carryLabel, handInQuestion, pileQuestion, returnedLine, thingsOf,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { SHOP_OPENING, SHOP_THANKS, payPage, refundedLine, returnLine, type ShopReturn } from './shop';
 import { trophiesIn } from './view/cabin';
 import type { Maps } from './maps';
-import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
+import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, returnedLines, thankRefusal, thankedFloat, thankedLine, thanksFor, where, type Offer } from './thanks';
 import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
 import { tripCard } from './trip';
 import { Stalker } from './unease';
@@ -111,7 +111,7 @@ interface Mover {
  * may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport' | 'locked';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport' | 'locked' | 'lostfound';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
@@ -208,6 +208,7 @@ function talkersOf(map: TileMap, pass: Pass, items: Items, nameOf: (id: string) 
     if (o.kind === 'teleport') return [{ x: o.x, y: o.y, who: TELEPORT, lines: [], kind: 'teleport' }];
     // Furniture in your cabin reads from any side of it; the rug is walked over, not faced.
     if (o.kind === 'comfort' && o.what !== 'rug') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: '', lines: [], kind: 'comfort', what: o.what }));
+    if (o.kind === 'lostfound') return [{ x: o.x, y: o.y, who: LOST_AND_FOUND, lines: LOST_AND_FOUND_LINES, kind: 'lostfound' }];
     return [];
   })];
 }
@@ -282,7 +283,7 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout', 'rescue']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout', 'rescue', 'carry', 'handIn']);
 /** If the server has not moved you this long after the teleport was sent, the trip is off: you are shown where you stand. */
 const BEAM_WAIT_MS = 4000;
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
@@ -944,7 +945,8 @@ export class Game {
       case 'touched': {
         const lost = msg.lost && pieceName(this.items.get(msg.lost), msg.level).toLowerCase();
         if (msg.by === 'skulker') {
-          this.floatOverMe(lost ? `It caught you. You dropped your ${lost}` : 'It caught you', EERIE, 1);
+          // Someone else's bundle is not yours: it lies in your pile all the same, to be picked up again.
+          this.floatOverMe(lost ? `It caught you. You dropped ${msg.lost === BUNDLE ? 'the' : 'your'} ${lost}` : 'It caught you', EERIE, 1);
           this.floatOverMe('It slipped back into the ferns', NO);
         } else {
           this.floatOverMe(lost ? `It took your ${lost}` : 'It touched you', EERIE, 1);
@@ -1140,8 +1142,15 @@ export class Game {
         break;
       }
       case 'letter': {
-        const lines = letterLines(msg.thanks, id => this.maps.find(id), this.items);
+        // What came back to the chest first: it is what matters most coming home.
+        const find = (id: string) => this.maps.find(id);
+        const lines = [...returnedLines(msg.returned ?? [], find), ...letterLines(msg.thanks, find, this.items)];
         if (lines.length) this.letters.push({ who: 'Letter', lines });
+        break;
+      }
+      case 'returned': {
+        const r = msg.returned, map = this.maps.find(r.map);
+        this.inform(LOST_AND_FOUND, `${returnedLine(r.by, map ? where(map, r.x, r.y, id => this.maps.find(id)) : 'out there')} ${IN_YOUR_CHEST}`);
         break;
       }
       case 'progress':
@@ -1564,7 +1573,35 @@ export class Game {
       this.openDialog({ ...t, who: said.who, lines: said.lines, kind: 'talk' });
       return;
     }
+    if (t.kind === 'lostfound') return this.leaveInBox(t);
     return this.offer(t.x, t.y);
+  }
+
+  /**
+   * A at the lost and found box (lostfound.ts): carrying bundles, it asks first ("Leave Ana's things in
+   * the lost and found box? Ana gets them back at home."), and the box then says what it did; carrying
+   * none, it reads its sign.
+   */
+  private leaveInBox(t: Talker) {
+    const names = this.bag.flatMap(s => (s.bundle ? [s.bundle.name] : []));
+    if (!names.length) return this.openDialog({ ...t, kind: 'talk' });
+    if (!this.online) return;
+    const text = handInQuestion(names);
+    this.ask({ who: LOST_AND_FOUND, text, yes: () => this.act(LOST_AND_FOUND, text, { t: 'handIn', x: t.x, y: t.y }) });
+  }
+
+  /**
+   * A at someone else's pile: what to do with it, one of two answers. Take half, as ever (a random half,
+   * the rest lost), or carry all of it to the lodge for them, tied up in a bundle (lostfound.ts): the box
+   * then says what it did. B backs out, and nothing happens.
+   */
+  private askPile(d: DropView) {
+    const text = pileQuestion(d.name), who = thingsOf(d.name);
+    this.ask({
+      who, text,
+      choices: { yes: TAKE_HALF, other: carryLabel(d.name), run: () => this.act(who, text, { t: 'carry', x: d.x, y: d.y, owner: d.owner }) },
+      yes: () => this.sendPick(d.x, d.y),
+    });
   }
 
   /**
@@ -1737,6 +1774,8 @@ export class Game {
   /** A tap on bag slot `slot` in the trade panel: what it holds goes into your side, or comes back out of it. */
   tradeTap(slot: number) {
     const s = this.bag[slot];
+    // Someone else's things are never given away (lostfound.ts): the box says so, and nothing changes.
+    if (s?.bundle) return this.inform('Trade', bundleNotYours(s.bundle.name));
     if (s && isKeepsake(this.items.get(s.item))) return this.inform('Trade', KEEPSAKE_STAYS);
     this.setOffer(tapSlot(this.tradeMine, this.bag, slot, this.items));
   }
@@ -2064,6 +2103,7 @@ export class Game {
     const c = this.cache, s = this.bag[slot];
     if (!c || !s || !this.online) return;
     const def = this.items.get(s.item);
+    if (s.bundle) return this.inform('Crate', bundleNotYours(s.bundle.name));
     if (isKeepsake(def)) return this.inform('Crate', KEEPSAKE_STAYS);
     if (!cacheTakes(def)) return this.inform('Crate', CRATE_NO_GEAR);
     if (c.left) return this.inform('Crate', LEFT_ONE);
@@ -2182,15 +2222,15 @@ export class Game {
 
   /** B: back, and NO to a question. Returns true when it handled something (so the caller does not open the bag). */
   pressB(): boolean {
-    if (this.question) { this.answer('no'); return true; }
+    if (this.question) { this.answer('back'); return true; }
     if (this.note) { this.closeNote(); return true; }
     if (this.dialog) { this.advanceDialog(); return true; }
     return false;
   }
 
   tapTile(x: number, y: number) {
-    // A tap on the world is outside the box: NO to a question, and what the box says closes.
-    if (this.question) return this.answer('no');
+    // A tap on the world is outside the box: backing out of a question, and what the box says closes.
+    if (this.question) return this.answer('back');
     if (this.note) return this.closeNote();
     if (this.dialog) return this.advanceDialog();
     if (this.beam) return;
@@ -2256,8 +2296,20 @@ export class Game {
     return lot >= 0 && lot !== this.street?.mine && (!this.street?.lots[lot] || this.shut.has(lot));
   }
 
-  /** Asks the server for what lies on tile x,y. One pick at a time: the answer is on its way. */
+  /**
+   * What lies on tile x,y: your own pile or a find is picked up at once; someone else's pile asks what to
+   * do with it first (askPile).
+   */
   private pick(x: number, y: number) {
+    if (!this.online) return;
+    const piles = [...this.drops.values()].filter(d => d.x === x && d.y === y);
+    const theirs = piles.some(d => d.owner === this.meId) ? undefined : piles[0];
+    if (theirs) return this.askPile(theirs);
+    this.sendPick(x, y);
+  }
+
+  /** Asks the server for what lies on tile x,y. One pick at a time: the answer is on its way. */
+  private sendPick(x: number, y: number) {
     if (!this.online || (this.picking && this.clock - this.picking.at < ANSWER_WAIT_MS)) return;
     this.picking = { at: this.clock };
     this.send({ t: 'pick', x, y });
@@ -2284,6 +2336,8 @@ export class Game {
   discard(slot: number) {
     const s = this.bag[slot];
     if (!s || !this.online) return;
+    // The card offers no Throw away for someone else's things; a key or a stray press gets the same answer.
+    if (s.bundle) return this.inform(thingsOf(s.bundle.name), bundleNotYours(s.bundle.name));
     const def = this.items.get(s.item), all = s.count, level = s.piece?.level, who = pieceName(def, level), text = (n: number) => tossQuestion(def, n, all, level);
     this.ask({
       who, text, count: { min: 1, max: all },
@@ -2338,8 +2392,11 @@ export class Game {
     this.boxChanges++;
   }
 
-  /** YES or NO to the open question: A, B, a tap on either, or a tap outside the box (NO). */
-  answer(choice: Choice) {
+  /**
+   * YES or NO to the open question (or the first or second of two choices): A, a tap on either; or backing
+   * out of it, B or a tap outside the box, which is NO (and with two choices, neither).
+   */
+  answer(answer: Answer) {
     const q = this.question;
     if (!q) return;
     this.question = null;
@@ -2347,8 +2404,7 @@ export class Game {
     // A direction held while it asked walks only once it is pressed again.
     this.pad.dir = null;
     this.boxChanges++;
-    if (choice === 'yes') q.ask.yes(q.n);
-    else q.ask.no?.();
+    q.run(answer);
     // Whatever was said meanwhile is old news once a new answer is on its way.
     if (this.note?.waiting) this.later = null;
     else this.sayLater();
@@ -2361,9 +2417,9 @@ export class Game {
     if (q && dir && q.step(this.repeat.press(dir, now))) this.boxChanges++;
   }
 
-  /** A tap outside the text box: NO to a question, and what the box says closes. */
+  /** A tap outside the text box: backing out of a question (NO), and what the box says closes. */
   dismiss() {
-    if (this.question) return this.answer('no');
+    if (this.question) return this.answer('back');
     this.closeNote();
   }
 

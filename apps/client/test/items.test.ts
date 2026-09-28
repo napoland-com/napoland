@@ -64,8 +64,9 @@ describe('what items look like', () => {
         continue;
       }
       expect(DRAWN_ITEMS, i.id).toContain(i.id);
-      // A sealed thing (a lockbox) never leaves the chest, where it is opened: it never lies on the ground, nor grows as a find.
-      if (i.kind === 'sealed') {
+      // A sealed thing (a lockbox) never leaves the chest, where it is opened, and a bundle is only ever carried (in a pile it
+      // is a pile): neither lies on the ground as itself, nor grows as a find.
+      if (i.kind === 'sealed' || i.kind === 'bundle') {
         expect(content.finds.map(f => f.item), i.id).not.toContain(i.id);
         continue;
       }

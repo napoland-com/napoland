@@ -116,7 +116,17 @@ describe('what A does', () => {
   it('picks up a pile before a find on the same tile', () => {
     start(3, 3, { finds: [glowcap(1, 3, 3)], drops: [pile('o1', 3, 3)] });
     expect(g.action()).toEqual({ kind: 'pick', x: 3, y: 3, what: 'drop' });
+    // Someone else's: what to do with it comes first (lostfound.ts), and Take half is the pick.
     g.pressA();
+    expect(picks()).toEqual([]);
+    g.pressA();
+    expect(picks()).toEqual([{ t: 'pick', x: 3, y: 3 }]);
+  });
+
+  it('picks up your own pile at once, with nothing asked', () => {
+    start(3, 3, { drops: [pile('me', 3, 3), pile('o1', 3, 3)] });
+    g.pressA();
+    expect(g.question).toBeNull();
     expect(picks()).toEqual([{ t: 'pick', x: 3, y: 3 }]);
   });
 
@@ -125,6 +135,7 @@ describe('what A does', () => {
     expect(g.action()).toEqual({ kind: 'pick', x: 3, y: 3, what: 'find' });
     g.handle({ t: 'findGone', id: 1 }, now);
     expect(g.action()).toEqual({ kind: 'pick', x: 3, y: 2, what: 'drop' });
+    g.pressA();
     g.pressA();
     expect(picks()).toEqual([{ t: 'pick', x: 3, y: 2 }]);
   });
@@ -212,6 +223,9 @@ describe('tapping a find or a pile', () => {
     start(3, 3, { drops: [pile('o1', 3, 1)] });
     g.tapTile(3, 1);
     walk(STEP_MS * 3);
+    // Someone else's pile asks first as you get there: Take half.
+    expect(g.askView()).toMatchObject({ labels: { yes: 'Take half', no: 'Carry it to the lodge for Bea' } });
+    g.pressA();
     expect(picks()).toEqual([{ t: 'pick', x: 3, y: 1 }]);
   });
 

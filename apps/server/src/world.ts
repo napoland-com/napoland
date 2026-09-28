@@ -154,8 +154,12 @@ import {
   amount,
   bagLoad,
   bagSlotsOf,
+  bundleWorth,
+  bundlesIn,
   cacheTakes,
   calendarDay,
+  carrierShare,
+  copyBundle,
   canMake,
   canRescue,
   cleanIds,
@@ -230,6 +234,8 @@ import {
   markLifetime,
   maxEnergy,
   merge,
+  owedOf,
+  packPile,
   mayWear,
   mayWearLook,
   mayWearShopLook,
@@ -290,6 +296,7 @@ import {
   type Arrival,
   type BagSlot,
   type BodyView,
+  type Bundle,
   type CacheItemView,
   type Calendar,
   type ConditionsData,
@@ -335,6 +342,7 @@ import {
   type PlayerView,
   type ProgressView,
   type Recipe,
+  type ReturnedView,
   type Refusal,
   type Resist,
   type Season,
@@ -364,11 +372,13 @@ import {
   type Weather,
 } from '@napoland/shared';
 import { FIRE_LOW_S, FIRE_MAX_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, ReturnRecord, StoneRecord, ThanksRecord } from './storage';
 
 // How often creatures step is their region's (map.ts, watcherStepMs, skulkerStepMs); these are the paces a rule leaves out.
 export { AURORA_WATCHER_STEP_MS, MARK_LIFETIME_MS, SKULKER_STEP_MS, WATCHER_STEP_MS, faces };
 
+/** How often the things carried back to the lodge are looked at, to forget the old ones (they are few, and in no hurry). */
+const RETURNS_LOOK_MS = 60_000;
 /** A step may start this much early: messages sent at a steady pace arrive bunched up. */
 export const STEP_TOLERANCE_MS = 40;
 /** Early steps wait here, in order; one more than this is rejected. */
@@ -579,6 +589,8 @@ export interface Writes {
   caches: Array<{ id: number; item: CacheItemRecord | undefined }>;
   /** First finders since (firsts.ts): each kept once, for good. */
   firsts: FirstRecord[];
+  /** Things carried back to the lodge, or told since (lostfound.ts), as they are now. */
+  returns: ReturnRecord[];
   /** The Long Night, if it changed: it began, the lodge's fire was fed or went out, or dawn came. */
   longNight?: LongNightRecord;
 }
@@ -608,6 +620,8 @@ export interface WorldOptions {
   firsts?: FirstRecord[];
   /** Who lives where: every player's lot on a street, as saved (online or not). */
   lots?: LotRecord[];
+  /** What was carried back to the lodge and is not in its owner's chest yet, or came back in the last THANKS_KEPT_DAYS. */
+  returns?: ReturnRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
   /** The Long Night as it was saved (storage.ts, cleanLongNight). */
@@ -975,12 +989,28 @@ function tilesOf<T>(index: Map<string, Map<number, T>>, key: string): Map<number
 }
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: w.kind, x: w.x, y: w.y, dir: w.dir, ...(w.chasing !== undefined && { chasing: w.chasing }) });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] =>
-  bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}), ...(s.piece ? { piece: { ...s.piece } } : {}) }));
-/** The bag as its owner hears it: a live item's `since` (the server's wall clock) as its age in seconds, and each carried piece of gear as it is. */
+  bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}), ...(s.piece ? { piece: { ...s.piece } } : {}), ...(s.bundle ? { bundle: copyBundle(s.bundle) } : {}) }));
+/**
+ * The bag as its owner hears it: a live item's `since` (the server's wall clock) as its age in seconds, each
+ * carried piece of gear as it is, and a bundle's owner, where it was lost and what it holds (for its weight),
+ * but not what its owner owed their stash: that is the server's.
+ */
 const bagView = (bag: readonly BagSlot[], wall: number): BagSlot[] =>
   bag.map(s => ({
     item: s.item, count: s.count, ...(s.since !== undefined ? { age: round(Math.max(0, wall - s.since) / 1000, 1) } : {}), ...(s.piece ? { piece: { ...s.piece, cond: round(s.piece.cond, 3) } } : {}),
+    ...(s.bundle ? { bundle: bundleView(s.bundle) } : {}),
   }));
+/** A bundle as its carrier hears it: whose, where it was lost, and what it holds; never what was owed. */
+const bundleView = (b: Bundle): Bundle => {
+  const { owed: _owed, ...seen } = copyBundle(b);
+  return seen;
+};
+/** A saved bundle as the server writes them: whose, where it was lost, what it holds; anything else is no bundle. */
+const isBundle = (b: unknown): b is Bundle => {
+  const o = (typeof b === 'object' && b !== null ? b : {}) as Partial<Bundle>;
+  return typeof o.id === 'string' && typeof o.owner === 'string' && typeof o.name === 'string' && typeof o.map === 'string' && Number.isInteger(o.x) && Number.isInteger(o.y)
+    && Array.isArray(o.items) && o.items.every(isSlot) && (o.owed === undefined || (typeof o.owed === 'object' && o.owed !== null));
+};
 const copyStash = (s: Stash): Stash => ({
   items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: Object.fromEntries(Object.entries(s.pieces).map(([id, l]) => [id, l.map(p => ({ ...p }))])) } : {}),
 });
@@ -1244,6 +1274,17 @@ export class World {
   /** The first finder of each secret found so far, by its key (firsts.ts), and those to write. */
   private readonly firsts = new Map<string, FirstRecord>();
   private firstWrites: FirstRecord[] = [];
+  /**
+   * What was carried back to the lodge (lostfound.ts), by id: until it is in its owner's chest and they
+   * were told, and THANKS_KEPT_DAYS after it came back. The bundles that came back, so none comes back twice.
+   */
+  private readonly returns = new Map<number, ReturnRecord>();
+  private readonly returnedBundles = new Set<string>();
+  private readonly returnWrites = new Map<number, ReturnRecord>();
+  /** The last id handed out: ids go up in the order things come back, restart or not. */
+  private lastReturnId = 0;
+  /** The game time the old ones are next looked at: they go at their own pace, no tick needs to. */
+  private returnsForgetAt = 0;
   /** The game time of the last tick: what everyone sees of an afterglow is counted from it. */
   private tickAt = 0;
   /** The walks kept for glimpses, by map id, oldest first: GLIMPSES_PER_MAP at most, a day at most, in memory only. */
@@ -1379,6 +1420,11 @@ export class World {
     }
     for (const m of this.maps.values()) this.cratesIn(m, '');
     for (const c of options.cacheItems ?? []) this.restoreCacheItem(c);
+    for (const r of options.returns ?? []) {
+      this.returns.set(r.id, { ...r, items: copyBag(r.items) });
+      this.returnedBundles.add(r.bundle);
+      this.lastReturnId = Math.max(this.lastReturnId, r.id);
+    }
     this.notesById = notesOf([...this.maps.values()].map(m => m.data));
     for (const f of options.firsts ?? []) if (!this.firsts.has(f.secret)) this.firsts.set(f.secret, { ...f });
     // Who lives where: a lot saved twice (it should not happen) is the first one's; the other is given a new one when they next come home.
@@ -1612,6 +1658,10 @@ export class World {
     if (r.outfit && !this.mayWearAs(r, r.outfit, 'outfit')) delete r.outfit;
     // A pattern and a badge likewise: only one of theirs, only signed in.
     for (const kind of ['pattern', 'badge'] as const) if (r[kind] && !this.mayWearAs(r, r[kind], kind)) delete r[kind];
+    // What was carried back to the lodge for them while they were away is in the chest now (lostfound.ts); the letter says who.
+    r.returned = Number.isInteger(r.returned) && r.returned! > 0 ? r.returned : 0;
+    // Saved at once: the chest and `returned` land together.
+    if (this.takeReturns(r)) this.saveNow.set(r.id, r);
     r.energy = Number.isFinite(r.energy) ? Math.min(this.maxOf(r), Math.max(0, r.energy)) : this.maxOf(r);
     r.wet = Number.isFinite(r.wet) ? clamp01(r.wet!) : 0;
     const readyAt = this.resting.get(r.id) ?? -Infinity;
@@ -1822,6 +1872,8 @@ export class World {
     if (this.spent(p, now)) return this.refuse(p, 'discard', p.slump ? 'down' : 'empty_slot');
     const thrown = p.rec.bag[slot];
     if (!thrown) return this.refuse(p, 'discard', 'empty_slot');
+    // Someone else's things are theirs to lose, not the carrier's to throw away (lostfound.ts).
+    if (thrown.bundle) return this.refuse(p, 'discard', 'not_yours');
     const n = Math.min(thrown.count, Math.max(1, Math.floor(count)));
     p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), thrown.item, n);
     p.rec.bag = takeFromBag(p.rec.bag, slot, n);
@@ -1947,14 +1999,17 @@ export class World {
     this.advance(p, now);
     const why = this.chestRefusal(p, x, y);
     if (why) return this.refuse(p, 'store', why);
-    const all = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
+    // Someone else's things go to the lodge, never into the carrier's chest (lostfound.ts): all of the bag
+    // but them, or a bundle's slot refused.
+    if (slot !== undefined && p.rec.bag[slot]?.bundle) return this.refuse(p, 'store', 'not_yours');
+    const all = slot === undefined ? p.rec.bag.filter(s => !s.bundle) : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
     if (!all.length) return this.refuse(p, 'store', 'empty_slot');
     const setBefore = keepsakeEnergy(this.keepsakes, p.rec.keepsakes);
     const { came, ...r } = this.stashing(p, all, now);
     if (came.length) p.rec.keepsakes = [...(p.rec.keepsakes ?? []), ...came];
     // Carried gear goes in as it is, piece by piece; fitPieces keeps the stash's pieces and its counts one.
     p.rec.stash = fitPieces(r.stash, this.items, this.rng);
-    p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
+    p.rec.bag = slot === undefined ? p.rec.bag.filter(s => s.bundle) : takeFromBag(p.rec.bag, slot);
     const before = levelOf(p.rec.xp ?? 0);
     this.saveNow.set(id, p.rec);
     this.sendBag(p, now);
@@ -2604,10 +2659,20 @@ export class World {
       this.saveNow.set(p.rec.id, p.rec);
       this.outbox.push({ to: p.rec.id, msg: { t: 'streetLetter', doorOff: p.rec.doorOff === true } });
     }
+    // What came back to the chest while they were away (lostfound.ts), the latest first; told once.
+    const back = [...this.returns.values()].filter(r => r.owner === p.rec.id && !r.told && r.id <= (p.rec.returned ?? 0)).sort((a, b) => b.id - a.id);
+    for (const r of back) {
+      r.told = true;
+      this.returnWrites.set(r.id, r);
+    }
+    const returned = back.map(r => this.returnedView(p.rec.id, r));
     // Only what is still kept: one older than THANKS_KEPT_DAYS may wait for the tick that forgets it.
     const kept = now + this.epochOffset - THANKS_KEPT_MS;
     const unread = [...this.thanks.values()].filter(t => t.helper === p.rec.id && !t.told && t.at > kept).sort((a, b) => b.at - a.at);
-    if (!unread.length) return;
+    if (!unread.length) {
+      if (returned.length) this.outbox.push({ to: p.rec.id, msg: { t: 'letter', thanks: [], returned } });
+      return;
+    }
     const blocks = this.blocks(p.rec.id);
     const groups = new Map<string, { group: ThanksGroup; givers: Set<string>; at: number }>();
     for (const t of unread) {
@@ -2624,9 +2689,9 @@ export class World {
       // The latest first: the list is newest first.
       if (g.group.names.length < 2) g.group.names.push(t.name);
     }
-    if (!groups.size) return;
+    if (!groups.size && !returned.length) return;
     const thanks = [...groups.values()].sort((a, b) => b.group.count - a.group.count || b.at - a.at).map(g => g.group);
-    this.outbox.push({ to: p.rec.id, msg: { t: 'letter', thanks } });
+    this.outbox.push({ to: p.rec.id, msg: { t: 'letter', thanks, ...(returned.length ? { returned } : {}) } });
   }
 
   /** Thanks older than THANKS_KEPT_DAYS are forgotten (storage deletes its own: Storage.forgetThanks). */
@@ -2670,6 +2735,8 @@ export class World {
     if (!c) return this.refuse(p, 'cacheLeave', 'too_far');
     const s = p.rec.bag[slot], def = s && this.items.get(s.item);
     if (!s || !def) return this.refuse(p, 'cacheLeave', 'empty_slot');
+    // Someone else's things go back to them at the lodge, not to whoever comes next.
+    if (s.bundle) return this.refuse(p, 'cacheLeave', 'not_yours');
     if (isKeepsake(def)) return this.refuse(p, 'cacheLeave', 'keepsake');
     if (!cacheTakes(def)) return this.refuse(p, 'cacheLeave', 'no_gear');
     const visit = this.visitAt(p, c);
@@ -2752,6 +2819,137 @@ export class World {
     const thanked = this.giveThanks(this.person(q), this.person(p), { kind: 'rescue', map: q.map.data.id, x: q.rec.x, y: q.rec.y, who }, now);
     this.outbox.push({ to: who, msg: { t: 'raised', by: this.person(p), ...(thanked ? { thanked: true as const } : {}) } });
     this.did(p, { kind: 'rescued', who, name: q.rec.name });
+  }
+
+  // ---------- the lost and found (lostfound.ts) ----------
+
+  /**
+   * `id` carries `owner`'s pile on tile x,y (theirs, or one of the four next to it) to the lodge for them:
+   * someone else's pile, all of it. Its owner's things are tied up into a bundle, one bag slot,
+   * and a bundle that lay in it (someone who collapsed carrying one) stays its own owner's; each needs a
+   * slot free. The pile is gone, and with it its hour: a bundle never fades. Everyone there sees it go.
+   */
+  carry(id: string, x: number, y: number, owner: string, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.spent(p, now)) return this.refuse(p, 'carry', p.slump ? 'down' : 'too_far');
+    if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return this.refuse(p, 'carry', 'too_far');
+    const d = owner !== id && p.map.inside(x, y) ? this.pileTiles.get(p.zone.key)?.get(y * p.map.width + x)?.find(o => o.owner === owner) : undefined;
+    if (!d) return this.refuse(p, 'carry', 'gone');
+    const { bundle, others } = packPile(d);
+    const carried = [...(bundle ? [bundle] : []), ...others];
+    if (p.rec.bag.length + carried.length > p.slots) return this.refuse(p, 'carry', 'bag_full');
+    this.removePile(d);
+    p.rec.bag = [...copyBag(p.rec.bag), ...copyBag(carried)];
+    // Saved with the pile's going, not at the next periodic save: a restart in between would find both.
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    this.did(p, { kind: 'carried', names: [...new Set(carried.map(s => s.bundle!.name))] });
+  }
+
+  /**
+   * `id` leaves every bundle they carry in the lost and found box on tile x,y, next to them. Each goes
+   * into its owner's chest whole: at once if they are online, as they next come into the game if not.
+   * The carrier earns a quarter of what it was worth (bundleWorth: never what the owner had taken out of
+   * their stash), not doubled by rest, since it is not their trip's; its owner earns the rest as their
+   * stash takes it (takeReturn). The owner thanks the carrier (thanks.ts), and their letter home says who
+   * carried it and from where. A bundle that came back already (a copy a crash left behind) only goes.
+   */
+  handIn(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.spent(p, now)) return this.refuse(p, 'handIn', p.slump ? 'down' : 'too_far');
+    if (manhattan(x, y, p.rec.x, p.rec.y) !== 1 || !p.map.data.objects.some(o => o.kind === 'lostfound' && o.x === x && o.y === y)) return this.refuse(p, 'handIn', 'too_far');
+    const bundles = bundlesIn(p.rec.bag);
+    if (!bundles.length) return this.refuse(p, 'handIn', 'empty_slot');
+    const wall = Math.floor(now + this.epochOffset);
+    let xp = 0;
+    for (const b of bundles) {
+      if (this.returnedBundles.has(b.id)) continue;
+      const share = carrierShare(bundleWorth(b, this.items));
+      xp += share;
+      this.lastReturnId = Math.max(wall, this.lastReturnId + 1);
+      const r: ReturnRecord = {
+        id: this.lastReturnId, bundle: b.id, owner: b.owner, carrier: id, name: p.rec.name, map: b.map, x: b.x, y: b.y, items: copyBag(b.items), xp: share, at: wall, told: false,
+      };
+      this.returns.set(r.id, r);
+      this.returnedBundles.add(b.id);
+      this.returnWrites.set(r.id, r);
+      const owner = this.players.get(b.owner);
+      if (owner) this.takeReturn(owner, r, now);
+      // Its owner thanks whoever brought it back, online or not, once a UTC day like any thanks.
+      this.giveThanks({ id: b.owner, name: b.name }, this.person(p), { kind: 'returned', map: b.map, x: b.x, y: b.y, who: b.owner }, now);
+    }
+    p.rec.bag = p.rec.bag.filter(s => !s.bundle);
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    const before = levelOf(p.rec.xp ?? 0);
+    if (xp > 0) this.grant(p, xp);
+    if (levelOf(p.rec.xp ?? 0) !== before) this.refresh(p, now);
+    this.tell(p, now);
+    this.did(p, { kind: 'handedIn', names: [...new Set(bundles.map(b => b.name))], xp: xp * this.xpTimes });
+  }
+
+  /**
+   * What someone carried back goes into its owner's chest, as their stash takes anything (store: what they
+   * had taken out of it earns nothing back), and they earn what it was worth there less what the carrier
+   * got, never below nothing: together never more than bringing it home would have earned. `returned`
+   * says it is in: it is saved with the stash, so nothing goes in twice. Online, they hear it at once.
+   */
+  private takeReturn(p: Online, r: ReturnRecord, now: number): void {
+    const before = levelOf(p.rec.xp ?? 0), gained = this.putBack(p.rec, r);
+    if (gained === null) return;
+    this.saveNow.set(p.rec.id, p.rec);
+    this.sendStash(p);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp ?? 0, p.rec.rested), gained } });
+    if (levelOf(p.rec.xp ?? 0) !== before) this.refresh(p, now);
+    this.tell(p, now);
+    // Told now, in the text box, and left out of the letter.
+    r.told = true;
+    this.returnWrites.set(r.id, r);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'returned', returned: this.returnedView(p.rec.id, r) } });
+  }
+
+  /** Puts what came back into a record's stash and XP (takeReturn), once: the XP it earned them, or null when the stash has it already. */
+  private putBack(rec: PlayerRecord, r: ReturnRecord): number | null {
+    if ((rec.returned ?? 0) >= r.id) return null;
+    const put = store(rec.stash ?? emptyStash(), r.items, this.items);
+    const gained = Math.max(0, put.xp - r.xp) * this.xpTimes;
+    rec.stash = fitPieces(put.stash, this.items, this.rng);
+    rec.xp = (rec.xp ?? 0) + gained;
+    rec.returned = r.id;
+    return gained;
+  }
+
+  /** Who carried it and from where, as its owner hears it: someone they block goes unnamed. */
+  private returnedView(owner: string, r: ReturnRecord): ReturnedView {
+    return { by: r.carrier !== null && this.blocks(owner).has(r.carrier) ? null : r.name, map: r.map, x: r.x, y: r.y };
+  }
+
+  /** XP that is no stashing (a carrier's share): as many times as a play-test says, never doubled by rest. */
+  private grant(p: Online, xp: number): void {
+    const gained = xp * this.xpTimes;
+    p.rec.xp = (p.rec.xp ?? 0) + gained;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, p.rec.rested), gained } });
+  }
+
+  /** What came back for someone who was away: into their record as they come into the game, oldest first, each once. True when anything did. */
+  private takeReturns(rec: PlayerRecord): boolean {
+    const due = [...this.returns.values()].filter(r => r.owner === rec.id && r.id > (rec.returned ?? 0)).sort((a, b) => a.id - b.id);
+    for (const r of due) this.putBack(rec, r);
+    return due.length > 0;
+  }
+
+  /** What came back and was told, older than THANKS_KEPT_DAYS, is forgotten (storage deletes its own: Storage.forgetReturns). */
+  private forgetReturns(now: number): void {
+    if (now < this.returnsForgetAt) return;
+    this.returnsForgetAt = now + RETURNS_LOOK_MS;
+    const kept = now + this.epochOffset - THANKS_KEPT_MS;
+    for (const [id, r] of this.returns) if (r.told && r.at <= kept) this.returns.delete(id);
   }
 
   /**
@@ -3028,6 +3226,7 @@ export class World {
     this.fadePiles(now);
     this.fadeMarks(now);
     this.forgetThanks(now);
+    this.forgetReturns(now);
     this.forgetEffects(now);
     this.forgetWalks(now);
     this.growFinds(now);
@@ -3098,9 +3297,11 @@ export class World {
       credits: this.credits,
       caches: [...this.cacheWrites].map(([id, c]) => ({ id, item: c && { ...c } })),
       firsts: this.firstWrites,
+      returns: [...this.returnWrites.values()].map(r => ({ ...r, items: copyBag(r.items) })),
       ...(this.nightWrite ? { longNight: { ...this.nightWrite } } : {}),
     };
     this.firstWrites = [];
+    this.returnWrites.clear();
     this.nightWrite = undefined;
     this.pileWrites.clear();
     this.saveNow.clear();
@@ -3474,7 +3675,9 @@ export class World {
       const into = this.items.get(s.item)?.live?.into;
       return into ? { item: into, count: s.count } : s;
     }));
-    const pile: DropRecord = { owner: id, name, map, ...copyField(p.zone.copy), x, y, items, droppedAt: Math.floor(now + this.epochOffset), trail };
+    // What of it they had taken out of their stash, for whoever carries it back to the lodge (lostfound.ts).
+    const owed = owedOf(p.rec.stash, items);
+    const pile: DropRecord = { owner: id, name, map, ...copyField(p.zone.copy), x, y, items, droppedAt: Math.floor(now + this.epochOffset), trail, owed };
     this.addPile(pile);
     this.pileWrites.set(id, pile);
     this.toZone(p.zone.key, { t: 'drop', drop: dropView(pile) });
@@ -4699,7 +4902,8 @@ export class World {
   /** A watcher reached a player: energy lost, one thing they carried taken (at random), and it goes away. */
   private touch(w: Watcher, p: Online, now: number): void {
     this.sendAway(w, now);
-    const units = p.rec.bag.flatMap((s, slot) => Array.from({ length: s.count }, () => slot));
+    // Only what is theirs: someone else's things, carried to the lodge for them, are left alone.
+    const units = p.rec.bag.flatMap((s, slot) => (s.bundle ? [] : Array.from({ length: s.count }, () => slot)));
     let lost: string | null = null, level = 0;
     if (units.length) {
       const slot = units[this.roll(units.length)]!;
@@ -5017,13 +5221,19 @@ export class World {
 
   /**
    * A saved bag as it fits today's items: items that no longer exist are gone, gear is a piece to a slot
-   * (gear saved before pieces travelled, a strange object's, gets a new one), and a bag that no longer
-   * fits (a stack size went down) is packed again; whatever does not fit then is lost.
+   * (gear saved before pieces travelled, a strange object's, gets a new one), a bundle is one only with
+   * what a bundle holds (lostfound.ts), and a bag that no longer fits (a stack size went down) is packed
+   * again; whatever does not fit then is lost.
    */
   private fitBag(bag: unknown, slots: number): BagSlot[] {
-    // Only a live item keeps when it was picked.
-    const known = this.pieced((Array.isArray(bag) ? bag : []).filter((s): s is BagSlot => isSlot(s) && this.items.has(s.item))
-      .map(s => (s.since === undefined || this.items.get(s.item)!.live ? s : { item: s.item, count: s.count, ...(s.piece ? { piece: s.piece } : {}) })));
+    const kept = (s: BagSlot): boolean => this.items.has(s.item) && (this.items.get(s.item)!.kind === 'bundle' ? isBundle(s.bundle) : true);
+    // Only a live item keeps when it was picked, and only a bundle what it holds.
+    const known = this.pieced((Array.isArray(bag) ? bag : []).filter((s): s is BagSlot => isSlot(s) && kept(s))
+      .map(s => {
+        const { bundle, ...rest } = s;
+        const plain = s.since === undefined || this.items.get(s.item)!.live ? rest : { item: s.item, count: s.count, ...(s.piece ? { piece: s.piece } : {}) };
+        return this.items.get(s.item)!.kind === 'bundle' ? { ...plain, count: 1, bundle: copyBundle(bundle!) } : plain;
+      }));
     const fine = known.length <= slots && known.every(s => s.count <= this.items.get(s.item)!.stack);
     return fine ? copyBag(known) : addAllToBag([], known, this.items, slots).bag;
   }
@@ -5148,11 +5358,11 @@ export class World {
    */
   private restore(d: DropRecord): void {
     const map = this.maps.get(d.map);
-    const items = gather(this.pieced((Array.isArray(d.items) ? d.items : []).filter(s => isSlot(s) && this.items.has(s.item))));
+    const items = gather(this.pieced((Array.isArray(d.items) ? d.items : []).filter(s => isSlot(s) && this.items.has(s.item) && (this.items.get(s.item)!.kind !== 'bundle' || isBundle(s.bundle)))));
     if (!map || !map.inside(d.x, d.y) || !items.length || this.piles.has(d.owner)) return;
     const trail = (Array.isArray(d.trail) ? d.trail : []).filter(([x, y]) => map.inside(x, y)).slice(-TRAIL_STEPS);
-    const { zone: _zone, ...rest } = d;
-    this.addPile({ ...rest, ...(typeof d.zone === 'string' && d.zone ? { zone: d.zone } : {}), items, trail });
+    const { zone: _zone, owed, ...rest } = d;
+    this.addPile({ ...rest, ...(typeof d.zone === 'string' && d.zone ? { zone: d.zone } : {}), items, trail, ...(owed && typeof owed === 'object' ? { owed: { ...owed } } : {}) });
   }
 
   private addPile(d: DropRecord): void {
@@ -5685,7 +5895,7 @@ export class World {
   private refuse(
     p: Online,
     action: 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind | 'checkout'
-      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue',
+      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn',
     reason: Refusal,
   ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });

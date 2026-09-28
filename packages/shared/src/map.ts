@@ -196,6 +196,11 @@ export type MapObject =
    * leaves a thing and takes one. `name`: what people call it, as a letter says it ("the old cabin's crate").
    */
   | { kind: 'cache'; x: number; y: number; name: string }
+  /**
+   * The lost and found box, by Walt in the lodge (lostfound.ts): a battered wooden box with a sign
+   * lettered by hand. Whatever you carry for someone, left in it, goes back to them.
+   */
+  | { kind: 'lostfound'; x: number; y: number }
   /** Furniture, inside buildings. A bed is one tile wide and two long (head at y); a rug is only drawn. */
   | { kind: 'bed'; x: number; y: number }
   | { kind: 'table'; x: number; y: number }
@@ -403,7 +408,7 @@ const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
-  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport',
+  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport', 'lostfound',
   'ruin', 'yarder', 'spool', 'traps', 'gate',
 ]);
 
@@ -429,7 +434,7 @@ export function underfoot(o: MapObject): boolean {
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
  */
-export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache', 'teleport']);
+export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache', 'teleport', 'lostfound']);
 
 /** Where a teleport sets you down: on the tile in front of it (below), facing away from it. */
 export function teleportArrival(t: { x: number; y: number }): { x: number; y: number; dir: Dir } {

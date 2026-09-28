@@ -11,13 +11,13 @@
  * (detailView), hud.ts draws it and sends what its buttons do.
  */
 import {
-  CACHE_SIZE, RESIST_MAX, WEAR_FADES, bagSlotsOf, cacheTakes, formatPrice, mayWear, meritLookOf, meritsLeft, mendCost, nextUpgrade, outfitOf, pieceFactor, priceOf, shopLookOf, upgradable,
+  CACHE_SIZE, RESIST_MAX, WEAR_FADES, bagSlotsOf, cacheTakes, formatPrice, mayWear, meritLookOf, meritsLeft, mendCost, nextUpgrade, outfitOf, pieceFactor, slotKg, priceOf, shopLookOf, upgradable,
   upgradeFactor, wearSeconds, whyNotBuy, whyNotCheckout, xpFor, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type LookKind, type Piece, type PieceAt, type Slot,
   type Tier, type Worn,
 } from '@napoland/shared';
 import { NO_BADGE_ICON, NO_OUTFIT_ICON, NO_PATTERN_ICON, iconFor, outfitIcon } from './icons';
-import { ELEMENT_WORDS, conditionText, countOf, factsOf, oddsText, pieceName, slotName, useLabel, type Items } from './items';
-import { CRATE_FULL, CRATE_NO_GEAR, KEEPSAKE_STAYS, LEFT_ONE, TOOK_ONE, holdsText, leftBy, merits, noMerit, price } from './said';
+import { ELEMENT_WORDS, bundleText, conditionText, countOf, factsOf, kgText, oddsText, pieceName, slotName, thingsOf, useLabel, type Items } from './items';
+import { CRATE_FULL, CRATE_NO_GEAR, KEEPSAKE_STAYS, LEFT_ONE, TOOK_ONE, bundleNotYours, holdsText, leftBy, merits, noMerit, price } from './said';
 import { SHOP_WHERE, YOURS, shopIcon } from './shop';
 import { NO_BADGE, NO_OUTFIT, NO_PATTERN, lookIcon, outfitWords, type WardrobeState } from './wardrobe';
 
@@ -305,6 +305,7 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
     case 'bag': {
       const slot = s.bag[ref.slot];
       if (!slot || slot.item !== ref.item) return null;
+      if (slot.bundle) return bundleCard(slot, ref.slot, s);
       const def = items.get(slot.item), gear = def.kind === 'gear';
       const card = gear ? gearCard(def, slot.piece ?? { cond: 1 }, s) : itemCard(def, slot.count);
       if (s.panel === 'crate') return s.crate ? leaveCard(card, def, ref.slot, s.crate) : null;
@@ -469,6 +470,20 @@ function furnitureCard(recipe: string, def: ItemDef, needs: NeedView[], s: Detai
  * first), or it is greyed out and the card says why: gear stays with you, you left one this visit
  * already, or the crate is full.
  */
+/**
+ * Someone else's things, tied up to carry to the lodge (lostfound.ts): whose, and as heavy as what they
+ * hold. There is nothing to do with them but carry them: in the bag the card only says so, and at the
+ * chest or a crate its button stays grey, with why.
+ */
+function bundleCard(slot: BagSlot, at: number, s: DetailState): DetailView {
+  const b = slot.bundle!;
+  const card: DetailView = { icon: iconFor(s.items.get(slot.item)), name: thingsOf(b.name), text: bundleText(b.name), stats: [], facts: [kgText(slotKg(slot, s.items.byId))], notes: [] };
+  if (s.panel === 'bag') return card;
+  const notes: DetailView['notes'] = [{ text: bundleNotYours(b.name), tone: 'bad' }];
+  if (s.panel === 'crate') return { ...card, notes, act: { label: 'Leave one', enabled: false, does: { kind: 'crateLeave', slot: at } } };
+  return { ...card, notes, act: { label: 'Put away', enabled: false, does: { kind: 'store', slot: at } } };
+}
+
 function leaveCard(card: DetailView, def: ItemDef, slot: number, c: NonNullable<DetailState['crate']>): DetailView {
   const act: NonNullable<DetailView['act']> = { label: 'Leave one', enabled: false, does: { kind: 'crateLeave', slot } };
   if (def.kind === 'keepsake') card.notes.push({ text: KEEPSAKE_STAYS, tone: 'bad' });

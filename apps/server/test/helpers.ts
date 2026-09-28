@@ -381,6 +381,42 @@ export async function keepsRested(storage: Storage): Promise<void> {
 }
 
 /**
+ * What was carried back to the lodge (lostfound.ts), kept on `storage` (in memory, or a real database): a
+ * return stored, then told; loaded while its owner's chest does not have it yet, however old, or while it
+ * is recent; forgotten only once it is in the chest (the owner's `returned`, saved with the chest, which a
+ * save only ever raises) and old. And a pile keeps what its owner owed their stash.
+ */
+export async function keepsReturns(storage: Storage): Promise<void> {
+  const DAY = 86_400_000, now = Date.now(), kept = now - 7 * DAY;
+  const ana = await savedPlayer(storage), bo = await savedPlayer(storage);
+  const old = {
+    id: now - 10 * DAY, bundle: `${ana.id}:1`, owner: ana.id, carrier: bo.id, name: bo.name, map: 'woods', x: 3, y: 6,
+    items: [{ item: 'nail', count: 4 }, { item: 'coat', count: 1, piece: { cond: 0.5 } }], xp: 3, at: now - 10 * DAY, told: false,
+  };
+  const mine = async () => (await storage.loadReturns(kept)).filter(r => r.owner === ana.id);
+  await storage.saveReturn(old);
+  // Ten days old, but not in her chest yet: kept, whatever its age.
+  expect(await mine()).toEqual([old]);
+  await storage.saveReturn({ ...old, told: true });
+  expect((await mine())[0]!.told).toBe(true);
+  const load = async () => (await storage.findByTokenHash(hashToken(ana.token)))!;
+  const rec = await load();
+  expect(rec.returned).toBeUndefined();
+  await storage.save({ ...rec, returned: old.id });
+  // A copy saved from before never takes it back out of her chest.
+  await storage.save({ ...rec, returned: 0 });
+  expect((await load()).returned).toBe(old.id);
+  const recent = { ...old, id: now - DAY, bundle: `${ana.id}:2`, at: now - DAY, told: false };
+  await storage.saveReturn(recent);
+  // In the chest and old: gone. Recent, or not in the chest: kept.
+  expect(await storage.forgetReturns(kept)).toBeGreaterThanOrEqual(1);
+  expect((await mine()).map(r => r.bundle)).toEqual([recent.bundle]);
+  // A pile keeps what was owed.
+  await storage.saveDrop({ owner: ana.id, name: ana.name, map: 'woods', x: 3, y: 6, items: [{ item: 'moss', count: 3 }], droppedAt: now, trail: [], owed: { moss: 2 } });
+  expect((await storage.loadDrops(now - DROP_LIFETIME_MS)).find(d => d.owner === ana.id)).toMatchObject({ items: [{ item: 'moss', count: 3 }], owed: { moss: 2 } });
+}
+
+/**
  * Signing in with an identity (dev mode here, so on any storage): a character made before sign-in
  * is claimed with its token by the first identity that brings it, and is theirs from then on, with
  * or without the token; for anyone else the token claims nothing, and they make their own. Runs on

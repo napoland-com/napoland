@@ -25,9 +25,10 @@ import type { KeepsakesData } from './notes';
  * one of a kind, left behind by someone (notes.ts): each player finds their own where it lies, once,
  * and brought home it stays there for good, apart from the stash. Furniture is made at the workbench for
  * a place in your own cabin (comfort.ts) and set in it at once: never in the bag, the stash, a pile or a
- * trade.
+ * trade. A bundle is someone else's pile tied up to carry to the lodge for them (lostfound.ts): only ever
+ * packed from a pile, never opened, traded, left in a crate, stashed or thrown away.
  */
-export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool' | 'sealed' | 'keepsake' | 'furniture';
+export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool' | 'sealed' | 'keepsake' | 'furniture' | 'bundle';
 
 /** One thing a sealed item may hold, by weight: these items, or one item of kind `any`, every one of that kind alike (any charm). */
 export interface Holding {
@@ -204,6 +205,7 @@ export interface LongNightData {
 /**
  * One bag slot: an item and how many of it (at most its stack). Gear stacks one to a slot, and its slot
  * carries the piece (its condition, quirk and level) wherever it goes: in a bag, a pile, a stash's list.
+ * So does a bundle (one to a slot) carry what it holds.
  */
 export interface BagSlot {
   item: string;
@@ -213,6 +215,42 @@ export interface BagSlot {
   since?: number;
   /** A live item, as the client hears its bag: seconds since it was picked, when the message was sent. */
   age?: number;
+  /** A bundle (lostfound.ts): whose things it holds, where they were lost, and the things. */
+  bundle?: Bundle;
+}
+
+/**
+ * Someone's pile, tied up to carry to the lost and found box in the lodge for them (lostfound.ts): one
+ * bag slot, as heavy as what it holds, that never fades. Never inside another one: a pile that holds
+ * bundles packs its owner's own things into one of their own, and the others stay as they are.
+ */
+export interface Bundle {
+  /** The pile it was packed from, its owner's and when they collapsed (bundleId): handed in once. */
+  id: string;
+  owner: string;
+  /** The owner's name, as their pile said it. */
+  name: string;
+  /** Where it was lost, the pile's map and tile, for the owner's letter ("by the pond"). */
+  map: string;
+  x: number;
+  y: number;
+  /** What it holds, as a pile holds it (gather): each piece of gear on its own, with its piece. */
+  items: BagSlot[];
+  /**
+   * Of each item, how many had been taken out of the owner's stash when they collapsed (Stash.out): they
+   * earn nothing when they go back (progress.ts). The server's only: the carrier never hears it.
+   */
+  owed?: Record<string, number>;
+}
+
+/** A copy of a bag slot, with its own piece and bundle: nothing a copy changes reaches the original. */
+export function copySlot(s: BagSlot): BagSlot {
+  return { ...s, ...(s.piece ? { piece: { ...s.piece } } : {}), ...(s.bundle ? { bundle: copyBundle(s.bundle) } : {}) };
+}
+
+/** A copy of a bundle, with its own things. */
+export function copyBundle(b: Bundle): Bundle {
+  return { ...b, items: b.items.map(copySlot), ...(b.owed ? { owed: { ...b.owed } } : {}) };
 }
 
 /**
@@ -239,9 +277,15 @@ export const DROP_LIFETIME_MS = 60 * 60 * 1000;
 /** What you carry easily. A heavier bag drains energy faster (energy.ts, LOAD_DRAIN). */
 export const CARRY_KG = 10;
 
+/** Kilograms in a bag slot: a bundle weighs what it holds. */
+export function slotKg(s: BagSlot, items: Map<string, ItemDef>): number {
+  if (s.bundle) return s.bundle.items.reduce((sum, b) => sum + slotKg(b, items), 0);
+  return s.count * (items.get(s.item)?.weight ?? 0);
+}
+
 /** What a bag weighs over what you carry easily: 0 empty, 1 at CARRY_KG, more beyond. `lighter` scales it (a feat, a charm). */
 export function bagLoad(bag: readonly BagSlot[], items: Map<string, ItemDef>, lighter = 1): number {
-  const kg = bag.reduce((sum, s) => sum + s.count * (items.get(s.item)?.weight ?? 0), 0);
+  const kg = bag.reduce((sum, s) => sum + slotKg(s, items), 0);
   return Math.round((kg * lighter / CARRY_KG) * 1000) / 1000;
 }
 
@@ -377,7 +421,7 @@ export function addToBag(bag: readonly BagSlot[], item: ItemDef, count: number, 
 
 /**
  * Puts several stacks into a bag, in order; what does not fit comes back in `left`. A piece of gear
- * keeps its piece, in the bag or left out.
+ * keeps its piece, and a bundle what it holds, in the bag or left out.
  */
 export function addAllToBag(bag: readonly BagSlot[], add: readonly BagSlot[], items: Map<string, ItemDef>, slots = BAG_SLOTS): { bag: BagSlot[]; left: BagSlot[] } {
   let out = bag.map(s => ({ ...s }));
@@ -386,13 +430,14 @@ export function addAllToBag(bag: readonly BagSlot[], add: readonly BagSlot[], it
     const def = items.get(a.item);
     if (!def) continue; // an item that no longer exists is dropped silently
     const r = addToBag(out, def, a.count, slots);
-    // A live item keeps when it was picked, and gear its piece: both stack one to a slot, so their slots are new ones.
+    // A live item keeps when it was picked, gear its piece and a bundle what it holds: all stack one to a slot, so their slots are new ones.
     for (const s of r.bag.slice(out.length)) {
       if (a.since !== undefined) s.since = a.since;
       if (a.piece) s.piece = { ...a.piece };
+      if (a.bundle) s.bundle = copyBundle(a.bundle);
     }
     out = r.bag;
-    if (r.left) left.push({ item: a.item, count: r.left, ...(a.piece ? { piece: { ...a.piece } } : {}) });
+    if (r.left) left.push({ item: a.item, count: r.left, ...(a.piece ? { piece: { ...a.piece } } : {}), ...(a.bundle ? { bundle: copyBundle(a.bundle) } : {}) });
   }
   return { bag: out, left };
 }
@@ -438,7 +483,7 @@ export function merge(items: readonly BagSlot[]): BagSlot[] {
 
 /**
  * What a pile holds: the same items joined like merge, but each piece of gear on its own with its
- * piece, so it comes back out of the pile as it went in. In the order they first came.
+ * piece, and each bundle whole, so it comes back out of the pile as it went in. In the order they first came.
  */
 export function gather(items: readonly BagSlot[]): BagSlot[] {
   const out: BagSlot[] = [];
@@ -448,6 +493,10 @@ export function gather(items: readonly BagSlot[]): BagSlot[] {
     if (s.piece) {
       // A piece is one of its item, however the slot counted it.
       out.push({ item: s.item, count: 1, piece: { ...s.piece } });
+      continue;
+    }
+    if (s.bundle) {
+      out.push({ item: s.item, count: 1, bundle: copyBundle(s.bundle) });
       continue;
     }
     const joined = by.get(s.item);
@@ -464,11 +513,13 @@ export function gather(items: readonly BagSlot[]): BagSlot[] {
 /**
  * A random half of a pile, for someone who is not its owner: exactly half of the units, chosen at
  * random, and an odd one out goes either way by a coin toss (so on average it is exactly half). A
- * piece of gear in it is a unit like any other, and keeps its piece.
+ * piece of gear in it is a unit like any other, and keeps its piece; so is a bundle, whole.
  */
 export function halfOf(items: readonly BagSlot[], rng: () => number): BagSlot[] {
   const units: BagSlot[] = [];
-  for (const s of items) for (let i = 0; i < s.count; i++) units.push(s.piece ? { item: s.item, count: 1, piece: s.piece } : { item: s.item, count: 1 });
+  for (const s of items) {
+    for (let i = 0; i < s.count; i++) units.push(s.piece ? { item: s.item, count: 1, piece: s.piece } : s.bundle ? { item: s.item, count: 1, bundle: s.bundle } : { item: s.item, count: 1 });
+  }
   // Fisher-Yates, then keep the first half.
   for (let i = units.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));

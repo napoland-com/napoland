@@ -353,7 +353,8 @@ function log(g: THREE.Object3D, r: number, len: number, bark: string, x: number,
  * Low-poly furniture with toon outlines, placed on its tiles: a bed (head north), a table with a mug
  * and a book, a shelf of books and jars (its back to the nearest wall), a crate (sometimes two), a
  * crate for whoever comes next (indoors and out), a rug, one of NAPO's desks (its back to the wall too),
- * a trapper's pegs of traps and snowshoes (on the wall) and a woodpile (along its wall). Colors vary by position, the same on every visit. Null for anything else.
+ * a trapper's pegs of traps and snowshoes (on the wall), a woodpile (along its wall) and the lost and found box. Colors vary by position, the
+ * same on every visit. Null for anything else.
  */
 export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | null {
   const v = hash2(o.x * 3 + 1, o.y * 5 + 2);
@@ -569,6 +570,35 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
         g.add(box(0.2, 0.03, 0.01, CHALK, 0, 0.26, 0.302, false));
         for (const t of [-1, 1]) g.add(box(0.1, 0.03, 0.01, CHALK, -0.07, 0.26 + t * 0.03, 0.303, false).rotateZ(t * 0.7));
       }
+      return g;
+    }
+    case 'lostfound': {
+      // The lost and found box by Walt (lostfound.ts): a battered wooden box, a board nailed crooked across
+      // a split in its front, its lid not quite shut on what people left in it (the end of a red scarf, the
+      // top of a boot), and behind it a sign on a stick, LOST AND FOUND in Walt's uneven brush strokes.
+      const wood = '#8a6a47', edge = '#5c4430', ink = '#2b2420';
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = (v - 0.5) * 0.24;
+      g.add(box(0.7, 0.44, 0.52, wood, 0, 0.22, 0));
+      for (const by of [0.15, 0.3]) g.add(box(0.7, 0.02, 0.012, edge, 0, by, 0.262, false));
+      g.add(box(0.5, 0.07, 0.02, '#6d5236', 0.06, 0.24, 0.27, false).rotateZ(0.16));
+      for (const sx of [-0.17, 0.27]) g.add(box(0.025, 0.025, 0.01, '#8f969c', sx, sx < 0 ? 0.205 : 0.28, 0.282, false));
+      // The lid, hinged at the back, held up a little by what is inside.
+      const lid = pivot(0, 0.44, -0.26);
+      lid.rotation.x = -0.1;
+      lid.add(box(0.74, 0.05, 0.56, '#7a5c3d', 0, 0.025, 0.28));
+      g.add(lid);
+      g.add(box(0.1, 0.2, 0.02, '#a33b2e', -0.2, 0.4, 0.27, false), box(0.12, 0.1, 0.14, '#3d2f24', 0.2, 0.47, 0.02, 0.01));
+      // The sign behind it, on its stick.
+      g.add(box(0.035, 0.74, 0.035, edge, -0.24, 0.37, -0.22, false));
+      const sign = pivot(-0.1, 0.78, -0.2);
+      sign.rotation.z = -0.07;
+      sign.add(box(0.5, 0.26, 0.025, '#d9cdb0', 0, 0, 0));
+      // Two rows of strokes, as a hand letters them: LOST, then AND FOUND.
+      for (const [lx, ly, w] of [[-0.14, 0.05, 0.05], [-0.07, 0.05, 0.05], [0, 0.055, 0.05], [0.07, 0.05, 0.05], [-0.17, -0.05, 0.08], [-0.05, -0.055, 0.1], [0.08, -0.05, 0.1], [0.18, -0.05, 0.04]] as const) {
+        sign.add(box(w, 0.045, 0.006, ink, lx, ly, 0.016, false));
+      }
+      g.add(sign);
       return g;
     }
     case 'console': {
@@ -792,6 +822,7 @@ export function furnitureShadows(map: TileMap): Array<[number, number, number, n
     else if (o.kind === 'table') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.44]);
     else if (o.kind === 'crate') out.push([o.x + 0.5, o.y + 0.5, 0.42, 0.42]);
     else if (o.kind === 'cache') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.4]);
+    else if (o.kind === 'lostfound') out.push([o.x + 0.5, o.y + 0.5, 0.44, 0.36]);
     else if (o.kind === 'chest') out.push([o.x + 0.5, o.y + 0.46, 0.46, 0.32]);
     else if (o.kind === 'workbench') out.push([o.x + 0.5, o.y + 0.42, 0.52, 0.36]);
     else if (o.kind === 'console' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.36, 0.52, 0.32]);

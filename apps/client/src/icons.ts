@@ -136,6 +136,14 @@ const ICONS: Record<string, string> = {
     <path d="M14.3 15.6v-1.9a1.7 1.7 0 0 1 3.4 0v1.9" stroke-width="1.4"/>
     <rect x="12.6" y="15.6" width="6.8" height="6.6" rx="1.2" fill="#4d5963"/>
     <circle cx="16" cy="18.4" r=".9" fill="#e8dfc8" stroke="none"/><path d="M16 19.2v1.4" stroke-width="1.1"/>`),
+  // Someone else's things, tied up in a cloth to carry to the lodge: its corners knotted on top, and a paper tag with their name.
+  bundle: icon(`<path d="M5.5 16.5c0-3 2.2-4.5 5-4.5h11c2.8 0 5 1.5 5 4.5v6.8c0 2.9-2.3 4.7-5.2 4.7H10.7c-2.9 0-5.2-1.8-5.2-4.7z" fill="#9a5b43"/>
+    <path d="M12.2 12.4c-1.6-1.8-2.6-4.3-1.6-6 .9 1.6 3 2.7 5.4 3.3 2.4-.6 4.5-1.7 5.4-3.3 1 1.7 0 4.2-1.6 6" fill="#b86f52"/>
+    <circle cx="16" cy="11.4" r="1.9" fill="#7a432f"/>
+    <path d="M6.2 19.6c3.1 1 6.4 1.5 9.8 1.5s6.7-.5 9.8-1.5" stroke="#6b3a28" stroke-width="1.2"/>
+    <path d="M20.4 20.8l2.6 3.2" stroke-width="1.1"/>
+    <rect x="21.4" y="23.2" width="6" height="4.2" rx=".8" fill="#e8dfc8" stroke="#6b5234" stroke-width="1" transform="rotate(12 24.4 25.3)"/>
+    <path d="M23 25.1h3" stroke="#6b5234" stroke-width=".9" transform="rotate(12 24.4 25.3)"/>`),
   // The keepsakes people left (notes.ts), each one of a kind, in a soft gold light that says so.
   // A photograph of the town before: a white border, the mill's roof, the street, the Old Stone whole.
   'old-photograph': icon(`${halo(16, 16, 14, '#ffd98a')}
