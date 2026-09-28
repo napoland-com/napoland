@@ -59,6 +59,10 @@
  * collapse. The rules for items and bags are in shared/items.ts. Tools are each player's own for good,
  * apart from the bag (giveTool): made at the workbench or found, and never in a pile.
  *
+ * Glimpses (shared/glimpses.ts): a walk of 20 to 40 steps out in the wilds that ended at a find picked, a fire
+ * fed or the way home is kept for a day, a few to a map and in memory only; whoever is alone out there on that
+ * map now and then glimpses one of somebody else's, as their color and their tiles, never whose.
+ *
  * Thanks (shared/thanks.ts): a fire out there remembers who fed it last, an arrow who painted it, and
  * whoever warms at the one or follows the other can thank them, once a UTC day each. The helper hears it
  * at once if online (a little energy out in the wilds, a line anywhere else), or in a letter when they
@@ -112,6 +116,12 @@ import {
   WHOLE_WEEK,
   FLASH_BURST_S,
   FLASH_GLOW_S,
+  GLIMPSES_PER_MAP,
+  GLIMPSE_EVERY_S,
+  GLIMPSE_KEPT_MS,
+  GLIMPSE_NEAR,
+  GLIMPSE_SEEN,
+  GLIMPSE_STEPS,
   UNEASE_COMPANY,
   UNEASE_MODS,
   UNEASE_SHAKEN_S,
@@ -250,6 +260,7 @@ import {
   type FlashKind,
   type FlashView,
   type Gear,
+  type GlimpseView,
   type ItemDef,
   type ItemsData,
   type KeepsakesData,
@@ -542,6 +553,19 @@ export interface WorldOptions {
   restedEveryMs?: number;
   /** How many make a crowd (TOWN_CROWD and REGION_CROWD unless set): tests, and play-tests with a few tabs (TOWN_CROWD, REGION_CROWD), set fewer. */
   crowd?: Partial<Crowd>;
+  /**
+   * Development only (GLIMPSE_EVERY_MS): whoever is alone out in the wilds glimpses a walk this often (ms)
+   * instead of every GLIMPSE_EVERY_S, to play-test glimpses without the wait. Unset: as it should be.
+   */
+  glimpseEveryMs?: number;
+}
+
+/** A walk kept for glimpses (glimpses.ts): whose (never told), their jacket color, the tiles in order, and when it ended (game time). */
+interface Walk {
+  owner: string;
+  color: string;
+  steps: Array<[number, number]>;
+  at: number;
 }
 
 interface Online {
@@ -581,6 +605,16 @@ interface Online {
   shakenUntil?: number;
   /** The last tiles walked on this map, out in the wilds. */
   trail: Array<[number, number]>;
+  /**
+   * For glimpses (glimpses.ts): the tiles walked on this map out in the wilds since a walk last ended there
+   * (GLIMPSE_STEPS at most, the last ones); the walk that took them into the room off the wilds they are in,
+   * which ends there if they pick a find or feed the fire in it; when they next glimpse someone's walk (game
+   * time), while alone out there; and the last one they glimpsed.
+   */
+  walked: Array<[number, number]>;
+  approach?: { map: string; steps: Array<[number, number]> };
+  glimpseAt?: number;
+  glimpsed?: Walk;
   /** What the player last heard, and when: the client counts on from there. */
   heardRate: number;
   heardWetRate: number;
@@ -1041,6 +1075,12 @@ export class World {
   private firstWrites: FirstRecord[] = [];
   /** The game time of the last tick: what everyone sees of an afterglow is counted from it. */
   private tickAt = 0;
+  /** The walks kept for glimpses, by map id, oldest first: GLIMPSES_PER_MAP at most, a day at most, in memory only. */
+  private readonly walks = new Map<string, Walk[]>();
+  /** When the oldest walk is to be forgotten (or later), so tick() only looks when one is due. */
+  private walkForgetAt = Infinity;
+  /** How often someone alone out there glimpses a walk (WorldOptions.glimpseEveryMs); undefined: every GLIMPSE_EVERY_S. */
+  private readonly glimpseEvery: number | undefined;
   /**
    * The street (a map with `street`): every player's cabin stands on it, each copy of it a street of
    * neighbors, keyed by the street's number (copyFor). The doors of its lots, lot by lot (lotDoors).
@@ -1095,6 +1135,7 @@ export class World {
     this.guests = options.guests ?? false;
     this.xpTimes = options.xpTimes ?? 1;
     this.restedEvery = options.restedEveryMs;
+    this.glimpseEvery = Number.isFinite(options.glimpseEveryMs) && options.glimpseEveryMs! > 0 ? options.glimpseEveryMs : undefined;
     this.stepMs = options.stepMs ?? STEP_MS;
     this.onCollapse = options.onCollapse;
     this.rng = options.rng ?? Math.random;
@@ -1344,7 +1385,7 @@ export class World {
     this.resting.delete(r.id);
     const p: Online = {
       rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
-      hitchAt: now, unease: 0, uneaseAt: now, uneaseLevel: 0, trail: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
+      hitchAt: now, unease: 0, uneaseAt: now, uneaseLevel: 0, trail: [], walked: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
       fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity,
     };
     this.refresh(p, now);
@@ -1604,6 +1645,7 @@ export class World {
     if (this.wild(p.map)) this.moveStory(p, { feed: 'fire' });
     // A dead fire lit again warms whoever stands by it.
     for (const q of p.zone.players) this.rerate(q, now);
+    this.walkEnded(p, now);
     this.did(p, { kind: 'fire', item: def.id, count: fed, left: burning.left ?? 0, ...(lit ? { lit: true as const } : {}) });
   }
 
@@ -2465,6 +2507,7 @@ export class World {
       this.surged(p, now);
       this.hitch(p, now);
       this.unnerve(p, now);
+      this.glimpse(p, now);
       this.snug(p, now);
       this.notice(p, now);
       this.rerate(p, now);
@@ -2481,6 +2524,7 @@ export class World {
     this.fadePiles(now);
     this.fadeMarks(now);
     this.forgetThanks(now);
+    this.forgetWalks(now);
     this.growFinds(now);
   }
 
@@ -2568,12 +2612,16 @@ export class World {
     if (p.map.data.kind === 'wilds') {
       p.trail.push([x, y]);
       if (p.trail.length > TRAIL_STEPS) p.trail.shift();
+      p.walked.push([x, y]);
+      if (p.walked.length > GLIMPSE_STEPS[1]) p.walked.shift();
       // The pack mule counts what the bag really weighs: a feel made lighter by its own ranks or a charm
       // must not slow the count toward its next rank.
       const real = bagLoad(p.rec.bag, this.items);
       for (const stat of STEP_STATS) if (stepCounts(stat, p.map, x, y, this.sky, real)) this.count(p, stat, now);
     }
     const exit = p.map.exitAt(x, y);
+    // Onto the way home (a home exit: no steps from home) out in the wilds: a walk others may glimpse ends here.
+    if (exit && p.map.data.kind === 'wilds' && p.map.homeSteps(x, y) === 0) this.walkEnded(p, now);
     if (exit) this.cross(p, exit, now);
     else {
       this.rerate(p, now);
@@ -2598,7 +2646,10 @@ export class World {
     const copy = this.copyFor(p.rec, map);
     // Onto the street, from town or out of the cabin: in front of their own cabin's door, on their own street.
     const at = map === this.street ? { ...this.doorstep(p.rec), dir: to.dir } : to;
+    const walked = p.walked;
     this.place(p, this.zoneFor(map, copy, now), at.x, at.y, at.dir);
+    // Into a room off the wilds: the walk that led here ends at a find or a fire, if they pick one up or feed it in there.
+    if (from.map.data.kind === 'wilds' && map.data.kind === 'inside') p.approach = { map: from.map.data.id, steps: walked };
     this.arrive(p, from, 'exit', now);
     this.moveStory(p, { reach: map.data.id });
     // Home, whichever copy of it (their own cabin): the letter waits there.
@@ -2782,6 +2833,8 @@ export class World {
     p.queue.length = 0;
     p.after = undefined;
     p.trail = [];
+    p.walked = [];
+    p.approach = undefined;
     this.revisit(p);
     // Home, or out of it: their window lights or goes dark on their street.
     if (this.players.has(p.rec.id) && this.ownCabin(p) !== home) this.homeChanged(p);
@@ -3473,6 +3526,88 @@ export class World {
     this.markFadeAt = [...this.marks.values()].reduce((at, m) => Math.min(at, markUntil(m) - this.epochOffset), Infinity);
   }
 
+  // ---------- glimpses (glimpses.ts) ----------
+
+  /** The walks on a map that may be glimpsed at `now` (none a day old), oldest first, as whoever glimpses one hears it. */
+  walksOn(mapId: string, now: number): GlimpseView[] {
+    return (this.walks.get(mapId) ?? []).filter(w => now - w.at < GLIMPSE_KEPT_MS).map(w => ({ color: w.color, steps: w.steps.map(([x, y]) => [x, y] as [number, number]) }));
+  }
+
+  /**
+   * A walk ended at a find picked, a fire fed or the way home: out in the wilds, the tiles walked there since
+   * the last one ended; in a room off the wilds, the walk that led in. Long enough (GLIMPSE_STEPS), it is kept
+   * for whoever comes along alone to glimpse, and the next walk starts from here.
+   */
+  private walkEnded(p: Online, now: number): void {
+    if (p.map.data.kind === 'wilds') {
+      this.keepWalk(p.map.data.id, p, p.walked, now);
+      p.walked = [];
+    } else if (p.approach) {
+      this.keepWalk(p.approach.map, p, p.approach.steps, now);
+      p.approach = undefined;
+    }
+  }
+
+  private keepWalk(mapId: string, p: Online, steps: ReadonlyArray<[number, number]>, now: number): void {
+    if (steps.length < GLIMPSE_STEPS[0]) return;
+    let walks = this.walks.get(mapId);
+    if (!walks) this.walks.set(mapId, (walks = []));
+    walks.push({ owner: p.rec.id, color: p.rec.color, steps: steps.slice(-GLIMPSE_STEPS[1]).map(([x, y]) => [x, y]), at: now });
+    // A few to a map: the oldest goes first.
+    if (walks.length > GLIMPSES_PER_MAP) walks.shift();
+    this.walkForgetAt = Math.min(this.walkForgetAt, walks[0]!.at + GLIMPSE_KEPT_MS);
+  }
+
+  /** Walks a day old are forgotten, glimpsed or not. */
+  private forgetWalks(now: number): void {
+    if (now < this.walkForgetAt) return;
+    let next = Infinity;
+    for (const [mapId, walks] of this.walks) {
+      while (walks[0] && now - walks[0].at >= GLIMPSE_KEPT_MS) walks.shift();
+      if (walks[0]) next = Math.min(next, walks[0].at + GLIMPSE_KEPT_MS);
+      else this.walks.delete(mapId);
+    }
+    this.walkForgetAt = next;
+  }
+
+  /**
+   * Alone out in the wilds (nobody else in their zone, and not in a room), every GLIMPSE_EVERY_S a player
+   * glimpses a walk somebody else took on this map in the last day: its color and its tiles, never whose.
+   * With someone else there, or in a room, the wait starts again once they are alone out there.
+   */
+  private glimpse(p: Online, now: number): void {
+    if (p.map.data.kind !== 'wilds' || p.zone.players.size > 1) {
+      p.glimpseAt = undefined;
+      return;
+    }
+    p.glimpseAt ??= now + this.glimpseGap();
+    if (now < p.glimpseAt) return;
+    p.glimpseAt = now + this.glimpseGap();
+    const walk = this.walkFor(p, now);
+    if (!walk) return;
+    p.glimpsed = walk;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'glimpse', glimpse: { color: walk.color, steps: walk.steps.map(([x, y]) => [x, y]) } } });
+  }
+
+  /** A while (ms) until someone alone out there glimpses another walk. */
+  private glimpseGap(): number {
+    const [a, b] = GLIMPSE_EVERY_S;
+    return this.glimpseEvery ?? (a + this.rng() * (b - a)) * 1000;
+  }
+
+  /**
+   * One of the walks on the player's map from the last day, at random: never theirs, one they can see (it passes
+   * within GLIMPSE_SEEN of where they stand, and does not begin within GLIMPSE_NEAR, where it would fade at
+   * once), and not the one they glimpsed last while there are others.
+   */
+  private walkFor(p: Online, now: number): Walk | undefined {
+    const { x, y } = p.rec, away = (sx: number, sy: number) => Math.hypot(sx - x, sy - y);
+    const seen = (w: Walk) => away(...w.steps[0]!) > GLIMPSE_NEAR && w.steps.some(([sx, sy]) => away(sx, sy) <= GLIMPSE_SEEN);
+    const theirs = (this.walks.get(p.map.data.id) ?? []).filter(w => w.owner !== p.rec.id && now - w.at < GLIMPSE_KEPT_MS && seen(w));
+    const fresh = theirs.length > 1 ? theirs.filter(w => w !== p.glimpsed) : theirs;
+    return fresh.length ? fresh[this.roll(fresh.length)] : undefined;
+  }
+
   // ---------- unease (unease.ts) ----------
 
   /**
@@ -3961,6 +4096,7 @@ export class World {
     this.rerate(p, now);
     this.moveStory(p, { pick: rule.item.id });
     this.found(p, rule.item.id, now);
+    this.walkEnded(p, now);
   }
 
   /**
@@ -3981,6 +4117,7 @@ export class World {
     if (this.wild(p.map)) this.count(p, 'found', now);
     this.moveStory(p, { pick: rule.item.id });
     this.found(p, rule.item.id, now);
+    this.walkEnded(p, now);
   }
 
   /**

@@ -10,6 +10,7 @@ import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { FirstView } from './firsts';
 import type { Gear, Quirk, Worn } from './gear';
+import type { GlimpseView } from './glimpses';
 import type { BagSlot } from './items';
 import type { MeritsView } from './merits';
 import type { NotebookView } from './notebook';
@@ -737,6 +738,11 @@ export type ServerMsg =
    * as often). Told only when the level changes; it is 0 whenever you come into the game.
    */
   | { t: 'unease'; level: number }
+  /**
+   * You are alone out in the wilds: someone's steps from the last day, on this map, to walk as a see-through
+   * figure in their jacket color (glimpses.ts). Only the color and the tiles: never whose they were.
+   */
+  | { t: 'glimpse'; glimpse: GlimpseView }
   /** On your map: someone lit a flare. */
   | { t: 'flare'; flare: FlareView }
   /** Your map's surge clock moved to another phase. */

@@ -996,6 +996,9 @@ function frame(now: number) {
   hud.setUnease(game.unease);
   const figure = me && game.online ? apparition.update(now, game.map, game.unease, inTheDark(weather), me.tx, me.ty, me.dir, edgeOf) : 0;
   view.setApparition(apparition.x, apparition.y, figure);
+  // Alone out in the wilds, someone's steps now and then: gone once anyone else is here, or you come near.
+  const passing = game.passing, glimpsed = me && passing.active ? passing.update(now, me.x, me.y, game.players.size <= 1 && game.map.data.kind === 'wilds') : 0;
+  view.setGlimpse(passing.x, passing.y, passing.heading, passing.walking, passing.color, glimpsed);
   const t = (now - start) / 1000;
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;

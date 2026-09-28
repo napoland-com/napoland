@@ -62,6 +62,8 @@ export interface ServerOptions {
   restedEveryMs?: number;
   /** How many make a crowd, in a copy of a town square and of a region (TOWN_CROWD and REGION_CROWD unless set): tests set fewer, and play-tests (TOWN_CROWD, REGION_CROWD). */
   crowd?: Partial<Crowd>;
+  /** Development only (GLIMPSE_EVERY_MS): whoever is alone out in the wilds glimpses someone's walk this often (ms). Every minute or two unless set. */
+  glimpseEveryMs?: number;
   /** With sign-in, how often guests who stayed away GUEST_DAYS are looked for (after start-up); default once a day. */
   forgetGuestsEveryMs?: number;
   /** How often thanks older than THANKS_KEPT_DAYS are deleted (after start-up); default once an hour. */
@@ -162,6 +164,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     xpTimes: o.xpMultiplier,
     ...(o.restedEveryMs ? { restedEveryMs: o.restedEveryMs } : {}),
     ...(o.crowd ? { crowd: o.crowd } : {}),
+    ...(o.glimpseEveryMs ? { glimpseEveryMs: o.glimpseEveryMs } : {}),
   });
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world!.size, version: o.version, auth: auth.config });
   const net = attachNet({

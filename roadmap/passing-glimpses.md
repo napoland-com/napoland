@@ -1,8 +1,8 @@
 ---
 id: passing-glimpses
 title: Other people's steps
-status: idea
-order: 160
+status: done
+order: 520
 area: social
 depends: [survival-dynamics]
 ---

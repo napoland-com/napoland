@@ -22,7 +22,7 @@ import { comfortModel, comfortShadow, lampLight } from './cabin';
 import { Afterglows, LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
 import { CROUCH_DROP, CROUCH_LEAN, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial } from './grass';
-import { Creatures, Echoes, FAR_FIGURE_H, FarFigure, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
+import { Creatures, Echoes, FAR_FIGURE_H, FarFigure, Flares, Flashes, Marks, Passer, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
@@ -269,6 +269,8 @@ export class WorldView {
   private echoes = new Echoes();
   /** What stands at the edge of the fog when you are uneasy (unease.ts): only on a map where watchers roam. */
   private farFigure: FarFigure | null = null;
+  /** Someone's steps, glimpsed while you are alone out there (glimpses.ts): only on a map of the wilds. */
+  private passer: Passer | null = null;
   private creatureList: CreatureAvatar[] = [];
   private flareLight = new THREE.PointLight(FLARE_COLOR, 0, 9, 2);
   /** The fires of this map: their tiles in the order Fires draws them, how big each burns, and where the game says so. */
@@ -322,6 +324,7 @@ export class WorldView {
     if (this.outdoors) this.buildEffects();
     this.scene.add(this.liveGlows.root, this.afterglows.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
     if (map.data.kind === 'wilds' && map.data.watchers) this.scene.add((this.farFigure = new FarFigure()).root);
+    if (map.data.kind === 'wilds') this.scene.add((this.passer = new Passer()).root);
     this.puffs.push(this.flares.sparks);
     this.animate.push(t => this.loot.update(t));
     this.animate.push(t => { this.marks.update(t); this.flares.update(t); this.flashes.update(t); });
@@ -336,9 +339,11 @@ export class WorldView {
     this.scene.add(this.marker);
     this.setWeather('rain');
     // Compile the shaders now (behind the black screen), not on the first frame you see. What stands at
-    // the edge of the fog is compiled with the rest, showing nothing, and hidden until it stands there.
+    // the edge of the fog and the figure of a glimpse are compiled with the rest, showing nothing, and
+    // hidden until they are there.
     this.renderer.compile(this.scene, this.camera);
     if (this.farFigure) this.farFigure.root.visible = false;
+    if (this.passer) this.passer.root.visible = false;
   }
 
   /** Frees everything this view put on the GPU. The renderer and the shared toon materials stay for the next map. */
@@ -1056,6 +1061,14 @@ export class WorldView {
   }
 
   /**
+   * Someone's steps, glimpsed (glimpses.ts): their figure at x,y (tiles), heading `heading`, walking or not, in
+   * their jacket `color`, showing `k` of itself (0: none): every frame. Only a map of the wilds has one.
+   */
+  setGlimpse(x: number, y: number, heading: number, walking: boolean, color: string, k: number) {
+    this.passer?.set(x, y, k > 0 ? this.groundAt(x + 0.5, y + 0.5) : 0, heading, walking, color, k);
+  }
+
+  /**
    * How far out on the screen something standing on tile x,y is seen, from its feet to a head FAR_FIGURE_H
    * up: the larger of across and up, 0 in the middle to 1 at the edge (more: off it); null behind the camera.
    * As last drawn: for what stands at the edge of the fog (unease.ts, EdgeOf).
@@ -1176,6 +1189,7 @@ export class WorldView {
     for (const c of this.creatureList) if (c.moving) this.rustleAt(c.x + 0.5, c.y + 0.5);
     this.echoes.update(t, (x, z) => this.groundAt(x, z));
     this.farFigure?.update(t, fx, fz);
+    this.passer?.update(t);
     this.light(fx, fz, t, dt);
     const dark = this.weather === 'night' || this.weather === 'aurora';
     if (this.storm && this.outdoors) this.hemi.intensity = this.amb.hemi.intensity * L * (lightningAt(t) ? 2.6 : 0.8);
