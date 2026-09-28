@@ -517,7 +517,8 @@ describe.skipIf(!url)('PgStorage', () => {
   it('keeps a whole player in one row: tools, parcels, the outfit, the field notes and the thanks received together, every column round trips, and no save writes the thanks received', async () => {
     const { sub, kept } = await keepsWholeRow(storage);
     const row = await admin.query(
-      `SELECT map, x, y, dir, energy, bag, wet, stats, xp, stash, gear, worn, story, tools, parcel_welcome, parcel_day, parcel_days, outfit, thanked, notebook, furniture, cozy_until, street, lot
+      `SELECT map, x, y, dir, energy, bag, wet, stats, xp, stash, gear, worn, story, tools, parcel_welcome, parcel_day, parcel_days, outfit, thanked, notebook, furniture, cozy_until, street, lot,
+         door_off, street_told
        FROM ${schema}.players WHERE auth_sub = $1`,
       [sub],
     );
@@ -526,7 +527,7 @@ describe.skipIf(!url)('PgStorage', () => {
     expect(row.rows).toEqual([{
       map: kept.map, x: kept.x, y: kept.y, dir: kept.dir, energy: kept.energy, bag: kept.bag, wet: kept.wet, stats: counts, xp: kept.xp, stash: kept.stash, gear: kept.gear,
       worn: kept.worn, story: kept.story, tools: kept.tools, parcel_welcome: true, parcel_day: 20_725, parcel_days: 0b11, outfit: 'rain-cape', thanked: 8, notebook: kept.notebook,
-      furniture: ['iron-stove', 'bed'], cozy_until: new Date(1_700_000_400_000), street: 3, lot: 0,
+      furniture: ['iron-stove', 'bed'], cozy_until: new Date(1_700_000_400_000), street: 3, lot: 0, door_off: false, street_told: true,
     }]);
   });
 
@@ -659,6 +660,24 @@ describe.skipIf(!url)('PgStorage', () => {
       await s.saveStone({ charge: 12.5, awake: true, at: 1_800_000_000_000 });
       await s.saveStone({ charge: 11.25, awake: true, at: 1_800_000_060_000 });
       expect(await s.loadStone()).toEqual({ charge: 11.25, awake: true, at: 1_800_000_060_000 });
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('keeps the Long Night beside the Old Stone, and reads back nothing it did not write', async () => {
+    const fresh = await freshSchema();
+    const s = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await s.init();
+      expect(await s.loadLongNight()).toBeNull();
+      await s.saveStone({ charge: 3, awake: false, at: 1_800_000_000_000 });
+      await s.saveLongNight({ week: 2961, bonus: true, outAt: 1_791_055_620_000, out: false, over: false });
+      await s.saveLongNight({ week: 2961, bonus: true, outAt: 1_791_055_920_000, out: true, over: true });
+      expect(await s.loadLongNight()).toEqual({ week: 2961, bonus: true, outAt: 1_791_055_920_000, out: true, over: true });
+      expect(await s.loadStone()).toEqual({ charge: 3, awake: false, at: 1_800_000_000_000 });
+      await admin.query(`UPDATE ${fresh.schema}.world_state SET value = '{"week":"soon"}'::jsonb WHERE key = 'long_night'`);
+      expect(await s.loadLongNight()).toBeNull();
     } finally {
       await s.close();
     }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ANSWER_DAY, dayIndex, firstBanner, firstInJournal, firstOnBoard, itemIndex, notesOf, secretKey, secretOf, secretTitle, thousands, zoneDay, type ItemsData, type MapData, type MapObject,
+  ANSWER_DAY, dayIndex, firstBanner, isLongNight, longNightFrom, weekIndex, firstInJournal, firstOnBoard, itemIndex, notesOf, secretKey, secretOf, secretTitle, thousands, zoneDay, type ItemsData, type MapData, type MapObject,
 } from '../src';
 
 const note = (id: string, by: 'ranger' | 'walt' | 'barlows', x: number, y: number): MapObject => ({ kind: 'note', id, by, name: 'A note', x, y, text: ['Words.'] });
@@ -41,11 +41,19 @@ describe('first finders', () => {
     expect([thousands(7), thousands(3052), thousands(1234567)]).toEqual(['7', '3,052', '1,234,567']);
   });
 
-  it('count the Zone\'s days from the night of the answer, a day for each turn of the sky: past day 3,050 late in September 2026', () => {
-    expect(zoneDay(Date.UTC(2026, 8, 28, 12))).toBe(3052);
+  it('count the Zone\'s days from the night of the answer, a day for each turn of the sky: past day 3,200 late in September 2026', () => {
+    expect(zoneDay(Date.UTC(2026, 8, 28, 12))).toBe(3201);
     expect(zoneDay(0)).toBe(-ANSWER_DAY);
     const t = Date.UTC(2026, 8, 28, 12);
     expect(zoneDay(t + 48 * 60 * 1000) - zoneDay(t)).toBe(1);
     expect(zoneDay(t)).toBe(dayIndex(t) - ANSWER_DAY);
+  });
+
+  it('start the count on a Long Night: the Long Night comes on the night of the week NAPO answered', () => {
+    expect(isLongNight(ANSWER_DAY)).toBe(true);
+    // The week of Monday 28 September 2026: its Long Night, Saturday 3 October, is the sixteenth since the answer.
+    expect(dayIndex(longNightFrom(weekIndex(Date.UTC(2026, 8, 28, 12)))) - ANSWER_DAY).toBe(16 * 210);
+    // Vera's card was written before the world's first players came: her day is behind the count.
+    expect(zoneDay(Date.UTC(2026, 8, 28, 12))).toBeGreaterThan(3041);
   });
 });

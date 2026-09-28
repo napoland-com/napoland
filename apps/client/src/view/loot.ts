@@ -19,6 +19,7 @@ import { OUTLINE, OUTLINE_INSTANCED, bake, box, flat, hash2, ownToon, part, pivo
 /** Items with a look of their own; any other item is drawn as a sack. */
 export const ITEM_LOOKS = [
   'glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'live-shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead', 'ember-coal', 'pale-moth',
+  'hand-warmer', 'rad-tablet', 'cedar-bark', 'battery', 'resin-tear', 'far-woods-map',
   // The keepsakes people left (notes.ts): each lies for one player alone, in a soft gold light.
   'old-photograph', 'brass-compass', 'pole-tag', 'tin-whistle', 'staff-badge',
 ] as const;
@@ -54,8 +55,15 @@ const STYLE: Record<Look, Style> = {
   'warm-pebble': { pool: '#ff9a4a', size: 1.2, top: 0.16, glow: { color: '#ff9447', emissive: '#8a3a0c' } },
   'hollow-feather': { pool: '#e8e2d6', size: 1.2, top: 0.12 },
   'humming-bead': { pool: '#5ff0e0', size: 1.3, top: 0.3, glow: { color: '#8ff7ee', emissive: '#1f8f86' }, floats: true },
+  'hand-warmer': { pool: '#ffb070', size: 1.2, top: 0.1 },
+  'rad-tablet': { pool: '#e4eeff', size: 1.15, top: 0.08 },
   'ember-coal': { pool: '#ff6a3a', size: 1.25, top: 0.16, glow: { color: '#ff6a38', emissive: '#a3280c' } },
   'pale-moth': { pool: '#f2ecd8', size: 1.3, top: 0.34, glow: { color: '#efe8d2', emissive: '#6e6650' }, floats: true },
+  'cedar-bark': { pool: '#e0955a', size: 1.2, top: 0.14 },
+  battery: { pool: '#d6e07a', size: 1.2, top: 0.26 },
+  'resin-tear': { pool: '#ffb347', size: 1.3, top: 0.2, glow: { color: '#ffb347', emissive: '#a8600c' } },
+  // A map found out there: pale paper, so it shows in the dark of a room.
+  'far-woods-map': { pool: '#f3e6c4', size: 1.35, top: 0.1 },
   'old-photograph': { pool: '#ffd98a', size: 1.35, top: 0.06 },
   'brass-compass': { pool: '#ffd98a', size: 1.35, top: 0.08, glow: { color: '#f3d27a', emissive: '#8a6a1a' } },
   'pole-tag': { pool: '#ffd98a', size: 1.35, top: 0.05 },
@@ -193,6 +201,25 @@ export function lootModel(look: Look, glow: THREE.Material): THREE.Group {
       g.add(part(flat(new THREE.TorusGeometry(0.1, 0.008, 4, 16)), '#c9d6d4', 0, 0.26, 0, false));
       break;
     }
+    case 'hand-warmer': {
+      // Two of NAPO's hand warmers, flat orange packets, one fallen across the other.
+      for (const [x, y, z, turn] of [[-0.03, 0.02, 0.02, 0.2], [0.05, 0.05, -0.03, -0.45]] as const) {
+        const packet = pivot(x, y, z);
+        packet.rotation.y = turn;
+        packet.add(box(0.26, 0.03, 0.17, '#d8643a', 0, 0, 0, 0.012), box(0.26, 0.004, 0.04, '#ffcf8a', 0, 0.017, -0.035, false));
+        g.add(packet);
+      }
+      break;
+    }
+    case 'rad-tablet': {
+      // A foil strip of rad tablets on a band of NAPO yellow: two still in it, one pressed out beside it.
+      const strip = pivot(0, 0.012, 0);
+      strip.rotation.y = 0.3;
+      strip.add(box(0.3, 0.014, 0.12, '#aebbc1', 0, 0, 0, 0.01), box(0.3, 0.003, 0.03, '#d6ad2f', 0, 0.008, 0.04, false));
+      for (const x of [-0.08, 0.08]) strip.add(part(flat(new THREE.CylinderGeometry(0.035, 0.035, 0.022, 8)), '#f4f1e8', x, 0.014, -0.01, false));
+      g.add(strip, part(flat(new THREE.CylinderGeometry(0.035, 0.035, 0.02, 8)), '#f4f1e8', 0.2, 0.01, 0.12, 0.008));
+      break;
+    }
     case 'old-photograph': {
       // A photograph face up in the grass: its white border, and the town before, dark and grey.
       const p = pivot(0, 0.012, 0);
@@ -254,6 +281,39 @@ export function lootModel(look: Look, glow: THREE.Material): THREE.Group {
         wing.rotation.set(0, side * 0.25, side * 0.3);
         g.add(wing);
       }
+      break;
+    }
+    case 'cedar-bark': {
+      // Long strips of reddish bark, curled and lying across each other.
+      for (const [x, z, turn, color] of [[0, -0.05, 0.3, '#8a4a30'], [0.02, 0.06, -0.25, '#a0583a'], [-0.03, 0.01, 0.05, '#7a4029']] as const) {
+        const strip = part(flat(new THREE.CylinderGeometry(0.05, 0.05, 0.36, 6, 1, true, 0, Math.PI)), color, x, 0.03, z, 0.01);
+        strip.rotation.set(0, turn, Math.PI / 2);
+        g.add(strip);
+      }
+      break;
+    }
+    case 'battery': {
+      // An old dry cell standing on its end, NAPO's yellow band round it, a spring terminal on top, and
+      // another lying beside it.
+      g.add(part(flat(new THREE.CylinderGeometry(0.075, 0.075, 0.24, 8)), '#3a3f41', -0.04, 0.12, 0, 0.014));
+      g.add(part(flat(new THREE.CylinderGeometry(0.077, 0.077, 0.06, 8)), '#d6ad2f', -0.04, 0.15, 0, false));
+      g.add(box(0.04, 0.03, 0.04, '#b9bcbf', -0.04, 0.255, 0, false));
+      g.add(lying(new THREE.CylinderGeometry(0.06, 0.06, 0.2, 8), '#3a3f41', 0.13, 0.06, 0.09, 0.012));
+      break;
+    }
+    case 'resin-tear': {
+      // A drop of amber with a seed caught in it, lying on the moss.
+      const tear = part(new THREE.IcosahedronGeometry(0.08, 1), glow, 0, 0.07, 0, 0.012);
+      tear.scale.set(0.9, 0.8, 1.3);
+      g.add(tear, part(new THREE.DodecahedronGeometry(0.025, 0), '#4a2e1a', 0.01, 0.075, 0.02, false));
+      break;
+    }
+    case 'far-woods-map': {
+      // A paper map folded in four, a pencil line across it, a corner lifting.
+      g.add(box(0.3, 0.012, 0.22, '#e6d6b3', 0, 0.01, 0, 0.008), box(0.29, 0.004, 0.012, '#8a7a5c', 0, 0.018, 0.02, false));
+      const corner = box(0.12, 0.01, 0.1, '#d9c7a0', 0.1, 0.03, -0.07, 0.006);
+      corner.rotation.z = 0.35;
+      g.add(corner, box(0.004, 0.006, 0.2, '#3b2e22', -0.03, 0.02, 0, false));
       break;
     }
     case 'sack': {

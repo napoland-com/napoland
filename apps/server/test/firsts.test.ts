@@ -28,7 +28,7 @@ const ITEMS: ItemsData = {
   finds: [],
   keepsakes: { energy: 5, places: [{ item: 'compass', map: 'woods', x: 5, y: 6 }] },
 };
-/** Noon on 28 September 2026: day 3,052 of the Zone. */
+/** Noon on 28 September 2026: day 3,201 of the Zone. */
 const NOON = Date.UTC(2026, 8, 28, 12);
 
 const rec = (id: string, map: string, x: number, y: number, dir: Dir = 'up', more: Partial<PlayerRecord> = {}): PlayerRecord => ({
@@ -47,8 +47,8 @@ describe('first finders', () => {
   it('keep the first to read a note, for good, and tell everyone online (a guest can be first)', () => {
     const w = world({ guests: true }, rec('ana', 'town', 2, 5), rec('bo', 'town', 3, 5), rec('cy', 'woods', 5, 5));
     w.talk('ana', 2, 4, 1000);
-    expect(firstsIn(w.drain())).toEqual([{ to: 'all', first: { secret: 'note:on-the-pole', name: 'ANA', day: 3052 } }]);
-    expect(w.takeWrites().firsts).toEqual([{ secret: 'note:on-the-pole', player: 'ana', name: 'ANA', day: 3052, at: NOON + 1000 }]);
+    expect(firstsIn(w.drain())).toEqual([{ to: 'all', first: { secret: 'note:on-the-pole', name: 'ANA', day: 3201 } }]);
+    expect(w.takeWrites().firsts).toEqual([{ secret: 'note:on-the-pole', player: 'ana', name: 'ANA', day: 3201, at: NOON + 1000 }]);
     // Only the first: whoever reads it after is nobody's first.
     w.step('bo', 'left', 1, 1000);
     w.tick(2000);

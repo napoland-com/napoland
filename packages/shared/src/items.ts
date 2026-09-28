@@ -12,7 +12,7 @@ import type { Comfort } from './comfort';
 import type { Mods } from './feats';
 import type { Element, Piece, Quirk, Recipe, Slot, Tier, Upgrade } from './gear';
 import type { ParcelsData } from './parcels';
-import type { ConditionsData } from './sky';
+import type { ConditionsData, Season } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 import type { KeepsakesData } from './notes';
 
@@ -64,6 +64,13 @@ export interface ItemUse {
   flare?: number;
   /** Look at it closely, which needs a roof and light in town: it turns into one of its `reveals`. */
   identify?: boolean;
+  /**
+   * An effect (effects.ts): for `lasts` seconds you resist these elements that much more (a hand warmer:
+   * cold 0.4 for 300), on top of your gear and under the same cap. A second of the same item while the
+   * first still works starts its time again: it never adds up.
+   */
+  resist?: Partial<Record<Element, number>>;
+  lasts?: number;
 }
 
 export interface ItemDef {
@@ -155,6 +162,8 @@ export interface FindRule {
   condition?: string;
   /** Only within `r` tiles (center to center) of tile x,y: crates by the pond. */
   around?: { x: number; y: number; r: number };
+  /** Only in this season (sky.ts), and gone when it is over: more glowcaps in spring, more resin in autumn. Never with `when` or `condition`. */
+  season?: Season;
 }
 
 export type FindWhen = 'unstable' | 'aurora' | 'storm';
@@ -180,6 +189,16 @@ export interface ItemsData {
   parcels?: ParcelsData;
   /** Where each keepsake lies, and what the whole set home gives (notes.ts). None: no keepsakes. */
   keepsakes?: KeepsakesData;
+  /** What grows back faster on a Long Night that has its bonus (sky.ts, world.ts). None: nothing does. */
+  longNight?: LongNightData;
+}
+
+/** The Long Night's bonus (ItemsData.longNight). */
+export interface LongNightData {
+  /** The items whose finds, picked that night, grow back faster, wherever they grow: copper wire and strange objects. */
+  items: string[];
+  /** How many times as fast: 2, twice. */
+  regrow: number;
 }
 
 /**
@@ -299,6 +318,19 @@ export function aOf(def: ItemDef): string {
 export function amount(def: ItemDef, n: number): string {
   if (n !== 1) return `${n} ${pluralOf(def)}`;
   return countable(def) ? aOf(def) : `1 ${nounOf(def)}`;
+}
+
+/**
+ * What the Long Night's bonus does, in words the notice board and the banners share: "wire and strange
+ * objects grow back twice as fast". Empty without one, or with none of its items here.
+ */
+export function longNightWords(data: LongNightData | undefined, items: Map<string, ItemDef>): string {
+  const defs = (data?.items ?? []).flatMap(id => items.get(id) ?? []);
+  if (!data || !defs.length) return '';
+  const names = defs.map(pluralOf), list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
+  // "Wire grows back", "strange objects grow back", "wire and strange objects grow back".
+  const grow = defs.length > 1 || countable(defs[0]!) ? 'grow' : 'grows';
+  return `${list} ${grow} back ${data.regrow === 2 ? 'twice' : `${data.regrow} times`} as fast`;
 }
 
 /** What a live item is worth `ageS` seconds after it was picked: its full XP while fresh, then less each minute, never below `into`'s. */
@@ -446,13 +478,13 @@ export function halfOf(items: readonly BagSlot[], rng: () => number): BagSlot[] 
   return gather(units.slice(0, keep));
 }
 
-/** Every tile a find may grow on: walkable, not an exit, and fitting the rule's tiles, steps, nearness and place. */
+/** Every tile a find may grow on: walkable, not an exit, never ice (it thaws), and fitting the rule's tiles, steps, nearness and place. */
 export function findTiles(map: TileMap, rule: FindRule): Array<{ x: number; y: number }> {
   const out: Array<{ x: number; y: number }> = [];
   // Measured from every tile an object covers, so a cabin or a car is near from all sides alike.
   const near = rule.near ? map.data.objects.filter(o => rule.near!.kinds.includes(o.kind)).flatMap(objectTiles) : [];
   for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
-    if (!map.walkable(x, y) || map.exitAt(x, y)) continue;
+    if (!map.walkable(x, y) || map.exitAt(x, y) || map.iceAt(x, y)) continue;
     if (rule.on && !rule.on.includes(map.kind(x, y)!)) continue;
     if (rule.steps) {
       const s = map.homeSteps(x, y);

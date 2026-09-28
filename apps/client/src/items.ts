@@ -5,7 +5,7 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, upgradable, upgradeChance, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef,
+  BAG_SLOTS, SLOTS, WEAR_FADES, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, upgradable, upgradeChance, wearSeconds, type BagSlot, type EffectView, type Element, type Gear, type ItemDef,
   type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction, type Slot, type Upgrade, type Worn,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
@@ -27,6 +27,8 @@ export class Items {
   readonly conditions: ItemsData['conditions'];
   /** Where the keepsakes lie, and what the whole set home gives (notes.ts). */
   readonly keepsakes: ItemsData['keepsakes'];
+  /** What the Long Night's bonus does, in words ("wire and strange objects grow back twice as fast"); empty without one. */
+  readonly longNight: string;
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
 
   constructor(data: ItemsData | undefined) {
@@ -38,6 +40,7 @@ export class Items {
     this.upgrades = data?.upgrades;
     this.conditions = data?.conditions;
     this.keepsakes = data?.keepsakes;
+    this.longNight = longNightWords(data?.longNight, this.byId);
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
 
@@ -246,6 +249,8 @@ export function factsOf(def: ItemDef): string[] {
   if (def.xp && !def.live) out.push(`${def.xp} XP at home`);
   if (def.weight) out.push(def.weight >= 0.95 ? `${Math.round(def.weight * 10) / 10} kg` : `${Math.round(def.weight * 1000)} g`);
   if (def.fuel) out.push(`Burns ${Math.round(def.fuel / 60)} min`);
+  // An effect: what it gives, and for how long.
+  if (def.use?.resist && def.use.lasts) for (const [e, v] of Object.entries(def.use.resist)) out.push(`${ELEMENT_WORDS[e as Element]} +${Math.round((v ?? 0) * 100)}% for ${Math.round(def.use.lasts / 60)} min`);
   if (def.charge) out.push('The Old Stone wants it');
   if (def.kind === 'charm') out.push('Works while in your bag');
   if (def.kind === 'tool') out.push('A tool, yours for good');
@@ -404,8 +409,9 @@ export function wornViews(gear: Gear, items: Items, worn: Worn = {}): Array<Worn
 }
 
 /** "Cold 25%, wind 45%": what the gear worn resists (as worn down as it is), or null for nothing. */
-export function resistText(gear: Gear, items: Items, worn: Worn = {}): string | null {
-  const r = resistOf(gear, items.byId, worn);
+export function resistText(gear: Gear, items: Items, worn: Worn = {}, effects: readonly EffectView[] = []): string | null {
+  // The effects working on you count with your gear, under the same cap (effects.ts).
+  const r = resistOf(gear, items.byId, worn, effectResist(effects, items.byId));
   const parts = (Object.entries(r) as Array<[Element, number]>).filter(([, v]) => v > 0).map(([e, v]) => `${ELEMENT_WORDS[e]} ${Math.round(v * 100)}%`);
   return parts.length ? parts.join(', ') : null;
 }
