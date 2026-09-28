@@ -1,12 +1,13 @@
 /**
  * Your street and your neighbors: every player's cabin stands on a lot of a street, a copy of the street's
  * map; players are given the first free lot as they first come home, and a new street opens when the
- * others are full. The way onto the street from town and out of the cabin lead in front of your own door;
- * other doors are knocked at. World rules first, then over real WebSockets.
+ * others are full. The road onto the street from town comes in where it comes in, and out of a cabin you
+ * stand in front of its door; other doors are knocked at, or walked into (visits.test.ts). World rules
+ * first, then over real WebSockets.
  *
- * The fixture world: the town (fixtures.ts), whose house door at 7,2 leads onto a lane of three lots
- * (arriving, for everyone, in front of their own door); each lot's door leads into the home, a private
- * room where you wake up by the fire; the lane's end leads back to the town's 7,3.
+ * The fixture world: the town (fixtures.ts, without its house), whose road off its bottom edge at 4,7 and
+ * 5,7 leads onto a lane of three lots, where it comes in (6,4); each lot's door leads into the home, a
+ * private room where you wake up by the fire; the lane's end leads back onto that road, at the town's 4,6.
  *
  *   lane (13x6, a street)              home (5x5, private)
  *     0123456789012                      01234
@@ -14,8 +15,8 @@
  *   1 tHHHgHHHgHHHt                    1 xpFHx   F fire (2,1), H chest (3,1)
  *   2 tHDHgHDHgHDHt  D the lots' doors 2 xpzpx   z where you wake up (2,2)
  *   3 tgggggggggggt  0 (2,2), 1 (6,2), 3 xpppx   2,3: where every lot's door leads in
- *   4 tgggggggggggt  2 (10,2)          4 xxpxx   2,4: out onto the lane, in front of your own door
- *   5 ttttttggttttt  6,5 and 7,5: the lane's end, to the town's 7,3
+ *   4 tgggggggggggt  2 (10,2)          4 xxpxx   2,4: out onto the lane, in front of that lot's door
+ *   5 ttttttggttttt  6,5 and 7,5: the lane's end, to the town's 4,6
  */
 import { describe, expect, it } from 'vitest';
 import { ENERGY_MAX, PROTOCOL_VERSION, STEP_MS, TileMap, lotDoors, validateMap, validateWorld, type Dir, type MapData, type ServerMsg } from '@napoland/shared';
@@ -24,28 +25,11 @@ import { startServer } from '../src/server';
 import { MemoryStorage, type LotRecord, type PlayerRecord } from '../src/storage';
 import { devAuth } from '../src/auth';
 import { DOOR_EVERY_MS, KNOCK_EVERY_MS, MOVE_EVERY_MS, World, colorFor, zoneKey, type Outgoing } from '../src/world';
-import { itemsData, townData, woodsData } from './fixtures';
+import { itemsData, laneData, streetTownData, townData, woodsData } from './fixtures';
 import { Client, loginTo, savedPlayer, serverDefaults, waitFor } from './helpers';
 
-function town(): MapData {
-  const t = townData();
-  return { ...t, exits: t.exits.map(e => (e.to === 'house' ? { ...e, to: 'lane', tx: 6, ty: 4 } : e)) };
-}
-
-function lane(): MapData {
-  const house = (x: number) => ({ kind: 'house' as const, x, y: 1, w: 3, h: 2, roof: '#6b7075', lit: 0 as const, plate: true as const });
-  return {
-    id: 'lane', name: 'The Lane', version: 1, kind: 'town', depth: 0, width: 13, height: 6, street: true,
-    tiles: ['ttttttttttttt', ...Array<string>(4).fill('tgggggggggggt'), 'ttttttggttttt'],
-    levels: Array<string>(6).fill('0000000000000'),
-    spawn: { x: 6, y: 4, dir: 'up' },
-    exits: [
-      ...[2, 6, 10].map(x => ({ x, y: 2, w: 1, h: 1, to: 'house', tx: 2, ty: 3, dir: 'up' as Dir })),
-      { x: 6, y: 5, w: 2, h: 1, to: 'town', tx: 7, ty: 3, dir: 'down' },
-    ],
-    objects: [house(1), house(5), house(9)],
-  };
-}
+/** The town with its road onto the lane, and the lane (fixtures.ts). */
+const town = streetTownData, lane = laneData;
 
 function home(): MapData {
   return {
@@ -89,7 +73,7 @@ function walk(w: World, id: string, dirs: Dir[], at: number): number {
 }
 
 describe('the fixtures', () => {
-  it('follow the content rules: a street whose every door leads into the home, reached from the town', () => {
+  it('follow the content rules: a street whose every door leads into the home, reached by a road off the edge of the town', () => {
     for (const m of [town(), lane(), home()]) expect(validateMap(m).filter(p => p.level === 'error'), m.id).toEqual([]);
     expect(validateWorld([town(), lane(), home(), woodsData()], 'town').filter(p => p.level === 'error')).toEqual([]);
     expect(lotDoors(lane())).toEqual([{ x: 2, y: 2 }, { x: 6, y: 2 }, { x: 10, y: 2 }]);
@@ -118,9 +102,9 @@ describe('lots on a street', () => {
     w.join(fresh('n'), 0);
     expect([w.get('n')!.street, w.get('n')!.lot]).toEqual([1, 2]);
     // y has no lot now: they are given one when they come home, on a new street, the first being full.
-    w.join(rec('y', 'town', 7, 3, 'up', { street: 1, lot: 0 }), 0);
+    w.join(rec('y', 'town', 4, 6, 'down', { street: 1, lot: 0 }), 0);
     expect(w.get('y')!.street).toBeUndefined();
-    w.step('y', 'up', ++seq, 1000);
+    w.step('y', 'down', ++seq, 1000);
     expect(w.zoneOf('y')).toBe(LANE(2));
     expect([w.get('y')!.street, w.get('y')!.lot]).toEqual([2, 0]);
     w.join(rec('a', 'town', 1, 2, 'down'), 0);
@@ -142,13 +126,36 @@ describe('lots on a street', () => {
     expect(on(w.drain(), LANE(1))).toContainEqual({ t: 'lot', lot: 1, view: { name: 'B' } });
   });
 
-  it('keep you out of the others\' doors: you knock at them instead', () => {
+  it('keep you out of a lot nobody lives on: the step comes back, and its door says so', () => {
     const w = world([lot('a', 1, 0), lot('b', 1, 1)]);
-    w.join(rec('a', 'lane', 6, 3, 'up'), 0);
+    w.join(rec('a', 'lane', 10, 3, 'up'), 0);
+    w.returned('a', 0);
     w.drain();
     walk(w, 'a', ['up'], 1000);
-    expect(of(to(w.drain(), 'a'), 'reject')).toEqual([{ t: 'reject', seq, x: 6, y: 3, dir: 'up' }]);
+    const out = to(w.drain(), 'a');
+    expect(of(out, 'reject')).toEqual([{ t: 'reject', seq, x: 10, y: 3, dir: 'up' }]);
+    expect(of(out, 'door')).toEqual([{ t: 'door', x: 10, y: 2, lot: null, closed: true }]);
     expect(w.zoneOf('a')).toBe(LANE(1));
+  });
+
+  it('are reached from town by the road, where it comes in, on your own street; out of the cabin you stand in front of your door', () => {
+    const w = world([lot('a', 1, 1), lot('b', 2, 0)]);
+    w.join(rec('a', 'town', 4, 6, 'down'), 0);
+    w.join(rec('b', 'town', 5, 6, 'down'), 0);
+    walk(w, 'a', ['down'], 1000);
+    expect(w.zoneOf('a')).toBe(LANE(1));
+    expect(w.get('a')).toMatchObject({ map: 'lane', x: 6, y: 4, dir: 'up' });
+    // Two tiles wide, like every road: the other lane of it comes in a tile over, on b's own street.
+    walk(w, 'b', ['down'], 1000);
+    expect(w.zoneOf('b')).toBe(LANE(2));
+    expect(w.get('b')).toMatchObject({ map: 'lane', x: 7, y: 4, dir: 'up' });
+    // a walks to their own door and in, and out again: in front of it. The lane's end leads back into town.
+    walk(w, 'a', ['up', 'up'], 2000);
+    expect(w.zoneOf('a')).toBe(zoneKey('house', 'a'));
+    walk(w, 'a', ['down'], 3000);
+    expect(w.get('a')).toMatchObject({ map: 'lane', x: 6, y: 3, dir: 'down' });
+    walk(w, 'a', ['down', 'down'], 4000);
+    expect(w.get('a')).toMatchObject({ map: 'town', x: 4, y: 6, dir: 'up' });
   });
 });
 
@@ -510,23 +517,27 @@ describe('streets over the network', () => {
       expect(await b.c.next('said')).toMatchObject({ id: a.id, text: 'evening, neighbor' });
       expect((await d.c.settle()).filter(m => m.t === 'said' || m.t === 'join' || (m.t === 'step' && m.id !== d.id))).toEqual([]);
 
-      // Ann knocks at Cid's door: Cid, at home, hears it in his text box; Ann hears that Cid is home. The door stays Cid's.
+      // Ann knocks at Cid's door: Cid, at home, hears it in his text box; Ann hears that Cid is home.
       await go(a.c, ['right', 'right', 'right', 'right', 'right', 'right', 'right']);
       a.c.send({ t: 'knock', x: 10, y: 2 });
       expect(await a.c.next('door')).toEqual({ t: 'door', x: 10, y: 2, lot: { name: 'Cid', home: true } });
       expect(await c.c.next('knocked')).toEqual({ t: 'knocked', name: 'Ann' });
-      now += STEP_MS + 10;
-      a.c.send({ t: 'step', dir: 'up', seq: ++seq });
-      expect(await a.c.next('reject')).toMatchObject({ x: 10, y: 3 });
+      // Then she walks in: Cid's cabin, not hers, and Cid reads that she came in. Out again, she stands in front of his door.
+      await step(a.c, 'up');
+      expect(await a.c.next('zone')).toMatchObject({ map: { id: 'house' }, x: 2, y: 3, visit: { name: 'Cid', trophies: [] } });
+      expect(await c.c.next('visited')).toEqual({ t: 'visited', name: 'Ann' });
+      expect(server.world.zoneOf(a.id)).toBe(zoneKey('house', c.id));
+      await step(a.c, 'down');
+      expect(await a.c.next('zone')).toMatchObject({ map: { id: 'lane' }, x: 10, y: 3, dir: 'down', street: { mine: 0 } });
 
-      // Bob walks out at the lane's end into town, then back through the house that is the way onto the street:
-      // in front of his own door again, facing it. One step more and he is home, and Ann sees his window light.
+      // Bob walks out at the lane's end into town, then back along the road: onto his own street where the
+      // road comes in. Two steps more and he is home, and Ann sees his window light.
       await go(b.c, ['down', 'down']);
-      expect(await b.c.next('zone')).toMatchObject({ map: { id: 'town' }, x: 7, y: 3, dir: 'down' });
-      await step(b.c, 'up');
+      expect(await b.c.next('zone')).toMatchObject({ map: { id: 'town' }, x: 4, y: 6, dir: 'up' });
+      await step(b.c, 'down');
       const back = await b.c.next('zone');
-      expect(back).toMatchObject({ map: { id: 'lane' }, x: 6, y: 3, dir: 'up', street: { mine: 1 } });
-      await step(b.c, 'up');
+      expect(back).toMatchObject({ map: { id: 'lane' }, x: 6, y: 4, dir: 'up', street: { mine: 1 } });
+      await go(b.c, ['up', 'up']);
       expect(await b.c.next('zone')).toMatchObject({ map: { id: 'house' }, x: 2, y: 3 });
       expect(await a.c.next('lot', m => m.lot === 1 && m.view?.home === true)).toEqual({ t: 'lot', lot: 1, view: { name: 'Bob', home: true } });
 

@@ -196,6 +196,13 @@ export function attachNet(o: NetOptions): Net {
     where: id => playing.get(id)?.map || undefined,
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
     unlinked: (a, b) => trades.unlinked(a, b),
+    // Friends no more, or a block either way: whoever that keeps out of either one's cabin walks out of it.
+    changed: (a, b) => {
+      const now = clock();
+      world.keepOut(a, now);
+      world.keepOut(b, now);
+      flush();
+    },
   });
   const chat = new Chat({
     world,
@@ -211,8 +218,10 @@ export function attachNet(o: NetOptions): Net {
     blocks: id => social.blocks(id),
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
   });
-  // Someone who blocks a player hears no thanks from them either, nor a knock at their door; and a friend's street is one to move to.
+  // Someone who blocks a player hears no thanks from them either, nor a knock at their door, and keeps them
+  // out of their cabin; a friend's street is one to move to, and a friend's cabin one to walk into.
   world.blocks = id => social.blocks(id);
+  world.blockedBy = id => social.blockedBy(id);
   world.friends = id => social.friends(id);
   /** Each player's social actions, one after another: each reads what the one before wrote. */
   const socialQueue = new Map<string, Promise<void>>();
@@ -390,6 +399,13 @@ export function attachNet(o: NetOptions): Net {
       case 'doorOff':
         // Guests too: a guest's name is on a door as well.
         world.doorOff(s.id, msg.off, now);
+        return flush();
+      case 'visitsOff':
+        // Guests too: a guest's cabin stands on a street as well.
+        world.visitsOff(s.id, msg.off, now);
+        return flush();
+      case 'teleport':
+        world.teleport(s.id, msg.x, msg.y, now);
         return flush();
       case 'befriend':
       case 'answer':
@@ -674,8 +690,10 @@ export function attachNet(o: NetOptions): Net {
       keepsakes: joined.keepsakes,
       firsts: joined.firsts,
       ...(joined.furniture && { furniture: joined.furniture }),
+      ...(joined.visit && { visit: joined.visit }),
       ...(joined.street && { street: joined.street }),
       ...(joined.doorOff && { doorOff: true }),
+      ...(joined.visitsOff && { visitsOff: true }),
       serverTime: Date.now(),
     });
     flush();

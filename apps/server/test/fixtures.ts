@@ -1,7 +1,8 @@
 /**
  * Small maps for the server tests, so they never depend on the real content (which changes as the
  * world grows): a town with a house, the inside of that house, and a patch of woods joined to the
- * town by a two-lane road.
+ * town by a two-lane road; and for a street, the town with a road onto a lane of cabins instead of the
+ * house (streetTownData, laneData).
  *
  *   town (10x8)                        woods (8x8, depth 1)
  *     0123456789                         01234567
@@ -93,6 +94,48 @@ export const chestMaps = (): TileMap[] => {
 
 /** Where moss grows in the woods: the tiles next to the campfire. */
 export const MOSS_TILES = [{ x: 3, y: 1 }, { x: 4, y: 1 }, { x: 5, y: 1 }];
+
+/**
+ * The town of a street (streets.test.ts, visits.test.ts): townData without its house. Its road off the
+ * bottom edge, (4,7) and (5,7), leads onto laneData's lane where the road comes in, (6,4) and (7,4). NAPO's
+ * teleport stands at (8,5): the one in a cabin sets you down in front of it, at (8,6), facing down.
+ */
+export function streetTownData(): MapData {
+  const t = townData();
+  return {
+    ...t,
+    exits: [...t.exits.filter(e => e.to !== 'house'), { x: 4, y: 7, w: 2, h: 1, to: 'lane', tx: 6, ty: 4, dir: 'up' }],
+    objects: [...t.objects.filter(o => o.kind !== 'house'), { kind: 'teleport', x: 8, y: 5 }],
+  };
+}
+
+/**
+ * A street of three lots (every street is a copy of it), each door into the home (`house`, a private room
+ * whose door leads back out onto it): the lane's end leads back onto the town's road, at its 4,6.
+ *
+ *   lane (13x6, a street)
+ *     0123456789012
+ *   0 ttttttttttttt
+ *   1 tHHHgHHHgHHHt
+ *   2 tHDHgHDHgHDHt   D: the lots' doors, 0 (2,2), 1 (6,2), 2 (10,2): into the home, at its 2,3
+ *   3 tgggggggggggt
+ *   4 tgggggggggggt   (6,4): where the road from town comes in, the spawn, facing up
+ *   5 ttttttggttttt   (6,5) and (7,5): the lane's end, to the town's 4,6
+ */
+export function laneData(): MapData {
+  const house = (x: number) => ({ kind: 'house' as const, x, y: 1, w: 3, h: 2, roof: '#6b7075', lit: 0 as const, plate: true as const });
+  return {
+    id: 'lane', name: 'The Lane', version: 1, kind: 'town', depth: 0, width: 13, height: 6, street: true,
+    tiles: ['ttttttttttttt', ...Array<string>(4).fill('tgggggggggggt'), 'ttttttggttttt'],
+    levels: Array<string>(6).fill('0000000000000'),
+    spawn: { x: 6, y: 4, dir: 'up' },
+    exits: [
+      ...[2, 6, 10].map(x => ({ x, y: 2, w: 1, h: 1, to: 'house', tx: 2, ty: 3, dir: 'up' as const })),
+      { x: 6, y: 5, w: 2, h: 1, to: 'town', tx: 4, ty: 6, dir: 'up' },
+    ],
+    objects: [house(1), house(5), house(9)],
+  };
+}
 
 export function itemsData(): ItemsData {
   return {

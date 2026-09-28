@@ -192,7 +192,7 @@ describe('playing', () => {
 
   it('closes on a bad message after the welcome', async () => {
     const a = await join();
-    a.c.send('{"t":"teleport","x":5,"y":5}');
+    a.c.send('{"t":"fly","x":5,"y":5}');
     expect(await a.c.next('error')).toMatchObject({ code: 'bad_message' });
     expect((await a.c.closed).code).toBe(1008);
   });

@@ -241,6 +241,7 @@ const hud = new Hud(screen, {
       case 'requests': return game.social({ t: 'requests', off: a.off });
       case 'tradeRequests': return game.social({ t: 'tradeRequests', off: a.off });
       case 'door': return game.setDoorOff(a.off);
+      case 'visits': return game.setVisitsOff(a.off);
       // Face to face only: from farther away, the card says so (the server checks it again).
       case 'trade': {
         const reach = game.tradeReach(a.id);
@@ -345,7 +346,7 @@ const arrival = new Arrival(held => {
   if (view.map !== game.map || view.season !== game.season.view.season) buildView();
   if (collapsed) hud.showBanner('You collapsed from exhaustion', leftPile ? 'You woke up at home.\nWhat you carried lies where you fell. It fades in an hour.' : 'You woke up at home');
   else if (signedInNews) hud.showBanner(signedInNews.title, signedInNews.sub);
-  else hud.showBanner(game.map.data.name);
+  else hud.showBanner(game.placeName());
   signedInNews = null;
 });
 
@@ -814,7 +815,7 @@ function frame(now: number) {
   // Your cabin's places: spoiled until made, and the trophy shelf with what your stash holds.
   if (game.furnitureChanges !== comfortShown.changes || game.stash !== comfortShown.stash || view !== comfortShown.view) {
     comfortShown = { changes: game.furnitureChanges, stash: game.stash, view };
-    view.setComfort(madePlaces(game.furniture, id => items.get(id)), game.trophies());
+    view.setComfort(madePlaces(game.roomFurniture(), id => items.get(id)), game.trophies());
   }
   // On your street, the windows of the neighbors who are home are lit.
   if (game.streetChanges !== lotsShown.changes || view !== lotsShown.view) {
@@ -1017,6 +1018,7 @@ function frame(now: number) {
     me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty), ice: map.frozenAt(me.tx, me.ty) } : null,
     fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),
     poles: map.data.objects.filter(o => o.kind === 'pole'),
+    teleports: map.data.objects.filter(o => o.kind === 'teleport'),
     // How far the front still has to come to reach your tile, as a share of its sweep.
     surge: surge && { phase: surge.phase, gap: rule && me && map.deepest ? ((surgeFront(rule, map.deepest, surge) ?? map.deepest) - map.homeSteps(me.tx, me.ty)) / map.deepest : 1 },
     caught, creatures: game.creatureViews(), flashes: game.flashesNow(now), live: !!game.meId && game.live.has(game.meId), news: worldNews,

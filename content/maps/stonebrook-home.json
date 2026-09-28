@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-home",
   "name": "Home",
-  "version": 6,
+  "version": 7,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -39,6 +39,7 @@
     {"kind":"comfort","x":3,"y":1,"what":"rack"},
     {"kind":"comfort","x":7,"y":1,"what":"bed"},
     {"kind":"comfort","x":3,"y":2,"what":"rug"},
-    {"kind":"comfort","x":2,"y":4,"what":"lamp"}
+    {"kind":"comfort","x":2,"y":4,"what":"lamp"},
+    {"kind":"teleport","x":7,"y":4}
   ]
 }

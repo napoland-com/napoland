@@ -24,8 +24,10 @@
  *   you make it at the workbench, which sets it there at once; standing by your own fire makes you cozy,
  *   which the status panel counts down once you leave it;
  * - on your street (the server says whose each lot is and who is home: their window is lit), A at a
- *   neighbor's door knocks, and the box says whether they are home; their door is never walked into. A at
- *   your own door offers, friend by friend, to move your cabin next to theirs, where their street has room;
+ *   neighbor's door knocks, and the box says whether they are home; walking into it you look round their
+ *   cabin, drawn with their furniture and shelf, if it lets you in (else the box says why). A at your own
+ *   door offers, friend by friend, to move your cabin next to theirs, where their street has room; A at
+ *   NAPO's teleport in a cabin takes you to town;
  * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
  *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
  *   said in the text box anywhere else, and come in a letter when you walk in at home;
@@ -52,7 +54,7 @@ import {
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type LongNightView, type MapNote, type OfferPick, type ParcelView, type RefusedAction,
-  type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type Weather,
+  type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type VisitView, type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -62,9 +64,10 @@ import { Passing } from './glimpses';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, buyQuestion,
-  cabinWho, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn,
-  openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, waltOnTheLongNight,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TELEPORT, TELEPORT_TOWN, TENDED, TOOK_ONE,
+  TOO_DARK, YOUR_CABIN, buyQuestion, cabinWho, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion,
+  noMerit, noShard, notYours, nothingToBurn, openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion,
+  useQuestion, visitedText, visitWho, waltOnTheLongNight,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { trophiesIn } from './view/cabin';
@@ -97,7 +100,7 @@ interface Mover {
  * the story (`story`): talking to one, or reading one, may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
@@ -174,6 +177,7 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
     if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
+    if (o.kind === 'teleport') return [{ x: o.x, y: o.y, who: TELEPORT, lines: [], kind: 'teleport' }];
     // Furniture in your cabin reads from any side of it; the rug is walked over, not faced.
     if (o.kind === 'comfort' && o.what !== 'rug') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: '', lines: [], kind: 'comfort', what: o.what }));
     return [];
@@ -323,6 +327,12 @@ export class Game {
   furniture: string[] = [];
   furnitureChanges = 0;
   /**
+   * In a neighbor's cabin (the welcome or zone said, `visit`): whose it is, the furniture they made and what
+   * their trophy shelf shows; null anywhere else. The room is drawn from it instead of your own cabin's.
+   * Its changes count in furnitureChanges too.
+   */
+  visit: { name: string; furniture: string[]; trophies: string[] } | null = null;
+  /**
    * Your street, while you are on it (the welcome or zone said): whose each lot is and whether they are
    * home, and which lot is yours; null anywhere else. `streetChanges` counts changes, for the lit windows.
    */
@@ -331,11 +341,18 @@ export class Game {
   /** The doors of the street's lots, lot by lot (lotDoors); none off it. */
   private lotDoor: Array<{ x: number; y: number }> = [];
   /**
+   * The lots whose doors stayed shut when you walked into them (the server said why): walked into no more,
+   * so a held stick does not bump into one again and again, until the lot changes or you come onto the street again.
+   */
+  private readonly shut = new Set<number>();
+  /**
    * You keep your name off your door and your window dark to your street (the setting beside friend and
    * trade requests), as the server last said: in the welcome, and whenever you change it. It counts in
    * socialChanges, as the friends panel shows it.
    */
   doorOff = false;
+  /** Only friends may walk into your cabin (the setting below the door's), as the server last said. It counts in socialChanges too. */
+  visitsOff = false;
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The id of the chapter of the story you are in, as the server said ('' until its welcome). */
@@ -526,6 +543,7 @@ export class Game {
   private setStreet(street: StreetView | undefined) {
     this.street = street ? { mine: street.mine, lots: [...street.lots] } : null;
     this.lotDoor = street ? lotDoors(this.current.data) : [];
+    this.shut.clear();
     this.streetChanges++;
   }
 
@@ -536,9 +554,34 @@ export class Game {
     this.furnitureChanges++;
   }
 
-  /** The charms and anomalous gear your stash holds, one of each: what stands on the trophy shelf. */
+  /** The cabin you are in, as the welcome or a zone told it: your own (its furniture), a neighbor's (`visit`), or none. */
+  private setRoom(furniture: readonly string[] | undefined, visit: VisitView | undefined) {
+    if (visit) {
+      this.visit = { name: visit.name, furniture: [...furniture ?? []], trophies: [...visit.trophies] };
+      this.furnitureChanges++;
+      return;
+    }
+    if (this.visit) {
+      this.visit = null;
+      this.furnitureChanges++;
+    }
+    if (furniture) this.setFurniture(furniture);
+  }
+
+  /** What stands in the places of the cabin you are in: a neighbor's while you visit, else your own. */
+  roomFurniture(): readonly string[] {
+    return this.visit?.furniture ?? this.furniture;
+  }
+
+  /** What stands on the trophy shelf of the cabin you are in: the neighbor's (the server said), or what your own stash holds, one of each. */
   trophies() {
+    if (this.visit) return this.visit.trophies.filter(id => this.items.byId.has(id)).map(id => this.items.get(id));
     return trophiesIn(this.stash ?? [], id => this.items.get(id));
+  }
+
+  /** What the place you are in is called, for the banner as you arrive: a neighbor's cabin by whose it is. */
+  placeName(): string {
+    return this.visit ? visitWho(this.visit.name) : this.current.data.name;
   }
 
   /** The season right now, its time left counted down from the server's last word. */
@@ -627,6 +670,7 @@ export class Game {
         this.enter(map, msg.players, msg.finds, msg.drops, someoneElse);
         this.setStreet(msg.street);
         this.doorOff = msg.doorOff === true;
+        this.visitsOff = msg.visitsOff === true;
         this.socialChanges++;
         this.scene(msg, now);
         this.weather = msg.weather;
@@ -650,7 +694,7 @@ export class Game {
         this.tools = msg.tools;
         this.chapter = msg.story.chapter;
         this.storyChanges++;
-        if (msg.furniture) this.setFurniture(msg.furniture);
+        this.setRoom(msg.furniture, msg.visit);
         this.wall = { now, ms: msg.serverTime };
         this.thankedDay = utcDay(msg.serverTime);
         this.thankedToday = new Set(msg.thanked ?? []);
@@ -673,7 +717,7 @@ export class Game {
         this.weather = msg.weather;
         this.stats = msg.stats;
         this.statsChanges++;
-        if (msg.furniture) this.setFurniture(msg.furniture);
+        this.setRoom(msg.furniture, msg.visit);
         this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
         // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
         const me = this.me ?? (old ? { ...old } : undefined);
@@ -712,16 +756,29 @@ export class Game {
         const s = this.street;
         if (s && msg.lot >= 0 && msg.lot < s.lots.length) {
           s.lots[msg.lot] = msg.view;
+          this.shut.delete(msg.lot);
           this.streetChanges++;
         }
         break;
       }
       case 'door':
-        this.inform(cabinWho(msg.lot), doorText(msg.lot));
+        if (msg.closed) {
+          // Tried no more: walking into it again only knocks.
+          const lot = this.lotDoor.findIndex(d => d.x === msg.x && d.y === msg.y);
+          if (lot >= 0) this.shut.add(lot);
+        }
+        this.inform(cabinWho(msg.lot), msg.closed ? shutText(msg.lot) : doorText(msg.lot));
         break;
       case 'doorOff':
         this.doorOff = msg.off;
         this.socialChanges++;
+        break;
+      case 'visitsOff':
+        this.visitsOff = msg.off;
+        this.socialChanges++;
+        break;
+      case 'visited':
+        this.inform(YOUR_CABIN, visitedText(msg.name));
         break;
       case 'streetLetter':
         this.letters.push({ who: 'Letter', lines: streetLetterLines(msg.doorOff) });
@@ -1022,7 +1079,11 @@ export class Game {
         this.tools = msg.tools;
         break;
       case 'furniture':
-        this.setFurniture(msg.furniture);
+        // Made in the cabin you are in: its owner's, when you visit (your own furniture is only ever made at home).
+        if (this.visit) {
+          this.visit = { ...this.visit, furniture: [...msg.furniture] };
+          this.furnitureChanges++;
+        } else this.setFurniture(msg.furniture);
         break;
       case 'got': {
         this.picking = null;
@@ -1251,6 +1312,17 @@ export class Game {
       return;
     }
     if (t.kind === 'fire') return this.tend(t.x, t.y);
+    // A neighbor's chest and workbench are theirs alone.
+    if ((t.kind === 'chest' || t.kind === 'bench') && this.visit) {
+      const said = notYours(this.visit.name, t.kind);
+      return this.inform(said.who, said.text);
+    }
+    if (t.kind === 'teleport') {
+      // The one in a cabin (anyone's) sets you down in town; the one in town only receives.
+      if (!this.current.data.private) return this.inform(TELEPORT, TELEPORT_TOWN);
+      if (this.online) this.send({ t: 'teleport', x: t.x, y: t.y });
+      return;
+    }
     if (t.kind === 'chest') {
       if (!this.online) return;
       this.opening = { x: t.x, y: t.y, at: this.clock };
@@ -1273,7 +1345,7 @@ export class Game {
     if (t.kind === 'comfort' && t.what) {
       // What stands there: spoiled, and where to make it again, or what you made.
       const def = furnitureFor(t.what, this.items.byId.values());
-      const said = comfortLines(t.what, def, !!def && this.furniture.includes(def.id), this.trophies());
+      const said = comfortLines(t.what, def, !!def && this.roomFurniture().includes(def.id), this.trophies(), !!this.visit);
       this.openDialog({ ...t, who: said.who, lines: said.lines, kind: 'talk' });
       return;
     }
@@ -1296,6 +1368,11 @@ export class Game {
   /** The setting beside friend and trade requests: keep your name off your door and your window dark (`off`), or show both. The server says back how it stands. */
   setDoorOff(off: boolean) {
     if (this.online) this.send({ t: 'doorOff', off });
+  }
+
+  /** The setting below it: let only friends walk into your cabin (`off`), or your neighbors too. The server says back how it stands. */
+  setVisitsOff(off: boolean) {
+    if (this.online) this.send({ t: 'visitsOff', off });
   }
 
   /** At your own door: each friend whose street has a lot free, asked about in turn (NO asks about the next); none, and the box says how it works. */
@@ -1853,8 +1930,9 @@ export class Game {
     }
     // People and signs are tall: a tap on the head lands on the tile behind them.
     const talker = this.talkerAt(x, y) ?? this.talkerAt(x, y + 1);
-    // Your own door is walked into, as any house's; a neighbor's is walked up to, and knocked at.
-    if (talker?.kind === 'door' && talker.lot === this.street?.mine) ({ x, y } = talker);
+    // A door on your street is walked into, as any house's: your own, and a neighbor's (the server lets you in,
+    // or says why not). One nobody lives behind, or that stayed shut, is walked up to, and knocked at.
+    if (talker?.kind === 'door' && !this.barred(talker.x, talker.y)) ({ x, y } = talker);
     else if (talker) {
       this.goal = { talk: talker };
       this.path = findPath(this.map, from.x, from.y, talker.x, talker.y, true);
@@ -1879,10 +1957,14 @@ export class Game {
     return { x, y, who: lot === s.mine ? YOUR_CABIN : cabinWho(s.lots[lot] ?? null), lines: [], kind: 'door', lot };
   }
 
-  /** A neighbor's door: knocked at, never walked into (the server keeps you out as well). */
+  /**
+   * The door of a lot nobody lives on: knocked at, never walked into. A neighbor's is tried: the server lets
+   * you in, or sends the step back and says why the door stayed shut (only friends, a block), which only it
+   * knows; one that stayed shut is not tried again (`shut`).
+   */
   private barred(x: number, y: number): boolean {
     const lot = this.lotDoor.findIndex(d => d.x === x && d.y === y);
-    return lot >= 0 && lot !== this.street?.mine;
+    return lot >= 0 && lot !== this.street?.mine && (!this.street?.lots[lot] || this.shut.has(lot));
   }
 
   /** Asks the server for what lies on tile x,y. One pick at a time: the answer is on its way. */
