@@ -241,6 +241,17 @@ describe('what the interface says', () => {
     expect(v.feats.find(f => f.name === 'Fire keeper')!.progress).toBe(0.25);
   });
 
+  it('sends you to the workbench at home to make gear and to mend it', () => {
+    const v = statusView({
+      energy: null, body: DRY, surge: null, caught: false, stone: ASLEEP, stats: {}, bag: [], items,
+      progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: 100 }, resists: null, wear: 'Raincoat worn out', quirks: [], storm: null, flash: null, weather: 'overcast', wilds: false,
+    });
+    expect(v.rows.filter(r => r.label === 'Wear' || r.label === 'Resists').map(r => [r.label, r.text])).toEqual([
+      ['Wear', 'Raincoat worn out. Mend it at the workbench at home.'],
+      ['Resists', 'Nothing yet. Make gear at the workbench at home.'],
+    ]);
+  });
+
   it('says what drains you, element by element, and the storm and a flash in the status panel', () => {
     expect(drainText({ weather: 'overcast', wet: 0, storm: false, caught: false, flash: null })).toBeNull();
     expect(drainText({ weather: 'night', wet: 0.5, storm: true, caught: true, flash: 'fire' })).toBe(

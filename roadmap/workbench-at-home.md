@@ -1,13 +1,13 @@
 ---
 id: workbench-at-home
 title: The workbench at home
-status: next
-order: 10
+status: done
+order: 230
 area: world
 depends: [equipment-resistances]
 ---
 
-The workbench moves from Stonebrook Lodge into your home, beside the chest by the fire. Making gear, mending it and choosing what to wear happen in one room, from one stash, without walking across town and back. The lodge keeps Walt, its fire and its long tables: it stays where the town gathers.
+The workbench moves from Stonebrook Lodge into your home, beside the chest by the fire. Making gear, mending it and choosing what to wear happen in one room, from one stash, without walking across town and back. The lodge keeps Walt, its fire and its long tables: it stays where the town gathers. As built: the fire, the chest and the workbench stand side by side along the back wall of the home, the chest's front warm from the fire and the workbench one step on, and the lodge stacks its firewood where the workbench stood.
 
 The story's second chapter says where the workbench is, so its text changes with it, and so do the status panel's hint and every item on this roadmap that makes something "at the workbench in the lodge": they all mean the workbench at home now.
 

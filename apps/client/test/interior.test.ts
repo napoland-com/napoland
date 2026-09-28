@@ -106,6 +106,12 @@ describe('windows, doorways and the fire', () => {
     expect(windowSpots(narrow, wallShapes(narrow))).toEqual([{ x: 2, y: 0 }]);
   });
 
+  it('keeps a window clear of the board a workbench hangs its tools on', () => {
+    // As at home: the fire in the middle, the chest and the workbench beside it, a bed in the corner.
+    const home = new TileMap({ ...cabin(), id: 'home', objects: [{ kind: 'fireplace', x: 4, y: 1 }, { kind: 'chest', x: 5, y: 1 }, { kind: 'workbench', x: 6, y: 1 }, { kind: 'bed', x: 7, y: 1 }] });
+    expect(windowSpots(home, wallShapes(home))).toEqual([{ x: 2, y: 0 }, { x: 7, y: 0 }]);
+  });
+
   it('finds the doorway and the way out through it', () => {
     expect(doorways(room)).toEqual([{ x: 4, y: 6, dir: 'down' }]);
   });
@@ -157,6 +163,23 @@ describe('furniture', () => {
   it('keeps rugs flat, under shadows and pools of light', () => {
     const rug = furnitureModel({ kind: 'rug', x: 3, y: 3, w: 3, h: 2 }, room)!;
     expect(new THREE.Box3().setFromObject(rug).max.y).toBeLessThan(0.03);
+  });
+
+  it('stacks a woodpile along the wall beside it, on its tile and lower than a person', () => {
+    const lodge = new TileMap({ ...cabin(), objects: [{ kind: 'woodpile', x: 7, y: 3 }] });
+    const pile = furnitureModel({ kind: 'woodpile', x: 7, y: 3 }, lodge)!;
+    const b = new THREE.Box3().setFromObject(pile);
+    expect(b.min.x).toBeGreaterThanOrEqual(6.99);
+    expect(b.max.x).toBeLessThanOrEqual(8.01);
+    expect(b.min.z).toBeGreaterThanOrEqual(2.99);
+    expect(b.max.z).toBeLessThanOrEqual(4.01);
+    expect(b.max.y).toBeLessThan(0.9);
+    // Against the east wall: the top of the stack leans on it, east of the tile's middle.
+    const top = new THREE.Box3();
+    pile.updateMatrixWorld(true);
+    pile.traverse(o => { if (o instanceof THREE.Mesh && new THREE.Box3().setFromObject(o).min.y > 0.5) top.expandByObject(o); });
+    expect(top.isEmpty()).toBe(false);
+    expect(top.min.x).toBeGreaterThan(7.5);
   });
 
   it('turns a shelf so its back is against the wall beside it', () => {

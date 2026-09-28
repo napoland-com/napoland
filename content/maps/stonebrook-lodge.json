@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-lodge",
   "name": "Stonebrook Lodge",
-  "version": 3,
+  "version": 4,
   "kind": "inside",
   "depth": 0,
   "width": 11,
@@ -43,7 +43,7 @@
     {"kind":"table","x":8,"y":4},
     {"kind":"barrel","x":1,"y":6},
     {"kind":"barrel","x":9,"y":6},
-    {"kind":"workbench","x":9,"y":3},
+    {"kind":"woodpile","x":9,"y":3},
     {"kind":"npc","id":"walt","name":"Walt","x":3,"y":2,"dir":"down","look":{"coat":"#5a4a3a","scarf":"#c98a2b","hair":"#9a958d","skin":"#c68b62","hat":"#d9a82b"},"lines":["Pull up a chair. Pruitt. Walt. I kept the north line for the power company, and then NAPO's. I strung its wire from the station to the Tower.","Before NAPO came, the Old Stone only hummed on cold nights. Nobody minded it.","Then the hum got into the radios, and every compass in town pointed at the woods. That's when the Observatory came.","The night they switched the Tower on, the woods lit up like a town and the Old Stone cracked. You can still see the crack.","Every forty minutes since, the woods surge. Regular as a clock. You'd think something out there was keeping time.","NAPO said two weeks, and I went with the rest. Came back for my truck, up where the north road gives out. It never started again, so I stayed."]}
   ]
 }

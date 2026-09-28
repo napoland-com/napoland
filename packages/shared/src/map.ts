@@ -96,13 +96,15 @@ export type MapObject =
   | { kind: 'board'; x: number; y: number }
   /** Your stash: a chest at home. Everyone who opens it sees only their own things in it. */
   | { kind: 'chest'; x: number; y: number }
-  /** The workbench: it makes gear from what your stash holds (recipes in content/items.json). */
+  /** The workbench, beside the chest at home: it makes gear from what your stash holds (recipes in content/items.json). */
   | { kind: 'workbench'; x: number; y: number }
   /** Furniture, inside buildings. A bed is one tile wide and two long (head at y); a rug is only drawn. */
   | { kind: 'bed'; x: number; y: number }
   | { kind: 'table'; x: number; y: number }
   | { kind: 'shelf'; x: number; y: number }
   | { kind: 'crate'; x: number; y: number }
+  /** Split firewood stacked against the nearest wall. Nothing to do with it: it only stands in the way. */
+  | { kind: 'woodpile'; x: number; y: number }
   | { kind: 'rug'; x: number; y: number; w: number; h: number };
 
 /** A place people call by name: the ring of stones, the sinks, the quarantine line. */
@@ -174,7 +176,7 @@ export interface Arrival {
 /** Objects that stand on a tile and stop anyone from walking onto it (a house's door tile excepted). */
 const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
-  'antenna', 'console',
+  'antenna', 'console', 'woodpile',
 ]);
 /** Objects that are only drawn: you walk over or through them. */
 export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug']);

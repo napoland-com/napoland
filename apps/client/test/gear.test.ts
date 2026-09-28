@@ -6,13 +6,13 @@ import { Items, factsOf, lookOf, recipeViews, resistText, slotViews, wornViews }
 import { Maps } from '../src/maps';
 import { FULL, itemsData, tinyTown, welcome } from './fixtures';
 
-/** A 5x4 room with a chest at 1,1 and a workbench at 3,1: stand below either, facing up. */
+/** A 5x4 room like home, the chest at 1,1 and the workbench beside it at 2,1: stand below either, facing up. */
 function room(): MapData {
   return {
-    id: 'room', name: 'Lodge', version: 1, kind: 'inside', depth: 0, width: 5, height: 4,
+    id: 'room', name: 'Home', version: 1, kind: 'inside', depth: 0, width: 5, height: 4,
     tiles: ['xxxxx', 'xpppx', 'xpppx', 'xxpxx'], levels: Array<string>(4).fill('00000'),
     spawn: { x: 2, y: 2, dir: 'up' }, exits: [{ x: 2, y: 3, w: 1, h: 1, to: 'town', tx: 3, ty: 1, dir: 'down' }],
-    objects: [{ kind: 'chest', x: 1, y: 1 }, { kind: 'workbench', x: 3, y: 1 }],
+    objects: [{ kind: 'chest', x: 1, y: 1 }, { kind: 'workbench', x: 2, y: 1 }],
   };
 }
 
@@ -58,13 +58,13 @@ describe('gear in the game', () => {
   });
 
   it('opens the workbench with A, makes recipes there, and says what it made', () => {
-    g.handle(welcome(room(), [me(3, 2)], FULL), now);
+    g.handle(welcome(room(), [me(2, 2)], FULL), now);
     g.pressA();
-    expect(sent).toEqual([{ t: 'bench', x: 3, y: 1 }]);
+    expect(sent).toEqual([{ t: 'bench', x: 2, y: 1 }]);
     g.handle({ t: 'bench', stash: [{ item: 'cloth', count: 9 }] }, now);
-    expect(g.bench).toEqual({ x: 3, y: 1, stash: [{ item: 'cloth', count: 9 }] });
+    expect(g.bench).toEqual({ x: 2, y: 1, stash: [{ item: 'cloth', count: 9 }] });
     g.craft('coat');
-    expect(sent.at(-1)).toEqual({ t: 'craft', x: 3, y: 1, recipe: 'coat' });
+    expect(sent.at(-1)).toEqual({ t: 'craft', x: 2, y: 1, recipe: 'coat' });
     g.handle({ t: 'crafted', item: 'coat', count: 1 }, now);
     expect(g.floats.map(f => f.text)).toEqual(['Made: Raincoat']);
     g.closeBench();

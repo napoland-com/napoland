@@ -106,7 +106,7 @@ export interface ItemsData {
   version: number;
   items: ItemDef[];
   finds: FindRule[];
-  /** What the workbench in town makes (gear.ts). None: it makes nothing. */
+  /** What the workbench at home makes (gear.ts). None: it makes nothing. */
   recipes?: Recipe[];
   /** Seconds out in the wilds that wear gear of each tier out (gear.ts); a tier left out never wears. */
   wear?: Partial<Record<Tier, number>>;
