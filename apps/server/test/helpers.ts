@@ -5,14 +5,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
-import { DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, PROTOCOL_VERSION, type BagSlot, type ClientMsg, type DropView, type ServerMsg } from '@napoland/shared';
+import { DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, PROTOCOL_VERSION, xpFor, type BagSlot, type ClientMsg, type DropView, type ServerMsg } from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord, type Storage } from '../src/storage';
 import { colorFor } from '../src/world';
-import { fixtureMaps, itemsData } from './fixtures';
+import { chestMaps, fixtureMaps, itemsData } from './fixtures';
 
 export type Msg<T extends ServerMsg['t']> = Extract<ServerMsg, { t: T }>;
 
@@ -173,6 +173,55 @@ export async function restartKeepsBagsAndPiles(first: Storage, second: Storage, 
     expect(await stored(faller.id)).toBe(true);
     expect(await stored(late.id)).toBe(false);
     for (const x of [w, c, f]) x.c.ws.terminate();
+  } finally {
+    await two.stop();
+  }
+}
+
+/**
+ * Outfits through a restart, over the network with dev sign-in, on `first` and then `second` (the same
+ * storage, or two connections to the same database). Signed in at level 10, one player puts on the
+ * survey rain cape at the chest and another takes off the NAPO work suit they wore; after the restart the
+ * first comes back in the cape, and everyone who joins sees it, while the second comes back in their gear.
+ */
+export async function outfitsKeptThroughARestart(first: Storage, second: Storage): Promise<void> {
+  setLogLevel('silent');
+  const options = (storage: Storage): ServerOptions => ({ ...serverDefaults(), storage, maps: chestMaps(), items: itemsData(), auth: devAuth() });
+  const who = randomUUID().slice(0, 8), sub = (name: string) => `dev:${name}-${who}@example.test`;
+  const at = { map: 'house', x: 3, y: 2, dir: 'up', tokenHash: null, xp: xpFor(10) } as const;
+  const ann = await savedPlayer(first, { ...at, authSub: sub('ann') });
+  const cid = await savedPlayer(first, { ...at, authSub: sub('cid'), outfit: 'napo-suit' });
+  const signIn = async (port: number, name: string) => {
+    const c = await Client.open(port);
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, auth: `${name}-${who}@example.test` });
+    return { c, welcome: await c.next('welcome') };
+  };
+
+  const one = await startServer(options(first));
+  try {
+    const a = await signIn(one.port, 'ann');
+    a.c.send({ t: 'outfit', x: 3, y: 1, outfit: 'rain-cape' });
+    expect(await a.c.next('outfit')).toEqual({ t: 'outfit', id: ann.id, outfit: 'rain-cape' });
+    const c = await signIn(one.port, 'cid');
+    expect(c.welcome.players.find(p => p.id === cid.id)?.outfit).toBe('napo-suit');
+    c.c.send({ t: 'outfit', x: 3, y: 1, outfit: null });
+    expect(await c.c.next('outfit', m => m.id === cid.id)).toEqual({ t: 'outfit', id: cid.id, outfit: null });
+    for (const x of [a, c]) x.c.ws.terminate();
+    await waitFor(() => one.world.size === 0, 'everyone to leave');
+  } finally {
+    await one.stop();
+  }
+  expect((await second.findByAuthSub(sub('ann')))?.outfit).toBe('rain-cape');
+  expect((await second.findByAuthSub(sub('cid')))?.outfit).toBeUndefined();
+
+  const two = await startServer(options(second));
+  try {
+    const a = await signIn(two.port, 'ann');
+    expect(a.welcome.players.find(p => p.id === ann.id)?.outfit).toBe('rain-cape');
+    const c = await signIn(two.port, 'cid');
+    expect(c.welcome.players.find(p => p.id === ann.id)?.outfit).toBe('rain-cape');
+    expect(c.welcome.players.find(p => p.id === cid.id)?.outfit).toBeUndefined();
+    for (const x of [a, c]) x.c.ws.terminate();
   } finally {
     await two.stop();
   }

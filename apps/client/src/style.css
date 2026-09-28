@@ -301,8 +301,32 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 /* The stash (the chest at home): your bag above, to put things away; the stash below, to take them out. */
 .hud .slot[hidden] { display: none; }
 .stash-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
-.stash-sheet .hint, .stash-sheet .acts { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.stash-sheet .hint, .stash-sheet .acts, .stash-sheet .gate { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint[hidden] { display: none; }
+/* The chest's two tabs stand where its title was: the stash (with what you wear) and the wardrobe. They
+   keep their width; the XP beside them takes what is left, and goes where too little is (a card beside
+   the list on a small screen on its side). */
+.stash-sheet .sheet-head { container: chest-head / inline-size; }
+.chest-tabs { flex: none; display: flex; gap: calc(var(--u) * .2); }
+.stash-sheet .sheet-head .room { flex: 1 1 0; text-align: right; }
+@container chest-head (max-width: 18em) { .stash-sheet .sheet-head .room { visibility: hidden; } }
+.hud .chest-tabs button { position: relative; min-height: var(--btn); padding: 0 .5em; border: 0; border-radius: 8px; background: none; box-shadow: none; font-size: inherit; font-weight: 600; color: #8a8474; white-space: nowrap; }
+.hud .chest-tabs button[aria-selected="true"] { color: #ffcf5a; }
+.hud .chest-tabs button[aria-selected="true"]::after { content: ""; position: absolute; left: .5em; right: .5em; bottom: calc(var(--u) * .35); height: 2px; border-radius: 1px; background: #ffcf5a; }
+.stash-sheet .sheet-head .room { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chest-part { flex: none; display: flex; flex-direction: column; gap: var(--gap); }
+/* The wardrobe: three tiles a row, each a small figure in its outfit with its name under it; a locked
+   one is dim and says the level that opens it, the one worn has a tick. */
+.sheet .grid.outfits { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.hud .slot.outfit svg { width: 60%; height: 60%; margin-bottom: 22%; }
+.hud .slot.outfit .lbl { bottom: 5%; padding-inline: 5%; font-size: calc(var(--u) * .92); line-height: 1.1; text-transform: none; color: #d3ccbb; }
+.hud .slot.outfit[data-locked] { background: #131820; box-shadow: inset 0 0 0 2px #232a36; }
+.hud .slot.outfit[data-locked] svg { opacity: .35; filter: grayscale(.7); }
+.hud .slot.outfit[data-locked] .lbl { color: #8a8474; }
+.hud .slot.outfit[data-worn] { box-shadow: inset 0 0 0 2px #8fd98a; }
+.hud .slot.outfit[data-picked] { background: #262d3a; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
+.slot.outfit .on { position: absolute; right: 6%; top: 6%; width: max(14px, calc(var(--u) * 1.5)); height: max(14px, calc(var(--u) * 1.5)); border-radius: 50%; background: #8fd98a; }
+.slot.outfit .on::after { content: ""; position: absolute; left: 36%; top: 20%; width: 24%; height: 44%; border: solid #12301a; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .hud .act:disabled, .hud .act[aria-disabled="true"] { opacity: .45; cursor: default; }
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }

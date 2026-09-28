@@ -1,13 +1,13 @@
 ---
 id: outfits
 title: "Outfits: how your character looks"
-status: next
-order: 60
+status: done
+order: 340
 area: social
 depends: [play-first, home-stash-xp-levels, gear-details]
 ---
 
-An outfit changes how your character looks, whatever gear it wears: a look only, with no stats. Everyone starts in the same first outfit, given with the first sign-in: a **NAPO work suit**, the grey coverall with the yellow NAPO patch that the station's stores held by the hundred. More come with levels:
+An outfit changes how your character looks, whatever gear it wears: a look only, with no stats. Everyone gets the same first outfit with their first sign-in: a **NAPO work suit**, the grey coverall with the yellow NAPO patch that the station's stores held by the hundred. More come with levels:
 
 - level 5, the **lineman's jacket**: orange, with reflective bands and a yellow hard hat, like Walt's;
 - level 10, the **survey rain cape**: dark green with yellow edging, what NAPO's field crews wore;

@@ -54,6 +54,8 @@ export interface Config {
   version: string;
   /** Development only: the world's clock runs this many ms ahead (or behind), to play-test a dawn or a surge without waiting for it. */
   clockShiftMs: number;
+  /** Development only: stashing earns this many times the XP, to play-test the levels (and the outfits they open) without the trips. */
+  xpMultiplier: number;
   auth: AuthSettings;
 }
 
@@ -140,6 +142,9 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
     else if (get('NODE_ENV') === 'production' && Number(shift) !== 0) errors.push('CLOCK_SHIFT_MS moves the whole world\'s clock, so it is refused when NODE_ENV=production');
     else clockShiftMs = Number(shift);
   }
+  const xpMultiplier = int('XP_MULTIPLIER', 1, 1, 100_000);
+  // Levels are earned by bringing things home, for everyone alike: a live server never hands them out.
+  if (get('NODE_ENV') === 'production' && xpMultiplier !== 1) errors.push('XP_MULTIPLIER hands out levels, so it is refused when NODE_ENV=production');
 
   let auth: AuthSettings = { mode: 'legacy' };
   const authMode = oneOf('AUTH_MODE', AUTH_MODES, 'legacy');
@@ -176,7 +181,7 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
     port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, storyFile: storyFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
-    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, auth,
+    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, xpMultiplier, auth,
   };
 }
 

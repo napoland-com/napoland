@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DROP_LIFETIME_MS } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord } from '../src/storage';
-import { forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, playFirstThenSignIn, restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
+import { forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, outfitsKeptThroughARestart, playFirstThenSignIn, restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -57,7 +57,7 @@ describe.skipIf(!url)('PgStorage', () => {
   it('applies each migration once', async () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
-      '011_guests.sql',
+      '011_guests.sql', '014_outfits.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -219,6 +219,38 @@ describe.skipIf(!url)('PgStorage', () => {
     expect(await storage.findByTokenHash(rec.tokenHash!)).toEqual(reader);
     await storage.save(rec);
     expect((await storage.findByTokenHash(rec.tokenHash!))!.story).toBe('the-lineman');
+  });
+
+  it('keeps the outfit a player wears, none for one who wears none, and none again once it is taken off', async () => {
+    const rec = player('Pg Dresser');
+    expect(await storage.create(rec)).toBe(true);
+    expect((await storage.findByTokenHash(rec.tokenHash))!.outfit).toBeUndefined();
+    const caped = { ...rec, outfit: 'rain-cape' };
+    await storage.save(caped);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(caped);
+    // Taken off, it is none: unlike the story, a save without one clears it.
+    await storage.save(rec);
+    expect((await storage.findByTokenHash(rec.tokenHash))!.outfit).toBeUndefined();
+    const born = { ...player('Pg Born Dressed'), outfit: 'napo-suit' };
+    expect(await storage.create(born)).toBe(true);
+    expect(await storage.findByTokenHash(born.tokenHash)).toEqual(born);
+    // The previous release's saves never touch it.
+    await admin.query(`UPDATE ${schema}.players SET x = 1 WHERE id = $1`, [born.id]);
+    expect((await storage.findByTokenHash(born.tokenHash))!.outfit).toBe('napo-suit');
+  });
+
+  it('keeps outfits through a restart of the server, over the network', async () => {
+    const fresh = await freshSchema();
+    const first = new PgStorage(fresh.url, MIGRATIONS);
+    const second = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await first.init();
+      await second.init();
+      await outfitsKeptThroughARestart(first, second);
+    } finally {
+      await first.close();
+      await second.close();
+    }
   });
 
   it('keeps XP and the stash, with what was taken out of it', async () => {

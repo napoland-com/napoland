@@ -61,8 +61,11 @@ async function main(): Promise<void> {
     maxConnectionsPerIp: cfg.maxConnectionsPerIp,
     newPlayersPerIpPerHour: cfg.newPlayersPerIpPerHour,
     clockShiftMs: cfg.clockShiftMs,
+    xpMultiplier: cfg.xpMultiplier,
     auth,
   });
+  // Only ever in development (the configuration refuses it in production): nobody should wonder later why levels came so fast.
+  if (cfg.xpMultiplier !== 1) log.warn('XP_MULTIPLIER: stashing earns more XP than it should (play-tests only)', { times: cfg.xpMultiplier });
   log.info('server started', {
     version: cfg.version,
     port: server.port,

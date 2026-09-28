@@ -51,6 +51,8 @@ export interface ServerOptions {
   auth?: Auth;
   /** Development only (CLOCK_SHIFT_MS): the sky, the surges and the conditions run this many ms ahead of the wall clock. */
   clockShiftMs?: number;
+  /** Development only (XP_MULTIPLIER): stashing earns this many times the XP. 1 unless set. */
+  xpMultiplier?: number;
   /** With sign-in, how often guests who stayed away GUEST_DAYS are looked for (after start-up); default once a day. */
   forgetGuestsEveryMs?: number;
 }
@@ -116,6 +118,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     // Game time never goes backwards; piles keep wall clock time, which is this far ahead of it.
     epochOffset: Date.now() + shift - clock(),
     guests,
+    xpTimes: o.xpMultiplier,
   });
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version, auth: auth.config });
   const net = attachNet({

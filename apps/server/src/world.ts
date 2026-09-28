@@ -26,7 +26,8 @@
  *
  * Gear is kept piece by piece (gear.ts): what a player wears wears down while they are out in the
  * wilds, protects less and less when nearly worn out, and is mended at the workbench; anomalous
- * pieces have a quirk, which everyone on the map knows (some show in the world).
+ * pieces have a quirk, which everyone on the map knows (some show in the world). Over it, a player
+ * signed in may wear an outfit (outfits.ts), which changes how they look and nothing else.
  *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
  * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts).
@@ -81,7 +82,9 @@ import {
   liveXp,
   maxEnergy,
   merge,
+  mayWear,
   modsOf,
+  outfitOf,
   progressOf,
   rankOf,
   reachedBy,
@@ -300,9 +303,11 @@ export interface WorldOptions {
   now?: number;
   /**
    * Players sign in on this server (dev or supabase), so one nobody signed in with (authSub null)
-   * plays as a guest, and everyone sees it (PlayerView.guest): no friends with them until they sign in.
+   * plays as a guest, and everyone sees it (PlayerView.guest): no friends and no outfits for them until they sign in.
    */
   guests?: boolean;
+  /** Development only (XP_MULTIPLIER): stashing earns this many times the XP, to play-test the levels without the trips. 1 unless set. */
+  xpTimes?: number;
 }
 
 interface Online {
@@ -416,7 +421,7 @@ interface Flare {
 const quirksOf = (w: Worn | undefined): Quirk[] => SLOTS.flatMap(s => (w?.[s]?.quirk ? [w[s]!.quirk!] : []));
 const view = (r: PlayerRecord, live = false, guest = false): PlayerView => ({
   id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn), ...(live ? { live: true as const } : {}),
-  ...(guest ? { guest: true as const } : {}),
+  ...(guest ? { guest: true as const } : {}), ...(r.outfit ? { outfit: r.outfit } : {}),
 });
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
@@ -499,6 +504,8 @@ export class World {
   private readonly cycle: boolean;
   /** Players sign in here: one nobody signed in with is a guest (WorldOptions.guests). */
   private readonly guests: boolean;
+  /** Stashing earns this many times an item's XP: 1, but for play-tests (WorldOptions.xpTimes). */
+  private readonly xpTimes: number;
   private readonly onCollapse: WorldOptions['onCollapse'];
   private readonly items: Map<string, ItemDef>;
   /** The items in the order of content/items.json: a stash lists them so. */
@@ -589,6 +596,7 @@ export class World {
     this.sky = weather;
     this.cycle = options.cycle ?? false;
     this.guests = options.guests ?? false;
+    this.xpTimes = options.xpTimes ?? 1;
     this.stepMs = options.stepMs ?? STEP_MS;
     this.onCollapse = options.onCollapse;
     this.rng = options.rng ?? Math.random;
@@ -685,7 +693,12 @@ export class World {
 
   /** A player as everyone sees them. */
   private viewOf(p: Online): PlayerView {
-    return view(p.rec, p.live > 0, this.guests && p.rec.authSub === null);
+    return view(p.rec, p.live > 0, this.guest(p.rec));
+  }
+
+  /** Nobody signed in with this character, on a server with sign-in: no friends and no outfits until someone does. */
+  private guest(r: PlayerRecord): boolean {
+    return this.guests && r.authSub === null;
   }
 
   /** What lies on a map to pick up. */
@@ -741,6 +754,8 @@ export class World {
       toSpawn(r, map);
     }
     r.map = map.data.id;
+    // An outfit is theirs only while they may wear it (signed in, the level reached): anything else saved is none.
+    if (!mayWear(r.outfit, levelOf(r.xp ?? 0), !this.guest(r))) delete r.outfit;
     r.energy = Number.isFinite(r.energy) ? Math.min(this.maxOf(r), Math.max(0, r.energy)) : this.maxOf(r);
     r.wet = Number.isFinite(r.wet) ? clamp01(r.wet!) : 0;
     const readyAt = this.resting.get(r.id) ?? -Infinity;
@@ -989,6 +1004,7 @@ export class World {
       r.stash = lr.stash;
       r.xp += lr.xp;
     }
+    r.xp *= this.xpTimes;
     // Gear brought home (an identified strange object) gets its piece, and its quirk if anomalous.
     p.rec.stash = fitPieces(r.stash, this.items, this.rng);
     p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
@@ -1044,6 +1060,27 @@ export class World {
     delete worn[slot];
     p.rec.stash = fitPieces({ ...moveStash(stash, undefined, 0, old), pieces }, this.items, this.rng);
     this.wearGear(p, gear, worn, now);
+  }
+
+  /**
+   * Puts on an outfit from the wardrobe at the chest on tile x,y next to the player, or takes it off
+   * (null): how they look, whatever gear they wear. Only signed in, and only one their level has
+   * reached. Nothing is used up and nothing else changes; it is saved, and everyone on the map sees it.
+   */
+  outfit(id: string, x: number, y: number, outfit: string | null, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.guest(p.rec)) return this.refuse(p, 'outfit', 'sign_in_first');
+    if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'outfit', 'too_far');
+    const def = outfit === null ? undefined : outfitOf(outfit);
+    if (outfit !== null && !def) return this.refuse(p, 'outfit', 'gone');
+    if (def && !mayWear(def, levelOf(p.rec.xp ?? 0), true)) return this.refuse(p, 'outfit', 'locked');
+    if ((p.rec.outfit ?? null) === outfit) return;
+    if (def) p.rec.outfit = def.id;
+    else delete p.rec.outfit;
+    this.saveNow.set(id, p.rec);
+    this.toMap(p.map.data.id, { t: 'outfit', id, outfit: def?.id ?? null });
   }
 
   /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. */
@@ -2342,7 +2379,7 @@ export class World {
     this.saveNow.set(p.rec.id, p.rec);
   }
 
-  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend', reason: Refusal): void {
+  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'outfit', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
   }
 

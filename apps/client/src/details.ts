@@ -1,16 +1,17 @@
 /**
  * A tap looks, an action is a second step. In the chest and at the workbench a tap on anything opens
  * its card: what a piece of gear is (tier, what it resists and the energy it adds as worn down as it
- * is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a mend takes, or
- * what something in your bag or stash is. The card's one button does the one thing that can be done
- * with it; so do A and a second tap on the same thing (DoubleTap).
+ * is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a mend takes,
+ * what something in your bag or stash is, or an outfit in the wardrobe. The card's one button does the
+ * one thing that can be done with it; so do A and a second tap on the same thing (DoubleTap).
  *
  * Plain logic with no page in it, so it can be tested: main.ts builds a card from the game
  * (detailView), hud.ts draws it and sends what its button does.
  */
-import { WEAR_FADES, mendCost, pieceFactor, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type Piece, type Slot, type Tier, type Worn } from '@napoland/shared';
-import { iconFor } from './icons';
+import { WEAR_FADES, mayWear, mendCost, outfitOf, pieceFactor, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type Piece, type Slot, type Tier, type Worn } from '@napoland/shared';
+import { NO_OUTFIT_ICON, iconFor, outfitIcon } from './icons';
 import { ELEMENT_WORDS, conditionText, countOf, factsOf, slotName, type Items } from './items';
+import { NO_OUTFIT, outfitWords, type WardrobeState } from './wardrobe';
 
 /** A second tap on the same thing within this many milliseconds does what its card's button does. */
 export const DOUBLE_TAP_MS = 350;
@@ -59,7 +60,9 @@ export type DetailRef =
   | { from: 'worn'; slot: Slot }
   /** A recipe at the workbench, and the mending of what you wear in a slot. */
   | { from: 'recipe'; id: string }
-  | { from: 'mend'; slot: Slot };
+  | { from: 'mend'; slot: Slot }
+  /** An outfit in the wardrobe (outfits.ts), by id, or NO_OUTFIT's. */
+  | { from: 'outfit'; id: string };
 
 /** Names what a card is about, for the double tap and to keep it open while the game changes around it. */
 export function refKey(r: DetailRef): string {
@@ -69,6 +72,7 @@ export function refKey(r: DetailRef): string {
     case 'worn': return `worn:${r.slot}`;
     case 'recipe': return `recipe:${r.id}`;
     case 'mend': return `mend:${r.slot}`;
+    case 'outfit': return `outfit:${r.id}`;
   }
 }
 
@@ -79,7 +83,9 @@ export type DetailAct =
   | { kind: 'wear'; item: string; n: number }
   | { kind: 'off'; slot: Slot }
   | { kind: 'make'; recipe: string }
-  | { kind: 'mend'; slot: Slot };
+  | { kind: 'mend'; slot: Slot }
+  /** Wear an outfit, or none (null). */
+  | { kind: 'outfit'; id: string | null };
 
 /** Something a piece gives: "Wind 14%" (the element's color), "+5 energy", "Holds 12 things". */
 export interface StatView {
@@ -120,13 +126,15 @@ export interface DetailView {
   act?: { label: string; then?: string; enabled: boolean; does: DetailAct };
 }
 
-/** What the card and the rest of the game know: your bag, what the open chest or workbench says your stash holds, what you wear. */
+/** What the card and the rest of the game know: your bag, what the open chest or workbench says your stash holds, what you wear, and the wardrobe. */
 export interface DetailState {
   items: Items;
   bag: readonly BagSlot[];
   stash: readonly BagSlot[];
   gear: Gear;
   worn: Worn;
+  /** Your level, the outfit you wear, and whether you play as a guest; without it, no outfit has a card. */
+  wardrobe?: WardrobeState;
 }
 
 /**
@@ -257,7 +265,34 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       short(card, needs);
       return { ...card, act: { label: 'Mend', enabled: needs.every(n => n.have >= n.need), does: { kind: 'mend', slot: ref.slot } } };
     }
+    case 'outfit':
+      return s.wardrobe ? outfitCard(ref.id, s.wardrobe) : null;
   }
+}
+
+/**
+ * An outfit's card: its drawing, its name and its line. Its button wears it, or takes it off when you
+ * wear it (your gear shows again); greyed out while your level has not reached it, and the card says
+ * which level does. No outfit's card takes off the one you wear. Nothing is used up, so nothing asks.
+ */
+function outfitCard(id: string, w: WardrobeState): DetailView | null {
+  const base = { stats: [], facts: [], notes: [] as DetailView['notes'] };
+  if (id === NO_OUTFIT.id) {
+    const now = outfitOf(w.wearing);
+    if (!w.wearing) return { ...base, icon: NO_OUTFIT_ICON, name: NO_OUTFIT.name, text: NO_OUTFIT.text, notes: [{ text: 'You wear no outfit now.', tone: 'plain' }] };
+    return { ...base, icon: NO_OUTFIT_ICON, name: NO_OUTFIT.name, text: NO_OUTFIT.text, act: { label: now ? `Take off your ${outfitWords(now.name)}` : 'Take it off', enabled: true, does: { kind: 'outfit', id: null } } };
+  }
+  const o = outfitOf(id);
+  if (!o) return null;
+  const card: DetailView = { ...base, icon: outfitIcon(o.id), name: o.name, text: o.text };
+  if (w.wearing === o.id) {
+    return { ...card, notes: [{ text: 'You wear it now.', tone: 'plain' }], act: { label: 'Take off', then: 'your gear shows again', enabled: true, does: { kind: 'outfit', id: null } } };
+  }
+  const open = mayWear(o, w.level, !w.guest);
+  if (w.guest) card.notes.push({ text: 'Sign in to wear it.', tone: 'plain' });
+  else if (!open) card.notes.push({ text: `It opens at level ${o.level}. You are level ${w.level}.`, tone: 'plain' });
+  else card.facts.push(o.level > 1 ? `Yours since level ${o.level}` : 'Yours since your first sign-in');
+  return { ...card, act: { label: 'Wear', enabled: open, does: { kind: 'outfit', id: o.id } } };
 }
 
 /** A piece of gear (or what a recipe makes: no piece yet, so no wear to show). */

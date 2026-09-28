@@ -5,7 +5,7 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, resistOf, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type Quirk,
+  BAG_SLOTS, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, outfitOf, resistOf, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type Quirk,
   type Recipe, type Refusal, type RefusedAction, type Slot, type Worn,
 } from '@napoland/shared';
 import type { RecipeView, WornView } from './hud';
@@ -97,10 +97,11 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
     case 'slow_down': return 'Slow down a little';
-    case 'sign_in_first': return action === 'say' || action === undefined ? 'Sign in to talk' : 'Sign in to make friends';
+    case 'sign_in_first': return action === 'say' || action === undefined ? 'Sign in to talk' : action === 'outfit' ? 'Sign in to wear an outfit' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'gear_stays': return 'Put gear on from the chest';
     case 'whole': return 'It needs no mending';
+    case 'locked': return 'Your level has not reached it yet';
   }
 }
 
@@ -206,8 +207,12 @@ export function factsOf(def: ItemDef): string[] {
   return out;
 }
 
-/** What someone looks like in what they wear (characters.ts): each piece's color, and the bag's size. */
-export function lookOf(gear: Gear, items: Items): Look {
+/**
+ * What someone looks like in what they wear (characters.ts): each piece's color, and the bag's size;
+ * or, in an outfit (outfits.ts), the outfit and the bag alone, since nothing else of the gear shows.
+ * An outfit this copy does not have leaves them in their gear.
+ */
+export function lookOf(gear: Gear, items: Items, outfit?: string): Look {
   // No cap: the hair shows. (Other slots, left bare, keep the old look: nobody walks out barefoot.)
   const out: Look = gear.cap ? {} : { cap: null };
   for (const slot of SLOTS) {
@@ -217,7 +222,9 @@ export function lookOf(gear: Gear, items: Items): Look {
     out[slot] = def.color;
     if (slot === 'bag' && def.bag) out.bagSize = Math.sqrt(def.bag / BAG_SLOTS);
   }
-  return out;
+  if (!outfitOf(outfit)) return out;
+  // The pack still shows over any outfit: how much someone carries matters out there.
+  return { outfit, ...(out.bag ? { bag: out.bag } : {}), ...(out.bagSize ? { bagSize: out.bagSize } : {}) };
 }
 
 /** The workbench's recipes against what a stash holds: what each makes, what it needs, whether it can. */

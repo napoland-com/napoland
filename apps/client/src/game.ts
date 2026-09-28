@@ -13,7 +13,7 @@
  * - people and NAPO's desks are in the story (story.ts): what someone says follows the chapter you
  *   are in, and the server hears whom you talked to or what you read; it says when a chapter is reached;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
- *   it tells us, we show them;
+ *   it tells us, we show them; so is what everyone wears, gear and outfits (you choose yours at the chest);
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
  * - energy, wetness, fires and the surge clock are counted forward between the server's reports, so
  *   everything moves smoothly.
@@ -133,7 +133,9 @@ export function minutes(seconds: number): string {
 
 /** News from the world for the interface to announce (status.ts, newsBanner). A feat's is the rank just reached. */
 export type News =
-  | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView }
+  | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView }
+  /** A new level: where it stands now, and the level before (one stash can climb several). */
+  | { kind: 'level'; progress: ProgressView; from: number }
   /** A new day's conditions, by name. */
   | { kind: 'conditions'; names: string[] }
   | { kind: 'chapter'; chapter: Chapter };
@@ -238,6 +240,8 @@ export class Game {
   live = new Set<string>();
   /** What everyone on this map wears, by player id (you too). */
   gear = new Map<string, Gear>();
+  /** The outfit each player on this map wears over their gear, by player id (you too); none: their gear shows. */
+  outfits = new Map<string, string>();
   /** Feats just earned, for the interface to announce (it empties the list). */
   news: News[] = [];
   /** A question in the text box (ask.ts): until it is answered, nobody walks and A, B and the stick answer it. */
@@ -496,6 +500,10 @@ export class Game {
         this.gear.set(msg.id, msg.gear);
         this.quirks.set(msg.id, msg.quirks);
         break;
+      case 'outfit':
+        if (msg.outfit) this.outfits.set(msg.id, msg.outfit);
+        else this.outfits.delete(msg.id);
+        break;
       case 'bench': {
         const b = this.benching;
         if (b && this.clock - b.at < ANSWER_WAIT_MS) { this.bench = { x: b.x, y: b.y, stash: msg.stash }; this.benching = null; }
@@ -508,13 +516,15 @@ export class Game {
         break;
       case 'progress':
         if (msg.gained > 0) this.floatOverMe(`+${msg.gained} XP`, GAIN);
-        if (msg.progress.level > this.progress.level) this.news.push({ kind: 'level', progress: msg.progress });
+        if (msg.progress.level > this.progress.level) this.news.push({ kind: 'level', progress: msg.progress, from: this.progress.level });
         this.progress = msg.progress;
         break;
       case 'join':
         this.players.set(msg.player.id, this.mover(msg.player));
         this.gear.set(msg.player.id, msg.player.gear ?? {});
         this.quirks.set(msg.player.id, msg.player.quirks ?? []);
+        if (msg.player.outfit) this.outfits.set(msg.player.id, msg.player.outfit);
+        else this.outfits.delete(msg.player.id);
         if (msg.player.live) this.live.add(msg.player.id);
         else this.live.delete(msg.player.id);
         // A guest who signed in comes back in as someone who is not one.
@@ -617,6 +627,8 @@ export class Game {
           this.inform(this.note?.waiting ? this.note.who : '', sentence(refusalText(msg.reason, msg.action)));
           break;
         }
+        // The wardrobe's panel would hide anything said over your head: the box stands above it.
+        if (msg.action === 'outfit') { this.inform('Wardrobe', sentence(refusalText(msg.reason, msg.action))); break; }
         if (msg.action === 'pick') this.picking = null;
         this.floatOverMe(refusalText(msg.reason), NO);
         break;
@@ -655,6 +667,7 @@ export class Game {
     this.socialChanges++;
     this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
     this.quirks = new Map(players.map(p => [p.id, p.quirks ?? []]));
+    this.outfits = new Map(players.flatMap(p => (p.outfit ? [[p.id, p.outfit] as const] : [])));
     this.live = new Set(players.filter(p => p.live).map(p => p.id));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
@@ -866,6 +879,12 @@ export class Game {
     if (c && this.online) this.send({ t: 'unequip', x: c.x, y: c.y, slot });
   }
 
+  /** At the open chest: wear an outfit from the wardrobe, or none (null). It uses nothing up, so it asks nothing. */
+  wearOutfit(outfit: string | null) {
+    const c = this.chest;
+    if (c && this.online) this.send({ t: 'outfit', x: c.x, y: c.y, outfit });
+  }
+
   /** At the open workbench: make a recipe. It asks first ("Make a raincoat? It uses 8 cloth and 4 resin."), or says what the stash lacks. */
   craft(recipe: string) {
     const b = this.bench, r = this.items.recipes.find(x => x.id === recipe);
@@ -883,6 +902,11 @@ export class Game {
   /** What you wear. */
   get myGear(): Gear {
     return (this.meId && this.gear.get(this.meId)) || {};
+  }
+
+  /** The outfit you wear, or null: your gear shows. */
+  get myOutfit(): string | null {
+    return (this.meId && this.outfits.get(this.meId)) || null;
   }
 
   /** What you wear, piece by piece (condition and quirk), as the server last told it. */
@@ -1346,7 +1370,7 @@ export class Game {
     const hitched = this.body.view.hitched;
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
-      look: lookOf(this.gear.get(p.id) ?? {}, this.items),
+      look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id)),
     }));
   }
 
