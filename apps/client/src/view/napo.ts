@@ -3,7 +3,8 @@
  * with a rim of NAPO yellow), its yellow warning signs, and the Tower, a red and white mast with
  * a dish turned toward the woods and a light blinking on top; and its things out in the places: a
  * burned-out jeep, its box trucks and fuel pump in the motor pool, the sample cages at the field site
- * with a humming rock in each, and its survey stakes. Plain builders of toon boxes for world.ts, which
+ * with a humming rock in each, its survey stakes, and its teleports (one in every cabin, its twin in
+ * town), whose rock hums too. Plain builders of toon boxes for world.ts, which
  * bakes them with the other props; only the Tower's light keeps a material of its own, which world.ts
  * blinks, and the rocks in the cages share one that glows faintly, the same day and night.
  */
@@ -337,6 +338,32 @@ export function stakeModel(s: { x: number; y: number }): THREE.Group {
 }
 
 /**
+ * One of NAPO's teleports (one in every cabin, its twin in town): a round concrete pad rimmed in NAPO yellow,
+ * a steel gate over it with NAPO's plate and eye on the crossbar, and in the gate a rock from deep in the woods
+ * that hums like the ones in its sample cages (`rock`, the humming material), held on a rod. Its control box,
+ * on the right post, faces the tile in front, where you stand to use it and where it sets you down.
+ */
+export function teleportModel(t: { x: number; y: number }, rock: THREE.Material): THREE.Group {
+  const g = pivot(t.x + 0.5, 0, t.y + 0.5);
+  g.add(part(flat(new THREE.CylinderGeometry(0.44, 0.46, 0.08, 14)), CONCRETE, 0, 0.04, 0, 0.015));
+  g.add(part(flat(new THREE.CylinderGeometry(0.42, 0.42, 0.02, 14)), NAPO_YELLOW, 0, 0.09, 0, false));
+  g.add(part(flat(new THREE.CylinderGeometry(0.34, 0.34, 0.025, 14)), '#5e6466', 0, 0.095, 0, false));
+  const H = 1.05, s = 0.36;
+  for (const x of [-s, s]) g.add(box(0.07, H, 0.07, STEEL, x, H / 2, -0.04));
+  g.add(box(2 * s + 0.12, 0.09, 0.1, STEEL, 0, H + 0.02, -0.04));
+  g.add(box(0.34, 0.12, 0.02, NAPO_YELLOW, 0, H + 0.02, 0.02, 0.008));
+  eye(g, 0, H + 0.02, 0.031, 0.07);
+  g.add(box(0.025, H - 0.55, 0.025, STEEL, 0, (H + 0.55) / 2, -0.04, false));
+  const r = part(new THREE.DodecahedronGeometry(0.15, 0), rock, 0, 0.5, -0.02, 0.015);
+  r.rotation.set(hash2(t.x, t.y) * 3, hash2(t.y, t.x) * 3, 0);
+  r.scale.set(1, 1.2, 0.9);
+  g.add(r);
+  g.add(box(0.14, 0.2, 0.08, '#2c3335', s, 0.62, 0.04, 0.012));
+  g.add(box(0.05, 0.05, 0.01, NAPO_YELLOW, s, 0.66, 0.085, false), box(0.08, 0.03, 0.01, '#e6dfcc', s, 0.57, 0.085, false));
+  return g;
+}
+
+/**
  * One of NAPO's gates, across its w tiles: a concrete post at each end, a heavy steel gate between them in
  * a frame braced corner to corner, its top rail striped NAPO yellow and black, a pull handle on its south
  * face over each tile (one for each who must pull), and its yellow plate in the middle.
@@ -362,6 +389,7 @@ export function napoProp(o: MapObject): THREE.Object3D | null {
     case 'jeep': return jeepModel(o);
     case 'pump': return pumpModel(o);
     case 'cage': return cageModel(o, HUM);
+    case 'teleport': return teleportModel(o, HUM);
     case 'stake': return stakeModel(o);
     case 'gate': return gateModel(o);
     case 'truck': return o.style === 'napo' ? napoTruck(o) : null;

@@ -204,6 +204,12 @@ export type MapObject =
    */
   | { kind: 'comfort'; x: number; y: number; what: Comfort }
   /**
+   * One of NAPO's teleports: one in every cabin (a home of one's own) and its twin in the home town.
+   * A at the cabin's takes you to town, onto the tile in front of the town's (teleportArrival); the
+   * town's only receives. Faced like a desk, from the tile in front of it.
+   */
+  | { kind: 'teleport'; x: number; y: number }
+  /**
    * A handwritten note someone left (notes.ts): on a table, a shelf, a crate or a bed, in a car, on the
    * luggage, nailed to a pole. It lies on the tile of what it is on, so it blocks nothing itself, and you
    * read it like a sign, facing that. `id` names it for good (what players read is kept by it), `by`
@@ -272,8 +278,9 @@ export interface MapData {
    */
   style?: 'napo' | 'mill';
   /**
-   * A room with a chest only: a home that is each player's own. Whoever walks in through its door is in a
-   * copy of the room of their own (their cabin, the server's zones), where nobody else ever is.
+   * A room with a chest only: a home that is each player's own. Whoever walks in through their own door is
+   * in a copy of the room of their own (their cabin, the server's zones), where only the neighbors they let
+   * in join them, to look round (world.ts, visits).
    */
   private?: true;
   /**
@@ -368,7 +375,7 @@ const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
-  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache',
+  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport',
   'ruin', 'yarder', 'spool', 'traps', 'gate',
 ]);
 
@@ -394,7 +401,12 @@ export function underfoot(o: MapObject): boolean {
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
  */
-export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache']);
+export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache', 'teleport']);
+
+/** Where a teleport sets you down: on the tile in front of it (below), facing away from it. */
+export function teleportArrival(t: { x: number; y: number }): { x: number; y: number; dir: Dir } {
+  return { x: t.x, y: t.y + 1, dir: 'down' };
+}
 
 /** How many tiles an object covers, across and down: houses, vehicles, log decks, beds, rugs and a few more are bigger than one. */
 export function footprint(o: MapObject): [number, number] {

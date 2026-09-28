@@ -8,7 +8,7 @@
  * into a few meshes of their own, and builds them again when what stands there changes.
  */
 import * as THREE from 'three';
-import type { Comfort, ItemDef, MapObject, TileMap } from '@napoland/shared';
+import { trophies, type Comfort, type ItemDef, type MapObject, type TileMap } from '@napoland/shared';
 import { againstWall, tableModel } from './interior';
 import { box, flat, hash2, part, pivot, toon } from './toon';
 
@@ -307,17 +307,9 @@ export function trophyModel(def: ItemDef): THREE.Group {
   return g;
 }
 
-/** The trophies a stash shows on the shelf, in its order: each charm and each piece of anomalous gear it holds, once. */
+/** The trophies a stash shows on the shelf, in its order: each charm and each piece of anomalous gear it holds, once (trophies, in shared comfort.ts). */
 export function trophiesIn(stash: ReadonlyArray<{ item: string }>, get: (id: string) => ItemDef): ItemDef[] {
-  const seen = new Set<string>(), out: ItemDef[] = [];
-  for (const s of stash) {
-    if (seen.has(s.item)) continue;
-    const def = get(s.item);
-    if (def.kind !== 'charm' && !(def.kind === 'gear' && def.tier === 'anomalous')) continue;
-    seen.add(s.item);
-    out.push(def);
-  }
-  return out;
+  return trophies(stash, get).map(get);
 }
 
 /** Which places are made, from the furniture set in the cabin (item ids). */

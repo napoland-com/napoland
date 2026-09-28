@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { doorOf, type MapObject } from '@napoland/shared';
-import { HUM, NAPO_WALL_H, NAPO_YELLOW, TOWER_H, cageModel, jeepModel, napoBuilding, napoProp, napoSign, napoTruck, pumpModel, stakeModel, towerModel } from '../src/view/napo';
+import { HUM, NAPO_WALL_H, NAPO_YELLOW, TOWER_H, cageModel, jeepModel, napoBuilding, napoProp, napoSign, napoTruck, pumpModel, stakeModel, teleportModel, towerModel } from '../src/view/napo';
 
 type House = Extract<MapObject, { kind: 'house' }>;
 /** A cabin's doorway (world.ts): NAPO's buildings share it. */
@@ -130,5 +130,14 @@ describe('what NAPO left out in the places', () => {
       expect(colored(stake, NAPO_YELLOW).length).toBeGreaterThan(0);
       expect(colored(stake, '#ff7a1a').length, 'its orange flagging').toBeGreaterThan(0);
     }
+  });
+
+  it('stands a teleport on its tile, under a cabin\'s ceiling, rimmed and plated in NAPO yellow, its rock humming in the glow the cages share', () => {
+    const t = teleportModel({ x: 7, y: 4 }, HUM);
+    onTiles(t, 7, 4);
+    expect(new THREE.Box3().setFromObject(t).max.y).toBeLessThan(NAPO_WALL_H);
+    expect(colored(t, NAPO_YELLOW).length).toBeGreaterThan(0);
+    expect(uses(t, HUM)).toBe(true);
+    expect(uses(napoProp({ kind: 'teleport', x: 12, y: 26 })!, HUM)).toBe(true);
   });
 });

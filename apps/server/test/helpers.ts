@@ -725,7 +725,7 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
     xp: 120, stash: { items: { moss: 9, coat: 1 }, out: { moss: 2 }, pieces: { coat: [{ cond: 1, level: 1 }] } },
     gear: { shirt: 'coat' }, worn: { shirt: { cond: 0.75, level: 2 } }, story: 'the-lineman', tools: ['stonebrook-map', 'radio'],
     parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', notebook: { pages: ['glowcaps', 'watchers'], blanks: [] }, furniture: ['iron-stove'], cozy: 1_700_000_300_000,
-    street: 2, lot: 7, doorOff: true,
+    street: 2, lot: 7, doorOff: true, visitsOff: true,
     createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   };
   expect(await storage.create(rec)).toBe(true);
@@ -736,8 +736,8 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
   expect(await load()).toEqual(rec);
   // Thanked meanwhile, by someone else: a save from the copy online before it leaves the count as it is.
   await storage.creditThanks(id);
-  // Later: their door shown again, and the letter about their street read.
-  const { doorOff: _door, ...shown } = rec;
+  // Later: their door shown again, their neighbors let in again, and the letter about their street read.
+  const { doorOff: _door, visitsOff: _visits, ...shown } = rec;
   const later: PlayerRecord = {
     ...shown, streetTold: true, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
     stash: { items: { moss: 11, coat: 1 }, out: {}, pieces: { coat: [{ cond: 1, level: 1 }] } }, worn: { shirt: { cond: 1, level: 2 } }, tools: [...rec.tools!, 'near-woods-map'],
@@ -756,15 +756,19 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
   const { cozy: _cozy, ...cold } = kept;
   await storage.save({ ...cold, lastSeenAt: kept.lastSeenAt + 1000 });
   expect((await load()).cozy).toBeUndefined();
-  // The letter about their street, once read, stays read, even by a save without it; the door's setting is said by every save.
+  // The letter about their street, once read, stays read, even by a save without it; the door's setting and
+  // who may come in are said by every save.
   const { streetTold: _told, ...untold } = kept;
-  await storage.save({ ...untold, doorOff: true, lastSeenAt: kept.lastSeenAt + 1200 });
-  expect(await load()).toMatchObject({ streetTold: true, doorOff: true });
-  expect((await storage.loadLots()).find(l => l.id === id)).toEqual({ id, name: rec.name, street: 3, lot: 0, off: true });
+  await storage.save({ ...untold, doorOff: true, visitsOff: true, lastSeenAt: kept.lastSeenAt + 1200 });
+  expect(await load()).toMatchObject({ streetTold: true, doorOff: true, visitsOff: true });
+  // Their lot says both, and what their cabin shows a neighbor who walks in while they are away: the furniture and the stash.
+  const shows = { furniture: kept.furniture, stash: kept.stash };
+  expect((await storage.loadLots()).find(l => l.id === id)).toEqual({ id, name: rec.name, street: 3, lot: 0, off: true, closed: true, ...shows });
   await storage.save({ ...kept, lastSeenAt: kept.lastSeenAt + 1300 });
-  expect((await load()).doorOff).toBeUndefined();
+  expect(await load()).not.toHaveProperty('doorOff');
+  expect(await load()).not.toHaveProperty('visitsOff');
   // And where their cabin stands, which everyone's lots are read from: one without it, and it stands on none.
-  expect(await storage.loadLots()).toContainEqual({ id, name: rec.name, street: 3, lot: 0 });
+  expect(await storage.loadLots()).toContainEqual({ id, name: rec.name, street: 3, lot: 0, ...shows });
   const { street: _street, lot: _lot, ...unhoused } = kept;
   await storage.save({ ...unhoused, lastSeenAt: kept.lastSeenAt + 1500 });
   expect(await load()).not.toHaveProperty('street');
