@@ -1,6 +1,7 @@
 /**
  * World and local chat. The server decides who hears a message: world chat everyone online, local
- * chat whoever is on the speaker's map within LOCAL_REACH (the speaker too, both ways). Nobody hears
+ * chat whoever is in the speaker's zone (their copy of their map) within LOCAL_REACH (the speaker too,
+ * both ways): someone on the same tile of another copy hears nothing. Nobody hears
  * someone they block. Only signed-in players talk, at most SAYS_PER_WINDOW messages in any
  * SAY_WINDOW_MS, and words on the list are masked first. Nothing said is kept or logged.
  */
@@ -40,7 +41,7 @@ export class Chat {
     this.limit.finish(id, true);
     const hearers = to === 'world'
       ? [...this.o.online()]
-      : this.o.world.views(me.map).filter(p => Math.hypot(p.x - me.x, p.y - me.y) <= LOCAL_REACH).map(p => p.id);
+      : this.o.world.views(this.o.world.zoneOf(id)!).filter(p => Math.hypot(p.x - me.x, p.y - me.y) <= LOCAL_REACH).map(p => p.id);
     const msg: ServerMsg = { t: 'said', to, id, name: me.name, text: maskWords(text, this.words) };
     for (const h of hearers) if (!this.o.blocks(h).has(id)) this.o.send(h, msg);
   }

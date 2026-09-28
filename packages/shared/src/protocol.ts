@@ -10,6 +10,7 @@ import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { Gear, Quirk, Worn } from './gear';
 import type { BagSlot } from './items';
+import type { MeritsView } from './merits';
 import type { NotebookView } from './notebook';
 import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
@@ -17,7 +18,7 @@ import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 23;
+export const PROTOCOL_VERSION = 25;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -162,6 +163,12 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('open'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40) }),
   /** Wear an outfit (outfits.ts) from the wardrobe at the chest on tile x,y, or none (null): your gear shows again. */
   z.object({ t: z.literal('outfit'), x: z.number().int(), y: z.number().int(), outfit: z.string().min(1).max(40).nullable() }),
+  /** Spend merits on a look (merits.ts: a jacket pattern or a name tag badge), at the chest on tile x,y: it is yours for good. */
+  z.object({ t: z.literal('buy'), x: z.number().int(), y: z.number().int(), look: z.string().min(1).max(40) }),
+  /** Wear a jacket pattern of yours from the wardrobe at the chest on tile x,y, or none (null). */
+  z.object({ t: z.literal('pattern'), x: z.number().int(), y: z.number().int(), pattern: z.string().min(1).max(40).nullable() }),
+  /** Wear a name tag badge of yours from the wardrobe at the chest on tile x,y, or none (null). */
+  z.object({ t: z.literal('badge'), x: z.number().int(), y: z.number().int(), badge: z.string().min(1).max(40).nullable() }),
   /** Ask someone to be your friend, by id (tapping their name tag) or by name. If they asked you already, you are friends. */
   z.object({ t: z.literal('befriend'), id: z.uuid().optional(), name: PlayerName.optional() }),
   /** Answer someone's friend request: yes makes you friends, no drops it. */
@@ -327,7 +334,9 @@ export type Did =
    * You took one `item` out of a crate, left there by `name`: `mine`, you had left it yourself; `thanked`,
    * it thanked them (not when you had thanked them today already).
    */
-  | { kind: 'took'; item: string; name: string; mine?: true; thanked?: true };
+  | { kind: 'took'; item: string; name: string; mine?: true; thanked?: true }
+  /** You spent merits on `look` (merits.ts): it is yours for good, and `left` merits are still to spend. */
+  | { kind: 'bought'; look: string; left: number };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -400,7 +409,13 @@ export type Refusal =
   | 'no_gear'
   /** You left one thing in this crate this visit already, or took one. */
   | 'left_one'
-  | 'took_one';
+  | 'took_one'
+  /** You have that look already: each is bought once, and kept. */
+  | 'owned'
+  /** You have no merit to spend on it (past level 20, every MERIT_XP earns one). */
+  | 'no_merits'
+  /** That look is not yours: buy it first. */
+  | 'not_owned';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -434,6 +449,10 @@ export interface PlayerView {
   quirks: Quirk[];
   /** The outfit they wear over it (outfits.ts): how they look, whatever their gear. None: their gear shows. */
   outfit?: string;
+  /** The pattern on their jacket (merits.ts), over an outfit too; none: their jacket as it is. */
+  pattern?: string;
+  /** The badge beside their name on their name tag (merits.ts); none: their name alone. */
+  badge?: string;
   /** They carry a live find (items.ts): a column of light over them that everyone on the map sees. */
   live?: true;
   /** They play as a guest (only on a server with sign-in): no friends until they sign in. */
@@ -495,8 +514,15 @@ export type ServerMsg =
       conditions: ConditionsView;
       /** What you did so far that counts toward feats: each feat's rank follows from its count (feats.ts, rankOf). */
       stats: Stats;
-      /** Your XP and level (progress.ts). */
+      /** Your XP and level, and the rest saved up while you were away (progress.ts). */
       progress: ProgressView;
+      /**
+       * The rest your time away was worth, since you were last seen (progress.ts, restFor), whether or not
+       * the cup had room for all of it: an arrival worth a word says so. None: no time worth any.
+       */
+      restedAway?: number;
+      /** What you spent of your merits and the looks you bought (merits.ts); what you earned follows from your XP. */
+      merits: MeritsView;
       /** Your tools (item ids, items.ts, toolsOf), in the order you got them: kept for good, apart from the bag. */
       tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
@@ -604,12 +630,21 @@ export type ServerMsg =
   | { t: 'chest'; stash: BagSlot[] }
   /** A parcel came into your chest (parcels.ts): when you arrived signed in, or at midnight UTC while you played. */
   | { t: 'parcel'; parcel: ParcelView }
-  /** Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did). */
-  | { t: 'progress'; progress: ProgressView; gained: number }
+  /**
+   * Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did), and the rest
+   * left: `fromRest` is the part of `gained` the cup of rest paid, doubling what stashing earned (progress.ts).
+   */
+  | { t: 'progress'; progress: ProgressView; gained: number; fromRest?: number }
   /** On your map: what someone wears now (you too, after you changed it). */
   | { t: 'gear'; id: string; gear: Gear; quirks: Quirk[] }
   /** On your map: the outfit someone wears now (you too, after you chose it); null: none, their gear shows. */
   | { t: 'outfit'; id: string; outfit: string | null }
+  /** On your map: the pattern on someone's jacket now (you too, after you chose it); null: none. */
+  | { t: 'pattern'; id: string; pattern: string | null }
+  /** On your map: the badge on someone's name tag now (you too, after you chose it); null: none. */
+  | { t: 'badge'; id: string; badge: string | null }
+  /** Your merits, whole, after you spent some: what you spent, and every look you bought. */
+  | { t: 'merits'; merits: MeritsView }
   /** The workbench you opened: what your stash holds, whole, after opening it, making or mending something, or a parcel came. */
   | { t: 'bench'; stash: BagSlot[] }
   /** On your map: a find grew here, or someone took one / it went. */
@@ -634,8 +669,8 @@ export type ServerMsg =
 
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
-  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'say' | 'call' | 'thank'
-  | 'cacheLeave' | 'cacheTake'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
+  | 'thank' | 'cacheLeave' | 'cacheTake'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
 
 /**

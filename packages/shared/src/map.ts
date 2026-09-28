@@ -217,6 +217,16 @@ export interface MapData {
    * floor (mill: boards, not logs). Its door is a building of the same style.
    */
   style?: 'napo' | 'mill';
+  /**
+   * A room with a chest only: a home that is each player's own. Whoever walks in through its door is in a
+   * copy of the room of their own (their cabin, the server's zones), where nobody else ever is.
+   */
+  private?: true;
+  /**
+   * A private room only, the one whose door opens onto the home town: where you wake up in it (as a new
+   * player, and after a collapse), on a walkable tile by its fire, facing `dir`.
+   */
+  wake?: { x: number; y: number; dir: Dir };
   /** Places on this map people call by name; the paper map writes them in. */
   places?: MapPlace[];
   /** The wilds only: skulkers, creatures that lie in the ferns and chase whoever they hear or see. */

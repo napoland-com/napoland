@@ -83,6 +83,28 @@ describe('a first goal on the first day (roadmap/first-day.md)', () => {
   });
 });
 
+describe('your own cabin (roadmap/own-cabin.md)', () => {
+  const home = maps.get('stonebrook-home')!, town = maps.get('stonebrook')!;
+
+  it('is private: everyone who walks in is in a cabin of their own, the one room anyone wakes up in', () => {
+    expect(home.data.private).toBe(true);
+    expect([...maps.values()].filter(m => m.data.private || m.data.wake).map(m => m.data.id)).toEqual(['stonebrook-home']);
+  });
+
+  it('wakes you right in front of the fire, facing the room, a step from the chest', () => {
+    const { x, y, dir } = home.data.wake!;
+    const fire = home.data.objects.find(o => o.kind === 'fireplace')!, chest = home.data.objects.find(o => o.kind === 'chest')!;
+    expect([x, y, dir]).toEqual([fire.x, fire.y + 1, 'down']);
+    expect(home.walkable(x, y) && home.warm(x, y) && !home.exitAt(x, y)).toBe(true);
+    expect(findPath(home, x, y, chest.x, chest.y + 1)).toEqual([{ x: chest.x, y: chest.y + 1 }]);
+  });
+
+  it('lets you out in front of the house in Stonebrook', () => {
+    const out = home.data.exits[0]!, door = town.data.exits.find(e => e.to === 'stonebrook-home')!;
+    expect([out.to, out.tx, out.ty, out.dir]).toEqual(['stonebrook', door.x, door.y + 1, 'down']);
+  });
+});
+
 describe('the workbench at home (roadmap/workbench-at-home.md)', () => {
   const home = maps.get('stonebrook-home')!, lodge = maps.get('stonebrook-lodge')!;
   const all = (map: TileMap, kind: 'chest' | 'workbench') => map.data.objects.filter(o => o.kind === kind);

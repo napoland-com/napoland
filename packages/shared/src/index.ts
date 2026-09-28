@@ -6,6 +6,7 @@ export * from './feats';
 export * from './gear';
 export * from './items';
 export * from './map';
+export * from './merits';
 export * from './movement';
 export * from './notebook';
 export * from './outfits';

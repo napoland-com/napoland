@@ -8,7 +8,7 @@
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
-import { BAG_SLOTS, RANKS, SLOTS, type BodyView, type CallKind, type Dir, type EnergyView, type Slot, type SurgeView } from '@napoland/shared';
+import { BAG_SLOTS, RANKS, SLOTS, type BodyView, type CallKind, type Dir, type EnergyView, type LookKind, type Slot, type SurgeView } from '@napoland/shared';
 import { aboutBody, versionView } from './about';
 import { CALL_NOTE_S, CALL_WORDS, FAN, fanChoice } from './calls';
 import { DOUBLE_TAP_MS, DoubleTap, cardPress, morePress, refKey, statText, type DetailAct, type DetailRef, type DetailView } from './details';
@@ -17,7 +17,7 @@ import { CALL_GLYPHS, NOTEBOOK_ICON } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import { fieldNotesHtml, type FieldNotesView, type JournalView } from './journal';
 import type { SoundSetting } from './sound';
-import { WARDROBE_GATE, WARDROBE_HINT, type WardrobeView } from './wardrobe';
+import { BADGES_HINT, PATTERNS_HINT, WARDROBE_GATE, WARDROBE_HINT, type OutfitTile, type WardrobePart, type WardrobeView } from './wardrobe';
 
 const svg = (inner: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 const ICON = {
@@ -76,6 +76,9 @@ export interface HudHandlers {
   open?(item: string): void;
   /** In the chest's wardrobe: wear an outfit, or none (null). */
   outfit?(id: string | null): void;
+  /** In the wardrobe: wear a pattern or a badge of yours, or none (null); spend merits on a look (the game asks first). */
+  adorn?(kind: LookKind, id: string | null): void;
+  buy?(look: string): void;
   /** The first goal was tapped where it does something: at the workbench, its card of what to make. */
   goal?(): void;
   craft?(recipe: string): void;
@@ -278,7 +281,6 @@ export function energyLook(e: EnergyView | null): EnergyLook {
   };
 }
 
-/** A name over someone's head, or over a pile (whose it is) while you are near it. */
 /** What the friends panel (and tapping a name tag) asks the game to do. */
 export type SocialAction =
   | { a: 'opened' }
@@ -291,7 +293,8 @@ export type SocialAction =
   | { a: 'tell'; id: string; text: string }
   | { a: 'requests'; off: boolean };
 
-export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean }
+/** A name over someone's head (with the drawing of their badge, merits.ts, when they wear one), or over a pile while you are near it. */
+export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; badge?: string }
 /** `row` stacks words said at once, 0 at the bottom. */
 export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number; row: number }
 /** The fan of calls over B: the call the finger is on (null: off the fan), and whether the words show under the notes. */
@@ -314,10 +317,13 @@ export class Hud {
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
   private shown = {
     fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
-    friends: '', personActs: '', talk: '', journal: '', field: '', chat: '', goal: '', wardrobe: '',
+    friends: '', personActs: '', talk: '', journal: '', field: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', badge: '',
   };
   /** The chest's tab: the stash (with what came in parcels, the first goal and what you wear), or the wardrobe. */
   private chestTab: 'stash' | 'wardrobe' = 'stash';
+  /** The wardrobe's part shown (outfits, patterns or badges), and the wardrobe as last told. */
+  private wardrobePart: WardrobePart = 'outfits';
+  private wardrobe: WardrobeView | null = null;
   /** The journal's part: the story's chapters, or the field notes. */
   private journalPart: JournalTab = 'story';
   /**
@@ -373,7 +379,7 @@ export class Hud {
       <div class="vignette" data-el="vignette"></div>
       <div class="fade" data-el="fade"></div>
       <div class="banner panel" data-el="banner" role="status" aria-live="polite"><b data-el="bannerTitle"></b><span data-el="bannerSub"></span></div>
-      <div class="status panel" data-el="status"><div class="name"><span><span data-el="name">...</span><span class="lvl" data-el="level" hidden></span></span><span data-el="online"></span></div>
+      <div class="status panel" data-el="status"><div class="name"><span><span class="badge" data-el="myBadge" aria-hidden="true" hidden></span><span data-el="name">...</span><span class="lvl" data-el="level" hidden></span></span><span data-el="online"></span></div>
         <div class="guest" data-el="guest" hidden><span class="guest-tag">Guest</span><button type="button" class="signin" data-signin>Sign in</button></div>
         <div class="energy" data-el="energy" hidden>${ICON.bolt}<div class="bar" data-el="energyBar" role="meter" aria-label="Energy" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="energyFill"></div></div></div>
         <div class="wet" data-el="wet" hidden>${ICON.drop}<div class="bar" data-el="wetBar" role="meter" aria-label="Wet" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="wetFill"></div></div></div>
@@ -421,6 +427,7 @@ export class Hud {
             <div class="parcel-note" data-el="stashParcels" role="status" hidden></div>
             <button type="button" class="goal" data-el="stashGoal" aria-disabled="true" tabindex="-1" hidden></button>
             <p class="hint">What you bring home earns XP. Tap something to see it, and tap it twice to put it away.</p>
+            <p class="rest-note" data-el="stashRest" role="status" hidden></p>
             <div class="grid" data-el="stashBag">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-bag="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
             <div class="acts"><button type="button" class="act go" data-el="storeAll">Put everything in</button></div>
             <h3 class="stash-title">Wearing</h3>
@@ -431,8 +438,12 @@ export class Hud {
             <p class="hint" data-el="stashEmpty">Nothing here yet.</p>
           </div>
           <div class="chest-part" data-el="wardrobePart" role="tabpanel" aria-label="Wardrobe" hidden>
+            <span class="wardrobe-tabs" data-el="wardrobeTabs" role="tablist" aria-label="Wardrobe">${(['outfits', 'patterns', 'badges'] as const).map(p => `<button type="button" role="tab" data-wpart="${p}" aria-selected="${p === 'outfits'}">${p[0]!.toUpperCase()}${p.slice(1)}</button>`).join('')}</span>
             <p class="hint" data-el="wardrobeHint">${WARDROBE_HINT}</p>
+            <p class="merit-note" data-el="meritNote" hidden></p>
             <div class="grid outfits" data-el="outfitGrid"></div>
+            <div class="grid outfits" data-el="patternGrid" hidden></div>
+            <div class="grid outfits" data-el="badgeGrid" hidden></div>
             <div class="gate" data-el="wardrobeGate" hidden><p>${WARDROBE_GATE}</p><button type="button" class="act go" data-signin>Sign in</button></div>
           </div>
         </div>
@@ -670,13 +681,15 @@ export class Hud {
     // A player's name tag opens their card.
     this.el.labels!.addEventListener('click', e => {
       const tag = (e.target as Element).closest<HTMLElement>('[data-player]');
-      if (tag) this.h.social?.({ a: 'person', id: tag.dataset.player!, name: tag.textContent ?? '' });
+      if (tag) this.h.social?.({ a: 'person', id: tag.dataset.player!, name: tag.dataset.name ?? tag.textContent ?? '' });
     });
     this.el.statusClose!.addEventListener('click', () => this.toggleStatus(false));
     this.el.stashClose!.addEventListener('click', () => this.toggleStash(false));
     this.el.stashSheet!.addEventListener('click', e => {
       const tab = (e.target as Element).closest<HTMLElement>('[data-chest]')?.dataset.chest;
       if (tab === 'stash' || tab === 'wardrobe') this.showChestTab(tab);
+      const part = (e.target as Element).closest<HTMLElement>('[data-wpart]')?.dataset.wpart;
+      if (part === 'outfits' || part === 'patterns' || part === 'badges') this.showWardrobePart(part);
     });
     this.el.storeAll!.addEventListener('click', () => this.h.store?.());
     // A tap looks, an action is a second step: in the chest, at the workbench and in the bag a tap opens
@@ -925,7 +938,7 @@ export class Hud {
     const was = this.stashOpen;
     if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.toggleCrate(false); this.el.statusSheet!.dataset.open = 'false'; }
     // It opens on the stash, at the top of the list, never on a card left from last time; closing, the card slides away with it.
-    if (open && !was) { this.showChestTab('stash'); this.el.stashBody!.scrollTop = 0; if (this.docked === 'stash') this.closeCard(); }
+    if (open && !was) { this.showChestTab('stash'); this.showWardrobePart('outfits'); this.el.stashBody!.scrollTop = 0; if (this.docked === 'stash') this.closeCard(); }
     else if (!open && this.card?.where === 'stash') this.forgetCard();
     // What came in the parcels is said once: it goes with the panel.
     if (!open && this.parcelLines.length) { this.parcelLines = []; this.showParcels(); }
@@ -1037,6 +1050,13 @@ export class Hud {
     this.refreshCard();
   }
 
+  /** At the chest, under its hint while the cup of rest holds any: how much more XP from it counts double (null: none). */
+  setRested(line: string | null) {
+    const el = this.el.stashRest!;
+    el.hidden = !line;
+    if (line && el.textContent !== line) el.textContent = line;
+  }
+
   /** A dot on the chest's Wardrobe tab: a new level opened an outfit. Looking at the wardrobe takes it away. */
   setWardrobeNews(on: boolean) {
     this.el.stashSheet!.querySelector('[data-chest="wardrobe"]')!.toggleAttribute('data-news', on && this.chestTab !== 'wardrobe');
@@ -1045,6 +1065,7 @@ export class Hud {
   /** Shows the chest's stash or its wardrobe, at the top, without a card: the card belonged to the other. */
   showChestTab(tab: 'stash' | 'wardrobe') {
     if (tab === 'wardrobe') this.setWardrobeNews(false);
+    if (tab === 'wardrobe' && this.wardrobePart !== 'outfits') this.setMeritNews(false);
     if (tab === this.chestTab) return;
     this.chestTab = tab;
     if (this.card?.where === 'stash' || this.docked === 'stash') this.closeCard();
@@ -1054,17 +1075,52 @@ export class Hud {
     this.el.stashBody!.scrollTop = 0;
   }
 
+  /** Shows one part of the wardrobe (outfits, patterns or badges), without a card: the card belonged to another. */
+  showWardrobePart(part: WardrobePart) {
+    // Patterns and badges share the merits' news: looking at either is looking at it.
+    if (part !== 'outfits') this.setMeritNews(false);
+    if (part === this.wardrobePart) return;
+    this.wardrobePart = part;
+    if (this.card?.where === 'stash' || this.docked === 'stash') this.closeCard();
+    for (const b of this.el.stashSheet!.querySelectorAll<HTMLElement>('[data-wpart]')) b.setAttribute('aria-selected', String(b.dataset.wpart === part));
+    this.showWardrobe();
+    this.el.stashBody!.scrollTop = 0;
+  }
+
+  /** A dot on the Patterns and Badges tabs (and on the Wardrobe's, until the wardrobe is looked at): stashing earned a merit. Looking at either takes it away. */
+  setMeritNews(on: boolean) {
+    // No dot where the patterns or the badges show already.
+    const news = on && !(this.stashOpen && this.chestTab === 'wardrobe' && this.wardrobePart !== 'outfits');
+    for (const b of this.el.stashSheet!.querySelectorAll<HTMLElement>('[data-wpart="patterns"], [data-wpart="badges"]')) b.toggleAttribute('data-news', news);
+    if (news) this.setWardrobeNews(true);
+  }
+
   /**
-   * The wardrobe: a tile for no outfit and one for each outfit, or for a guest one card that says what
-   * signing in keeps, with the Sign in button. Only written to the page when it changed.
+   * The wardrobe: a tile for no outfit and one for each outfit, the same for the patterns and the badges
+   * merits buy, over them what merits there are; or for a guest one card that says what signing in keeps,
+   * with the Sign in button. Only written to the page when it changed.
    */
   setWardrobe(v: WardrobeView) {
-    const html = v.tiles.map(t => `<button type="button" class="slot outfit" data-outfit="${esc(t.id)}"${t.locked ? ' data-locked' : ''}${t.worn ? ' data-worn' : ''}`
-      + ` aria-label="${esc(`${t.name}${t.worn ? ', wearing it' : t.locked ? `, opens at ${t.label.toLowerCase()}` : ''}`)}">${t.icon}<span class="lbl">${esc(t.label)}</span>${t.worn ? '<i class="on" aria-hidden="true"></i>' : ''}</button>`).join('');
-    if (html !== this.shown.wardrobe) { this.shown.wardrobe = html; this.el.outfitGrid!.innerHTML = html; }
-    this.el.wardrobeGate!.hidden = !v.gate;
-    this.el.wardrobeHint!.hidden = this.el.outfitGrid!.hidden = !!v.gate;
+    this.wardrobe = v;
+    const grids = [['wardrobe', this.el.outfitGrid!, wardrobeTilesHtml(v.tiles, 'data-outfit')], ['patterns', this.el.patternGrid!, wardrobeTilesHtml(v.patterns, 'data-look')],
+      ['badges', this.el.badgeGrid!, wardrobeTilesHtml(v.badges, 'data-look')]] as const;
+    for (const [key, el, html] of grids) if (html !== this.shown[key]) { this.shown[key] = html; el.innerHTML = html; }
+    if (this.el.meritNote!.textContent !== v.merits) this.el.meritNote!.textContent = v.merits;
+    this.showWardrobe();
     this.refreshCard();
+  }
+
+  /** The part of the wardrobe shown, or a guest's gate in place of all of it. */
+  private showWardrobe() {
+    const gate = !!this.wardrobe?.gate, part = this.wardrobePart;
+    this.el.wardrobeGate!.hidden = !gate;
+    this.el.wardrobeTabs!.hidden = gate;
+    this.el.wardrobeHint!.hidden = gate;
+    this.el.wardrobeHint!.textContent = part === 'outfits' ? WARDROBE_HINT : part === 'patterns' ? PATTERNS_HINT : BADGES_HINT;
+    this.el.meritNote!.hidden = gate || part === 'outfits';
+    this.el.outfitGrid!.hidden = gate || part !== 'outfits';
+    this.el.patternGrid!.hidden = gate || part !== 'patterns';
+    this.el.badgeGrid!.hidden = gate || part !== 'badges';
   }
 
   /** A card is open in the stash, at the workbench or in the bag. */
@@ -1134,6 +1190,8 @@ export class Hud {
     if (wear) return wear.dataset.empty === 'true' ? 'empty' : { from: 'worn', slot: wear.dataset.wear as Slot };
     const outfit = target.closest<HTMLElement>('[data-outfit]')?.dataset.outfit;
     if (outfit) return { from: 'outfit', id: outfit };
+    const look = target.closest<HTMLElement>('[data-look]')?.dataset.look;
+    if (look) return { from: 'look', id: look };
     const it = target.closest<HTMLElement>('[data-item]');
     if (it) return it.dataset.n === undefined ? { from: 'stash', item: it.dataset.item! } : { from: 'stash', item: it.dataset.item!, n: Number(it.dataset.n) };
     return null;
@@ -1265,6 +1323,9 @@ export class Hud {
       // Taking asks nothing; leaving one asks first (the game does).
       case 'crateTake': return this.h.crateTake?.(a.id);
       case 'crateLeave': return this.h.crateLeave?.(a.slot);
+      case 'pattern': case 'badge': return this.h.adorn?.(a.kind, a.id);
+      // It asks first, with the card still open behind the question.
+      case 'buy': return this.h.buy?.(a.look);
     }
   }
 
@@ -1435,6 +1496,12 @@ export class Hud {
   }
 
   setName(name: string) { this.el.name!.textContent = name; }
+  /** The badge you wear (its drawing; null: none), before your name, as everyone else sees it on your name tag. */
+  setBadge(svg: string | null) {
+    const el = this.el.myBadge!;
+    el.hidden = !svg;
+    if (svg && svg !== this.shown.badge) el.innerHTML = this.shown.badge = svg;
+  }
 
   /**
    * You play as a guest, or not (signed in): the Guest label and its Sign in button under your name,
@@ -1627,7 +1694,14 @@ export class Hud {
         this.el.labels!.appendChild(el);
         this.tagEls.set(t.id, el);
       }
-      if (el.textContent !== t.name) el.textContent = t.name;
+      // A badge (merits.ts) sits before the name, as tall as its letters.
+      const key = `${t.badge ?? ''}|${t.name}`;
+      if (el.dataset.shows !== key) {
+        el.dataset.shows = key;
+        el.dataset.name = t.name;
+        if (t.badge) el.innerHTML = `<span class="badge" aria-hidden="true">${t.badge}</span>${esc(t.name)}`;
+        else el.textContent = t.name;
+      }
       el.style.transform = `translate(${t.x.toFixed(1)}px, ${t.y.toFixed(1)}px) translate(-50%, -100%)`;
     }
     for (const [id, el] of this.tagEls) if (!seen.has(id)) { el.remove(); this.tagEls.delete(id); }
@@ -1799,7 +1873,20 @@ function pickedSelector(r: DetailRef, where: CardSheet): string {
     case 'upgrade': return `[data-recipe="${upgradeId(r.of)}"]`;
     case 'outfit': return `[data-outfit="${r.id}"]`;
     case 'crate': return `[data-centry="${r.id}"]`;
+    case 'look': return `[data-look="${r.id}"]`;
   }
+}
+
+/**
+ * A wardrobe's tiles: an outfit's, a pattern's or a badge's, each its drawing over its label, a tick on the
+ * one worn, dim while it cannot be had yet, its price bright while merits can buy it (`data-buy`).
+ */
+export function wardrobeTilesHtml(tiles: ReadonlyArray<OutfitTile & { buy?: boolean }>, attr: 'data-outfit' | 'data-look'): string {
+  return tiles.map(t => {
+    const why = t.worn ? ', wearing it' : t.locked ? `, ${attr === 'data-outfit' ? `opens at ${t.label.toLowerCase()}` : `not yours yet: ${t.label}`}` : t.buy ? `, ${t.label} to buy` : '';
+    return `<button type="button" class="slot outfit" ${attr}="${esc(t.id)}"${t.locked ? ' data-locked' : ''}${t.worn ? ' data-worn' : ''}${t.buy ? ' data-buy' : ''}`
+      + ` aria-label="${esc(`${t.name}${why}`)}">${t.icon}<span class="lbl">${esc(t.label)}</span>${t.worn ? '<i class="on" aria-hidden="true"></i>' : ''}</button>`;
+  }).join('');
 }
 
 function esc(t: string): string {

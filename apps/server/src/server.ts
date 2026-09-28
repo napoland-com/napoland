@@ -58,6 +58,8 @@ export interface ServerOptions {
   parcelDayMs?: number;
   /** Development only (XP_MULTIPLIER): stashing earns this many times the XP. 1 unless set. */
   xpMultiplier?: number;
+  /** Development only (RESTED_EVERY_MS): the time away that fills one XP of rest. 20 minutes unless set. */
+  restedEveryMs?: number;
   /** With sign-in, how often guests who stayed away GUEST_DAYS are looked for (after start-up); default once a day. */
   forgetGuestsEveryMs?: number;
   /** How often thanks older than THANKS_KEPT_DAYS are deleted (after start-up); default once an hour. */
@@ -145,6 +147,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     guests,
     ...(o.parcelDayMs ? { calendar: quickCalendar(o.parcelDayMs, Date.now() + shift) } : {}),
     xpTimes: o.xpMultiplier,
+    ...(o.restedEveryMs ? { restedEveryMs: o.restedEveryMs } : {}),
   });
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version, auth: auth.config });
   const net = attachNet({
