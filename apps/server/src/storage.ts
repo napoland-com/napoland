@@ -73,6 +73,13 @@ export interface PlayerRecord {
    * none). Loaded only when they wear one. A save without it keeps what was saved.
    */
   outfit?: string | null;
+  /**
+   * The furniture the player made for their own cabin (comfort.ts), as item ids, each set in its place.
+   * None: nothing made yet. A save without it keeps what was saved, as with the tools: nothing takes it away.
+   */
+  furniture?: string[];
+  /** Until when (ms since the epoch) the player is cozy from their own fire (comfort.ts). None: they are not. Every save says it. */
+  cozy?: number;
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
@@ -280,7 +287,7 @@ const copyWorn = (w: Worn): Worn => Object.fromEntries(Object.entries(w).map(([s
 const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...rec, bag: copyBag(rec.bag), ...(rec.stats ? { stats: { ...rec.stats } } : {}), ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
   ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
-  ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}),
+  ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.furniture ? { furniture: [...rec.furniture] } : {}),
 });
 /** A record as storage keeps it: the copy it names, if any (like the database, which keeps '' for the main copy and reads it back as none). */
 function withZone<T extends { zone?: string }>(r: T, zone: string | undefined): T {
@@ -364,8 +371,11 @@ export class MemoryStorage implements Storage {
         stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) },
         xp: rec.xp ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
-        ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), lastSeenAt: rec.lastSeenAt,
+        ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.furniture ? { furniture: [...rec.furniture] } : {}), lastSeenAt: rec.lastSeenAt,
       });
+      // Every save says whether they are cozy, as it says where they are.
+      if (rec.cozy !== undefined) cur.cozy = rec.cozy;
+      else delete cur.cozy;
       // Every save says where they are: back in the main copy, the copy they were in is forgotten.
       if (rec.zone) cur.zone = rec.zone;
       else delete cur.zone;
@@ -595,6 +605,10 @@ interface PlayerRow {
   outfit: string | null;
   /** Thanks received (migration 015): only creditThanks adds to it. */
   thanked: number;
+  /** Null for a player who made no furniture yet (018_furniture.sql). */
+  furniture: unknown;
+  /** Null for a player who is not cozy. */
+  cozy_until: Date | null;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -691,6 +705,9 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.parcel_welcome || r.parcel_day !== null ? { parcels: { welcome: r.parcel_welcome, day: r.parcel_day, days: r.parcel_days } } : {}),
   // What the World checks again when the player joins: an outfit they may not wear (or that no longer exists) shows as none.
   ...(r.outfit ? { outfit: r.outfit } : {}),
+  // A list of ids as the server wrote it; anything else reads as none (the World checks it again).
+  ...(Array.isArray(r.furniture) ? { furniture: r.furniture.filter((t): t is string => typeof t === 'string') } : {}),
+  ...(r.cozy_until ? { cozy: r.cozy_until.getTime() } : {}),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -752,14 +769,15 @@ export class PgStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
-         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25)
+         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, furniture, cozy_until)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26::jsonb, $27)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
         rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.outfit ?? null,
-        Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '',
+        Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '', rec.furniture ? JSON.stringify(rec.furniture) : null,
+        rec.cozy === undefined ? null : new Date(rec.cozy),
       ],
     );
     return r.rowCount === 1;
@@ -767,19 +785,21 @@ export class PgStorage implements Storage {
 
   async save(rec: PlayerRecord): Promise<void> {
     // A record without parcels (never had one) leaves the parcel columns as they are, as a save without a
-    // chapter leaves the story; so does one without an outfit, while null (taken off) saves none. The copy
-    // is always said, as the map is: a record without one is in the main copy.
+    // chapter leaves the story; so does one without an outfit, while null (taken off) saves none, and one
+    // without furniture, like the tools. The copy is always said, as the map is: a record without one is
+    // in the main copy; and so is whether they are cozy.
     const p = rec.parcels;
     await this.pool.query(
       `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
        gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
        parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
-       parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23, last_seen_at = $13 WHERE id = $1`,
+       parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23,
+       furniture = COALESCE($24::jsonb, furniture), cozy_until = $25, last_seen_at = $13 WHERE id = $1`,
       [
         rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
         rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
-        rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '',
+        rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '', rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
       ],
     );
   }

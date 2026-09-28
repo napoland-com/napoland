@@ -39,7 +39,10 @@
  * which changes how they look and nothing else.
  *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
- * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). On a server
+ * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). Each player's
+ * cabin is their own, and the furniture years of damp spoiled in it is made again at the workbench and set
+ * in its place at once (comfort.ts): the more comfort, the longer a player who stood by their own fire
+ * stays cozy, tiring slower out in the wilds; with the drying rack they always walk out dry. On a server
  * with sign-in, whoever plays signed in finds a parcel in it the first time they play on each calendar
  * day, a welcome parcel the very first time (parcels.ts): gifts, which earn no XP. A NAPO lockbox, which
  * Sunday's parcel holds for whoever came back all week, is opened at the chest.
@@ -65,6 +68,8 @@
 import {
   CACHE_NEAR,
   CACHE_SIZE,
+  COZY_AFTER_S,
+  COZY_MODS,
   DIR_VEC,
   MARK_LIFETIME_MS,
   QUIRKS,
@@ -103,6 +108,9 @@ import {
   seeded,
   charmsIn,
   chapterOf,
+  comfortOf,
+  cozySeconds,
+  dries,
   energyRate,
   featOf,
   fitPieces,
@@ -345,6 +353,8 @@ export interface Joined extends Scene {
   story: StoryView;
   /** Whom the player thanked today (UTC), by id. */
   thanked: string[];
+  /** In their own cabin: the furniture they made for it (comfort.ts), which only they are told of. */
+  furniture?: string[];
 }
 
 /** What storage must hear: piles and marks to write (or remove: undefined), players to save now, and the Old Stone if it changed. */
@@ -444,7 +454,16 @@ interface Online {
   surgedIn?: string;
   /** The crate they visit (its key: in its room, or near it in the open), and whether they left one thing and took one this visit. */
   visit: { cache: string; left: boolean; took: boolean } | null;
+  /** Seconds they have stood by their own fire this time, in their own cabin (0 while away from it), counted up to firesideAt. */
+  fireside: number;
+  firesideAt: number;
+  /** What they last heard of it: away from their fire, warming by it, or cozy and held there; and whether they were cozy at all. */
+  heardFireside: Fireside;
+  heardCozy: boolean;
 }
+
+/** Where a player stands with their own fire (comfort.ts): away, warming by it (under COZY_AFTER_S), or held there, cozy in full. */
+type Fireside = 'away' | 'warming' | 'held';
 
 /** A crate for whoever comes next (caches.ts) on its map and tile, and what lies in it, oldest first. */
 interface Crate {
@@ -580,7 +599,14 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 const flashView = (f: Flash, now: number): FlashView => ({ x: f.x, y: f.y, kind: f.kind, left: round((f.until - now) / 1000, 1) });
 const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), max: p.max, rate: round(p.rate, 3) });
 const copyWorn = (w: Worn | undefined): Worn => Object.fromEntries(Object.entries(w ?? {}).map(([s, p]) => [s, { ...p, cond: round(p.cond, 3) }]));
-const bodyView = (p: Online): BodyView => ({ wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched, worn: copyWorn(p.rec.worn) });
+/** The player's body as they hear it, `wall` ms since the epoch: with how long they stay cozy, and how long they stood by their own fire. */
+const bodyView = (p: Online, wall: number, by: boolean): BodyView => {
+  const cozy = (p.rec.cozy ?? 0) - wall;
+  return {
+    wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched, worn: copyWorn(p.rec.worn),
+    ...(cozy > 0 ? { cozy: round(cozy / 1000, 1) } : {}), ...(by ? { fireside: round(p.fireside, 1) } : {}),
+  };
+};
 /**
  * Draining and not empty yet, or refilling and not full yet. Holding (rate 0) changes nothing.
  * Wetness is left out: it moves at a steady rate the client counts on, and is told when that turns.
@@ -622,6 +648,7 @@ const copyStash = (s: Stash): Stash => ({
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
+  ...(r.furniture ? { furniture: [...r.furniture] } : {}),
 });
 /** A saved piece as the server writes them: a condition from 0 to 1, a quirk the game knows (or none), a level up to UPGRADE_MAX (or none). */
 const isPiece = (p: unknown): p is Piece => {
@@ -641,6 +668,8 @@ const isSlot = (s: unknown): s is BagSlot => {
 };
 /** Saved tools: item ids, each once, in the order they came. Anything but a list was never set (the starter tools). */
 const cleanTools = (t: unknown): string[] | undefined => (Array.isArray(t) ? [...new Set(t.filter((id): id is string => typeof id === 'string' && id !== ''))] : undefined);
+/** Saved furniture: the same, a list of item ids, each once. An id today's items do not know stays saved, for the release that made it. */
+const cleanFurniture = cleanTools;
 /** Saved counts, trusted only where they are whole numbers from 0. */
 const cleanStats = (s: unknown): Stats => {
   const out: Stats = {};
@@ -991,6 +1020,11 @@ export class World {
       tools: cleanTools(rec.tools),
       ...(rec.parcels !== undefined ? { parcels: cleanParcels(rec.parcels) } : {}),
     };
+    const furniture = cleanFurniture(rec.furniture);
+    if (furniture) r.furniture = furniture;
+    else delete r.furniture;
+    // Cozy is a time on the wall clock: it went on counting down while they were away.
+    if (!(Number.isFinite(r.cozy) && r.cozy! > now + this.epochOffset)) delete r.cozy;
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
     // saved tile may be inside something new or part of an exit now (start at that map's spawn). Never
     // start inside a wall, or on an exit that would move you the moment you step.
@@ -1016,6 +1050,7 @@ export class World {
     const p: Online = {
       rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
       hitchAt: now, trail: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
+      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false,
     };
     this.refresh(p, now);
     this.revisit(p);
@@ -1029,12 +1064,13 @@ export class World {
     this.giveParcel(p, now);
     const here = zone.key, today = utcDay(now + this.epochOffset);
     return {
-      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
+      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: this.bodyOf(p, now), bag: bagView(r.bag, now + this.epochOffset),
       stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
       tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
       thanked: [...this.thanks.values()].filter(t => t.giver === r.id && t.day === today).map(t => t.helper),
+      ...this.cabinOf(p),
     };
   }
 
@@ -1429,26 +1465,36 @@ export class World {
     if (!this.benchNextTo(p, x, y)) return this.refuse(p, 'craft', 'too_far');
     const recipe = this.recipes.get(recipeId);
     if (!recipe) return this.refuse(p, 'craft', 'gone');
+    const made = this.items.get(recipe.make);
     // A tool made is the player's for good (giveTool), never the stash's: one of each, so a second is refused before anything is paid.
-    const tool = this.items.get(recipe.make)?.kind === 'tool';
+    const tool = made?.kind === 'tool';
     if (tool && this.owns(p, recipe.make)) return this.refuse(p, 'craft', 'have_tool');
+    // Furniture goes into its place in the player's own cabin (comfort.ts), never the stash: one for each place.
+    const furniture = made?.kind === 'furniture' ? made : undefined;
+    if (furniture && (p.rec.furniture ?? []).includes(furniture.id)) return this.refuse(p, 'craft', 'placed');
+    if (furniture && !(this.ownCabin(p) && p.map.data.objects.some(o => o.kind === 'comfort' && o.what === furniture.furnishes))) return this.refuse(p, 'craft', 'not_here');
     const stash = p.rec.stash ?? emptyStash();
     if (!canMake(recipe, stash.items)) return this.refuse(p, 'craft', 'missing');
-    const items = { ...stash.items }, count = tool ? 1 : recipe.count ?? 1;
+    const items = { ...stash.items }, count = tool || furniture ? 1 : recipe.count ?? 1;
     for (const n of recipe.needs) {
       items[n.item] = items[n.item]! - n.count;
       if (!items[n.item]) delete items[n.item];
     }
-    if (!tool) items[recipe.make] = (items[recipe.make] ?? 0) + count;
+    if (!tool && !furniture) items[recipe.make] = (items[recipe.make] ?? 0) + count;
     // Gear made comes new, piece by piece.
     p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
     this.saveNow.set(id, p.rec);
     if (tool) this.giveTool(id, recipe.make);
+    if (furniture) {
+      p.rec.furniture = [...(p.rec.furniture ?? []), furniture.id];
+      // Only its owner is told: nobody else is ever in their cabin.
+      this.outbox.push({ to: id, msg: { t: 'furniture', furniture: this.placed(p) } });
+    }
     // Walt has a word for the first thing someone makes (story.ts, remarks): gear, each piece; a tool is no piece of gear.
-    if (this.items.get(recipe.make)?.kind === 'gear') this.count(p, 'made', now, count);
+    if (made?.kind === 'gear') this.count(p, 'made', now, count);
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
-    // The text box says where it went: a tool (its kind tells the client) is the player's for good.
-    this.did(p, { kind: 'made', item: recipe.make, count });
+    // The text box says where it went: a tool (its kind tells the client) is the player's for good, and furniture stands in its place.
+    this.did(p, { kind: 'made', item: recipe.make, count, ...(furniture ? { comfort: comfortOf(p.rec.furniture, this.items) } : {}) });
   }
 
   /** Mends the piece the player wears in `slot`, at the workbench on tile x,y next to them, paying from their stash: it is whole again. */
@@ -1888,6 +1934,7 @@ export class World {
       if (p.live) this.fadeLive(p, now);
       this.surged(p, now);
       this.hitch(p, now);
+      this.snug(p, now);
       this.rerate(p, now);
       // The client counts on with the rates it heard; repeating the values keeps it from drifting.
       if (now - p.heardAt >= ENERGY_SYNC_MS && changing(p)) this.tell(p, now);
@@ -2009,6 +2056,8 @@ export class World {
    */
   private cross(p: Online, to: Arrival, now: number): void {
     const from = p.zone, map = this.maps.get(to.to)!;
+    // With the drying rack in their cabin, a player always walks out of it dry.
+    if (this.ownCabin(p) && dries(p.rec.furniture, this.items)) p.rec.wet = 0;
     this.place(p, this.zoneFor(map, this.copyFor(p.rec, map), now), to.x, to.y, to.dir);
     this.arrive(p, from, 'exit', now);
     this.moveStory(p, { reach: map.data.id });
@@ -2059,6 +2108,9 @@ export class World {
     p.rec.energy = this.maxOf(p.rec);
     p.rec.wet = 0;
     p.hitched = false;
+    // The warmth of their own fire ends early: they have to stand by it again.
+    delete p.rec.cozy;
+    p.fireside = 0;
     // They wake up at home: the next time out is a new trip.
     p.gifts = 0;
     this.collapses = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
@@ -2128,7 +2180,7 @@ export class World {
     this.toZone(here, { t: 'join', player: this.viewOf(p) }, id);
     this.outbox.push({
       to: id,
-      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), stats: { ...p.rec.stats }, reason },
+      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), stats: { ...p.rec.stats }, reason, ...this.cabinOf(p) },
       // Where the network hears them from now on, when it is not the map's main copy (its key is the map's id).
       ...(p.zone.copy ? { zone: here } : {}),
     });
@@ -2141,7 +2193,8 @@ export class World {
   /** The rates and load for where the player stands now, and their mods. Nobody is told. */
   private refresh(p: Online, now: number): void {
     const { x, y } = p.rec;
-    p.mods = modsOf(p.rec.stats ?? {}, charmsIn(p.rec.bag, this.items));
+    // Being cozy changes Mods like a charm does (comfort.ts): out in the wilds they tire slower.
+    p.mods = modsOf(p.rec.stats ?? {}, [...charmsIn(p.rec.bag, this.items), ...(this.cozy(p, now) ? [COZY_MODS] : [])]);
     p.load = bagLoad(p.rec.bag, this.items, p.mods.load);
     p.max = this.maxOf(p.rec);
     p.slots = bagSlotsOf(p.rec.gear ?? {}, this.items);
@@ -2160,6 +2213,7 @@ export class World {
       flash: p.zone.flashes.find(f => flashHits(flashView(f, now), x, y))?.kind,
       resist,
       farDrain: p.mods.farDrain,
+      drain: p.mods.drain,
     });
     // Wind resistance (a raincoat) keeps the rain out.
     p.wetRate = wetRate(p.map.data.kind, this.sky, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
@@ -2175,7 +2229,9 @@ export class World {
     const turned = Math.sign(p.rate) !== Math.sign(p.heardRate);
     const moved = Math.abs(p.rate - p.heardRate) > ENERGY_RATE_CHANGE * Math.abs(p.heardRate);
     const wet = Math.sign(p.wetRate) !== Math.sign(p.heardWetRate);
-    if (turned || moved || wet || p.load !== p.heardLoad) this.tell(p, now);
+    // Stepping up to their own fire or away from it, and cozy starting, holding in full or wearing off: the client counts on from there.
+    const warm = this.fireside(p, now) !== p.heardFireside || this.cozy(p, now) !== p.heardCozy;
+    if (turned || moved || wet || warm || p.load !== p.heardLoad) this.tell(p, now);
   }
 
   /** Brings the player's energy and wetness up to `now` at their current rates, and returns the energy. */
@@ -2206,7 +2262,61 @@ export class World {
     p.heardWetRate = p.wetRate;
     p.heardLoad = p.load;
     p.heardAt = now;
-    this.outbox.push({ to: p.rec.id, msg: { t: 'energy', energy: energyView(p), body: bodyView(p) } });
+    p.heardFireside = this.fireside(p, now);
+    p.heardCozy = this.cozy(p, now);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'energy', energy: energyView(p), body: this.bodyOf(p, now) } });
+  }
+
+  /** The player's body as they hear it now: how wet, their load and what clings to them, what they wear, and how cozy. */
+  private bodyOf(p: Online, now: number): BodyView {
+    return bodyView(p, now + this.epochOffset, this.byOwnFire(p, now));
+  }
+
+  // ---------- a cozy cabin (comfort.ts) ----------
+
+  /** In their own cabin: nobody else is ever in it, and its furniture is theirs. */
+  private ownCabin(p: Online): boolean {
+    return p.map.data.private === true && p.zone.copy === p.rec.id;
+  }
+
+  /** On a tile their own fire warms, in their own cabin (it never goes out: a home's fire is tended). */
+  private byOwnFire(p: Online, now: number): boolean {
+    return this.ownCabin(p) && p.map.warm(p.rec.x, p.rec.y) && p.zone.fires.warmth(p.rec.x, p.rec.y, now) > 0;
+  }
+
+  /** Where the player stands with their own fire now. */
+  private fireside(p: Online, now: number): Fireside {
+    return !this.byOwnFire(p, now) ? 'away' : p.fireside >= COZY_AFTER_S ? 'held' : 'warming';
+  }
+
+  /** Cozy now: out in the wilds they tire slower (COZY_MODS). */
+  private cozy(p: Online, now: number): boolean {
+    return (p.rec.cozy ?? 0) > now + this.epochOffset;
+  }
+
+  /** The furniture set in their cabin, as today's items know it: what they are told stands in its places. */
+  private placed(p: Online): string[] {
+    return (p.rec.furniture ?? []).filter(id => this.items.get(id)?.kind === 'furniture');
+  }
+
+  /** What a zone or welcome tells a player about the room they are in when it is their own cabin: its furniture, and nobody else is told. */
+  private cabinOf(p: Online): { furniture?: string[] } {
+    return this.ownCabin(p) ? { furniture: this.placed(p) } : {};
+  }
+
+  /**
+   * By their own fire, in their own cabin, a player grows cozy (comfort.ts): after COZY_AFTER_S there it
+   * holds in full, cozySeconds of the cabin's comfort, for as long as they stay by it; from when they leave
+   * it counts down by the wall clock, offline too, and a collapse ends it. The client hears it as it starts,
+   * holds and wears off (rerate).
+   */
+  private snug(p: Online, now: number): void {
+    const dt = Math.max(0, now - p.firesideAt) / 1000;
+    p.firesideAt = now;
+    p.fireside = this.byOwnFire(p, now) ? p.fireside + dt : 0;
+    const wall = now + this.epochOffset;
+    if (this.fireside(p, now) === 'held') p.rec.cozy = wall + cozySeconds(comfortOf(p.rec.furniture, this.items)) * 1000;
+    else if (p.rec.cozy !== undefined && p.rec.cozy <= wall) delete p.rec.cozy;
   }
 
   /**

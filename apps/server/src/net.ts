@@ -593,6 +593,7 @@ export function attachNet(o: NetOptions): Net {
       items: world.itemsVersion,
       story: joined.story,
       thanked: joined.thanked,
+      ...(joined.furniture && { furniture: joined.furniture }),
       serverTime: Date.now(),
     });
     flush();

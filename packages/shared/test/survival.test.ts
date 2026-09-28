@@ -138,7 +138,7 @@ describe('bags, charms, strange objects and feats', () => {
     expect(rankOf(rain, need - 1)).toBe(0);
     expect(rankOf(rain, need)).toBe(1);
     expect(modsOf({ rainSteps: need }, [{ wetting: 0.5 }])).toEqual({ ...NO_MODS, wetting: 0.8 * 0.5 });
-    expect(modsOf({})).toEqual({ wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0, marks: 1 });
+    expect(modsOf({})).toEqual({ wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0, marks: 1, drain: 1 });
   });
 });
 

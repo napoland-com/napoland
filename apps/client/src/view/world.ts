@@ -15,7 +15,10 @@
  * black: see interior.ts for the room, fire.ts for the fire and lighting.ts for the light.
  */
 import * as THREE from 'three';
-import { DIR_VEC, hidden, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
+import {
+  DIR_VEC, hidden, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather,
+} from '@napoland/shared';
+import { comfortModel, comfortShadow, lampLight } from './cabin';
 import { LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
 import { CROUCH_DROP, CROUCH_LEAN, GrassMaterial, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps } from './grass';
@@ -200,8 +203,12 @@ export class WorldView {
   private sun = new THREE.DirectionalLight(0xc9d4d8, 0.36 * L);
   private flash = new THREE.SpotLight(0xfff0d0, 0, 10, 0.5, 0.6, 1.3);
   private flashTarget = new THREE.Object3D();
-  /** Lamps and fires: what may carry one of the real lights. */
+  /** Lamps and fires: what may carry one of the real lights; the map's own, and a lamp made in your cabin besides. */
   private sources: LightSource[] = [];
+  private baseSources: LightSource[] = [];
+  /** Your cabin's furniture (cabin.ts), built again when what stands in its places changes: what was built last. */
+  private comfortRoot = new THREE.Group();
+  private comfortKey: string | null = null;
   /** The real lights, each on one of the nearest sources (index into `sources`, -1 for none). */
   private slots = Array.from({ length: LIGHTS }, () => ({ light: new THREE.PointLight(LAMP_COLOR, 0, LAMP_REACH, 2), source: -1, on: 0 }));
   /** The tile the lights were last handed out for. */
@@ -301,7 +308,10 @@ export class WorldView {
     this.animate.push(t => { this.marks.update(t); this.flares.update(t); this.flashes.update(t); });
     // Before the fires draw: how big each burns now.
     this.animate.unshift(() => { this.fireTiles.forEach(([x, y], i) => { this.fireLevels[i] = this.fireLevel(x, y); }); });
-    this.sources = lightSources(map);
+    this.sources = this.baseSources = lightSources(map);
+    // Every place for furniture stands spoiled until the game says what you made (setComfort).
+    this.scene.add(this.comfortRoot);
+    this.setComfort(new Set(), []);
     this.marker = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.66, 4, 1, Math.PI / 4).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xe9e6de, transparent: true, opacity: 0.9, depthWrite: false }));
     this.marker.visible = false;
     this.scene.add(this.marker);
@@ -793,7 +803,8 @@ export class WorldView {
       this.puffs.push(fires.sparks);
       this.animate.push(t => fires.update(t, this.fireLevels));
     }
-    this.instanced(this.shadowGeo, furnitureShadows(map), ([x, z, rx, rz], o) => { o.position.set(x, BLOB_Y, z); o.scale.set(rx, 1, rz); }, this.shadowMat);
+    const comfortShadows = this.objects('comfort').flatMap(o => { const s = comfortShadow(o); return s ? [s] : []; });
+    this.instanced(this.shadowGeo, [...furnitureShadows(map), ...comfortShadows], ([x, z, rx, rz], o) => { o.position.set(x, BLOB_Y, z); o.scale.set(rx, 1, rz); }, this.shadowMat);
     if (this.outdoors) return;
     const light: Array<readonly [number, number, number, number]> = [];
     // The house of people who left has its curtains drawn inside too, in the same cloth as from the street.
@@ -918,6 +929,27 @@ export class WorldView {
     this.grass?.setWind(this.storm && this.outdoors ? STORM_WIND : WIND[w]);
     this.applySurge();
     this.updateFog();
+  }
+
+  /**
+   * What stands in your cabin's places for furniture (comfort.ts): `made`, the places whose furniture you
+   * made (the rest stand spoiled), and on the trophy shelf the charms and anomalous gear of your stash.
+   * Built again only when that changed; a map without such places ignores it. A lamp made lights the room.
+   */
+  setComfort(made: ReadonlySet<Comfort>, trophies: readonly ItemDef[]) {
+    const places = this.objects('comfort');
+    if (!places.length) return;
+    const key = `${[...made].sort().join()}|${made.has('shelf') ? trophies.map(t => t.id).join() : ''}`;
+    if (key === this.comfortKey) return;
+    this.comfortKey = key;
+    disposeTree(this.comfortRoot);
+    this.comfortRoot.clear();
+    const built = places.map(o => comfortModel(o, made.has(o.what), this.map, o.what === 'shelf' ? trophies : []));
+    for (const m of bake(built)) this.comfortRoot.add(m);
+    const lamp = places.find(o => o.what === 'lamp' && made.has('lamp'));
+    this.sources = lamp ? [...this.baseSources, { kind: 'lamp', ...lampLight(lamp), flicker: false, ph: 0, tx: lamp.x, ty: lamp.y }] : this.baseSources;
+    // The real lights are handed out again on the next frame, the lamp among them.
+    this.lightTile = NaN;
   }
 
   /** How big each fire burns (fire.ts, fireLevel), by its fireplace's tile: asked every frame. */

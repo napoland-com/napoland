@@ -168,6 +168,8 @@ export interface DetailState {
   worn: Worn;
   /** The tools you own: a recipe for one of them cannot be made again. None known: none. */
   tools?: readonly string[];
+  /** The furniture standing in your cabin (comfort.ts): each place has one, so it is not made again. None known: none. */
+  furniture?: readonly string[];
   /**
    * Where the card opens: at home (in the chest or at the workbench), where gear goes on from and off
    * into the stash, in the bag, anywhere, where it goes on from and off into the bag, or at a crate, where
@@ -349,6 +351,7 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
     case 'recipe': {
       const recipe = items.recipes.find(r => r.id === ref.id);
       if (!recipe) return null;
+      if (items.get(recipe.make).kind === 'furniture') return furnitureCard(recipe.id, items.get(recipe.make), needViews(recipe.needs, s), s);
       // A tool is not worn and resists nothing: its card says what it is, like anything else's.
       const def = items.get(recipe.make), count = recipe.count ?? 1, card = def.kind === 'tool' ? itemCard(def, count) : gearCard(def, undefined, s);
       const needs = needViews(recipe.needs, s);
@@ -396,6 +399,23 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       return { ...card, act: { label: 'Take it', enabled: !c.took, does: { kind: 'crateTake', id: e.id } } };
     }
   }
+}
+
+/**
+ * What the workbench makes for your cabin (comfort.ts): what it is and the comfort it adds, what it takes,
+ * and that it goes straight into its place; once it stands there, its button is greyed and says so (pressed,
+ * the game says why in the text box, as for a tool you have).
+ */
+function furnitureCard(recipe: string, def: ItemDef, needs: NeedView[], s: DetailState): DetailView {
+  const card = itemCard(def, 1);
+  card.costs = { title: 'It takes', needs };
+  if (s.furniture?.includes(def.id)) {
+    card.notes.push({ text: 'It stands in its place in your cabin.', tone: 'plain' });
+    return { ...card, act: { label: 'In its place', enabled: false, does: { kind: 'make', recipe } } };
+  }
+  card.notes.push({ text: 'Made, it goes straight into its place in your cabin.', tone: 'plain' });
+  short(card, needs);
+  return { ...card, act: { label: 'Make', enabled: needs.every(n => n.have >= n.need), does: { kind: 'make', recipe } } };
 }
 
 /**

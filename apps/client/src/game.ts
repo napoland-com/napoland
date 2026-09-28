@@ -19,6 +19,9 @@
  *   last told it;
  * - a crate for whoever comes next (A, facing it) opens a panel like the chest's: take one thing out
  *   (it asks nothing, and thanks whoever left it) and leave one (it asks first), once each a visit;
+ * - in your own cabin, what stands in each place for furniture (comfort.ts) reads with A: spoiled until
+ *   you make it at the workbench, which sets it there at once; standing by your own fire makes you cozy,
+ *   which the status panel counts down once you leave it;
  * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
  *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
  *   said in the text box anywhere else, and come in a letter when you walk in at home;
@@ -31,12 +34,12 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, STEP_MS, activeConditions, furnitureFor, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal,
   markLifetime, mendCost, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, DIR_VEC, type CacheItemView,
   type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
+  type CallKind, type ChatTo, type Comfort, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -45,9 +48,10 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion, mendQuestion,
-  noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, comfortLines, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
+  mendQuestion, noShard, nothingToBurn, openQuestion, placedAlready, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
+import { trophiesIn } from './view/cabin';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
 import type { Avatar } from './view/world';
@@ -74,10 +78,12 @@ interface Mover {
  * the story (`story`): talking to one, or reading one, may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
+  /** A place for furniture in your cabin (comfort.ts): which one, read as what stands there now. */
+  what?: Comfort;
 };
 
 /** Something lying on a tile to pick up: a pile someone left when they collapsed, or a find. */
@@ -142,6 +148,8 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
     if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
+    // Furniture in your cabin reads from any side of it; the rug is walked over, not faced.
+    if (o.kind === 'comfort' && o.what !== 'rug') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: '', lines: [], kind: 'comfort', what: o.what }));
     return [];
   });
 }
@@ -166,7 +174,9 @@ export type News =
   | { kind: 'call'; id: string; call: CallKind; x: number; y: number; at: number }
   | { kind: 'chapter'; chapter: Chapter }
   /** A parcel came into your chest; the welcome parcel also names the outfits signing in gave you (their ids). */
-  | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] };
+  | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] }
+  /** You stood by your own fire long enough: cozy, for this many minutes once you leave it (comfort.ts). */
+  | { kind: 'cozy'; minutes: number };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -233,6 +243,12 @@ export class Game {
   conditions: ConditionsView = { today: [], week: null, next: null };
   /** Your tools (item ids), in the order you got them: as the welcome said, then whole again whenever you get one. Replaced, never changed in place. */
   tools: string[] = [];
+  /**
+   * The furniture you made for your cabin (comfort.ts), as its room last told it (item ids): told only in
+   * there, so the workbench and the room know what stands in its places. `furnitureChanges` counts changes.
+   */
+  furniture: string[] = [];
+  furnitureChanges = 0;
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The id of the chapter of the story you are in, as the server said ('' until its welcome). */
@@ -358,11 +374,31 @@ export class Game {
     return { value: energyAfter(e.view, Math.max(0, now - e.at) / 1000), max: e.view.max, rate: e.view.rate };
   }
 
-  /** Your body right now: wetness counted forward at its rate. */
+  /**
+   * Your body right now: wetness counted forward at its rate; time by your own fire counted up, and cozy
+   * counted down, but for while it holds in full by the fire (comfort.ts).
+   */
   bodyNow(now: number): BodyView {
     const b = this.body.view;
     if (!this.online) return b;
-    return { ...b, wet: Math.min(1, Math.max(0, b.wet + (b.wetRate * Math.max(0, now - this.body.at)) / 1000)) };
+    const dt = Math.max(0, now - this.body.at) / 1000, held = (b.fireside ?? 0) >= COZY_AFTER_S;
+    const cozy = b.cozy === undefined ? undefined : held ? b.cozy : b.cozy - dt;
+    return {
+      ...b, wet: Math.min(1, Math.max(0, b.wet + b.wetRate * dt)),
+      cozy: cozy !== undefined && cozy > 0 ? cozy : undefined, fireside: b.fireside === undefined ? undefined : b.fireside + dt,
+    };
+  }
+
+  /** What stands in your cabin now, as its room told it. */
+  private setFurniture(furniture: readonly string[]) {
+    if (furniture.join() === this.furniture.join()) return;
+    this.furniture = [...furniture];
+    this.furnitureChanges++;
+  }
+
+  /** The charms and anomalous gear your stash holds, one of each: what stands on the trophy shelf. */
+  trophies() {
+    return trophiesIn(this.stash ?? [], id => this.items.get(id));
   }
 
   /** Seconds of fuel the fire on tile x,y has left now; null for a tended fire, undefined where there is none. */
@@ -438,6 +474,7 @@ export class Game {
         this.tools = msg.tools;
         this.chapter = msg.story.chapter;
         this.storyChanges++;
+        if (msg.furniture) this.setFurniture(msg.furniture);
         this.wall = { now, ms: msg.serverTime };
         this.thankedDay = utcDay(msg.serverTime);
         this.thankedToday = new Set(msg.thanked ?? []);
@@ -451,6 +488,7 @@ export class Game {
         this.scene(msg, now);
         this.stats = msg.stats;
         this.statsChanges++;
+        if (msg.furniture) this.setFurniture(msg.furniture);
         this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
         // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
         const me = this.me ?? (old ? { ...old } : undefined);
@@ -460,10 +498,15 @@ export class Game {
         }
         break;
       }
-      case 'energy':
+      case 'energy': {
+        // Cozy just now (it was not, as last told): the news says for how long. Worn off away from your fire: a word over your head.
+        const was = this.body.view.cozy ?? 0, is = msg.body.cozy ?? 0;
+        if (!was && is > 0) this.news.push({ kind: 'cozy', minutes: Math.round(is / 60) });
+        else if (was > 0 && !is && msg.body.fireside === undefined) this.murmur('The warmth of home wears off');
         this.lastEnergy = { view: msg.energy, at: now };
         this.body = { view: msg.body, at: now };
         break;
+      }
       case 'fire':
         this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now, fed: msg.fire.fed ?? [] });
         break;
@@ -674,6 +717,9 @@ export class Game {
       }
       case 'tools':
         this.tools = msg.tools;
+        break;
+      case 'furniture':
+        this.setFurniture(msg.furniture);
         break;
       case 'got': {
         this.picking = null;
@@ -893,6 +939,13 @@ export class Game {
       this.send({ t: 'cache', x: t.x, y: t.y });
       return;
     }
+    if (t.kind === 'comfort' && t.what) {
+      // What stands there: spoiled, and where to make it again, or what you made.
+      const def = furnitureFor(t.what, this.items.byId.values());
+      const said = comfortLines(t.what, def, !!def && this.furniture.includes(def.id), this.trophies());
+      this.openDialog({ ...t, who: said.who, lines: said.lines, kind: 'talk' });
+      return;
+    }
     return this.offer(t.x, t.y);
   }
 
@@ -1093,6 +1146,7 @@ export class Game {
     if (!b || !this.online || !r) return;
     const made = this.items.get(r.make);
     if (made.kind === 'tool' && this.tools.includes(r.make)) return this.inform('Workbench', haveTool(made));
+    if (made.kind === 'furniture' && this.furniture.includes(r.make)) return this.inform('Workbench', placedAlready(made));
     const short = shortOf(r.needs, b.stash);
     if (short.length) return this.inform('Workbench', stashShort(short, this.items, { make: this.items.get(r.make) }));
     const text = makeQuestion(r, this.items);

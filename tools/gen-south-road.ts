@@ -517,6 +517,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   // The rest stands in town, in the Near Woods and in the rooms.
   jeep: 'C', logs: '#', stump: 'o', skid: '_', stake: '!', boxes: 'c', rocker: 'n', piano: 'n', bike: 'n', birdcage: 'n',
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
+  // The furniture of your own cabin stands there alone (gen-interiors.ts).
+  comfort: 'n',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '_' };
 const objGlyph = new Map<number, string>();
