@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { CACHE_SIZE, TileMap, type CacheItemView, type ClientMsg, type ItemsData, type MapData, type PlayerView } from '@napoland/shared';
 import { cardPress, detailView, type DetailState } from '../src/details';
 import { Game } from '../src/game';
-import { Items, crateView } from '../src/items';
+import { crateView } from '../src/crates';
+import { Items } from '../src/items';
 import { Maps } from '../src/maps';
 import { CRATE_EMPTY, CRATE_FULL, CRATE_NO_GEAR, LEFT_ONE, TOOK_ONE, agoText, didText, didWho, leaveQuestion, leftBy } from '../src/said';
 import { furnitureModel } from '../src/view/interior';
@@ -53,7 +54,8 @@ describe('what a crate says', () => {
 });
 
 describe('a crate\'s cards', () => {
-  const state = (crate: DetailState['crate'], bag: DetailState['bag'] = []): DetailState => ({ items, bag, stash: [], gear: {}, worn: {}, crate });
+  // At a crate, the cards of your bag's slots leave one there (panel 'crate'), as in the chest they put it away.
+  const state = (crate: DetailState['crate'], bag: DetailState['bag'] = []): DetailState => ({ items, bag, stash: [], gear: {}, worn: {}, panel: 'crate', ...(crate ? { crate } : {}) });
   const inside = [thing(7, 'resin', 'ana', 'Ana', 120)];
 
   it('shows a thing in it with who left it, and takes it without asking, once a visit', () => {
@@ -70,18 +72,22 @@ describe('a crate\'s cards', () => {
   it('offers to leave one of a bag slot, and says why not: gear, one left already, or a full crate', () => {
     const bag = [{ item: 'resin', count: 4 }, { item: 'raincoat', count: 1 }];
     const open = { items: inside, left: false, took: false, me: 'me' };
-    const leave = detailView({ from: 'crateBag', slot: 0, item: 'resin' }, state(open, bag))!;
+    const leave = detailView({ from: 'bag', slot: 0, item: 'resin' }, state(open, bag))!;
     expect(leave.act).toEqual({ label: 'Leave one', enabled: true, does: { kind: 'crateLeave', slot: 0 } });
-    const gear = detailView({ from: 'crateBag', slot: 1, item: 'raincoat' }, state(open, bag))!;
+    const gear = detailView({ from: 'bag', slot: 1, item: 'raincoat' }, state(open, bag))!;
     expect(gear.act?.enabled).toBe(false);
     expect(gear.notes).toContainEqual({ text: CRATE_NO_GEAR, tone: 'bad' });
     // Greyed out, it still goes to the game, which says why in the text box (as making does).
     expect(cardPress(gear)).toEqual({ does: { kind: 'crateLeave', slot: 1 }, close: false, shake: true });
-    expect(detailView({ from: 'crateBag', slot: 0, item: 'resin' }, state({ ...open, left: true }, bag))!.notes).toContainEqual({ text: LEFT_ONE, tone: 'bad' });
+    expect(detailView({ from: 'bag', slot: 0, item: 'resin' }, state({ ...open, left: true }, bag))!.notes).toContainEqual({ text: LEFT_ONE, tone: 'bad' });
     const full = Array.from({ length: CACHE_SIZE }, (_, i) => thing(i, 'resin', 'ana', 'Ana', 60));
-    expect(detailView({ from: 'crateBag', slot: 0, item: 'resin' }, state({ ...open, items: full }, bag))!.notes).toContainEqual({ text: CRATE_FULL, tone: 'bad' });
-    // The slot no longer holds what was tapped: no card.
-    expect(detailView({ from: 'crateBag', slot: 0, item: 'glowcap' }, state(open, bag))).toBeNull();
+    expect(detailView({ from: 'bag', slot: 0, item: 'resin' }, state({ ...open, items: full }, bag))!.notes).toContainEqual({ text: CRATE_FULL, tone: 'bad' });
+    // The slot no longer holds what was tapped, or the crate is closed: no card.
+    expect(detailView({ from: 'bag', slot: 0, item: 'glowcap' }, state(open, bag))).toBeNull();
+    expect(detailView({ from: 'bag', slot: 0, item: 'resin' }, state(undefined, bag))).toBeNull();
+    // The same slot in the chest puts it away, and in the bag uses it or throws it away: only at a crate is it left.
+    expect(detailView({ from: 'bag', slot: 0, item: 'resin' }, { ...state(open, bag), panel: 'home' })!.act).toMatchObject({ label: 'Put away', does: { kind: 'store', slot: 0 } });
+    expect(detailView({ from: 'bag', slot: 0, item: 'resin' }, { ...state(open, bag), panel: 'bag' })!.act?.does.kind).not.toBe('crateLeave');
   });
 });
 

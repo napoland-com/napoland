@@ -5,13 +5,12 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, CACHE_SIZE, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, resistOf, wearSeconds, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type ItemsData,
-  type Piece, type Quirk, type Recipe, type Refusal, type RefusedAction, type Slot, type Worn,
+  BAG_SLOTS, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, nextUpgrade, outfitOf, resistOf, upgradable, upgradeChance, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef,
+  type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction, type Slot, type Upgrade, type Worn,
 } from '@napoland/shared';
-import type { CrateView, RecipeView, ToolView, WornView } from './hud';
+import type { RecipeView, ToolView, WornView } from './hud';
 import type { Look } from './view/characters';
 import { iconFor } from './icons';
-import { CRATE_EMPTY, leftBy } from './said';
 
 export class Items {
   /** The version of content/items.json this client carries; 0 when it has none. */
@@ -20,9 +19,10 @@ export class Items {
   readonly byId: Map<string, ItemDef>;
   /** What the workbench makes. */
   readonly recipes: Recipe[];
-  /** How gear wears out and what mending it costs, and the quirks' names and words. */
+  /** How gear wears out, what mending and upgrading it cost, and the quirks' names and words. */
   readonly wear: ItemsData['wear'];
   readonly mend: ItemsData['mend'];
+  readonly upgrades: ItemsData['upgrades'];
   /** What the woods may be like on a day or in a week (sky.ts). */
   readonly conditions: ItemsData['conditions'];
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
@@ -33,6 +33,7 @@ export class Items {
     this.recipes = data?.recipes ?? [];
     this.wear = data?.wear;
     this.mend = data?.mend;
+    this.upgrades = data?.upgrades;
     this.conditions = data?.conditions;
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
@@ -98,11 +99,15 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
     case 'slow_down': return 'Slow down a little';
-    case 'sign_in_first': return action === 'say' || action === undefined ? 'Sign in to talk' : 'Sign in to make friends';
+    case 'sign_in_first': return action === 'say' || action === undefined ? 'Sign in to talk' : action === 'outfit' ? 'Sign in to wear an outfit' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
-    case 'gear_stays': return 'Put gear on from the chest';
+    case 'bag_at_home': return 'The bag you wear changes only at home';
     case 'whole': return 'It needs no mending';
     case 'have_tool': return action === 'pick' ? 'You have one already. It stays for someone else' : 'You have one already';
+    case 'not_upgradable': return 'Worn clothes and bags are not upgraded';
+    case 'top_level': return 'It goes no higher';
+    case 'sealed_stays': return 'It stays in the chest: open it there';
+    case 'locked': return 'Your level has not reached it yet';
     case 'thanked': return 'Thanks go once a day to each person';
     case 'crate_full': return 'The crate is full';
     case 'no_gear': return 'Gear stays with you: a crate takes none';
@@ -126,9 +131,15 @@ export interface SlotView {
   icon: string;
   /** Gear: the slot it is worn in. */
   slot?: Slot;
-  /** A piece of gear in the stash: its condition (0 to 1; none for gear that never wears), and which of that item's pieces it is (the stash's order). */
+  /**
+   * A piece of gear, in the stash or carried: its condition (0 to 1; none for gear that never wears),
+   * which of that item's pieces it is (in the list's order), and its quirk's name.
+   */
   cond?: number;
   n?: number;
+  quirk?: string;
+  /** Its upgrade level, once it has one (+1 to +9): shown after its name, and on its slot. */
+  level?: number;
   /** A live find: what it is, what it fades into, and its age in seconds when the bag was told (liveState). */
   live?: { def: ItemDef; into?: ItemDef; age: number };
 }
@@ -145,7 +156,10 @@ export function slotViews(bag: readonly BagSlot[], items: Items): SlotView[] {
     const n = nth.get(s.item) ?? 0;
     nth.set(s.item, n + 1);
     const q = p.quirk && items.quirk(p.quirk), wears = wearSeconds(def, items.wear) !== undefined;
-    return { ...base, ...(wears ? { cond: p.cond } : {}), n, text: q ? `${def.text} ${q.name}: ${q.text}` : def.text, facts: [conditionText(p.cond, wears), ...base.facts] };
+    return {
+      ...base, name: pieceName(def, p.level), ...(wears ? { cond: p.cond } : {}), n, text: q ? `${def.text} ${q.name}: ${q.text}` : def.text,
+      facts: [conditionText(p.cond, wears), ...base.facts], ...(q ? { quirk: q.name } : {}), ...(p.level ? { level: p.level } : {}),
+    };
   });
 }
 
@@ -184,9 +198,14 @@ export function wearText(gear: Gear, worn: Worn, items: Items): string | null {
   const parts = SLOTS.flatMap(slot => {
     const id = gear[slot], p = worn[slot], def = id ? items.get(id) : undefined;
     if (!def || !p || p.cond >= 0.995 || wearSeconds(def, items.wear) === undefined) return [];
-    return [`${def.name} ${p.cond <= 0 ? 'worn out' : `${Math.max(1, Math.round(p.cond * 100))}%`}`];
+    return [`${pieceName(def, p.level)} ${p.cond <= 0 ? 'worn out' : `${Math.max(1, Math.round(p.cond * 100))}%`}`];
   });
   return parts.length ? parts.join(', ') : null;
+}
+
+/** A piece's name as the game shows it, with its level after it once it is upgraded: "Raincoat +3". */
+export function pieceName(def: ItemDef, level = 0): string {
+  return level > 0 ? `${def.name} +${level}` : def.name;
 }
 
 /** The quirks of what you wear, by name ("Glowing steps"). */
@@ -214,8 +233,12 @@ export function factsOf(def: ItemDef): string[] {
   return out;
 }
 
-/** What someone looks like in what they wear (characters.ts): each piece's color, and the bag's size. */
-export function lookOf(gear: Gear, items: Items): Look {
+/**
+ * What someone looks like in what they wear (characters.ts): each piece's color, and the bag's size;
+ * or, in an outfit (outfits.ts), the outfit and the bag alone, since nothing else of the gear shows.
+ * An outfit this copy does not have leaves them in their gear.
+ */
+export function lookOf(gear: Gear, items: Items, outfit?: string): Look {
   // No cap: the hair shows. (Other slots, left bare, keep the old look: nobody walks out barefoot.)
   const out: Look = gear.cap ? {} : { cap: null };
   for (const slot of SLOTS) {
@@ -225,7 +248,9 @@ export function lookOf(gear: Gear, items: Items): Look {
     out[slot] = def.color;
     if (slot === 'bag' && def.bag) out.bagSize = Math.sqrt(def.bag / BAG_SLOTS);
   }
-  return out;
+  if (!outfitOf(outfit)) return out;
+  // The pack still shows over any outfit: how much someone carries matters out there.
+  return { outfit, ...(out.bag ? { bag: out.bag } : {}), ...(out.bagSize ? { bagSize: out.bagSize } : {}) };
 }
 
 /**
@@ -235,9 +260,8 @@ export function lookOf(gear: Gear, items: Items): Look {
  */
 export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[], items: Items, tools: readonly string[] = []): RecipeView[] {
   return recipes.map(r => {
-    const def = items.get(r.make), have = def.kind === 'tool' && tools.includes(r.make);
-    const needs = r.needs.map(n => ({ name: items.get(n.item).name, icon: iconFor(items.get(n.item)), have: countOf(stash, n.item), need: n.count }));
-    return { id: r.id, name: def.name, icon: iconFor(def), facts: have ? 'You have it' : factsOf(def).join(' · '), needs, can: !have && needs.every(n => n.have >= n.need) };
+    const def = items.get(r.make), have = def.kind === 'tool' && tools.includes(r.make), needs = needsOf(r.needs, stash, items);
+    return { id: r.id, group: 'make', name: def.name, icon: iconFor(def), facts: have ? 'You have it' : factsOf(def).join(' · '), needs, can: !have && needs.every(n => n.have >= n.need) };
   });
 }
 
@@ -268,41 +292,82 @@ export function mendViews(gear: Gear, worn: Worn, stash: readonly BagSlot[], ite
     const id = gear[slot], p: Piece | undefined = worn[slot], def = id ? items.get(id) : undefined;
     const cost = mendCost(def, items.mend);
     if (!def || !p || !cost || p.cond >= 0.995) return [];
-    const needs = cost.map(n => ({ name: items.get(n.item).name, icon: iconFor(items.get(n.item)), have: countOf(stash, n.item), need: n.count }));
-    return [{ id: `mend:${slot}`, name: `Mend your ${def.name.toLowerCase()}`, icon: iconFor(def), facts: `${p.cond <= 0 ? 'Worn out' : wornLeft(p.cond)}. Like new again when mended.`, needs, can: needs.every(n => n.have >= n.need) }];
+    const needs = needsOf(cost, stash, items);
+    return [{
+      id: `mend:${slot}`, group: 'mend', name: `Mend your ${pieceName(def, p.level).toLowerCase()}`, icon: iconFor(def),
+      facts: `${p.cond <= 0 ? 'Worn out' : wornLeft(p.cond)}. Like new again when mended.`, needs, can: needs.every(n => n.have >= n.need),
+    }];
   });
 }
 
 /**
- * A crate you opened, as its panel shows it: "3 of 6", what you may still do this visit, and what lies
- * in it, the newest first ("Fir resin", "left by Ana, 2 h ago"); an empty one says so. `items` have
- * their ages as of now (Game.cacheItemsNow); `me`: your id, to call your own things yours.
+ * Upgrading at the workbench: a row for each piece you wear, then each in the stash, that can go up a
+ * level, with that level, what it takes against what the stash holds, and how often it works. Worn
+ * clothes, bags and pieces at the top have none. Its id is upgradeId ("up:worn:shirt", "up:stash:raincoat:1").
  */
-export function crateView(c: { items: readonly CacheItemView[]; left: boolean; took: boolean }, items: Items, me: string): CrateView {
-  const hint = c.left && c.took
-    ? 'You took one thing and left one this time. Come by again for more.'
-    : c.took ? 'You took one thing this time. Leave one for whoever comes next?'
-      : c.left ? 'You left one thing this time. Take one if you need it.'
-        : 'For whoever comes next: take one thing and leave one, each time you come by.';
-  return {
-    count: `${c.items.length} of ${CACHE_SIZE}`,
-    hint,
-    rows: c.items.map(e => {
-      const def = items.get(e.item);
-      return { id: e.id, name: def.name, icon: iconFor(def), line: leftBy(e.name, e.owner === me, e.age) };
-    }),
-    empty: c.items.length ? null : CRATE_EMPTY,
+export function upgradeViews(gear: Gear, worn: Worn, stash: readonly BagSlot[], items: Items): RecipeView[] {
+  const rows: RecipeView[] = [];
+  const add = (of: PieceAt, def: ItemDef, p: Piece, where: string) => {
+    const level = p.level ?? 0, next = nextUpgrade(level, items.upgrades);
+    if (!upgradable(def) || !next) return;
+    const needs = needsOf(next.needs, stash, items);
+    rows.push({
+      id: upgradeId(of), group: 'upgrade', name: `${pieceName(def, level)} → +${level + 1}`, icon: iconFor(def), facts: `${where}. ${oddsText(next)}`,
+      needs, can: needs.every(n => n.have >= n.need),
+    });
   };
+  for (const slot of SLOTS) {
+    const id = gear[slot], p = worn[slot];
+    if (id && p && items.has(id)) add({ from: 'worn', slot }, items.get(id), p, 'You wear it');
+  }
+  const nth = new Map<string, number>();
+  for (const s of stash) {
+    if (!s.piece) continue;
+    const n = nth.get(s.item) ?? 0;
+    nth.set(s.item, n + 1);
+    add({ from: 'stash', item: s.item, n }, items.get(s.item), s.piece, 'In the stash');
+  }
+  return rows;
 }
 
-/** What is worn in each slot, in SLOTS order (null: bare), with how worn down it is. */
+/** An upgrade row's id at the workbench: "up:worn:shirt", "up:stash:raincoat:1". */
+export function upgradeId(of: PieceAt): string {
+  return of.from === 'worn' ? `up:worn:${of.slot}` : `up:stash:${of.item}:${of.n}`;
+}
+
+/** The piece an upgrade row's id names, or null for anything else. */
+export function upgradeOf(id: string): PieceAt | null {
+  const [up, from, a, b] = id.split(':');
+  if (up !== 'up') return null;
+  if (from === 'worn' && (SLOTS as readonly string[]).includes(a ?? '')) return { from: 'worn', slot: a as Slot };
+  const n = Number(b);
+  return from === 'stash' && a && Number.isInteger(n) && n >= 0 ? { from: 'stash', item: a, n } : null;
+}
+
+/** How often an upgrade works, in words: "It always works.", "It works 7 times in 10." */
+export function oddsText(u: Upgrade): string {
+  const c = upgradeChance(u);
+  if (c >= 1) return 'It always works.';
+  const tenths = Math.round(c * 10);
+  return Math.abs(tenths - c * 10) < 1e-9 ? `It works ${tenths} time${tenths === 1 ? '' : 's'} in 10.` : `It works ${Math.round(c * 100)}% of the time.`;
+}
+
+/** What something needs from the stash, against what the stash holds. */
+function needsOf(needs: readonly BagSlot[], stash: readonly BagSlot[], items: Items): RecipeView['needs'] {
+  return needs.map(n => ({ name: items.get(n.item).name, icon: iconFor(items.get(n.item)), have: countOf(stash, n.item), need: n.count }));
+}
+
+/** What is worn in each slot, in SLOTS order (null: bare), with how worn down it is, its quirk and its level. */
 export function wornViews(gear: Gear, items: Items, worn: Worn = {}): Array<WornView | null> {
   return SLOTS.map(slot => {
     const id = gear[slot];
     if (!id || !items.has(id)) return null;
     const def = items.get(id), p = worn[slot];
     const wears = wearSeconds(def, items.wear) !== undefined;
-    return { slot, name: def.name, icon: iconFor(def), ...(p && wears ? { cond: p.cond } : {}), ...(p?.quirk ? { quirk: items.quirk(p.quirk).name } : {}) };
+    return {
+      slot, name: pieceName(def, p?.level), icon: iconFor(def), ...(p && wears ? { cond: p.cond } : {}), ...(p?.quirk ? { quirk: items.quirk(p.quirk).name } : {}),
+      ...(p?.level ? { level: p.level } : {}),
+    };
   });
 }
 

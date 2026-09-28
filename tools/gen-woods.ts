@@ -16,7 +16,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { DECOR, ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
 
 const W = 64, H = 80, SEED = 20260927;
@@ -208,11 +208,11 @@ ellipse(39, 22.5, 1.5, 1.2, 0.2, 111, (x, y) => { level[y]![x] = 2; });
 
 const objects: MapObject[] = [];
 const blocked = new Uint8Array(W * H);
-/** Adds an object. Things stand on cleared ground: a forest or water tile under one becomes grass. */
+/** Adds an object. Things stand on cleared ground: a forest or water tile under one becomes grass. What is only drawn (glowcaps, stakes) blocks nothing. */
 function place(o: MapObject) {
   for (const [x, y] of objectTiles(o)) {
     if (!inner(x, y)) throw new Error(`${o.kind} at ${o.x},${o.y} is on the map edge`);
-    if (o.kind === 'shrooms') continue;
+    if (DECOR.has(o.kind)) continue;
     if (blocked[y * W + x]) throw new Error(`${o.kind} at ${o.x},${o.y} overlaps something on ${x},${y}`);
     blocked[y * W + x] = 1;
     if (at(x, y) === 't' || at(x, y) === 'w') set(x, y, 'g');
@@ -238,16 +238,17 @@ function stepsHome(): Int32Array {
   return d;
 }
 const reached = (d: Int32Array) => d.reduce((n, v) => n + (v >= 0 ? 1 : 0), 0);
-/** Places a one-tile object unless it would cut somebody off: every other tile must stay reachable. */
+/** Places an object unless it would cut somebody off: every tile it does not cover must stay reachable. */
 function tryPlace(o: MapObject): boolean {
-  const { x, y } = o;
-  if (!inner(x, y) || blocked[y * W + x]) return false;
+  const tiles = objectTiles(o);
+  if (tiles.some(([x, y]) => !inner(x, y) || blocked[y * W + x])) return false;
   const d = stepsHome();
-  if (d[y * W + x]! >= 0) {
+  const covered = tiles.filter(([x, y]) => d[y * W + x]! >= 0).length;
+  if (covered) {
     const before = reached(d);
-    blocked[y * W + x] = 1;
-    const cut = reached(stepsHome()) !== before - 1;
-    blocked[y * W + x] = 0;
+    for (const [x, y] of tiles) blocked[y * W + x] = 1;
+    const cut = reached(stepsHome()) !== before - covered;
+    for (const [x, y] of tiles) blocked[y * W + x] = 0;
     if (cut) return false;
   }
   place(o);
@@ -460,10 +461,108 @@ const patches = TALL.map((p, k) => {
 });
 if (patches.filter(p => fromHome[p[0]!]! >= 50).length * 2 <= patches.length) throw new Error('most of the tall grass belongs in the deeper half');
 
+// ---- What the loggers and NAPO left (roadmap/richer-places.md) ----
+
+// Added last, so nothing that was here moves: every road, trail, shelter, pole, lamp, sign, patch of
+// tall grass and named place stays where it was, and every tile anyone could walk on stays walkable
+// and just as far from home (the checks below stop the script otherwise). New ground is only cut out of
+// the forest, in dead ends off the ways, so it makes no shortcut; what blocks stands only on it (or on
+// forest it clears); NAPO's stakes, which block nothing, stand on open ground by the rocks.
+const beforeTiles = tile.map(r => r.join('')), beforeSteps = stepsHome();
+/** Cuts one tile of new ground out of the forest, or stops: it would change ground that was there. */
+function clear(x: number, y: number, c: 'g' | 'm') {
+  if (at(x, y) !== 't' || !inner(x, y)) throw new Error(`new ground at ${x},${y} is not forest`);
+  set(x, y, c);
+}
+/** Places something on forest it clears (with ground `c` under it), or stops. */
+function onForest(o: MapObject, c: 'g' | 'm' = 'g') {
+  for (const [x, y] of objectTiles(o)) clear(x, y, c);
+  must(o);
+}
+
+// The log landing, from the logging days: the gravel turnout under the last light was where the trucks
+// turned and loaded, and beside it, east, the landing: a clearing of stumps and the log deck the last
+// crew stacked and nobody hauled. An old skid road climbs out of it north-east into the cut, and gives
+// out among the stumps.
+const LANDING = { x: 44.5, y: 69.5 };
+/** The log deck, at the back of the landing; the row in front of it stays open, as a truck would need it. */
+const DECK = { x: 42, y: 67, w: 3, h: 2 };
+ellipse(LANDING.x, LANDING.y, 4.6, 3.2, 0.15, 160, (x, y) => { if (at(x, y) === 't') set(x, y, noise(x, y, 1.7, 161) < 0.5 ? 'm' : 'g'); });
+// The skid road: in from the turnout, across the landing in front of the deck, and on up into the cut.
+const skidRoad: P[] = polyline([[38, 70], [41, 70], ...stairs([41, 70], [48, 69], 3, 162), ...stairs([48, 69], [53, 64], 2, 163)])
+  .filter(([x, y], k, all) => all.findIndex(([ax, ay]) => ax === x && ay === y) === k);
+for (const [x, y] of skidRoad) {
+  if (beforeTiles[y]![x] !== 't') throw new Error(`the skid road at ${x},${y} runs onto ground that was there`);
+  set(x, y, 'm');
+}
+must({ kind: 'logs', ...DECK });
+// Stumps where the firs were cut: over the landing, never two side by side, never on the skid road or
+// in front of the deck, nor where one would cut a tile off (tryPlace); and in the forest along the
+// skid road and around the landing's edge, where they stand on the ground they cleared.
+const onRoad = new Set(skidRoad.map(([x, y]) => y * W + x));
+const stumpAt = new Set<number>();
+const lonely = (x: number, y: number) => { for (let yy = y - 1; yy <= y + 1; yy++) for (let xx = x - 1; xx <= x + 1; xx++) if (stumpAt.has(yy * W + xx)) return false; return true; };
+const stump = (x: number, y: number, salt: number): MapObject => ({ kind: 'stump', x, y, s: round(0.8 + hash(x, y, salt) * 0.45), v: round(hash(x, y, salt + 1)) });
+for (let y = 62; y <= 75; y++) for (let x = 38; x <= 55; x++) {
+  const i = y * W + x;
+  const front = y === DECK.y + DECK.h && x >= DECK.x - 1 && x <= DECK.x + DECK.w;
+  if (beforeTiles[y]![x] !== 't' || at(x, y) === 't' || onRoad.has(i) || blocked[i] || front || !lonely(x, y)) continue;
+  if (hash(x, y, 163) < 0.38 && tryPlace(stump(x, y, 164))) stumpAt.add(i);
+}
+for (let y = 62; y <= 75; y++) for (let x = 37; x <= 55; x++) {
+  const i = y * W + x;
+  if (at(x, y) !== 't' || !lonely(x, y) || !SIDES.some(([dx, dy]) => beforeTiles[y + dy]![x + dx] === 't' && at(x + dx, y + dy) !== 't')) continue;
+  const byRoad = SIDES.some(([dx, dy]) => onRoad.has((y + dy) * W + x + dx));
+  if (hash(x, y, 166) < (byRoad ? 0.45 : 0.22)) { onForest(stump(x, y, 167)); stumpAt.add(i); }
+}
+// The skids: logs laid across the road and half sunk, every other tile of it.
+skidRoad.forEach(([x, y], k) => {
+  if (k % 2 || blocked[y * W + x]) return;
+  const [nx] = skidRoad[k + 1] ?? skidRoad[k - 1]!;
+  place({ kind: 'skid', x, y, dir: nx !== x ? 'h' : 'v' });
+});
+
+// NAPO's survey stakes by the rocks, orange flagging on each: around the outcrop's foot, on open grass
+// off the trails and out of the tall grass, a few tiles apart.
+{
+  const foot: Array<[number, number, number]> = [];
+  for (let y = 17; y <= 29; y++) for (let x = 31; x <= 46; x++) {
+    const i = y * W + x;
+    if (at(x, y) !== 'g' || way[i] || blocked[i] || tall[i] || !walkable(x, y) || PLACES.some(([, [px, py]]) => px === x && py === y)) continue;
+    let rock = false;
+    for (let yy = y - 1; yy <= y + 1; yy++) for (let xx = x - 1; xx <= x + 1; xx++) if (level[yy]![xx]! > 0) rock = true;
+    if (rock) foot.push([hash(x, y, 171), x, y]);
+  }
+  foot.sort((a, b) => a[0] - b[0]);
+  const stakes: P[] = [];
+  for (const [, x, y] of foot) if (stakes.length < 5 && stakes.every(([sx, sy]) => Math.abs(sx - x) + Math.abs(sy - y) >= 3)) stakes.push([x, y]);
+  if (stakes.length < 4) throw new Error(`room for only ${stakes.length} of NAPO's stakes by the rocks`);
+  for (const [x, y] of stakes) place({ kind: 'stake', x, y });
+}
+
+// A burned-out NAPO jeep off the road in, west of it across from the last light: it went off the
+// asphalt nose first into the firs, and burned, and took the nearest of them with it. Its door hangs
+// open; its stencil is read from beside it.
+for (const [x, y] of [[29, 70], [29, 71], [29, 72], [29, 73], [29, 74], [28, 71], [28, 73]] as const) clear(x, y, 'm');
+onForest({ kind: 'jeep', x: 27, y: 72, w: 2, h: 1, dir: 'left', text: ['Stenciled on the door: NAPO · FIELD SURVEY · UNIT 7.', 'Burned out to the frame, and the firs beside it with it.', 'The door hangs open, and the keys are still in it.'] }, 'm');
+for (const [x, y] of [[27, 71], [28, 70], [27, 73], [28, 74]] as const) onForest({ kind: 'stump', x, y, s: round(0.85 + hash(x, y, 169) * 0.3), v: round(hash(x, y, 170)), burned: true }, 'm');
+
+// The checks: only forest changed, every tile anyone could walk on is still walkable and as far from
+// home as it was, and the new ground is reached from the road.
+{
+  const d = stepsHome();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, was = beforeTiles[y]![x]!;
+    if (was !== 't' && tile[y]![x] !== was) throw new Error(`the tile at ${x},${y} was ${was} and is now ${tile[y]![x]}: only forest may change`);
+    if (beforeSteps[i]! >= 0 && d[i] !== beforeSteps[i]) throw new Error(`the tile at ${x},${y} was ${beforeSteps[i]} steps from home and is now ${d[i]}`);
+    if (was === 't' && at(x, y) !== 't' && walkable(x, y) && d[i]! < 0) throw new Error(`new ground at ${x},${y} cannot be reached`);
+  }
+}
+
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 8, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 9, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
@@ -480,8 +579,12 @@ const map: MapData = {
   // Three skulkers in the deep ferns, 50 steps or more out, at night and in a storm.
   skulkers: { count: 3, steps: [50, 999], when: ['night', 'storm'] },
   // What the paper map names, besides the cabins and the way home. The names of tall grass come after
-  // the older ones, so the paper map writes those where it always did.
-  places: [...NAMED, ...TALL.flatMap(p => (p.name ? [{ name: p.name, x: p.at[0], y: p.at[1] }] : []))],
+  // the older ones, and what the loggers and NAPO left after those, so the paper map writes the older
+  // names where it always did.
+  places: [
+    ...NAMED, ...TALL.flatMap(p => (p.name ? [{ name: p.name, x: p.at[0], y: p.at[1] }] : [])),
+    { name: 'the log landing', x: Math.floor(LANDING.x), y: Math.floor(LANDING.y) }, { name: 'the burned jeep', x: 28, y: 72 },
+  ],
 };
 
 // One row or object per line, so map changes show up as small, readable diffs.
@@ -509,7 +612,7 @@ writeFileSync(out, json);
 
 // A glance at the result, two map rows per line because a terminal character is about twice as tall
 // as it is wide. Of the two tiles in a character, the one listed first in ORDER wins.
-const ORDER = '*!HC@SFvibBnLc-T^o~=";,_. ';
+const ORDER = '*!HCJ@SFvibBnLc#-T^ox~=";,_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', sign: '!', board: '!', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
@@ -517,6 +620,11 @@ const GLYPH: Record<MapObject['kind'], string> = {
   fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_', woodpile: 'b', cache: 'c',
   // NAPO's listening post has a mast here, by the ring of stones; its desks stand on the South Road (gen-south-road.ts).
   antenna: 'i', console: 'n',
+  // What the loggers left (the log deck, stumps, the skids across the skid road) and NAPO (its stakes, the jeep).
+  logs: '#', stump: 'x', skid: '_', stake: '!', jeep: 'J',
+  // The rest of what people left stands in town, on the South Road and in the rooms.
+  truck: 'C', luggage: 'b', boxes: 'c', rocker: 'n', piano: 'n', bike: 'n', birdcage: 'n', pump: 'i', cage: 'c',
+  hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();
@@ -530,7 +638,7 @@ const frame = '+' + '-'.repeat(W) + '+';
 const rows = [frame];
 for (let y = 0; y < H; y += 2) rows.push('|' + Array.from({ length: W }, (_, x) => pick(glyph(x, y), glyph(x, y + 1))).join('') + '|');
 console.log([...rows, frame].join('\n'));
-console.log(' . ground  " ferns  ; tall grass  = old road  ~ water  ^ rocks  * street light  ! sign  H cabin  C car  i pole  o rock  T fir  , shrooms  v way home');
+console.log(' . ground  " ferns  ; tall grass  = old road  ~ water  ^ rocks  * street light  ! sign or stake  H cabin  C car  J jeep  i pole  o rock  x stump  # log deck  T fir  , shrooms  v way home');
 
 // How deep it goes, measured like the game does (TileMap.homeSteps drives the energy drain).
 const tm = new TileMap(map);

@@ -59,6 +59,10 @@ export interface Config {
   version: string;
   /** Development only: the world's clock runs this many ms ahead (or behind), to play-test a dawn or a surge without waiting for it. */
   clockShiftMs: number;
+  /** Development only: the parcels' days last this many ms (0: real calendar days), to play-test a week of parcels in minutes. */
+  parcelDayMs: number;
+  /** Development only: stashing earns this many times the XP, to play-test the levels (and the outfits they open) without the trips. */
+  xpMultiplier: number;
   auth: AuthSettings;
 }
 
@@ -145,6 +149,15 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
     else if (get('NODE_ENV') === 'production' && Number(shift) !== 0) errors.push('CLOCK_SHIFT_MS moves the whole world\'s clock, so it is refused when NODE_ENV=production');
     else clockShiftMs = Number(shift);
   }
+  let parcelDayMs = 0;
+  if (get('PARCEL_DAY_MS') !== undefined) {
+    // A day for everyone's parcels: a live server must follow the real calendar.
+    if (get('NODE_ENV') === 'production') errors.push('PARCEL_DAY_MS shortens the days of everyone\'s parcels, so it is refused when NODE_ENV=production');
+    else parcelDayMs = int('PARCEL_DAY_MS', 0, 5000, 86_400_000);
+  }
+  const xpMultiplier = int('XP_MULTIPLIER', 1, 1, 100_000);
+  // Levels are earned by bringing things home, for everyone alike: a live server never hands them out.
+  if (get('NODE_ENV') === 'production' && xpMultiplier !== 1) errors.push('XP_MULTIPLIER hands out levels, so it is refused when NODE_ENV=production');
 
   let auth: AuthSettings = { mode: 'legacy' };
   const authMode = oneOf('AUTH_MODE', AUTH_MODES, 'legacy');
@@ -184,7 +197,7 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
     port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, storyFile: storyFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
-    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, auth,
+    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, auth,
   };
 }
 

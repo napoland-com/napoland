@@ -10,6 +10,7 @@
  */
 import * as THREE from 'three';
 import { doorOf, type Dir, type MapData, type MapObject, type TileMap } from '@napoland/shared';
+import { curtainColor, curtainPanels } from './left';
 import { box, flat, hash2, part, pivot, toon } from './toon';
 
 /** Height of a wall that stands (the back and side walls), and of one cut down to a baseboard (the front). */
@@ -59,13 +60,16 @@ export function hasFire(data: MapData | undefined): boolean {
 
 /**
  * Where windows go: in standing back walls with room in front, between two other wall tiles, and not
- * over a fireplace (its chimney is there), a shelf or a workbench (the board its tools hang on). One
- * in a narrow room; two in a wide one, a quarter of the way in from each side.
+ * over a fireplace or a cold hearth (its chimney is there), a shelf, a workbench (the board its tools
+ * hang on) or a tall clock, nor where a calendar or a drawing hangs. One in a narrow room; two in a wide
+ * one, a quarter of the way in from each side.
  */
 export function windowSpots(map: TileMap, shapes: readonly WallShape[]): Array<{ x: number; y: number }> {
   const W = map.width, busy = new Set<string>();
-  for (const f of objectsOf(map.data, 'fireplace')) for (const dx of [-1, 0, 1]) busy.add(`${f.x + dx},${f.y}`);
-  for (const s of [...objectsOf(map.data, 'shelf'), ...objectsOf(map.data, 'workbench')]) busy.add(`${s.x},${s.y}`);
+  for (const f of [...objectsOf(map.data, 'fireplace'), ...objectsOf(map.data, 'hearth')]) for (const dx of [-1, 0, 1]) busy.add(`${f.x + dx},${f.y}`);
+  for (const s of [...objectsOf(map.data, 'shelf'), ...objectsOf(map.data, 'workbench'), ...objectsOf(map.data, 'clock')]) busy.add(`${s.x},${s.y}`);
+  // A paper on the wall stands on the wall tile itself: the floor it is read from is below it.
+  for (const p of objectsOf(map.data, 'paper')) if (map.kind(p.x, p.y) === 'wall') busy.add(`${p.x},${p.y + 1}`);
   const tall = (x: number, y: number) => map.inside(x, y) && shapes[y * W + x] === 'tall';
   const spots: Array<{ x: number; y: number }> = [];
   for (let y = 0; y < map.height; y++) for (let x = 0; x < W; x++) {
@@ -88,6 +92,21 @@ export function doorways(map: TileMap): Array<{ x: number; y: number; dir: Dir }
   const out: Array<{ x: number; y: number; dir: Dir }> = [];
   for (const e of map.data.exits) for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) out.push({ x, y, dir: e.dir });
   return out;
+}
+
+/**
+ * The curtains of a room whose house outside has them drawn (its people left): their color, the same
+ * as from the street, or null. `peek` finds the map the room's door opens onto.
+ */
+export function roomCurtains(room: MapData, peek: (id: string) => MapData | undefined): string | null {
+  const out = room.exits[0];
+  const outside = out && peek(out.to);
+  const house = outside?.objects.find((o): o is Extract<MapObject, { kind: 'house' }> => {
+    if (o.kind !== 'house') return false;
+    const d = doorOf(o);
+    return d.x === out.tx && d.y === out.ty - 1;
+  });
+  return house?.curtains ? curtainColor(house) : null;
 }
 
 /**
@@ -122,12 +141,21 @@ export interface RoomTone {
   cut: THREE.Color;
   /** One of NAPO's rooms: slabs instead of boards, courses of block instead of logs. */
   concrete?: boolean;
+  /** The mill's floor: walls of sawn boards instead of logs. */
+  boards?: boolean;
 }
 
-/** A room's colors; `napo`: the inside of one of NAPO's buildings, concrete, warm grey by a fire. */
-export function roomTone(warm: boolean, napo = false): RoomTone {
+/**
+ * A room's colors, by its style: a cabin's (warm and honey-toned by a fire, grey and weathered in an
+ * empty house), NAPO's (true or 'napo': concrete, warm grey by a fire) or the mill's (dusty boards,
+ * dark: nothing has burned there since it closed).
+ */
+export function roomTone(warm: boolean, style: boolean | 'napo' | 'mill' = false): RoomTone {
   const c = (s: string) => new THREE.Color(s);
-  if (napo) {
+  if (style === 'mill') {
+    return { plank: c('#6a5d4d'), gap: c('#221b15'), log: c('#584c40'), seam: c('#211b16'), rim: c('#3b3229'), top: c('#15120f'), cut: c('#15120f'), boards: true };
+  }
+  if (style) {
     return warm
       ? { plank: c('#77716a'), gap: c('#34302c'), log: c('#7d786f'), seam: c('#3b3733'), rim: c('#55514b'), top: c('#1f1d1b'), cut: c('#1f1d1b'), concrete: true }
       : { plank: c('#5d6163'), gap: c('#232627'), log: c('#666a6d'), seam: c('#2a2d2f'), rim: c('#43474a'), top: c('#17191a'), cut: c('#17191a'), concrete: true };
@@ -182,6 +210,15 @@ export function floorTile(quad: QuadFn, x: number, y: number, tone: RoomTone, h 
  * Each band is [bottom, top, color at the bottom, color at the top].
  */
 function logBands(h: number, tone: RoomTone): Array<[number, number, THREE.Color, THREE.Color]> {
+  if (tone.boards) {
+    // Sawn boards, each a little different, a dark line between them.
+    const n = Math.max(1, Math.round(h / 0.24)), bh = h / n, seam = 0.02, out: Array<[number, number, THREE.Color, THREE.Color]> = [];
+    for (let i = 0; i < n; i++) {
+      const y0 = i * bh, board = tone.log.clone().offsetHSL(0, 0, (hash2(i, 7) - 0.5) * 0.05);
+      out.push([y0, y0 + seam, tone.seam, tone.seam], [y0 + seam, y0 + bh, board.clone().multiplyScalar(0.92), board]);
+    }
+    return out;
+  }
   if (tone.concrete) {
     const n = Math.max(1, Math.round(h / 0.4)), ch = h / n, seam = 0.025;
     const out: Array<[number, number, THREE.Color, THREE.Color]> = [];
@@ -243,15 +280,20 @@ export function wallTile(quad: QuadFn, map: TileMap, shapes: readonly WallShape[
 /**
  * A window in the back wall at tile x,y (its face is the tile's south side): a frame, a pane that
  * glows with the light outside (`pane`, which the weather changes) and a cross of bars. In an empty
- * house it is boarded up, as it is from the street.
+ * house it is boarded up, as it is from the street; in a house whose people left, `curtains` (their
+ * color) are drawn across it, as they are from the street.
  */
-export function windowModel(x: number, y: number, pane: THREE.Material, boarded: boolean): THREE.Group {
+export function windowModel(x: number, y: number, pane: THREE.Material, boarded: boolean, curtains: string | null = null): THREE.Group {
   const g = pivot(x + 0.5, WINDOW_Y, y + 1);
   const wood = boarded ? '#3a3029' : '#3b2a1e';
   g.add(box(0.8, 0.74, 0.05, wood, 0, 0, 0.025, 0.018));
   g.add(part(new THREE.BoxGeometry(0.66, 0.6, 0.02), pane, 0, 0, 0.055, false));
   g.add(box(0.045, 0.6, 0.03, wood, 0, 0, 0.07, false), box(0.66, 0.045, 0.03, wood, 0, 0.03, 0.07, false));
   g.add(box(0.9, 0.06, 0.14, wood, 0, -0.4, 0.07, 0.015));
+  if (curtains) {
+    curtainPanels(g, curtains, 0, 0, 0.09, 0.7, 0.62);
+    return g;
+  }
   if (boarded) {
     for (const [dy, r] of [[0.12, 0.3], [-0.14, -0.24]] as const) {
       const p = box(0.86, 0.1, 0.03, '#5d4c3b', 0, dy, 0.1, false);
@@ -347,11 +389,115 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
       return g;
     }
     case 'table': {
-      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
-      g.add(box(0.86, 0.07, 0.72, '#6b4a31', 0, 0.57, 0));
-      for (const [lx, lz] of [[-0.36, -0.29], [0.36, -0.29], [-0.36, 0.29], [0.36, 0.29]] as const) g.add(box(0.07, 0.54, 0.07, '#4a3223', lx, 0.27, lz, false));
+      const g = tableModel(o.x, o.y);
       g.add(part(flat(new THREE.CylinderGeometry(0.06, 0.055, 0.12, 8)), '#c9c1b0', 0.2, 0.665, 0.1, 0.012));
       g.add(box(0.22, 0.035, 0.28, v > 0.5 ? '#7b2f2a' : '#35505c', -0.16, 0.62, -0.06, 0.01));
+      return g;
+    }
+    case 'paper': return paperModel(o, v);
+    case 'sheeted': {
+      // Under a dust sheet: an armchair, a chest of drawers against the wall, or a table with chairs pushed in.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = againstWall(map, o.x, o.y);
+      const sheet = '#d8d3c6', fold = '#bfb9ab', hem = '#c9c3b5';
+      if (v < 0.4) {
+        g.add(box(0.72, 0.42, 0.6, sheet, 0, 0.21, 0.02), box(0.74, 0.46, 0.2, sheet, 0, 0.64, -0.22));
+        for (const s of [-1, 1]) g.add(box(0.15, 0.2, 0.62, sheet, s * 0.31, 0.5, 0.02));
+        for (const x of [-0.15, 0.12]) g.add(box(0.03, 0.36, 0.012, fold, x, 0.2, 0.33, false));
+      } else if (v < 0.7) {
+        g.add(box(0.84, 0.94, 0.46, sheet, 0, 0.47, -0.2), box(0.88, 0.05, 0.5, fold, 0, 0.955, -0.2, false));
+        for (const x of [-0.25, 0.05, 0.3]) g.add(box(0.03, 0.9, 0.012, fold, x, 0.45, 0.034, false));
+      } else {
+        g.add(box(0.8, 0.52, 0.68, sheet, 0, 0.26, 0));
+        g.add(box(0.26, 0.28, 0.24, sheet, -0.22, 0.66, -0.12), box(0.3, 0.2, 0.26, hem, 0.2, 0.62, 0.1));
+        for (const x of [-0.34, 0.34]) g.add(box(0.05, 0.08, 0.05, '#4a3223', x, 0.04, 0.3, false));
+      }
+      if (v < 0.4 || v >= 0.7) g.add(box(0.8, 0.05, 0.66, hem, 0, 0.025, v < 0.4 ? 0.02 : 0, false));
+      else g.add(box(0.88, 0.05, 0.52, hem, 0, 0.025, -0.2, false));
+      return g;
+    }
+    case 'crib': {
+      // A baby's crib, light wood and slats, a folded blanket and a knitted animal left in it.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      const wood = '#c9a26e';
+      g.add(box(0.86, 0.06, 0.52, wood, 0, 0.32, 0), box(0.8, 0.08, 0.46, '#e8e2d6', 0, 0.39, 0, false));
+      for (const [x, z] of [[-0.42, -0.25], [0.42, -0.25], [-0.42, 0.25], [0.42, 0.25]] as const) g.add(box(0.05, 0.86, 0.05, wood, x, 0.43, z, 0.012));
+      for (const z of [-0.25, 0.25]) {
+        g.add(box(0.88, 0.04, 0.04, wood, 0, 0.84, z, false));
+        for (let i = 1; i < 8; i++) g.add(box(0.022, 0.46, 0.022, wood, -0.42 + i * 0.105, 0.6, z, false));
+      }
+      for (const x of [-0.42, 0.42]) g.add(box(0.03, 0.5, 0.5, wood, x, 0.6, 0, false));
+      g.add(box(0.36, 0.05, 0.28, '#b9c9d6', 0.14, 0.455, 0.02, false), box(0.1, 0.08, 0.08, '#c98a6a', -0.2, 0.47, -0.06, 0.01));
+      return g;
+    }
+    case 'clock': {
+      // A tall clock against the wall, stopped: its hands at ten past four, its pendulum hanging still.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = againstWall(map, o.x, o.y);
+      const wood = '#4a2f1f', dark = '#3a2418', brass = '#b8943e';
+      g.add(box(0.5, 0.12, 0.36, dark, 0, 0.06, -0.28), box(0.42, 1.5, 0.3, wood, 0, 0.87, -0.28));
+      g.add(box(0.5, 0.38, 0.34, wood, 0, 1.8, -0.28), box(0.54, 0.07, 0.37, dark, 0, 2.02, -0.28));
+      g.add(part(new THREE.CylinderGeometry(0.15, 0.15, 0.02, 14).rotateX(Math.PI / 2), '#e8e0c8', 0, 1.8, -0.1, false));
+      for (const [len, turn] of [[0.08, -2.2], [0.12, -1.05]] as const) {
+        const hand = box(0.014, len, 0.008, '#141210', Math.sin(-turn) * len / 2, 1.8 + Math.cos(turn) * len / 2, -0.085, false);
+        hand.rotation.z = turn;
+        g.add(hand);
+      }
+      g.add(box(0.26, 0.9, 0.012, '#1c1f24', 0, 0.85, -0.124, false), box(0.012, 0.5, 0.008, brass, 0, 1.0, -0.115, false));
+      g.add(part(new THREE.CylinderGeometry(0.06, 0.06, 0.012, 10).rotateX(Math.PI / 2), brass, 0, 0.72, -0.112, false));
+      return g;
+    }
+    case 'saw': {
+      // The head saw against the back wall: its frame, the two big wheels one over the other, the band
+      // between them on the carriage's side, and the belts up to the line shaft that drove it all.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      const iron = '#3d4448', wheel = '#566067', belt = '#3b2a1e';
+      g.add(box(0.3, 2.25, 0.3, iron, 0, 1.12, -0.3), box(0.9, 0.16, 0.5, iron, 0, 0.08, -0.14));
+      for (const y of [0.5, 1.72]) {
+        g.add(part(flat(new THREE.CylinderGeometry(0.42, 0.42, 0.09, 16).rotateX(Math.PI / 2)), wheel, 0, y, -0.06, 0.018));
+        g.add(part(new THREE.CylinderGeometry(0.1, 0.1, 0.1, 8).rotateX(Math.PI / 2), '#2a2f33', 0, y, -0.02, false));
+        for (let k = 0; k < 4; k++) {
+          const spoke = box(0.035, 0.7, 0.02, '#4a5359', 0, y, -0.005, false);
+          spoke.rotation.z = (k / 4) * Math.PI;
+          g.add(spoke);
+        }
+      }
+      g.add(box(0.045, 1.22, 0.012, '#c8ccd0', 0.41, 1.11, 0.0, false), box(0.12, 0.3, 0.12, iron, 0.41, 0.66, 0.04, 0.012));
+      // The line shaft along the wall above, its pulleys, and the belt down to the lower wheel.
+      g.add(part(flat(new THREE.CylinderGeometry(0.035, 0.035, 3.4, 6).rotateZ(Math.PI / 2)), '#5a6268', 0, 2.2, -0.38, false));
+      for (const x of [-1.3, -0.25, 1.2]) g.add(part(flat(new THREE.CylinderGeometry(0.14, 0.14, 0.08, 10).rotateZ(Math.PI / 2)), '#4a4038', x, 2.2, -0.38, 0.012));
+      for (const dz of [-0.02, 0.05]) {
+        const strand = box(0.07, 1.72, 0.012, belt, -0.25, 1.35, -0.26 + dz, false);
+        strand.rotation.x = 0.13;
+        g.add(strand);
+      }
+      return g;
+    }
+    case 'carriage': {
+      // The carriage on its rails, east to west in front of the saw, the last log still dogged on it,
+      // cut down one side where the saw had started on it.
+      const g = pivot(o.x, 0, o.y + 0.5);
+      const iron = '#3d4448', steel = '#7d858a';
+      for (let t = 0.3; t < o.w; t += 0.6) g.add(box(0.1, 0.03, 0.72, '#4a3a2c', t, 0.015, 0, false));
+      for (const z of [-0.26, 0.26]) g.add(box(o.w - 0.1, 0.05, 0.05, steel, o.w / 2, 0.05, z, false));
+      const car = o.w / 2 + 0.4;
+      g.add(box(2.0, 0.18, 0.66, iron, car, 0.2, 0));
+      for (const x of [car - 0.8, car + 0.8]) for (const z of [-0.26, 0.26]) g.add(part(new THREE.CylinderGeometry(0.09, 0.09, 0.05, 8).rotateX(Math.PI / 2), '#2a2f33', x, 0.1, z, false));
+      for (const x of [car - 0.7, car, car + 0.7]) g.add(box(0.14, 0.46, 0.14, iron, x, 0.52, -0.24, 0.012), box(0.08, 0.06, 0.1, steel, x, 0.72, -0.12, false));
+      const bark = '#5b4130', r = 0.28, len = 2.3, lz = 0.04;
+      g.add(part(flat(new THREE.CylinderGeometry(r, r, len, 8).rotateZ(Math.PI / 2)), bark, car, 0.58, lz, 0.014));
+      for (const s of [-1, 1]) {
+        g.add(part(new THREE.CylinderGeometry(r * 0.86, r * 0.86, 0.012, 8).rotateZ(Math.PI / 2), GRAIN, car + s * (len / 2 + 0.004), 0.58, lz, false));
+        g.add(part(new THREE.CylinderGeometry(r * 0.3, r * 0.3, 0.014, 6).rotateZ(Math.PI / 2), HEART, car + s * (len / 2 + 0.007), 0.58, lz, false));
+      }
+      g.add(box(len * 0.7, 0.34, 0.012, GRAIN, car + len * 0.12, 0.58, lz - r * 0.72, false));
+      return g;
+    }
+    case 'sawdust': {
+      // A drift of sawdust where it fell and nobody swept.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.add(part(flat(new THREE.ConeGeometry(0.34, 0.1, 7)), '#c9a86a', (v - 0.5) * 0.2, 0.05, 0, false));
+      for (let k = 0; k < 4; k++) g.add(box(0.07, 0.01, 0.05, '#b8965c', Math.cos(k * 1.7 + v) * 0.36, 0.005, Math.sin(k * 1.7 + v) * 0.3, false));
       return g;
     }
     case 'shelf': {
@@ -470,9 +616,57 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
   }
 }
 
+/** A table on tile x,y: its top and legs, nothing on it yet. */
+function tableModel(x: number, y: number): THREE.Group {
+  const g = pivot(x + 0.5, 0, y + 0.5);
+  g.add(box(0.86, 0.07, 0.72, '#6b4a31', 0, 0.57, 0));
+  for (const [lx, lz] of [[-0.36, -0.29], [0.36, -0.29], [-0.36, 0.29], [0.36, 0.29]] as const) g.add(box(0.07, 0.54, 0.07, '#4a3223', lx, 0.27, lz, false));
+  return g;
+}
+
+/**
+ * Something left to read: a note or a list lying on a table (a pen by the note, the list lined and
+ * crossed out), or on the wall over the floor it is read from, a calendar (a picture above, the
+ * month below with its red circle) or a child's crayon drawing pinned up at a child's height.
+ */
+function paperModel(o: Extract<MapObject, { kind: 'paper' }>, v: number): THREE.Group {
+  if (o.look === 'note' || o.look === 'list') {
+    const g = tableModel(o.x, o.y), long = o.look === 'list';
+    const sheet = pivot(0.02, 0.608, 0.02);
+    sheet.rotation.y = (v - 0.5) * 0.7;
+    sheet.add(box(long ? 0.2 : 0.24, 0.006, long ? 0.34 : 0.18, '#ece6d4', 0, 0, 0, false));
+    for (let k = 0; k < (long ? 7 : 3); k++) sheet.add(box(long ? 0.13 : 0.17, 0.004, 0.012, '#6a6a78', -0.01, 0.004, (long ? -0.13 : -0.05) + k * 0.042, false));
+    if (long) sheet.add(box(0.15, 0.005, 0.01, '#8a2a24', 0, 0.006, 0.08, false));
+    g.add(sheet);
+    g.add(box(0.14, 0.014, 0.014, '#1f2a4a', -0.24, 0.614, 0.14, false).rotateY(0.6));
+    if (!long) g.add(part(flat(new THREE.CylinderGeometry(0.05, 0.045, 0.1, 8)), '#c9c1b0', 0.26, 0.655, -0.16, 0.012));
+    return g;
+  }
+  // On the wall: its face is the wall tile's south side, over the floor below.
+  const g = pivot(o.x + 0.5, 0, o.y + 1);
+  if (o.look === 'calendar') {
+    g.add(box(0.36, 0.5, 0.012, '#ece6d4', 0, 1.38, 0.012, 0.008), box(0.3, 0.2, 0.006, '#4f6b4a', 0, 1.51, 0.02, false));
+    g.add(box(0.3, 0.06, 0.006, '#6d8a5a', 0, 1.44, 0.021, false));
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 5; c++) g.add(box(0.04, 0.03, 0.004, '#9a958a', -0.12 + c * 0.06, 1.34 - r * 0.05, 0.02, false));
+    g.add(part(new THREE.TorusGeometry(0.03, 0.006, 4, 10), '#b33a2a', -0.06, 1.29, 0.024, false));
+    g.add(box(0.02, 0.02, 0.02, '#3a3a3c', 0, 1.64, 0.02, false));
+  } else {
+    const sheet = pivot(0, 1.02, 0.012);
+    sheet.rotation.z = (v - 0.5) * 0.25;
+    sheet.add(box(0.42, 0.32, 0.006, '#efe8d6', 0, 0, 0, 0.006));
+    for (const [x, h] of [[-0.14, 0.14], [-0.04, 0.18], [0.1, 0.12], [0.16, 0.16]] as const) {
+      sheet.add(box(0.05, h, 0.004, '#1c1a18', x, -0.1 + h / 2, 0.006, false));
+    }
+    for (const [x, y] of [[-0.09, 0.02], [0.03, 0.07], [0.13, -0.01], [-0.02, -0.06]] as const) sheet.add(box(0.05, 0.05, 0.004, '#3fbf78', x, y, 0.008, false));
+    sheet.add(box(0.3, 0.02, 0.004, '#2f4a8a', 0, 0.13, 0.008, false), box(0.025, 0.025, 0.014, '#b33a2a', 0, 0.15, 0.01, false));
+    g.add(sheet);
+  }
+  return g;
+}
+
 /** Soft dark ellipses under furniture (and a fireplace), so it stands on the floor: [x, z, radius x, radius z]. */
 export function furnitureShadows(map: TileMap): Array<[number, number, number, number]> {
-  const out: Array<[number, number, number, number]> = [];
+  const out: Array<[number, number, number, number]> = [], inside = map.data.kind === 'inside';
   for (const o of map.data.objects) {
     if (o.kind === 'bed') out.push([o.x + 0.5, o.y + 1, 0.5, 1.0]);
     else if (o.kind === 'table') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.44]);
@@ -482,6 +676,13 @@ export function furnitureShadows(map: TileMap): Array<[number, number, number, n
     else if (o.kind === 'workbench') out.push([o.x + 0.5, o.y + 0.42, 0.52, 0.36]);
     else if (o.kind === 'console' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.36, 0.52, 0.32]);
     else if (o.kind === 'shelf' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.28, 0.52, 0.26]);
+    else if (o.kind === 'paper' && map.kind(o.x, o.y) !== 'wall') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.44]);
+    else if (o.kind === 'sheeted' || o.kind === 'crib') out.push([o.x + 0.5, o.y + 0.5, 0.46, 0.4]);
+    else if (o.kind === 'clock' || o.kind === 'saw') out.push([o.x + 0.5, o.y + 0.25, 0.36, 0.26]);
+    else if (o.kind === 'carriage') out.push([o.x + o.w / 2 + 0.4, o.y + 0.5, 1.2, 0.42]);
+    // Boxes and logs also stand out of doors, where they go without: a shadow there would cost a draw call of its own.
+    else if (inside && (o.kind === 'boxes' || o.kind === 'luggage')) out.push([o.x + 0.5, o.y + 0.5, 0.46, 0.4]);
+    else if (inside && o.kind === 'logs') out.push([o.x + o.w / 2, o.y + o.h / 2, o.w / 2 + 0.05, o.h / 2 + 0.05]);
     else if (o.kind === 'woodpile') {
       // Long along its wall, and drawn a little toward it, where the stack is.
       const turn = againstWall(map, o.x, o.y), along = turn === 0;

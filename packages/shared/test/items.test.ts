@@ -236,9 +236,10 @@ describe('a crate for whoever comes next', () => {
     const coat: ItemDef = { id: 'coat', name: 'Coat', kind: 'gear', stack: 1, slot: 'shirt', text: 'Warm.' };
     const chart: ItemDef = { id: 'woods-map', name: 'Map of the woods', kind: 'tool', stack: 1, text: 'Folded.' };
     const pebble: ItemDef = { id: 'pebble', name: 'Warm pebble', kind: 'charm', stack: 1, text: 'Warm.', charm: { wetting: 0.6 } };
+    const lockbox: ItemDef = { id: 'lockbox', name: 'NAPO lockbox', kind: 'sealed', stack: 1, text: 'Locked.', holds: [{ weight: 1, items: [{ item: 'glowcap', count: 2 }] }] };
     expect([glowcap, thermos, pebble].map(cacheTakes)).toEqual([true, true, true]);
-    // A piece of gear carries its own condition and quirk, and a tool is yours for good.
-    expect([coat, chart, undefined].map(cacheTakes)).toEqual([false, false, false]);
+    // A piece of gear carries its own condition and quirk, a tool is yours for good, and a lockbox is opened at the chest.
+    expect([coat, chart, lockbox, undefined].map(cacheTakes)).toEqual([false, false, false, false]);
     expect([CACHE_SIZE, CACHE_NEAR]).toEqual([6, 3]);
   });
 });

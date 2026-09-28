@@ -89,7 +89,8 @@ describe('a crate for whoever comes next', () => {
 
     a.c.send({ t: 'cacheTake', ...HUT, id: seen.items[0]!.id });
     expect(await a.c.next('did')).toEqual({ t: 'did', did: { kind: 'took', item: 'resin', name: b.welcome.name, thanked: true } });
-    expect(world().get(a.id)!.bag).toEqual([{ item: 'coat', count: 1 }, { item: 'resin', count: 2 }]);
+    // The coat carried is a piece of gear, with its piece (gear on the road): it stays in the bag as it was.
+    expect(world().get(a.id)!.bag).toEqual([{ item: 'coat', count: 1, piece: { cond: 1 } }, { item: 'resin', count: 2 }]);
     // Whoever left it is thanked, for what they left where; out in a shelter off the woods, it warms them.
     expect(await b.c.next('thanked')).toEqual({ t: 'thanked', name: a.welcome.name, what: { kind: 'cache', map: 'hut', ...HUT, item: 'resin' }, energy: 3 });
     // Everyone visiting sees it go.

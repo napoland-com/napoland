@@ -42,7 +42,7 @@ describe('what thanks say', () => {
 
   it('names what you left in a crate, and the crate by what people call it', () => {
     expect(thanksFor({ kind: 'cache', map: 'near-woods-old-cabin', x: 2, y: 1, item: 'resin' }, find, items)).toBe('the resin you left in the old cabin\'s crate');
-    expect(thanksFor({ kind: 'cache', map: 'south-road', x: 23, y: 21, item: 'glowcap' }, find, items)).toBe('the glowcap you left in the crate at the leavers\' camp');
+    expect(thanksFor({ kind: 'cache', map: 'south-road', x: 19, y: 19, item: 'glowcap' }, find, items)).toBe('the glowcap you left in the crate at the leavers\' camp');
     expect(letterLines([{ what: { kind: 'cache', map: 'south-road-bunker', x: 1, y: 3, item: 'thermos' }, count: 1, people: 1, names: ['Ana'] }], find, items))
       .toEqual(['While you were away, Ana thanked you for the thermos you left in the bunker\'s crate.']);
   });

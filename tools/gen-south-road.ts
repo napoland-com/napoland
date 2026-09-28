@@ -214,16 +214,17 @@ function stepsHome(): Int32Array {
   return d;
 }
 const reached = (d: Int32Array) => d.reduce((n, v) => n + (v >= 0 ? 1 : 0), 0);
-/** Places a one-tile object unless it would cut somebody off: every other tile must stay reachable. */
+/** Places an object unless it would cut somebody off: every tile it does not cover must stay reachable. */
 function tryPlace(o: MapObject): boolean {
-  const { x, y } = o;
-  if (!inner(x, y) || blocked[y * W + x]) return false;
+  const tiles = objectTiles(o);
+  if (tiles.some(([x, y]) => !inner(x, y) || blocked[y * W + x])) return false;
   const d = stepsHome();
-  if (d[y * W + x]! >= 0) {
+  const covered = tiles.filter(([x, y]) => d[y * W + x]! >= 0).length;
+  if (covered) {
     const before = reached(d);
-    blocked[y * W + x] = 1;
-    const cut = reached(stepsHome()) !== before - 1;
-    blocked[y * W + x] = 0;
+    for (const [x, y] of tiles) blocked[y * W + x] = 1;
+    const cut = reached(stepsHome()) !== before - covered;
+    for (const [x, y] of tiles) blocked[y * W + x] = 0;
     if (cut) return false;
   }
   place(o);
@@ -367,10 +368,6 @@ for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
   else if (edge && hash(x, y, 143) < 0.035) tryPlace({ kind: 'rock', x, y, s: round(0.55 + hash(x, y, 144) * 0.45), v: round(hash(x, y, 145)) });
 }
 
-// A crate for whoever comes next (caches.ts), by the camp's fire, where the trail comes in. Placed last:
-// every choice above hashes the tile or checks its neighbors, so anything placed earlier could move them.
-must({ kind: 'cache', x: CAMP[0] + 1, y: CAMP[1] - 1, name: 'the crate at the leavers\' camp' });
-
 // The places worth walking to. Each must be reachable, or the clean-up below would quietly turn it
 // back into forest.
 const PLACES: Array<[string, P]> = [
@@ -393,19 +390,100 @@ const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES
   for (let i = objects.length - 1; i >= 0; i--) { const o = objects[i]!; if (o.kind === 'shrooms' && at(o.x, o.y) === 't') objects.splice(i, 1); }
 }
 
+// ---- What the leavers and NAPO left (roadmap/richer-places.md) ----
+
+// Added last, so nothing that was here moves: the road, the buildings, the poles, the lamps, the fire,
+// the signs and the named places stay where they were, and every tile anyone could walk on stays
+// walkable and just as far from home (the checks below stop the script otherwise). What blocks
+// stands on forest it clears; new ground is a dead end off the road, so it makes no shortcut.
+const beforeTiles = tile.map(r => r.join('')), beforeSteps = stepsHome();
+/** Cuts one tile of new ground out of the forest, or stops: it would change ground that was there. */
+function clear(x: number, y: number, c: 'g' | 'm' | 'l') {
+  if (at(x, y) !== 't' || !inner(x, y)) throw new Error(`new ground at ${x},${y} is not forest`);
+  set(x, y, c);
+}
+/** Places something on forest it clears, or stops. */
+function onForest(o: MapObject, c: 'g' | 'm' | 'l' = 'g') {
+  for (const [x, y] of objectTiles(o)) clear(x, y, c);
+  must(o);
+}
+
+// The jam: where the line of leavers stopped and never moved again. Their cars stand nose to tail at the
+// edge of the firs on both sides of the road, beside the three on the pull-offs, some with a door open
+// or the trunk up, and between them what was unloaded and left. The road itself stays clear.
+const JAM: Array<{ x: number; y: number; paint: string; door?: boolean; trunk?: boolean }> = [
+  { x: 38, y: 21, paint: '#8a3b32', door: true },
+  { x: 33, y: 24, paint: '#c2b38f' },
+  { x: 38, y: 24, paint: '#3f5a73', trunk: true },
+  { x: 38, y: 26, paint: '#6e5a44' },
+  { x: 33, y: 30, paint: '#4f6b4a', door: true },
+  { x: 38, y: 33, paint: '#7d7f82' },
+  { x: 33, y: 36, paint: '#9a7a3a', door: true },
+  { x: 38, y: 36, paint: '#2f3b45' },
+];
+for (const c of JAM) onForest({ kind: 'car', x: c.x, y: c.y, w: 1, h: 2, dir: 'down', paint: c.paint, ...(c.door && { door: true }), ...(c.trunk && { trunk: true }) });
+for (const [x, y] of [[38, 23], [33, 26], [33, 32], [38, 35], [32, 30]] as const) onForest({ kind: 'luggage', x, y });
+
+// NAPO's motor pool, across the road from the research station: a fenced gravel lot of its box trucks,
+// parked in a row, and the pump they filled up at, reached by a short track off the road.
+const POOL = { x0: 40, y0: 35, x1: 48, y1: 41 };
+for (let y = POOL.y0; y <= POOL.y1; y++) for (let x = POOL.x0; x <= POOL.x1; x++) clear(x, y, 'l');
+for (const [x, y] of [[38, 39], [39, 39]] as const) clear(x, y, 'm');
+for (let x = POOL.x0; x <= POOL.x1; x++) for (const y of [POOL.y0, POOL.y1]) must({ kind: 'fence', x, y, dir: 'h' });
+for (let y = POOL.y0 + 1; y < POOL.y1; y++) {
+  if (y !== 39) must({ kind: 'fence', x: POOL.x0, y, dir: 'v' });
+  must({ kind: 'fence', x: POOL.x1, y, dir: 'v' });
+}
+for (const x of [42, 44, 46]) must({ kind: 'truck', x, y: 36, w: 1, h: 3, dir: 'down', style: 'napo' });
+must({ kind: 'pump', x: 42, y: 40 });
+for (const [x, y] of [[46, 40], [47, 40]] as const) must({ kind: 'barrel', x, y });
+must({ kind: 'crate', x: 47, y: 36 });
+onForest({ kind: 'sign', x: 38, y: 38, style: 'napo', text: ['NAPO · Motor pool', 'Vehicles sign out at the front desk. Fuel for NAPO use only.'] });
+
+// The field site's sample cages, in a row along its north edge: steel mesh around the rocks NAPO
+// carried here from deep in the woods to listen to, each with its tag.
+const CAGES: Array<[number, string[]]> = [
+  [49, ['NAPO · Sample 3 · the ring of stones, Near Woods.', 'Keep caged. Log the hum at every pulse.']],
+  [50, ['NAPO · Sample 7 · deep in the Near Woods.', 'Keep caged. Log the hum at every pulse.']],
+  [51, ['NAPO · Sample 9 · the ring of stones, Near Woods.', 'Keep caged. Do not carry past the checkpoint.']],
+  [52, ['NAPO · Sample 12. No place written.', 'Keep caged.']],
+];
+for (const [x, text] of CAGES) onForest({ kind: 'cage', x, y: 66, text }, 'l');
+
+// The checks: only forest changed, every tile anyone could walk on is still walkable and as far from
+// home as it was, and the new ground is reached from the road.
+{
+  const d = stepsHome();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, was = beforeTiles[y]![x]!;
+    if (was !== 't' && tile[y]![x] !== was) throw new Error(`the tile at ${x},${y} was ${was} and is now ${tile[y]![x]}: only forest may change`);
+    if (beforeSteps[i]! >= 0 && d[i] !== beforeSteps[i]) throw new Error(`the tile at ${x},${y} was ${beforeSteps[i]} steps from home and is now ${d[i]}`);
+    if (was === 't' && tile[y]![x] !== 't' && walkable(x, y) && d[i]! < 0) throw new Error(`new ground at ${x},${y} cannot be reached`);
+  }
+}
+
+// A crate for whoever comes next (caches.ts), at the edge of the leavers' camp, three steps from its fire.
+// Placed after everything else, what the leavers and NAPO left included: every choice above hashes the
+// tile or checks what stands around it, so anything placed earlier could move them. And like those, it
+// stands on forest it clears, so every tile anyone could walk on stays walkable and as far from home:
+// the one forest tile this near the fire with open ground in front of it, where you open it from.
+onForest({ kind: 'cache', x: CAMP[0] - 3, y: CAMP[1] - 3, name: 'the crate at the leavers\' camp' });
+
 // ---- Output ----
 
 const map: MapData = {
-  id: 'south-road', name: 'The South Road', version: 2, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'south-road', name: 'The South Road', version: 3, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 35, y: 2, dir: 'down' },
   exits: [EXIT, ...doors],
   objects,
-  // What the paper map names, besides NAPO's buildings and the way home.
+  // What the paper map names, besides NAPO's buildings and the way home. The newer names come after,
+  // so the paper map writes the older ones where it always did.
   places: [
     { name: 'the leavers\' camp', x: CAMP[0], y: CAMP[1] }, { name: 'the Tower', x: 51, y: 47 }, { name: 'the sinks', x: 15, y: 64 },
     { name: 'field site', x: 51, y: 71 }, { name: 'quarantine line', x: 35, y: 88 },
+    { name: 'the jam', x: 35, y: 30 }, { name: 'the motor pool', x: 44, y: 38 },
   ],
 };
 
@@ -429,11 +507,16 @@ writeFileSync(out, json);
 
 // A glance at the result, two map rows per line because a terminal character is about twice as tall
 // as it is wide. Of the two tiles in a character, the one listed first in ORDER wins.
-const ORDER = '*A!HFC@kvibBnLc-T^o~=",_. ';
+const ORDER = '*A!HFCK@kvibBnLc#-T^o~=",_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', antenna: 'A', sign: '!', board: '!', console: 'k', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b',
   fence: '-', tree: 'T', rock: 'o', shrooms: ',', fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_', woodpile: 'b', cache: 'c',
+  // What the leavers left at the jam, and NAPO in its motor pool and at the field site.
+  luggage: 'b', truck: 'K', pump: 'i', cage: '#',
+  // The rest stands in town, in the Near Woods and in the rooms.
+  jeep: 'C', logs: '#', stump: 'o', skid: '_', stake: '!', boxes: 'c', rocker: 'n', piano: 'n', bike: 'n', birdcage: 'n',
+  hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '_' };
 const objGlyph = new Map<number, string>();
@@ -447,7 +530,7 @@ const frame = '+' + '-'.repeat(W) + '+';
 const rows = [frame];
 for (let y = 0; y < H; y += 2) rows.push('|' + Array.from({ length: W }, (_, x) => pick(glyph(x, y), glyph(x, y + 1))).join('') + '|');
 console.log([...rows, frame].join('\n'));
-console.log(' . ground  _ gravel  " ferns  = road  ~ water  ^ ridge  * floodlight  A mast  ! sign  H NAPO building  F fire  C car  i pole  - fence  b barrel  c crate  o rock  T fir  , shrooms  v way home');
+console.log(' . ground  _ gravel  " ferns  = road  ~ water  ^ ridge  * floodlight  A mast  ! sign  H NAPO building  F fire  C car  K truck  i pole or pump  - fence  b barrel or luggage  c crate  # sample cage  o rock  T fir  , shrooms  v way home');
 
 // How deep it goes, measured like the game does (TileMap.homeSteps drives the energy drain).
 const tm = new TileMap(map);

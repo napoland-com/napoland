@@ -123,7 +123,7 @@ export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 
 /** What else a welcome can carry: finds and piles on the map, your bag, the server's items version, and the rest of the scene. */
 export interface Extras {
-  finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; items?: number;
+  finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; stash?: BagSlot[]; items?: number;
   fires?: FireView[]; marks?: MarkView[]; creatures?: CreatureView[]; flares?: FlareView[]; flashes?: FlashView[]; surge?: SurgeView | null; storm?: StormView | null; body?: BodyView; stone?: StoneView;
   progress?: ProgressView; tools?: string[]; story?: StoryView; conditions?: ConditionsView;
   /** Whom you thanked today (UTC), by id. */
@@ -138,7 +138,7 @@ export const START: ProgressView = { xp: 0, level: 1, from: 0, to: 30, maxEnergy
 export function welcome(map: MapData, players: PlayerView[], energy: EnergyView = FULL, extras: Extras = {}): Extract<ServerMsg, { t: 'welcome' }> {
   return {
     t: 'welcome', v: PROTOCOL_VERSION, you: 'me', name: 'Aldo', token: 'x'.repeat(20), guest: false, map: ref(map), players, stepMs: STEP_MS, weather: 'rain', energy, serverTime: 0,
-    finds: extras.finds ?? [], drops: extras.drops ?? [], bag: extras.bag ?? [], items: extras.items ?? ITEMS.version,
+    finds: extras.finds ?? [], drops: extras.drops ?? [], bag: extras.bag ?? [], stash: extras.stash ?? [], items: extras.items ?? ITEMS.version,
     fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], flashes: extras.flashes ?? [], surge: extras.surge ?? null, storm: extras.storm ?? null,
     body: extras.body ?? DRY, stone: extras.stone ?? ASLEEP, stats: {}, progress: extras.progress ?? START, tools: extras.tools ?? [],
     // A game made without a story has none (version 0).

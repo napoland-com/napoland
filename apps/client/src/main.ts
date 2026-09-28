@@ -10,21 +10,25 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type OAuthProvider, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type OAuthProvider,
+  type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
-import { detailView } from './details';
+import { detailView, type DetailRef } from './details';
 import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
-import { Items, crateView, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, wearText, wornViews } from './items';
+import { crateView } from './crates';
+import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, upgradeOf, upgradeViews, wearText, wornViews } from './items';
 import { journalView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { mapFor, paperMap } from './papermap';
 import { providerButton } from './providers';
 import { Connection, serverUrl } from './net';
+import { parcelNote } from './parcels';
+import { goalText } from './said';
 import { Sound, type SoundSetting } from './sound';
 import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
@@ -33,6 +37,7 @@ import { levelText, newsBanner, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
 import { WorldView, createRenderer, lightningAt } from './view/world';
+import { wardrobeView, type WardrobeState } from './wardrobe';
 import { guardZoom } from './zoom';
 
 // Before anything can be touched: on iPhones two thumbs (the stick and A) would zoom the page.
@@ -99,6 +104,8 @@ const closePanels = () => {
   hud.toggleBag(false); hud.toggleJournal(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleCrate(false); hud.toggleMenu(false); hud.toggleFriends(false); hud.toggleChat(false);
   return open;
 };
+/** What the wardrobe knows: whether you play as a guest, your level and the outfit you wear. */
+const wardrobeNow = (): WardrobeState => ({ guest: game.guest, level: game.progress.level, wearing: game.myOutfit });
 /** The status panel, as the game stands now. */
 const showStatus = () => {
   const now = performance.now();
@@ -138,20 +145,37 @@ const hud = new Hud(screen, {
   // Steps count toward feats without the server telling each one: the panel asks for the counts as they are.
   status: () => { game.askStats(); showStatus(); },
   store: slot => game.store(slot),
-  take: item => game.take(item),
+  take: (item, n) => game.take(item, n),
   stashClosed: () => game.closeChest(),
   equip: (item, n) => game.equip(item, n),
   unequip: slot => game.unequip(slot),
-  // The workbench's rows are recipes, and mending ("mend:" and the slot).
-  craft: recipe => (recipe.startsWith('mend:') ? game.mend(recipe.slice(5) as Slot) : game.craft(recipe)),
+  wear: slot => game.wear(slot),
+  doff: slot => game.doff(slot),
+  open: item => game.openSealed(item),
+  outfit: id => game.wearOutfit(id),
+  // At the workbench, the first goal opens the card of what to make (once the workbench has answered).
+  goal: () => {
+    const next = game.nextGear();
+    if (!next || !game.benchBeside()) return;
+    goalCard = { from: 'recipe', id: next.recipe.id };
+    game.openBench();
+  },
+  // The workbench's rows are recipes, mending ("mend:" and the slot) and upgrades ("up:" and the piece, upgradeId).
+  craft: recipe => {
+    const up = upgradeOf(recipe);
+    if (up) game.upgrade(up);
+    else if (recipe.startsWith('mend:')) game.mend(recipe.slice(5) as Slot);
+    else game.craft(recipe);
+  },
   benchClosed: () => game.closeBench(),
   // Taking out of a crate asks nothing; leaving one asks first (the game does).
   crateTake: id => game.takeFromCache(id),
   crateLeave: slot => game.leaveInCache(slot),
   crateClosed: () => game.closeCache(),
-  // What a tap in the chest, at the workbench or at a crate shows, from what the open one says it holds.
-  details: ref => detailView(ref, {
+  // What a tap in the chest, at the workbench, in the bag or at a crate shows, from what the open chest or workbench says your stash holds, or what the open crate holds.
+  details: (ref, where) => detailView(ref, {
     items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools,
+    panel: where === 'bag' ? 'bag' : where === 'crate' ? 'crate' : 'home', wardrobe: wardrobeNow(),
     ...(game.cache ? { crate: { items: game.cacheItemsNow(performance.now()), left: game.cache.left, took: game.cache.took, me: game.meId ?? '' } } : {}),
   }),
   chat: a => {
@@ -622,6 +646,8 @@ let chestShown: typeof game.chest = null;
 let capacityShown = 0;
 /** The workbench and the gear worn, as their sheets show them. */
 let benchShown: typeof game.bench = null;
+/** The card the first goal asked the workbench to open with, once it has. */
+let goalCard: DetailRef | null = null;
 /** The crate as its sheet shows it, and when that was drawn: how long ago each thing was left moves on. */
 let crateShown: typeof game.cache = null;
 let crateAt = 0;
@@ -631,13 +657,16 @@ let prints: Array<{ map: string; x: number; y: number; dir: Dir; at: number }> =
 /** When the last hum said the region grows restless: one hum for each time it does. */
 let humFor = -Infinity;
 let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: null };
+/** The wardrobe as drawn: a guest's gate, or the outfits of a level, and the one worn. */
+let wardrobeShown = '';
 let toolsShown: string[] | null = null;
 let progressShown: typeof game.progress | null = null;
 let storyShown = -1;
 /**
- * Chapters and feats' ranks reached and not announced yet. Each waits until it can be read: for what
- * is being said (a chapter reached by talking to someone), the panel that is open (the stash you put
- * things in, the workbench you mend at), the fade and the banner already up.
+ * Chapters, feats' ranks and levels reached and not announced yet. Each waits until it can be read: for
+ * what is being said (a chapter reached by talking to someone), the panel that is open (the stash you
+ * put things in, which is where levels come, and the workbench you mend at), the fade and the banner
+ * already up.
  */
 const toSay: News[] = [];
 /** The scene sound was mixed for last frame: what changed since is what makes a one-shot. */
@@ -654,8 +683,8 @@ function frame(now: number) {
   arrival.update(dt);
   game.held = arrival.leaving;
   game.update(dt, now);
-  // The letter home, and offers to thank someone, wait for the panels, the menu and the fade.
-  game.idle(now, panelOpen() || hud.menuOpen || arrival.dark > 0);
+  // The letter home, and offers to thank someone, wait for the panels (and any card open in one), the menu and the fade.
+  game.idle(now, panelOpen() || hud.cardOpen || hud.menuOpen || arrival.dark > 0);
   const me = game.me;
   if (game.lootChanges !== lootShown.changes || view !== lootShown.view) {
     lootShown = { changes: game.lootChanges, view };
@@ -711,11 +740,16 @@ function frame(now: number) {
     // A dot on the menu until the journal is opened (it shows the chapter at once if it is open).
     if (n.kind === 'chapter') { toSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
     if (n.kind === 'feat') { toSay.push(n); continue; }
-    const b = newsBanner(n, game.map.data.name);
+    // A dot on the chest's Wardrobe tab too, until it is looked at, when the level opened an outfit.
+    if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
+    // A parcel that comes on arrival waits for the place's name to be read first; one that comes while
+    // the chest is open needs no banner, as the stash says what came (below).
+    if (n.kind === 'parcel') { if (!game.chest) toSay.push(n); continue; }
+    const b = newsBanner(n, game.map.data.name, items, game.guest);
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (toSay.length && !game.dialog && !boxUp() && !panelOpen() && !hud.bannerUp && !arrival.dark) {
-    const b = newsBanner(toSay.shift()!, game.map.data.name);
+    const b = newsBanner(toSay.shift()!, game.map.data.name, items, game.guest);
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (game.storyChanges !== storyShown) {
@@ -739,17 +773,28 @@ function frame(now: number) {
   if (hud.friendsOpen && !game.guest && now - friendsAskedAt > FRIENDS_REFRESH_MS) { friendsAskedAt = now; game.social({ t: 'friends' }); }
   const benchChanged = game.bench !== benchShown;
   if (benchChanged) {
-    if (game.bench && !benchShown) hud.toggleBench(true);
+    if (game.bench && !benchShown) {
+      hud.toggleBench(true);
+      if (goalCard) hud.cardOf('bench', goalCard);
+    }
+    goalCard = null;
     if (!game.bench && benchShown) hud.toggleBench(false);
     benchShown = game.bench;
   }
-  // Also when what you wear wears down or is mended: its mend row changes.
+  // Also when what you wear wears down, is mended or upgraded: its mend and upgrade rows change.
   if (game.bench && (benchChanged || game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn)) {
-    hud.setBench([...mendViews(game.myGear, game.myWorn, game.bench.stash, items), ...recipeViews(items.recipes, game.bench.stash, items, game.tools)]);
+    const { stash } = game.bench;
+    hud.setBench([...mendViews(game.myGear, game.myWorn, stash, items), ...upgradeViews(game.myGear, game.myWorn, stash, items), ...recipeViews(items.recipes, stash, items, game.tools)]);
   }
   if (game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn) {
     gearShown = { gear: game.myGear, worn: game.myWorn };
     hud.setWearing(wornViews(game.myGear, items, game.myWorn));
+  }
+  // A guest who signs in has the outfits at once; a new level opens more.
+  const wardrobe = wardrobeNow(), wardrobeKey = `${wardrobe.guest}|${wardrobe.level}|${wardrobe.wearing}`;
+  if (wardrobeKey !== wardrobeShown) {
+    wardrobeShown = wardrobeKey;
+    hud.setWardrobe(wardrobeView(wardrobe));
   }
   if (game.cache !== crateShown || (game.cache && now - crateAt > CRATE_REDRAW_MS)) {
     if (game.cache && !crateShown) hud.toggleCrate(true);
@@ -768,6 +813,11 @@ function frame(now: number) {
     if (game.chest) hud.setStash(slotViews(game.chest.stash, items), levelText(game.progress));
     hud.setLevel(game.progress.level);
   }
+  // Open, the stash says once what came in the parcels since it last opened, and in one that comes while it is.
+  if (game.chest && game.parcels.length) hud.addParcels(game.takeParcels().map(p => parcelNote(p, items)));
+  // The first goal, in the bag and the chest; at the workbench, a tap on it opens its card (the Hud writes it only when it changed).
+  const next = game.nextGear();
+  hud.setGoal(next && { text: goalText(next, items), ready: next.ready, act: !!game.benchBeside() });
   const t = (now - start) / 1000;
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;

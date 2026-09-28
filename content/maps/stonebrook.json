@@ -1,7 +1,7 @@
 {
   "id": "stonebrook",
   "name": "Stonebrook",
-  "version": 9,
+  "version": 10,
   "kind": "town",
   "depth": 0,
   "width": 44,
@@ -36,9 +36,9 @@
     "ggggggggglllllllgggggggggggggggggggggggggggg",
     "ggggggggglllllllgggggggggggggggggggggggggggg",
     "gggggggggggrrggggggggggggggggggggggggggggggg",
-    "gggggggggggrrrrrrrrrrrrrrrrggmmmmmgggggggggg",
-    "gggggggggggrrrrrrrrrrrrrrrrmmwwwwwmmgggggggg",
-    "gggggggggggrrgggggggggggggmwwwwwwwwwmggggggg",
+    "gggggggggggrrrrrrrrrrrrrrrrggmmmmmmmmmmggggg",
+    "gggggggggggrrrrrrrrrrrrrrrrmmwwwwwwwwwwwgggg",
+    "gggggggggggrrgggggggggggggmwwwwwwwwwmmmmgggg",
     "gggggggggggrrggggggggggggmmwwwwwwwwwmmgggggg",
     "gggggggggggrrggggggggggggmwwwwwwwwwwwmgggggg",
     "gggggggggggrrggggggggggggmmwwwwwwwwwmmgggggg",
@@ -104,7 +104,12 @@
     {"x":11,"y":43,"w":2,"h":1,"to":"south-road","tx":35,"ty":1,"dir":"down"},
     {"x":8,"y":20,"w":1,"h":1,"to":"stonebrook-home","tx":4,"ty":5,"dir":"up"},
     {"x":15,"y":20,"w":1,"h":1,"to":"stonebrook-empty-house","tx":4,"ty":5,"dir":"up"},
-    {"x":8,"y":31,"w":1,"h":1,"to":"stonebrook-lodge","tx":5,"ty":6,"dir":"up"}
+    {"x":8,"y":31,"w":1,"h":1,"to":"stonebrook-lodge","tx":5,"ty":6,"dir":"up"},
+    {"x":5,"y":15,"w":1,"h":1,"to":"stonebrook-okada-house","tx":4,"ty":4,"dir":"up"},
+    {"x":19,"y":15,"w":1,"h":1,"to":"stonebrook-hale-house","tx":4,"ty":4,"dir":"up"},
+    {"x":21,"y":27,"w":1,"h":1,"to":"stonebrook-dahl-house","tx":4,"ty":4,"dir":"up"},
+    {"x":25,"y":27,"w":1,"h":1,"to":"stonebrook-lindqvist-house","tx":4,"ty":4,"dir":"up"},
+    {"x":36,"y":28,"w":1,"h":1,"to":"stonebrook-sawmill","tx":5,"ty":5,"dir":"up"}
   ],
   "objects": [
     {"kind":"house","x":7,"y":19,"w":3,"h":2,"roof":"#6b7075","lit":1},
@@ -791,11 +796,35 @@
     {"kind":"tree","x":41,"y":36,"s":1.131,"v":0.243},
     {"kind":"tree","x":41,"y":39,"s":1.359,"v":0.562},
     {"kind":"sign","x":10,"y":38,"text":["South: the South Road","NAPO's old grounds. Your energy drains out there too, faster the farther you go.","The bunker's fire never goes out; feed the others."]},
-    {"kind":"sign","x":15,"y":38,"style":"napo","text":["NAPO NOTICE","By order of the Observatory, Stonebrook lies inside the Napoland Zone. All residents leave by the south road.","Take only what you can carry. Back in two weeks."]}
+    {"kind":"sign","x":15,"y":38,"style":"napo","text":["NAPO NOTICE","By order of the Observatory, Stonebrook lies inside the Napoland Zone. All residents leave by the south road.","Take only what you can carry. Back in two weeks."]},
+    {"kind":"house","x":4,"y":14,"w":3,"h":2,"roof":"#4f5b62","lit":0,"curtains":true},
+    {"kind":"sign","x":6,"y":16,"style":"mailbox","text":["OKADA, in neat black letters.","Empty. The mail stopped coming a long time ago."]},
+    {"kind":"house","x":18,"y":14,"w":3,"h":2,"roof":"#6a4638","lit":0,"curtains":true},
+    {"kind":"sign","x":21,"y":15,"style":"mailbox","text":["THE HALES, in stick-on letters, one of them gone."]},
+    {"kind":"house","x":20,"y":26,"w":3,"h":2,"roof":"#55603f","lit":0,"curtains":true},
+    {"kind":"sign","x":22,"y":28,"style":"mailbox","text":["DAHL, painted in white.","The little flag is still up. Nobody came for the letter."]},
+    {"kind":"house","x":24,"y":26,"w":3,"h":2,"roof":"#5d4a3b","lit":0,"curtains":true},
+    {"kind":"sign","x":26,"y":28,"style":"mailbox","text":["LINDQVIST, in brass letters.","Stuffed with NAPO notices, all of them the same one."]},
+    {"kind":"house","x":33,"y":26,"w":6,"h":3,"roof":"#7a4a2e","lit":0,"style":"mill"},
+    {"kind":"logs","x":29,"y":26,"w":3,"h":1},
+    {"kind":"truck","x":28,"y":28,"w":3,"h":1,"dir":"right"},
+    {"kind":"sign","x":31,"y":28,"text":["Stonebrook Timber Co.","Closed for the winter. Back to work in the spring.","Under it, in pencil: \"Which spring?\""]},
+    {"kind":"luggage","x":13,"y":36},
+    {"kind":"boxes","x":14,"y":36},
+    {"kind":"piano","x":16,"y":36},
+    {"kind":"sign","x":16,"y":37,"style":"cardboard","text":["In marker, on a flap of cardboard propped against the piano:","\"PLEASE LEAVE THESE. WE ARE COMING BACK FOR THEM.\"","The rain has run the ink."]},
+    {"kind":"rocker","x":19,"y":36},
+    {"kind":"bike","x":19,"y":37},
+    {"kind":"birdcage","x":20,"y":37},
+    {"kind":"luggage","x":21,"y":36},
+    {"kind":"luggage","x":10,"y":36},
+    {"kind":"boxes","x":9,"y":36}
   ],
   "places": [
     {"name":"the Old Stone","x":15,"y":8},
     {"name":"the notice board","x":12,"y":23},
-    {"name":"the pond","x":31,"y":33}
+    {"name":"the pond","x":31,"y":33},
+    {"name":"the sawmill","x":36,"y":27},
+    {"name":"the verge","x":17,"y":37}
   ]
 }

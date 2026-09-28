@@ -3,12 +3,15 @@
  * can be tested; hud.ts shows it and main.ts asks for it.
  */
 import {
-  ELEMENTS, FEATS, GUEST_DAYS, rankOf, rankText, type BagSlot, type BodyView, type Element, type EnergyView, type Feat, type FlashKind, type ProgressView, type Stats, type StoneView,
+  ELEMENTS, FEATS, GUEST_DAYS, outfitsOpening, rankOf, rankText, type BagSlot, type BodyView, type Element, type EnergyView, type Feat, type FlashKind, type ProgressView, type Stats, type StoneView,
   type StormView, type SurgeView, type Weather,
 } from '@napoland/shared';
+import { listWords } from './details';
 import { minutes, type News } from './game';
 import type { FeatView, StatusView } from './hud';
 import type { Items } from './items';
+import { parcelBanner } from './parcels';
+import { outfitWords } from './wardrobe';
 
 export interface StatusInput {
   energy: EnergyView | null;
@@ -108,10 +111,20 @@ export function statusView(s: StatusInput): StatusView {
   return { rows, feats: FEATS.map(f => featView(f, s.stats[f.stat] ?? 0)), ...(s.guest && { guest: GUEST_NOTE }) };
 }
 
-/** The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a feat, a level, a chapter of the story. Null: nothing to say. */
-export function newsBanner(n: News, place: string): { title: string; sub: string } | null {
+/**
+ * The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a
+ * feat, a level, a chapter of the story, a parcel (which names what came: `items`, and with the welcome
+ * parcel, the outfits signing in gave). Null: nothing to say. A level says the outfits it opens, which a
+ * guest (`guest`) would wear once signed in.
+ */
+export function newsBanner(n: News, place: string, items?: Items, guest = false): { title: string; sub: string } | null {
+  if (n.kind === 'parcel') return items ? parcelBanner(n.parcel, items, n.outfits) : null;
   if (n.kind === 'conditions') return n.names.length ? { title: 'A new day', sub: n.names.join('\n') } : null;
-  if (n.kind === 'level') return { title: `Level ${n.progress.level}`, sub: `Your energy bar grows to ${n.progress.maxEnergy}.\nYou can go a little farther now.` };
+  if (n.kind === 'level') {
+    const opened = listWords(outfitsOpening(n.from, n.progress.level).map(o => `the ${outfitWords(o.name)}`));
+    const outfits = opened ? (guest ? `\nSign in to wear ${opened}.` : `\nNew in your wardrobe: ${opened}.`) : '';
+    return { title: `Level ${n.progress.level}`, sub: `Your energy bar grows to ${n.progress.maxEnergy}.\nYou can go a little farther now.${outfits}` };
+  }
   if (n.kind === 'chapter') return { title: `Journal: ${n.chapter.title}`, sub: 'A new chapter of the story.\nRead it in your journal, in the menu.' };
   if (n.kind === 'live') return { title: 'It is still live', sub: `Stash it within ${minutes(n.fresh)} for the most XP.` };
   if (n.kind === 'feat') {

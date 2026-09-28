@@ -7,7 +7,7 @@
  * sketchOf turns a map into what to draw (plain data, so it can be tested); paperMap draws it on a
  * canvas once per map version and keeps it.
  */
-import type { MapData, TileMap } from '@napoland/shared';
+import { doorOf, footprint, type MapData, type TileMap } from '@napoland/shared';
 
 /** Tiles, center to center, apart from which two poles are not on one line (as in the 3D world). */
 const MAX_WIRE = 10;
@@ -50,18 +50,32 @@ export interface Sketch {
   water: Pt[];
   /** Road tiles, drawn as one band. */
   roads: Pt[];
-  /** Cabins, and NAPO's concrete buildings (`flat`: a flat roof, no gable). */
-  houses: Array<{ x: number; y: number; w: number; h: number; flat: boolean }>;
+  /** Cabins, NAPO's concrete buildings (`flat`: a flat roof, no gable) and the sawmill (`mill`: a sawtooth roof). */
+  houses: Array<{ x: number; y: number; w: number; h: number; flat: boolean; mill: boolean }>;
   poles: Pt[];
   wires: Array<[Pt, Pt]>;
   /** Radio masts, like the NAPO Tower: tall enough to steer by. */
   masts: Pt[];
   /** Fences, along the middle of their tiles: a yard, a barrier across a road. */
   fences: Array<[Pt, Pt]>;
-  cars: Pt[];
+  /** Cars, trucks and jeeps, by the middle of their tiles and their size (w by h tiles); a jeep burned out. */
+  cars: Array<{ at: Pt; w: number; h: number; kind: 'car' | 'truck' | 'jeep' }>;
   signs: Pt[];
+  /** Log decks, on their tiles: drawn as the ends of their logs. */
+  logs: Array<{ x: number; y: number; w: number; h: number }>;
+  /** Stumps where the firs were cut, and NAPO's survey stakes with their flags. */
+  stumps: Pt[];
+  stakes: Pt[];
+  /** The logs across a skid road, each a short line across it. */
+  skids: Array<[Pt, Pt]>;
+  /** Small things left in the places, each with a mark of its own. */
+  things: Array<{ at: Pt; kind: Thing }>;
   labels: Array<{ x: number; y: number; text: string }>;
 }
+
+/** The small things the paper map marks, each its own way. */
+type Thing = 'luggage' | 'boxes' | 'rocker' | 'piano' | 'bike' | 'birdcage' | 'pump' | 'cage' | 'mailbox';
+const THINGS = new Set<string>(['luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage']);
 
 /** The area a map belongs to: the map itself, or for a room the place its door opens onto. */
 export function areaOf(id: string, find: (id: string) => MapData | undefined): string {
@@ -90,7 +104,8 @@ const drift = (x: number, y: number, k = 0): Pt => [x + 0.5 + (hash(x, y, k) - 0
 export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefined): Sketch {
   const { width: W, height: H } = map;
   const s: Sketch = {
-    title: map.data.name, width: W, height: H, forest: [], trees: [], ground: [], grass: [], water: [], roads: [], houses: [], poles: [], wires: [], masts: [], fences: [], cars: [], signs: [], labels: [],
+    title: map.data.name, width: W, height: H, forest: [], trees: [], ground: [], grass: [], water: [], roads: [], houses: [], poles: [], wires: [], masts: [], fences: [], cars: [], signs: [],
+    logs: [], stumps: [], stakes: [], skids: [], things: [], labels: [],
   };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const kind = map.kind(x, y), r = hash(x, y, 1);
@@ -104,25 +119,44 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
     else if (map.walkable(x, y) && r < 0.12) s.ground.push(drift(x, y, 4));
   }
   for (const o of map.data.objects) {
-    if (o.kind === 'house') s.houses.push({ x: o.x + (hash(o.x, o.y, 5) - 0.5) * 0.6, y: o.y + (hash(o.x, o.y, 6) - 0.5) * 0.6, w: o.w, h: o.h, flat: o.style === 'napo' });
+    if (o.kind === 'house') s.houses.push({ x: o.x + (hash(o.x, o.y, 5) - 0.5) * 0.6, y: o.y + (hash(o.x, o.y, 6) - 0.5) * 0.6, w: o.w, h: o.h, flat: o.style === 'napo', mill: o.style === 'mill' });
     else if (o.kind === 'pole') s.poles.push(drift(o.x, o.y, 8));
     else if (o.kind === 'antenna') s.masts.push(drift(o.x, o.y, 14));
     // Along the middle of its tile, like the fence in the world; drawn with a steady hand, so a yard stays closed.
     else if (o.kind === 'fence') s.fences.push(o.dir === 'h' ? [[o.x, o.y + 0.5], [o.x + 1, o.y + 0.5]] : [[o.x + 0.5, o.y], [o.x + 0.5, o.y + 1]]);
-    else if (o.kind === 'car') s.cars.push(drift(o.x, o.y, 9));
+    else if (o.kind === 'car' || o.kind === 'truck' || o.kind === 'jeep') {
+      const [w, h] = footprint(o), [dx, dy] = drift(o.x, o.y, 9);
+      s.cars.push({ at: [dx - 0.5 + w / 2, dy - 0.5 + h / 2], w, h, kind: o.kind });
+    } else if (o.kind === 'sign' && o.style === 'mailbox') s.things.push({ at: drift(o.x, o.y, 16), kind: 'mailbox' });
     else if (o.kind === 'sign') s.signs.push(drift(o.x, o.y, 10));
+    else if (o.kind === 'logs') s.logs.push({ x: o.x, y: o.y, w: o.w, h: o.h });
+    else if (o.kind === 'stump') s.stumps.push(drift(o.x, o.y, 17));
+    else if (o.kind === 'stake') s.stakes.push(drift(o.x, o.y, 18));
+    // Across the road, as the skid lies.
+    else if (o.kind === 'skid') s.skids.push(o.dir === 'h' ? [[o.x + 0.5, o.y + 0.15], [o.x + 0.5, o.y + 0.85]] : [[o.x + 0.15, o.y + 0.5], [o.x + 0.85, o.y + 0.5]]);
+    else if (THINGS.has(o.kind)) s.things.push({ at: o.kind === 'piano' ? [o.x + 1, o.y + 0.5] : drift(o.x, o.y, 19), kind: o.kind as Thing });
   }
   s.poles.forEach((a, i) => s.poles.slice(i + 1).forEach(b => { if (Math.hypot(a[0] - b[0], a[1] - b[1]) <= MAX_WIRE) s.wires.push([a, b]); }));
-  for (const e of map.data.exits) {
+  // The ways out first, then the places people call by name, then the buildings by their doors: a name
+  // people steer by keeps its spot, and a door's name finds room around it (a street of houses has many).
+  // A name is written once: where the map names a place as its door does, the place's name stands.
+  const placed = new Set((map.data.places ?? []).map(p => p.name.toLowerCase()));
+  const doors = new Set(map.data.objects.flatMap(o => (o.kind === 'house' ? [`${doorOf(o).x},${doorOf(o).y}`] : [])));
+  const exits = map.data.exits.filter(e => !doors.has(`${e.x},${e.y}`)), rooms = map.data.exits.filter(e => doors.has(`${e.x},${e.y}`));
+  const labels: Array<Sketch['labels'][number] & { below?: number }> = [];
+  const exitLabel = (e: MapData['exits'][number]) => {
     const name = nameOf(e.to);
-    // Beside the way home (not on the road), above a cabin's roof.
-    if (name) s.labels.push(e.home ? { x: e.x + e.w + 4, y: e.y - 1, text: `to ${name}` } : { x: e.x + 0.5, y: e.y - 3.4, text: name });
-  }
+    // Beside the way home (not on the road), above a cabin's roof (or, where the roofs of a street are
+    // taken, in front of its door).
+    if (name && !placed.has(name.toLowerCase())) labels.push(e.home ? { x: e.x + e.w + 4, y: e.y - 1, text: `to ${name}` } : { x: e.x + 0.5, y: e.y - 3.4, text: name, below: e.y + 3 });
+  };
+  exits.forEach(exitLabel);
   // The places people call by name. A map that names none still gets its pond.
-  for (const p of map.data.places ?? []) s.labels.push({ x: p.x + 0.5, y: p.y + 0.5, text: p.name });
+  for (const p of map.data.places ?? []) labels.push({ x: p.x + 0.5, y: p.y + 0.5, text: p.name });
+  rooms.forEach(exitLabel);
   const pond = biggest(map, 'water');
-  if (!map.data.places && pond.length >= POND_TILES) s.labels.push({ x: pond.reduce((n, [x]) => n + x, 0) / pond.length + 0.5, y: pond.reduce((n, [, y]) => n + y, 0) / pond.length + 0.5, text: 'pond' });
-  s.labels = apart(s.labels, W, H, [...s.masts.map(mastBox), ...s.signs.map(signBox)]);
+  if (!map.data.places && pond.length >= POND_TILES) labels.push({ x: pond.reduce((n, [x]) => n + x, 0) / pond.length + 0.5, y: pond.reduce((n, [, y]) => n + y, 0) / pond.length + 0.5, text: 'pond' });
+  s.labels = apart(labels, W, H, [...s.masts.map(mastBox), ...s.signs.map(signBox)]);
   return s;
 }
 
@@ -130,17 +164,20 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
  * Labels where they are drawn (kept off the paper's edge), each on the nearest line (a line up first,
  * then down, then two up...) where it covers no name written before it, no mast and no sign: two doors
  * side by side get one name above the other, and a place named at its mast gets its name clear of it.
+ * A door's name that finds no room a line from its roof goes in front of the door (`below`) before
+ * it goes farther up or down.
  */
-function apart(labels: Sketch['labels'], width: number, height: number, marks: Box[]): Sketch['labels'] {
+function apart(labels: ReadonlyArray<Sketch['labels'][number] & { below?: number }>, width: number, height: number, marks: Box[]): Sketch['labels'] {
   type Label = Sketch['labels'][number];
   const done: Sketch['labels'] = [];
   const half = (l: Label) => (l.text.length * LETTER) / 2;
   const clash = (a: Label, b: Label) => Math.abs(a.x - b.x) < half(a) + half(b) && Math.abs(a.y - b.y) < LINE;
   const covers = (a: Label) => marks.some(m => a.x + half(a) > m.x0 && a.x - half(a) < m.x1 && a.y + LINE / 2 > m.y0 && a.y - LINE / 2 < m.y1);
   const free = (a: Label) => !done.some(d => clash(a, d)) && !covers(a);
-  for (const l of labels) {
+  for (const { below, ...l } of labels) {
     const at = { ...l, x: Math.min(width - 3, Math.max(3, l.x)), y: Math.max(0.5, l.y) };
-    const lines = [0, -1, 1, -2, 2, -3, 3, -4, 4].map(n => at.y + n * LINE).filter(y => y >= 0.5 && y <= height - 0.5);
+    const near = [0, -1, 1].map(n => at.y + n * LINE), far = [-2, 2, -3, 3, -4, 4].map(n => at.y + n * LINE);
+    const lines = [...near, ...(below === undefined ? [] : [below]), ...far].filter(y => y >= 0.5 && y <= height - 0.5);
     done.push({ ...at, y: lines.find(y => free({ ...at, y })) ?? at.y });
   }
   return done;
@@ -166,6 +203,27 @@ function biggest(map: TileMap, kind: string): Pt[] {
     if (patch.length > best.length) best = patch;
   }
   return best;
+}
+
+/**
+ * A small thing, drawn the way a hand would mark it at px, py: a suitcase with its handle, a pair of
+ * boxes, a rocking chair from the side, a piano with its keys, a bike's two wheels, a birdcage's dome,
+ * NAPO's pump with its hose and its cages crosshatched, a mailbox on its post.
+ */
+function thing(g: CanvasRenderingContext2D, kind: Thing, px: number, py: number) {
+  g.beginPath();
+  switch (kind) {
+    case 'luggage': g.rect(px - 3.5, py - 2, 7, 5); g.moveTo(px - 1.5, py - 2); g.lineTo(px - 1.5, py - 3.5); g.lineTo(px + 1.5, py - 3.5); g.lineTo(px + 1.5, py - 2); break;
+    case 'boxes': g.rect(px - 4, py - 1, 5, 5); g.rect(px - 1, py - 4, 4.5, 4); break;
+    case 'rocker': g.moveTo(px - 4, py + 3); g.quadraticCurveTo(px, py + 5, px + 4, py + 3); g.moveTo(px - 2, py + 3.5); g.lineTo(px - 2, py - 1); g.lineTo(px + 2, py - 1); g.lineTo(px + 2, py + 3.5); g.moveTo(px + 2, py - 1); g.lineTo(px + 3, py - 5); break;
+    case 'piano': g.rect(px - 9, py - 3, 18, 6); for (const k of [-5, -1, 3]) { g.moveTo(px + k, py + 3); g.lineTo(px + k, py + 1); } break;
+    case 'bike': g.moveTo(px - 0.5, py); g.arc(px - 3, py, 2.5, 0, Math.PI * 2); g.moveTo(px + 5.5, py); g.arc(px + 3, py, 2.5, 0, Math.PI * 2); g.moveTo(px - 3, py); g.lineTo(px, py - 3); g.lineTo(px + 3, py); break;
+    case 'birdcage': g.moveTo(px - 3, py + 3); g.lineTo(px - 3, py - 1); g.quadraticCurveTo(px, py - 6, px + 3, py - 1); g.lineTo(px + 3, py + 3); g.lineTo(px - 3, py + 3); break;
+    case 'pump': g.rect(px - 2, py - 4, 4, 8); g.moveTo(px + 2, py - 2); g.quadraticCurveTo(px + 5, py, px + 3, py + 3); break;
+    case 'cage': g.rect(px - 4, py - 4, 8, 8); g.moveTo(px - 4, py); g.lineTo(px + 4, py); g.moveTo(px, py - 4); g.lineTo(px, py + 4); break;
+    case 'mailbox': g.rect(px - 2.5, py - 4, 5, 3); g.moveTo(px, py - 1); g.lineTo(px, py + 4); break;
+  }
+  g.stroke();
 }
 
 /** Pixels per tile, and the paper's margin in tiles. */
@@ -279,12 +337,18 @@ function draw(s: Sketch): HTMLCanvasElement {
   g.fillStyle = INK;
   for (const [a] of s.fences) g.fillRect(X(a[0]) - 1, Y(a[1]) - 1, 2, 2);
   g.lineWidth = 1.6;
-  // Cabins: a box with a roof. NAPO's buildings: a flat roof, drawn heavier. Cars: a small box. Signs: a post with a board.
+  // Cabins: a box with a roof. NAPO's buildings: a flat roof, drawn heavier. The mill: its sawtooth.
+  // Cars: a small box, a truck a long one with its cab marked, a burned jeep crossed out. Signs: a post with a board.
   g.fillStyle = '#c9b48a';
   for (const h of s.houses) {
     g.beginPath(); g.rect(X(h.x), Y(h.y + 0.4), h.w * PX, (h.h - 0.4) * PX); g.fill(); g.stroke();
     if (h.flat) { g.lineWidth = 3; g.beginPath(); g.moveTo(X(h.x - 0.1), Y(h.y + 0.4)); g.lineTo(X(h.x + h.w + 0.1), Y(h.y + 0.4)); g.stroke(); g.lineWidth = 1.6; }
-    else { g.beginPath(); g.moveTo(X(h.x - 0.2), Y(h.y + 0.4)); g.lineTo(X(h.x + h.w / 2), Y(h.y - 0.6)); g.lineTo(X(h.x + h.w + 0.2), Y(h.y + 0.4)); g.stroke(); }
+    else if (h.mill) {
+      const teeth = Math.max(2, Math.round(h.w / 2)), tw = h.w / teeth;
+      g.beginPath(); g.moveTo(X(h.x), Y(h.y + 0.4));
+      for (let k = 0; k < teeth; k++) { g.lineTo(X(h.x + tw * (k + 1)), Y(h.y - 0.4)); g.lineTo(X(h.x + tw * (k + 1)), Y(h.y + 0.4)); }
+      g.stroke();
+    } else { g.beginPath(); g.moveTo(X(h.x - 0.2), Y(h.y + 0.4)); g.lineTo(X(h.x + h.w / 2), Y(h.y - 0.6)); g.lineTo(X(h.x + h.w + 0.2), Y(h.y + 0.4)); g.stroke(); }
   }
   // Masts: a tall narrow A with its cross braces, and a dot at the top for the light.
   g.fillStyle = INK;
@@ -296,10 +360,41 @@ function draw(s: Sketch): HTMLCanvasElement {
     g.stroke();
     g.beginPath(); g.arc(X(x), top, 2, 0, Math.PI * 2); g.fill();
   }
-  for (const [x, y] of s.cars) g.strokeRect(X(x) - 7, Y(y) - 4, 14, 8);
+  for (const c of s.cars) {
+    const long = Math.max(c.w, c.h) * 7, across = 8, wide = c.w >= c.h;
+    const [w, h] = wide ? [long, across] : [across, long], x0 = X(c.at[0]) - w / 2, y0 = Y(c.at[1]) - h / 2;
+    g.strokeRect(x0, y0, w, h);
+    g.beginPath();
+    if (c.kind === 'truck') { if (wide) { g.moveTo(x0 + w * 0.7, y0); g.lineTo(x0 + w * 0.7, y0 + h); } else { g.moveTo(x0, y0 + h * 0.7); g.lineTo(x0 + w, y0 + h * 0.7); } }
+    if (c.kind === 'jeep') { g.moveTo(x0, y0); g.lineTo(x0 + w, y0 + h); g.moveTo(x0 + w, y0); g.lineTo(x0, y0 + h); }
+    g.stroke();
+  }
   g.beginPath();
   for (const [x, y] of s.signs) { g.moveTo(X(x), Y(y) + PX * SIGN_HALF); g.lineTo(X(x), Y(y) - PX * SIGN_HALF); g.rect(X(x) - PX * SIGN_HALF, Y(y) - PX * SIGN_TOP, PX * SIGN_HALF * 2, PX * SIGN_HALF); }
   g.stroke();
+  // Log decks: the ends of their logs, a pile of little rings (seen from the side when they lie east to west).
+  g.lineWidth = 1;
+  for (const l of s.logs) {
+    const along = l.h === 1 && l.w > 1 ? 'x' : 'z', n = Math.max(2, Math.round((along === 'x' ? l.h : l.w) * 2.4));
+    g.beginPath();
+    if (along === 'x') for (let k = 0; k < 3; k++) { const y = Y(l.y + 0.3 + k * 0.2); g.moveTo(X(l.x + 0.1), y); g.lineTo(X(l.x + l.w - 0.1), y); }
+    else for (let row = 0; row < 2; row++) for (let i = 0; i < n - row; i++) {
+      const cx = X(l.x + (i + 0.5 + row / 2) * ((l.w - 0.2) / n) + 0.1), cy = Y(l.y + l.h * 0.5 - row * 0.35);
+      g.moveTo(cx + PX * 0.18, cy); g.arc(cx, cy, PX * 0.18, 0, Math.PI * 2);
+    }
+    g.stroke();
+  }
+  // Stumps: a ring with its heart. Stakes: a post with a little flag. Skids: a short line across the road.
+  g.beginPath();
+  for (const [x, y] of s.stumps) { g.moveTo(X(x) + 3, Y(y)); g.arc(X(x), Y(y), 3, 0, Math.PI * 2); }
+  for (const [a, b] of s.skids) { g.moveTo(X(a[0]), Y(a[1])); g.lineTo(X(b[0]), Y(b[1])); }
+  g.stroke();
+  for (const [x, y] of s.stumps) g.fillRect(X(x) - 0.75, Y(y) - 0.75, 1.5, 1.5);
+  g.beginPath();
+  for (const [x, y] of s.stakes) { g.moveTo(X(x), Y(y) + 4); g.lineTo(X(x), Y(y) - 5); g.lineTo(X(x) + 5, Y(y) - 3); g.lineTo(X(x), Y(y) - 1); }
+  g.stroke();
+  for (const t of s.things) thing(g, t.kind, X(t.at[0]), Y(t.at[1]));
+  g.lineWidth = 1.6;
 
   // Words in handwriting, each a little tilted.
   g.fillStyle = INK;
