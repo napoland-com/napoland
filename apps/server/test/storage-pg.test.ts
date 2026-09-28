@@ -65,7 +65,7 @@ describe.skipIf(!url)('PgStorage', () => {
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
       '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql', '016_caches.sql', '017_zones.sql', '018_rested.sql', '019_merits.sql',
       '020_trades_off.sql', '021_notebook.sql', '022_notes.sql', '023_firsts.sql', '024_furniture.sql', '025_streets.sql', '026_door.sql',
-      '027_bests.sql',
+      '027_bests.sql', '028_visits.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -527,7 +527,7 @@ describe.skipIf(!url)('PgStorage', () => {
     const { sub, kept } = await keepsWholeRow(storage);
     const row = await admin.query(
       `SELECT map, x, y, dir, energy, bag, wet, stats, xp, stash, gear, worn, story, tools, parcel_welcome, parcel_day, parcel_days, outfit, thanked, notebook, furniture, cozy_until, street, lot,
-         door_off, street_told
+         door_off, street_told, visits_off
        FROM ${schema}.players WHERE auth_sub = $1`,
       [sub],
     );
@@ -536,7 +536,7 @@ describe.skipIf(!url)('PgStorage', () => {
     expect(row.rows).toEqual([{
       map: kept.map, x: kept.x, y: kept.y, dir: kept.dir, energy: kept.energy, bag: kept.bag, wet: kept.wet, stats: counts, xp: kept.xp, stash: kept.stash, gear: kept.gear,
       worn: kept.worn, story: kept.story, tools: kept.tools, parcel_welcome: true, parcel_day: 20_725, parcel_days: 0b11, outfit: 'rain-cape', thanked: 8, notebook: kept.notebook,
-      furniture: ['iron-stove', 'bed'], cozy_until: new Date(1_700_000_400_000), street: 3, lot: 0, door_off: false, street_told: true,
+      furniture: ['iron-stove', 'bed'], cozy_until: new Date(1_700_000_400_000), street: 3, lot: 0, door_off: false, street_told: true, visits_off: false,
     }]);
   });
 

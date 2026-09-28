@@ -27,8 +27,9 @@ import { OFFER_MAX } from './trade';
  * whose winter freezes water that is then walked on (a client that did not know would never step on it).
  * 32: the Long Night (`longNight`, in the welcome too), whose lodge fire is fed like a shelter's.
  * 33: how the trip went (`trip`), when you come home or wake up there.
+ * 34: a neighbor's door is walked into (`visit`, `locked`, `cameIn`), and the road onto your street.
  */
-export const PROTOCOL_VERSION = 33;
+export const PROTOCOL_VERSION = 34;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -260,6 +261,11 @@ export const ClientMsg = z.discriminatedUnion('t', [
    * show both (as everyone does until they choose). Anyone, guests too: a guest's name is on a door as well.
    */
   z.object({ t: z.literal('doorOff'), off: z.boolean() }),
+  /**
+   * The setting beside it: keep your neighbors out of your cabin (`off`), or let them walk in to look (as
+   * everyone does until they choose). Friends come in either way, and someone you block never does.
+   */
+  z.object({ t: z.literal('visitsOff'), off: z.boolean() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -530,6 +536,16 @@ export interface LotView {
   home?: true;
 }
 
+/**
+ * A neighbor's cabin you walked into: whose it is, the furniture they made (item ids) and what stands on
+ * their trophy shelf (item ids, in their stash's order: trophiesIn). Their chest and workbench are theirs.
+ */
+export interface VisitView {
+  name: string;
+  furniture: string[];
+  trophies: string[];
+}
+
 /** Your street (a copy of the street's map): which lot is yours, and every lot on it, in the order of its houses (null: nobody lives there yet). */
 export interface StreetView {
   mine: number;
@@ -713,6 +729,8 @@ export type ServerMsg =
       street?: StreetView;
       /** You keep your name off your door and your window dark (the setting in the menu). */
       doorOff?: true;
+      /** You keep your neighbors out of your cabin (the setting in the menu): only friends come in. */
+      visitsOff?: true;
       serverTime: number;
     }
   /**
@@ -728,6 +746,8 @@ export type ServerMsg =
       furniture?: string[];
       /** On your street: its lots, and which is yours. */
       street?: StreetView;
+      /** In a neighbor's cabin: whose it is, and how they made it theirs. */
+      visit?: VisitView;
     }
   /** Your energy and body, sent when a rate changes and every few seconds (ENERGY_SYNC_MS). */
   | { t: 'energy'; energy: EnergyView; body: BodyView }
@@ -751,6 +771,12 @@ export type ServerMsg =
   | { t: 'knocked'; name: string }
   /** Your door's setting, as it stands now that you changed it (`off`: your name off it, your window dark). */
   | { t: 'doorOff'; off: boolean }
+  /** Whether you keep your neighbors out of your cabin, as it stands now that you changed it. */
+  | { t: 'visitsOff'; off: boolean }
+  /** Someone (`name`) walked into your cabin while you were home. */
+  | { t: 'cameIn'; name: string }
+  /** The door on tile x,y of your street did not let you in: its owner keeps it to friends (or blocks you). */
+  | { t: 'locked'; x: number; y: number }
   /**
    * The first time you come home since streets came: a letter about what your street sees of you (your name
    * on your door, your window lit while you are home; `doorOff`: you keep both to yourself already). Once.

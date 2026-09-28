@@ -246,14 +246,16 @@ export const SPOILED_NAMES: Readonly<Record<Comfort, string>> = {
 };
 
 /**
- * A at a place in your cabin: what stands there spoiled and where to make it again, or, made, what it is;
- * the trophy shelf says what stands on it (`trophies`: the charms and anomalous gear in your stash).
+ * A at a place in a cabin: what stands there spoiled and where to make it again, or, made, what it is;
+ * the trophy shelf says what stands on it (`trophies`: the charms and anomalous gear in the stash). In a
+ * neighbor's cabin (`visit`), only what stands there: making it is theirs.
  */
-export function comfortLines(what: Comfort, def: ItemDef | undefined, placed: boolean, trophies: readonly ItemDef[] = []): { who: string; lines: string[] } {
+export function comfortLines(what: Comfort, def: ItemDef | undefined, placed: boolean, trophies: readonly ItemDef[] = [], visit = false): { who: string; lines: string[] } {
   if (!def) return { who: SPOILED_NAMES[what], lines: ['Years of damp spoiled it.'] };
-  if (!placed) return { who: SPOILED_NAMES[what], lines: [def.spoiled ?? 'Years of damp spoiled it.', `Make ${aOf(def)} at the workbench beside the chest: it goes straight into its place.`] };
+  const spoiled = def.spoiled ?? 'Years of damp spoiled it.';
+  if (!placed) return { who: SPOILED_NAMES[what], lines: visit ? [spoiled] : [spoiled, `Make ${aOf(def)} at the workbench beside the chest: it goes straight into its place.`] };
   if (what !== 'shelf') return { who: def.name, lines: [def.text] };
-  const on = trophies.length ? `On it: ${listOf(trophies.map(aOf))}.` : 'Nothing on it yet. The charms and anomalous gear you keep in your stash will stand here.';
+  const on = trophies.length ? `On it: ${listOf(trophies.map(aOf))}.` : visit ? 'Nothing on it yet.' : 'Nothing on it yet. The charms and anomalous gear you keep in your stash will stand here.';
   return { who: def.name, lines: [def.text, on] };
 }
 
@@ -476,7 +478,7 @@ export const NOBODY_LIVES = 'Nobody lives here yet.';
 
 /**
  * What a knock hears back: whether they are home. By name, never a pronoun. Someone who keeps their door to
- * themselves answers only friends: to anyone else, nobody answers. Visiting is for later.
+ * themselves answers only friends: to anyone else, nobody answers.
  */
 export function doorText(lot: LotView | null): string {
   if (!lot) return NOBODY_LIVES;
@@ -488,6 +490,25 @@ export const FIRST_WAKE = 'Mira, by the notice board in town, knows where things
 
 /** The setting beside friend and trade requests: whether your street sees your name on your door, and your window lit while you are home. */
 export const DOOR_SETTING = 'Show my name on my door and when I am home';
+
+/** The setting beside it: whether neighbors may walk into your cabin to look around (friends always may). */
+export const VISITS_SETTING = 'Let my neighbors come into my cabin';
+
+/** A neighbor's door that did not open: they keep their cabin to friends. */
+export const LOCKED = 'The door is locked.';
+
+/** At home, when a neighbor walks in. */
+export function cameInText(name: string): string {
+  return `${name} came in.`;
+}
+
+/** In a neighbor's cabin, at their chest or their workbench: it is theirs. By name, never a pronoun. */
+export function notYoursText(name: string, what: 'chest' | 'bench'): string {
+  return what === 'chest' ? `${name}'s chest. Your own stash is in your own cabin.` : `${name}'s workbench. Yours is in your own cabin.`;
+}
+
+/** What NAPO's teleport in town says: it sends nobody anywhere, it only takes you in. */
+export const TOWN_TELEPORT = ['A NAPO booth, humming. The one in your cabin sends you here.', 'It sends nobody back: the way home is the road, through the side street past the old house.'];
 
 /**
  * The letter the first time you come home since streets came: what your street sees of you, and where to

@@ -7,14 +7,14 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { COMFORTS, COZY_AFTER_S, TileMap, type ClientMsg, type ItemsData, type MapData, type MapObject, type PlayerView } from '@napoland/shared';
+import { COMFORTS, COZY_AFTER_S, TileMap, trophiesIn, type ClientMsg, type ItemsData, type MapData, type MapObject, type PlayerView } from '@napoland/shared';
 import { detailView } from '../src/details';
 import { Game } from '../src/game';
 import { Items, recipeViews } from '../src/items';
 import { Maps } from '../src/maps';
 import { comfortLines, cozyText, didText, makeQuestion, placedAlready } from '../src/said';
 import { newsBanner, statusView } from '../src/status';
-import { comfortModel, madePlaces, trophiesIn } from '../src/view/cabin';
+import { comfortModel, madePlaces } from '../src/view/cabin';
 import { windowSpots, wallShapes } from '../src/view/interior';
 import { DRY, FULL, START, tinyTown, welcome, zone } from './fixtures';
 

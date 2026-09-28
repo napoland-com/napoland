@@ -3,7 +3,7 @@
  * with a rim of NAPO yellow), its yellow warning signs, and the Tower, a red and white mast with
  * a dish turned toward the woods and a light blinking on top; and its things out in the places: a
  * burned-out jeep, its box trucks and fuel pump in the motor pool, the sample cages at the field site
- * with a humming rock in each, and its survey stakes. Plain builders of toon boxes for world.ts, which
+ * with a humming rock in each, its survey stakes, and the teleport in every cabin and its twin in town. Plain builders of toon boxes for world.ts, which
  * bakes them with the other props; only the Tower's light keeps a material of its own, which world.ts
  * blinks, and the rocks in the cages share one that glows faintly, the same day and night.
  */
@@ -356,6 +356,29 @@ export function gateModel(o: { x: number; y: number; w: number }): THREE.Group {
   return g;
 }
 
+/** The field in a teleport's frame: a cold blue that glows the same day and night. One material for every teleport. */
+export const PORT_GLOW = toon('#8fe3f0', { emissive: 0x2a7f95 });
+
+/**
+ * NAPO's teleport, on its tile and facing the tile below it, where you press it: a steel booth on a
+ * concrete pad, open at the front, its frame striped NAPO yellow and black over the top, the glowing
+ * field inside it (PORT_GLOW), and its yellow plate and a dark panel with one light on the post.
+ */
+export function teleportModel(o: { x: number; y: number }): THREE.Group {
+  const g = pivot(o.x + 0.5, 0, o.y + 0.5), H = 1.25, W = 0.7;
+  g.add(box(0.9, 0.08, 0.84, CONCRETE, 0, 0.04, 0));
+  g.add(box(W + 0.12, 0.05, 0.6, '#5e6466', 0, 0.105, -0.02, false));
+  for (const x of [-W / 2, W / 2]) g.add(box(0.09, H, 0.52, STEEL, x, 0.08 + H / 2, -0.02));
+  g.add(box(W + 0.09, 0.07, 0.52, STEEL, 0, 0.08 + H + 0.03, -0.02), box(W - 0.05, H, 0.05, '#4a5053', 0, 0.08 + H / 2, -0.26, false));
+  for (let k = 0; k < 6; k++) g.add(box((W + 0.09) / 6, 0.07, 0.02, k % 2 ? INK : NAPO_YELLOW, -(W + 0.09) / 2 + ((W + 0.09) * (k + 0.5)) / 6, 0.08 + H + 0.03, 0.25, false));
+  const field = box(W - 0.1, H - 0.12, 0.03, PORT_GLOW, 0, 0.08 + H / 2, -0.2, false);
+  g.add(field);
+  g.add(box(0.16, 0.1, 0.012, NAPO_YELLOW, W / 2, 0.95, 0.245, false), box(0.1, 0.02, 0.005, INK, W / 2, 0.96, 0.253, false));
+  g.add(box(0.1, 0.14, 0.012, '#1c1f24', W / 2, 0.72, 0.245, false));
+  eye(g, W / 2, 0.75, 0.252, 0.05);
+  return g;
+}
+
 /** NAPO's things that stand on a tile (its signs and buildings aside): null for anything else. */
 export function napoProp(o: MapObject): THREE.Object3D | null {
   switch (o.kind) {
@@ -364,6 +387,7 @@ export function napoProp(o: MapObject): THREE.Object3D | null {
     case 'cage': return cageModel(o, HUM);
     case 'stake': return stakeModel(o);
     case 'gate': return gateModel(o);
+    case 'teleport': return teleportModel(o);
     case 'truck': return o.style === 'napo' ? napoTruck(o) : null;
     default: return null;
   }

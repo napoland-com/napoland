@@ -141,6 +141,11 @@ export interface PlayerRecord {
    * dark to their street. None: both show, as for everyone until they choose. Every save says it.
    */
   doorOff?: true;
+  /**
+   * The setting beside it (world.ts, street visits): the player keeps their neighbors out of their cabin;
+   * only friends come in. None: neighbors may walk in to look, as for everyone until they choose. Every save says it.
+   */
+  visitsOff?: true;
   /** They read the letter about their street, the first time they came home since streets came: never again. A save without it keeps it. */
   streetTold?: true;
   /**
@@ -255,6 +260,11 @@ export interface LotRecord {
   lot: number;
   /** They keep their name off their door, and their window dark (PlayerRecord.doorOff). */
   off?: true;
+  /** They keep their neighbors out of their cabin (PlayerRecord.visitsOff). */
+  shut?: true;
+  /** What a neighbor who walks into their cabin sees while they are away: the furniture they made, and the trophies in their stash. */
+  furniture?: string[];
+  stash?: Stash;
 }
 
 /** The Old Stone: shards in it, whether it is awake, and when (ms since the epoch) that charge was so. */
@@ -544,6 +554,8 @@ export class MemoryStorage implements Storage {
       // And whether they keep their door to themselves; the letter about the street, once read, stays read.
       if (rec.doorOff) cur.doorOff = true;
       else delete cur.doorOff;
+      if (rec.visitsOff) cur.visitsOff = true;
+      else delete cur.visitsOff;
       if (rec.streetTold) cur.streetTold = true;
       // Every save says where they are: back in the main copy, the copy they were in is forgotten.
       if (rec.zone) cur.zone = rec.zone;
@@ -600,7 +612,10 @@ export class MemoryStorage implements Storage {
   }
 
   async loadLots(): Promise<LotRecord[]> {
-    return [...this.byId.values()].flatMap(r => (r.street !== undefined && r.lot !== undefined ? [{ id: r.id, name: r.name, street: r.street, lot: r.lot, ...(r.doorOff && { off: true as const }) }] : []));
+    return [...this.byId.values()].flatMap(r => (r.street !== undefined && r.lot !== undefined ? [{
+      id: r.id, name: r.name, street: r.street, lot: r.lot, ...(r.doorOff && { off: true as const }), ...(r.visitsOff && { shut: true as const }),
+      ...(r.furniture && { furniture: [...r.furniture] }), ...(r.stash && { stash: copyStash(r.stash) }),
+    }] : []));
   }
 
   async loadDrops(after: number): Promise<DropRecord[]> {
@@ -837,6 +852,8 @@ interface PlayerRow {
   /** Whether they keep their door to themselves, and whether they read the letter about their street (026_door.sql). */
   door_off: boolean;
   street_told: boolean;
+  /** Whether they keep their neighbors out of their cabin (028_visits.sql). */
+  visits_off: boolean;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -991,6 +1008,7 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.cozy_until ? { cozy: r.cozy_until.getTime() } : {}),
   ...(r.street !== null && r.lot !== null ? { street: r.street, lot: r.lot } : {}),
   ...(r.door_off ? { doorOff: true as const } : {}),
+  ...(r.visits_off ? { visitsOff: true as const } : {}),
   ...(r.street_told ? { streetTold: true as const } : {}),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
@@ -1019,8 +1037,8 @@ const thanksFor = (json: unknown): ThanksFor | null => {
 // counted as taken out (PlayerRecord.wornOut), once written with the counts, stays, and a save without field
 // notes, notes read or keepsakes home (the previous release's, which never writes them) leaves those; one
 // without furniture keeps it too, like the tools, while whether they are cozy, where their cabin stands and
-// whether they keep their door to themselves is said by every save; the letter about their street, once read,
-// stays read.
+// whether they keep their door (and their cabin) to themselves is said by every save; the letter about their
+// street, once read, stays read.
 const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9,
   stats = $10::jsonb || CASE WHEN players.stats ? 'wornOut' THEN '{"wornOut": 1}'::jsonb ELSE '{}'::jsonb END, xp = $11, stash = $12::jsonb,
   gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
@@ -1029,7 +1047,7 @@ const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, colo
   merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
   badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, notebook = COALESCE($31::jsonb, notebook), notes = COALESCE($32::jsonb, notes),
   keepsakes = COALESCE($33::jsonb, keepsakes), furniture = COALESCE($34::jsonb, furniture), cozy_until = $35, street = $36, lot = $37, door_off = $38,
-  street_told = street_told OR $39, bests = COALESCE($40::jsonb, bests), last_seen_at = $13 WHERE id = $1`;
+  street_told = street_told OR $39, bests = COALESCE($40::jsonb, bests), visits_off = $41, last_seen_at = $13 WHERE id = $1`;
 
 // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
 function saveParams(rec: PlayerRecord): unknown[] {
@@ -1043,7 +1061,7 @@ function saveParams(rec: PlayerRecord): unknown[] {
     rec.notes ? JSON.stringify(rec.notes) : null, rec.keepsakes ? JSON.stringify(rec.keepsakes) : null,
     rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
     rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null, rec.doorOff === true, rec.streetTold === true,
-    rec.bests ? JSON.stringify(rec.bests) : null,
+    rec.bests ? JSON.stringify(rec.bests) : null, rec.visitsOff === true,
   ];
 }
 
@@ -1096,9 +1114,9 @@ export class PgStorage implements Storage {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
          parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, rested, merits_spent, looks, pattern, badge, notebook, notes, keepsakes, furniture, cozy_until, street, lot,
-         door_off, street_told)
+         door_off, street_told, visits_off)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27,
-         $28::jsonb, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb, $34::jsonb, $35, $36, $37, $38, $39)
+         $28::jsonb, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb, $34::jsonb, $35, $36, $37, $38, $39, $40)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedCounts(rec)),
@@ -1107,7 +1125,7 @@ export class PgStorage implements Storage {
         Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? 0, rec.looks?.length ? JSON.stringify(rec.looks) : null,
         rec.pattern ?? null, rec.badge ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null, rec.notes ? JSON.stringify(rec.notes) : null,
         rec.keepsakes ? JSON.stringify(rec.keepsakes) : null, rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
-        rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null, rec.doorOff === true, rec.streetTold === true,
+        rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null, rec.doorOff === true, rec.streetTold === true, rec.visitsOff === true,
       ],
     );
     return r.rowCount === 1;
@@ -1156,10 +1174,13 @@ export class PgStorage implements Storage {
   }
 
   async loadLots(): Promise<LotRecord[]> {
-    const r = await this.pool.query<{ id: string; name: string; street: number; lot: number; door_off: boolean }>(
-      'SELECT id, name, street, lot, door_off FROM players WHERE street IS NOT NULL AND lot IS NOT NULL',
+    const r = await this.pool.query<{ id: string; name: string; street: number; lot: number; door_off: boolean; visits_off: boolean; furniture: unknown; stash: unknown }>(
+      'SELECT id, name, street, lot, door_off, visits_off, furniture, stash FROM players WHERE street IS NOT NULL AND lot IS NOT NULL',
     );
-    return r.rows.map(l => ({ id: l.id, name: l.name, street: l.street, lot: l.lot, ...(l.door_off && { off: true as const }) }));
+    return r.rows.map(l => ({
+      id: l.id, name: l.name, street: l.street, lot: l.lot, ...(l.door_off && { off: true as const }), ...(l.visits_off && { shut: true as const }),
+      ...(Array.isArray(l.furniture) && { furniture: l.furniture.filter((t): t is string => typeof t === 'string') }), stash: stash(l.stash),
+    }));
   }
 
   async loadDrops(after: number): Promise<DropRecord[]> {

@@ -1,8 +1,8 @@
 ---
 id: street-visits
 title: The road to your street, your neighbors' cabins and NAPO's teleport
-status: next
-order: 110
+status: done
+order: 580
 area: social
 depends: [streets, cabin-comfort]
 ---
@@ -14,5 +14,7 @@ Your neighbors' cabins can be visited. Walk in through a neighbor's door, whethe
 A NAPO teleport stands in every cabin: A at it and you are in town, on NAPO's teleport by the notice board. It is a second way out, to start a trip at once; the way home is the road.
 
 Why: every other way in the world is one you walk (one fixed world you learn), and the way home should be one too. A street you can visit makes your neighbors' cabins something to see and yours something to show, so making it cozy is worth more than its comfort, and a lit window becomes a place to drop in on (together you go farther). The teleport keeps the start of a trip short, now that home is a walk from town.
+
+Built: Stonebrook's main street runs on west past the house that was Home, dark now with a room of its own, and off the edge of town onto the east end of Residents' Lane; neighbors walk into each other's cabins unless kept out (they read "The door is locked."), see the furniture and the trophy shelf as the owner left them, and the owner at home reads "Cy came in."; the setting is "Let my neighbors come into my cabin", under Friends; NAPO's teleport stands by the east wall of every cabin, its twin by the notice board.
 
 More: [World structure](../docs/DESIGN.md#world-structure).

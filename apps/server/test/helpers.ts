@@ -756,15 +756,18 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
   const { cozy: _cozy, ...cold } = kept;
   await storage.save({ ...cold, lastSeenAt: kept.lastSeenAt + 1000 });
   expect((await load()).cozy).toBeUndefined();
-  // The letter about their street, once read, stays read, even by a save without it; the door's setting is said by every save.
+  // The letter about their street, once read, stays read, even by a save without it; the door's settings are said by every save.
   const { streetTold: _told, ...untold } = kept;
-  await storage.save({ ...untold, doorOff: true, lastSeenAt: kept.lastSeenAt + 1200 });
-  expect(await load()).toMatchObject({ streetTold: true, doorOff: true });
-  expect((await storage.loadLots()).find(l => l.id === id)).toEqual({ id, name: rec.name, street: 3, lot: 0, off: true });
+  await storage.save({ ...untold, doorOff: true, visitsOff: true, lastSeenAt: kept.lastSeenAt + 1200 });
+  expect(await load()).toMatchObject({ streetTold: true, doorOff: true, visitsOff: true });
+  // A lot carries what a neighbor who walks in sees while its owner is away: the furniture, and the stash the trophies come from.
+  const cabin = { furniture: later.furniture, stash: later.stash };
+  expect((await storage.loadLots()).find(l => l.id === id)).toEqual({ id, name: rec.name, street: 3, lot: 0, off: true, shut: true, ...cabin });
   await storage.save({ ...kept, lastSeenAt: kept.lastSeenAt + 1300 });
-  expect((await load()).doorOff).toBeUndefined();
+  expect(await load()).not.toHaveProperty('doorOff');
+  expect(await load()).not.toHaveProperty('visitsOff');
   // And where their cabin stands, which everyone's lots are read from: one without it, and it stands on none.
-  expect(await storage.loadLots()).toContainEqual({ id, name: rec.name, street: 3, lot: 0 });
+  expect(await storage.loadLots()).toContainEqual({ id, name: rec.name, street: 3, lot: 0, ...cabin });
   const { street: _street, lot: _lot, ...unhoused } = kept;
   await storage.save({ ...unhoused, lastSeenAt: kept.lastSeenAt + 1500 });
   expect(await load()).not.toHaveProperty('street');

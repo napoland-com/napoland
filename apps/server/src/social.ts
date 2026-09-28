@@ -71,6 +71,8 @@ export class Social {
   private readonly blocking = new Map<string, Set<string>>();
   /** Who each player online is friends with, kept at hand the same way. */
   private readonly befriended = new Map<string, Set<string>>();
+  /** Who blocks each player online, online or not: the World keeps them out of those players' cabins. */
+  private readonly blockers = new Map<string, Set<string>>();
 
   constructor(private readonly o: SocialOptions) {
     this.tellLimit = new RollingLimit(TELLS_PER_MINUTE, 60_000, o.clock);
@@ -82,6 +84,11 @@ export class Social {
     return this.blocking.get(id) ?? new Set();
   }
 
+  /** Who blocks `id`, while they are online (nobody before joined() has run). */
+  blockedBy(id: string): ReadonlySet<string> {
+    return this.blockers.get(id) ?? NOBODY;
+  }
+
   /** Who `id` is friends with, while they are online (nobody before joined() has run, and nobody for a guest). */
   friends(id: string): ReadonlySet<string> {
     return this.befriended.get(id) ?? NOBODY;
@@ -91,6 +98,7 @@ export class Social {
   left(id: string): void {
     this.blocking.delete(id);
     this.befriended.delete(id);
+    this.blockers.delete(id);
   }
 
   /**
@@ -101,6 +109,7 @@ export class Social {
     if (guest) {
       const links = await this.o.storage.linksOf(id);
       this.blocking.set(id, new Set(links.filter(l => l.from === id && l.kind === 'block').map(l => l.to)));
+      this.blockers.set(id, new Set(links.filter(l => l.to === id && l.kind === 'block').map(l => l.from)));
       return;
     }
     await this.list(id);
@@ -139,6 +148,9 @@ export class Social {
         await s.setLink(me, msg.id, 'block', msg.on);
         if (msg.on) this.blocking.set(me, new Set([...this.blocks(me), msg.id]));
         else this.blocking.get(me)?.delete(msg.id);
+        // Whoever they block hears nothing of it (a guest's list is never read again), but is kept out at once.
+        if (msg.on) this.blockers.get(msg.id)?.add(me);
+        else this.blockers.get(msg.id)?.delete(me);
         return this.lists(me, msg.id);
       case 'tell':
         return this.tell(me, msg.to, msg.text);
@@ -234,6 +246,7 @@ export class Social {
     // The list is read whole here anyway: the blocks and friends at hand follow it.
     this.blocking.set(id, new Set(out('block').map(p => p.id)));
     this.befriended.set(id, new Set(out('friend').map(p => p.id)));
+    this.blockers.set(id, new Set(links.filter(l => l.to === id && l.kind === 'block').map(l => l.from)));
     this.o.send(id, {
       t: 'friends',
       friends: out('friend').map(p => ({ ...p, map: this.o.where(p.id) ?? null })),

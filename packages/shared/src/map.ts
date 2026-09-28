@@ -166,6 +166,12 @@ export type MapObject =
   /** The workbench, beside the chest at home: it makes gear from what your stash holds (recipes in content/items.json). */
   | { kind: 'workbench'; x: number; y: number }
   /**
+   * NAPO's teleport: a booth pressed with A from the tile below it. The one in every cabin (a private room)
+   * sends you to its twin in the home town, by the notice board, and you arrive on the tile below that one.
+   * It only goes that way: the twin sends nobody anywhere.
+   */
+  | { kind: 'teleport'; x: number; y: number }
+  /**
    * A crate for whoever comes next (caches.ts), where people rest by a fire out there: anyone opens it,
    * leaves a thing and takes one. `name`: what people call it, as a letter says it ("the old cabin's crate").
    */
@@ -369,7 +375,7 @@ const BLOCKING = new Set<MapObject['kind']>([
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
   'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache',
-  'ruin', 'yarder', 'spool', 'traps', 'gate',
+  'ruin', 'yarder', 'spool', 'traps', 'gate', 'teleport',
 ]);
 
 /** How many must pull at one of NAPO's gates at once (MapObject 'gate'), and how close together their pulls count as at once. */
@@ -394,7 +400,7 @@ export function underfoot(o: MapObject): boolean {
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
  */
-export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache']);
+export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache', 'teleport']);
 
 /** How many tiles an object covers, across and down: houses, vehicles, log decks, beds, rugs and a few more are bigger than one. */
 export function footprint(o: MapObject): [number, number] {

@@ -136,12 +136,39 @@ describe('your street (roadmap/streets.md)', () => {
     expect([...maps.values()].flatMap(m => m.data.exits.filter(e => e.to === 'stonebrook-home').map(() => m.data.id))).toEqual(Array<string>(30).fill('residents-lane'));
   });
 
-  it('is reached through the house that was Home in Stonebrook, and its end leads back out in front of it', () => {
+  // Since street visits (roadmap/street-visits.md) a road leads there, like every other way in the world.
+  it('is reached by a side street off Stonebrook, past the house that was Home, and its end leads back along it', () => {
     const onto = town.data.exits.find(e => e.to === 'residents-lane')!;
-    expect(town.data.objects.some(o => o.kind === 'house' && doorOf(o).x === onto.x && doorOf(o).y === onto.y)).toBe(true);
+    // Off the town's west edge, on a road that runs from the main street.
+    expect([onto.x, onto.w, onto.h]).toEqual([0, 1, 2]);
+    for (let y = onto.y; y < onto.y + onto.h; y++) {
+      expect(town.kind(onto.x, y)).toBe('road');
+      expect(findPath(town, onto.x + 1, y, town.data.spawn.x, town.data.spawn.y).length, `${onto.x + 1},${y}`).toBeGreaterThan(0);
+    }
+    // It comes onto the lane where the road comes in (the lane's spawn), and the lane's end leads back onto it.
+    expect([onto.tx, onto.ty]).toEqual([lane.data.spawn.x, lane.data.spawn.y]);
     const end = lane.data.exits.find(e => e.to === 'stonebrook')!;
-    expect([end.tx, end.ty, end.dir]).toEqual([onto.x, onto.y + 1, 'down']);
+    expect([end.x, end.tx, end.ty, end.dir]).toEqual([lane.width - 1, onto.x + 1, onto.y, 'right']);
     expect(lane.data.exits.map(e => e.to).sort()).toEqual(['stonebrook', ...Array<string>(30).fill('stonebrook-home')]);
+    // No door in town leads onto the lane any more: the house that was Home is dark, like the leavers', and has a room of its own.
+    const old = town.data.objects.find((o): o is Extract<MapObject, { kind: 'house' }> => o.kind === 'house' && town.exitAt(doorOf(o).x, doorOf(o).y)?.to === 'stonebrook-old-house')!;
+    expect(old).toMatchObject({ x: 7, y: 19, lit: 0, curtains: true });
+    expect(maps.get('stonebrook-old-house')!.data.objects.some(o => o.kind === 'fireplace')).toBe(false);
+  });
+
+  it('has NAPO\'s teleport in every cabin, and its twin by the notice board in town to arrive in front of', () => {
+    const port = (m: TileMap) => m.data.objects.filter(o => o.kind === 'teleport');
+    const home = maps.get('stonebrook-home')!;
+    expect(port(home)).toHaveLength(1);
+    const [twin] = port(town), board = town.data.objects.find(o => o.kind === 'board')!;
+    expect(port(town)).toHaveLength(1);
+    expect(Math.abs(twin!.x - board.x) + Math.abs(twin!.y - board.y)).toBeLessThanOrEqual(2);
+    expect(town.walkable(twin!.x, twin!.y + 1) && !town.exitAt(twin!.x, twin!.y + 1)).toBe(true);
+    // In the cabin it stands in reach of the door, out of the way from the door to the fire.
+    const [p] = port(home);
+    expect(findPath(home, home.data.spawn.x, home.data.spawn.y, p!.x, p!.y + 1).at(-1)).toEqual({ x: p!.x, y: p!.y + 1 });
+    expect(findPath(home, home.data.spawn.x, home.data.spawn.y, home.data.wake!.x, home.data.wake!.y).at(-1)).toEqual({ x: home.data.wake!.x, y: home.data.wake!.y });
+    expect([...maps.values()].filter(m => port(m).length).map(m => m.data.id).sort()).toEqual(['stonebrook', 'stonebrook-home']);
   });
 });
 
@@ -532,25 +559,35 @@ const kept = (o: MapObject) => (NATURE.has(o.kind) ? `${o.kind} ${o.x},${o.y}` :
 
 describe('the pass that put more of the story in the places (roadmap/richer-places.md)', () => {
   const areas = ['stonebrook', 'near-woods', 'south-road'] as const;
+  // Changed since, on purpose (roadmap/street-visits.md): a side street runs off Stonebrook's west edge to
+  // Residents' Lane, where trees stood, and the house that was Home is dark behind its curtains, its door
+  // leading into a room of its own. The tiles paved, and what that changed of an old exit and thing:
+  const paved = (id: string) => new Set(id !== 'stonebrook' ? [] : before[id]!.tiles.flatMap((row, y) => [...row].flatMap((c, x) => (c !== 'r' && maps.get(id)!.data.tiles[y]![x] === 'r' ? [`${x},${y}`] : []))));
+  const oldHome = (o: MapObject | MapExit) => 'kind' in o ? o.kind === 'house' && o.x === 7 && o.y === 19 : o.to === 'stonebrook-home';
+  const exitSince = (e: MapExit): MapExit => {
+    const room = maps.get('stonebrook-old-house')!.data.spawn;
+    return oldHome(e) ? { ...e, to: 'stonebrook-old-house', tx: room.x, ty: room.y } : e;
+  };
+  const thingSince = (id: string, o: MapObject): MapObject => (id === 'stonebrook' && oldHome(o) ? { ...o, lit: 0, curtains: true } as MapObject : o);
 
   it('only added: every tile, exit, place and thing that was there still is, where it was and in its order', () => {
     for (const id of areas) {
       const b = before[id]!, now = maps.get(id)!.data;
       expect(now.version, id).toBeGreaterThan(b.version);
       expect(now.spawn, id).toEqual(b.spawn);
-      // New exits (the doors of new houses) and new names come after the old ones. One door changed since, on
-      // purpose: the house that was Home is the way onto your street now (roadmap/streets.md), where it was.
-      const lane = maps.get('residents-lane')!.data.spawn;
-      const since = (e: MapExit): MapExit => (e.to === 'stonebrook-home' ? { ...e, to: 'residents-lane', tx: lane.x, ty: lane.y } : e);
-      expect(now.exits.slice(0, b.exits.length), id).toEqual(b.exits.map(since));
+      // New exits (the doors of new houses, the side street) and new names come after the old ones.
+      expect(now.exits.slice(0, b.exits.length), id).toEqual(b.exits.map(exitSince));
       expect((now.places ?? []).slice(0, b.places.length), id).toEqual(b.places);
-      // The old things first, in their order (which lamps flicker, and which poles the wires run between, go by it).
-      const old = new Set([...b.nature, ...b.things.map(o => JSON.stringify(o))]);
+      // The old things first, in their order (which lamps flicker, and which poles the wires run between, go by it),
+      // but for the trees the side street took.
+      const road = paved(id), nature = b.nature.filter(n => !road.has(n.split(' ')[1]!)), was = b.things.map(o => JSON.stringify(thingSince(id, o)));
+      expect(b.nature.length - nature.length, id).toBe(id === 'stonebrook' ? 10 : 0);
+      const old = new Set([...nature, ...was]);
       const first = now.objects.slice(0, old.size).map(kept);
       expect(first.filter(k => !old.has(k)), id).toEqual([]);
       expect(new Set(first).size, id).toBe(old.size);
       const things = now.objects.slice(0, old.size).filter(o => !NATURE.has(o.kind)).map(o => JSON.stringify(o));
-      expect(things, id).toEqual(b.things.map(o => JSON.stringify(o)));
+      expect(things, id).toEqual(was);
       const raised = now.levels.flatMap((row, y) => [...row].flatMap((c, x) => (c === '0' ? [] : [`${x},${y}=${c}`])));
       expect(raised, id).toEqual(b.raised);
     }
@@ -560,9 +597,12 @@ describe('the pass that put more of the story in the places (roadmap/richer-plac
     for (const id of areas) {
       const b = before[id]!, now = maps.get(id)!;
       const standing = new Set(oldMap(id).data.objects.flatMap(o => objectTiles(o).map(([x, y]) => `${x},${y}`)));
+      const onto = now.data.exits.find(e => e.to === 'residents-lane');
       for (let y = 0; y < now.height; y++) for (let x = 0; x < now.width; x++) {
         const was = b.tiles[y]![x]!, is = now.data.tiles[y]![x]!;
         if (was === is) continue;
+        // The side street to the lane (street visits), in the rows its road leaves the town by.
+        if (onto && was === 'g' && is === 'r' && y >= onto.y && y < onto.y + onto.h) continue;
         if (id === 'stonebrook') expect('gm'.includes(was) && 'wm'.includes(is) && !standing.has(`${x},${y}`), `${id} ${x},${y}: ${was} to ${is}`).toBe(true);
         else expect(was, `${id} ${x},${y}: ${was} to ${is}`).toBe('t');
       }
@@ -602,7 +642,8 @@ describe('the pass that put more of the story in the places (roadmap/richer-plac
     const town = maps.get('stonebrook')!;
     const houses = town.data.objects.filter((o): o is Extract<MapObject, { kind: 'house' }> => o.kind === 'house');
     const roomOf = (h: Extract<MapObject, { kind: 'house' }>) => maps.get(town.exitAt(doorOf(h).x, doorOf(h).y)!.to)!;
-    const left = houses.filter(h => h.curtains);
+    // The house that was Home has its curtains drawn too since street visits, but nobody left it: its people live on the lane.
+    const left = houses.filter(h => h.curtains && roomOf(h).data.id !== 'stonebrook-old-house');
 
     it('four families who left: dark behind drawn curtains, cold inside, their name on the mailbox by the door, one thing to read', () => {
       expect(left).toHaveLength(4);

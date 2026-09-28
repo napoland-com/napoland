@@ -68,3 +68,19 @@ export function cozySeconds(comfort: number): number {
 export function dries(furniture: readonly string[] | undefined, items: Map<string, ItemDef>): boolean {
   return (furniture ?? []).some(id => { const def = items.get(id); return def?.kind === 'furniture' && def.dries === true; });
 }
+
+/**
+ * The trophies a stash shows on the trophy shelf, in its order: each charm and each piece of anomalous gear
+ * it holds, once. Your own shelf shows yours; a neighbor who comes in sees theirs (the server sends it).
+ */
+export function trophiesIn(stash: ReadonlyArray<{ item: string }>, get: (id: string) => ItemDef | undefined): ItemDef[] {
+  const seen = new Set<string>(), out: ItemDef[] = [];
+  for (const s of stash) {
+    if (seen.has(s.item)) continue;
+    const def = get(s.item);
+    if (!def || (def.kind !== 'charm' && !(def.kind === 'gear' && def.tier === 'anomalous'))) continue;
+    seen.add(s.item);
+    out.push(def);
+  }
+  return out;
+}

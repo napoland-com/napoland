@@ -307,19 +307,6 @@ export function trophyModel(def: ItemDef): THREE.Group {
   return g;
 }
 
-/** The trophies a stash shows on the shelf, in its order: each charm and each piece of anomalous gear it holds, once. */
-export function trophiesIn(stash: ReadonlyArray<{ item: string }>, get: (id: string) => ItemDef): ItemDef[] {
-  const seen = new Set<string>(), out: ItemDef[] = [];
-  for (const s of stash) {
-    if (seen.has(s.item)) continue;
-    const def = get(s.item);
-    if (def.kind !== 'charm' && !(def.kind === 'gear' && def.tier === 'anomalous')) continue;
-    seen.add(s.item);
-    out.push(def);
-  }
-  return out;
-}
-
 /** Which places are made, from the furniture set in the cabin (item ids). */
 export function madePlaces(furniture: readonly string[], get: (id: string) => ItemDef): Set<Comfort> {
   const out = new Set<Comfort>();

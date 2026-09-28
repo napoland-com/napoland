@@ -96,7 +96,8 @@ describe('curtains', () => {
     expect(curtainColor(house)).toBe(curtainColor({ ...house }));
     expect(CURTAINS).toContain(curtainColor(house));
     const town = map('stonebrook'), cloths = town.objects.flatMap(o => (o.kind === 'house' && o.curtains ? [curtainColor(o)] : []));
-    expect(cloths).toHaveLength(4);
+    // The four families' houses, and the house that was Home, shut up since every cabin stood on the lane.
+    expect(cloths).toHaveLength(5);
   });
 });
 

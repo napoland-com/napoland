@@ -211,8 +211,10 @@ export function attachNet(o: NetOptions): Net {
     blocks: id => social.blocks(id),
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
   });
-  // Someone who blocks a player hears no thanks from them either, nor a knock at their door; and a friend's street is one to move to.
+  // Someone who blocks a player hears no thanks from them either, nor a knock at their door, and never has them in
+  // their cabin; and a friend's street is one to move to, and a friend's cabin one to walk into.
   world.blocks = id => social.blocks(id);
+  world.blockedBy = id => social.blockedBy(id);
   world.friends = id => social.friends(id);
   /** Each player's social actions, one after another: each reads what the one before wrote. */
   const socialQueue = new Map<string, Promise<void>>();
@@ -390,6 +392,10 @@ export function attachNet(o: NetOptions): Net {
       case 'doorOff':
         // Guests too: a guest's name is on a door as well.
         world.doorOff(s.id, msg.off, now);
+        return flush();
+      case 'visitsOff':
+        // Guests too: a guest's cabin stands on the street as well.
+        world.visitsOff(s.id, msg.off, now);
         return flush();
       case 'befriend':
       case 'answer':
@@ -676,6 +682,7 @@ export function attachNet(o: NetOptions): Net {
       ...(joined.furniture && { furniture: joined.furniture }),
       ...(joined.street && { street: joined.street }),
       ...(joined.doorOff && { doorOff: true }),
+      ...(joined.visitsOff && { visitsOff: true }),
       serverTime: Date.now(),
     });
     flush();

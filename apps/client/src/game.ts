@@ -24,7 +24,8 @@
  *   you make it at the workbench, which sets it there at once; standing by your own fire makes you cozy,
  *   which the status panel counts down once you leave it;
  * - on your street (the server says whose each lot is and who is home: their window is lit), A at a
- *   neighbor's door knocks, and the box says whether they are home; their door is never walked into. A at
+ *   neighbor's door knocks, and the box says whether they are home; walking into it visits, when they let
+ *   you in (the server says; else the box says it is locked), and their chest and workbench stay theirs. A at
  *   your own door offers, friend by friend, to move your cabin next to theirs, where their street has room;
  * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
  *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
@@ -47,12 +48,12 @@
 import {
   BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter,
   emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf,
-  nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
+  nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, trophiesIn, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type LongNightView, type MapNote, type OfferPick, type ParcelView, type RefusedAction,
-  type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type Weather,
+  type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type VisitView, type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -62,12 +63,11 @@ import { Passing } from './glimpses';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, buyQuestion,
-  cabinWho, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, LOCKED, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TENDED, TOOK_ONE, TOO_DARK, TOWN_TELEPORT, YOUR_CABIN, buyQuestion,
+  cabinWho, cameInText, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYoursText, nothingToBurn,
   openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, waltOnTheLongNight,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
-import { trophiesIn } from './view/cabin';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
 import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
@@ -97,7 +97,7 @@ interface Mover {
  * the story (`story`): talking to one, or reading one, may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
@@ -180,6 +180,8 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
     if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
+    // NAPO's teleport: the one in a cabin takes you into town (the server moves you); its twin there only reads.
+    if (o.kind === 'teleport') return [map.data.private ? { x: o.x, y: o.y, who: 'NAPO teleport', lines: [], kind: 'teleport' } : { x: o.x, y: o.y, who: 'NAPO teleport', lines: TOWN_TELEPORT, kind: 'talk' }];
     // Furniture in your cabin reads from any side of it; the rug is walked over, not faced.
     if (o.kind === 'comfort' && o.what !== 'rug') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: '', lines: [], kind: 'comfort', what: o.what }));
     return [];
@@ -328,6 +330,8 @@ export class Game {
    */
   furniture: string[] = [];
   furnitureChanges = 0;
+  /** A neighbor's cabin you are in (the zone said): whose it is, and how they made it theirs; null anywhere else. It counts in furnitureChanges. */
+  host: VisitView | null = null;
   /**
    * Your street, while you are on it (the welcome or zone said): whose each lot is and whether they are
    * home, and which lot is yours; null anywhere else. `streetChanges` counts changes, for the lit windows.
@@ -342,6 +346,8 @@ export class Game {
    * socialChanges, as the friends panel shows it.
    */
   doorOff = false;
+  /** You keep your neighbors out of your cabin (the setting beside it), as the server last said. It counts in socialChanges too. */
+  visitsOff = false;
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The id of the chapter of the story you are in, as the server said ('' until its welcome). */
@@ -547,6 +553,19 @@ export class Game {
     return trophiesIn(this.stash ?? [], id => this.items.get(id));
   }
 
+  /** A neighbor's cabin you walked into, or none: the view draws their furniture and their shelf. */
+  private setHost(visit: VisitView | undefined) {
+    if (!visit && !this.host) return;
+    this.host = visit ? { name: visit.name, furniture: [...visit.furniture], trophies: [...visit.trophies] } : null;
+    this.furnitureChanges++;
+  }
+
+  /** The cabin you are in as it stands: the furniture in its places and what is on its shelf (a neighbor's, when you visit). */
+  cabinShown(): { furniture: readonly string[]; trophies: ItemDef[] } {
+    const h = this.host;
+    return h ? { furniture: h.furniture, trophies: h.trophies.flatMap(id => this.items.byId.get(id) ?? []) } : { furniture: this.furniture, trophies: this.trophies() };
+  }
+
   /** The season right now, its time left counted down from the server's last word. */
   seasonNow(now: number): SeasonView {
     const s = this.season;
@@ -632,7 +651,9 @@ export class Game {
         this.stepMs = msg.stepMs;
         this.enter(map, msg.players, msg.finds, msg.drops, someoneElse);
         this.setStreet(msg.street);
+        this.setHost(undefined);
         this.doorOff = msg.doorOff === true;
+        this.visitsOff = msg.visitsOff === true;
         this.socialChanges++;
         this.scene(msg, now);
         this.weather = msg.weather;
@@ -674,6 +695,7 @@ export class Game {
         const old = this.me;
         this.enter(map, msg.players, msg.finds, msg.drops);
         this.setStreet(msg.street);
+        this.setHost(msg.visit);
         this.scene(msg, now);
         // The weather over the new map: its region's own rain (a room, the map outside its door).
         this.weather = msg.weather;
@@ -728,6 +750,18 @@ export class Game {
       case 'doorOff':
         this.doorOff = msg.off;
         this.socialChanges++;
+        break;
+      case 'visitsOff':
+        this.visitsOff = msg.off;
+        this.socialChanges++;
+        break;
+      case 'locked': {
+        const lot = this.lotDoor.findIndex(d => d.x === msg.x && d.y === msg.y);
+        this.inform(cabinWho(this.street?.lots[lot] ?? null), LOCKED);
+        break;
+      }
+      case 'cameIn':
+        this.inform('Door', cameInText(msg.name));
         break;
       case 'streetLetter':
         this.letters.push({ who: 'Letter', lines: streetLetterLines(msg.doorOff) });
@@ -1257,6 +1291,13 @@ export class Game {
       return;
     }
     if (t.kind === 'fire') return this.tend(t.x, t.y);
+    // In a neighbor's cabin their chest and workbench are theirs: the box says so, and nothing is asked.
+    if ((t.kind === 'chest' || t.kind === 'bench') && this.host) return this.inform(t.kind === 'chest' ? `${this.host.name}'s stash` : 'Workbench', notYoursText(this.host.name, t.kind));
+    // NAPO's teleport in a cabin: the server takes you into town.
+    if (t.kind === 'teleport') {
+      if (this.online) this.send({ t: 'talk', x: t.x, y: t.y });
+      return;
+    }
     if (t.kind === 'chest') {
       if (!this.online) return;
       this.opening = { x: t.x, y: t.y, at: this.clock };
@@ -1278,8 +1319,8 @@ export class Game {
     if (t.kind === 'door' && t.lot !== undefined) return this.atDoor(t.lot, t.x, t.y);
     if (t.kind === 'comfort' && t.what) {
       // What stands there: spoiled, and where to make it again, or what you made.
-      const def = furnitureFor(t.what, this.items.byId.values());
-      const said = comfortLines(t.what, def, !!def && this.furniture.includes(def.id), this.trophies());
+      const def = furnitureFor(t.what, this.items.byId.values()), cabin = this.cabinShown();
+      const said = comfortLines(t.what, def, !!def && cabin.furniture.includes(def.id), cabin.trophies, !!this.host);
       this.openDialog({ ...t, who: said.who, lines: said.lines, kind: 'talk' });
       return;
     }
@@ -1302,6 +1343,11 @@ export class Game {
   /** The setting beside friend and trade requests: keep your name off your door and your window dark (`off`), or show both. The server says back how it stands. */
   setDoorOff(off: boolean) {
     if (this.online) this.send({ t: 'doorOff', off });
+  }
+
+  /** The setting beside it: keep your neighbors out of your cabin (`off`), or let them walk in to look. The server says back how it stands. */
+  setVisitsOff(off: boolean) {
+    if (this.online) this.send({ t: 'visitsOff', off });
   }
 
   /** At your own door: each friend whose street has a lot free, asked about in turn (NO asks about the next); none, and the box says how it works. */
@@ -1885,10 +1931,10 @@ export class Game {
     return { x, y, who: lot === s.mine ? YOUR_CABIN : cabinWho(s.lots[lot] ?? null), lines: [], kind: 'door', lot };
   }
 
-  /** A neighbor's door: knocked at, never walked into (the server keeps you out as well). */
+  /** The door of a lot nobody lives behind: it leads nowhere. A neighbor's is tried: the server lets you in, or says it is locked. */
   private barred(x: number, y: number): boolean {
     const lot = this.lotDoor.findIndex(d => d.x === x && d.y === y);
-    return lot >= 0 && lot !== this.street?.mine;
+    return lot >= 0 && !this.street?.lots[lot];
   }
 
   /** Asks the server for what lies on tile x,y. One pick at a time: the answer is on its way. */

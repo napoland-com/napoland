@@ -66,8 +66,11 @@ const ROOMS: readonly Room[] = [
     // Years of damp spoiled the rest (comfort.ts): an iron stove in the corner, a shelf, a drying rack
     // by the fire, the bed, the rug and the lamp on the table stand spoiled in their places until you
     // make each again at the workbench, which sets it there at once.
-    // Its door is every cabin's on Residents' Lane (gen-street.ts): the server lets each player in through their own.
-    id: 'stonebrook-home', name: 'Home', version: 6, outside: 'residents-lane', door: [6, 20], lots: true, private: true, wake: { x: 4, y: 2, dir: 'down' },
+    // NAPO's teleport stands by the east wall, out of the way: A at it and you are in town, by the notice
+    // board (its twin there, gen-map.ts). The way home is the road.
+    // Its door is every cabin's on Residents' Lane (gen-street.ts): the server lets each player in through
+    // their own, and a neighbor through theirs when they let them in.
+    id: 'stonebrook-home', name: 'Home', version: 7, outside: 'residents-lane', door: [6, 20], lots: true, private: true, wake: { x: 4, y: 2, dir: 'down' },
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -87,6 +90,29 @@ const ROOMS: readonly Room[] = [
       { kind: 'comfort', x: 7, y: 1, what: 'bed' },
       { kind: 'comfort', x: 3, y: 2, what: 'rug' },
       { kind: 'comfort', x: 2, y: 4, what: 'lamp' },
+      { kind: 'teleport', x: 7, y: 4 },
+    ],
+  },
+  {
+    // The house that was Home, before every cabin stood on Residents' Lane: shut up since, dark behind its
+    // curtains like the leavers' houses, what was left in it under dust sheets and the hearth cold.
+    id: 'stonebrook-old-house', name: 'The old house', version: 1, outside: 'stonebrook', door: [8, 20],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      { kind: 'hearth', x: 4, y: 1 },
+      { kind: 'sheeted', x: 1, y: 1 },
+      { kind: 'sheeted', x: 7, y: 1 },
+      { kind: 'sheeted', x: 6, y: 3 },
+      { kind: 'table', x: 2, y: 3 },
+      { kind: 'boxes', x: 1, y: 4 },
+      { kind: 'rug', x: 3, y: 2, w: 3, h: 2 },
     ],
   },
   {
@@ -799,7 +825,7 @@ function json(map: MapData): string {
 const GLYPH: Partial<Record<MapObject['kind'], string>> = {
   fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@',
   hearth: 'f', sheeted: 's', boxes: 'n', crib: 'C', clock: 'k', paper: '?', saw: 'S', carriage: '=', sawdust: ':', logs: 'l', luggage: 'u', cache: 'X',
-  traps: 't',
+  traps: 't', teleport: 'P',
 };
 /** The places for furniture in a home (comfort.ts), in lower case: what stands there, spoiled until it is made. */
 const COMFORT_GLYPH: Record<Comfort, string> = { stove: 'o', bed: 'b', rug: '_', lamp: 'i', rack: 'r', shelf: 't' };

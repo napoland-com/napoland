@@ -241,6 +241,7 @@ const hud = new Hud(screen, {
       case 'requests': return game.social({ t: 'requests', off: a.off });
       case 'tradeRequests': return game.social({ t: 'tradeRequests', off: a.off });
       case 'door': return game.setDoorOff(a.off);
+      case 'visits': return game.setVisitsOff(a.off);
       // Face to face only: from farther away, the card says so (the server checks it again).
       case 'trade': {
         const reach = game.tradeReach(a.id);
@@ -814,7 +815,8 @@ function frame(now: number) {
   // Your cabin's places: spoiled until made, and the trophy shelf with what your stash holds.
   if (game.furnitureChanges !== comfortShown.changes || game.stash !== comfortShown.stash || view !== comfortShown.view) {
     comfortShown = { changes: game.furnitureChanges, stash: game.stash, view };
-    view.setComfort(madePlaces(game.furniture, id => items.get(id)), game.trophies());
+    const cabin = game.cabinShown();
+    view.setComfort(madePlaces(cabin.furniture, id => items.get(id)), cabin.trophies);
   }
   // On your street, the windows of the neighbors who are home are lit.
   if (game.streetChanges !== lotsShown.changes || view !== lotsShown.view) {

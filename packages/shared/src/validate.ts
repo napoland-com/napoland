@@ -155,6 +155,12 @@ export function validateMap(data: MapData): Problem[] {
       else if (data.private !== true) err(`comfort at ${o.x},${o.y}: a place for furniture is only in a home of one's own (private)`);
       else if (data.objects.filter(p => p.kind === 'comfort' && p.what === o.what).length > 1) err(`comfort at ${o.x},${o.y}: a home has one place for its ${o.what}`);
     }
+    // NAPO's teleport: one in a cabin sends you to its twin in town (validateWorld), and you arrive in front of it.
+    if (o.kind === 'teleport') {
+      if (!(data.private === true || (data.kind === 'town' && !data.street))) err(`teleport at ${o.x},${o.y}: NAPO's teleports stand in a home of one's own (private) and in town`);
+      else if (data.objects.filter(t => t.kind === 'teleport').length > 1) err(`teleport at ${o.x},${o.y}: a map has one teleport at most`);
+      else if (map.exitAt(o.x, o.y + 1)) err(`teleport at ${o.x},${o.y}: the tile in front of it (below) is where you arrive, and it is an exit`);
+    }
     if (o.kind === 'npc' && !o.lines.length) err(`npc ${o.id} has nothing to say`);
     if (o.kind === 'npc') for (const [k, c] of Object.entries(o.look ?? {})) {
       if (!(NPC_LOOK as readonly string[]).includes(k)) err(`npc ${o.id}: a look has ${NPC_LOOK.join(', ')}, not ${k}`);
@@ -426,7 +432,7 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   if (home.data.kind !== 'town') out.push({ level: 'error', map: homeId, message: 'the home map must be a town (players start there, or in the home off it, and wake up there after a collapse)' });
 
   // A street of cabins (Residents' Lane): one at most, whose every door leads into one home of one's own,
-  // each player's own cabin; it is reached through a house in the home town (the way onto your street).
+  // each player's own cabin; a road off the home town leads onto it, and its end leads back.
   const streets = [...byId.values()].filter(m => m.data.street);
   if (streets.length > 1) out.push({ level: 'error', map: streets[1]!.data.id, message: `street: ${streets.map(m => m.data.id).join(' and ')} are both streets, but every player's cabin stands on the one` });
   for (const street of streets) {
@@ -434,15 +440,22 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
     const room = rooms.size === 1 ? byId.get([...rooms][0]!) : undefined;
     if (!room?.data.private) out.push({ level: 'error', map: street.data.id, message: 'street: every cabin on it leads into the one home of one\'s own (a private room): its owner\'s own cabin' });
     if (!street.data.exits.some(e => e.to === homeId)) out.push({ level: 'error', map: street.data.id, message: `street: its end leads back to the home town (${homeId})` });
+    if (!home.data.exits.some(e => e.to === street.data.id)) out.push({ level: 'error', map: homeId, message: `street: a road off the home town leads onto ${street.data.id}` });
+  }
+  // NAPO's teleports: the one in a cabin sends you to its twin in the home town, the only one there.
+  const ports = [...byId.values()].filter(m => m.data.objects.some(o => o.kind === 'teleport'));
+  for (const m of ports) {
+    if (m.data.kind === 'town' && m.data.id !== homeId) out.push({ level: 'error', map: m.data.id, message: `teleport: the twin of the cabins' teleports stands in the home town (${homeId})` });
+  }
+  if (ports.some(m => m.data.private) && !home.data.objects.some(o => o.kind === 'teleport')) {
+    out.push({ level: 'error', map: homeId, message: 'teleport: a cabin has one, but its twin in the home town is missing, so it would send you nowhere' });
   }
   for (const map of byId.values()) {
-    // A door leads into a building: its exit must go to an inside, not to another town or the wilds (but
-    // for the house whose door is the way onto your street).
+    // A door leads into a building: its exit must go to an inside, not to a town, a street or the wilds.
     for (const o of map.data.objects) {
       if (o.kind !== 'house') continue;
       const d = doorOf(o), into = map.exitAt(d.x, d.y), target = into && byId.get(into.to);
-      if (target?.data.street && map.data.id !== homeId) out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: the way onto the street is a house in the home town (${homeId})` });
-      else if (target && target.data.kind !== 'inside' && !target.data.street) out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: its door leads to ${into!.to}, which is not an inside` });
+      if (target && target.data.kind !== 'inside') out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: its door leads to ${into!.to}, which is not an inside` });
       // Concrete outside, concrete inside: one of NAPO's buildings leads into one of its rooms, the mill
       // onto its floor, a cabin into a cabin's.
       else if (target && (o.style ?? null) !== (target.data.style ?? null)) {

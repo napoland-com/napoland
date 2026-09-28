@@ -8,7 +8,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { objectTiles, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
-import { ontoStreet } from './gen-street';
+import { TOWN_ROAD, ontoStreet } from './gen-street';
 
 const N = 44;
 function mulberry32(a: number) {
@@ -48,19 +48,19 @@ rect(0, 0, N - 1, N - 1, (x, y) => {
 });
 for (const [x0, y0, x1, y1] of [[21, 4, 27, 10], [32, 5, 39, 11], [33, 19, 40, 25]] as const) rect(x0, y0, x1, y1, (x, y) => { if (tile[y]![x] === 'g' && !level[y]![x]) tile[y]![x] = 'f'; });
 
-// Town. Every house can be entered: the house that was home, whose door is the way onto your street
-// (Residents' Lane, gen-street.ts, where your own cabin stands; the spawn is at its door), the empty
-// house next door, and the lodge, where the town sits by the fire.
+// Town. Every house can be entered: the house that was Home, dark now behind its curtains like the
+// leavers' (your cabin stands on Residents' Lane, up the side street past it; the spawn is at its door),
+// the empty house next door, and the lodge, where the town sits by the fire.
 const houses = [
-  { x: 7, y: 19, roof: '#6b7075', lit: 1, inside: null },
+  { x: 7, y: 19, roof: '#6b7075', lit: 0, inside: 'stonebrook-old-house', curtains: true },
   { x: 14, y: 19, roof: '#7a4b33', lit: 0, inside: 'stonebrook-empty-house' },
   { x: 7, y: 30, roof: '#4a5a44', lit: 1, inside: 'stonebrook-lodge' },
 ] as const;
 const doors: MapExit[] = [];
 for (const h of houses) {
-  const house = { kind: 'house', x: h.x, y: h.y, w: 3, h: 2, roof: h.roof, lit: h.lit } as const;
+  const house = { kind: 'house', x: h.x, y: h.y, w: 3, h: 2, roof: h.roof, lit: h.lit, ...('curtains' in h && { curtains: true }) } as const;
   place(house);
-  doors.push(h.inside ? doorInto(h.inside, 'stonebrook', house) : ontoStreet(house));
+  doors.push(doorInto(h.inside, 'stonebrook', house));
 }
 place({ kind: 'car', x: 13, y: 24, w: 2 });
 for (const [x, y] of [[15, 23], [15, 27], [9, 27]] as const) place({ kind: 'barrel', x, y });
@@ -184,6 +184,27 @@ function round(v: number) { return Math.round(v * 1000) / 1000; }
   });
 }
 
+// The side street to Residents' Lane (gen-street.ts), where everyone's cabin stands: off the main street
+// by the house that was Home, west behind it and off the edge of town. Laid after everything drawn from
+// rnd(), so nothing else moves: only the trees in its way go.
+for (let y = TOWN_ROAD.y; y <= TOWN_ROAD.y + 1; y++) for (let x = TOWN_ROAD.x; tile[y]![x] !== 'r'; x++) {
+  const tree = objects.findIndex(o => o.kind === 'tree' && o.x === x && o.y === y);
+  if (tree >= 0) objects.splice(tree, 1);
+  else if (blocked[y]![x]) throw new Error(`the side street needs open ground at ${x},${y}`);
+  if (tile[y]![x] !== 'g') throw new Error(`the side street needs grass at ${x},${y}`);
+  tile[y]![x] = 'r';
+  blocked[y]![x] = false;
+}
+
+// NAPO's teleport by the notice board, the twin of the one in every cabin: you arrive in front of it.
+{
+  const PORT = { x: 11, y: 23 };
+  for (const [x, y] of [[PORT.x, PORT.y], [PORT.x, PORT.y + 1]] as const) {
+    if (blocked[y]![x] || tile[y]![x] !== 'l') throw new Error(`NAPO's teleport needs open ground on the lot at ${x},${y}`);
+  }
+  place({ kind: 'teleport', ...PORT });
+}
+
 // ---- What the town left (roadmap/richer-places.md) ----
 // Added after everything above, and without rnd(), so nothing placed before moves: the brook the town
 // is named for, running out of the woods into the pond; the houses of four families who left, dark
@@ -284,16 +305,18 @@ const brook: Array<[number, number]> = [];
 }
 
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 13, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 14, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
   // The north road leads into the Near Woods (its road enters at x 31-32 on the bottom row), the south
-  // road down the South Road (its road enters at x 35-36 on the top row).
+  // road down the South Road (its road enters at x 35-36 on the top row); after the doors (newer), the
+  // side street onto Residents' Lane (its road comes in at its east end).
   exits: [
     { x: 29, y: 0, w: 2, h: 1, to: 'near-woods', tx: 31, ty: 78, dir: 'up' },
     { x: 11, y: 43, w: 2, h: 1, to: 'south-road', tx: 35, ty: 1, dir: 'down' },
     ...doors,
+    ontoStreet(),
   ],
   objects,
   // The town's rain, the same as the Near Woods' up its north road: from 12 minutes after dawn, for 12.
