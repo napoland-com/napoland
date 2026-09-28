@@ -2297,20 +2297,20 @@ export class Game {
 
   /**
    * A (or a tap) at a place being mended (works.ts): with what it takes in the bag and room for it, asks
-   * first ("Give 3 scrap to the footbridge?", and how many, up to what you carry and what it takes); YES
-   * gives it, and NO says how it stands. With none of it, or when it takes no more for now, it says how it
-   * stands and whose name is on its plaque.
+   * first ("Give 3 scrap to the footbridge? It is broken: it stands again with 30 scrap.", and how many, up
+   * to what you carry and what it takes); YES gives it, and NO says how it stands and whose name is on its
+   * plaque. With none of it, or when it takes no more for now, it says that and why.
    */
   private atWorks(t: Talker) {
     const w = t.works ? this.items.works.get(t.works) : undefined;
     if (!w || !this.online) return;
     const def = this.items.get(w.item), view = this.works.get(w.id), who = worksWho(w), state = worksText(w, view, def);
-    const slot = this.bag.findIndex(b => b.item === w.item), room = worksRoom(w, view ?? { standing: false, held: 0 });
+    const stands = view ?? { standing: false, held: 0 }, slot = this.bag.findIndex(b => b.item === w.item), room = worksRoom(w, stands);
     if (slot < 0) return this.inform(who, `${state} ${nothingToGive(def)}`);
     if (room <= 0) return this.inform(who, `${state} ${WORKS_FULL}`);
     this.ask({
-      who, text: n => bringQuestion(def, w, n), count: { min: 1, max: Math.min(countOf(this.bag, w.item), room, FEED_MAX) },
-      yes: n => this.actOn(slot, w.item, who, bringQuestion(def, w, n), i => ({ t: 'bring', x: t.x, y: t.y, slot: i, ...(n > 1 ? { count: n } : {}) })),
+      who, text: n => bringQuestion(def, w, stands, n), count: { min: 1, max: Math.min(countOf(this.bag, w.item), room, FEED_MAX) },
+      yes: n => this.actOn(slot, w.item, who, bringQuestion(def, w, stands, n), i => ({ t: 'bring', x: t.x, y: t.y, slot: i, ...(n > 1 ? { count: n } : {}) })),
       no: () => this.inform(who, state),
     });
   }

@@ -83,10 +83,14 @@ beforeEach(() => {
 });
 
 describe('what the text box says at a place being mended', () => {
-  it('asks first what to give, by its name', () => {
-    expect(bringQuestion(SCRAP, BRIDGE, 3)).toBe('Give 3 scrap to the footbridge?');
-    expect(bringQuestion(SCRAP, BRIDGE, 1)).toBe('Give 1 scrap to the footbridge?');
-    expect(bringQuestion(WIRE, LIGHT, 2)).toBe('Give 2 wire to the street light?');
+  it('asks first what to give, by its name, with one line of how it stands', () => {
+    const none = { standing: false, held: 0 };
+    expect(bringQuestion(SCRAP, BRIDGE, none, 3)).toBe('Give 3 scrap to the footbridge? It is broken: it stands again with 30 scrap.');
+    expect(bringQuestion(SCRAP, BRIDGE, { standing: false, held: 12 }, 1)).toBe('Give 1 scrap to the footbridge? It is broken: 12 of 30 given, 18 more and it stands again.');
+    expect(bringQuestion(WIRE, LIGHT, none, 2)).toBe('Give 2 wire to the street light? It is dark: it lights up again with 12 wire.');
+    expect(bringQuestion(SCRAP, BRIDGE, { standing: true, held: 15 }, 5)).toBe('Give 5 scrap to the footbridge? It stands, with enough put by for 3 more days.');
+    expect(bringQuestion(SCRAP, BRIDGE, { standing: true, held: 5 }, 5)).toBe('Give 5 scrap to the footbridge? It stands, with enough put by for 1 more day.');
+    expect(bringQuestion(WIRE, LIGHT, { standing: true, held: 1 }, 1)).toBe('Give 1 wire to the street light? It is lit, but not past today.');
     expect([worksWho(BRIDGE), worksWho(LIGHT)]).toEqual(['Footbridge', 'Street light']);
   });
 
@@ -121,7 +125,7 @@ describe('your own game at a place being mended', () => {
   it('asks first to give what it takes, up to what you carry and what it has room for; yes gives it, no says how it stands', () => {
     const g = play(at(4, 2, 'right'), broken, [{ item: 'moss', count: 1 }, { item: 'scrap', count: 10 }, { item: 'scrap', count: 4 }]);
     g.pressA();
-    expect(g.askView()).toMatchObject({ who: 'Footbridge', text: 'Give 1 scrap to the footbridge?', count: expect.objectContaining({ n: 1, max: 14 }) });
+    expect(g.askView()).toMatchObject({ who: 'Footbridge', text: 'Give 1 scrap to the footbridge? It is broken: it stands again with 30 scrap.', count: expect.objectContaining({ n: 1, max: 14 }) });
     g.answer('yes');
     expect(sent).toEqual([{ t: 'bring', x: 5, y: 2, slot: 1 }]);
     g.handle({ t: 'did', did: { kind: 'brought', works: 'creek-bridge', item: 'scrap', count: 1, view: { id: 'creek-bridge', standing: false, held: 1, top: 'Aldo' } } }, now);

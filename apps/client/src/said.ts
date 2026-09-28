@@ -90,9 +90,19 @@ export function upText(seconds: number): string {
   return `You climb up to the lookout and see the woods for miles. You can stay ${howLong(seconds)}: B climbs down.`;
 }
 
-/** A: at a place being mended (works.ts), with what it takes. "Give 3 scrap to the footbridge?" */
-export function bringQuestion(def: ItemDef, w: Pick<WorksDef, 'name'>, n: number): string {
-  return `Give ${amount(def, n)} to ${w.name}?`;
+/**
+ * A: at a place being mended (works.ts), with what it takes, and one line of how it stands, so that the
+ * first time you meet it you know what it is for. "Give 3 scrap to the footbridge? It is broken: it
+ * stands again with 30 scrap." "Give 2 wire to the street light? It is lit, with enough put by for 3 more days."
+ */
+export function bringQuestion(def: ItemDef, w: WorksDef, v: Pick<WorksView, 'standing' | 'held'>, n: number): string {
+  const q = `Give ${amount(def, n)} to ${w.name}?`, light = w.build === 'light', again = light ? 'it lights up again' : 'it stands again';
+  if (v.standing) {
+    const days = worksDays(w, v.held), up = light ? 'It is lit' : 'It stands';
+    return days > 0 ? `${q} ${up}, with enough put by for ${days} more day${days === 1 ? '' : 's'}.` : `${q} ${up}, but not past today.`;
+  }
+  const down = light ? 'It is dark' : 'It is broken';
+  return v.held > 0 ? `${q} ${down}: ${v.held} of ${w.need} given, ${w.need - v.held} more and ${again}.` : `${q} ${down}: ${again} with ${w.need} ${pluralOf(def)}.`;
 }
 
 /** What the text box calls a place being mended: "Footbridge", "Street light". */
