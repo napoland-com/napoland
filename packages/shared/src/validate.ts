@@ -27,6 +27,8 @@ export function validateMap(data: MapData): Problem[] {
   const out: Problem[] = [];
   const err = (message: string) => out.push({ level: 'error', message });
   const warn = (message: string) => out.push({ level: 'warning', message });
+  // The server tells the copies of a map apart by its id and a key after it (world.ts, zoneKey).
+  if (!ID.test(data.id ?? '')) err(`its id is lowercase words joined by hyphens, not ${JSON.stringify(data.id)}`);
   if (data.tiles.length !== data.height) err(`tiles has ${data.tiles.length} rows, expected ${data.height}`);
   if (data.levels.length !== data.height) err(`levels has ${data.levels.length} rows, expected ${data.height}`);
   data.tiles.forEach((row, y) => {

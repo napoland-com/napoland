@@ -26,6 +26,11 @@ export interface PlayerRecord {
   authSub: string | null;
   /** The id of the map the player is on. */
   map: string;
+  /**
+   * The copy of that map they are in (world.ts, zones), so they come back into it if it still makes
+   * sense. None (or ''): the map's main copy, the world everyone shares.
+   */
+  zone?: string;
   x: number;
   y: number;
   dir: Dir;
@@ -71,6 +76,8 @@ export interface DropRecord {
   /** The owner's name, shown with the pile. Not stored with it: it comes from the player. */
   name: string;
   map: string;
+  /** The copy of the map it lies in: none (or ''), the main copy. It is only ever found there. */
+  zone?: string;
   x: number;
   y: number;
   items: BagSlot[];
@@ -88,6 +95,8 @@ export interface MarkRecord {
   name: string;
   color: string;
   map: string;
+  /** The copy of the map it is painted in: none (or ''), the main copy. */
+  zone?: string;
   x: number;
   y: number;
   dir: Dir;
@@ -154,7 +163,7 @@ export interface Storage {
   nameTaken(name: string): Promise<boolean>;
   /** False if the name was taken in the meantime (two players racing for it), or the identity has a character already. */
   create(rec: PlayerRecord): Promise<boolean>;
-  /** Stores what changes while playing: map, position, direction, energy, bag, color and lastSeenAt. */
+  /** Stores what changes while playing: map and the copy of it, position, direction, energy, bag, color and lastSeenAt. */
   save(rec: PlayerRecord): Promise<void>;
   /** The player is back (lastSeenAt is `at`, ms since the epoch). False if they no longer exist. */
   seen(id: string, at: number): Promise<boolean>;
@@ -211,6 +220,11 @@ const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
   ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}),
 });
+/** A record as storage keeps it: the copy it names, if any (like the database, which keeps '' for the main copy and reads it back as none). */
+function withZone<T extends { zone?: string }>(r: T, zone: string | undefined): T {
+  const { zone: _zone, ...rest } = r;
+  return (zone ? { ...rest, zone } : rest) as T;
+}
 
 export class MemoryStorage implements Storage {
   private readonly byId = new Map<string, PlayerRecord>();
@@ -256,7 +270,7 @@ export class MemoryStorage implements Storage {
     // Like the database's unique columns (nulls never collide).
     const taken = (key: string | null, index: Map<string, string>) => key !== null && index.has(key);
     if (this.byId.has(rec.id) || taken(rec.tokenHash, this.idByToken) || taken(rec.authSub, this.idBySub) || this.idByName.has(name)) return false;
-    this.byId.set(rec.id, copyRecord(rec));
+    this.byId.set(rec.id, withZone(copyRecord(rec), rec.zone));
     if (rec.tokenHash !== null) this.idByToken.set(rec.tokenHash, rec.id);
     if (rec.authSub !== null) this.idBySub.set(rec.authSub, rec.id);
     this.idByName.set(name, rec.id);
@@ -272,6 +286,9 @@ export class MemoryStorage implements Storage {
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
         ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), lastSeenAt: rec.lastSeenAt,
       });
+      // Every save says where they are: back in the main copy, the copy they were in is forgotten.
+      if (rec.zone) cur.zone = rec.zone;
+      else delete cur.zone;
     }
   }
 
@@ -321,7 +338,7 @@ export class MemoryStorage implements Storage {
     // Like the database's foreign key: a pile belongs to a player who exists.
     if (!this.byId.has(drop.owner)) throw new Error(`there is no player ${drop.owner}`);
     const { name: _name, ...stored } = drop;
-    this.drops.set(drop.owner, { ...stored, items: copyBag(drop.items) });
+    this.drops.set(drop.owner, withZone({ ...stored, items: copyBag(drop.items) }, drop.zone));
   }
 
   async removeDrop(owner: string): Promise<void> {
@@ -341,7 +358,7 @@ export class MemoryStorage implements Storage {
   async saveMark(mark: MarkRecord): Promise<void> {
     if (!this.byId.has(mark.owner)) throw new Error(`there is no player ${mark.owner}`);
     const { name: _name, color: _color, ...stored } = mark;
-    this.marks.set(mark.id, stored);
+    this.marks.set(mark.id, withZone(stored, mark.zone));
   }
 
   async removeMark(id: number): Promise<void> {
@@ -417,6 +434,8 @@ interface PlayerRow {
   token_hash: string | null;
   auth_sub: string | null;
   map: string;
+  /** The copy of the map (014_zones.sql): '' for the main copy. */
+  zone: string;
   x: number;
   y: number;
   dir: Dir;
@@ -448,6 +467,7 @@ interface DropRow {
   owner: string;
   name: string;
   map: string;
+  zone: string;
   x: number;
   y: number;
   items: unknown;
@@ -461,6 +481,7 @@ interface MarkRow {
   name: string;
   color: string;
   map: string;
+  zone: string;
   x: number;
   y: number;
   dir: Dir;
@@ -487,6 +508,8 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   tokenHash: r.token_hash,
   authSub: r.auth_sub,
   map: r.map,
+  // '' is the main copy, which a record names by naming none.
+  ...(r.zone ? { zone: r.zone } : {}),
   x: r.x,
   y: r.y,
   dir: r.dir,
@@ -557,13 +580,13 @@ export class PgStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
-         parcel_welcome, parcel_day, parcel_days)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22)
+         parcel_welcome, parcel_day, parcel_days, zone)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
-        rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0,
+        rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.zone ?? '',
       ],
     );
     return r.rowCount === 1;
@@ -571,16 +594,17 @@ export class PgStorage implements Storage {
 
   async save(rec: PlayerRecord): Promise<void> {
     // A record without parcels (never had one) leaves the parcel columns as they are, as a save without a chapter leaves the story.
+    // The copy is always said, as the map is: a record without one is in the main copy.
     const p = rec.parcels;
     await this.pool.query(
       `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
        gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
        parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
-       parcel_days = COALESCE($20::smallint, parcel_days), last_seen_at = $13 WHERE id = $1`,
+       parcel_days = COALESCE($20::smallint, parcel_days), zone = $21, last_seen_at = $13 WHERE id = $1`,
       [
         rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
-        rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
+        rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null, rec.zone ?? '',
       ],
     );
   }
@@ -612,18 +636,21 @@ export class PgStorage implements Storage {
   async loadDrops(after: number): Promise<DropRecord[]> {
     await this.pool.query('DELETE FROM drops WHERE dropped_at <= $1', [new Date(after)]);
     const r = await this.pool.query<DropRow>(
-      `SELECT d.owner, p.name, d.map, d.x, d.y, d.items, d.dropped_at, d.trail
+      `SELECT d.owner, p.name, d.map, d.zone, d.x, d.y, d.items, d.dropped_at, d.trail
        FROM drops d JOIN players p ON p.id = d.owner
        ORDER BY d.dropped_at`,
     );
-    return r.rows.map(d => ({ owner: d.owner, name: d.name, map: d.map, x: d.x, y: d.y, items: slots(d.items), droppedAt: d.dropped_at.getTime(), trail: trail(d.trail) }));
+    return r.rows.map(d => ({
+      owner: d.owner, name: d.name, map: d.map, ...(d.zone ? { zone: d.zone } : {}), x: d.x, y: d.y, items: slots(d.items), droppedAt: d.dropped_at.getTime(), trail: trail(d.trail),
+    }));
   }
 
   async saveDrop(drop: DropRecord): Promise<void> {
     await this.pool.query(
-      `INSERT INTO drops (owner, map, x, y, items, dropped_at, trail) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb)
-       ON CONFLICT (owner) DO UPDATE SET map = EXCLUDED.map, x = EXCLUDED.x, y = EXCLUDED.y, items = EXCLUDED.items, dropped_at = EXCLUDED.dropped_at, trail = EXCLUDED.trail`,
-      [drop.owner, drop.map, drop.x, drop.y, JSON.stringify(drop.items), new Date(drop.droppedAt), JSON.stringify(drop.trail ?? [])],
+      `INSERT INTO drops (owner, map, zone, x, y, items, dropped_at, trail) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
+       ON CONFLICT (owner) DO UPDATE SET map = EXCLUDED.map, zone = EXCLUDED.zone, x = EXCLUDED.x, y = EXCLUDED.y, items = EXCLUDED.items, dropped_at = EXCLUDED.dropped_at,
+         trail = EXCLUDED.trail`,
+      [drop.owner, drop.map, drop.zone ?? '', drop.x, drop.y, JSON.stringify(drop.items), new Date(drop.droppedAt), JSON.stringify(drop.trail ?? [])],
     );
   }
 
@@ -634,18 +661,21 @@ export class PgStorage implements Storage {
   async loadMarks(after: number): Promise<MarkRecord[]> {
     await this.pool.query('DELETE FROM marks WHERE placed_at <= $1', [new Date(after)]);
     const r = await this.pool.query<MarkRow>(
-      `SELECT m.id, m.owner, p.name, p.color, m.map, m.x, m.y, m.dir, m.placed_at
+      `SELECT m.id, m.owner, p.name, p.color, m.map, m.zone, m.x, m.y, m.dir, m.placed_at
        FROM marks m JOIN players p ON p.id = m.owner
        ORDER BY m.placed_at`,
     );
-    return r.rows.map(m => ({ id: Number(m.id), owner: m.owner, name: m.name, color: m.color, map: m.map, x: m.x, y: m.y, dir: m.dir, placedAt: m.placed_at.getTime() }));
+    return r.rows.map(m => ({
+      id: Number(m.id), owner: m.owner, name: m.name, color: m.color, map: m.map, ...(m.zone ? { zone: m.zone } : {}), x: m.x, y: m.y, dir: m.dir, placedAt: m.placed_at.getTime(),
+    }));
   }
 
   async saveMark(m: MarkRecord): Promise<void> {
     await this.pool.query(
-      `INSERT INTO marks (id, owner, map, x, y, dir, placed_at) VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (id) DO UPDATE SET owner = EXCLUDED.owner, map = EXCLUDED.map, x = EXCLUDED.x, y = EXCLUDED.y, dir = EXCLUDED.dir, placed_at = EXCLUDED.placed_at`,
-      [m.id, m.owner, m.map, m.x, m.y, m.dir, new Date(m.placedAt)],
+      `INSERT INTO marks (id, owner, map, zone, x, y, dir, placed_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (id) DO UPDATE SET owner = EXCLUDED.owner, map = EXCLUDED.map, zone = EXCLUDED.zone, x = EXCLUDED.x, y = EXCLUDED.y, dir = EXCLUDED.dir,
+         placed_at = EXCLUDED.placed_at`,
+      [m.id, m.owner, m.map, m.zone ?? '', m.x, m.y, m.dir, new Date(m.placedAt)],
     );
   }
 
