@@ -146,6 +146,12 @@ export function attachNet(o: NetOptions): Net {
   let joining = 0;
   /** The last save started for each player, while it runs. */
   const pendingSaves = new Map<string, Promise<void>>();
+  /**
+   * What each player who left took with them, until all their saves are written: a hello meanwhile (a
+   * quick reconnect while the database is busy) plays this, never the older row storage still reads, or
+   * what fell into their pile or went into a crate on the way out would be theirs twice.
+   */
+  const leftWith = new Map<string, PlayerRecord>();
   /** The same for each player's pile, each mark and the Old Stone. */
   const pendingDrops = new Map<string, Promise<void>>();
   const pendingMarks = new Map<number, Promise<void>>();
@@ -413,6 +419,11 @@ export function attachNet(o: NetOptions): Net {
       send(old, { t: 'error', code: 'replaced', message: 'You are playing somewhere else' });
       const live = disconnect(old, CLOSE_CODES.replaced, 'replaced', false);
       if (live) entry.rec = { ...live, authSub: entry.rec.authSub };
+    } else {
+      // Back before the saves of their last visit were all written: they come back as they left. Only
+      // whose character it is and the thanks received (others add to them) are storage's to say.
+      const left = leftWith.get(entry.rec.id);
+      if (left) entry.rec = fresher(left, entry.rec);
     }
     enter(s, entry);
   }
@@ -564,6 +575,8 @@ export function attachNet(o: NetOptions): Net {
 
   function enter(s: Session, { rec, token, claimed }: Entry): void {
     const joined = world.join(rec, clock());
+    // In the world again: from here on the World has the freshest record.
+    leftWith.delete(rec.id);
     s.state = 'play';
     s.id = rec.id;
     s.guest = guests && rec.authSub === null;
@@ -643,7 +656,10 @@ export function attachNet(o: NetOptions): Net {
     hear(s, '', '');
     const rec = world.leave(s.id, clock());
     flush();
-    if (rec && save) void persist(rec);
+    if (rec && save) {
+      leftWith.set(rec.id, rec);
+      void persist(rec);
+    }
     log.info('player left', { id: s.id, online: world.size });
     return rec;
   }
@@ -665,7 +681,10 @@ export function attachNet(o: NetOptions): Net {
       .then(() => storage.save(snapshot))
       .catch((err: unknown) => log.error('saving a player failed', { id: rec.id, err }))
       .finally(() => {
-        if (pendingSaves.get(rec.id) === done) pendingSaves.delete(rec.id);
+        if (pendingSaves.get(rec.id) !== done) return;
+        pendingSaves.delete(rec.id);
+        // All written: storage has what they left with now.
+        leftWith.delete(rec.id);
       });
     pendingSaves.set(rec.id, done);
     return done;
@@ -856,6 +875,15 @@ export function attachNet(o: NetOptions): Net {
       clearTimeout(force);
     },
   };
+}
+
+/**
+ * A player as they left (`left`, their saves still on the way), with what storage says that only
+ * storage knows (`read`): whose character it is (a claim) and the thanks others gave them meanwhile.
+ */
+function fresher(left: PlayerRecord, read: PlayerRecord): PlayerRecord {
+  const thanked = Math.max(left.stats?.thanked ?? 0, read.stats?.thanked ?? 0);
+  return { ...left, authSub: read.authSub, stats: { ...left.stats, ...(thanked ? { thanked } : {}) } };
 }
 
 function text(data: RawData): string {
