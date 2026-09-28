@@ -276,9 +276,10 @@ describe('the Far Woods, what they give', () => {
     const rule = items.finds.find(f => f.item === 'far-woods-map')!;
     expect(rule.map).toBe('far-woods-trapper-cabin');
     expect(rule.respawn[1]).toBeLessThanOrEqual(180);
-    // Every other area there is outdoors has a map everyone starts with; this one alone is found.
+    // Every other area there is outdoors has a map everyone starts with; this one alone is found. (A
+    // street is no area of its own: it is on the map of the town its end leads back to, areaOf.)
     const charted = new Set([...STARTER_TOOLS].map(t => byId.get(t)!.chart));
-    const outdoors = [...maps.values()].filter(m => m.data.kind !== 'inside').map(m => m.data.id);
+    const outdoors = [...maps.values()].filter(m => m.data.kind !== 'inside' && !m.data.street).map(m => m.data.id);
     expect(outdoors.filter(id => !charted.has(id))).toEqual(['far-woods']);
   });
 });

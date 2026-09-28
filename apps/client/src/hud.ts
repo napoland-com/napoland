@@ -205,7 +205,7 @@ export interface GoalView { text: string; ready: boolean; act: boolean }
  */
 export interface RecipeView {
   id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean;
-  group?: 'mend' | 'upgrade' | 'make';
+  group?: 'mend' | 'upgrade' | 'make' | 'cabin';
 }
 /**
  * A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or
@@ -312,8 +312,11 @@ export type SocialAction =
 /** What the trade panel asks the game to do: give (or take back) a bag slot, one fewer or one more on a row of your side, Ready, Trade, or call it off. */
 export type TradeAction = { a: 'give'; slot: number } | { a: 'step'; i: number; by: -1 | 1 } | { a: 'ready' } | { a: 'confirm' } | { a: 'cancel' };
 
-/** A name over someone's head (with the drawing of their badge, merits.ts, when they wear one), or over a pile while you are near it. */
-export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; badge?: string }
+/**
+ * A name over someone's head (with the drawing of their badge, merits.ts, when they wear one), over a pile
+ * while you are near it (`pile`), or on the plate by a cabin's door on your street (`plate`).
+ */
+export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; plate?: boolean; badge?: string }
 /** `row` stacks words said at once, 0 at the bottom. */
 export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number; row: number }
 /** The fan of calls over B: the call the finger is on (null: off the fan), and whether the words show under the notes. */
@@ -1851,7 +1854,7 @@ export class Hud {
     more!.setAttribute('aria-disabled', String(c.n >= c.max));
   }
 
-  /** Name tags above other players and near piles, positioned in screen pixels. */
+  /** Name tags above other players, near piles and on the name plates of your street, positioned in screen pixels. */
   setTags(tags: TagView[]) {
     const seen = new Set<string>();
     for (const t of tags) {
@@ -1859,9 +1862,9 @@ export class Hud {
       let el = this.tagEls.get(t.id);
       if (!el) {
         el = document.createElement('div');
-        el.className = t.pile ? 'tag pile' : 'tag';
+        el.className = t.pile ? 'tag pile' : t.plate ? 'tag plate' : 'tag';
         // A player's tag can be tapped: their card, to ask them to be friends (or block or report them).
-        if (!t.pile) el.dataset.player = t.id;
+        if (!t.pile && !t.plate) el.dataset.player = t.id;
         this.el.labels!.appendChild(el);
         this.tagEls.set(t.id, el);
       }
@@ -1963,11 +1966,12 @@ export function offerHtml(rows: readonly OfferRow[], side: 'mine' | 'theirs'): s
 }
 
 /** The headings of the workbench's list, over the rows of each kind. */
-const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> = { mend: 'Mend', upgrade: 'Upgrade', make: 'Make' };
+const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> = { mend: 'Mend', upgrade: 'Upgrade', make: 'Make', cabin: 'For your cabin' };
 
 /**
- * The workbench's list: its rows in the order given (mending, upgrades, then what it makes), each kind
- * under its heading. A row shows what it is, what it needs against the stash, and Ready when it can be done.
+ * The workbench's list: its rows in the order given (mending, upgrades, what it makes, then furniture for
+ * your cabin), each kind under its heading. A row shows what it is, what it needs against the stash, and
+ * Ready when it can be done.
  */
 export function benchHtml(rows: readonly RecipeView[]): string {
   let group: RecipeView['group'];

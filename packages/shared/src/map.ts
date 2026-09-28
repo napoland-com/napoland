@@ -7,6 +7,7 @@
  * the deeper you are) or the inside of a building. Every house can be entered: its door is an exit
  * to a small map of its own. Energy only comes back near a fireplace. See energy.ts.
  */
+import { comfortSize, underfootComfort, type Comfort } from './comfort';
 import { STEP_MS } from './movement';
 import type { Dir } from './protocol';
 import type { FlashRule, StormRule, SurgeRule } from './sky';
@@ -75,8 +76,10 @@ export type MapObject =
    * of NAPO's concrete buildings (3 by 2 or bigger, a flat roof in `roof`), or with style 'mill' the
    * old sawmill, long and low, timber under a sawtooth roof (`roof` its rusted metal). Lit: someone is
    * home. `curtains`: a cabin whose people left and drew the curtains behind them; its windows never light.
+   * `plate`: a cabin on a street, a lot (MapData.street), with a name plate by its door where its owner's
+   * name shows; its window lights while its owner is at home, whatever `lit` says.
    */
-  | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' | 'mill'; curtains?: boolean }
+  | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' | 'mill'; curtains?: boolean; plate?: true }
   | { kind: 'lamp'; x: number; y: number }
   /**
    * A wooden signpost; with style 'napo' one of NAPO's yellow warning signs, 'cardboard' a piece of
@@ -185,6 +188,12 @@ export type MapObject =
   /** A drift of sawdust on the mill floor: walked through. */
   | { kind: 'sawdust'; x: number; y: number }
   /**
+   * A place in a home of one's own where furniture stands (comfort.ts): spoiled by years of damp until
+   * its owner makes new furniture for it at the workbench. Each player sees their own (their cabin is
+   * theirs alone). `what` says which: a bed two tiles long, the rug three by two (walked over), the rest one.
+   */
+  | { kind: 'comfort'; x: number; y: number; what: Comfort }
+  /**
    * A handwritten note someone left (notes.ts): on a table, a shelf, a crate or a bed, in a car, on the
    * luggage, nailed to a pole. It lies on the tile of what it is on, so it blocks nothing itself, and you
    * read it like a sign, facing that. `id` names it for good (what players read is kept by it), `by`
@@ -258,6 +267,12 @@ export interface MapData {
   wake?: { x: number; y: number; dir: Dir };
   /** Places on this map people call by name; the paper map writes them in. */
   places?: MapPlace[];
+  /**
+   * A town only: a street of cabins (Residents' Lane), where each player's cabin stands. The server keeps a
+   * copy of it for each street of neighbors, each of its houses a lot (in the order they are listed),
+   * whose door leads into its owner's own cabin (the private home).
+   */
+  street?: true;
   /** The wilds only: skulkers, creatures that lie in the ferns and chase whoever they hear or see. */
   skulkers?: SkulkerRule;
   /**
@@ -332,6 +347,16 @@ const BLOCKING = new Set<MapObject['kind']>([
  * which blocks the way itself.
  */
 export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'bridge', 'note']);
+
+/** Does this object stop anyone from walking onto its tiles? A comfort place does, but for the rug. */
+export function blocks(o: MapObject): boolean {
+  return o.kind === 'comfort' ? !underfootComfort(o.what) : BLOCKING.has(o.kind);
+}
+
+/** Is this object only drawn, walked over or through (DECOR, and the rug of a comfort place)? */
+export function underfoot(o: MapObject): boolean {
+  return o.kind === 'comfort' ? underfootComfort(o.what) : DECOR.has(o.kind);
+}
 /**
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
@@ -347,6 +372,7 @@ export function footprint(o: MapObject): [number, number] {
     case 'bed': return [1, 2];
     case 'piano': return [2, 1];
     case 'yarder': return [2, 2];
+    case 'comfort': return comfortSize(o.what);
     default: return [1, 1];
   }
 }
@@ -368,6 +394,12 @@ export function objectTiles(o: MapObject): Array<[number, number]> {
  */
 export function hidden(map: TileMap, x: number, y: number): boolean {
   return map.kind(x, y) === 'tallgrass';
+}
+
+/** The doors of a street's lots (MapData.street), lot by lot: its houses' doors, in the order the map lists them. None on any other map. */
+export function lotDoors(data: MapData): Array<{ x: number; y: number }> {
+  if (!data.street) return [];
+  return data.objects.flatMap(o => (o.kind === 'house' ? [doorOf(o)] : []));
 }
 
 /**
@@ -413,7 +445,7 @@ export class TileMap {
         this.levels[y * W + x] = Number(lv[x] ?? '0') || 0;
       }
     }
-    for (const o of data.objects) if (BLOCKING.has(o.kind)) for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.blocked[y * W + x] = 1;
+    for (const o of data.objects) if (blocks(o)) for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.blocked[y * W + x] = 1;
     // Every house can be entered: its door tile stays open (it is an exit to the house's inside).
     for (const o of data.objects) {
       if (o.kind !== 'house') continue;

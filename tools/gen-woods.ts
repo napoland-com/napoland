@@ -17,7 +17,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DECOR, ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, objectTiles, underfoot, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
 import { noteAt, type NoteId } from './notes-left';
 import { FAR_WOODS_END, NEAR_WOODS_END } from './trappers-trail';
@@ -215,7 +215,7 @@ const blocked = new Uint8Array(W * H);
 function place(o: MapObject) {
   for (const [x, y] of objectTiles(o)) {
     if (!inner(x, y)) throw new Error(`${o.kind} at ${o.x},${o.y} is on the map edge`);
-    if (DECOR.has(o.kind)) continue;
+    if (underfoot(o)) continue;
     if (blocked[y * W + x]) throw new Error(`${o.kind} at ${o.x},${o.y} overlaps something on ${x},${y}`);
     blocked[y * W + x] = 1;
     if (at(x, y) === 't' || at(x, y) === 'w') set(x, y, 'g');
@@ -684,6 +684,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   ruin: 'H', yarder: '#', spool: 'o', bridge: '=', traps: 'L',
   // A note lies on something else, which shows.
   note: ' ',
+  // The furniture of your own cabin stands there alone (gen-interiors.ts).
+  comfort: 'n',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();

@@ -40,6 +40,7 @@ import { heardFinds, nearest, radioOf, type RadioScene } from './radio';
 import { levelText, newsBanner, restedLine, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
+import { madePlaces } from './view/cabin';
 import { WorldView, createRenderer, lightningAt, nextView } from './view/world';
 import { wardrobeView, type WardrobeState } from './wardrobe';
 import { guardZoom } from './zoom';
@@ -207,7 +208,7 @@ const hud = new Hud(screen, {
   crateClosed: () => game.closeCache(),
   // What a tap in the chest, at the workbench, in the bag or at a crate shows, from what the open chest or workbench says your stash holds, or what the open crate holds.
   details: (ref, where) => detailView(ref, {
-    items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools,
+    items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools, furniture: game.furniture,
     panel: where === 'bag' ? 'bag' : where === 'crate' ? 'crate' : 'home', wardrobe: wardrobeNow(),
     ...(game.cache ? { crate: { items: game.cacheItemsNow(performance.now()), left: game.cache.left, took: game.cache.took, me: game.meId ?? '' } } : {}),
   }),
@@ -707,6 +708,11 @@ let lootShown = { changes: -1, view: null as WorldView | null };
 let marksShown = { changes: -1, view: null as WorldView | null };
 /** Echoes are chosen again when the piles change or you reach another tile. */
 let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
+/** Your cabin's furniture as drawn, and the stash its trophy shelf was drawn from. */
+let comfortShown = { changes: -1, stash: null as typeof game.stash, view: null as WorldView | null };
+let lotsShown = { changes: -1, view: null as WorldView | null };
+/** The furniture the workbench's rows were drawn with. */
+let benchFurniture = -1;
 let statusAt = 0;
 let statsShown = -1;
 let friendsShown = { changes: -1, open: false, reach: '' };
@@ -800,6 +806,16 @@ function frame(now: number) {
   const capacity = bagSlotsOf(game.myGear, items.byId);
   if (game.bag !== bagShown || capacity !== capacityShown) hud.setBag(slotViews((bagShown = game.bag), items), (capacityShown = capacity), game.bagAt);
   hud.tickLive(now);
+  // Your cabin's places: spoiled until made, and the trophy shelf with what your stash holds.
+  if (game.furnitureChanges !== comfortShown.changes || game.stash !== comfortShown.stash || view !== comfortShown.view) {
+    comfortShown = { changes: game.furnitureChanges, stash: game.stash, view };
+    view.setComfort(madePlaces(game.furniture, id => items.get(id)), game.trophies());
+  }
+  // On your street, the windows of the neighbors who are home are lit.
+  if (game.streetChanges !== lotsShown.changes || view !== lotsShown.view) {
+    lotsShown = { changes: game.streetChanges, view };
+    view.setLots(game.litLots());
+  }
   if (game.markChanges !== marksShown.changes || view !== marksShown.view) {
     marksShown = { changes: game.markChanges, view };
     view.setMarks(game.marks.values());
@@ -919,9 +935,10 @@ function frame(now: number) {
     benchShown = game.bench;
   }
   // Also when what you wear wears down, is mended or upgraded: its mend and upgrade rows change.
-  if (game.bench && (benchChanged || game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn)) {
+  if (game.bench && (benchChanged || game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn || game.furnitureChanges !== benchFurniture)) {
     const { stash } = game.bench;
-    hud.setBench([...mendViews(game.myGear, game.myWorn, stash, items), ...upgradeViews(game.myGear, game.myWorn, stash, items), ...recipeViews(items.recipes, stash, items, game.tools)]);
+    benchFurniture = game.furnitureChanges;
+    hud.setBench([...mendViews(game.myGear, game.myWorn, stash, items), ...upgradeViews(game.myGear, game.myWorn, stash, items), ...recipeViews(items.recipes, stash, items, game.tools, game.furniture)]);
   }
   if (game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn) {
     gearShown = { gear: game.myGear, worn: game.myWorn };
@@ -997,6 +1014,8 @@ function frame(now: number) {
   }
   // Whose pile it is, while you are near. Its id is its owner's, so it gets a key of its own.
   for (const d of game.pilesNear()) { const s = view.project(d.x, d.y, 0.62); tags.push({ id: `pile:${d.id}`, name: d.name, x: s.x, y: s.y, pile: true }); }
+  // On your street, whose cabin it is, on the plate by its door, while you pass it.
+  for (const p of game.platesNear()) { const s = view.project(p.x, p.y + 0.35, 1.3); tags.push({ id: `plate:${p.lot}`, name: p.name, x: s.x, y: s.y, plate: true }); }
   hud.setTags(tags);
   // A speech bubble over whoever said something near you, above their name.
   hud.setBubbles(game.bubblesNow(now).flatMap(b => {
