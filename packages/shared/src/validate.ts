@@ -5,7 +5,7 @@
 import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
 import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
-import { DECOR, FRONTED, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, hangs, objectTiles, type MapData, type MapObject, type NpcLook, type TileKind } from './map';
+import { CREATURE_STEP_MIN_MS, DECOR, FRONTED, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, hangs, objectTiles, watcherStepMs, type MapData, type MapObject, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
 import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
@@ -93,6 +93,18 @@ export function validateMap(data: MapData): Problem[] {
     if (o.kind === 'car' || o.kind === 'truck' || o.kind === 'jeep') validateVehicle(o, map, err);
     if ((o.kind === 'logs' || o.kind === 'carriage') && !footprint(o).every(n => Number.isInteger(n) && n >= 1 && n <= (o.kind === 'logs' ? 4 : 9))) {
       err(`${o.kind} at ${o.x},${o.y} is ${footprint(o).join(' by ')}: ${o.kind === 'logs' ? 'a log deck is 1 to 4 tiles each way' : 'a carriage runs 1 to 9 tiles'}`);
+    }
+    if (o.kind === 'ruin' && !(Number.isInteger(o.w) && Number.isInteger(o.h) && o.w >= 2 && o.w <= 6 && o.h >= 2 && o.h <= 4)) {
+      err(`ruin at ${o.x},${o.y} is ${o.w} by ${o.h}: what is left of a bunkhouse is 2 to 6 wide and 2 to 4 deep`);
+    }
+    if (o.kind === 'bridge') {
+      // Laid on the ford it crosses: you walk on the ground under it, and the creek runs by on either side of it.
+      const across: Array<[number, number]> = o.dir === 'v' ? [[o.x - 1, o.y], [o.x + 1, o.y]] : [[o.x, o.y - 1], [o.x, o.y + 1]];
+      if (o.dir !== 'h' && o.dir !== 'v') err(`bridge at ${o.x},${o.y}: dir is h (it runs east to west) or v (north to south)`);
+      else if (!map.walkable(o.x, o.y) || !across.some(([x, y]) => map.kind(x, y) === 'water')) err(`bridge at ${o.x},${o.y}: it lies on a ford you can walk, with the water beside it`);
+    }
+    if ((o.kind === 'rock' && o.hum !== undefined && typeof o.hum !== 'boolean') || (o.kind === 'antenna' && o.broken !== undefined && typeof o.broken !== 'boolean')) {
+      err(`${o.kind} at ${o.x},${o.y}: ${o.kind === 'rock' ? 'hum' : 'broken'} is true, false or left out`);
     }
     if (o.kind === 'paper') {
       if (!o.name?.trim() || !o.text?.length || o.text.some(t => !t.trim())) err(`paper at ${o.x},${o.y} needs a name and something to read`);
@@ -185,11 +197,16 @@ export function validateMap(data: MapData): Problem[] {
     if (data.kind !== 'wilds') err('watchers live only in the wilds');
     if (!Number.isInteger(w.count) || w.count < 1) err('watchers: count must be a whole number from 1');
     if (!(w.steps?.length === 2 && w.steps[0] >= 0 && w.steps[0] <= w.steps[1])) err('watchers: steps is [nearest, farthest], from 0');
+    // Quicker on an aurora night, and even then slower than you: you get away by walking.
+    if (w.stepMs !== undefined && !(Number.isInteger(w.stepMs) && watcherStepMs(w, true) >= CREATURE_STEP_MIN_MS)) {
+      err(`watchers: stepMs is whole ms, slow enough that on an aurora night they still step no quicker than every ${CREATURE_STEP_MIN_MS} ms`);
+    }
   }
   if (data.skulkers) {
     const s = data.skulkers;
     if (data.kind !== 'wilds') err('skulkers live only in the wilds');
     if (!Number.isInteger(s.count) || s.count < 1) err('skulkers: count must be a whole number from 1');
+    if (s.stepMs !== undefined && !(Number.isInteger(s.stepMs) && s.stepMs >= CREATURE_STEP_MIN_MS)) err(`skulkers: stepMs is whole ms, at least ${CREATURE_STEP_MIN_MS}: walking away gets you out`);
     if (!(s.steps?.length === 2 && s.steps[0] >= 0 && s.steps[0] <= s.steps[1])) err('skulkers: steps is [nearest, farthest], from 0');
     else {
       let lairs = 0;
@@ -207,6 +224,7 @@ export function validateMap(data: MapData): Problem[] {
     for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (map.walkable(x, y) && map.homeSteps(x, y) < 0) lost++;
     if (lost) warn(`${lost} walkable tiles have no way to a home exit`);
   }
+  if (data.forest !== undefined && (data.forest !== 'old' || data.kind !== 'wilds')) err(`forest ${JSON.stringify(data.forest)}: only the wilds say how their forest grows, and it is old or left out`);
   validateTallGrass(data, map, err, warn);
   const named = new Set<string>();
   for (const p of data.places ?? []) {

@@ -48,7 +48,7 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_MAP_YET, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
   mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
@@ -1833,6 +1833,11 @@ export class Game {
 
   private float(text: string, color: string, x: number, y: number, row = 0) {
     this.floats.push({ id: ++this.fid, text, color, x, y, t: 0, row });
+  }
+
+  /** The map button (or M) where you carry no map of the area: the text box says so, over the bag if it is open. */
+  noMap() {
+    this.inform('Map', NO_MAP_YET);
   }
 
   /** Says something short over your head, in the grey of "Nothing here". */

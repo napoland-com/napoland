@@ -1,15 +1,15 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 9,
+  "version": 10,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
   "height": 80,
   "tiles": [
-    "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
-    "tttttggttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
-    "ttthhhgggttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+    "tttttttttttttttttttttttttttttttttttttttttttttttttttttmtttttttttt",
+    "tttttggttttttttttttttttttttttttttttttttttttttttttttttmtttttttttt",
+    "ttthhhgggtttttttttttttttttttttttttttttttttttttttttttggtttttttttt",
     "tthhhgggggttttttttttttttttttttttttttttttttttttttttttggggggtttttt",
     "tthhggggggttttttttttttttttttgggggtttttttgmmmmtttttttghgggggttttt",
     "tthgggggggmttttttttttttttttgggggggttttttmmttmtttttthhhgggggttttt",
@@ -175,7 +175,8 @@
     {"x":31,"y":79,"w":2,"h":1,"to":"stonebrook","tx":29,"ty":1,"dir":"down","home":true},
     {"x":47,"y":38,"w":1,"h":1,"to":"near-woods-old-cabin","tx":4,"ty":4,"dir":"up"},
     {"x":30,"y":6,"w":1,"h":1,"to":"near-woods-ranger-hut","tx":3,"ty":4,"dir":"up"},
-    {"x":55,"y":4,"w":1,"h":1,"to":"near-woods-end-cabin","tx":4,"ty":5,"dir":"up"}
+    {"x":55,"y":4,"w":1,"h":1,"to":"near-woods-end-cabin","tx":4,"ty":5,"dir":"up"},
+    {"x":53,"y":0,"w":1,"h":1,"to":"far-woods","tx":40,"ty":98,"dir":"up"}
   ],
   "objects": [
     {"kind":"lamp","x":33,"y":70},
@@ -310,7 +311,8 @@
     {"kind":"stump","x":27,"y":71,"s":1.077,"v":0.522,"burned":true},
     {"kind":"stump","x":28,"y":70,"s":1.07,"v":0.643,"burned":true},
     {"kind":"stump","x":27,"y":73,"s":1.099,"v":0.783,"burned":true},
-    {"kind":"stump","x":28,"y":74,"s":1.061,"v":0.361,"burned":true}
+    {"kind":"stump","x":28,"y":74,"s":1.061,"v":0.361,"burned":true},
+    {"kind":"sign","x":52,"y":2,"text":["The Far Woods, up the trappers' trail.","Past here the old trappers went in pairs. Up there you tire twice as fast as down here.","Feed the fire in the trapper's cabin on the way in, so it still burns on your way out."]}
   ],
   "surge": {"every":2400,"unstable":360,"surge":150,"sweep":90},
   "storm": {"every":2400,"warn":60,"length":180,"offset":1200},

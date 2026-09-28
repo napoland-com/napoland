@@ -1,0 +1,39 @@
+{
+  "id": "far-woods-trapper-cabin",
+  "name": "The trapper's cabin",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 9,
+  "height": 6,
+  "tiles": [
+    "xxxxxxxxx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xxxxpxxxx"
+  ],
+  "levels": [
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000"
+  ],
+  "spawn": {"x":4,"y":4,"dir":"up"},
+  "exits": [
+    {"x":4,"y":5,"w":1,"h":1,"to":"far-woods","tx":15,"ty":63,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"fireplace","x":4,"y":1},
+    {"kind":"bed","x":1,"y":1},
+    {"kind":"traps","x":6,"y":1},
+    {"kind":"shelf","x":7,"y":1},
+    {"kind":"woodpile","x":7,"y":3},
+    {"kind":"paper","x":2,"y":3,"look":"list","name":"Tally in pencil","text":["A trapper's tally in pencil, the seasons down the side: marten, fisher, and one lynx, underlined twice.","Along the bottom: \"No sets past the split rock. Up there the traps come back sprung, and empty.\"","Pressed in hard under it: \"Never alone past the gorge. Feed the fire going in. Leave wood for the next one.\""]},
+    {"kind":"crate","x":7,"y":4},
+    {"kind":"cache","x":2,"y":1,"name":"the trapper's crate"}
+  ]
+}

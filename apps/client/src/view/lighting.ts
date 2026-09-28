@@ -91,6 +91,20 @@ export function ambience(kind: MapKind, weather: Weather, fire: boolean): Ambien
   };
 }
 
+/**
+ * Under old growth (MapData.forest 'old', the Far Woods) the same weather is darker: the tall firs and
+ * cedars take a share of the sky's light and the sun's, and the mist closes in a little sooner. Lamps,
+ * fires and whatever glows are as bright as anywhere.
+ */
+export function underOldGrowth(a: Ambience): Ambience {
+  return {
+    ...a,
+    hemi: { ...a.hemi, intensity: a.hemi.intensity * 0.82 },
+    sun: { ...a.sun, intensity: a.sun.intensity * 0.75 },
+    fog: a.fog && { min: a.fog.min * 0.85, share: a.fog.share * 0.85 },
+  };
+}
+
 /** Something that gives light: a street lamp, or a fireplace (as bright as it burns). */
 export interface LightSource {
   kind: 'lamp' | 'fire';
