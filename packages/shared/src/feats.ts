@@ -63,13 +63,14 @@ export function modChanges(k: keyof Mods, v: unknown): boolean {
 /**
  * What the server counts: for feats, and for what people say once after the first time you did
  * something (story.ts, remarks): gear made, collapses, and surges that caught you out in the wilds.
- * `told` is not a count: it keeps which of those remarks were said, a bit each (story.ts, toldAfter).
+ * `told` is not a count: it keeps which of those remarks were said, a bit each (story.ts, toldAfter),
+ * and `scenes` which of the scenes people told at length (story.ts, scenesAfter), the same way.
  * `thanked` (thanks received) is the one count others add to, often while its owner is offline: the
  * server keeps it apart from the rest (storage.ts), so no save of a whole player can undo one.
  */
-export type Stat = 'rainSteps' | 'nightSteps' | 'heavySteps' | 'farSteps' | 'fed' | 'mended' | 'found' | 'thanked' | 'made' | 'collapsed' | 'surged' | 'told';
+export type Stat = 'rainSteps' | 'nightSteps' | 'heavySteps' | 'farSteps' | 'fed' | 'mended' | 'found' | 'thanked' | 'made' | 'collapsed' | 'surged' | 'told' | 'scenes';
 export type Stats = Partial<Record<Stat, number>>;
-export const STATS: readonly Stat[] = ['rainSteps', 'nightSteps', 'heavySteps', 'farSteps', 'fed', 'mended', 'found', 'thanked', 'made', 'collapsed', 'surged', 'told'];
+export const STATS: readonly Stat[] = ['rainSteps', 'nightSteps', 'heavySteps', 'farSteps', 'fed', 'mended', 'found', 'thanked', 'made', 'collapsed', 'surged', 'told', 'scenes'];
 /** The counts a step out in the wilds may add to (stepCounts). */
 export const STEP_STATS = ['rainSteps', 'nightSteps', 'heavySteps', 'farSteps'] as const satisfies readonly Stat[];
 

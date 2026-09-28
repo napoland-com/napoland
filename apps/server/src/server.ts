@@ -64,6 +64,8 @@ export interface ServerOptions {
   xpMultiplier?: number;
   /** Development only (RESTED_EVERY_MS): the time away that fills one XP of rest. 20 minutes unless set. */
   restedEveryMs?: number;
+  /** Development only (TOWN_DONE): milestones and works of the town it has come to from the start. */
+  townDone?: string[];
   /** How many make a crowd, in a copy of a town square and of a region (TOWN_CROWD and REGION_CROWD unless set): tests set fewer, and play-tests (TOWN_CROWD, REGION_CROWD). */
   crowd?: Partial<Crowd>;
   /** Development only (GLIMPSE_EVERY_MS): whoever is alone out in the wilds glimpses someone's walk this often (ms). Every minute or two unless set. */
@@ -154,6 +156,8 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     }
   };
   const stone = await o.storage.loadStone();
+  // The town counts from the first time this release runs, and keeps what it came to across restarts.
+  const town = await o.storage.loadTown();
   // Whether the lodge's fire lasted through the last Long Night, and how it burns if one is on.
   const longNight = await o.storage.loadLongNight();
   const cycle = o.weather === 'cycle';
@@ -167,6 +171,8 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     lots,
     returns,
     stone,
+    town,
+    ...(o.townDone?.length ? { townDone: o.townDone } : {}),
     longNight,
     now: clock(),
     // Where players run out tells how hard each part of the world really is.

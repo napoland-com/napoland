@@ -290,9 +290,12 @@ const HAND = '"Bradley Hand", "Segoe Print", "Comic Sans MS", cursive';
 
 const drawn = new Map<string, HTMLCanvasElement>();
 
-/** The drawing of a map, made once per map version. */
-export function paperMap(map: TileMap, nameOf: (id: string) => string | undefined): HTMLCanvasElement {
-  const key = `${map.data.id}@${map.data.version}`;
+/**
+ * The drawing of a map, made once per map version and what the town has come to (`town`: a room it names
+ * may be called something else once someone comes home to it, town.ts).
+ */
+export function paperMap(map: TileMap, nameOf: (id: string) => string | undefined, town = ''): HTMLCanvasElement {
+  const key = `${map.data.id}@${map.data.version}#${town}`;
   let c = drawn.get(key);
   if (!c) drawn.set(key, (c = draw(sketchOf(map, nameOf))));
   return c;

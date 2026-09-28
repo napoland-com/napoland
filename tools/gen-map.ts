@@ -281,6 +281,22 @@ const brook: Array<[number, number]> = [];
   add({ kind: 'luggage', x: 21, y: 36 });
   add({ kind: 'luggage', x: 10, y: 36 });
   add({ kind: 'boxes', x: 9, y: 36 });
+
+  // ---- Stonebrook wakes up (roadmap/stonebrook-wakes.md, packages/shared/src/town.ts) ----
+  // Added after everything above, like what the town left, so nothing moves. What changes with the town
+  // stands here from the start, within its gate: the mailbox by the empty house next to home, with the
+  // name the weather took off it, painted on again once Edith is home (the same tile, one until her
+  // milestone and one from it: they never stand there together); the street lights along the south
+  // road, broken and dark until the town's ledger mends them; and the roof over the notice board, only
+  // once the ledger builds it (a porch is walked under, so it takes no ground from anyone).
+  add({ kind: 'sign', x: 16, y: 21, style: 'mailbox', town: { until: 'edith-home' }, text: ['A mailbox. The name painted on it went with the weather.', 'Inside, a seed catalogue, years old.'] });
+  const home: MapObject = { kind: 'sign', x: 16, y: 21, style: 'mailbox', town: { from: 'edith-home' }, text: ['LUND, freshly painted.', 'Somebody lives here again.'] };
+  place(home);
+  leftBehind.push(home);
+  for (const [x, y] of [[13, 31], [10, 34], [13, 39]] as const) add({ kind: 'lamp', x, y, town: { from: 'south-lights' } });
+  const porch: MapObject = { kind: 'porch', x: 11, y: 23, w: 2, h: 2, town: { from: 'board-shelter' } };
+  objects.push(porch);
+  leftBehind.push(porch);
 }
 
 // ---- The road to your street (roadmap/street-visits.md) ----
@@ -316,7 +332,7 @@ const brook: Array<[number, number]> = [];
 }
 
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 14, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 15, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
@@ -344,6 +360,13 @@ const map: MapData = {
     { name: 'the sawmill', x: 36, y: 27 },
     { name: 'the verge', x: 17, y: 37 },
   ],
+  // What else changes with the town (town.ts): the empty house lights up once Edith is home, the mill
+  // once Arvid lights its stove and gets a new roof once the ledger mends it; and whoever comes back is
+  // chalked over the number painted on the town's sign.
+  town: {
+    houses: [{ x: 14, y: 19, from: 'edith-home', lit: 1 }, { x: 33, y: 26, from: 'mill-stove', lit: 1 }, { x: 33, y: 26, from: 'mill-roof', roof: '#6b7075' }],
+    sign: { x: 13, y: 37, pop: 23 },
+  },
 };
 
 // One row or object per line, so map changes show up as small, readable diffs.
@@ -359,7 +382,8 @@ const json = [
   '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
   `  "rain": ${JSON.stringify(map.rain)},`,
   `  "ice": ${JSON.stringify(map.ice)},`,
-  '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ]',
+  '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ],',
+  `  "town": ${JSON.stringify(map.town)}`,
   '}',
   '',
 ].join('\n');

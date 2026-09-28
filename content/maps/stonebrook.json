@@ -1,7 +1,7 @@
 {
   "id": "stonebrook",
   "name": "Stonebrook",
-  "version": 14,
+  "version": 15,
   "kind": "town",
   "depth": 0,
   "width": 44,
@@ -810,6 +810,12 @@
     {"kind":"luggage","x":21,"y":36},
     {"kind":"luggage","x":10,"y":36},
     {"kind":"boxes","x":9,"y":36},
+    {"kind":"sign","x":16,"y":21,"style":"mailbox","town":{"until":"edith-home"},"text":["A mailbox. The name painted on it went with the weather.","Inside, a seed catalogue, years old."]},
+    {"kind":"sign","x":16,"y":21,"style":"mailbox","town":{"from":"edith-home"},"text":["LUND, freshly painted.","Somebody lives here again."]},
+    {"kind":"lamp","x":13,"y":31,"town":{"from":"south-lights"}},
+    {"kind":"lamp","x":10,"y":34,"town":{"from":"south-lights"}},
+    {"kind":"lamp","x":13,"y":39,"town":{"from":"south-lights"}},
+    {"kind":"porch","x":11,"y":23,"w":2,"h":2,"town":{"from":"board-shelter"}},
     {"kind":"sign","x":9,"y":16,"text":["West: Residents' Lane","The cabins of the people who stayed, yours among them."]},
     {"kind":"teleport","x":12,"y":26}
   ],
@@ -821,5 +827,6 @@
     {"name":"the pond","x":31,"y":33},
     {"name":"the sawmill","x":36,"y":27},
     {"name":"the verge","x":17,"y":37}
-  ]
+  ],
+  "town": {"houses":[{"x":14,"y":19,"from":"edith-home","lit":1},{"x":33,"y":26,"from":"mill-stove","lit":1},{"x":33,"y":26,"from":"mill-roof","roof":"#6b7075"}],"sign":{"x":13,"y":37,"pop":23}}
 }

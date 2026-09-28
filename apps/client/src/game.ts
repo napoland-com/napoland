@@ -53,12 +53,12 @@
  * - the Long Night is the server's too (`longNight`): its banners, and what Walt says while it is on.
  */
 import {
-  BUBBLE_S, TILE_NEEDS, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes,
-  canRescue, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors,
-  markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf, stepTarget,
-  linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type ShopData, type ShopOpen, type CacheItemView,
-  type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page, type Pass, BUNDLE, carriesFood, cookable, cooks,
-  nearestCooking, whyNotEat,
+  BUBBLE_S, TILE_NEEDS, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf,
+  cacheTakes, canRescue, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal,
+  lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf,
+  stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type ShopData, type ShopOpen,
+  type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page, type Pass, BUNDLE, carriesFood, cookable,
+  cooks, nearestCooking, whyNotEat, ledgerLines, levelOf, noTown, popOf, sceneDue, scenesAfter, stormAt, swapsFit, workWants, type SayContext, type TownView,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Recipe, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView,
   type StoryData, type SurgeView, type TileMap,
@@ -79,7 +79,7 @@ import {
   floodedText, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, placedAlready, raisedText,
   rescueQuestion, rescueRefusal, rescueTooTired, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, visitedText,
   visitWho, waltOnTheLongNight, padlocked, IN_YOUR_CHEST, LOST_AND_FOUND, LOST_AND_FOUND_LINES, TAKE_HALF, bundleNotYours, carryLabel, handInQuestion, pileQuestion, returnedLine, thingsOf,
-  SLAB, slabRefusal, FIRE_CHOICE, FIRE_OPTIONS, TWO_MEALS, WHAT_TO_COOK, ateAlready, cookQuestion, cookShort,
+  SLAB, slabRefusal, FIRE_CHOICE, FIRE_OPTIONS, TWO_MEALS, WHAT_TO_COOK, ateAlready, cookQuestion, cookShort, giveQuestion, swapQuestion, type DidContext,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { SHOP_OPENING, SHOP_THANKS, payPage, refundedLine, returnLine, type ShopReturn } from './shop';
@@ -114,7 +114,7 @@ interface Mover {
  * may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport' | 'locked' | 'lostfound' | 'slab';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport' | 'locked' | 'lostfound' | 'slab' | 'ledger';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
@@ -208,6 +208,8 @@ function talkersOf(map: TileMap, pass: Pass, items: Items, nameOf: (id: string) 
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
     if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
+    // What the town's ledger says is the town as it stands (town.ts): read out as you open it.
+    if (o.kind === 'ledger') return [{ x: o.x, y: o.y, who: 'The town ledger', lines: [], kind: 'ledger' }];
     if (o.kind === 'teleport') return [{ x: o.x, y: o.y, who: TELEPORT, lines: [], kind: 'teleport' }];
     // Furniture in your cabin reads from any side of it; the rug is walked over, not faced.
     if (o.kind === 'comfort' && o.what !== 'rug') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: '', lines: [], kind: 'comfort', what: o.what }));
@@ -272,7 +274,11 @@ export type News =
    * A look you bought in the shop is yours now (Stripe told the server it is paid), as it goes in a sentence;
    * `said`: the text box said so already, coming back from Stripe's page, so only the wardrobe's dot is news.
    */
-  | { kind: 'bought'; noun: string; plural: boolean; said: boolean };
+  | { kind: 'bought'; noun: string; plural: boolean; said: boolean }
+  /** The town came to a milestone or a work of its ledger (town.ts): everyone online reads it; `pop` is how many live in town now. */
+  | { kind: 'town'; id: string; pop: number }
+  /** Someone told you a scene (story.ts): no banner (the box just told it), a dot on the journal's People. */
+  | { kind: 'scene'; id: string };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -287,7 +293,7 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'cook', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout', 'rescue', 'carry', 'handIn']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'cook', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout', 'rescue', 'carry', 'handIn', 'swap', 'give']);
 /** If the server has not moved you this long after the teleport was sent, the trip is off: you are shown where you stand. */
 const BEAM_WAIT_MS = 4000;
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
@@ -437,6 +443,18 @@ export class Game {
   firsts = new Map<string, FirstView>();
   /** Every note on the maps by id, for what a secret is called (firsts.ts): worked out the first time it is needed. */
   private notesById: ReturnType<typeof notesOf> | null = null;
+  /** What the town has come to (town.ts), as the server said: the milestones reached, the works done, what was given to the rest. */
+  town: TownView = noTown();
+  /** Counts every change to the town, so what shows it is drawn again. */
+  townChanges = 0;
+  /** The maps the last change to the town changed (by id): the one you are on is drawn again. */
+  townMaps = new Set<string>();
+  /** Scenes told since the journal's People were last looked at (story.ts), by id. */
+  freshScenes = new Set<string>();
+  /** The world's clock (ms since the epoch, as the sky follows it) at our `now`: what follows the wall clock elsewhere (the storms over the wilds). */
+  private sky = { now: 0, ms: 0 };
+  /** What waits for the box once someone's lines are done: a swap offered, something to give at the ledger. Each asks, or does nothing when it no longer holds. */
+  private queued: Array<() => void> = [];
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
@@ -768,6 +786,9 @@ export class Game {
           this.disconnected(now);
           break;
         }
+        // The town first: who stands where on the map you arrive on follows it.
+        this.applyTown(msg.town ?? noTown(), false);
+        this.sky = { now, ms: msg.clock ?? msg.serverTime };
         // Someone else now (the account's own character after its guest, say): nothing of theirs stays open.
         const someoneElse = msg.you !== this.meId;
         this.meId = msg.you;
@@ -1071,6 +1092,9 @@ export class Game {
         if (title) this.news.push({ kind: 'first', text: firstBanner(msg.first, title, msg.first.name === this.myName()) });
         break;
       }
+      case 'town':
+        this.applyTown(msg.town, true);
+        break;
       case 'keepsake': {
         if (this.keepsakesHome.includes(msg.item)) break;
         this.keepsakesHome = [...this.keepsakesHome, msg.item];
@@ -1140,7 +1164,7 @@ export class Game {
       case 'did':
         if (msg.did.kind === 'thanked') this.thankedToday.add(msg.did.who);
         // It takes the place of the question just said yes to, which waited for it in the box.
-        this.inform(didWho(msg.did, this.items), didText(msg.did, this.items));
+        this.inform(didWho(msg.did, this.items, this.didContext()), didText(msg.did, this.items, this.didContext()));
         break;
       case 'thanked': {
         // Out in the wilds, over your head; anywhere else the text box says what it was for.
@@ -1526,19 +1550,35 @@ export class Game {
     }
     if (t.kind === 'talk') {
       // What people say comes in one order (storyLines, story.ts): the chapter's hint, what they say once
-      // about what you did for the first time, what they have heard (Mira: what the woods are like today),
-      // then what they always say. The server hears who you talked to, or what you read.
-      // What they always say comes a few lines a talk (linesInTurn), taken up where the last talk left off.
-      const word = t.id === 'mira' ? this.miraWord() : t.id === 'walt' ? this.waltWord() : null, today = word ? [word] : [];
+      // about what you did for the first time, a scene of theirs that opened (in place of the rest), else
+      // what they have heard about the day (Mira: what the woods are like today; Walt: the lodge's fire on
+      // the Long Night; the sky), what they say about what you did or the town came to, then what they
+      // always say, a few lines a talk (linesInTurn), taken up where the last talk left off. The server
+      // hears who you talked to, or what you read.
+      const word = t.id === 'mira' ? this.miraWord() : t.id === 'walt' ? this.waltWord() : null;
       const person = t.story && 'talk' in t.story ? t.story.talk : undefined, key = t.id ?? `${t.x},${t.y}`;
+      const ctx = { ...this.sayContext(), day: word ? [word] : [] };
+      const scene = person ? sceneDue(this.story, person, this.stats, ctx) : undefined;
       const turn = linesInTurn(t.lines, this.heard.get(key) ?? 0);
-      this.heard.set(key, turn.next);
-      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, turn.lines, this.stats, today) : [...today, ...turn.lines] });
-      // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
-      const told = person ? toldAfter(this.story, person, this.stats) : undefined;
-      if (told !== undefined && told !== (this.stats.told ?? 0)) { this.stats = { ...this.stats, told }; this.statsChanges++; }
+      // A scene is told in place of the rest: what they always say waits where it was for the next talk.
+      if (!scene) this.heard.set(key, turn.next);
+      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, turn.lines, this.stats, ctx) : word ? [word, ...turn.lines] : turn.lines });
+      if (person) {
+        // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
+        const told = toldAfter(this.story, person, this.stats), scenes = scenesAfter(this.story, person, this.stats, ctx);
+        if (told !== (this.stats.told ?? 0) || scenes !== (this.stats.scenes ?? 0)) { this.stats = { ...this.stats, told, scenes }; this.statsChanges++; }
+        if (scene) { this.freshScenes.add(scene.id); this.news.push({ kind: 'scene', id: scene.id }); }
+        // Once their lines are done, whatever they swap for what you carry spare is offered, one by one (town.ts).
+        for (const swap of this.items.swaps.filter(x => x.who === person)) this.queued.push(() => this.offerSwap(swap.id, t.x, t.y));
+      }
       // Whom you talked to, or what you read and where (never what it says): the story, and the field notes, may follow.
       if (this.online) this.send({ t: 'talk', x: t.x, y: t.y });
+      return;
+    }
+    if (t.kind === 'ledger') {
+      // The town as it stands, read out; then what you carry that a work still wants is offered, work by work.
+      this.openDialog({ ...t, lines: ledgerLines(this.items.town, this.town, id => this.items.byId.get(id)) });
+      for (const w of this.items.town?.works ?? []) for (const n of w.needs) this.queued.push(() => this.offerGift(w.id, n.item, t.x, t.y));
       return;
     }
     if (t.kind === 'board') {
@@ -2582,7 +2622,11 @@ export class Game {
     });
   }
 
-  /** Says what waited for the box, once the box is free: a friend's ask to trade first, as it does not wait long. */
+  /**
+   * Says what waited for the box, once the box is free: a friend's ask to trade first, as it does not wait
+   * long; then what came to be said meanwhile; then what someone's lines left to offer (a swap, a gift at
+   * the ledger), one question at a time.
+   */
   private sayLater() {
     const p = this.tradeAsk;
     if (p && !this.question && !this.dialog) {
@@ -2590,15 +2634,83 @@ export class Game {
       this.tradeAsk = null;
     }
     const l = this.later;
-    if (!l || this.question || this.dialog || this.note) return;
-    this.later = null;
-    this.inform(l.who, l.text);
+    if (l && !this.question && !this.dialog && !this.note) {
+      this.later = null;
+      return this.inform(l.who, l.text);
+    }
+    while (this.queued.length && !this.question && !this.dialog && !this.note) this.queued.shift()!();
+  }
+
+  /**
+   * After talking to them: the swap `id` (town.ts) with the person on tile x,y, if you carry enough to make
+   * it and have room for what comes back. It asks first, how many times over; nothing when it would not fit.
+   */
+  private offerSwap(id: string, x: number, y: number) {
+    const swap = this.items.swaps.find(s => s.id === id), me = this.me;
+    if (!swap || !me || !this.online || Math.abs(me.tx - x) + Math.abs(me.ty - y) !== 1) return;
+    const max = swapsFit(this.bag, swap, this.items.byId, bagSlotsOf(this.myGear, this.items.byId));
+    if (max < 1) return;
+    const who = this.talkers.find(t => t.id === swap.who)?.who ?? 'Swap', text = (n: number) => swapQuestion(swap, n, this.items);
+    this.ask({ who, text, count: { min: 1, max }, yes: n => this.act(who, text(n), { t: 'swap', x, y, swap: id, ...(n > 1 ? { count: n } : {}) }) });
+  }
+
+  /** After reading the ledger: give it `item` for the work `work`, if you carry some and it still wants some. It asks first, how many. */
+  private offerGift(workId: string, item: string, x: number, y: number) {
+    const work = this.items.town?.works.find(w => w.id === workId), me = this.me;
+    if (!work || !me || !this.online || this.town.done.includes(workId) || Math.abs(me.tx - x) + Math.abs(me.ty - y) !== 1) return;
+    const wants = workWants(work, this.town.given[workId], item), have = countOf(this.bag, item);
+    if (!wants || !have) return;
+    const def = this.items.get(item), text = (n: number) => giveQuestion(work, def, n, wants);
+    this.ask({
+      who: 'The town ledger', text, count: { min: 1, max: Math.min(wants, have) },
+      yes: n => this.act('The town ledger', text(n), { t: 'give', x, y, work: workId, item, ...(n > 1 ? { count: n } : {}) }),
+    });
+  }
+
+  /** The town as the server says it is (town.ts): every map follows, and what it has just come to is news. */
+  private applyTown(view: TownView, news: boolean) {
+    const before = new Set(this.town.done), pop = popOf(this.items.town, view.done);
+    this.town = { done: [...view.done], given: structuredClone(view.given) };
+    this.townMaps = this.maps.setTown(new Set(view.done), pop);
+    if (this.townMaps.has(this.current.data.id)) this.talkers = talkersOf(this.current, this.pass, this.items, this.nameOf);
+    this.townChanges++;
+    if (news) for (const id of view.done) if (!before.has(id)) this.news.push({ kind: 'town', id, pop });
+  }
+
+  /** What a did about the town needs besides the items: a person's name, and the town as it stands. */
+  private didContext(): DidContext {
+    return {
+      name: id => this.talkers.find(t => t.id === id)?.who,
+      town: { view: this.town, works: this.items.town?.works ?? [], swaps: this.items.swaps },
+    };
+  }
+
+  /** The world's clock now (ms since the epoch, as the sky follows it). */
+  skyNow(): number {
+    return this.sky.ms + (this.clock - this.sky.now);
+  }
+
+  /** What people's words may follow besides the chapter and the counts (story.ts): your level, what you read, brought home and noted, the town, the sky. */
+  sayContext(): SayContext {
+    const wall = this.skyNow();
+    const storm = this.maps.all().some(m => m.kind === 'wilds' && m.storm !== undefined && stormAt(m.storm, wall).phase === 'storm');
+    return {
+      level: this.progress.level || levelOf(this.progress.xp), notes: this.notesRead, keepsakes: this.keepsakesHome, pages: this.fieldNotes.pages, town: this.town.done,
+      sky: { weather: this.weather, storm },
+    };
+  }
+
+  /** The journal's People were looked at: none of the scenes there is new any more. */
+  seenScenes() {
+    if (!this.freshScenes.size) return;
+    this.freshScenes = new Set();
+    this.townChanges++;
   }
 
   /** Nothing is asked or said any more: another map, or a lost connection. */
   private clearBox() {
     if (this.question || this.note) this.boxChanges++;
-    this.question = null; this.note = null; this.later = null;
+    this.question = null; this.note = null; this.later = null; this.queued = [];
     this.repeat.release();
   }
 

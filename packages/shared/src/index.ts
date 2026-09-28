@@ -27,6 +27,7 @@ export * from './sky';
 export * from './slab';
 export * from './story';
 export * from './thanks';
+export * from './town';
 export * from './trade';
 export * from './unease';
 export * from './validate';

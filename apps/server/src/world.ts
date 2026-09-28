@@ -294,6 +294,22 @@ import {
   swapOffers,
   traded,
   zoneDay,
+  thousands,
+  gateOpen,
+  popOf,
+  reachedAt,
+  scenesAfter,
+  swapBag,
+  swapped,
+  swapsFit,
+  workLeft,
+  workWants,
+  type FindRule,
+  type SwapDef,
+  type TownCount,
+  type TownData,
+  type TownGate,
+  type TownView,
   type FirstView,
   type OfferPick,
   type Arrival,
@@ -375,7 +391,7 @@ import {
   type Weather,
 } from '@napoland/shared';
 import { FIRE_LOW_S, FIRE_MAX_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, ReturnRecord, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, ReturnRecord, StoneRecord, ThanksRecord, TownRecord } from './storage';
 
 // How often creatures step is their region's (map.ts, watcherStepMs, skulkerStepMs); these are the paces a rule leaves out.
 export { AURORA_WATCHER_STEP_MS, MARK_LIFETIME_MS, SKULKER_STEP_MS, WATCHER_STEP_MS, faces };
@@ -560,6 +576,10 @@ export interface Joined extends Scene {
   keepsakes: string[];
   /** Who found each secret found so far first (firsts.ts). */
   firsts: FirstView[];
+  /** What the town has come to (town.ts). */
+  town: TownView;
+  /** The world's clock (ms since the epoch, as the sky follows it) as of joining. */
+  clock: number;
   /** In a cabin: the furniture made for it (comfort.ts), theirs in their own, the owner's in a neighbor's (`visit`). */
   furniture?: string[];
   /** In a neighbor's cabin: whose it is, and what its trophy shelf shows. */
@@ -594,6 +614,8 @@ export interface Writes {
   firsts: FirstRecord[];
   /** Things carried back to the lodge, or told since (lostfound.ts), as they are now. */
   returns: ReturnRecord[];
+  /** The town (town.ts), as it is now, if it changed: a count went up, something was given, a milestone reached. */
+  town?: TownRecord;
   /** The Long Night, if it changed: it began, the lodge's fire was fed or went out, or dawn came. */
   longNight?: LongNightRecord;
 }
@@ -627,6 +649,10 @@ export interface WorldOptions {
   returns?: ReturnRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
+  /** The town (town.ts) as it was saved: what it counted since this release, what was given, what it has come to. None: a town that starts counting now. */
+  town?: TownRecord | null;
+  /** Development only (TOWN_DONE): milestones and works the town has come to from the start, to play-test them. */
+  townDone?: string[];
   /** The Long Night as it was saved (storage.ts, cleanLongNight). */
   longNight?: LongNightRecord | null;
   /**
@@ -828,6 +854,8 @@ interface Crate {
  * which every copy of the map shares; each copy grows its own finds of it.
  */
 interface Rule {
+  /** The rule as content has it: what stands on its map may change with the town, and its tiles with it. */
+  def: FindRule;
   item: ItemDef;
   map: TileMap;
   /** Every tile its finds may grow on (findTiles), as y * width + x. */
@@ -841,6 +869,8 @@ interface Rule {
   after?: number;
   /** Only while this condition is on (sky.ts). */
   condition?: string;
+  /** Only within this gate of the town (town.ts). */
+  town?: TownGate;
   /** Only in this season (sky.ts). */
   season?: Season;
   open: boolean;
@@ -879,7 +909,8 @@ interface Zone {
   readonly players: Set<Online>;
   /** The finds lying in it, by tile: never two on one tile. */
   readonly finds: Map<number, Find>;
-  readonly fires: Fires;
+  /** Its fires: made again when the town lights a hearth in it (a town's fires are all tended, so nothing burns down with them). */
+  fires: Fires;
   readonly watchers: Watcher[];
   readonly skulkers: Skulker[];
   flares: Flare[];
@@ -1308,6 +1339,17 @@ export class World {
   private readonly slabOpened = new Map<string, number>();
   /** The game time of the last tick: what everyone sees of an afterglow is counted from it. */
   private tickAt = 0;
+  /** The town's milestones and the works of its ledger (content/items.json, town.ts). None: the town never changes. */
+  private readonly townData: TownData | undefined;
+  /**
+   * What the town counted since this release (the Old Stone waking, fires fed out there, thanks given),
+   * what was given to each work of the ledger not done yet, and what it has come to: the milestones
+   * reached and the works done, in the order they came, each with the Zone's day. One town for everyone.
+   */
+  private readonly town: { since: number; counts: Partial<Record<TownCount, number>>; given: Record<string, Record<string, number>>; done: Array<{ id: string; day: number; at: number }> };
+  private townWrite: TownRecord | undefined;
+  /** What the townspeople swap for what you carry spare (town.ts), by id. */
+  private readonly swaps: Map<string, SwapDef>;
   /** The walks kept for glimpses, by map id, oldest first: GLIMPSES_PER_MAP at most, a day at most, in memory only. */
   private readonly walks = new Map<string, Walk[]>();
   /** When the oldest walk is to be forgotten (or later), so tick() only looks when one is due. */
@@ -1395,10 +1437,26 @@ export class World {
     // creatures wake is laid out off the ice, which thaws; winter freezes it at the end.
     this.season = seasonAt((options.now ?? 0) + this.epochOffset);
     for (const m of this.maps.values()) m.freeze(false);
+    const items = options.items ?? { version: 0, items: [], finds: [] };
+    // The town as it was saved (or a town that starts counting now), before anything stands on its maps:
+    // who is where, which lamps and hearths are lit, follows it from the start.
+    this.townData = items.town;
+    this.swaps = new Map((items.swaps ?? []).map(s => [s.id, s]));
+    const kept = options.town;
+    const wall = Math.floor((options.now ?? 0) + this.epochOffset);
+    this.town = {
+      since: kept && Number.isFinite(kept.since) ? kept.since : wall,
+      counts: Object.fromEntries(Object.entries(kept?.counts ?? {}).filter(([, n]) => Number.isInteger(n) && n > 0)),
+      given: structuredClone(kept?.given ?? {}),
+      done: (kept?.done ?? []).filter(d => typeof d?.id === 'string').map(d => ({ id: d.id, day: d.day, at: d.at })),
+    };
+    const known = new Set([...(items.town?.milestones ?? []), ...(items.town?.works ?? [])].map(m => m.id));
+    for (const id of options.townDone ?? []) if (known.has(id) && !this.town.done.some(d => d.id === id)) this.town.done.push({ id, day: zoneDay(wall), at: wall });
+    if (!kept || options.townDone?.length) this.townWrite = this.townRecord();
+    this.setTown();
     // Every map's main copy, the world everyone shares: its fires start burning now.
     for (const m of this.maps.values()) this.newZone(m, '', options.now ?? 0);
 
-    const items = options.items ?? { version: 0, items: [], finds: [] };
     this.items = itemIndex(items);
     this.itemOrder = items.items;
     this.recipes = new Map((items.recipes ?? []).map(rc => [rc.id, rc]));
@@ -1427,10 +1485,11 @@ export class World {
       const item = this.items.get(f.item);
       if (!item) throw new Error(`a find rule on map ${f.map} grows ${f.item}, which is not an item`);
       const tiles = findTiles(map, f).map(t => t.y * map.width + t.x);
-      // Finds that only grow at certain times wait for the first tick to tell whether it is one; a season's grow in it from the start.
+      // Finds that only grow at certain times wait for the first tick to tell whether it is one; a season's
+      // grow in it from the start, and those that grow with the town as it is now.
       this.rules.push({
-        item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, after: f.after, condition: f.condition, season: f.season,
-        open: !f.when && !f.condition && (!f.season || f.season === this.season),
+        def: f, item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, after: f.after, condition: f.condition, season: f.season, town: f.town,
+        open: !f.when && !f.condition && (!f.season || f.season === this.season) && gateOpen(f.town, this.townDone()),
       });
     }
     // The piles first: finds never grow on a tile that has one.
@@ -1727,6 +1786,8 @@ export class World {
       firsts: [...this.firsts.values()].map(firstView),
       // Theirs alone, beside the zone's: the keepsakes lying here for them.
       finds: this.findsFor(r, zone),
+      town: this.townView(),
+      clock: Math.floor(now + this.epochOffset),
       ...this.cabinOf(p),
       ...this.streetOf(p),
       ...(r.doorOff && { doorOff: true as const }),
@@ -2005,10 +2066,14 @@ export class World {
       this.saveNow.set(id, p.rec);
       this.moveStory(p, { feed: 'stone' });
       this.rerate(p, now);
-      return this.did(p, { kind: 'stone', item: def.id, count: r.taken, stone: this.stoneView(now), ...(woke ? { woke: true as const } : {}) });
+      this.did(p, { kind: 'stone', item: def.id, count: r.taken, stone: this.stoneView(now), ...(woke ? { woke: true as const } : {}) });
+      // The town counts every waking since this release (town.ts): after what the feed did, so the box says that first.
+      if (woke) this.bumpTown('woke', 1, now);
+      return;
     }
     const fires = p.zone.fires, fire = fires.at(x, y);
-    if (!fire) return this.refuse(p, 'feed', 'gone');
+    // A hearth in town that nobody keeps yet stays cold until someone comes home to it (town.ts).
+    if (!fire) return this.refuse(p, 'feed', p.map.source.objects.some(o => o.kind === 'fireplace' && o.x === x && o.y === y && o.town) ? 'cold' : 'gone');
     if (fire.tended) return this.refuse(p, 'feed', 'tended');
     if (!def?.fuel) return this.refuse(p, 'feed', 'not_fuel');
     const lit = fires.left(fire, now) <= 0;
@@ -2032,6 +2097,8 @@ export class World {
     for (const q of p.zone.players) this.rerate(q, now);
     this.walkEnded(p, now);
     this.did(p, { kind: 'fire', item: def.id, count: fed, left: burning.left ?? 0, ...(lit ? { lit: true as const } : {}) });
+    // The town counts the fires fed out there (town.ts): a town's fires are tended, so every fire fed is one.
+    if (this.wild(p.map)) this.bumpTown('fed', fed, now);
   }
 
   /**
@@ -2632,10 +2699,16 @@ export class World {
    */
   private remarked(p: Online, npc: string): void {
     const stats = (p.rec.stats ??= {});
-    const told = toldAfter(this.story, npc, stats);
-    if (told === (stats.told ?? 0)) return;
-    stats.told = told;
+    const told = toldAfter(this.story, npc, stats), scenes = scenesAfter(this.story, npc, stats, this.sayContext(p));
+    if (told === (stats.told ?? 0) && scenes === (stats.scenes ?? 0)) return;
+    if (told) stats.told = told;
+    if (scenes) stats.scenes = scenes;
     this.saveNow.set(p.rec.id, p.rec);
+  }
+
+  /** What a scene may wait for (story.ts, sceneDue): the player's level, the notes they read, the pages of their field notes open, their keepsakes home, and the town. */
+  private sayContext(p: Online): { level: number; notes: string[]; pages: string[]; keepsakes: string[]; town: string[] } {
+    return { level: levelOf(p.rec.xp ?? 0), notes: p.rec.notes ?? [], pages: p.rec.notebook?.pages ?? [], keepsakes: p.rec.keepsakes ?? [], town: [...this.townDone()] };
   }
 
   /**
@@ -2714,6 +2787,7 @@ export class World {
     this.thanks.set(key, t);
     this.thanksWrites.set(key, t);
     this.credits.push(helper.id);
+    this.bumpTown('thanks', 1, now);
     this.thanksForgetAt = Math.min(this.thanksForgetAt, t.at + THANKS_KEPT_MS);
     return true;
   }
@@ -3439,10 +3513,12 @@ export class World {
       caches: [...this.cacheWrites].map(([id, c]) => ({ id, item: c && { ...c } })),
       firsts: this.firstWrites,
       returns: [...this.returnWrites.values()].map(r => ({ ...r, items: copyBag(r.items) })),
+ ...(this.townWrite ? { town: this.townWrite } : {}),
       ...(this.nightWrite ? { longNight: { ...this.nightWrite } } : {}),
     };
     this.firstWrites = [];
     this.returnWrites.clear();
+ this.townWrite = undefined;
     this.nightWrite = undefined;
     this.pileWrites.clear();
     this.saveNow.clear();
@@ -3923,8 +3999,8 @@ export class World {
     });
     // Down at 0, nothing drains them further (a surge or a storm neither) and nothing refills them: only a rescuer's energy gets them up.
     if (p.slump) p.rate = 0;
-    // Wind resistance (a raincoat) keeps the rain out.
-    p.wetRate = wetRate(p.map.data.kind, weather, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
+    // Wind resistance (a raincoat) keeps the rain out; so does a roof out of doors (a porch the town built), as any roof does.
+    p.wetRate = wetRate(p.map.roofed(x, y) ? 'inside' : p.map.data.kind, weather, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
   }
 
   /**
@@ -4215,6 +4291,137 @@ export class World {
     if (k.map === p.map.data.id) this.outbox.push({ to: p.rec.id, msg: { t: 'find', find: { id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y } } });
   }
 
+  // ---------- the town (town.ts): one for everyone ----------
+
+  /** What the town has come to: the milestones reached and the works done. */
+  private townDone(): ReadonlySet<string> {
+    return new Set(this.town.done.map(d => d.id));
+  }
+
+  /** What the town has come to, as every client hears it. */
+  townView(): TownView {
+    const done = this.town.done.map(d => d.id);
+    return { done, given: Object.fromEntries(Object.entries(this.town.given).filter(([w]) => !done.includes(w)).map(([w, g]) => [w, { ...g }])) };
+  }
+
+  private townRecord(): TownRecord {
+    return { since: this.town.since, counts: { ...this.town.counts }, given: structuredClone(this.town.given), done: this.town.done.map(d => ({ ...d })) };
+  }
+
+  /** Every map as the town has it now: who is where, which lamps and hearths are lit. The maps that changed. */
+  private setTown(): TileMap[] {
+    const done = this.townDone(), pop = popOf(this.townData, [...done]);
+    return [...this.maps.values()].filter(m => m.setTown(done, pop));
+  }
+
+  /**
+   * `by` more of what the town counts (the Old Stone waking, fires fed out there, thanks given): kept, and
+   * any milestone it reaches is reached for good.
+   */
+  private bumpTown(count: TownCount, by: number, now: number): void {
+    if (!this.townData || by <= 0) return;
+    this.town.counts[count] = (this.town.counts[count] ?? 0) + by;
+    this.townWrite = this.townRecord();
+    for (const m of reachedAt(this.townData, this.town.counts, this.townDone())) this.reach(m.id, now);
+  }
+
+  /**
+   * The town has come to a milestone or a work of its ledger, for good: it is kept with the Zone's day,
+   * everyone online hears the town as it is now, and every map follows (townChanged).
+   */
+  private reach(id: string, now: number): void {
+    if (this.town.done.some(d => d.id === id)) return;
+    const wall = Math.floor(now + this.epochOffset);
+    this.town.done.push({ id, day: zoneDay(wall), at: wall });
+    delete this.town.given[id];
+    this.townWrite = this.townRecord();
+    this.townChanged(now);
+    this.outbox.push({ to: 'all', msg: { t: 'town', town: this.townView() } });
+  }
+
+  /**
+   * The maps follow what the town has come to: a hearth lit is a fire (tended, since it is in town) in
+   * every copy of its map, whoever stands there warms and dries as they now do, and finds that grow with
+   * the town start or stop, on the tiles free now.
+   */
+  private townChanged(now: number): void {
+    const changed = new Set(this.setTown());
+    const done = this.townDone();
+    for (const map of changed) for (const zone of this.copiesOf(map.data.id)) {
+      const tiles = (f: Fires) => f.all().map(x => `${x.x},${x.y}`).join(' ');
+      const fires = new Fires(map, this.wild(map), this.rng, now);
+      if (tiles(fires) !== tiles(zone.fires)) {
+        zone.fires = fires;
+        for (const f of fires.all()) this.toZone(zone.key, { t: 'fire', fire: fires.view(f, now) });
+      }
+      for (const q of zone.players) this.rerate(q, now);
+    }
+    for (const rule of this.rules) {
+      if (changed.has(rule.map)) rule.tiles = findTiles(rule.map, rule.def).map(t => t.y * rule.map.width + t.x);
+      if (rule.town) this.openRule(rule, gateOpen(rule.town, done), now);
+    }
+  }
+
+  /**
+   * Gives `count` of `item` from the player's bag to the work `workId` of the town's ledger on tile x,y
+   * next to them: as many as it still needs of it, and as they carry. Used up: whatever of it came out of
+   * their stash is no longer owed. The last of what the work needed does it, for good (reach).
+   */
+  give(id: string, x: number, y: number, workId: string, item: string, count: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (manhattan(x, y, p.rec.x, p.rec.y) > 1 || !p.map.data.objects.some(o => o.kind === 'ledger' && o.x === x && o.y === y)) return this.refuse(p, 'give', 'too_far');
+    const work = this.townData?.works.find(w => w.id === workId);
+    if (!work) return this.refuse(p, 'give', 'gone');
+    const wants = this.town.done.some(d => d.id === workId) ? 0 : workWants(work, this.town.given[workId], item);
+    if (!wants) return this.refuse(p, 'give', 'not_needed');
+    const at = p.rec.bag.findIndex(s => s.item === item);
+    if (at < 0) return this.refuse(p, 'give', 'empty_slot');
+    const r = takeItem(p.rec.bag, at, Math.min(count, wants));
+    p.rec.bag = r.bag;
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), item, r.taken);
+    const given = (this.town.given[workId] ??= {});
+    given[item] = (given[item] ?? 0) + r.taken;
+    this.townWrite = this.townRecord();
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    // Everyone hears the town as it stands now (the giver too, before what the gift did: the box says what the work still wants).
+    const done = !workLeft(work, given).length;
+    if (done) this.reach(workId, now);
+    else this.outbox.push({ to: 'all', msg: { t: 'town', town: this.townView() } });
+    this.did(p, { kind: 'gave', work: workId, item, count: r.taken, ...(done ? { done: true as const } : {}) });
+  }
+
+  /**
+   * Makes the swap `swapId` with the person on tile x,y next to the player, `count` times over: as often
+   * as they have what it gives and room for what it gets. What was given out of the stash makes what
+   * comes back owed in its place (town.ts, swapped): a swap never earns XP twice.
+   */
+  swapWith(id: string, x: number, y: number, swapId: string, count: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'swap', 'too_far');
+    }
+    const s = this.swaps.get(swapId);
+    if (!s) return this.refuse(p, 'swap', 'gone');
+    if (manhattan(x, y, p.rec.x, p.rec.y) > 1 || !p.map.data.objects.some(o => o.kind === 'npc' && o.id === s.who && o.x === x && o.y === y)) return this.refuse(p, 'swap', 'too_far');
+    const have = p.rec.bag.reduce((n, b) => n + (b.item === s.give.item ? b.count : 0), 0);
+    if (have < s.give.count) return this.refuse(p, 'swap', 'missing');
+    const n = Math.min(count, swapsFit(p.rec.bag, s, this.items, p.slots));
+    if (n < 1) return this.refuse(p, 'swap', 'bag_full');
+    p.rec.bag = swapBag(p.rec.bag, s, n, this.items, p.slots);
+    p.rec.stash = swapped(p.rec.stash ?? emptyStash(), s, n);
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    this.did(p, { kind: 'swapped', swap: swapId, count: n });
+  }
+
   /** A map's poles (their tiles), found once. */
   private polesOf(map: TileMap): Array<[number, number]> {
     let at = this.poles.get(map.data.id);
@@ -4239,7 +4446,7 @@ export class World {
    * collapse, a surge, gear made). A new rank is the player's for good: they hear it (once: counts only
    * go up), and it is saved at once.
    */
-  private count(p: Online, stat: Exclude<(typeof STATS)[number], 'told'>, now: number, by = 1): void {
+  private count(p: Online, stat: Exclude<(typeof STATS)[number], 'told' | 'scenes'>, now: number, by = 1): void {
     const stats = (p.rec.stats ??= {});
     const n = (stats[stat] ?? 0) + by;
     stats[stat] = n;
@@ -5289,6 +5496,7 @@ export class World {
       const st = this.stoneView(now);
       lines.push(st.awake ? `The Old Stone is awake: surges are gentler for ${about(st.left, true)}.` : `The Old Stone sleeps. ${st.charge} of ${st.need} shards fed.`);
     }
+    lines.push(...this.townLines());
     // The latest three first finders, the latest first: something to talk about, and somewhere nobody has been.
     const latest = [...this.firsts.values()].sort((a, b) => b.at - a.at).flatMap(f => {
       const title = secretTitle(f.secret, this.notesById, this.items);
@@ -5296,6 +5504,28 @@ export class World {
     });
     lines.push(...latest.slice(0, FIRSTS_ON_BOARD));
     return lines;
+  }
+
+  /**
+   * The notice board on the town (town.ts): who came back, and since which of the Zone's days; what the
+   * works of the ledger at the lodge still want, or that they are done. Never how near a milestone is:
+   * the town finds that out when it happens.
+   */
+  private townLines(): string[] {
+    const t = this.townData;
+    if (!t) return [];
+    const done = new Map(this.town.done.map(d => [d.id, d]));
+    const back = t.milestones.filter(m => m.back && done.has(m.id)).map(m => `${m.back}, since day ${thousands(done.get(m.id)!.day)}`);
+    const want = t.works.filter(w => !done.has(w.id)).map(w => {
+      const left = workLeft(w, this.town.given[w.id]).flatMap(n => { const d = this.items.get(n.item); return d ? [amount(d, n.count)] : []; });
+      return `${listOf(left)} for ${lower(w.name)}`;
+    });
+    const fixed = t.works.filter(w => done.has(w.id)).map(w => lower(w.name));
+    return [
+      ...(back.length ? [`Back in town: ${listOf(back)}.`] : []),
+      ...(want.length ? [`The town's ledger at the lodge wants ${want.join('; ')}.`] : []),
+      ...(fixed.length ? [`Mended for good: ${listOf(fixed)}.`] : []),
+    ];
   }
 
   /**
@@ -6077,7 +6307,7 @@ export class World {
   private refuse(
     p: Online,
     action: 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind | 'checkout'
-      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab',
+      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab' | 'swap' | 'give',
     reason: Refusal,
   ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });

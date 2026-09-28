@@ -558,6 +558,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   note: ' ',
   // The furniture of your own cabin stands there alone (gen-interiors.ts).
   comfort: 'n',
+  // What the town builds and keeps stands in town (gen-map.ts, gen-interiors.ts).
+  porch: '_', ledger: 'n',
   // NAPO's teleport stands in every cabin and by the notice board in town (gen-interiors.ts, gen-map.ts).
   teleport: 'N',
 };

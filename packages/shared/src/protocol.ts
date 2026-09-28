@@ -20,6 +20,7 @@ import type { ProgressView } from './progress';
 import type { ShopView } from './shop';
 import type { ConditionsView, FlashView, SeasonView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
+import type { TownView } from './town';
 import { OFFER_MAX } from './trade';
 
 /**
@@ -34,8 +35,9 @@ import { OFFER_MAX } from './trade';
  * 36: the shop for looks (`checkout`, and `shop` in the welcome and when what you bought changes), and the window to be saved, someone down out in the wilds, whom an older page could not show or get up.
  * 37: the lost and found, whose bundles, questions and letters an older page could not show.
  * 38: the slab that needs two, which an older page could not put its hands to.
+ * 39: the town waking up: its milestones and ledger (`town`), townspeople's scenes, swaps and gifts, which an older page could not show.
  */
-export const PROTOCOL_VERSION = 38;
+export const PROTOCOL_VERSION = 39;
 
 /**
  * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
@@ -273,6 +275,13 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('cacheLeave'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63) }),
   /** Take the thing `id` out of the crate on tile x,y: once a visit; it thanks whoever left it. */
   z.object({ t: z.literal('cacheTake'), x: z.number().int(), y: z.number().int(), id: z.number().int().nonnegative() }),
+  /** Make the swap `swap` (town.ts) with the person on tile x,y, next to you, `count` times over (1 when left out). */
+  z.object({ t: z.literal('swap'), x: z.number().int(), y: z.number().int(), swap: z.string().min(1).max(40), count: z.number().int().positive().max(99).optional() }),
+  /** Give `count` (1 when left out) of `item` from your bag to the work `work` of the town's ledger on tile x,y, next to you (town.ts). */
+  z.object({
+    t: z.literal('give'), x: z.number().int(), y: z.number().int(), work: z.string().min(1).max(40), item: z.string().min(1).max(40),
+    count: z.number().int().positive().max(999).optional(),
+  }),
   /**
    * Get `who` back up (rescue.ts): they lie slumped on your tile or the one next to it, and you give them
    * RESCUE_ENERGY of your own energy, which you need more than. Their thanks comes with it.
@@ -477,7 +486,11 @@ export type Did =
   /** You left what you carried for `names` in the lost and found box: it is back in their chests, and you earned `xp`. */
   | { kind: 'handedIn'; names: string[]; xp: number }
   /** You and `with` (their name) lifted the slab together (slab.ts): `got` is in your bag now. */
-  | { kind: 'slab'; with: string; got: BagSlot[] };
+  | { kind: 'slab'; with: string; got: BagSlot[] }
+  /** A townsperson made the swap `swap` with you `count` times over (town.ts): what it gives went, what it gets came into your bag. */
+  | { kind: 'swapped'; swap: string; count: number }
+  /** You gave `count` of `item` to the work `work` of the town's ledger (town.ts); `done`: that was the last of what it needed. */
+  | { kind: 'gave'; work: string; item: string; count: number; done?: true };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -600,7 +613,7 @@ export type Refusal =
   | 'padlocked'
   /** It is someone else's things, in a bundle (lostfound.ts): carried to the lodge, never opened, stashed, thrown away or left. */
   | 'not_yours'
-  /** The slab lies cold: it opens only while the woods are restless (slab.ts). */
+  /** Cold: the slab (it opens only while the woods are restless: slab.ts), or a hearth in town that nobody keeps yet (town.ts). */
   | 'cold'
   /** Nobody else put their hands to the slab with yours: it will not move for one pair. */
   | 'one_pair'
@@ -611,7 +624,9 @@ export type Refusal =
   /** You ate that meal this trip already: the same one twice does nothing more. */
   | 'ate_it'
   /** You ate two meals this trip already: a third waits for the next trip. */
-  | 'two_meals';
+  | 'two_meals'
+  /** The town's ledger wants no more of that for this work (it has all it needs of it, or it is done). */
+  | 'not_needed';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -828,6 +843,14 @@ export type ServerMsg =
       keepsakes: string[];
       /** Who was the first on the server to find each secret found so far (firsts.ts), and on which day. */
       firsts: FirstView[];
+      /** What the town has come to (town.ts): the milestones reached, the works of its ledger done, what was given to the rest. */
+      town: TownView;
+      /**
+       * The world's clock (ms since the epoch, as the sky follows it: a play-test's CLOCK_SHIFT_MS in it),
+       * as this was sent: from it the client works out what follows the wall clock without being told,
+       * the storms over other regions and the echoes' walks.
+       */
+      clock: number;
       /** In a cabin: the furniture made and set in its places (item ids), yours in your own, the owner's in a neighbor's (`visit`). */
       furniture?: string[];
       /** In a neighbor's cabin: whose it is, and what their trophy shelf shows. */
@@ -1013,6 +1036,8 @@ export type ServerMsg =
   | { t: 'keepsake'; item: string }
   /** To everyone online: someone (you too) is the first on the server to find a secret (firsts.ts). */
   | { t: 'first'; first: FirstView }
+  /** To everyone online: the town changed (town.ts): a milestone reached, something given at the ledger, a work done. Whole. */
+  | { t: 'town'; town: TownView }
   /** What is in your stash, whole, after you opened the chest or anything went in or out. */
   | { t: 'chest'; stash: BagSlot[] }
   /** A parcel came into your chest (parcels.ts): when you arrived signed in, or at midnight UTC while you played. */
@@ -1070,6 +1095,7 @@ export type RefusedAction =
   | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab'
   | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge'
   | 'say' | 'call' | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
+  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'swap' | 'give'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 

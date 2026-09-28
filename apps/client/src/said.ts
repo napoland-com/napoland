@@ -7,7 +7,7 @@
 import {
   CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, RESCUE_ENERGY, aOf, amount, comfortMax, countable, fireFull, formatPrice, levelOf, meritLookOf, meritsLeft,
   nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear,
-  type Recipe, type Refusal, type ShopLook, type StoneView, type Upgrade, bagShort, type Mods,
+  type Recipe, type Refusal, type ShopLook, type StoneView, type Upgrade, bagShort, type Mods, workLeft, type SwapDef, type TownView, type TownWork,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, bundleText, kgText, oddsText, pieceName, thingsOf, type Items } from './items';
 
@@ -560,10 +560,30 @@ function boughtText(did: Extract<Did, { kind: 'bought' }>): string {
   return did.left > 0 ? `${got} ${did.left === 1 ? 'One merit' : `${did.left} merits`} left to spend.` : got;
 }
 
+// ---------- the town: Walt's swaps and the ledger (town.ts) ----------
+
+/** Before a swap: "Swap 20 glowcaps for 2 cloth?" */
+export function swapQuestion(swap: SwapDef, n: number, items: Items): string {
+  return `Swap ${amount(items.get(swap.give.item), n * swap.give.count)} for ${amount(items.get(swap.get.item), n * swap.get.count)}?`;
+}
+
+/** Before giving at the ledger: "Give 4 copper wire to the street lights on the south road? The ledger wants 12 copper wire for it." */
+export function giveQuestion(work: TownWork, def: ItemDef, n: number, wants: number): string {
+  return `Give ${amount(def, n)} to ${lower(work.name)}? The ledger wants ${amount(def, wants)} for it.`;
+}
+
+/** What a did about the town needs besides the items: a person's name by their id, and the town as it stands now. */
+export interface DidContext {
+  name?: (npc: string) => string | undefined;
+  town?: { view: TownView; works: readonly TownWork[]; swaps: readonly SwapDef[] };
+}
+
+const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
+
 // ---------- what it did ----------
 
 /** The name over the box for what something did. */
-export function didWho(did: Did, items: Items): string {
+export function didWho(did: Did, items: Items, ctx: DidContext = {}): string {
   switch (did.kind) {
     case 'fire': case 'cooked': return 'Fire';
     case 'stone': return 'The Old Stone';
@@ -573,6 +593,8 @@ export function didWho(did: Did, items: Items): string {
     case 'thanked': return did.what === 'fire' ? 'Fire' : 'Arrow';
     case 'left': case 'took': return 'Crate';
     case 'bought': return 'Wardrobe';
+    case 'swapped': { const who = ctx.town?.swaps.find(x => x.id === did.swap)?.who; return (who && ctx.name?.(who)) ?? 'Swap'; }
+    case 'gave': return 'The town ledger';
     case 'moved': return YOUR_CABIN;
     case 'rescued': return did.name;
     case 'carried': return thingsOf(did.names[0] ?? 'Someone');
@@ -582,11 +604,17 @@ export function didWho(did: Did, items: Items): string {
 }
 
 /** What something did, in words, from the server's answer. */
-export function didText(did: Did, items: Items): string {
+export function didText(did: Did, items: Items, ctx: DidContext = {}): string {
   // Thanks carry no item: the helper, by name (never a pronoun).
   if (did.kind === 'thanked') return did.what === 'fire' ? `You thank ${did.name} for feeding the fire.` : `You thank ${did.name} for the arrow.`;
   // Merits buy looks, not items.
   if (did.kind === 'bought') return boughtText(did);
+  if (did.kind === 'swapped') {
+    const swap = ctx.town?.swaps.find(x => x.id === did.swap);
+    if (!swap) return 'The swap is made.';
+    const who = ctx.name?.(swap.who) ?? 'They';
+    return `${who} takes ${amount(items.get(swap.give.item), did.count * swap.give.count)} and hands you ${amount(items.get(swap.get.item), did.count * swap.get.count)}.`;
+  }
   // Nor does a move: your cabin, next to the friend's, by name.
   if (did.kind === 'moved') return `Your cabin stands next to ${did.name}'s now.`;
   if (did.kind === 'rescued') return `You give ${did.name} ${RESCUE_ENERGY} of your energy. ${did.name} is back up.`;
@@ -670,6 +698,15 @@ export function didText(did: Did, items: Items): string {
       if (did.mine) return `You take back the ${n} you left.`;
       // By name, never a pronoun: the thanks goes with it, unless you thanked them today already.
       return did.thanked ? `You take the ${n} ${did.name} left, and thank ${did.name} for it.` : `You take the ${n} ${did.name} left.`;
+    }
+    case 'gave': {
+      // The town as it stands after it (the server says the town first): what the work still wants, or what it does now.
+      const work = ctx.town?.works.find(w => w.id === did.work);
+      const took = `The ledger takes ${amount(def, did.count)}${work ? ` for ${lower(work.name)}` : ''}.`;
+      if (!work) return took;
+      if (did.done) return `${took} That was the last of what it needed. ${work.perk}`;
+      const left = workLeft(work, ctx.town!.view.given[work.id]).map(n => amount(items.get(n.item), n.count));
+      return left.length ? `${took} It still wants ${listOf(left)}.` : took;
     }
   }
 }

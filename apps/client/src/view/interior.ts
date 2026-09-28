@@ -368,6 +368,19 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
       g.add(box(0.58, 0.11, 0.3, '#ece5d4', 0, 0.43, -0.64, 0.018));
       return g;
     }
+    case 'ledger': {
+      // The town's ledger (town.ts): a big book lying open on a slanted stand, a pencil on a string.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.add(box(0.1, 0.72, 0.1, '#4a3223', 0, 0.36, 0), box(0.44, 0.05, 0.36, '#4a3223', 0, 0.03, 0, false));
+      const top = pivot(0, 0.78, 0);
+      top.rotation.x = 0.42;
+      top.add(box(0.62, 0.05, 0.44, '#5a3d2a', 0, 0, 0));
+      top.add(box(0.27, 0.035, 0.38, '#e6dcc4', -0.14, 0.04, 0, false), box(0.27, 0.035, 0.38, '#ddd2b8', 0.14, 0.04, 0, false));
+      for (const z of [-0.1, -0.03, 0.04, 0.11]) top.add(box(0.2, 0.004, 0.012, '#6a6150', -0.14, 0.06, z, false), box(0.18, 0.004, 0.012, '#6a6150', 0.14, 0.06, z, false));
+      g.add(top);
+      g.add(box(0.015, 0.2, 0.015, '#c9a54a', 0.24, 0.66, 0.2, false));
+      return g;
+    }
     case 'workbench': {
       // The workbench: a thick top on sturdy legs, a vise, tools hung on a board behind it.
       const g = pivot(o.x + 0.5, 0, o.y + 0.5);

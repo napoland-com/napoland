@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-sawmill",
   "name": "The sawmill",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 11,
@@ -43,7 +43,9 @@
     {"kind":"logs","x":1,"y":4,"w":2,"h":1},
     {"kind":"crate","x":9,"y":4},
     {"kind":"crate","x":9,"y":5},
-    {"kind":"sawdust","x":3,"y":5}
+    {"kind":"sawdust","x":3,"y":5},
+    {"kind":"fireplace","x":8,"y":1,"town":{"from":"mill-stove"}},
+    {"kind":"npc","id":"arvid","name":"Arvid","x":9,"y":2,"dir":"down","town":{"from":"mill-stove"},"look":{"coat":"#8a3a2e","scarf":"#2f3a36","hair":"#8c8780","skin":"#c49270"},"lines":["Arvid Holm. I ran the head saw in here thirty-one winters. Then came the winter it didn't open.","The fires out there are lit again, enough that I thought: somebody's keeping this place. So I came up from the bunker.","Nothing in here works but the stove. The stove always drew.","The saw's still true. Nobody's touched it. I oil it anyway.","Ruth said I'd freeze up here. Ruth says that about everywhere."]}
   ],
   "style": "mill"
 }

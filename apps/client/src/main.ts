@@ -24,7 +24,7 @@ import { Hud, type TagView } from './hud';
 import { badgeIcon } from './icons';
 import { crateView } from './crates';
 import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, upgradeOf, upgradeViews, wearText, wornViews } from './items';
-import { fieldNotesView, journalView, notesView } from './journal';
+import { fieldNotesView, journalView, notesView, peopleView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { mapFor, paperMap } from './papermap';
@@ -305,6 +305,7 @@ const hud = new Hud(screen, {
   },
   fieldSeen: () => game.seenFieldNotes(),
   notesSeen: () => game.seenNotes(),
+  peopleSeen: () => game.seenScenes(),
   version: () => loadVersion(),
   sound: s => { sound.set(s); store.set(SOUND_KEY, JSON.stringify(s)); },
 });
@@ -319,7 +320,7 @@ function openMap() {
   const map = data && maps.get(data);
   if (!map) return game.noMap();
   hud.toggleBag(false);
-  hud.showPaper(paperMap(map, id => maps.find(id)?.name));
+  hud.showPaper(paperMap(map, id => maps.find(id)?.name, game.town.done.join()));
 }
 
 const keys = new Keys({
@@ -360,7 +361,13 @@ const arrival = new Arrival(held => {
     else if (msg.t === 'welcome') { collapsed = false; arrived = true; }
   }
   hud.setOnline(game.players.size);
-  if (view.map !== game.map || view.season !== game.season.view.season) buildView();
+  // Only the town changed this map (nobody arrived): drawn again, and no name to say.
+  const onlyTown = redraw && view.map === game.map && !held.length;
+  if (view.map !== game.map || view.season !== game.season.view.season || redraw) {
+    redraw = false;
+    buildView();
+  }
+  if (onlyTown) return;
   if (collapsed) hud.showBanner('You collapsed from exhaustion', leftPile ? 'You woke up at home.\nWhat you carried lies where you fell. It fades in an hour.' : 'You woke up at home');
   else if (signedInNews) hud.showBanner(signedInNews.title, signedInNews.sub);
   else hud.showBanner(game.placeName());
@@ -785,6 +792,15 @@ let storyShown = -1;
 let firstStepsShown = -1;
 let notebookShown = -1;
 let notesShown = -1;
+let peopleShown = '';
+let townShown = -1;
+/** The town changed the map you are on: its view is built again on the next dark screen. */
+let redraw = false;
+/** A person's name by their id, as a map has it: whoever told you a scene. */
+const personName = (id: string) => {
+  for (const m of maps.all()) for (const o of m.objects) if (o.kind === 'npc' && o.id === id) return o.name;
+  return id;
+};
 /** A map's name, for the field notes' headings. */
 const mapName = (id: string) => maps.find(id)?.name;
 /**
@@ -911,6 +927,10 @@ function frame(now: number) {
     if (n.kind === 'note' || n.kind === 'keepsake') { if (n.kind === 'keepsake') toSay.push(n); if (!(hud.journalOpen && hud.journalTab === 'notes')) hud.setNotesNews(true); continue; }
     // A first finder: one line for everyone online, waiting like the rest for panels and talk to be done.
     if (n.kind === 'first') { toSay.push(n); continue; }
+    // What the town came to, for everyone online (town.ts): it waits the same way.
+    if (n.kind === 'town') { toSay.push(n); continue; }
+    // A scene told needs no banner (the box is telling it), only a dot on the journal's People until they are looked at.
+    if (n.kind === 'scene') { if (!(hud.journalOpen && hud.journalTab === 'people')) hud.setPeopleNews(true); continue; }
     if (n.kind === 'feat') { toSay.push(n); continue; }
     // A dot on the chest's Wardrobe tab too, until it is looked at, when the level opened an outfit.
     if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
@@ -945,9 +965,24 @@ function frame(now: number) {
     notebookShown = game.notebookChanges;
     hud.setFieldNotes(fieldNotesView(notebook, game.fieldNotes, mapName, game.freshPages));
   }
-  if (game.notesChanges !== notesShown) {
+  if (game.notesChanges !== notesShown || game.townChanges !== townShown) {
     notesShown = game.notesChanges;
     hud.setNotes(notesView(maps.all(), game.notesRead, items.keepsakes, game.keepsakesHome, id => items.byId.get(id), game.freshNotes, game.firsts, game.myName()));
+  }
+  // What people told you: redrawn as scenes are told and looked at.
+  const people = `${game.stats.scenes ?? 0}|${[...game.freshScenes].join()}`;
+  if (people !== peopleShown) {
+    peopleShown = people;
+    hud.setPeople(peopleView(story, game.stats, personName, game.freshScenes));
+  }
+  // The town changed what stands on the map you are on (someone came home, a street light was mended):
+  // it is drawn again, behind a moment of dark, as when you arrive.
+  if (game.townChanges !== townShown) {
+    townShown = game.townChanges;
+    if (game.townMaps.has(view.map.data.id)) {
+      redraw = true;
+      if (!arrival.leaving) arrival.cut();
+    }
   }
   if (hud.statusOpen && (now - statusAt > 500 || game.statsChanges !== statsShown)) { statusAt = now; statsShown = game.statsChanges; showStatus(); }
   // A friend's card says whether they are near enough to trade with, as they walk.
