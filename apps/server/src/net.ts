@@ -3,7 +3,8 @@
  * hello (and with it who is signing in, see auth.ts), feeds client messages to the World and sends
  * out what the World has to say, each message to the players it is for: one player, or everyone on
  * one map. Nothing a client sends is trusted. It also stores players (now and then, and when they
- * leave), piles and marks (whenever one changes) and the Old Stone (whenever it is fed or falls asleep).
+ * leave), piles and marks (whenever one changes), thanks (whenever one is given or told, with one more
+ * thanks received for its helper) and the Old Stone (whenever it is fed or falls asleep).
  * Friends, requests, blocks, private messages and reports go to social.ts, one player's in order.
  * On a server with sign-in, whoever says hello without it plays as a guest (a character that lives
  * in their browser, by its token); signing in later with that token keeps the character.
@@ -29,7 +30,7 @@ import { RollingLimit, clientIp } from './limits';
 import { log } from './log';
 import { Chat } from './chat';
 import { Social, type SocialMsg } from './social';
-import type { DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord } from './storage';
+import type { DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
 import { colorFor, type World } from './world';
 
 const HELLO_TIMEOUT_MS = 5000;
@@ -143,6 +144,9 @@ export function attachNet(o: NetOptions): Net {
   /** The same for each player's pile, each mark and the Old Stone. */
   const pendingDrops = new Map<string, Promise<void>>();
   const pendingMarks = new Map<number, Promise<void>>();
+  /** The same for each thanks (by giver, helper and day), and each helper's count of thanks received. */
+  const pendingThanks = new Map<string, Promise<void>>();
+  const pendingCredits = new Map<string, Promise<void>>();
   let pendingStone: Promise<void> = Promise.resolve();
   let saving = false;
   let closing = false;
@@ -171,6 +175,8 @@ export function attachNet(o: NetOptions): Net {
     blocks: id => social.blocks(id),
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
   });
+  // Someone who blocks a player hears no thanks from them either.
+  world.blocks = id => social.blocks(id);
   /** Each player's social actions, one after another: each reads what the one before wrote. */
   const socialQueue = new Map<string, Promise<void>>();
 
@@ -298,6 +304,10 @@ export function attachNet(o: NetOptions): Net {
         return flush();
       case 'stats':
         world.stats(s.id);
+        return flush();
+      case 'thank':
+        // Guests too: a thanks carries no words.
+        world.thank(s.id, msg.who, msg.what, now);
         return flush();
       case 'befriend':
       case 'answer':
@@ -539,11 +549,18 @@ export function attachNet(o: NetOptions): Net {
       tools: joined.tools,
       items: world.itemsVersion,
       story: joined.story,
+      thanked: joined.thanked,
       serverTime: Date.now(),
     });
     flush();
     const guest = s.guest;
-    befriends(rec.id, () => social.joined(rec.id, guest));
+    // Once whom they block is known, a player back in the game at home reads their letter (World.returned).
+    befriends(rec.id, async () => {
+      await social.joined(rec.id, guest);
+      if (playing.get(rec.id) !== s) return;
+      world.returned(rec.id, clock());
+      flush();
+    });
     log.info('player joined', { id: rec.id, name: rec.name, map: joined.map.id, online: world.size, ...(guest && { guest }) });
   }
 
@@ -624,18 +641,45 @@ export function attachNet(o: NetOptions): Net {
     return done;
   }
 
+  /** Stores a thanks as it is now. One thanks's writes run in order (given, then told), like persist(). */
+  function persistThanks(t: ThanksRecord): Promise<void> {
+    const key = `${t.giver} ${t.helper} ${t.day}`;
+    const done = (pendingThanks.get(key) ?? Promise.resolve())
+      .then(() => storage.saveThanks(t))
+      .catch((err: unknown) => log.error('saving a thanks failed', { giver: t.giver, helper: t.helper, err }))
+      .finally(() => {
+        if (pendingThanks.get(key) === done) pendingThanks.delete(key);
+      });
+    pendingThanks.set(key, done);
+    return done;
+  }
+
+  /** One more thanks received by `helper`, added in storage on its own (the save of a player never writes it). */
+  function persistCredit(helper: string): Promise<void> {
+    const done = (pendingCredits.get(helper) ?? Promise.resolve())
+      .then(() => storage.creditThanks(helper))
+      .catch((err: unknown) => log.error('counting a thanks failed', { helper, err }))
+      .finally(() => {
+        if (pendingCredits.get(helper) === done) pendingCredits.delete(helper);
+      });
+    pendingCredits.set(helper, done);
+    return done;
+  }
+
   function persistStone(stone: StoneRecord): Promise<void> {
     pendingStone = pendingStone.then(() => storage.saveStone(stone)).catch((err: unknown) => log.error('saving the Old Stone failed', { err }));
     return pendingStone;
   }
 
-  /** Starts the writes the World asked for: every pile and mark that changed, the players whose bag changed with one, the Old Stone. */
+  /** Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag changed with one, the Old Stone. */
   function store(): void {
-    const { drops, players, marks, stone } = world.takeWrites();
+    const { drops, players, marks, stone, thanks, credits } = world.takeWrites();
     // Players first: a pile or a mark belongs to a player who must exist in the database.
     for (const rec of players) void persist(rec);
     for (const { owner, drop } of drops) void persistDrop(owner, drop);
     for (const { id, mark } of marks) void persistMark(id, mark);
+    for (const t of thanks) void persistThanks(t);
+    for (const helper of credits) void persistCredit(helper);
     if (stone) void persistStone(stone);
   }
 
@@ -732,7 +776,7 @@ export function attachNet(o: NetOptions): Net {
       store();
       for (const rec of recs) void persist(rec);
       // Includes writes for players who left just before, so storage can be closed after this.
-      await Promise.all([...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), pendingStone]);
+      await Promise.all([...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), pendingStone]);
       // Clients get a moment to answer the close; then their sockets are cut.
       const force = setTimeout(() => {
         for (const ws of wss.clients) ws.terminate();

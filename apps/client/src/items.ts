@@ -102,6 +102,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'gear_stays': return 'Put gear on from the chest';
     case 'whole': return 'It needs no mending';
     case 'have_tool': return action === 'pick' ? 'You have one already. It stays for someone else' : 'You have one already';
+    case 'thanked': return 'Thanks go once a day to each person';
   }
 }
 

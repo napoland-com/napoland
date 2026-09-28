@@ -119,7 +119,8 @@ describe('fires out there', () => {
     expect([...to(w.drain(), 'a'), ...[]].filter(m => m.t === 'refused')).toEqual([{ t: 'refused', action: 'feed', reason: 'not_fuel' }]);
     w.feed('a', 4, 4, 0, out + 5000);
     const heard = w.drain();
-    expect(onMap(heard, 'field')).toContainEqual({ t: 'fire', fire: { x: 4, y: 4, left: 120 } });
+    // With who fed it: whoever warms at it later may thank them.
+    expect(onMap(heard, 'field')).toContainEqual({ t: 'fire', fire: { x: 4, y: 4, left: 120, fed: [{ id: 'a', name: 'A' }] } });
     expect(of(to(heard, 'a'), 'bag').at(-1)).toEqual({ t: 'bag', bag: [{ item: 'twig', count: 1 }, { item: 'rock', count: 1 }] });
     // Lit again, it warms whoever stands by it (low: 120 s is under FIRE_LOW_S).
     expect(lastEnergy(heard, 'a')?.energy.rate).toBe(r3(REFILL_PER_SECOND * EMBERS));
@@ -132,7 +133,7 @@ describe('fires out there', () => {
     const w = world(withFire(), 'overcast', {}, rec('a', 'field', 4, 5, 'up', { bag: [{ item: 'twig', count: 5 }, { item: 'rock', count: 1 }, { item: 'twig', count: 10 }] }));
     w.feed('a', 4, 4, 0, 1000, 20);
     const heard = w.drain();
-    expect(onMap(heard, 'field')).toContainEqual({ t: 'fire', fire: { x: 4, y: 4, left: FIRE_MAX_S } });
+    expect(onMap(heard, 'field')).toContainEqual({ t: 'fire', fire: { x: 4, y: 4, left: FIRE_MAX_S, fed: [{ id: 'a', name: 'A' }] } });
     // What it did comes last, after everything it changed.
     expect(to(heard, 'a').at(-1)).toEqual({ t: 'did', did: { kind: 'fire', item: 'twig', count: 8, left: FIRE_MAX_S } });
     // From the slot asked for first, then from the other one of twigs; each counts for the fire keeper.
@@ -152,6 +153,18 @@ describe('fires out there', () => {
     w.feed('a', 4, 4, 0, out, 5);
     expect(of(to(w.drain(), 'a'), 'did')).toEqual([{ t: 'did', did: { kind: 'fire', item: 'twig', count: 2, left: 240, lit: true } }]);
     expect(w.get('a')!.bag).toEqual([]);
+  });
+
+  it('remember the last three who fed them, the latest first, each once, until a restart', () => {
+    const twigs = { bag: [{ item: 'twig', count: 3 }] };
+    const w = world(withFire(), 'overcast', {}, ...['a', 'b', 'c', 'd'].map(id => rec(id, 'field', 4, 5, 'up', twigs)));
+    // Out, so each twig goes in.
+    const t = (FIRE_MAX_S / 2 + 10) * 1000;
+    for (const id of ['a', 'b', 'a', 'c', 'd']) w.feed(id, 4, 4, 0, t);
+    w.drain();
+    expect(w.scene('field', t).fires).toEqual([{ x: 4, y: 4, left: 5 * 120, fed: [{ id: 'd', name: 'D' }, { id: 'c', name: 'C' }, { id: 'a', name: 'A' }] }]);
+    // A fire in town is fed by nobody: it tells no names.
+    expect(w.scene('house', t).fires).toEqual([{ x: 2, y: 1, left: null }]);
   });
 
   it('never needs feeding in town, and never burns past full', () => {
@@ -766,13 +779,13 @@ describe('marks', () => {
   it('paint an arrow where you stand, pointing where you face, for everyone on the map, for a day', () => {
     const w = world(fieldData(), 'overcast', {}, rec('a', 'field', 3, 5, 'left', { bag: [{ item: 'cap', count: 3 }] }), rec('b', 'field', 6, 6));
     w.use('a', 0, 1000);
-    const mark = { id: 1, x: 3, y: 5, dir: 'left', color: colorFor('a'), name: 'A', until: 1000 + MARK_LIFETIME_MS };
+    const mark = { id: 1, x: 3, y: 5, dir: 'left', color: colorFor('a'), owner: 'a', name: 'A', until: 1000 + MARK_LIFETIME_MS };
     const heard = w.drain();
     expect(onMap(heard, 'field')).toContainEqual({ t: 'mark', mark });
     expect(of(to(heard, 'a'), 'bag').at(-1)).toEqual({ t: 'bag', bag: [{ item: 'cap', count: 2 }] });
     // The painter hears which way it points and how long everyone sees it.
     expect(of(to(heard, 'a'), 'did')).toEqual([{ t: 'did', did: { kind: 'used', item: 'cap', mark: { dir: 'left', left: MARK_LIFETIME_MS / 1000 } } }]);
-    expect(w.takeWrites().marks).toEqual([{ id: 1, mark: { id: 1, owner: 'a', name: 'A', color: colorFor('a'), map: 'field', x: 3, y: 5, dir: 'left', placedAt: 1000 } }]);
+    expect(w.takeWrites().marks).toEqual([{ id: 1, mark: { id: 1, owner: 'a', name: 'A', color: colorFor('a'), map: 'field', x: 3, y: 5, dir: 'left', placedAt: 1000, until: 1000 + MARK_LIFETIME_MS } }]);
     // One per tile.
     w.use('a', 0, 2000);
     expect(of(to(w.drain(), 'a'), 'refused')).toEqual([{ t: 'refused', action: 'use', reason: 'marked' }]);
@@ -792,6 +805,21 @@ describe('marks', () => {
     const marks = w.scene('field', 10_000).marks;
     expect(marks).toHaveLength(MARKS_PER_PLAYER);
     expect(marks.map(m => m.x)).toEqual([2, 3, 4, 5, 6, 7]);
+  });
+
+  it('last longer for a good neighbor: two days at rank 1, a week at rank 5', () => {
+    const w = world(fieldData(), 'overcast', {}, rec('a', 'field', 3, 5, 'up', { bag: [{ item: 'cap', count: 3 }], stats: { thanked: 25 } }), rec('e', 'field', 5, 5, 'up', { bag: [{ item: 'cap', count: 1 }], stats: { thanked: 1_200 } }));
+    w.use('a', 0, 1000);
+    w.use('e', 0, 1000);
+    const heard = w.drain();
+    expect(of(to(heard, 'a'), 'did')).toEqual([{ t: 'did', did: { kind: 'used', item: 'cap', mark: { dir: 'up', left: 2 * MARK_LIFETIME_MS / 1000 } } }]);
+    expect(of(to(heard, 'e'), 'did')).toEqual([{ t: 'did', did: { kind: 'used', item: 'cap', mark: { dir: 'up', left: 7 * MARK_LIFETIME_MS / 1000 } } }]);
+    expect(w.scene('field', 1000).marks.map(m => [m.owner, m.until])).toEqual([['a', 1000 + 2 * MARK_LIFETIME_MS], ['e', 1000 + 7 * MARK_LIFETIME_MS]]);
+    // A day on, both still show; two days on, only the week's.
+    w.tick(1000 + MARK_LIFETIME_MS);
+    expect(w.scene('field', 1000 + MARK_LIFETIME_MS).marks).toHaveLength(2);
+    w.tick(1000 + 2 * MARK_LIFETIME_MS);
+    expect(w.scene('field', 1000 + 2 * MARK_LIFETIME_MS).marks.map(m => m.owner)).toEqual(['e']);
   });
 
   it('come back after a restart, and new ones get new ids', () => {

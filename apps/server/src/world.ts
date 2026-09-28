@@ -20,7 +20,7 @@
  * you stand. Tall grass hides you from them all (shared hidden()): no creature steps into it or notices
  * anyone in it, and a chase ends there; nothing else out there cares. A flare keeps them all off and
  * shakes off a hitchhiker. Anyone can paint arrows on the ground with a
- * glowcap; they last a day. The Old Stone in town wakes when enough shards are fed to it, and while
+ * glowcap; they last a day (longer for a good neighbor). The Old Stone in town wakes when enough shards are fed to it, and while
  * awake it calms every surge. Strange objects found deep in turn into something when looked at in
  * town. Feats, earned rank by rank by what you do out there, make it a little easier for good (feats.ts).
  *
@@ -38,8 +38,15 @@
  * gets it all back, anyone else a random half (the rest is lost), and it fades an hour after the
  * collapse. The rules for items and bags are in shared/items.ts. Tools are each player's own for good,
  * apart from the bag (giveTool): made at the workbench or found, and never in a pile.
+ *
+ * Thanks (shared/thanks.ts): a fire out there remembers who fed it last, an arrow who painted it, and
+ * whoever warms at the one or follows the other can thank them, once a UTC day each. The helper hears it
+ * at once if online (a little energy out in the wilds, a line anywhere else), or in a letter when they
+ * next walk into their home room. Who thanked whom is kept THANKS_KEPT_DAYS, in memory and in storage.
  */
 import {
+  DIR_VEC,
+  MARK_LIFETIME_MS,
   QUIRKS,
   SLOTS,
   STARTER_GEAR,
@@ -50,6 +57,10 @@ import {
   STEP_STATS,
   STEP_MS,
   SURGE_DRAIN,
+  THANKS_ENERGY,
+  THANKS_KEPT_MS,
+  THANKS_PER_TRIP,
+  THANKS_REACH,
   FLASH_BURST_S,
   FLASH_GLOW_S,
   activeConditions,
@@ -80,6 +91,7 @@ import {
   levelOf,
   liveEnds,
   liveXp,
+  markLifetime,
   maxEnergy,
   merge,
   modsOf,
@@ -100,8 +112,10 @@ import {
   surgeFront,
   takeFromBag,
   takeItem,
+  thanksKey,
   toolsOf,
   untilSurge,
+  utcDay,
   weatherAt,
   wetRate,
   type Arrival,
@@ -129,6 +143,7 @@ import {
   type MapRef,
   type MarkView,
   type Mods,
+  type PersonView,
   type PlayerView,
   type ProgressView,
   type Recipe,
@@ -146,11 +161,15 @@ import {
   type SurgeView,
   type Slot,
   type SkulkerRule,
+  type ThanksFor,
+  type ThanksGroup,
   type TileMap,
   type Weather,
 } from '@napoland/shared';
 import { FIRE_LOW_S, Fires, type Fire } from './fires';
-import type { DropRecord, MarkRecord, PlayerRecord, StoneRecord } from './storage';
+import type { DropRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
+
+export { MARK_LIFETIME_MS };
 
 /** A step may start this much early: messages sent at a steady pace arrive bunched up. */
 export const STEP_TOLERANCE_MS = 40;
@@ -161,8 +180,7 @@ export const STEP_QUEUE_MAX = 2;
  * last heard. Smaller changes (one more step into the woods) wait for the regular repeat.
  */
 export const ENERGY_RATE_CHANGE = 0.1;
-/** Marks fade this long after they are painted, and each player has at most this many. */
-export const MARK_LIFETIME_MS = 24 * 60 * 60 * 1000;
+/** Each player has at most this many marks (they fade MARK_LIFETIME_MS after they are painted, longer for a good neighbor). */
 export const MARKS_PER_PLAYER = 6;
 /** A pile keeps this many of the last steps its owner walked out there: their echo. */
 export const TRAIL_STEPS = 16;
@@ -262,6 +280,8 @@ export interface Joined extends Scene {
   /** Every tool the player owns, in the order they got them (toolsOf): the starter tools until they got one of their own. */
   tools: string[];
   story: StoryView;
+  /** Whom the player thanked today (UTC), by id. */
+  thanked: string[];
 }
 
 /** What storage must hear: piles and marks to write (or remove: undefined), players to save now, and the Old Stone if it changed. */
@@ -271,6 +291,10 @@ export interface Writes {
   players: PlayerRecord[];
   marks: Array<{ id: number; mark: MarkRecord | undefined }>;
   stone?: StoneRecord;
+  /** Thanks given, or told since (thanks.ts), as they are now. */
+  thanks: ThanksRecord[];
+  /** The helpers of the thanks given since, one entry for each: their count of thanks received grows by one each (Storage.creditThanks). */
+  credits: string[];
 }
 
 export interface WorldOptions {
@@ -288,6 +312,8 @@ export interface WorldOptions {
   drops?: DropRecord[];
   /** Marks saved before a restart. */
   marks?: MarkRecord[];
+  /** Thanks given in the last THANKS_KEPT_DAYS, as saved before a restart. */
+  thanks?: ThanksRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
   /**
@@ -338,6 +364,8 @@ interface Online {
   heardAt: number;
   /** Live finds in the bag (sendBag keeps it up to date), so only their carriers are looked at for fading. */
   live: number;
+  /** Thanks that gave them energy this trip (THANKS_PER_TRIP at most): a trip ends at home, or with a collapse. */
+  gifts: number;
 }
 
 /** A find rule of items.json, ready to use. */
@@ -436,7 +464,12 @@ const findView = (f: Find): FindView => ({ id: f.id, item: f.rule.item.id, x: f.
 const dropView = (d: DropRecord): DropView => ({
   id: d.owner, x: d.x, y: d.y, owner: d.owner, name: d.name, until: d.droppedAt + DROP_LIFETIME_MS, trail: (d.trail ?? []).map(([x, y]) => [x, y]),
 });
-const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, name: m.name, until: m.placedAt + MARK_LIFETIME_MS });
+/** When a mark fades: its own time, or a day after it was painted for one saved without (by an older release). */
+const markUntil = (m: MarkRecord): number => m.until ?? m.placedAt + MARK_LIFETIME_MS;
+const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, owner: m.owner, name: m.name, until: markUntil(m) });
+/** One thanks a day from a giver to a helper: its key. */
+const thanksDay = (giver: string, helper: string, day: number) => `${giver} ${helper} ${day}`;
+const NOBODY: ReadonlySet<string> = new Set();
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: w.kind, x: w.x, y: w.y, dir: w.dir, ...(w.chasing !== undefined && { chasing: w.chasing }) });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}) }));
 /** The bag as its owner hears it: a live item's `since` (the server's wall clock) as its age in seconds. */
@@ -568,6 +601,19 @@ export class World {
   private readonly asleep = new Set<string>();
   /** Collapses in the last hour, for the notice board. */
   private collapses: Array<{ map: string; at: number }> = [];
+  /** The rooms that are someone's home: an inside with the chest, where each player's stash is. Walking into one ends a trip. */
+  private readonly homes = new Set<string>();
+  /** Who thanked whom in the last THANKS_KEPT_DAYS, by giver, helper and UTC day (thanksDay): one each. */
+  private readonly thanks = new Map<string, ThanksRecord>();
+  private readonly thanksWrites = new Map<string, ThanksRecord>();
+  private credits: string[] = [];
+  /** The wall time when the oldest thanks is to be forgotten (or later), so tick() only looks when one is due. */
+  private thanksForgetAt = Infinity;
+  /**
+   * Whom each player online blocks (net.ts sets it from social.ts): someone who blocks a player hears
+   * nothing from them, thanks included. Nobody, until it is set.
+   */
+  blocks: (id: string) => ReadonlySet<string> = () => NOBODY;
 
   /** `maps` must fit together (validateWorld) and `items` must fit the maps (validateItems); `homeId` is a town. */
   constructor(maps: Iterable<TileMap>, homeId: string, weather: Weather, options: WorldOptions = {}) {
@@ -587,6 +633,7 @@ export class World {
       if (m.data.kind === 'inside') continue;
       for (const e of m.data.exits) if (this.maps.get(e.to)!.data.kind === 'inside') { this.outside.set(e.to, m.data.kind); this.around.set(e.to, m); }
     }
+    for (const m of this.maps.values()) if (m.data.kind === 'inside' && m.data.objects.some(o => o.kind === 'chest')) this.homes.add(m.data.id);
     const home = this.maps.get(homeId);
     if (!home) throw new Error(`the home map ${homeId} does not exist`);
     this.home = home;
@@ -621,6 +668,10 @@ export class World {
     for (const d of options.drops ?? []) this.restore(d);
     for (const rule of this.rules) if (rule.open) this.sow(rule);
     for (const m of options.marks ?? []) this.restoreMark(m);
+    for (const t of options.thanks ?? []) {
+      this.thanks.set(thanksDay(t.giver, t.helper, t.day), { ...t, what: { ...t.what } });
+      this.thanksForgetAt = Math.min(this.thanksForgetAt, t.at + THANKS_KEPT_MS);
+    }
 
     for (const m of this.maps.values()) {
       const w = m.data.watchers;
@@ -753,7 +804,7 @@ export class World {
     this.resting.delete(r.id);
     const p: Online = {
       rec: r, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false, hitchAt: now, trail: [],
-      heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag),
+      heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0,
     };
     this.refresh(p, now);
     this.players.set(r.id, p);
@@ -762,14 +813,25 @@ export class World {
     this.toMap(map.data.id, { t: 'join', player }, r.id);
     // The welcome has the energy too; the message after it is what a client listens to from then on.
     this.tell(p, now);
-    const here = map.data.id;
+    const here = map.data.id, today = utcDay(now + this.epochOffset);
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
       stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
       tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
+      thanked: [...this.thanks.values()].filter(t => t.giver === r.id && t.day === today).map(t => t.helper),
     };
+  }
+
+  /**
+   * A player who joined is settled in: whom they block is known (net.ts calls it once social.ts has read
+   * it). Back in the game at home (they left it there), they read their letter now, as if they had
+   * walked in: it leaves out thanks from whoever they block.
+   */
+  returned(id: string, now: number): void {
+    const p = this.players.get(id);
+    if (p && this.homes.has(p.map.data.id)) this.homecoming(p, now);
   }
 
   /** Takes a player out of the world, tells everyone on their map and returns the record to save. */
@@ -885,7 +947,7 @@ export class World {
       kind: 'used', item: def.id,
       ...(use.energy ? { energy: Math.round(p.rec.energy - before) } : {}),
       ...(use.flare ? { flare: use.flare } : {}),
-      ...(use.mark ? { mark: { dir: p.rec.dir, left: MARK_LIFETIME_MS / 1000 } } : {}),
+      ...(use.mark ? { mark: { dir: p.rec.dir, left: markLifetime(p.mods) / 1000 } } : {}),
       ...(into ? { into } : {}),
     });
     // Something that takes energy could empty the bar.
@@ -954,6 +1016,8 @@ export class World {
     p.rec.bag = takeItem(p.rec.bag, slot, fed).bag;
     p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, fed);
     this.sendBag(p, now);
+    // Whoever warms at it later may thank them (thanks.ts).
+    this.fires.fedBy(fire, { id, name: p.rec.name });
     const burning = this.fires.view(fire, now);
     this.toMap(p.map.data.id, { t: 'fire', fire: burning });
     // Each one counts for the fire keeper, as when they went in one press at a time.
@@ -1201,6 +1265,131 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'board', lines: this.news(now) } });
   }
 
+  /**
+   * `id` thanks `who` (thanks.ts): one of the last players who fed the fire on tile x,y of their map (they
+   * warm at it), or the painter of the arrow `id` (they stand where it points), from within THANKS_REACH.
+   * Once a UTC day for each helper, never oneself. The thanker hears what it did (`did`); the helper, at
+   * once if online, or in the letter when they come home.
+   */
+  thank(id: string, who: string, what: { kind: 'fire'; x: number; y: number } | { kind: 'mark'; id: number }, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    // Steps whose time has come first: the thanks comes from where the player really is.
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'thank', 'too_far');
+    }
+    const found = who === id ? undefined : this.thankable(p, who, what);
+    if (!found) return this.refuse(p, 'thank', 'gone');
+    const [nx, ny] = found.near;
+    if (Math.max(Math.abs(nx - p.rec.x), Math.abs(ny - p.rec.y)) > THANKS_REACH) return this.refuse(p, 'thank', 'too_far');
+    if (!this.giveThanks(p, found.helper, found.what, now)) return this.refuse(p, 'thank', 'thanked');
+    this.did(p, { kind: 'thanked', who, name: found.helper.name, what: found.what.kind });
+  }
+
+  /** Who a thanks is for (one of the fire's last feeders, or the arrow's painter), what for, and the tile it is given from; undefined when that no longer holds. */
+  private thankable(p: Online, who: string, what: { kind: 'fire'; x: number; y: number } | { kind: 'mark'; id: number }): { helper: PersonView; what: ThanksFor; near: [number, number] } | undefined {
+    const map = p.map.data.id;
+    if (what.kind === 'fire') {
+      const fire = this.fires.at(p.map, what.x, what.y), helper = fire?.fed.find(f => f.id === who);
+      if (!fire || !helper) return undefined;
+      return { helper: { ...helper }, what: { kind: 'fire', map, x: fire.x, y: fire.y }, near: [fire.x, fire.y] };
+    }
+    const m = this.marks.get(what.id);
+    if (!m || m.map !== map || m.owner !== who) return undefined;
+    // Thanked by whoever followed it: from the tile it points to.
+    const [dx, dy] = DIR_VEC[m.dir];
+    return { helper: { id: m.owner, name: m.name }, what: { kind: 'mark', map, x: m.x, y: m.y }, near: [m.x + dx, m.y + dy] };
+  }
+
+  /**
+   * Records `from`'s thanks to `helper` for `what`, and tells the helper if they are online (deliver);
+   * otherwise it waits for their letter home. It counts toward their Good neighbor wherever they are.
+   * False, and nothing happens, for oneself or a helper `from` thanked today already.
+   */
+  private giveThanks(from: Online, helper: PersonView, what: ThanksFor, now: number): boolean {
+    const wall = now + this.epochOffset, day = utcDay(wall), key = thanksDay(from.rec.id, helper.id, day);
+    if (helper.id === from.rec.id || this.thanks.has(key)) return false;
+    const h = this.players.get(helper.id);
+    // Someone who blocks the giver hears nothing from them, thanks included, and the giver is not told
+    // (nobody learns who blocks them). Blocks are known for players online; the letter leaves out the rest.
+    if (h && this.blocks(helper.id).has(from.rec.id)) return true;
+    const t: ThanksRecord = { giver: from.rec.id, helper: helper.id, day, at: Math.floor(wall), what: { ...what }, told: false, name: from.rec.name };
+    if (h) this.deliver(h, t, now);
+    this.thanks.set(key, t);
+    this.thanksWrites.set(key, t);
+    this.credits.push(helper.id);
+    this.thanksForgetAt = Math.min(this.thanksForgetAt, t.at + THANKS_KEPT_MS);
+    return true;
+  }
+
+  /**
+   * A thanks reaches a helper online. Out in the wilds (or a shelter out there) it warms them by
+   * THANKS_ENERGY, THANKS_PER_TRIP times a trip at most, and floats over their head; the letter home says
+   * what it was for. Anywhere else a line in the text box says it all, and the letter leaves it out.
+   */
+  private deliver(h: Online, t: ThanksRecord, now: number): void {
+    let energy = 0;
+    if (!this.wild(h.map)) t.told = true;
+    else if (h.gifts < THANKS_PER_TRIP && this.advance(h, now) > 0) {
+      // A bar with no room to speak of takes nothing, and the gift is not spent on it.
+      const room = Math.min(THANKS_ENERGY, h.max - h.rec.energy);
+      if (room >= 0.5) {
+        h.rec.energy += room;
+        h.gifts++;
+        energy = Math.round(room);
+      }
+    }
+    this.outbox.push({ to: h.rec.id, msg: { t: 'thanked', name: t.name, what: { ...t.what }, ...(energy ? { energy } : {}), ...(t.told ? { line: true as const } : {}) } });
+    this.count(h, 'thanked', now);
+    if (energy) this.tell(h, now);
+  }
+
+  /**
+   * The player walked into their home room (or is back in the game there): a new trip starts from here,
+   * and a letter says who thanked them while they were away, and for what, the most thanked first. What
+   * the text box already said, and thanks from someone they block, are left out.
+   */
+  private homecoming(p: Online, now: number): void {
+    p.gifts = 0;
+    // Only what is still kept: one older than THANKS_KEPT_DAYS may wait for the tick that forgets it.
+    const kept = now + this.epochOffset - THANKS_KEPT_MS;
+    const unread = [...this.thanks.values()].filter(t => t.helper === p.rec.id && !t.told && t.at > kept).sort((a, b) => b.at - a.at);
+    if (!unread.length) return;
+    const blocks = this.blocks(p.rec.id);
+    const groups = new Map<string, { group: ThanksGroup; givers: Set<string>; at: number }>();
+    for (const t of unread) {
+      t.told = true;
+      this.thanksWrites.set(thanksDay(t.giver, t.helper, t.day), t);
+      if (blocks.has(t.giver)) continue;
+      const k = thanksKey(t.what);
+      let g = groups.get(k);
+      if (!g) groups.set(k, (g = { group: { what: { ...t.what }, count: 0, people: 0, names: [] }, givers: new Set(), at: t.at }));
+      g.group.count++;
+      if (g.givers.has(t.giver)) continue;
+      g.givers.add(t.giver);
+      g.group.people++;
+      // The latest first: the list is newest first.
+      if (g.group.names.length < 2) g.group.names.push(t.name);
+    }
+    if (!groups.size) return;
+    const thanks = [...groups.values()].sort((a, b) => b.group.count - a.group.count || b.at - a.at).map(g => g.group);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'letter', thanks } });
+  }
+
+  /** Thanks older than THANKS_KEPT_DAYS are forgotten (storage deletes its own: Storage.forgetThanks). */
+  private forgetThanks(now: number): void {
+    const wall = now + this.epochOffset;
+    if (wall < this.thanksForgetAt) return;
+    let next = Infinity;
+    for (const [k, t] of this.thanks) {
+      if (t.at + THANKS_KEPT_MS <= wall) this.thanks.delete(k);
+      else next = Math.min(next, t.at + THANKS_KEPT_MS);
+    }
+    this.thanksForgetAt = next;
+  }
+
   /** The player's counts toward feats as they are now: the status panel asks when it opens. */
   stats(id: string): void {
     const p = this.players.get(id);
@@ -1242,6 +1431,7 @@ export class World {
     for (const [id, readyAt] of this.resting) if (readyAt <= now) this.resting.delete(id);
     this.fadePiles(now);
     this.fadeMarks(now);
+    this.forgetThanks(now);
     this.growFinds(now);
   }
 
@@ -1273,11 +1463,15 @@ export class World {
       players: [...this.saveNow.values()].map(copyRecord),
       marks: [...this.markWrites].map(([id, m]) => ({ id, mark: m && { ...m } })),
       ...(this.stoneWrite ? { stone: { ...this.stoneWrite } } : {}),
+      thanks: [...this.thanksWrites.values()].map(t => ({ ...t, what: { ...t.what } })),
+      credits: this.credits,
     };
     this.pileWrites.clear();
     this.saveNow.clear();
     this.markWrites.clear();
     this.stoneWrite = undefined;
+    this.thanksWrites.clear();
+    this.credits = [];
     return out;
   }
 
@@ -1343,6 +1537,7 @@ export class World {
     this.place(p, this.maps.get(to.to)!, to.x, to.y, to.dir);
     this.arrive(p, from, 'exit', now);
     this.moveStory(p, { reach: p.map.data.id });
+    if (this.homes.has(p.map.data.id)) this.homecoming(p, now);
   }
 
   /** Out of energy while online: the player wakes up at home, and both maps see it. */
@@ -1361,6 +1556,8 @@ export class World {
     p.rec.energy = this.maxOf(p.rec);
     p.rec.wet = 0;
     p.hitched = false;
+    // They wake up at home: the next time out is a new trip.
+    p.gifts = 0;
     this.collapses = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
     this.collapses.push({ map, at: now });
     this.onCollapse?.(id, { map, x, y });
@@ -1735,12 +1932,16 @@ export class World {
     for (const w of [...(this.watchers.get(map) ?? []), ...(this.skulkers.get(map) ?? [])]) if (w.awake && Math.hypot(w.x - x, w.y - y) <= FLARE_RADIUS + 3) this.sendAway(w, now);
   }
 
-  /** An arrow on the player's tile, pointing where they face. Their oldest goes when they have too many. */
+  /**
+   * An arrow on the player's tile, pointing where they face, for a day (longer for a good neighbor:
+   * markLifetime). Their oldest goes when they have too many.
+   */
   private paint(p: Online, now: number): void {
     const { id, name, color, map, x, y, dir } = p.rec;
     const mine = [...this.marks.values()].filter(m => m.owner === id).sort((a, b) => a.placedAt - b.placedAt);
     for (const m of mine.slice(0, Math.max(0, mine.length - MARKS_PER_PLAYER + 1))) this.removeMark(m);
-    const mark: MarkRecord = { id: this.nextMarkId++, owner: id, name, color, map, x, y, dir, placedAt: Math.floor(now + this.epochOffset) };
+    const placedAt = Math.floor(now + this.epochOffset);
+    const mark: MarkRecord = { id: this.nextMarkId++, owner: id, name, color, map, x, y, dir, placedAt, until: placedAt + markLifetime(p.mods) };
     this.addMark(mark);
     this.markWrites.set(mark.id, mark);
     this.toMap(map, { t: 'mark', mark: markView(mark) });
@@ -1756,7 +1957,7 @@ export class World {
   private addMark(m: MarkRecord): void {
     this.marks.set(m.id, m);
     this.markTiles.get(m.map)!.set(m.y * this.maps.get(m.map)!.width + m.x, m);
-    this.markFadeAt = Math.min(this.markFadeAt, m.placedAt + MARK_LIFETIME_MS - this.epochOffset);
+    this.markFadeAt = Math.min(this.markFadeAt, markUntil(m) - this.epochOffset);
   }
 
   private removeMark(m: MarkRecord): void {
@@ -1769,8 +1970,8 @@ export class World {
   private fadeMarks(now: number): void {
     if (now < this.markFadeAt) return;
     const wall = now + this.epochOffset;
-    for (const m of [...this.marks.values()]) if (wall >= m.placedAt + MARK_LIFETIME_MS) this.removeMark(m);
-    this.markFadeAt = [...this.marks.values()].reduce((at, m) => Math.min(at, m.placedAt + MARK_LIFETIME_MS - this.epochOffset), Infinity);
+    for (const m of [...this.marks.values()]) if (wall >= markUntil(m)) this.removeMark(m);
+    this.markFadeAt = [...this.marks.values()].reduce((at, m) => Math.min(at, markUntil(m) - this.epochOffset), Infinity);
   }
 
   // ---------- watchers ----------
@@ -2395,7 +2596,7 @@ export class World {
     this.saveNow.set(p.rec.id, p.rec);
   }
 
-  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend', reason: Refusal): void {
+  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'thank', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
   }
 

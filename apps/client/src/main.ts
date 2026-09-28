@@ -642,6 +642,8 @@ function frame(now: number) {
   arrival.update(dt);
   game.held = arrival.leaving;
   game.update(dt, now);
+  // The letter home, and offers to thank someone, wait for the panels, the menu and the fade.
+  game.idle(now, panelOpen() || hud.menuOpen || arrival.dark > 0);
   const me = game.me;
   if (game.lootChanges !== lootShown.changes || view !== lootShown.view) {
     lootShown = { changes: game.lootChanges, view };

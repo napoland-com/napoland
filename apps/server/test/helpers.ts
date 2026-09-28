@@ -5,7 +5,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
-import { DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, PROTOCOL_VERSION, type BagSlot, type ClientMsg, type DropView, type ServerMsg } from '@napoland/shared';
+import { DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, utcDay, type BagSlot, type ClientMsg, type DropView, type ServerMsg } from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
@@ -281,8 +281,8 @@ export async function playFirstThenSignIn(storage: Storage): Promise<void> {
 
 /**
  * Guests who stayed away GUEST_DAYS are forgotten, on `storage` (in memory, or a real database, with
- * nobody else in it): with their pile, marks, links and messages, and their name is free again. A guest
- * seen since, and anyone signed in however long ago, stay. Returns who went, and who reported them.
+ * nobody else in it): with their pile, marks, links, messages and thanks, and their name is free again. A
+ * guest seen since, and anyone signed in however long ago, stay. Returns who went, and who reported them.
  */
 export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ away: string; reporter: string }> {
   const now = Date.now(), cutoff = now - GUEST_DAYS * 86_400_000;
@@ -295,6 +295,10 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   await storage.setLink(away.id, signed.id, 'friend', true);
   await storage.setLink(signed.id, away.id, 'friend', true);
   await storage.addTell({ from: away.id, to: signed.id, text: 'see you out there', at: now - 1000 });
+  const thanks = { day: utcDay(now), at: now - 1000, what: { kind: 'fire' as const, map: 'woods', x: 4, y: 2 }, told: false, name: '' };
+  await storage.saveThanks({ ...thanks, giver: away.id, helper: signed.id });
+  await storage.saveThanks({ ...thanks, giver: signed.id, helper: away.id });
+  await storage.saveThanks({ ...thanks, giver: signed.id, helper: lately.id });
   await storage.addReport({ reporter: signed.id, reported: away.id, reason: 'spam', quote: null, at: now - 1000 });
   // Coming back counts: seen now, it stays.
   expect(await storage.seen(back.id, now)).toBe(true);
@@ -303,9 +307,10 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   expect(await storage.findByTokenHash(hashToken(away.token))).toBeNull();
   expect(await storage.nameTaken(away.name)).toBe(false);
   expect((await storage.loadDrops(now - DROP_LIFETIME_MS)).map(d => d.owner)).not.toContain(away.id);
-  expect((await storage.loadMarks(now - 86_400_000)).map(m => m.owner)).not.toContain(away.id);
+  expect((await storage.loadMarks(now, MARK_LIFETIME_MS)).map(m => m.owner)).not.toContain(away.id);
   expect(await storage.linksOf(signed.id)).toEqual([]);
   expect(await storage.tellsTo(signed.id)).toEqual([]);
+  expect((await storage.loadThanks(now - 60_000)).map(t => [t.giver, t.helper])).toEqual([[signed.id, lately.id]]);
   expect(await storage.seen(away.id, now)).toBe(false);
   for (const stays of [lately, signed, back]) expect(await storage.findPerson({ id: stays.id }), stays.name).not.toBeNull();
   // Nobody else has stayed away that long.
