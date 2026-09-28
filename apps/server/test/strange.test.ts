@@ -78,6 +78,17 @@ describe('the new charms', () => {
   });
 });
 
+describe('the new quirks, kept', () => {
+  it('stay on a saved piece and go to everyone with what its wearer wears (the lodestone needs no more of the server)', () => {
+    for (const quirk of ['hush', 'lodestone', 'afterglow'] as const) {
+      const w = world(fieldData(), 'overcast', {}, rec('a', 'field', 4, 5, 'up', { ...hooded(quirk), worn: { cap: { cond: 0.4, quirk } } }));
+      expect(w.views('field').find(p => p.id === 'a')?.quirks).toEqual([quirk]);
+      // Not taken for a broken piece and made anew: its condition is as it was saved.
+      expect(w.get('a')!.worn).toEqual({ cap: { cond: 0.4, quirk } });
+    }
+  });
+});
+
 describe('hush', () => {
   // One skulker at night, in its lair at 4,3 (the field's one fern tile), that may go 8 steps from home or more.
   const skulkers = { count: 1, steps: [8, 999] as [number, number], when: ['night'] as Array<'night' | 'storm'> };
