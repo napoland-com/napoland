@@ -192,3 +192,12 @@ export function assignLights(current: readonly number[], sources: ReadonlyArray<
   }
   return out;
 }
+
+/**
+ * Whose flashlight each of the lights kept for other players follows (`current`, by player id, '' for none): the
+ * nearest to (fx, fz) of those holding one (`held`), each light staying on whoever it follows while they are still
+ * among the nearest, as assignLights keeps the lamps'. '' where there are fewer than lights.
+ */
+export function assignBeams(current: readonly string[], held: ReadonlyArray<{ id: string; x: number; z: number }>, fx: number, fz: number): string[] {
+  return assignLights(current.map(id => held.findIndex(h => h.id === id)), held, fx, fz).map(i => held[i]?.id ?? '');
+}

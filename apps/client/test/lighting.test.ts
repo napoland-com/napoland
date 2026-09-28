@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { TileMap, Weather } from '@napoland/shared';
-import { ambience, assignLights, lightSources } from '../src/view/lighting';
+import { ambience, assignBeams, assignLights, lightSources } from '../src/view/lighting';
 import { cabin, houseTown, shed, tinyWoods } from './fixtures';
 
 const luminance = (hex: string) => { const c = new THREE.Color(hex); return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b; };
@@ -89,5 +89,20 @@ describe('the real lights: lamps and fires, nearest first', () => {
       expect(assignLights([-1, -1, -1, -1], sources, 0, 0)).toHaveLength(4);
     }
     expect(assignLights([2, 0, -1, -1], [{ x: 0, z: 0 }], 0, 0)).toEqual([-1, 0, -1, -1]);
+  });
+
+  it('gives the lights kept for other players\' flashlights to the nearest who hold one, and keeps each on whoever it follows', () => {
+    const at = (id: string, x: number) => ({ id, x, z: 0 });
+    // Four others at night, one light too few: the three nearest you (at 0,0) are lit, the farthest walks unlit.
+    const four = [at('far', 9), at('a', 1), at('b', 2), at('c', 3)];
+    const first = assignBeams(['', '', ''], four, 0, 0);
+    expect([...first].sort()).toEqual(['a', 'b', 'c']);
+    // You walk toward the far one: the light that followed whoever is now farthest goes to them, the others stay put.
+    const next = assignBeams(first, four, 6, 0);
+    expect(next.filter((id, k) => id === first[k]).sort()).toEqual(['b', 'c']);
+    expect(next).toContain('far');
+    // Fewer others than lights, or nobody (by day nobody holds one): the rest are off.
+    expect(assignBeams(['a', 'b', 'c'], [at('b', 2)], 0, 0)).toEqual(['', 'b', '']);
+    expect(assignBeams(['a', 'b', 'c'], [], 0, 0)).toEqual(['', '', '']);
   });
 });

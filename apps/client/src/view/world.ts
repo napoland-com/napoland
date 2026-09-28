@@ -34,7 +34,7 @@ import {
   type QuadFn, type WallShape,
 } from './interior';
 import { bridgeModel, bridgeRails, cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
-import { SNOW, ambience, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
+import { SNOW, ambience, assignBeams, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
 import { HUM, TELEPORT_ROCK_Y, napoBuilding, napoProp, napoSign, teleportCore, towerModel } from './napo';
 import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
@@ -59,6 +59,17 @@ export interface Avatar {
   afterglow?: boolean;
   /** What they wear (characters.ts). */
   look?: Look;
+}
+
+/** A flashlight someone holds at night: where the light is, and where on the ground it points (world units). */
+interface Held {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  tx: number;
+  ty: number;
+  tz: number;
 }
 
 /** A creature as the game draws it: a watcher or a skulker, and whom it chases (if anyone). */
@@ -90,6 +101,12 @@ const CHUNK = 8;
 const LIGHTS = 4;
 /** Seconds a light takes to come on when its lamp or fire becomes one of the nearest. */
 const LIGHT_FADE_S = 0.35;
+/**
+ * How many other players' flashlights light the night around them, the nearest ones: real spotlights like your
+ * own, so walking together lights more of the woods. Like the lamps' lights they are always in the scene, off by
+ * day, so their number never changes and nothing recompiles; anyone farther walks unlit.
+ */
+const OTHER_FLASHLIGHTS = 3;
 const LAMP_COLOR = 0xff9a3c;
 const LAMP_REACH = 7;
 /** A fire's light is redder than a lamp's, and as strong whatever the weather: it is always burning. */
@@ -273,6 +290,8 @@ export class WorldView {
   private sun = new THREE.DirectionalLight(0xc9d4d8, 0.36 * L);
   private flash = new THREE.SpotLight(0xfff0d0, 0, 10, 0.5, 0.6, 1.3);
   private flashTarget = new THREE.Object3D();
+  /** The other players' flashlights (OTHER_FLASHLIGHTS): whose each follows ('' for nobody) and how far it has come on. */
+  private beams = Array.from({ length: OTHER_FLASHLIGHTS }, () => ({ light: new THREE.SpotLight(0xfff0d0, 0, 10, 0.5, 0.6, 1.3), target: new THREE.Object3D(), id: '', on: 0 }));
   /** Lamps and fires: what may carry one of the real lights; the map's own, and a lamp made in your cabin besides. */
   private sources: LightSource[] = [];
   private baseSources: LightSource[] = [];
@@ -382,6 +401,10 @@ export class WorldView {
     this.creatures = new Creatures(this.shadowGeo, this.shadowMat);
     for (const s of this.slots) this.scene.add(s.light);
     this.flash.target = this.flashTarget;
+    for (const b of this.beams) {
+      b.light.target = b.target;
+      this.scene.add(b.light, b.target);
+    }
     if (this.outdoors) this.findOpenings();
     // What never moves or changes is built from hundreds of little boxes; it is drawn as a few meshes (see bake).
     const still: THREE.Object3D[] = [];
@@ -1370,6 +1393,7 @@ export class WorldView {
   /** The players as the game has them now: their models, crouched in tall grass, and the nearest to (fx, fz) parting the grass. */
   private syncAvatars(avatars: Avatar[], meId: string | null, fx: number, fz: number, dt: number) {
     const seen = new Set<string>();
+    const held: Held[] = [];
     this.partD.fill(Infinity);
     for (const a of avatars) {
       seen.add(a.id);
@@ -1403,16 +1427,40 @@ export class WorldView {
       // Whatever clings to your back rides along.
       if (a.hitched && !e.hitch) e.rig.root.add((e.hitch = hitchhikerModel()));
       if (e.hitch) e.hitch.visible = !!a.hitched;
-      if (a.id === meId && this.amb.flashlight) {
+      if (this.amb.flashlight) {
         const [dx, dy] = DIR_VEC[a.dir];
         // Held where the hands are: lower while crouched, or it would light the top of your own cap.
-        this.flash.position.set(x + dx * 0.2, gy + 0.75 - CROUCH_DROP * c, z + dy * 0.2);
-        this.flashTarget.position.set(x + dx * 4, gy, z + dy * 4);
-        this.flashTarget.updateMatrixWorld();
+        const h = { id: a.id, x: x + dx * 0.2, y: gy + 0.75 - CROUCH_DROP * c, z: z + dy * 0.2, tx: x + dx * 4, ty: gy, tz: z + dy * 4 };
+        if (a.id !== meId) held.push(h);
+        else {
+          this.flash.position.set(h.x, h.y, h.z);
+          this.flashTarget.position.set(h.tx, h.ty, h.tz);
+          this.flashTarget.updateMatrixWorld();
+        }
       }
     }
+    this.lightBeams(held, fx, fz, dt);
     for (const [id, e] of this.rigs) if (!seen.has(id)) { this.dropRig(e); this.rigs.delete(id); }
     if (this.grass) for (let i = 0; i < PARTERS; i++) this.grass.part(i, this.partX[i]!, this.partZ[i]!, this.partD[i]! < Infinity ? 1 : 0);
+  }
+
+  /** Puts the other players' flashlights on those nearest you who hold one (assignBeams), each coming on as it is handed over. */
+  private lightBeams(held: Held[], fx: number, fz: number, dt: number) {
+    const next = assignBeams(this.beams.map(b => b.id), held, fx, fz);
+    this.beams.forEach((b, k) => {
+      const h = held.find(o => o.id === next[k]);
+      if (!h) {
+        b.id = ''; b.on = 0; b.light.intensity = 0;
+        return;
+      }
+      if (h.id !== b.id) { b.id = h.id; b.on = 0; }
+      b.on = Math.min(1, b.on + dt / LIGHT_FADE_S);
+      b.light.position.set(h.x, h.y, h.z);
+      b.target.position.set(h.tx, h.ty, h.tz);
+      b.target.updateMatrixWorld();
+      // As strong as your own (applyAmbience): together you light as much as each of you.
+      b.light.intensity = 1.6 * L * b.on;
+    });
   }
 
   /** Someone at x, z, `d` (squared) from you: kept among the parters if they are among the nearest. */
