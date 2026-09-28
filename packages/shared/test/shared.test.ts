@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AuthConfig, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, MAX_AUTH_CHARS, MAX_HELLO_BYTES, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, REFILL_PER_SECOND, TileMap,
-  WEATHER_DRAIN, dirOf, dirToward, energyAfter, energyRate, findPath, parseClientMsg, stepTarget, validateMap, validateWorld, type MapData, type MapObject,
+  AuthConfig, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, MAX_AUTH_CHARS, MAX_HELLO_BYTES, MAX_MESSAGE_BYTES, OAUTH_PROVIDERS, PROTOCOL_VERSION, REFILL_PER_SECOND, TileMap,
+  WEATHER_DRAIN, dirOf, dirToward, energyAfter, energyRate, findPath, isOAuthProvider, parseClientMsg, stepTarget, validateMap, validateWorld, type MapData, type MapObject,
   type NpcLook,
 } from '../src';
 
@@ -218,12 +218,23 @@ describe('protocol', () => {
   });
   it('describes how to sign in, with only http(s) addresses for Supabase', () => {
     expect(AuthConfig.parse({ mode: 'legacy' })).toEqual({ mode: 'legacy' });
-    expect(AuthConfig.parse({ mode: 'dev' })).toEqual({ mode: 'dev' });
+    expect(AuthConfig.parse({ mode: 'dev' })).toEqual({ mode: 'dev', providers: [] });
     const supabase = { mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_x' };
-    expect(AuthConfig.parse(supabase)).toEqual(supabase);
-    for (const bad of [{ mode: 'google' }, { ...supabase, url: 'javascript:alert(1)' }, { ...supabase, publishableKey: '' }, { mode: 'supabase' }]) {
+    expect(AuthConfig.parse(supabase)).toEqual({ ...supabase, providers: [] });
+    for (const bad of [{ mode: 'google' }, { ...supabase, url: 'javascript:alert(1)' }, { ...supabase, publishableKey: '' }, { mode: 'supabase' }, { ...supabase, providers: 'google' }]) {
       expect(AuthConfig.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
     }
+  });
+  it('says which of Google and Apple the sign-in card offers, in order, leaving out names this client does not know', () => {
+    const supabase = { mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_x' };
+    expect(AuthConfig.parse({ ...supabase, providers: ['apple', 'google'] })).toEqual({ ...supabase, providers: ['apple', 'google'] });
+    expect(AuthConfig.parse({ mode: 'dev', providers: ['google'] })).toEqual({ mode: 'dev', providers: ['google'] });
+    // A newer server may offer more: this client shows what it knows, once each.
+    expect(AuthConfig.parse({ ...supabase, providers: ['github', 'google', 'google'] })).toEqual({ ...supabase, providers: ['google'] });
+    // Without sign-in there is nothing to offer.
+    expect(AuthConfig.parse({ mode: 'legacy', providers: ['google'] })).toEqual({ mode: 'legacy' });
+    expect(OAUTH_PROVIDERS).toEqual(['google', 'apple']);
+    expect([isOAuthProvider('apple'), isOAuthProvider('Apple'), isOAuthProvider('email')]).toEqual([true, false, false]);
   });
 });
 

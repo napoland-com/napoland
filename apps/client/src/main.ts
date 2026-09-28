@@ -5,9 +5,12 @@
 // promises it). Vite bundles their files; a browser downloads only the alphabets a page shows.
 import '@fontsource-variable/fredoka';
 import '@fontsource-variable/nunito';
+// Google's button guidelines set its words in Roboto Medium: only its Latin letters, and only
+// downloaded once that button shows.
+import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, bagSlotsOf, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type OAuthProvider, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
@@ -20,6 +23,7 @@ import { journalView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { mapFor, paperMap } from './papermap';
+import { providerButton } from './providers';
 import { Connection, serverUrl } from './net';
 import { Sound, type SoundSetting } from './sound';
 import { soundscape, type Scene } from './soundscape';
@@ -222,22 +226,27 @@ const arrival = new Arrival(held => {
 });
 
 // ---------- signing in, and status screens ----------
-// One card at a time over the game; signin.ts decides which (see Screen). More ways to sign in
-// (Google, Apple) will go on the email card, above the email. Every sign-in card ends with the
-// small print: the privacy policy, the legal notice and the source code, before anyone signs in.
+// One card at a time over the game; signin.ts decides which (see Screen). The other ways to sign in
+// (Google, Apple, providers.ts) go on the email card, above the email, for the providers the server
+// lists; the email field's label then reads as the quiet line between them. Every sign-in card ends
+// with the small print: the privacy policy, the legal notice and the source code, before anyone signs in.
 /** The game in one line, on the first cards. */
 const PITCH = 'Leave home, gather what glows, and get back before your energy runs out.';
+/** Under "Send me a code". */
+const EMAIL_FINE = `We email you a ${CODE_LENGTH}-digit code to sign in. No password to remember.`;
 const overlay = document.createElement('div');
 overlay.className = 'overlay';
 overlay.innerHTML = `
   <form class="card panel" data-el="emailCard" novalidate hidden>
     <h1>napoland</h1>
     <p class="intro">${PITCH}</p>
+    <div class="providers" data-el="providers" hidden>${OAUTH_PROVIDERS.map(providerButton).join('')}</div>
+    <div class="err" data-el="providerErr" role="alert" hidden></div>
     <label for="email" data-el="emailLabel">Your email</label>
     <input id="email" name="email" type="email" autocomplete="email" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" maxlength="254" placeholder="you@example.com" />
     <div class="err" data-el="emailErr" role="alert"></div>
     <button type="submit" data-el="emailBtn">Send me a code</button>
-    <p class="fine" data-el="emailFine">We email you a ${CODE_LENGTH}-digit code to sign in. No password to remember.</p>
+    <p class="fine" data-el="emailFine">${EMAIL_FINE}</p>
     <div class="links center" data-el="emailLinks" hidden><button type="button" class="link" data-el="emailBack">Back</button></div>
     ${signInFooter()}
   </form>
@@ -282,6 +291,9 @@ const button = (name: string) => el[name] as HTMLButtonElement;
 const emailInput = overlay.querySelector<HTMLInputElement>('#email')!;
 const codeInput = overlay.querySelector<HTMLInputElement>('#code')!;
 const nameInput = overlay.querySelector<HTMLInputElement>('#name')!;
+const providerButtons = [...overlay.querySelectorAll<HTMLButtonElement>('button[data-provider]')];
+/** A touch screen, where focusing a field brings up the keyboard. */
+const coarsePointer = () => matchMedia('(pointer: coarse)').matches;
 
 /** Set once the server has said how to sign in. */
 let signin: SignIn | undefined;
@@ -313,16 +325,36 @@ function render(s: Screen) {
     btn.hidden = !s.button;
     if (s.button) { btn.textContent = s.button.label; btn.onclick = s.button.run; }
   } else if (s.kind === 'email') {
-    text('emailLabel').textContent = s.dev ? 'Your email (development: no code)' : 'Your email';
+    // Google and Apple, in the server's order (in the page too, so the keyboard goes through them in
+    // it), and under them why the last one did not sign you in.
+    const offered = s.providers.length > 0;
+    const box = text('providers');
+    box.hidden = !offered;
+    card('emailCard').classList.toggle('with-providers', offered);
+    const shownButtons = s.providers.flatMap(p => providerButtons.filter(b => b.dataset.provider === p));
+    if (shownButtons.some((b, i) => box.children[i] !== b)) box.prepend(...shownButtons);
+    for (const b of providerButtons) {
+      b.hidden = !shownButtons.includes(b);
+      b.disabled = s.busy;
+    }
+    text('providerErr').textContent = s.providerError;
+    text('providerErr').hidden = !s.providerError;
+    // Under them, the email field's label is the quiet line between the two ways in, one line long:
+    // in dev mode, the line under the button says there is no code then.
+    const label = text('emailLabel');
+    label.classList.toggle('or', offered);
+    label.textContent = offered ? 'or with your email' : s.dev ? 'Your email (development: no code)' : 'Your email';
     const btn = button('emailBtn');
     btn.textContent = s.busy ? 'Sending...' : s.dev ? 'Sign in' : 'Send me a code';
     btn.disabled = s.busy;
-    text('emailFine').hidden = s.dev;
+    text('emailFine').textContent = s.dev ? 'Development: any email signs in, with no code.' : EMAIL_FINE;
+    text('emailFine').hidden = s.dev && !offered;
     text('emailErr').textContent = s.error;
     text('emailLinks').hidden = !s.back;
     button('emailBack').textContent = s.back ?? '';
     button('emailBack').disabled = s.busy;
-    if (first) { emailInput.value = s.email; focusSoon(emailInput); }
+    // On a phone the keyboard would cover Google and Apple, the one-tap ways in: the field waits for a tap.
+    if (first) { emailInput.value = s.email; if (!offered || !coarsePointer()) focusSoon(emailInput); }
   } else if (s.kind === 'code') {
     text('codeEmail').textContent = s.email;
     const btn = button('codeBtn');
@@ -385,6 +417,10 @@ card('nameCard').addEventListener('submit', e => {
   else signin?.submitName(nameInput.value);
 });
 button('playSignIn').addEventListener('click', () => signin?.beginSignIn());
+for (const b of providerButtons) b.addEventListener('click', () => void signin?.signInWith(b.dataset.provider as OAuthProvider));
+// Back from Google's or Apple's page by the browser's back button, the page may come back just as it
+// left, saying it is taking you there: the sign-in did not finish, unless it did in a later page.
+window.addEventListener('pageshow', e => { if (e.persisted) void signin?.resumed(); });
 button('emailBack').addEventListener('click', () => signin?.back());
 button('accountPlay').addEventListener('click', () => signin?.playAccount());
 button('accountBack').addEventListener('click', () => void signin?.keepGuest());
@@ -500,7 +536,8 @@ async function boot() {
   let backend: AuthBackend | undefined;
   if (config.mode === 'supabase') backend = (await import('./supabase')).supabaseBackend(config.url, config.publishableKey);
   signin = new SignIn({
-    config, backend, store, tab: tabStore, now: () => Date.now(),
+    // Google and Apple send the player back to this game's address (it lives at the root of it).
+    config, backend, store, tab: tabStore, now: () => Date.now(), returnTo: location.origin,
     connect: () => { if (!leaving) conn.start(); },
     disconnect: () => conn.stop(),
     show: render,

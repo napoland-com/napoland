@@ -1,17 +1,25 @@
 /**
- * Signing in through Supabase Auth: an email, and a 6-digit code sent to it. supabase-js keeps the
- * session in this browser's localStorage and refreshes its access token while the game runs; the
- * game server only ever sees that token. Loaded only when the server asks for Supabase sign-in, so
- * the game does not download it otherwise. Google and Apple will come through the same client
- * (signInWithOAuth), next to the email.
+ * Signing in through Supabase Auth: an email and a 6-digit code sent to it, or Google or Apple.
+ * supabase-js keeps the session in this browser's localStorage and refreshes its access token while
+ * the game runs; the game server only ever sees that token. Loaded only when the server asks for
+ * Supabase sign-in, so the game does not download it otherwise.
+ *
+ * Google and Apple use the PKCE flow: the page goes to the provider through Supabase, keeping a
+ * one-time secret here, and comes back to the game's address with a code that only that secret turns
+ * into a session, so a code caught on the way is worth nothing. supabase-js exchanges it as it starts
+ * (detectSessionInUrl). The email code works the same in either flow: it is checked directly.
  */
 import { createClient, isAuthRetryableFetchError, type AuthError } from '@supabase/supabase-js';
 import { AuthProblem, type AuthBackend } from './signin';
 
 export function supabaseBackend(url: string, publishableKey: string): AuthBackend {
   const { auth } = createClient(url, publishableKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' },
   });
+  // Starting, supabase-js reads a provider's answer from the address and takes out a code it used, but
+  // leaves an error, or a code it could not use: tidied once it has read them, so a reload does not
+  // read them again and the address can be shared.
+  void auth.initialize().then(tidyAddress, tidyAddress);
   return {
     async session() {
       // Refreshes the access token first when it is about to expire.
@@ -29,6 +37,11 @@ export function supabaseBackend(url: string, publishableKey: string): AuthBacken
       if (error) throw problem(error, 'verify');
       if (!data.session) throw new AuthProblem('other');
     },
+    async signInWith(provider, returnTo) {
+      // Goes to the provider's page (location.assign) once the secret is kept.
+      const { error } = await auth.signInWithOAuth({ provider, options: returnTo ? { redirectTo: returnTo } : {} });
+      if (error) throw problem(error);
+    },
     async refresh() {
       const { data, error } = await auth.refreshSession();
       if (data.session) return true;
@@ -40,6 +53,26 @@ export function supabaseBackend(url: string, publishableKey: string): AuthBacken
       await auth.signOut({ scope: 'local' });
     },
   };
+}
+
+/** What Supabase adds to the game's address coming back from Google or Apple (in the query, and errors in the fragment too). */
+const ANSWER_PARAMS = ['code', 'sb_flow_id', 'error', 'error_code', 'error_description'];
+
+/** The address without a provider's answer in it, or null when it has none. */
+export function withoutAnswer(href: string): string | null {
+  const url = new URL(href);
+  const hash = new URLSearchParams(url.hash.slice(1));
+  const inQuery = ANSWER_PARAMS.filter(p => url.searchParams.has(p));
+  const inHash = ANSWER_PARAMS.some(p => hash.has(p));
+  if (!inQuery.length && !inHash) return null;
+  for (const p of inQuery) url.searchParams.delete(p);
+  if (inHash) url.hash = '';
+  return url.href;
+}
+
+function tidyAddress(): void {
+  const href = withoutAnswer(location.href);
+  if (href) history.replaceState(history.state, '', href);
 }
 
 function problem(error: AuthError, step: 'send' | 'verify' = 'send'): AuthProblem {
