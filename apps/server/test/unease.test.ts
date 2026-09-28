@@ -5,7 +5,7 @@
  * home in the middle of its bottom row.
  */
 import { describe, expect, it } from 'vitest';
-import { ENERGY_MAX, TileMap, UNEASE_BUILD_S, UNEASE_CALM_S, UNEASE_LEVELS, type Dir, type MapData, type Weather } from '@napoland/shared';
+import { ENERGY_MAX, SLUMP_S, TileMap, UNEASE_BUILD_S, UNEASE_CALM_S, UNEASE_LEVELS, type Dir, type MapData, type Weather } from '@napoland/shared';
 import type { PlayerRecord } from '../src/storage';
 import { World, colorFor, type Outgoing, type WorldOptions } from '../src/world';
 import { fixtureMaps } from './fixtures';
@@ -68,8 +68,9 @@ describe('unease', () => {
     const w = world(fieldData(), 'night', {}, rec('a', 4, 6));
     w.tick(UNEASE_BUILD_S * 1000);
     expect(heard(w.drain(), 'a')).toEqual([UNEASE_LEVELS]);
-    // Out there long enough to run out.
+    // Out there long enough to run out, and nobody comes while they lie there (rescue.ts).
     w.tick((UNEASE_BUILD_S + 200) * 1000);
+    w.tick((UNEASE_BUILD_S + 200 + SLUMP_S) * 1000);
     const out = w.drain();
     expect(out.some(o => o.to === 'a' && o.msg.t === 'zone' && o.msg.reason === 'collapse')).toBe(true);
     expect(heard(out, 'a')).toEqual([0]);

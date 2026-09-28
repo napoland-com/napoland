@@ -7,7 +7,7 @@ import { ENERGY_MAX, ENERGY_SYNC_MS, REFILL_PER_SECOND, STEP_MS, TileMap, energy
 import { setLogLevel } from '../src/log';
 import { colorFor } from '../src/world';
 import { woodsData } from './fixtures';
-import { setup, waitFor, type Client } from './helpers';
+import { nobodyCame, setup, waitFor, type Client } from './helpers';
 /** What a zone lists besides players, finds and piles, in the fixture world: fires burn down at random levels, and nothing else is there. */
 /** What a zone lists besides players, finds and piles; its weather is the server's fixed one here (weather.test.ts has a region's own). */
 const SCENE = { fires: expect.any(Array), marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, stats: expect.any(Object), weather: expect.any(String) };
@@ -221,6 +221,8 @@ describe('energy', () => {
     vi.spyOn(process.stdout, 'write').mockImplementation(chunk => (logged.push(String(chunk)), true));
 
     now += 5000; // 1 energy lasts 4.1 s here
+    // Down first, and nobody comes (rescue.ts).
+    await nobodyCame(a.c, ms => { now += ms; });
     const me = { id: a.id, name: a.welcome.name, x: 1, y: 2, dir: 'down' as const, color: colorFor(a.id), gear: {}, quirks: [] };
     expect(await a.c.next('zone')).toEqual({
       t: 'zone', map: { id: 'town', version: 1 }, x: 1, y: 2, dir: 'down', players: [t.welcome.players[0], me], finds: [], drops: [], ...SCENE, reason: 'collapse',

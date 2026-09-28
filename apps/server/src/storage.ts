@@ -1027,10 +1027,11 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
 /** A jsonb thanks' `what` as the server wrote it, or null for anything else (such a thanks is left out). */
 const thanksFor = (json: unknown): ThanksFor | null => {
   const w = (typeof json === 'object' && json !== null ? json : {}) as Partial<Record<string, unknown>>;
-  if ((w.kind !== 'fire' && w.kind !== 'mark' && w.kind !== 'cache') || typeof w.map !== 'string' || !Number.isInteger(w.x) || !Number.isInteger(w.y)) return null;
+  if ((w.kind !== 'fire' && w.kind !== 'mark' && w.kind !== 'cache' && w.kind !== 'rescue') || typeof w.map !== 'string' || !Number.isInteger(w.x) || !Number.isInteger(w.y)) return null;
   const at = { map: w.map, x: w.x as number, y: w.y as number };
-  if (w.kind !== 'cache') return { kind: w.kind, ...at };
-  return typeof w.item === 'string' ? { kind: 'cache', ...at, item: w.item } : null;
+  if (w.kind === 'cache') return typeof w.item === 'string' ? { kind: 'cache', ...at, item: w.item } : null;
+  if (w.kind === 'rescue') return typeof w.who === 'string' ? { kind: 'rescue', ...at, who: w.who } : null;
+  return { kind: w.kind, ...at };
 };
 
 /**

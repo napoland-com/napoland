@@ -12,7 +12,10 @@
  * shares them, and the Old Stone is the whole world's. Which copy an exit leads into is decided in one
  * place (copyFor). Everyone online has energy, which drains in the wilds,
  * holds in town and inside buildings, and only comes back next to a burning fire (the rules and
- * numbers are in shared/energy.ts). At zero a player collapses and wakes up at home.
+ * numbers are in shared/energy.ts). At zero out in the wilds a player slumps where they stand for a
+ * while (shared/rescue.ts): everyone on the map hears where they are down, by landmark, and anyone who
+ * reaches them can give them some of their own energy to get them up; nobody comes, and they collapse
+ * and wake up at home.
  *
  * Out there more wears you down (energy.ts): a heavy bag, rain soaking you, a surge sweeping the
  * region (its clock is the wall clock's, sky.ts), a storm blowing over it (a clock like a surge's), a
@@ -115,6 +118,9 @@ import {
   STARTER_TOOLS,
   DROP_LIFETIME_MS,
   ENERGY_SYNC_MS,
+  RESCUE_ENERGY,
+  SLUMP_FLARE_S,
+  SLUMP_S,
   STATS,
   STEP_STATS,
   STEP_MS,
@@ -149,6 +155,7 @@ import {
   cacheTakes,
   calendarDay,
   canMake,
+  canRescue,
   cleanIds,
   cleanNotebook,
   cleanRested,
@@ -211,6 +218,7 @@ import {
   inTheDark,
   emptyStash,
   itemIndex,
+  landmarkOf,
   levelOf,
   liveEnds,
   liveXp,
@@ -724,6 +732,11 @@ interface Online {
   heardCozy: boolean;
   /** When they last collapsed: a chase they were in then was no chase they got out of. */
   fellAt?: number;
+  /**
+   * Down out in the wilds, out of energy (rescue.ts): since when (game time), when they collapse unless
+   * someone gets them up, and whether a flare burning by them gave them the longer window.
+   */
+  slump?: { from: number; until: number; flare: boolean };
   /** Their afterglow (a quirk, gear.ts) lasts until then (game time): they glow faintly, and watchers keep off them. */
   afterglowUntil?: number;
   /** When they last knocked at a door (game time): once in KNOCK_EVERY_MS. */
@@ -892,10 +905,10 @@ interface Flare {
 }
 
 const quirksOf = (w: Worn | undefined): Quirk[] => SLOTS.flatMap(s => (w?.[s]?.quirk ? [w[s]!.quirk!] : []));
-const view = (r: PlayerRecord, live = false, guest = false, afterglow = 0): PlayerView => ({
+const view = (r: PlayerRecord, live = false, guest = false, afterglow = 0, down = false): PlayerView => ({
   id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn), ...(live ? { live: true as const } : {}),
   ...(guest ? { guest: true as const } : {}), ...(r.outfit ? { outfit: r.outfit } : {}), ...(r.pattern ? { pattern: r.pattern } : {}), ...(r.badge ? { badge: r.badge } : {}),
-  ...(afterglow > 0 ? { afterglow } : {}),
+  ...(afterglow > 0 ? { afterglow } : {}), ...(down ? { down: true as const } : {}),
 });
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
@@ -1446,7 +1459,7 @@ export class World {
   /** A player as everyone sees them (an afterglow's seconds left as of the last tick). */
   private viewOf(p: Online): PlayerView {
     const glow = p.afterglowUntil === undefined ? 0 : round(Math.max(0, p.afterglowUntil - this.tickAt) / 1000, 1);
-    return view(p.rec, p.live > 0, this.guest(p.rec), glow);
+    return view(p.rec, p.live > 0, this.guest(p.rec), glow, !!p.slump);
   }
 
   /** Nobody signed in with this character, on a server with sign-in: no friends and no outfits until someone does. */
@@ -1667,6 +1680,8 @@ export class World {
   step(id: string, dir: Dir, seq: number, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
+    // Down, nobody walks: the client stands where the server has them.
+    if (p.slump) return this.reject(p, seq);
     this.runQueue(p, now);
     if (p.queue.length === 0 && this.ready(p, now)) this.move(p, dir, seq, now);
     else if (p.queue.length < STEP_QUEUE_MAX) p.queue.push({ dir, seq });
@@ -1676,7 +1691,7 @@ export class World {
   /** Turn in place. Only a real change is worth telling the others about. */
   face(id: string, dir: Dir): void {
     const p = this.players.get(id);
-    if (!p || p.rec.dir === dir) return;
+    if (!p || p.rec.dir === dir || p.slump) return;
     p.rec.dir = dir;
     this.toZone(p.zone.key, { t: 'face', id, dir }, id);
   }
@@ -1691,11 +1706,8 @@ export class World {
     if (!p) return;
     // Steps whose time has come first: the player reaches from where they really are.
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      // Out of energy before reaching for it: the player collapses, far away from it now.
-      this.collapse(p, now);
-      return this.refuse(p, 'pick', 'too_far');
-    }
+    // Out of energy before reaching for it: down where they stand, or collapsed and far away from it now.
+    if (this.spent(p, now)) return this.refuse(p, 'pick', p.slump ? 'down' : 'too_far');
     if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return this.refuse(p, 'pick', 'too_far');
     const pile = this.pileAt(p.zone, x, y, id);
     if (pile) return this.pickPile(p, pile, now);
@@ -1714,11 +1726,8 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      // Too late: the player collapses, and the bag falls out.
-      this.collapse(p, now);
-      return this.refuse(p, 'use', 'empty_slot');
-    }
+    // Too late: down, or collapsed and the bag fell out.
+    if (this.spent(p, now)) return this.refuse(p, 'use', p.slump ? 'down' : 'empty_slot');
     const s = p.rec.bag[slot];
     if (!s) return this.refuse(p, 'use', 'empty_slot');
     const def = this.items.get(s.item);
@@ -1780,18 +1789,15 @@ export class World {
       this.note(p, { find: into.item });
     }
     // Something that takes energy could empty the bar.
-    if (p.rec.energy <= 0) this.collapse(p, now);
+    if (p.rec.energy <= 0) this.exhausted(p, now);
   }
 
   /** Throws away `count` of what is in bag slot `slot`, or all of it. */
   discard(id: string, slot: number, now: number, count = Infinity): void {
     const p = this.players.get(id);
     if (!p) return;
-    if (this.advance(p, now) <= 0) {
-      // Too late: the player collapses, and the bag falls out.
-      this.collapse(p, now);
-      return this.refuse(p, 'discard', 'empty_slot');
-    }
+    // Too late: down, or collapsed and the bag fell out.
+    if (this.spent(p, now)) return this.refuse(p, 'discard', p.slump ? 'down' : 'empty_slot');
     const thrown = p.rec.bag[slot];
     if (!thrown) return this.refuse(p, 'discard', 'empty_slot');
     const n = Math.min(thrown.count, Math.max(1, Math.floor(count)));
@@ -1814,10 +1820,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'feed', 'too_far');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'feed', p.slump ? 'down' : 'too_far');
     if (Math.max(Math.abs(x - p.rec.x), Math.abs(y - p.rec.y)) > 1) return this.refuse(p, 'feed', 'too_far');
     const s = p.rec.bag[slot];
     if (!s) return this.refuse(p, 'feed', 'empty_slot');
@@ -2005,10 +2008,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'wear', 'empty_slot');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'wear', p.slump ? 'down' : 'empty_slot');
     const s = p.rec.bag[slot], def = s && this.items.get(s.item);
     if (!s || !def) return this.refuse(p, 'wear', 'empty_slot');
     if (def.kind !== 'gear' || !def.slot) return this.refuse(p, 'wear', 'not_gear');
@@ -2029,10 +2029,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'doff', 'empty_slot');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'doff', p.slump ? 'down' : 'empty_slot');
     if (slot === 'bag') return this.refuse(p, 'doff', 'keep_bag');
     const gear = { ...p.rec.gear }, worn = { ...p.rec.worn }, old = gear[slot];
     if (!old) return this.refuse(p, 'doff', 'empty_slot');
@@ -2428,15 +2425,12 @@ export class World {
     if (!p) return;
     // Steps whose time has come first: the thanks comes from where the player really is.
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'thank', 'too_far');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'thank', p.slump ? 'down' : 'too_far');
     const found = who === id ? undefined : this.thankable(p, who, what);
     if (!found) return this.refuse(p, 'thank', 'gone');
     const [nx, ny] = found.near;
     if (Math.max(Math.abs(nx - p.rec.x), Math.abs(ny - p.rec.y)) > THANKS_REACH) return this.refuse(p, 'thank', 'too_far');
-    if (!this.giveThanks(p, found.helper, found.what, now)) return this.refuse(p, 'thank', 'thanked');
+    if (!this.giveThanks(this.person(p), found.helper, found.what, now)) return this.refuse(p, 'thank', 'thanked');
     this.did(p, { kind: 'thanked', who, name: found.helper.name, what: found.what.kind });
   }
 
@@ -2455,19 +2449,24 @@ export class World {
     return { helper: { id: m.owner, name: m.name }, what: { kind: 'mark', map, x: m.x, y: m.y }, near: [m.x + dx, m.y + dy] };
   }
 
+  /** A player online as a thanks names them: their id and name. */
+  private person(p: Online): PersonView {
+    return { id: p.rec.id, name: p.rec.name };
+  }
+
   /**
    * Records `from`'s thanks to `helper` for `what`, and tells the helper if they are online (deliver);
    * otherwise it waits for their letter home. It counts toward their Good neighbor wherever they are.
    * False, and nothing happens, for oneself or a helper `from` thanked today already.
    */
-  private giveThanks(from: Online, helper: PersonView, what: ThanksFor, now: number): boolean {
-    const wall = now + this.epochOffset, day = utcDay(wall), key = thanksDay(from.rec.id, helper.id, day);
-    if (helper.id === from.rec.id || this.thanks.has(key)) return false;
+  private giveThanks(from: PersonView, helper: PersonView, what: ThanksFor, now: number): boolean {
+    const wall = now + this.epochOffset, day = utcDay(wall), key = thanksDay(from.id, helper.id, day);
+    if (helper.id === from.id || this.thanks.has(key)) return false;
     const h = this.players.get(helper.id);
     // Someone who blocks the giver hears nothing from them, thanks included, and the giver is not told
     // (nobody learns who blocks them). Blocks are known for players online; the letter leaves out the rest.
-    if (h && this.blocks(helper.id).has(from.rec.id)) return true;
-    const t: ThanksRecord = { giver: from.rec.id, helper: helper.id, day, at: Math.floor(wall), what: { ...what }, told: false, name: from.rec.name };
+    if (h && this.blocks(helper.id).has(from.id)) return true;
+    const t: ThanksRecord = { giver: from.id, helper: helper.id, day, at: Math.floor(wall), what: { ...what }, told: false, name: from.name };
     if (h) this.deliver(h, t, now);
     this.thanks.set(key, t);
     this.thanksWrites.set(key, t);
@@ -2573,10 +2572,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'cacheLeave', 'too_far');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'cacheLeave', p.slump ? 'down' : 'too_far');
     const c = this.crateNextTo(p, x, y);
     if (!c) return this.refuse(p, 'cacheLeave', 'too_far');
     const s = p.rec.bag[slot], def = s && this.items.get(s.item);
@@ -2611,10 +2607,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'cacheTake', 'too_far');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'cacheTake', p.slump ? 'down' : 'too_far');
     const c = this.crateNextTo(p, x, y);
     if (!c) return this.refuse(p, 'cacheTake', 'too_far');
     const visit = this.visitAt(p, c);
@@ -2630,12 +2623,42 @@ export class World {
     this.cacheWrites.set(e.id, undefined);
     visit.took = true;
     const mine = e.owner === id;
-    const thanked = !mine && this.giveThanks(p, { id: e.owner, name: e.name }, { kind: 'cache', map: c.map.data.id, x: c.x, y: c.y, item: def.id }, now);
+    const thanked = !mine && this.giveThanks(this.person(p), { id: e.owner, name: e.name }, { kind: 'cache', map: c.map.data.id, x: c.x, y: c.y, item: def.id }, now);
     this.saveNow.set(id, p.rec);
     this.sendBag(p, now);
     this.rerate(p, now);
     this.tellVisitors(c, now);
     this.did(p, { kind: 'took', item: def.id, name: e.name, ...(mine ? { mine: true as const } : {}), ...(thanked ? { thanked: true as const } : {}) });
+  }
+
+  /**
+   * `id` gets `who` back up (rescue.ts): `who` lies slumped on their tile or the one next to it, in their
+   * zone, and `id` has more than RESCUE_ENERGY. They give that much of their own, and `who` gets up with
+   * it. `who` thanks them as they get up (thanks.ts: it counts for their Good neighbor, and their letter
+   * says what for), and everyone there sees `who` stand.
+   */
+  rescue(id: string, who: string, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    // Steps whose time has come first: the rescuer reaches from where they really are.
+    this.runQueue(p, now);
+    if (this.spent(p, now)) return this.refuse(p, 'rescue', p.slump ? 'down' : 'too_far');
+    const q = who === id ? undefined : this.players.get(who);
+    if (!q?.slump || q.zone !== p.zone) return this.refuse(p, 'rescue', 'gone');
+    if (manhattan(q.rec.x, q.rec.y, p.rec.x, p.rec.y) > 1) return this.refuse(p, 'rescue', 'too_far');
+    if (!canRescue(p.rec.energy)) return this.refuse(p, 'rescue', 'too_tired');
+    p.rec.energy -= RESCUE_ENERGY;
+    this.advance(q, now);
+    q.slump = undefined;
+    q.rec.energy = Math.min(q.max, RESCUE_ENERGY);
+    for (const r of [p, q]) {
+      this.refresh(r, now);
+      this.tell(r, now);
+    }
+    this.toZone(q.zone.key, { t: 'down', id: who, on: false });
+    const thanked = this.giveThanks(this.person(q), this.person(p), { kind: 'rescue', map: q.map.data.id, x: q.rec.x, y: q.rec.y, who }, now);
+    this.outbox.push({ to: who, msg: { t: 'raised', by: this.person(p), ...(thanked ? { thanked: true as const } : {}) } });
+    this.did(p, { kind: 'rescued', who, name: q.rec.name });
   }
 
   /**
@@ -2812,11 +2835,12 @@ export class World {
 
   /**
    * Where an online player is: their zone (a copy of a map: two players in two copies of one map, two
-   * cabins say, never meet, so they never trade) and their tile.
+   * cabins say, never meet, so they never trade), their tile, and whether they are down (rescue.ts: they
+   * can trade nothing until someone gets them up).
    */
-  where(id: string): { zone: string; x: number; y: number } | undefined {
+  where(id: string): { zone: string; x: number; y: number; down?: true } | undefined {
     const p = this.players.get(id);
-    return p && { zone: p.zone.key, x: p.rec.x, y: p.rec.y };
+    return p && { zone: p.zone.key, x: p.rec.x, y: p.rec.y, ...(p.slump ? { down: true as const } : {}) };
   }
 
   /** What these picks of an online player's bag offer in a trade (offerFrom): only ever what the bag holds. */
@@ -2840,7 +2864,7 @@ export class World {
   swap(aId: string, bId: string, aGives: readonly BagSlot[], bGives: readonly BagSlot[], now: number): Swap {
     const a = this.players.get(aId), b = this.players.get(bId);
     if (!a || !b) return { ok: false, why: 'gone', who: a ? bId : aId };
-    // A bar that ran out collapses on this tick: with its bag, so nothing is handed over by someone who is falling.
+    // A bar that ran out goes down (or collapses) on this tick: with its bag, so nothing is handed over by someone who is falling.
     for (const p of [a, b]) if (this.advance(p, now) <= 0) return { ok: false, why: 'gone', who: p.rec.id };
     const r = swapOffers(a.rec.bag, b.rec.bag, aGives, bGives, a.slots, b.slots, this.items);
     if (!r.ok) return { ok: false, why: r.why, who: r.side === 'a' ? aId : bId };
@@ -2877,8 +2901,11 @@ export class World {
     this.burnStone(now);
     if (wasAwake && !this.stoneAwake) this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
     for (const p of this.players.values()) {
-      if (this.advance(p, now) <= 0) {
-        this.collapse(p, now);
+      if (p.slump || this.advance(p, now) <= 0) {
+        if (p.slump) this.slumping(p, now);
+        else this.exhausted(p, now);
+        // Lying there (not collapsed yet), the fear goes on as ever: it builds alone in the dark, and whoever comes calms it.
+        if (p.slump) this.unnerve(p, now);
         continue;
       }
       if (p.queue.length) this.runQueue(p, now);
@@ -2941,8 +2968,7 @@ export class World {
     if (weather === 'aurora' || was === 'aurora') for (const rule of this.rules) if (rule.when === 'aurora' && rule.map === map) this.openRule(rule, weather === 'aurora', now);
     for (const zone of this.copiesOf(map.data.id)) for (const p of [...zone.players]) {
       // Up to now at the rate of the old weather, which the player still has.
-      if (this.advance(p, now) <= 0) this.collapse(p, now);
-      else this.rerate(p, now);
+      if (!this.spent(p, now)) this.rerate(p, now);
     }
   }
 
@@ -3015,8 +3041,8 @@ export class World {
   }
 
   private move(p: Online, dir: Dir, seq: number, now: number): void {
-    // Energy that ran out before this step could start: the player collapses instead of walking.
-    if (this.advance(p, now) <= 0) return this.collapse(p, now);
+    // Energy that ran out before this step could start: the player goes down instead of walking.
+    if (this.spent(p, now)) return this.reject(p, seq);
     const { x, y } = stepTarget(p.rec.x, p.rec.y, dir);
     if (!p.map.walkable(x, y) || this.barred(p, x, y)) {
       // Steps queued behind this one were planned from a tile the player never reached.
@@ -3220,6 +3246,69 @@ export class World {
     return this.copyFor(r, map);
   }
 
+  /**
+   * Energy up to now. Out of it the player cannot act: out in the wilds they go down where they stand
+   * (exhausted), anywhere else they collapse. True then, and while they lie slumped already.
+   */
+  private spent(p: Online, now: number): boolean {
+    if (p.slump) return true;
+    if (this.advance(p, now) > 0) return false;
+    this.exhausted(p, now);
+    return true;
+  }
+
+  /**
+   * Out of energy: out in the wilds the player slumps where they stand, a window to be saved (rescue.ts);
+   * anywhere else they collapse at once (nothing drains there, so it takes a way nothing has yet).
+   */
+  private exhausted(p: Online, now: number): void {
+    if (p.slump) return;
+    if (p.map.data.kind === 'wilds') this.slump(p, now);
+    else this.collapse(p, now);
+  }
+
+  /**
+   * Down: the player lies where they stand for SLUMP_S seconds (SLUMP_FLARE_S with a flare burning by
+   * them), unable to walk or act, while nothing drains them further (they are at 0) and no creature
+   * touches them. They hear how long they have; everyone in their zone sees them lie there, and hears
+   * once, in local chat, where they are down: by landmark (landmarks.ts), never where exactly. Someone who
+   * blocks them hears no line from them, this one either.
+   */
+  private slump(p: Online, now: number): void {
+    const { id, name, x, y } = p.rec;
+    p.rec.energy = 0;
+    // Steps sent before it came are refused: the client stands where the server has them.
+    for (const s of p.queue) this.reject(p, s.seq);
+    p.queue.length = 0;
+    p.after = undefined;
+    p.slump = { from: now, until: now + SLUMP_S * 1000, flare: false };
+    this.refresh(p, now);
+    this.tell(p, now);
+    if (!this.lengthen(p, now)) this.outbox.push({ to: id, msg: { t: 'slump', left: SLUMP_S } });
+    this.toZone(p.zone.key, { t: 'down', id, on: true });
+    const where = landmarkOf(p.map, x, y, m => this.maps.get(m)?.data);
+    for (const q of p.zone.players) if (!this.blocks(q.rec.id).has(id)) this.outbox.push({ to: q.rec.id, msg: { t: 'slumped', id, name, where } });
+  }
+
+  /** A flare burning by someone down gives them the longer window (they hear it); true when it did just now. */
+  private lengthen(p: Online, now: number): boolean {
+    const s = p.slump;
+    if (!s || s.flare || !this.nearFlare(p.zone, p.rec.x, p.rec.y, now)) return false;
+    s.flare = true;
+    s.until = s.from + SLUMP_FLARE_S * 1000;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'slump', left: round(Math.max(0, s.until - now) / 1000, 1) } });
+    return true;
+  }
+
+  /** Every tick while someone is down: a flare lit by them now gives them longer; when their time is up, they collapse. */
+  private slumping(p: Online, now: number): void {
+    this.advance(p, now);
+    // What they carry goes on fading: a live find keeps the wall clock's time.
+    if (p.live) this.fadeLive(p, now);
+    this.lengthen(p, now);
+    if (now >= p.slump!.until) this.collapse(p, now);
+  }
+
   /** Out of energy while online: the player wakes up at home, and both zones see it. */
   private collapse(p: Online, now: number): void {
     const from = p.zone, { map, x, y } = p.rec;
@@ -3236,6 +3325,8 @@ export class World {
    */
   private fall(p: Online, now: number): void {
     const { id, map, x, y } = p.rec;
+    // Nobody came in time: the window is over.
+    p.slump = undefined;
     this.dropBag(p, now);
     const w = this.wakeUp;
     this.place(p, this.zoneFor(w.map, this.copyFor(p.rec, w.map), now), w.x, w.y, w.dir);
@@ -3382,6 +3473,8 @@ export class World {
       chill: { weather: SEASONS[this.season].chill, wet: SEASONS[this.season].wet },
       drain: p.mods.drain,
     });
+    // Down at 0, nothing drains them further (a surge or a storm neither) and nothing refills them: only a rescuer's energy gets them up.
+    if (p.slump) p.rate = 0;
     // Wind resistance (a raincoat) keeps the rain out.
     p.wetRate = wetRate(p.map.data.kind, weather, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
   }
@@ -3681,12 +3774,13 @@ export class World {
   }
 
   /**
-   * A skulker's chase ended without a catch: its prey got out of it, unless they collapsed meanwhile. At
-   * the edge of the tall grass they reached, the chase ended there.
+   * A skulker's chase ended without a catch: its prey got out of it, unless they collapsed meanwhile or
+   * lie down out of energy (rescue.ts: it leaves them alone, which is no getting away). At the edge of
+   * the tall grass they reached, the chase ended there.
    */
   private escaped(s: Skulker): void {
     const p = s.chasing === undefined ? undefined : this.players.get(s.chasing);
-    if (!p || (p.fellAt ?? -Infinity) >= s.chaseUntil - SKULKER_CHASE_MS) return;
+    if (!p || p.slump || (p.fellAt ?? -Infinity) >= s.chaseUntil - SKULKER_CHASE_MS) return;
     this.saw(p, 'escaped');
     if (p.zone === s.zone && hidden(p.map, p.rec.x, p.rec.y)) this.saw(p, 'grass');
   }
@@ -4077,9 +4171,10 @@ export class World {
         continue;
       }
       zone.nextFlash = now + rule.every * 1000;
+      // Never under someone down: they could not step out of it.
       const out = [...zone.players].filter(p => {
         const steps = p.map.homeSteps(p.rec.x, p.rec.y);
-        return steps >= rule.steps[0] && steps <= rule.steps[1] && this.exposed(p, now);
+        return !p.slump && steps >= rule.steps[0] && steps <= rule.steps[1] && this.exposed(p, now);
       });
       const who = out[Math.floor(this.rng() * out.length)];
       if (!who) continue;
@@ -4415,8 +4510,8 @@ export class World {
           this.sendAway(w, now);
           continue;
         }
-        // Anyone who faces it holds it still, prey or not: a friend can keep watch.
-        if (here.some(p => manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_SEE && faces(p.rec.x, p.rec.y, p.rec.dir, w.x, w.y))) continue;
+        // Anyone who faces it holds it still, prey or not: a friend can keep watch. Someone down watches nothing.
+        if (here.some(p => !p.slump && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_SEE && faces(p.rec.x, p.rec.y, p.rec.dir, w.x, w.y))) continue;
         // An afterglow keeps them off: whoever glows with it is nobody's prey.
         const prey = here
           .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && !this.glowing(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
@@ -4523,7 +4618,7 @@ export class World {
     this.advance(p, now);
     p.rec.energy = Math.max(0, p.rec.energy - WATCHER_TOUCH);
     this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'watcher', lost, ...(level ? { level } : {}) } });
-    if (p.rec.energy <= 0) return this.collapse(p, now);
+    if (p.rec.energy <= 0) return this.exhausted(p, now);
     this.refresh(p, now);
     this.tell(p, now);
   }
@@ -4644,7 +4739,7 @@ export class World {
     p.rec.energy = Math.max(0, p.rec.energy - SKULKER_CATCH);
     if (p.rec.energy <= 0) {
       this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'skulker', lost: null } });
-      return this.collapse(p, now);
+      return this.exhausted(p, now);
     }
     let lost: string | null = null, level = 0;
     if (p.rec.bag.length) {
@@ -5495,7 +5590,7 @@ export class World {
   private refuse(
     p: Online,
     action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
-      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport',
+      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue',
     reason: Refusal,
   ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });

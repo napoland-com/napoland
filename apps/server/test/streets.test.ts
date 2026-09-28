@@ -26,7 +26,7 @@ import { MemoryStorage, type LotRecord, type PlayerRecord } from '../src/storage
 import { devAuth } from '../src/auth';
 import { DOOR_EVERY_MS, KNOCK_EVERY_MS, MOVE_EVERY_MS, World, colorFor, zoneKey, type Outgoing } from '../src/world';
 import { itemsData, laneData, streetTownData, townData, woodsData } from './fixtures';
-import { Client, loginTo, savedPlayer, serverDefaults, waitFor } from './helpers';
+import { Client, loginTo, nobodyCame, savedPlayer, serverDefaults, waitFor } from './helpers';
 
 /** The town with its road onto the lane, and the lane (fixtures.ts). */
 const town = streetTownData, lane = laneData;
@@ -580,6 +580,8 @@ describe('streets over the network', () => {
       const { c } = await loginTo(first.port, a.token);
       clients.push(c);
       now += 60_000;
+      // Down first (rescue.ts), and nobody comes.
+      await nobodyCame(c, ms => { now += ms; });
       expect(await c.next('zone')).toMatchObject({ map: { id: 'house' }, x: 2, y: 2, dir: 'down', reason: 'collapse' });
       expect(first.world.zoneOf(a.id)).toBe(zoneKey('house', a.id));
       expect(first.world.get(a.id)).toMatchObject({ street: 1, lot: 2 });

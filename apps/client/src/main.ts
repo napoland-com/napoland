@@ -1086,6 +1086,8 @@ function frame(now: number) {
   const d = game.dialog, line = d ? d.lines[d.i] ?? '' : '';
   hud.setDialog(d ? { who: d.who, text: line.slice(0, Math.floor(d.shown)), done: d.shown >= line.length } : null);
   hud.setEnergy(game.energy(now));
+  // Down out there: how long someone has to come.
+  hud.setSlump(game.slumpLeft(now));
   hud.setFade(arrival.dark);
 }
 requestAnimationFrame(frame);

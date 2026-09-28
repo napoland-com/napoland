@@ -3,7 +3,7 @@
  * only; over WebSockets they go through the same calls as the rest (net.ts).
  */
 import { describe, expect, it } from 'vitest';
-import { ENERGY_MAX, ENERGY_PER_LEVEL, TileMap, XP_CURVE, type Dir, type ItemsData, type ServerMsg } from '@napoland/shared';
+import { ENERGY_MAX, ENERGY_PER_LEVEL, SLUMP_S, TileMap, XP_CURVE, type Dir, type ItemsData, type ServerMsg } from '@napoland/shared';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { World, colorFor, zoneKey, type Outgoing, type WorldOptions } from '../src/world';
 import { fixtureMaps, houseData } from './fixtures';
@@ -204,15 +204,18 @@ describe('rest while away', () => {
     expect(of(walked, 'zone').map(z => z.map.id)).toEqual(['town', 'house']);
     expect(of(walked, 'progress')).toEqual([]);
     expect(w.zoneOf('a')).toBe(zoneKey('house', 'a'));
-    // b's energy runs out in the woods: they wake up in their own cabin, still not gone.
+    // b's energy runs out in the woods: down first (rescue.ts), and nobody comes, so they wake up in their
+    // own cabin, still not gone.
+    const window = SLUMP_S * 1000;
     w.tick(5000);
+    w.tick(5000 + window);
     expect(w.zoneOf('b')).toBe(zoneKey('house', 'b'));
     expect(['a', 'b'].map(id => [w.get(id)!.lastSeenAt, w.get(id)!.rested])).toEqual([[seen, 6], [9 * HOUR, 3]]);
     // Stashing in the cabin earns double out of the cup, as at any chest.
-    w.store('a', 3, 1, undefined, 5200);
+    w.store('a', 3, 1, undefined, 5200 + window);
     expect(of(to(w.drain(), 'a'), 'progress')).toEqual([{ t: 'progress', progress: expect.objectContaining({ xp: 8, rested: 2 }), gained: 8, fromRest: 4 }]);
     // Leaving is what ends a visit: seen until then.
-    expect(w.leave('a', 6000)!.lastSeenAt).toBe(10 * HOUR + 6000);
+    expect(w.leave('a', 6000 + window)!.lastSeenAt).toBe(10 * HOUR + 6000 + window);
   });
 
   it('fills faster only for a play-test (RESTED_EVERY_MS), and never past three days\' worth', () => {

@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { STEP_MS, TileMap, type Dir, type ItemsData, type ServerMsg, type Slot, type Stash } from '@napoland/shared';
 import { houseData, itemsData, townData, woodsData } from './fixtures';
-import { setup, waitFor, type Client } from './helpers';
+import { nobodyCame, setup, waitFor, type Client } from './helpers';
 
 /** A workbench at 1,1 in the house (stand at 1,2), a chest at 3,1 (stand at 3,2). */
 const maps = () => [
@@ -143,6 +143,8 @@ describe('gear upgrades, over the network', () => {
     const a = await enter({ map: 'woods', x: 3, y: 6, energy: 1, bag: [{ item: 'coat', count: 1, piece: coat }] });
     await Promise.all([w.c.settle(), a.c.settle()]);
     now += 5000;
+    // Down first, and nobody comes (rescue.ts).
+    await nobodyCame(a.c, ms => { now += ms; });
     await w.c.next('drop', m => m.drop.owner === a.id);
     await a.c.next('zone', m => m.reason === 'collapse');
     await waitFor(() => ctx.storage.drop(a.id) !== undefined, 'the pile to be stored');

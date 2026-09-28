@@ -60,6 +60,8 @@ export interface Avatar {
   afterglow?: boolean;
   /** What they wear (characters.ts). */
   look?: Look;
+  /** They lie slumped, out of energy, until someone gets them up (rescue.ts): everyone sees them lie there. */
+  down?: boolean;
   /** You, while NAPO's teleport takes you (beam.ts): going or coming, how many seconds into it, and its pad. */
   beam?: { phase: 'out' | 'in'; t: number; pad: { x: number; y: number } };
 }
@@ -72,6 +74,8 @@ interface RigEntry {
   shadow: THREE.Mesh;
   hitch?: THREE.Group;
   crouch: number;
+  /** From 0 to 1 as they go down out of energy (rescue.ts), and back as they get up. */
+  slump: number;
   clipped?: Map<THREE.Mesh, THREE.Material | THREE.Material[]>;
 }
 
@@ -162,6 +166,12 @@ const ROOF_SNOW = new THREE.Color('#dfe7ec');
 const TREE_GRADE: Readonly<Record<Season, [string, number]>> = {
   spring: ['#2f6a3a', 0.18], summer: ['#4a5530', 0.1], autumn: ['#5c4a26', 0.14], winter: ['#b4c4c2', 0.32],
 };
+/**
+ * Someone down lies face down on their tile, the pack up: leaned this far forward (radians), lifted so
+ * the face rests on the ground rather than in it, drawn back so the body lies over their own tile, and
+ * rolled a little to one side. SLUMP_S (seconds) is how long going down or getting up takes.
+ */
+const SLUMP_LEAN = 1.35, SLUMP_LIFT = 0.1, SLUMP_BACK = 0.42, SLUMP_ROLL = 0.22, SLUMP_TIME = 0.6;
 /** A house's doorway: its width and height, and how deep it goes in (the front wall's thickness). */
 const DOOR_W = 0.6;
 const DOOR_H = 0.84;
@@ -292,7 +302,7 @@ export class WorldView {
   /** How this place looks in the current weather (lighting.ts). */
   private amb: Ambience;
   private readonly pitch = THREE.MathUtils.degToRad(62);
-  /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass. */
+  /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass, `slump` as they go down. */
   private rigs = new Map<string, RigEntry>();
   /** The ground's colors (grass.ts), and the grass's material: null where no grass grows. */
   private ground!: Ground;
@@ -1436,14 +1446,14 @@ export class WorldView {
       seen.add(a.id);
       let e = this.rigs.get(a.id);
       const x = a.x + 0.5, z = a.y + 0.5, gy = this.groundAt(x, z);
-      // Everyone's tile is known, so everyone sees who crouches in tall grass.
-      const inGrass = hidden(this.map, Math.floor(x), Math.floor(z));
-      // A new jacket or new gear: the character is built again in it (as crouched as it was).
+      // Everyone's tile is known, so everyone sees who crouches in tall grass (someone down lies there instead).
+      const inGrass = hidden(this.map, Math.floor(x), Math.floor(z)) && !a.down;
+      // A new jacket or new gear: the character is built again in it (as crouched and as slumped as it was).
       const look = JSON.stringify(a.look ?? {});
       if (!e || e.color !== a.color || e.look !== look) {
-        const crouch = e ? e.crouch : inGrass ? 1 : 0;
+        const crouch = e ? e.crouch : inGrass ? 1 : 0, slump = e ? e.slump : a.down ? 1 : 0;
         if (e) this.dropRig(e);
-        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0), crouch };
+        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0), crouch, slump };
         // Turned to face first, then leaned: a crouch leans forward whichever way they face.
         e.rig.root.rotation.order = 'YXZ';
         this.scene.add(e.rig.root, e.shadow);
@@ -1451,14 +1461,17 @@ export class WorldView {
       }
       const { rig } = e;
       const c = (e.crouch = crouchToward(e.crouch, inGrass, dt));
+      const k = (e.slump = Math.min(1, Math.max(0, e.slump + (a.down ? dt : -dt) / SLUMP_TIME)));
+      // Down, they lie over their own tile: drawn back against the way they face as they lean.
+      const [bx, bz] = DIR_VEC[a.dir], back = SLUMP_BACK * k;
       // Crouched, only the head and shoulders show over the grass, and the step is shorter.
-      rig.root.position.set(x, gy + (a.moving ? Math.abs(Math.sin(a.phase)) * 0.045 * (1 - c * 0.6) : 0) - CROUCH_DROP * c, z);
-      rig.root.rotation.set(CROUCH_LEAN * c, FACE[a.dir], 0);
+      rig.root.position.set(x - bx * back, gy + (a.moving ? Math.abs(Math.sin(a.phase)) * 0.045 * (1 - c * 0.6) : 0) - CROUCH_DROP * c + SLUMP_LIFT * k, z - bz * back);
+      rig.root.rotation.set(CROUCH_LEAN * c + SLUMP_LEAN * k, FACE[a.dir], SLUMP_ROLL * k);
       e.shadow.position.set(x, gy + BLOB_Y, z);
-      const sw = (a.moving ? Math.sin(a.phase) * 0.95 : a.turnT > 0 ? Math.sin((1 - a.turnT / 0.14) * Math.PI) * 0.45 : 0) * (1 - c * 0.45);
-      rig.legL.rotation.x = sw; rig.legR.rotation.x = -sw;
-      // The arms come forward as if pushing the grass aside.
-      rig.armL.rotation.x = -sw * 0.7 - c * 0.55; rig.armR.rotation.x = sw * 0.7 - c * 0.55;
+      const sw = (a.moving ? Math.sin(a.phase) * 0.95 : a.turnT > 0 ? Math.sin((1 - a.turnT / 0.14) * Math.PI) * 0.45 : 0) * (1 - c * 0.45) * (1 - k);
+      rig.legL.rotation.x = sw + 0.25 * k; rig.legR.rotation.x = -sw - 0.1 * k;
+      // The arms come forward as if pushing the grass aside; down, they lie loose, one flung ahead.
+      rig.armL.rotation.x = -sw * 0.7 - c * 0.55 - 0.5 * k; rig.armR.rotation.x = sw * 0.7 - c * 0.55 - 2.1 * k;
       // You, while NAPO's teleport takes you (beam.ts): onto the pad and round, then gone from your feet up; or
       // back from your head down on the pad and off it onto your tile. Only your own screen has it.
       const pose = a.beam ? beamPose(a.beam.phase, a.beam.t) : null;

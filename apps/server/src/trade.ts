@@ -7,8 +7,9 @@
  * - Friends only, signed in on a server with sign-in (a guest is refused sign_in_first, as for everything
  *   among friends), on the same map (and copy of it) and at most TRADE_REACH tiles apart. Nobody can be
  *   asked who turned trade requests off, or who is in a trade already. One trade at a time each.
- * - Walking farther apart, leaving the map, collapsing, going offline, or being friends no more calls
- *   it off for both, and so does either of them (their panel closing). An ask waits TRADE_ASK_MS.
+ * - Walking farther apart, leaving the map, going down out of energy (rescue.ts), collapsing, going
+ *   offline, or being friends no more calls it off for both, and so does either of them (their panel
+ *   closing). Nobody down asks or is asked. An ask waits TRADE_ASK_MS.
  * - A side only ever offers what that bag holds: when a bag changes (a find, a watcher's touch, a live
  *   find fading), its side keeps what is still there, and both Readys go.
  * - Nothing is asked first: both sides already confirm. The swap checks that each bag has room for what
@@ -113,6 +114,8 @@ export class Trades {
       if (!a || !b) continue;
       if (a.zone !== t.zone) this.end(t, 'left', t.a.id);
       else if (b.zone !== t.zone) this.end(t, 'left', t.b.id);
+      else if (a.down) this.end(t, 'down', t.a.id);
+      else if (b.down) this.end(t, 'down', t.b.id);
       else if (Math.hypot(a.x - b.x, a.y - b.y) > TRADE_REACH) this.end(t, 'far');
     }
   }
@@ -153,6 +156,8 @@ export class Trades {
     if (this.byPlayer.has(me)) return this.again(me, them);
     // Near first: it needs no storage, and a friend far away is the usual reason.
     if (!this.near(me, them)) return this.refuse(me, 'tradeOpen', 'too_far');
+    // Someone down out there (rescue.ts) trades nothing: getting them up comes first.
+    if (this.down(me, them)) return this.refuse(me, 'tradeOpen', 'down');
     if (!this.asks.start(me)) return this.refuse(me, 'tradeOpen', 'slow_down');
     let asked = false;
     try {
@@ -165,6 +170,7 @@ export class Trades {
       if (this.byPlayer.has(them)) return this.refuse(me, 'tradeOpen', 'busy');
       const here = this.o.world.where(me), name = this.o.world.get(me)?.name;
       if (!here || name === undefined || !this.near(me, them)) return this.refuse(me, 'tradeOpen', 'too_far');
+      if (this.down(me, them)) return this.refuse(me, 'tradeOpen', 'down');
       const side = (id: string, who: string): Side => ({ id, name: who, offer: [], ready: false, confirmed: false });
       const t: Trade = { a: side(me, name), b: side(them, person.name), open: false, askedAt: this.o.clock(), zone: here.zone };
       this.byPlayer.set(me, t);
@@ -286,6 +292,11 @@ export class Trades {
   private near(a: string, b: string): boolean {
     const x = this.o.world.where(a), y = this.o.world.where(b);
     return !!x && !!y && x.zone === y.zone && Math.hypot(x.x - y.x, x.y - y.y) <= TRADE_REACH;
+  }
+
+  /** Either of them lies down out there, out of energy. */
+  private down(a: string, b: string): boolean {
+    return !!this.o.world.where(a)?.down || !!this.o.world.where(b)?.down;
   }
 
   private sideOf(t: Trade, id: string): Side {

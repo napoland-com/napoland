@@ -3,7 +3,7 @@
  * sizes, what gear resists, and the workbench. World rules only.
  */
 import { describe, expect, it } from 'vitest';
-import { ENERGY_MAX, TileMap, energyRate, type Dir, type ItemsData, type ServerMsg } from '@napoland/shared';
+import { ENERGY_MAX, SLUMP_S, TileMap, energyRate, type Dir, type ItemsData, type ServerMsg } from '@napoland/shared';
 import type { PlayerRecord } from '../src/storage';
 import { World, colorFor, type Outgoing } from '../src/world';
 import { fixtureMaps, houseData, woodsData } from './fixtures';
@@ -365,19 +365,23 @@ describe('gear on the road', () => {
     const halo = { cond: 0.7, quirk: 'flicker' as const };
     const bag = [{ item: 'cloth', count: 2 }, { item: 'halo', count: 1, piece: halo }, { item: 'coat', count: 1, piece: { cond: 0.2 } }];
     const w = road(rec('a', 'woods', 3, 6, { energy: 0.01, gear: { ...STARTER, shirt: 'coat' }, worn: { shirt: { cond: 0.5 } }, bag }));
+    // Down, and nobody comes (rescue.ts): they fall when the window is over.
+    const fell = 1000 + SLUMP_S * 1000;
     w.tick(1000);
+    w.tick(fell);
     const pile = w.takeWrites().drops[0]!.drop!;
     expect(pile.items).toEqual(bag);
     // What you wear stays on.
     expect(w.get('a')).toMatchObject({ map: 'town', bag: [], gear: { shirt: 'coat' } });
-    const back = w.leave('a', 2000)!;
-    w.join({ ...back, map: 'woods', x: 3, y: 5 }, 2000);
-    w.pick('a', 3, 6, 2000);
+    const back = w.leave('a', fell + 1000)!;
+    w.join({ ...back, map: 'woods', x: 3, y: 5 }, fell + 1000);
+    w.pick('a', 3, 6, fell + 1000);
     expect(w.get('a')!.bag).toEqual(bag);
     // Someone else: with these dice, one cloth and the cap, as it was.
     const other = road(rec('b', 'woods', 3, 6, { energy: 0.01, bag }), rec('c', 'woods', 3, 5));
     other.tick(1000);
-    other.pick('c', 3, 6, 1000);
+    other.tick(fell);
+    other.pick('c', 3, 6, fell);
     expect(other.get('c')!.bag).toEqual([{ item: 'cloth', count: 1 }, { item: 'halo', count: 1, piece: halo }]);
     expect(of(to(other.drain(), 'c'), 'got')).toEqual([{ t: 'got', items: [{ item: 'cloth', count: 1 }, { item: 'halo', count: 1 }], from: 'drop' }]);
   });
