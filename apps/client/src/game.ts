@@ -34,6 +34,9 @@
  * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
  *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
  *   said in the text box anywhere else, and come in a letter when you walk in at home;
+ * - out of energy out in the wilds you go down (shared rescue.ts): you cannot move, a countdown runs, and
+ *   everyone on the map reads in local chat where you are down; A at someone down asks to give them
+ *   some of your energy, and they get up with it;
  * - alone out in the wilds, now and then someone's steps from the last day walk past as a see-through
  *   figure in their color (glimpses.ts): the server sends only the color and the tiles, never who;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
@@ -50,7 +53,7 @@
  * - the Long Night is the server's too (`longNight`): its banners, and what Walt says while it is on.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, canRescue, charmsIn, dirOf,
   dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft,
   meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf, stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter,
   upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type ShopData, type ShopOpen,
@@ -70,8 +73,8 @@ import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, FIRST_STEPS_DONE, FIRST_STEPS_TITLE, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TELEPORT, TENDED, TOOK_ONE,
-  TOO_DARK, YOUR_CABIN, buyQuestion, cabinWho, checkoutQuestion, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion,
-  moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion,
+  TOO_DARK, YOUR_CABIN, YOU_ARE_DOWN, buyQuestion, cabinWho, checkoutQuestion, comfortLines, didText, didWho, doorText, downLine, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion,
+  moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, FIRST_WAKE, placedAlready, raisedText, rescueQuestion, rescueRefusal, rescueTooTired, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion,
   upgradeQuestion, useQuestion, visitedText, visitWho, waltOnTheLongNight,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
@@ -121,11 +124,14 @@ export type Talker = {
 /** Something lying on a tile to pick up: a pile someone left when they collapsed, or a find. */
 export type Thing = { kind: 'drop'; drop: DropView } | { kind: 'find'; find: FindView };
 
-/** What A does now: pick up what lies on tile x,y (a pile or a find), or talk. */
-export type Action = { kind: 'pick'; x: number; y: number; what: Thing['kind'] } | { kind: 'talk'; talker: Talker };
+/** What A does now: get someone up who is down, pick up what lies on tile x,y (a pile or a find), or talk. */
+export type Action =
+  | { kind: 'rescue'; id: string; name: string }
+  | { kind: 'pick'; x: number; y: number; what: Thing['kind'] }
+  | { kind: 'talk'; talker: Talker };
 
 /** Where a tap sends us, and what to do there. */
-type Goal = { talk: Talker } | { pick: { x: number; y: number } };
+type Goal = { talk: Talker } | { pick: { x: number; y: number } } | { rescue: { id: string; x: number; y: number } };
 
 /** How long a D-pad direction must be held before a turn becomes a walk. */
 const HOLD_TO_WALK_MS = 160;
@@ -268,7 +274,7 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout', 'rescue']);
 /** If the server has not moved you this long after the teleport was sent, the trip is off: you are shown where you stand. */
 const BEAM_WAIT_MS = 4000;
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
@@ -446,8 +452,11 @@ export class Game {
   tradeMine: BagSlot[] = [];
   /** Counts every change to the trade, so its panel is drawn again only when something changed. */
   tradeChanges = 0;
-  /** What you heard said this session, oldest first, at most CHAT_LOG lines; replaced whole on every change. Nothing said is kept anywhere. */
-  chat: Array<{ to: ChatTo; id: string; name: string; text: string; mine: boolean }> = [];
+  /**
+   * What you heard said this session, oldest first, at most CHAT_LOG lines; replaced whole on every change.
+   * Nothing said is kept anywhere. `system`: a line the game says about someone (they are down), not their words.
+   */
+  chat: Array<{ to: ChatTo; id: string; name: string; text: string; mine: boolean; system?: boolean }> = [];
   /** Something was said since the chat panel was last looked at (the interface clears it). */
   chatNews = false;
   /** Why the last thing you tried to say did not go out, in words. */
@@ -461,6 +470,10 @@ export class Game {
   live = new Set<string>();
   /** Who on this map glows after a flash (the afterglow quirk), until when (our clock). */
   afterglows = new Map<string, number>();
+  /** Who on this map lies slumped, out of energy (rescue.ts): their figure lies there, and A at one gets them up. You too. */
+  downs = new Set<string>();
+  /** You are down: when you collapse unless someone gets you up (our clock). Null while you are not. */
+  slump: { until: number } | null = null;
   /** What everyone on this map wears, by player id (you too). */
   gear = new Map<string, Gear>();
   /** The outfit each player on this map wears over their gear, by player id (you too); none: their gear shows. */
@@ -532,6 +545,8 @@ export class Game {
   private thankedToday = new Set<string>();
   private thankedDay = -1;
   private thanking: { id: string; name: string } | null = null;
+  /** Whom you asked to get up, for the words of a no. */
+  private rescuing: { id: string; name: string } | null = null;
   /** The server's wall clock at our `now` (the welcome says it): the UTC day turns by it. */
   private wall = { now: 0, ms: 0 };
   /** Letters from home (who thanked you while you were away, the one about your street), in the order they came, each until the text box is free to show it. */
@@ -775,6 +790,8 @@ export class Game {
         this.statsChanges++;
         this.setRoom(msg.furniture, msg.visit);
         this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
+        // Another map, or home after a collapse: whatever window there was is over.
+        this.slump = null;
         // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
         const me = this.me ?? (old ? { ...old } : undefined);
         if (me) {
@@ -906,6 +923,31 @@ export class Game {
         break;
       case 'glimpse':
         this.passing.begin(msg.glimpse, now);
+        break;
+      case 'slump':
+        // You are down: nobody walks, nothing is asked, and the countdown shows how long someone has to come.
+        this.slump = { until: now + msg.left * 1000 };
+        this.path = []; this.goal = null; this.marker = null;
+        if (this.question) { this.question = null; this.repeat.release(); this.boxChanges++; }
+        break;
+      case 'down':
+        if (msg.on) this.downs.add(msg.id);
+        else this.downs.delete(msg.id);
+        if (!msg.on && msg.id === this.meId) this.slump = null;
+        break;
+      case 'slumped': {
+        // A line in local chat, by landmark: never where exactly.
+        const mine = msg.id === this.meId;
+        this.chat = [...this.chat, { to: 'local' as const, id: msg.id, name: msg.name, text: downLine(msg.name, msg.where, mine), mine, system: true }].slice(-CHAT_LOG);
+        if (!mine) this.chatNews = true;
+        this.chatChanges++;
+        break;
+      }
+      case 'raised':
+        this.slump = null;
+        if (this.meId) this.downs.delete(this.meId);
+        if (msg.thanked) this.thankedToday.add(msg.by.id);
+        this.inform(msg.by.name, raisedText(msg.by.name, msg.thanked));
         break;
       case 'flare':
         this.flares.push({ x: msg.flare.x, y: msg.flare.y, until: now + msg.flare.left * 1000 });
@@ -1056,7 +1098,7 @@ export class Game {
         break;
       case 'thanked': {
         // Out in the wilds, over your head; anywhere else the text box says what it was for.
-        if (msg.line) this.inform('Thanks', thankedLine(msg.name, thanksFor(msg.what, id => this.maps.find(id), this.items)));
+        if (msg.line) this.inform('Thanks', thankedLine(msg.name, thanksFor(msg.what, id => this.maps.find(id), this.items, msg.name)));
         else this.floatOverMe(thankedFloat(msg.name, msg.energy), GAIN);
         break;
       }
@@ -1091,6 +1133,8 @@ export class Game {
         else this.live.delete(msg.player.id);
         if (msg.player.afterglow) this.afterglows.set(msg.player.id, now + msg.player.afterglow * 1000);
         else this.afterglows.delete(msg.player.id);
+        if (msg.player.down) this.downs.add(msg.player.id);
+        else this.downs.delete(msg.player.id);
         // A guest who signed in comes back in as someone who is not one.
         if (msg.player.guest) this.guests.add(msg.player.id);
         else this.guests.delete(msg.player.id);
@@ -1112,6 +1156,7 @@ export class Game {
         this.players.delete(msg.id);
         this.live.delete(msg.id);
         this.afterglows.delete(msg.id);
+        this.downs.delete(msg.id);
         break;
       }
       case 'step': {
@@ -1229,6 +1274,17 @@ export class Game {
           this.inform(this.note?.waiting ? this.note.who : '', thankRefusal(msg.reason, this.thanking.name));
           break;
         }
+        // So is getting someone up: by the name of whoever was down.
+        if (msg.action === 'rescue' && this.rescuing) {
+          this.inform(this.rescuing.name, rescueRefusal(msg.reason, this.rescuing.name));
+          break;
+        }
+        // Down, whatever you tried: the box says why nothing happens.
+        if (msg.reason === 'down') {
+          if (msg.action === 'pick') this.picking = null;
+          this.inform('', YOU_ARE_DOWN);
+          break;
+        }
         // Taking out of a crate asks nothing, but is answered in the box like what does.
         if (msg.action === 'cacheTake') { this.inform('Crate', sentence(refusalText(msg.reason, msg.action))); break; }
         // What was asked first is answered in the same box; the rest (picking up, the chest) over your head.
@@ -1249,6 +1305,8 @@ export class Game {
   /** The connection dropped: stop predicting until the next welcome puts us back in sync. */
   disconnected(now: number) {
     this.online = false;
+    // Leaving while down is a collapse (the server's rule): the next welcome is at home.
+    this.slump = null;
     this.pending = []; this.path = []; this.goal = null;
     // A trip half done is off: the next welcome says where you are.
     this.beam = null;
@@ -1292,6 +1350,7 @@ export class Game {
     this.badges = new Map(players.flatMap(p => (p.badge ? [[p.id, p.badge] as const] : [])));
     this.live = new Set(players.filter(p => p.live).map(p => p.id));
     this.afterglows = new Map(players.flatMap(p => (p.afterglow ? [[p.id, this.clock + p.afterglow * 1000] as const] : [])));
+    this.downs = new Set(players.filter(p => p.down).map(p => p.id));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
     this.lootChanges++;
@@ -1364,11 +1423,40 @@ export class Game {
     if (this.dialog) return this.advanceDialog();
     if (this.beam) return;
     const me = this.me;
-    if (!me || me.anim) return;
+    // Down, you cannot act: the countdown on screen says as much.
+    if (!me || me.anim || this.slump) return;
     const act = this.action();
     if (!act) this.float('Nothing here', GREY, me.tx, me.ty);
+    else if (act.kind === 'rescue') this.rescue(act.id, act.name);
     else if (act.kind === 'talk') this.meet(act.talker);
     else this.pick(act.x, act.y);
+  }
+
+  /**
+   * A at someone down: asks to give them RESCUE_ENERGY of your energy ("Give Ana 20 of your energy? Ana
+   * gets up with it, and you keep 44."), or says why you cannot: it takes more than that. YES sends it; the
+   * box then says what it did, from the server's answer.
+   */
+  rescue(id: string, name: string) {
+    if (!this.online || this.slump) return;
+    const energy = this.energy(this.clock)?.value ?? 0;
+    if (!canRescue(energy)) return this.inform(name, rescueTooTired(name, energy));
+    const text = rescueQuestion(name, energy);
+    this.ask({ who: name, text, yes: () => { this.rescuing = { id, name }; this.act(name, text, { t: 'rescue', who: id }); } });
+  }
+
+  /** Someone else lying down on tile x,y, if anyone is. */
+  private downAt(x: number, y: number): Mover | undefined {
+    for (const id of this.downs) {
+      const p = this.players.get(id);
+      if (p && id !== this.meId && p.tx === x && p.ty === y) return p;
+    }
+    return undefined;
+  }
+
+  /** How long you have while you are down, in seconds from `now`; null while you are not. */
+  slumpLeft(now: number): number | null {
+    return this.slump ? Math.max(0, (this.slump.until - now) / 1000) : null;
   }
 
   /** What A does at someone or something you face: talk, read the board, feed a fire or the Old Stone. */
@@ -1594,6 +1682,7 @@ export class Game {
   /** Asks a friend to trade (their card's Trade): the server asks them, and the trade panel opens once it says so. */
   askTrade(p: PersonView) {
     if (!this.online || this.trade) return;
+    if (this.slump) return this.inform('', YOU_ARE_DOWN);
     this.tradeWith = p;
     this.callingOff = null;
     this.send({ t: 'tradeOpen', id: p.id });
@@ -2026,13 +2115,16 @@ export class Game {
   }
 
   /**
-   * What A would do now: pick up what lies on your own tile, else on the tile you face (on either, a
-   * pile before a find), and only then talk to whoever you face or read the sign.
+   * What A would do now: get up someone who is down on the tile you face (or your own), else pick up
+   * what lies on your own tile, else on the tile you face (on either, a pile before a find), and only
+   * then talk to whoever you face or read the sign.
    */
   action(): Action | null {
     const me = this.me;
     if (!me) return null;
     const [dx, dy] = DIR_VEC[me.dir];
+    const down = this.downAt(me.tx + dx, me.ty + dy) ?? this.downAt(me.tx, me.ty);
+    if (down) return { kind: 'rescue', id: down.id, name: down.name };
     for (const [x, y] of [[me.tx, me.ty], [me.tx + dx, me.ty + dy]] as const) {
       const thing = this.thingAt(x, y);
       if (thing) return { kind: 'pick', x, y, what: thing.kind };
@@ -2063,8 +2155,18 @@ export class Game {
     if (this.dialog) return this.advanceDialog();
     if (this.beam) return;
     const me = this.me;
-    if (!me) return;
+    // Down, you go nowhere.
+    if (!me || this.slump) return;
     const from = { x: me.tx, y: me.ty };
+    // Someone down: walk up to them, and A's question comes as you arrive.
+    const down = this.downAt(x, y);
+    if (down) {
+      this.goal = { rescue: { id: down.id, x, y } };
+      this.path = findPath(this.map, from.x, from.y, x, y, true);
+      const end = this.path.at(-1) ?? from;
+      this.marker = { x: end.x, y: end.y, t: 0 };
+      return;
+    }
     // Something to pick up: walk onto it (finds are small, so a tap on one lands on its own tile).
     if (this.thingAt(x, y)) {
       this.goal = { pick: { x, y } };
@@ -2150,6 +2252,7 @@ export class Game {
   /** Why using `def` from bag slot `slot` cannot work here, when the game knows it already (the server checks it anyway); null when it can. */
   private whyNotUse(slot: number, def: ItemDef): string | null {
     const u = def.use ?? {}, me = this.me;
+    if (this.slump) return YOU_ARE_DOWN;
     if (u.identify) {
       if (!this.inTown()) return TOO_DARK;
       // Its own slot frees up; whatever it turns out to be must fit somewhere.
@@ -2285,7 +2388,7 @@ export class Game {
     // The UTC day turns: whom you thanked yesterday may be thanked again.
     const day = utcDay(this.wall.ms + (now - this.wall.now));
     if (day !== this.thankedDay) { this.thankedDay = day; this.thankedToday.clear(); }
-    const free = this.online && !covered && !this.held && !this.question && !this.note && !this.dialog;
+    const free = this.online && !covered && !this.held && !this.question && !this.note && !this.dialog && !this.slump;
     const letter = free && this.letters.shift();
     if (letter) {
       this.openDialog({ x: 0, y: 0, who: letter.who, lines: letter.lines, kind: 'talk' });
@@ -2538,7 +2641,8 @@ export class Game {
   /** Decide the local player's next step once they stand on a tile. */
   private driveMe(now: number) {
     const me = this.me;
-    if (!me || me.anim || this.dialog || this.question || !this.online || this.held || this.beam) { this.justStepped = false; return; }
+    // Down, nobody walks: the stick and a tap on the world do nothing until someone gets you up.
+    if (!me || me.anim || this.dialog || this.question || !this.online || this.held || this.slump || this.beam) { this.justStepped = false; return; }
     // On an exit the server is about to move us to another map, and steps planned on this one would be refused.
     if (this.map.exitAt(me.tx, me.ty)) {
       this.exitSince ??= now;
@@ -2585,15 +2689,18 @@ export class Game {
    * (or what lies next to us, when its tile could not be reached). Nothing, if it went away meanwhile.
    */
   private reach(me: Mover, goal: Goal) {
-    const at = 'talk' in goal ? goal.talk : goal.pick;
+    const at = 'talk' in goal ? goal.talk : 'rescue' in goal ? goal.rescue : goal.pick;
     const d = Math.abs(at.x - me.tx) + Math.abs(at.y - me.ty);
-    const there = 'talk' in goal ? d === 1 : d <= 1 && !!this.thingAt(at.x, at.y);
+    // Someone down is got up from beside them, if they are still down there.
+    const down = 'rescue' in goal ? this.downAt(at.x, at.y) : undefined;
+    const there = 'talk' in goal ? d === 1 : 'rescue' in goal ? d <= 1 && down?.id === goal.rescue.id : d <= 1 && !!this.thingAt(at.x, at.y);
     if (!there) return;
     if (d === 1) {
       const face = dirToward(at.x - me.tx, at.y - me.ty);
       if (face !== me.dir) { me.dir = face; this.send({ t: 'face', dir: face }); }
     }
     if ('talk' in goal) this.meet(goal.talk);
+    else if ('rescue' in goal) this.rescue(down!.id, down!.name);
     else this.pick(at.x, at.y);
   }
 
@@ -2602,7 +2709,7 @@ export class Game {
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
       afterglow: (this.afterglows.get(p.id) ?? 0) > this.clock,
-      look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id), this.shop),
+      look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id), this.shop), down: this.downs.has(p.id),
       ...(b && p.id === this.meId && { beam: { phase: b.phase, t: b.t, pad: b.pad } }),
     }));
   }

@@ -425,6 +425,10 @@ export function attachNet(o: NetOptions): Net {
       case 'move':
         world.moveNextTo(s.id, msg.to, now);
         return flush();
+      case 'rescue':
+        // Guests too: help carries no words.
+        world.rescue(s.id, msg.who, now);
+        return flush();
       case 'doorOff':
         // Guests too: a guest's name is on a door as well.
         world.doorOff(s.id, msg.off, now);

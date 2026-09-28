@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { STARTER_TOOLS, TileMap, type Dir, type ItemDef, type ItemsData, type ServerMsg, type StoryData } from '@napoland/shared';
+import { SLUMP_S, STARTER_TOOLS, TileMap, type Dir, type ItemDef, type ItemsData, type ServerMsg, type StoryData } from '@napoland/shared';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { World, colorFor, type Outgoing, type WorldOptions } from '../src/world';
 import { fixtureMaps, houseData } from './fixtures';
@@ -209,14 +209,17 @@ describe('a tool lying out there', () => {
 describe('a collapse', () => {
   it('never lets a tool fall into the pile: it holds what the bag held, and the tools stay', () => {
     const w = world({}, rec('a', 'woods', 3, 6, { energy: 0.01, bag: [{ item: 'moss', count: 2 }], tools: WITH_RADIO }));
+    // Down, and nobody comes (rescue.ts): they fall when the window is over.
+    const fell = 1000 + SLUMP_S * 1000;
     w.tick(1000);
+    w.tick(fell);
     w.drain();
     const { drops, players } = w.takeWrites();
     expect(drops.map(d => [d.owner, d.drop?.items])).toEqual([['a', [{ item: 'moss', count: 2 }]]]);
     expect(players.map(p => p.tools)).toEqual([WITH_RADIO]);
     expect(w.get('a')).toMatchObject({ map: 'town', bag: [], tools: WITH_RADIO });
-    const back = w.leave('a', 2000)!;
-    expect(w.join(back, 2000).tools).toEqual(WITH_RADIO);
+    const back = w.leave('a', fell + 1000)!;
+    expect(w.join(back, fell + 1000).tools).toEqual(WITH_RADIO);
   });
 });
 

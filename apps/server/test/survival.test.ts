@@ -11,8 +11,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, STEP_MS, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, findTiles, fireTakes, hidden, weatherAt,
-  type ConditionDef, type ConditionsData, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather,
+  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, SLUMP_S, STEP_MS, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, findTiles, fireTakes, hidden,
+  weatherAt, type ConditionDef, type ConditionsData, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather,
 } from '@napoland/shared';
 import { loadMaps } from '../src/content';
 import { EMBERS, FIRE_LOW_S, FIRE_MAX_S } from '../src/fires';
@@ -541,7 +541,10 @@ describe('live finds', () => {
 
   it('go dim in a collapse: the pile holds a plain shard', () => {
     const w = world(fieldData(), 'overcast', { items }, rec('a', 'field', 4, 5, 'up', { energy: 0.01, bag: [live(0), { item: 'rock', count: 1 }] }));
+    // Down, still glowing; nobody comes, and the pile is where it goes dim.
     w.tick(10_000);
+    expect(of(onMap(w.drain(), 'field'), 'glow')).toEqual([]);
+    w.tick(10_000 + SLUMP_S * 1000);
     expect(onMap(w.drain(), 'field')).toContainEqual({ t: 'glow', id: 'a', on: false });
     expect(w.takeWrites().drops[0]?.drop?.items).toEqual([{ item: 'shard', count: 1 }, { item: 'rock', count: 1 }]);
   });
@@ -891,7 +894,9 @@ describe('echoes and the notice board', () => {
   it('a pile keeps the last steps its owner walked out there', () => {
     const w = world(fieldData(40), 'overcast', {}, rec('a', 'field', 1, 30, 'up', { energy: 3, bag: [{ item: 'rock', count: 1 }] }));
     for (let i = 0; i < TRAIL_STEPS + 4; i++) w.step('a', i % 2 ? 'up' : 'right', i + 1, i * 200);
+    // Down where the steps ended, and nobody came.
     w.tick(60_000);
+    w.tick(60_000 + SLUMP_S * 1000);
     const drop = w.dropViews('field')[0]!;
     expect(drop.trail).toHaveLength(TRAIL_STEPS);
     expect(drop.trail.at(-1)).toEqual([drop.x, drop.y]);
@@ -944,7 +949,9 @@ describe('the day', () => {
     let t = 0;
     while (weatherAt(t).weather !== 'aurora') t += 60_000;
     const w = world(fieldData(), 'overcast', { items, cycle: true }, rec('a', 'field', 4, 5));
-    w.tick(t - 60_000);
+    // Hours before it: out of energy long ago, down, and nobody came.
+    w.tick(t - 200_000);
+    w.tick(t - 200_000 + SLUMP_S * 1000 + 1);
     w.drain();
     expect(w.findViews('field')).toEqual([]);
     w.tick(t + 1);

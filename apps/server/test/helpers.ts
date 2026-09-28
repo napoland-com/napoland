@@ -7,7 +7,8 @@ import { request } from 'node:http';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
 import {
-  CALENDAR_DAY_MS, DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, utcDay, xpFor, type BagSlot, type ClientMsg, type DropView, type ItemsData, type ServerMsg,
+  CALENDAR_DAY_MS, DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, SLUMP_S, utcDay, xpFor, type BagSlot, type ClientMsg, type DropView, type ItemsData,
+  type ServerMsg,
 } from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
@@ -105,6 +106,17 @@ export async function eventually<T>(attempt: () => Promise<T>, what: string, tim
   }
 }
 
+/**
+ * Out of energy out in the wilds, a player goes down first (rescue.ts) and collapses only when nobody came
+ * in time. Once `c`'s player is down, this takes what they heard of it out of the inbox (their energy at 0
+ * among it) and moves the test's game clock (`move`) past that window, so they collapse as ever on the next tick.
+ */
+export async function nobodyCame(c: Client, move: (ms: number) => void): Promise<void> {
+  await c.next('slump');
+  await c.settle();
+  move(SLUMP_S * 1000);
+}
+
 let names = 0;
 export const newName = (): string => `Player ${++names}`;
 
@@ -157,6 +169,7 @@ export async function restartKeepsBagsAndPiles(first: Storage, second: Storage, 
     const c = await loginTo(one.port, carrier.token);
     const f = await loginTo(one.port, faller.token);
     now += 5000; // 1 energy lasts about 4.1 s where the faller stands
+    await nobodyCame(f.c, ms => { now += ms; });
     await f.c.next('zone', m => m.reason === 'collapse');
     await eventually(async () => expect(await stored(faller.id)).toBe(true), 'the pile to be stored');
     dropped = one.world.dropViews('woods');

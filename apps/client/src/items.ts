@@ -142,6 +142,8 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'neighbors': return 'You live on the same street already';
     case 'shop_closed': return 'The shop is closed';
     case 'shop_down': return 'The shop cannot reach Stripe right now. Try again in a moment';
+    case 'down': return 'You are down. You cannot move until someone comes';
+    case 'too_tired': return 'You need more energy than that';
   }
 }
 

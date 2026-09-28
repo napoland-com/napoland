@@ -12,7 +12,7 @@ import { setLogLevel } from '../src/log';
 import { startServer, type RunningServer } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { itemsData } from './fixtures';
-import { Client, loginTo, savedPlayer, serverDefaults, waitFor } from './helpers';
+import { Client, loginTo, nobodyCame, savedPlayer, serverDefaults, waitFor } from './helpers';
 
 class HeldSaves extends MemoryStorage {
   private gate: Promise<void> | undefined;
@@ -31,10 +31,14 @@ class HeldSaves extends MemoryStorage {
 
 const moss = (rec: PlayerRecord | undefined) => (rec?.bag ?? []).reduce((n, s) => n + (s.item === 'moss' ? s.count : 0), 0);
 
-/** Out of energy in the woods while the test holds the saves: the bag falls where they stand, they wake at home, and they leave. */
-async function collapseAndLeave(server: RunningServer, storage: HeldSaves, c: Client, id: string, later: () => void) {
+/**
+ * Out of energy in the woods while the test holds the saves: down first (rescue.ts) and nobody comes, so
+ * the bag falls where they stand, they wake at home, and they leave. `later` moves the game clock on.
+ */
+async function collapseAndLeave(server: RunningServer, storage: HeldSaves, c: Client, id: string, later: (ms: number) => void) {
   storage.hold();
-  later();
+  later(10 * 60_000);
+  await nobodyCame(c, later);
   await c.next('zone', m => m.reason === 'collapse');
   expect(server.world.dropViews('woods')).toHaveLength(1);
   c.ws.close();
@@ -50,7 +54,7 @@ describe('coming back while the last saves wait', () => {
     try {
       const p = await savedPlayer(storage, { map: 'woods', x: 3, y: 5, bag: [{ item: 'moss', count: 2 }] });
       const a = await loginTo(server.port, p.token);
-      await collapseAndLeave(server, storage, a.c, p.id, () => { now += 10 * 60_000; });
+      await collapseAndLeave(server, storage, a.c, p.id, ms => { now += ms; });
 
       const b = await loginTo(server.port, p.token);
       expect(b.welcome.bag).toEqual([]);
@@ -79,7 +83,7 @@ describe('coming back while the last saves wait', () => {
       clients.push(guest);
       guest.send({ t: 'hello', v: PROTOCOL_VERSION, token: g.token });
       expect(await guest.next('welcome')).toMatchObject({ you: g.id, guest: true });
-      await collapseAndLeave(server, storage, guest, g.id, () => { now += 10 * 60_000; });
+      await collapseAndLeave(server, storage, guest, g.id, ms => { now += ms; });
 
       const signedIn = await Client.open(server.port);
       clients.push(signedIn);

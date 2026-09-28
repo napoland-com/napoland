@@ -31,7 +31,7 @@ import { OFFER_MAX } from './trade';
  * 34: visits (a neighbor's door lets you in: `visit` in the welcome and `zone`, whose furniture is theirs),
  * the road to your street, and NAPO's teleport (`teleport`), which a client that did not know would never use.
  * 35: the teleport in town takes you home, and a new player's first steps (`firstSteps`, in the welcome too).
- * 36: the shop for looks (`checkout`, and `shop` in the welcome and when what you bought changes).
+ * 36: the shop for looks (`checkout`, and `shop` in the welcome and when what you bought changes), and the window to be saved, someone down out in the wilds, whom an older page could not show or get up.
  */
 export const PROTOCOL_VERSION = 36;
 
@@ -267,6 +267,11 @@ export const ClientMsg = z.discriminatedUnion('t', [
   /** Take the thing `id` out of the crate on tile x,y: once a visit; it thanks whoever left it. */
   z.object({ t: z.literal('cacheTake'), x: z.number().int(), y: z.number().int(), id: z.number().int().nonnegative() }),
   /**
+   * Get `who` back up (rescue.ts): they lie slumped on your tile or the one next to it, and you give them
+   * RESCUE_ENERGY of your own energy, which you need more than. Their thanks comes with it.
+   */
+  z.object({ t: z.literal('rescue'), who: z.uuid() }),
+  /**
    * A at a door on your street, on tile x,y next to you: a neighbor's, you knock (they hear it if they are
    * home, and you hear whether they are); your own, what it offers (moving next to a friend: `doorstep`).
    */
@@ -426,7 +431,9 @@ export type Did =
   /** You spent merits on `look` (merits.ts): it is yours for good, and `left` merits are still to spend. */
   | { kind: 'bought'; look: string; left: number }
   /** Your cabin moved next to `name`'s, onto their street: you stand in front of its door there now. */
-  | { kind: 'moved'; name: string };
+  | { kind: 'moved'; name: string }
+  /** You gave `who` (their `name`) RESCUE_ENERGY of your energy, and they got up (rescue.ts). */
+  | { kind: 'rescued'; who: string; name: string };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -538,7 +545,11 @@ export type Refusal =
   /** The shop is closed: the owner has not set up payments (or turned them off). */
   | 'shop_closed'
   /** The shop could not open a payment just now (Stripe did not answer): try again in a moment. */
-  | 'shop_down';
+  | 'shop_down'
+  /** You are down (rescue.ts): you cannot walk or act until someone gets you up, or you collapse. */
+  | 'down'
+  /** Getting someone up takes more energy than you have: more than RESCUE_ENERGY. */
+  | 'too_tired';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -602,8 +613,11 @@ export interface TradeView {
   theyConfirmed: boolean;
 }
 
-/** Why a trade is off: called off, the ask said no to or not answered, too far apart, one left the map, collapsed or went offline, or they are friends no more. */
-export type TradeOff = 'cancel' | 'no' | 'timeout' | 'far' | 'left' | 'collapsed' | 'offline' | 'unfriended';
+/**
+ * Why a trade is off: called off, the ask said no to or not answered, too far apart, one left the map,
+ * went down out of energy (rescue.ts), collapsed or went offline, or they are friends no more.
+ */
+export type TradeOff = 'cancel' | 'no' | 'timeout' | 'far' | 'left' | 'down' | 'collapsed' | 'offline' | 'unfriended';
 
 /**
  * How a trade ended: it went through (what you gave, and what you got), or it is off, and why, and who
@@ -636,6 +650,8 @@ export interface PlayerView {
   afterglow?: number;
   /** They play as a guest (only on a server with sign-in): no friends until they sign in. */
   guest?: true;
+  /** They lie slumped out in the wilds, out of energy, until someone gets them up or they collapse (rescue.ts). */
+  down?: true;
 }
 
 /** A map by id and version; a client whose copy has another version reloads. */
@@ -861,6 +877,17 @@ export type ServerMsg =
   | { t: 'creature'; creature: CreatureView }
   | { t: 'creatureGone'; id: number }
   /**
+   * You are down (rescue.ts): out of energy out in the wilds, you collapse in `left` seconds unless someone
+   * gets you up. Said again whenever that changes (a flare burning by you gives you longer).
+   */
+  | { t: 'slump'; left: number }
+  /** On your map: someone lies slumped, out of energy (on), or got back up (off). */
+  | { t: 'down'; id: string; on: boolean }
+  /** On your map: someone is down, `where` in words (landmarks.ts: "by the pond"), never where exactly. For local chat. */
+  | { t: 'slumped'; id: string; name: string; where: string }
+  /** Someone gave you RESCUE_ENERGY of theirs, and you are back up; `thanked`: you thanked them for it (not twice in a UTC day). */
+  | { t: 'raised'; by: PersonView; thanked?: true }
+  /**
    * A creature reached you: you lost energy, and one of what you carried (if anything) went: a watcher
    * takes it, a skulker makes you drop a whole bag slot of it into your pile where you stand. `level`: it
    * was a piece upgraded that far.
@@ -969,7 +996,7 @@ export type ServerMsg =
 export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
   | 'checkout'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
+  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 

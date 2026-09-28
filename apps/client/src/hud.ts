@@ -16,7 +16,7 @@ import type { FriendsView } from './friends';
 import { CALL_GLYPHS, NOTEBOOK_ICON } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import { fieldNotesHtml, notesHtml, type FieldNotesView, type JournalView, type NotesView } from './journal';
-import { DOOR_SETTING, VISITS_SETTING, firstStepsView } from './said';
+import { DOOR_SETTING, SOMEONE_MAY_COME, VISITS_SETTING, firstStepsView } from './said';
 import type { SoundSetting } from './sound';
 import { SHOP_HINT, SHOP_TERMS, payPage, type ShopTabView } from './shop';
 import type { OfferRow, TradePanel } from './trade';
@@ -174,6 +174,14 @@ export function bannerMs(title: string, sub: string): number {
 export function clock(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/**
+ * What the screen says while you are down (rescue.ts), quietly: how long you have, as a clock, and that
+ * someone may come. Null while you are not.
+ */
+export function slumpLook(left: number | null): { clock: string; text: string } | null {
+  return left === null ? null : { clock: clock(left), text: SOMEONE_MAY_COME };
 }
 
 /** What the surge pill says, and how it looks: nothing while calm. `caught`: the front is over you. */
@@ -348,7 +356,7 @@ export class Hud {
   private shown = {
     fill: -1, level: '', refill: false, pct: -1, vignette: -1, unease: 0, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
     friends: '', personActs: '', talk: '', journal: '', field: '', notes: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', shop: '', badge: '', tradeMine: '', tradeTheirs: '',
-    tradeBag: '',
+    tradeBag: '', slump: '',
   };
   /** The chest's tab: the stash (with what came in parcels, the first goal and what you wear), or the wardrobe. */
   private chestTab: 'stash' | 'wardrobe' = 'stash';
@@ -425,6 +433,7 @@ export class Hud {
         <div class="sub"><span class="conn" data-el="conn" data-state="connecting"><i></i><span data-el="connText">Connecting</span></span><span data-el="ping"></span></div>
         <div class="steps" data-el="steps" hidden role="status" aria-live="polite"><b data-el="stepsTitle"></b><span data-el="stepsText"></span></div></div>
       <div class="surge-glow" data-el="surgeGlow"></div>
+      <div class="slump panel" data-el="slump" role="status" aria-live="polite" hidden><b data-el="slumpClock"></b><span data-el="slumpText"></span></div>
       <button type="button" class="menu-btn" data-el="menuBtn" aria-label="Menu" aria-expanded="false">${ICON.menu}</button>
       <button type="button" class="menu-btn chat-btn" data-el="chatBtn" aria-label="Chat" aria-expanded="false">${ICON.chat}</button>
       <div class="menu-panel panel" data-el="menu" hidden>
@@ -843,11 +852,16 @@ export class Hud {
     if (open && !was) this.h.chat?.({ a: 'opened' });
   }
 
-  /** The chat panel: the tab shown, its lines (oldest first), and why the last message did not go out. */
-  setChat(tab: 'world' | 'local', lines: ReadonlyArray<{ id: string; name: string; text: string; mine: boolean }>, note: string | null) {
+  /**
+   * The chat panel: the tab shown, its lines (oldest first), and why the last message did not go out. A
+   * line the game says about someone (`system`: they are down) is its words alone, set apart from what people said.
+   */
+  setChat(tab: 'world' | 'local', lines: ReadonlyArray<{ id: string; name: string; text: string; mine: boolean; system?: boolean }>, note: string | null) {
     this.chatTab = tab;
     for (const b of this.root.querySelectorAll<HTMLElement>('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
-    const html = lines.map(l => `<p class="cline"${l.mine ? ' data-mine' : ''}>${l.mine ? `<b>${esc(l.name)}</b>` : `<button type="button" class="who" data-who="${esc(l.id)}">${esc(l.name)}</button>`} ${esc(l.text)}</p>`).join('')
+    const html = lines.map(l => (l.system
+      ? `<p class="cline" data-sys>${esc(l.text)}</p>`
+      : `<p class="cline"${l.mine ? ' data-mine' : ''}>${l.mine ? `<b>${esc(l.name)}</b>` : `<button type="button" class="who" data-who="${esc(l.id)}">${esc(l.name)}</button>`} ${esc(l.text)}</p>`)).join('')
       || `<p class="hint">${tab === 'local' ? 'Only players near you hear what you say here, and see it over your head.' : 'Everyone online hears what you say here.'}</p>`;
     if (html !== this.shown.chat) {
       this.shown.chat = html;
@@ -1824,6 +1838,21 @@ export class Hud {
       g.style.visibility = glow > 0 ? 'visible' : 'hidden';
       g.style.opacity = String(glow);
     }
+  }
+
+  /**
+   * While you are down (`left`: seconds until you collapse; null while you are not): a quiet countdown and
+   * "Someone may come." between your figure and the text box, clear of A and B. Called every frame; it
+   * writes only when the clock moves on.
+   */
+  setSlump(left: number | null) {
+    const look = slumpLook(left), key = look ? `${look.clock}|${look.text}` : '';
+    if (key === this.shown.slump) return;
+    this.shown.slump = key;
+    this.el.slump!.hidden = !look;
+    if (!look) return;
+    this.el.slumpClock!.textContent = look.clock;
+    if (this.el.slumpText!.textContent !== look.text) this.el.slumpText!.textContent = look.text;
   }
 
   /** How dark the world is (0 to 1) while you move between maps. The HUD stays above it. */

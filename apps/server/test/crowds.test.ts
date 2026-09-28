@@ -9,13 +9,13 @@
  * the woods up its north road (4,0, arriving on 3,6; the way back at 3,7, arriving on 4,1).
  */
 import { describe, expect, it } from 'vitest';
-import { ENERGY_MAX, STEP_MS, type Dir, type ServerMsg } from '@napoland/shared';
+import { ENERGY_MAX, SLUMP_S, STEP_MS, type Dir, type ServerMsg } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { startServer } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { REGION_CROWD, TOWN_CROWD, World, colorFor, type Crowd } from '../src/world';
 import { fixtureMaps, itemsData } from './fixtures';
-import { Client, loginTo, savedPlayer, serverDefaults, waitFor } from './helpers';
+import { Client, loginTo, nobodyCame, savedPlayer, serverDefaults, waitFor } from './helpers';
 
 const rec = (id: string, map = 'town', x = 7, y = 3, dir: Dir = 'up', more: Partial<PlayerRecord> = {}): PlayerRecord => ({
   id, name: id.toUpperCase(), tokenHash: `hash-${id}`, authSub: null, map, x, y, dir, color: colorFor(id), energy: ENERGY_MAX, bag: [], createdAt: 1, lastSeenAt: 1, ...more,
@@ -137,7 +137,9 @@ describe('crowds', () => {
     w.join(rec('x', 'woods', 5, 5), 0);
     w.join(rec('a', 'woods', 3, 6, 'up', { energy: 0.05, bag: [{ item: 'moss', count: 2 }] }), 0);
     expect(zones(w, ['x', 'a'])).toEqual(['woods', 'woods:2']);
+    // Down first (rescue.ts), and nobody comes.
     w.tick(60_000);
+    w.tick(60_000 + SLUMP_S * 1000);
     expect(w.dropViews('woods:2')).toMatchObject([{ owner: 'a', x: 3, y: 6 }]);
     expect(w.dropViews('woods')).toEqual([]);
   });
@@ -207,6 +209,8 @@ describe('crowds over the network', () => {
       expect([server.world.zoneOf(e.id), server.world.zoneOf(f.id)]).toEqual(['woods', 'woods:2']);
       await e.c.settle();
       now += 60_000;
+      // Down first (rescue.ts), and nobody comes.
+      await nobodyCame(f.c, ms => { now += ms; });
       heard.push(await f.c.next('zone', m => m.reason === 'collapse'));
       // Its pile lies in its copy: e, in the main copy of the woods, never hears of it.
       await waitFor(() => server.world.dropViews('woods:2').length === 1, 'the pile in the copy');

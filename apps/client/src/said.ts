@@ -5,8 +5,8 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, comfortMax, countable, fireFull, formatPrice, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands,
-  toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type ShopLook, type StoneView,
+  CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, RESCUE_ENERGY, aOf, amount, comfortMax, countable, fireFull, formatPrice, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands,
+  toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type Refusal, type ShopLook, type StoneView,
   type Upgrade,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, oddsText, pieceName, type Items } from './items';
@@ -313,6 +313,43 @@ export function leftBy(name: string, mine: boolean, ageS: number): string {
   return `left by ${mine ? 'you' : name}, ${agoText(ageS)}`;
 }
 
+// ---------- down out there, and getting someone up (rescue.ts) ----------
+
+/** Under the countdown, while you are down. */
+export const SOMEONE_MAY_COME = 'Someone may come.';
+/** Down, you cannot walk or act: what the box says when you try. */
+export const YOU_ARE_DOWN = 'You are down. You cannot move until someone comes.';
+
+/** The line local chat shows when someone on your map goes down, by landmark: "Ana is down by the pond." Your own says "You". */
+export function downLine(name: string, where: string, mine = false): string {
+  return `${mine ? 'You are' : `${name} is`} down ${where}.`;
+}
+
+/** A at someone down: "Give Ana 20 of your energy? Ana gets up with it, and you keep 44." By name, never a pronoun. */
+export function rescueQuestion(name: string, energy: number): string {
+  return `Give ${name} ${RESCUE_ENERGY} of your energy? ${name} gets up with it, and you keep ${Math.max(0, Math.floor(energy - RESCUE_ENERGY))}.`;
+}
+
+/** A at someone down, with too little energy to give: it takes more than RESCUE_ENERGY. */
+export function rescueTooTired(name: string, energy: number): string {
+  return `Getting ${name} up takes ${RESCUE_ENERGY} of your energy, and you need more than that. You have ${Math.max(0, Math.floor(energy))}.`;
+}
+
+/** Why the server did not let you get someone up, with their name. */
+export function rescueRefusal(reason: Refusal, name: string): string {
+  switch (reason) {
+    case 'too_tired': return `You need more than ${RESCUE_ENERGY} energy to get ${name} up.`;
+    case 'too_far': return `You are too far from ${name} now.`;
+    case 'down': return YOU_ARE_DOWN;
+    default: return `${name} is not down any more.`;
+  }
+}
+
+/** Someone got you up: "Bo gives you 20 energy, and you are back on your feet. You thank Bo." */
+export function raisedText(name: string, thanked = false): string {
+  return `${name} gives you ${RESCUE_ENERGY} energy, and you are back on your feet.${thanked ? ` You thank ${name}.` : ''}`;
+}
+
 // ---------- merits ----------
 
 /** "12,345": a count with its thousands apart, the same in every language the browser speaks (firsts.ts). */
@@ -379,6 +416,7 @@ export function didWho(did: Did, items: Items): string {
     case 'left': case 'took': return 'Crate';
     case 'bought': return 'Wardrobe';
     case 'moved': return YOUR_CABIN;
+    case 'rescued': return did.name;
   }
 }
 
@@ -390,6 +428,7 @@ export function didText(did: Did, items: Items): string {
   if (did.kind === 'bought') return boughtText(did);
   // Nor does a move: your cabin, next to the friend's, by name.
   if (did.kind === 'moved') return `Your cabin stands next to ${did.name}'s now.`;
+  if (did.kind === 'rescued') return `You give ${did.name} ${RESCUE_ENERGY} of your energy. ${did.name} is back up.`;
   const def = items.get(did.item);
   switch (did.kind) {
     case 'fire': {

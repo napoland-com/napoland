@@ -1,8 +1,8 @@
 /**
  * Face-to-face exchange over real WebSockets: two friends in one copy of a map, at most TRADE_REACH tiles apart,
  * ask and answer, put things in, press Ready and Trade, and the server swaps both sides in one step.
- * Anything that changes either side takes both Readys back; walking apart, another map, a collapse or
- * going offline calls it off; nothing traded ever earns XP twice.
+ * Anything that changes either side takes both Readys back; walking apart, another map, going down out
+ * of energy or going offline calls it off; nothing traded ever earns XP twice.
  */
 import { describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, TRADE_REACH, TileMap, type BagSlot, type ItemsData, type TradeView } from '@napoland/shared';
@@ -328,7 +328,7 @@ describe('a trade and the clock', () => {
     expect((await over(b.c)).end).toEqual({ kind: 'off', why: 'timeout', by: 'you' });
   });
 
-  it('is off for both when one of them collapses', async () => {
+  it('is off for both when one of them goes down out there, and nobody asks or is asked while down', async () => {
     // Out in the woods, one step from home, with almost nothing left.
     const [a, b] = await friends({ map: 'woods', x: 4, y: 5, energy: 1 }, { map: 'woods', x: 5, y: 5 });
     a.c.send({ t: 'tradeOpen', id: b.id });
@@ -336,9 +336,14 @@ describe('a trade and the clock', () => {
     b.c.send({ t: 'tradeAnswer', id: a.id, yes: true });
     await until(a.c, t => t.state === 'open');
     now += 10_000;
-    expect((await a.c.next('zone')).reason).toBe('collapse');
-    expect((await over(a.c)).end).toEqual({ kind: 'off', why: 'collapsed', by: 'you' });
-    expect((await over(b.c)).end).toEqual({ kind: 'off', why: 'collapsed', by: 'them' });
+    // Down first (rescue.ts): the trade is off at once, long before any collapse.
+    await a.c.next('slump');
+    expect((await over(a.c)).end).toEqual({ kind: 'off', why: 'down', by: 'you' });
+    expect((await over(b.c)).end).toEqual({ kind: 'off', why: 'down', by: 'them' });
+    for (const [from, to] of [[b, a], [a, b]] as const) {
+      from.c.send({ t: 'tradeOpen', id: to.id });
+      expect(await from.c.next('refused')).toEqual({ t: 'refused', action: 'tradeOpen', reason: 'down' });
+    }
   });
 });
 
