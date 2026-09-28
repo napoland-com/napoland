@@ -39,6 +39,8 @@ export function validateMap(data: MapData): Problem[] {
   const out: Problem[] = [];
   const err = (message: string) => out.push({ level: 'error', message });
   const warn = (message: string) => out.push({ level: 'warning', message });
+  // The server tells the copies of a map apart by its id and a key after it (world.ts, zoneKey).
+  if (!ID.test(data.id ?? '')) err(`its id is lowercase words joined by hyphens, not ${JSON.stringify(data.id)}`);
   if (data.tiles.length !== data.height) err(`tiles has ${data.tiles.length} rows, expected ${data.height}`);
   if (data.levels.length !== data.height) err(`levels has ${data.levels.length} rows, expected ${data.height}`);
   data.tiles.forEach((row, y) => {
@@ -125,6 +127,17 @@ export function validateMap(data: MapData): Problem[] {
   }
   const s = data.spawn;
   if (!map.walkable(s.x, s.y)) err(`spawn ${s.x},${s.y} is not walkable`);
+  // A home of one's own: only a room with the chest, where each player's stash is, is private.
+  if (data.private !== undefined && (data.private !== true || data.kind !== 'inside' || !data.objects.some(o => o.kind === 'chest'))) {
+    err('private: only a room with a chest (a home) is private, and then it is true');
+  }
+  if (data.wake !== undefined) {
+    const w = data.wake;
+    if (data.private !== true) err('wake: only a private room (a home) has a place to wake up in');
+    if (!Dir.safeParse(w.dir).success) err('wake: dir must be up, down, left or right');
+    if (!map.walkable(w.x, w.y) || map.exitAt(w.x, w.y)) err(`wake ${w.x},${w.y} is not a walkable tile of the room (an exit is none either)`);
+    else if (!map.warm(w.x, w.y)) err(`wake ${w.x},${w.y} is not by the fire: you wake up where it warms you`);
+  }
 
   // Every walkable tile should be reachable from the spawn; islands usually mean a blocked road.
   if (map.walkable(s.x, s.y)) {
@@ -266,7 +279,7 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   }
   const home = byId.get(homeId);
   if (!home) return [...out, { level: 'error', map: homeId, message: `the home map ${homeId} does not exist` }];
-  if (home.data.kind !== 'town') out.push({ level: 'error', map: homeId, message: 'the home map must be a town (collapsed players wake up there)' });
+  if (home.data.kind !== 'town') out.push({ level: 'error', map: homeId, message: 'the home map must be a town (players start there, or in the home off it, and wake up there after a collapse)' });
 
   for (const map of byId.values()) {
     // A door leads into a building: its exit must go to an inside, not to another town or the wilds.
@@ -310,6 +323,13 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
       out.push({ level: 'error', map: nearest.id, message: `the shelter nearest to the way home from ${map.data.id} must keep a fire that never goes out (a fireplace with tended: true), so new players always have one safe fire` });
     }
   }
+
+  // Where new players start and collapsed ones wake up: one home, off the home town, so it is never in doubt.
+  const wakes = [...byId.values()].filter(m => m.data.wake);
+  for (const m of wakes) {
+    if (!m.data.exits.some(e => e.to === homeId)) out.push({ level: 'error', map: m.data.id, message: `wake: only the home off the home town (${homeId}) is where you wake up, and this room's door opens elsewhere` });
+  }
+  if (wakes.length > 1) out.push({ level: 'error', map: wakes[1]!.data.id, message: `wake: ${wakes.map(m => m.data.id).join(' and ')} both have one, but everyone wakes up in the same home` });
 
   const reached = new Set([homeId]);
   const queue = [homeId];

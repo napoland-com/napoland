@@ -2,7 +2,7 @@
 id: well-rested
 title: Rested while away
 status: done
-order: 400
+order: 410
 area: gameplay
 depends: [home-stash-xp-levels]
 ---
