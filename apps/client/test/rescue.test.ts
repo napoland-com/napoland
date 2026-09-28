@@ -59,13 +59,13 @@ describe('what the window to be saved says', () => {
   it('names a rescue in the letter home by who was down and where, by landmark', () => {
     // As the trip report says where you fell: right by the pond, and how far the nearest door is.
     const pond = { kind: 'rescue' as const, map: 'near-woods', x: 21, y: 40, who: 'ana' };
-    expect(thanksFor(pond, find, items, 'Ana')).toBe('getting Ana back up by the pond, 36 steps from the old cabin');
+    expect(thanksFor(pond, find, items, 'Ana')).toBe('the hand up by the pond, 36 steps from the old cabin');
     expect(letterLines([{ what: pond, count: 1, people: 1, names: ['Ana'] }], find, items)).toEqual([
-      'While you were away, Ana thanked you for getting Ana back up by the pond, 36 steps from the old cabin.',
+      'While you were away, Ana thanked you for the hand up by the pond, 36 steps from the old cabin.',
     ]);
     // By a cabin's door: the room's name, and how far the next door is.
     const deep = { kind: 'rescue' as const, map: 'near-woods', x: 55, y: 6, who: 'ana' };
-    expect(thanksFor(deep, find, items, 'Ana')).toBe('getting Ana back up by the cabin at the end, 39 steps from the ranger\'s hut');
+    expect(thanksFor(deep, find, items, 'Ana')).toBe('the hand up by the cabin at the end, 39 steps from the ranger\'s hut');
   });
 });
 

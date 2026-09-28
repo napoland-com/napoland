@@ -53,7 +53,7 @@
  * - the Long Night is the server's too (`longNight`): its banners, and what Walt says while it is on.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes,
+  BUBBLE_S, TILE_NEEDS, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes,
   canRescue, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors,
   markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf, stepTarget,
   linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type ShopData, type ShopOpen, type CacheItemView,
@@ -76,7 +76,7 @@ import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, FIRST_STEPS_DONE, FIRST_STEPS_TITLE, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TELEPORT,
   TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, YOU_ARE_DOWN, buyQuestion, cabinWho, checkoutQuestion, comfortLines, didText, didWho, doorText, downLine, feedQuestion, fullFire, haveTool,
-  knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, placedAlready, raisedText,
+  floodedText, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, placedAlready, raisedText,
   rescueQuestion, rescueRefusal, rescueTooTired, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, visitedText,
   visitWho, waltOnTheLongNight, padlocked, IN_YOUR_CHEST, LOST_AND_FOUND, LOST_AND_FOUND_LINES, TAKE_HALF, bundleNotYours, carryLabel, handInQuestion, pileQuestion, returnedLine, thingsOf,
   SLAB, slabRefusal, FIRE_CHOICE, FIRE_OPTIONS, TWO_MEALS, WHAT_TO_COOK, ateAlready, cookQuestion, cookShort,
@@ -2318,6 +2318,10 @@ export class Game {
       return;
     }
     if (!this.map.inside(x, y)) return;
+    // A tap looks: on ground that opens only with a tool you have not got (the culvert without waders), the
+    // box says what it takes. Walking into it only turns you, and says nothing.
+    const kind = this.map.kind(x, y), need = kind && TILE_NEEDS[kind];
+    if (need && !this.pass.has(need)) return this.inform('Culvert', floodedText(this.items.get(need)));
     this.goal = null;
     this.path = findPath(this.map, from.x, from.y, x, y, false, undefined, this.pass);
     if (this.path.length) { const end = this.path.at(-1)!; this.marker = { x: end.x, y: end.y, t: 0 }; }

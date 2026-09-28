@@ -59,8 +59,7 @@ export function where(map: MapData, x: number, y: number, find: (id: string) => 
 /**
  * What a thanks was for, as a sentence names it: "the fire at the ranger's hut", "the fire at the leavers'
  * camp", "the campfire in the Near Woods", "your arrow by the pond" (the nearest place the map names),
- * "the resin you left in the old cabin's crate", "getting Ana back up by the pond, 36 steps from the old
- * cabin" and "bringing back what Ana lost by the pond, 36 steps from the old cabin" (by landmark, as the
+ * "the resin you left in the old cabin's crate", "the hand up by the pond, 36 steps from the old cabin" and "bringing back what Ana lost by the pond, 36 steps from the old cabin" (by landmark, as the
  * trip report says where you fell; `giver`: who thanked, who was down or whose it was). `find` gives a
  * map's data by id (every map ships with the client).
  */
@@ -84,9 +83,8 @@ export function thanksFor(what: ThanksFor, find: (id: string) => MapData | undef
       return place ? `your arrow by ${the(place.name)}` : `your arrow in ${inSentence(map.name)}`;
     }
     case 'rescue': {
-      // By name, never a pronoun: whoever was down is whoever thanked.
-      const who = giver ?? 'someone';
-      return map ? `getting ${who} back up ${where(map, what.x, what.y, find)}` : `getting ${who} back up`;
+      // Never a pronoun, and not the name again either: whoever was down is whoever thanked ("Ana thanked you for the hand up by the pond").
+      return map ? `the hand up ${where(map, what.x, what.y, find)}` : 'the hand up';
     }
     case 'returned': {
       // By name too: whoever lost it is whoever thanked.

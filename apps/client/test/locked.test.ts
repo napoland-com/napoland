@@ -97,6 +97,17 @@ describe('your own game and the culvert', () => {
     expect(walked).toEqual(['right', 'right', 'right', 'right']);
   });
 
+  it('says what it takes to a tap on its water without waders, and walks into it for a tap in them', () => {
+    const g = play(at(1, 1, 'right'), []);
+    g.tapTile(3, 1);
+    expect(note(g)).toBe('The culvert is flooded to the waist, and the water is cold. Waders would do it.');
+    expect(g.marker).toBeNull();
+    const wading = play(at(1, 1, 'right'), ['waders']);
+    wading.tapTile(3, 1);
+    expect(note(wading)).toBeUndefined();
+    expect(wading.marker).toMatchObject({ x: 3, y: 1 });
+  });
+
   it('never steps into it without waders: pushing against it only turns you, and says nothing', () => {
     const g = play(at(1, 1, 'down'), []);
     g.padChange('right', now);

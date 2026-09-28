@@ -285,6 +285,11 @@ export const GONE = 'It is not in your bag any more.';
  * more: a padlock, rusted shut. Bolt cutters would do it." Said as you walk into it, face it and press A,
  * or tap it.
  */
+/** Over a tap on the flooded culvert without waders (TILE_NEEDS): what it is, and what would do it. */
+export function floodedText(tool: ItemDef | undefined): string {
+  return `The culvert is flooded to the waist, and the water is cold.${tool ? ` ${tool.name} would do it.` : ''}`;
+}
+
 export function padlocked(tool: ItemDef | undefined): string {
   const why = tool ? `a padlock, rusted shut. ${tool.name} would do it.` : 'a padlock, rusted shut.';
   return `You pull at the door. It gives a little, and no more: ${why}`;
