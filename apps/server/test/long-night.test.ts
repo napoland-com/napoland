@@ -11,7 +11,7 @@ import { startServer, type RunningServer } from '../src/server';
 import { MemoryStorage, cleanLongNight, type LongNightRecord, type PlayerRecord } from '../src/storage';
 import { LODGE_FUEL_S, World, colorFor, type Outgoing } from '../src/world';
 import { houseData, townData, woodsData } from './fixtures';
-import { Client, eventually, savedPlayer, serverDefaults } from './helpers';
+import { Client, boardText, eventually, savedPlayer, serverDefaults } from './helpers';
 
 const DAY_MS = DAY_S * 1000, WEEK_MS = 7 * 86_400_000;
 /** The week of Monday 28 September 2026, and its Long Night: Saturday 3 October, from 19:12 to 20:00 UTC. */
@@ -53,7 +53,7 @@ const of = <T extends ServerMsg['t']>(msgs: ServerMsg[], t: T) => msgs.filter((m
 const board = (w: World, id: string, now: number) => {
   w.drain();
   w.board(id, 0, 4, now);
-  return of(to(w.drain(), id), 'board')[0]!.lines;
+  return boardText(of(to(w.drain(), id), 'board')[0]!, ITEMS);
 };
 const lodgeFire = (w: World, now: number) => w.scene('house', now).fires[0]!;
 

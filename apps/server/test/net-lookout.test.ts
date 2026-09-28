@@ -27,7 +27,7 @@ import { setLogLevel } from '../src/log';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { houseData, itemsData, townData } from './fixtures';
-import { Client, savedPlayer, serverDefaults, waitFor } from './helpers';
+import { Client, boardText, savedPlayer, serverDefaults, waitFor } from './helpers';
 
 const W = 16, H = 34;
 const LOOKOUT = { kind: 'lookout', x: 7, y: 8 } as const;
@@ -219,7 +219,7 @@ describe('the fire lookout, over the network', () => {
     expect(r.welcome.lamps).toBeUndefined();
     const board = async () => {
       r.c.send({ t: 'board', x: 0, y: 4 });
-      return (await r.c.next('board')).lines.filter(l => l.includes('lookout'));
+      return boardText(await r.c.next('board'), items()).filter(l => l.includes('lookout'));
     };
     expect(await board()).toEqual(['The fire lookout in the Woods: its lamp is out. It burns resin: feed it at the foot of the ladder.']);
 

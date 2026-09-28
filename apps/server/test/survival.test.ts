@@ -22,6 +22,7 @@ import {
   pathStep, type Outgoing, type WorldOptions,
 } from '../src/world';
 import { fixtureMaps, houseData, townData } from './fixtures';
+import { boardText } from './helpers';
 
 /** A field `h` tiles tall (8 wide inside the forest), its way home at (4, h - 1). */
 function fieldData(h = 12, more: Partial<MapData> = {}): MapData {
@@ -906,7 +907,7 @@ describe('echoes and the notice board', () => {
     const surge = { every: 100, unstable: 20, surge: 20, sweep: 10 };
     const w = world(fieldData(12, { surge, objects: [{ kind: 'fireplace', x: 4, y: 4 }] }), 'rain', {}, rec('a', 'town', 0, 5));
     w.board('a', 0, 4, (FIRE_MAX_S / 2 + 1) * 1000);
-    const lines = of(to(w.drain(), 'a'), 'board')[0]!.lines;
+    const lines = boardText(of(to(w.drain(), 'a'), 'board')[0]!, ITEMS);
     expect(lines).toEqual([
       'Rain.',
       // The first week after the epoch is a spring's, four days of it left (sky.ts, seasons).
@@ -926,7 +927,7 @@ describe('echoes and the notice board', () => {
   it('the board calls a fire in the open by the name people give it', () => {
     const w = world(fieldData(12, { objects: [{ kind: 'fireplace', x: 4, y: 4, name: 'the leavers\' camp' }] }), 'rain', {}, rec('a', 'town', 0, 5));
     w.board('a', 0, 4, (FIRE_MAX_S / 2 + 1) * 1000);
-    expect(of(to(w.drain(), 'a'), 'board')[0]!.lines).toContain('Gone out: the leavers\' camp. Bring something that burns.');
+    expect(boardText(of(to(w.drain(), 'a'), 'board')[0]!, ITEMS)).toContain('Gone out: the leavers\' camp. Bring something that burns.');
   });
 
   it('the board is read once the steps sent before the look are walked, from where they take you', () => {
@@ -1090,7 +1091,7 @@ describe('what the woods are like today', () => {
     const [week, next] = view.week === 'copper' ? ['copper week. Wire by every pole, all week.', 'quiet woods'] : ['quiet woods. The watchers sleep all week.', 'copper week'];
     const w = world(fieldData(12), 'rain', { items: { ...ITEMS, conditions }, epochOffset: now }, rec('a', 'town', 0, 5));
     w.board('a', 0, 4, 0);
-    expect(of(to(w.drain(), 'a'), 'board')[0]!.lines.slice(0, 6)).toEqual([
+    expect(boardText(of(to(w.drain(), 'a'), 'board')[0]!, { ...ITEMS, conditions }).slice(0, 6)).toEqual([
       'Rain.',
       // Day 20000 is in a winter's week, with two days of it left; nothing freezes in the Field.
       'Winter, for about 2 days more: colder out there, and snow instead of rain. Spring comes next.',

@@ -610,6 +610,64 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .field-notes .note .where + p ~ p { margin-top: .35em; }
 /* Who found it first on the server (firsts.ts), dim under it. */
 .field-notes .page .first { margin-top: .35em; font-size: .85em; color: #b9a36a; }
+/* The notice board (board.ts): opened by reading it, where the other panels open. Its tabs like the
+   journal's; over them the sky in a row of chips; under them cards, a region's opened by a tap for what
+   the board says about it. Colors only where something needs seeing to: a surge in the surge's violet,
+   a storm or a fire gone out in red, soon in amber, falling rain in blue. */
+.board-sheet .sheet-head .chest-tabs { flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.board-sheet .sheet-head .chest-tabs::-webkit-scrollbar { display: none; }
+.hud .board-sheet .chest-tabs button { padding: 0 .45em; }
+.board-sky, .board-body { flex: none; width: 100%; max-width: max(440px, calc(var(--u) * 40)); }
+.board-sky { display: flex; flex-wrap: wrap; gap: calc(var(--u) * .4); }
+.board-body { display: grid; gap: calc(var(--u) * .6); font-family: var(--font-text); font-weight: 700; font-size: max(12px, calc(var(--u) * 1.15)); line-height: 1.35; color: #e6dfcf; }
+.board-body[hidden] { display: none; }
+.board-body p { margin: 0; }
+.hud .bchip, .bchip { display: inline-flex; align-items: center; gap: .3em; width: auto; min-height: 0; padding: .22em .65em .22em .35em; border: 0; border-radius: 99px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240;
+  font-family: var(--font-text); font-weight: 700; font-size: max(11px, calc(var(--u) * 1.02)); line-height: 1.2; color: #d3ccbb; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hud .bchip svg, .bchip svg { width: 1.45em; height: 1.45em; flex: none; }
+.hud button.bchip { cursor: pointer; }
+.bchip[data-tone="good"] { color: #b8f0a8; box-shadow: inset 0 0 0 1px #3f6a4a; }
+.bchip[data-tone="rain"] { color: #bfe2ff; box-shadow: inset 0 0 0 1px #3f6a96; }
+.bchip[data-tone="restless"] { color: #e3d4ff; background: rgba(60, 34, 100, .75); box-shadow: inset 0 0 0 1px #8a6cd0; }
+.bchip[data-tone="surge"] { color: #fff; background: rgba(118, 30, 150, .9); box-shadow: inset 0 0 0 1px #f0c6ff; }
+.bchip[data-tone="warn"] { color: #ffe3a3; background: #2a2414; box-shadow: inset 0 0 0 1px #8a7440; }
+.bchip[data-tone="bad"] { color: #ffd0c4; background: #34181a; box-shadow: inset 0 0 0 1px #b04a3a; }
+.bcard { display: grid; gap: calc(var(--u) * .45); padding: .6em .75em .65em; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.bcard[data-card] { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.bcard[data-card]:focus-visible { outline: 2px solid #ffcf5a; outline-offset: 2px; }
+.bcard[aria-expanded="true"] { box-shadow: inset 0 0 0 1px #8a7440; }
+.bhead { display: flex; align-items: center; gap: .45em; font-family: var(--font-ui); font-weight: 600; font-size: 1.05em; line-height: 1.2; color: #ffcf5a; }
+.bhead b { flex: 1; font-weight: inherit; }
+.bhead svg { width: 1.5em; height: 1.5em; flex: none; }
+.bcard[data-card] .bhead svg { width: 1.2em; height: 1.2em; color: #8a8474; transition: transform .18s ease; }
+.bcard[aria-expanded="true"] .bhead svg { transform: rotate(180deg); }
+.bchips { display: flex; flex-wrap: wrap; gap: calc(var(--u) * .35); }
+.brow { display: flex; align-items: center; gap: .45em; min-width: 0; }
+.brow svg { width: 1.5em; height: 1.5em; flex: none; }
+.brow .bt { min-width: 0; }
+/* A bar and its count line up down a card: the same width, at the same place, whatever the words before them. */
+.brow .sbar { flex: none; width: min(8em, 30%); margin-left: auto; }
+.brow .n { flex: none; min-width: 5.6em; text-align: right; color: #b9b2a2; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.brow[data-tone="good"] { color: #b8f0a8; }
+.brow[data-tone="warn"] { color: #ffe3a3; }
+.brow[data-tone="bad"] { color: #ffae98; }
+.brow[data-tone="surge"] { color: #e3d4ff; }
+.bmore { display: grid; gap: .35em; margin-top: .15em; padding-top: .45em; border-top: 1px solid #2a3240; color: #d3ccbb; }
+.bmore[hidden] { display: none; }
+.bsay { display: grid; gap: .3em; color: #d3ccbb; }
+.bwork { margin-top: .3em; font-family: var(--font-ui); font-weight: 600; color: #d3ccbb; }
+.bnote { display: grid; gap: .4em; padding: 0 .2em; color: #b9b2a2; }
+/* The week's parcels: seven days in a row, today ringed, a day you came back ticked; the one picked says what it holds under them. */
+.bweek { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: calc(var(--u) * .3); }
+.hud .bday { position: relative; display: grid; justify-items: center; gap: .1em; width: auto; min-width: 0; padding: .35em 0 .3em; border: 0; border-radius: 8px; background: #10141b; box-shadow: inset 0 0 0 1px #2a3240;
+  font-family: var(--font-ui); font-weight: 600; font-size: max(11px, calc(var(--u) * .9)); color: #b9b2a2; }
+.hud .bday svg { width: 1.9em; height: 1.9em; }
+.hud .bday[data-today] { color: #ffcf5a; box-shadow: inset 0 0 0 2px #ffcf5a; }
+.hud .bday[aria-pressed="true"] { background: #1d2430; }
+.bday .came { position: absolute; right: .12em; bottom: .12em; width: 1.05em; height: 1.05em; }
+.bday .came svg { width: 100%; height: 100%; }
+.bdayline { color: #e6dfcf; }
+.bdayline[hidden] { display: none; }
 /* About (about.ts): who makes the game, and where its code and rules are. It opens where the bag does.
    Its words never go below 11 to 12px, so a small phone can still read the small print. */
 .about-sheet .sheet-head { font-size: max(14px, calc(var(--u) * 1.35)); }

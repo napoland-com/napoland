@@ -8,6 +8,7 @@ import { ENERGY_MAX, SEASONS, TileMap, energyRate, seasonAt, type Dir, type Item
 import type { PlayerRecord } from '../src/storage';
 import { World, colorFor, type Outgoing } from '../src/world';
 import { fixtureMaps, townData } from './fixtures';
+import { boardText } from './helpers';
 
 const WEEK_MS = 7 * 86_400_000;
 /** The first Monday 00:00 UTC from late September 2026 that starts `season`. */
@@ -93,7 +94,7 @@ describe('seasons', () => {
       w.join(rec('a', 'town', 0, 5, 'up'), 0);
       w.drain();
       w.board('a', 0, 4, 0);
-      return of(to(w.drain(), 'a'), 'board')[0]!.lines;
+      return boardText(of(to(w.drain(), 'a'), 'board')[0]!, ITEMS);
     };
     // Three days into winter, 14 minutes after that day's dawn: the Field rains (snows) on the usual cycle.
     const lines = board(mondayOf('winter') + 3 * 86_400_000 + 14 * 60_000);

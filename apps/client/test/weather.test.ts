@@ -5,6 +5,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ClientMsg, PlayerView } from '@napoland/shared';
+import { boardPanel } from '../src/board';
 import { Game } from '../src/game';
 import { Items, factsOf, resistText, useLabel } from '../src/items';
 import { Maps } from '../src/maps';
@@ -12,7 +13,7 @@ import { didText, useQuestion } from '../src/said';
 import { newsBanner, statusView } from '../src/status';
 import { soundscape, type Scene } from '../src/soundscape';
 import { ambience } from '../src/view/lighting';
-import { DRY, FULL, itemsData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
+import { DRY, FULL, boardView, itemsData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
 
 const items = new Items({
   ...itemsData(),
@@ -67,11 +68,20 @@ describe('the sky follows the region you are in', () => {
     expect(soundscape(scene('overcast')).loops.rain).toBe(0);
   });
 
-  it('shows the notice board as the server writes it: the day, then each region on its own rain', () => {
-    g.handle(welcome(tinyTown(), [me(3, 3)]), 0);
-    const lines = ['Night falls in about 18 minutes.', 'The Near Woods: rain for about 10 minutes more.', 'The South Road: dry for about 10 minutes, then rain.'];
-    g.handle({ t: 'board', lines }, 1000);
-    expect(g.dialog).toMatchObject({ who: 'Notice board', lines });
+  it('shows on the notice board when night falls, and each region\'s own rain: falling, coming, or none till dark, nearest town first', () => {
+    const board = boardView({
+      regions: [
+        { id: 'near-woods', name: 'The Near Woods', rain: { raining: true, left: 600 }, glowing: [] },
+        { id: 'south-road', name: 'The South Road', rain: { raining: false, left: 600 }, glowing: [] },
+        { id: 'far-woods', name: 'The Far Woods', rain: null, glowing: [] },
+      ],
+    });
+    const { sky, out } = boardPanel(board, items.board);
+    expect(sky).toContain('Night in 18 min');
+    for (const chip of ['Rain · 10 min more', 'Rain in 10 min', 'Dry till dark']) expect(out).toContain(chip);
+    for (const line of ['The Near Woods: rain for about 10 minutes more.', 'The South Road: dry for about 10 minutes, then rain.', 'The Far Woods: dry until nightfall.']) expect(out).toContain(line);
+    expect(out.indexOf('The Near Woods')).toBeLessThan(out.indexOf('The South Road'));
+    expect(out.indexOf('The South Road')).toBeLessThan(out.indexOf('The Far Woods'));
   });
 });
 

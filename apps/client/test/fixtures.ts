@@ -1,5 +1,5 @@
 import {
-  PROTOCOL_VERSION, STEP_MS, type BagSlot, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type FlashView, type StormView, type ItemsData,
+  PROTOCOL_VERSION, STEP_MS, type BagSlot, type BoardView, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type FlashView, type StormView, type ItemsData,
   type LongNightView, type MapData, type MarkView, type MeritsView, type NotebookView, type PlayerView, type ProgressView, type SeasonView, type ServerMsg, type ShopData, type ShopView,
   type StoneView, type StoryData, type StoryView, type SurgeView, type ConditionsView, type Weather, type TownView,
 } from '@napoland/shared';
@@ -154,6 +154,16 @@ export interface Extras {
 /** Dry, light and alone. */
 export const DRY: BodyView = { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} };
 export const ASLEEP: StoneView = { charge: 0, need: 20, awake: false, left: 0 };
+/**
+ * The notice board as the server sends it (board.ts): a summer day with night 18 minutes off, the Long
+ * Night 5 days off with its bonus, and nothing else yet; `more` fills in the rest.
+ */
+export function boardView(more: Partial<BoardView> = {}): BoardView {
+  return {
+    sky: { kind: 'day', dusk: 1080 }, season: { season: 'summer', left: 6 * 86_400, next: 'autumn', frozen: [] }, longNight: { on: false, in: 5 * 86_400, bonus: true },
+    regions: [], conditions: { today: [], week: null, next: null }, lamps: [], works: [], fires: { out: [], low: [], count: 0 }, collapses: [], firsts: [], ...more,
+  };
+}
 /** Nothing stashed yet: level 1. */
 export const START: ProgressView = { xp: 0, level: 1, from: 0, to: 30, maxEnergy: 100 };
 

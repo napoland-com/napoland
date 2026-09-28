@@ -12,7 +12,7 @@ import { setLogLevel } from '../src/log';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { houseData, itemsData, townData, woodsData } from './fixtures';
-import { Client, keepsParcels, keepsToolsParcelsAndOutfit, newName, parcelsThroughRestarts, savedPlayer, serverDefaults, type Msg } from './helpers';
+import { Client, boardText, keepsParcels, keepsToolsParcelsAndOutfit, newName, parcelsThroughRestarts, savedPlayer, serverDefaults, type Msg } from './helpers';
 
 /** Monday 28 September 2026, 00:00 UTC, and the calendar day it is. */
 const MONDAY = Date.UTC(2026, 8, 28);
@@ -235,7 +235,7 @@ describe('the NAPO lockbox', () => {
 describe('the calendar on the notice board', () => {
   const read = async (c: Client) => {
     c.send({ t: 'board', x: 2, y: 5 });
-    return (await c.next('board')).lines;
+    return boardText(await c.next('board'), items());
   };
   const CALENDAR = [
     "Parcels this week, from the town's stores. Mon: a nail. Tue: 2 nails. Wed (today): 3 nails. Thu: 4 nails.",
