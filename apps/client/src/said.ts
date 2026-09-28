@@ -5,8 +5,8 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, LAMP_MAX_S, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, toNextMerit, type BagSlot, type Did, type Dir,
-  type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
+  CACHE_SIZE, LAMP_MAX_S, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, toNextMerit, worksDays, type BagSlot, type Did,
+  type Dir, type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade, type WorksDef, type WorksView,
 } from '@napoland/shared';
 import { oddsText, pieceName, type Items } from './items';
 
@@ -81,6 +81,52 @@ export function lampQuestion(fuel: ItemDef): string {
 export function upText(seconds: number): string {
   return `You climb up to the lookout and see the woods for miles. You can stay ${howLong(seconds)}: B climbs down.`;
 }
+
+/** A: at a place being mended (works.ts), with what it takes. "Give 3 scrap to the footbridge?" */
+export function giveQuestion(def: ItemDef, w: Pick<WorksDef, 'name'>, n: number): string {
+  return `Give ${amount(def, n)} to ${w.name}?`;
+}
+
+/** What the text box calls a place being mended: "Footbridge", "Street light". */
+export function worksWho(w: Pick<WorksDef, 'name'>): string {
+  const n = w.name.replace(/^the /, '');
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+/** How long what is put by keeps a place standing: "enough for 3 more days"; or that it will not last past today. */
+function upkeep(w: WorksDef, held: number, def: ItemDef): string {
+  const days = worksDays(w, held), noun = pluralOf(def);
+  if (days > 0) return `${held} ${noun} put by, enough for ${days} more day${days === 1 ? '' : 's'} (it takes ${w.wear} a day).`;
+  return `It takes ${w.wear} ${noun} a day, and ${held === 0 ? 'none is' : `only ${held} ${held === 1 ? 'is' : 'are'}`} put by: it will not last past today.`;
+}
+
+/** How a place being mended stands: "The footbridge is broken: 12 of 30 scrap given, 18 more and it stands again." */
+function worksState(w: WorksDef, v: Pick<WorksView, 'standing' | 'held'>, def: ItemDef): string {
+  const name = w.name.charAt(0).toUpperCase() + w.name.slice(1), light = w.build === 'light', again = light ? 'it lights up again' : 'it stands again';
+  if (v.standing) return `${name} ${light ? 'is lit' : 'stands'}. ${upkeep(w, v.held, def)}`;
+  const down = light ? 'is dark' : 'is broken';
+  return v.held > 0
+    ? `${name} ${down}: ${v.held} of ${w.need} ${pluralOf(def)} given, ${w.need - v.held} more and ${again}.`
+    : `${name} ${down}: ${again} with ${w.need} ${pluralOf(def)}.`;
+}
+
+/**
+ * A: at a place being mended, with nothing it takes in the bag, or none it has room for, or after NO: how
+ * it stands, and the name on its plaque. "The footbridge stands. 18 scrap put by, enough for 3 more days
+ * (it takes 5 a day). Its plaque: Ana gave the most."
+ */
+export function worksText(w: WorksDef, v: WorksView | undefined, def: ItemDef): string {
+  const plaque = v?.top ? ` Its plaque: ${v.top} gave the most.` : ' Its plaque is blank: nobody has given anything yet.';
+  return `${worksState(w, v ?? { standing: false, held: 0 }, def)}${plaque}`;
+}
+
+/** Said after how a place stands, when you carry nothing it takes: "You have no scrap to give it." */
+export function nothingToGive(def: ItemDef): string {
+  return `You have no ${nounOf(def)} to give it.`;
+}
+
+/** Said after how a place stands, when it takes no more for now. */
+export const WORKS_FULL = 'It has all it can keep for now.';
 
 /** A: at the Old Stone. "Give the Old Stone a shard?", "Give the Old Stone 3 shards?" */
 export function stoneQuestion(def: ItemDef, n: number): string {
@@ -315,6 +361,7 @@ export function didWho(did: Did, items: Items): string {
   switch (did.kind) {
     case 'fire': return 'Fire';
     case 'lamp': return 'Lookout';
+    case 'gave': { const w = items.works.get(did.works); return w ? worksWho(w) : 'Mending'; }
     case 'stone': return 'The Old Stone';
     case 'made': case 'mended': case 'upgraded': return 'Workbench';
     case 'used': case 'opened': return items.get(did.item).name;
@@ -340,6 +387,14 @@ export function didText(did: Did, items: Items): string {
     case 'lamp': {
       const took = `The lamp takes ${amount(def, did.count)}${did.lit ? ' and lights up' : ''}.`;
       return `${took} ${lampFull(did.left) ? 'It is full: it' : 'It'} will burn ${burnsOn(did.left)}, its beam sweeping the woods.`;
+    }
+    case 'gave': {
+      const w = items.works.get(did.works), v = did.view;
+      if (!w) return `You give ${amount(def, did.count)}.`;
+      const gave = `You give ${amount(def, did.count)} to ${w.name}`;
+      if (did.built) return `${gave}, and ${w.build === 'light' ? 'it lights up again' : 'it stands again'}! ${upkeep(w, v.held, def)}`;
+      if (v.standing) return `${gave}. ${upkeep(w, v.held, def)}`;
+      return `${gave}: ${v.held} of ${w.need}, ${w.need - v.held} more and ${w.build === 'light' ? 'it lights up again' : 'it stands again'}.`;
     }
     case 'stone': {
       const what = did.count === 1 ? `the ${nounOf(def)}` : amount(def, did.count), s = did.stone;

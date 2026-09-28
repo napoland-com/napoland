@@ -549,9 +549,9 @@ describe('places you can see but not reach yet (roadmap/locked-places.md)', () =
   });
 
   it('moved nothing: the shed and its door came after everything before them, and every tile anyone walks is as far from home as without them', () => {
-    // Only what came later still (the fire lookout, and its sign) stands after the shed; its door is the last exit.
+    // Only what came later still (the fire lookout and its sign, then the places mended together) stands after the shed; its door is the last exit.
     const after = woods.data.objects.slice(woods.data.objects.indexOf(shed) + 1);
-    expect(after.every(o => o.kind === 'lookout' || o.kind === 'sign')).toBe(true);
+    expect(after.map(o => (o.kind === 'lamp' && o.works ? 'works lamp' : o.kind))).toEqual(['lookout', 'sign', 'footbridge', 'works lamp']);
     expect(woods.data.exits.at(-1)).toMatchObject({ to: 'near-woods-shed' });
     // The woods as they were: forest where the culvert runs and the shed stands (its ground was cut out of the firs).
     const under = new Set(objectTiles(shed).map(([x, y]) => `${x},${y}`));
@@ -608,12 +608,87 @@ describe('the fire lookout (roadmap/lookout-tower.md)', () => {
     expect(road.data.objects.some(o => o.kind === 'sign' && o.text.join(' ').includes('Do not climb'))).toBe(true);
   });
 
-  it('moved nothing: it and its sign came last, on forest they cleared, and every tile anyone walks is as far from home as without them', () => {
-    const at = woods.data.objects.indexOf(tower);
-    expect(woods.data.objects.slice(at).map(o => o.kind)).toEqual(['lookout', 'sign']);
-    const cleared = new Set([...objectTiles(tower), ...objectTiles(woods.data.objects[at + 1]!), [foot.x, foot.y] as const].map(([x, y]) => `${x},${y}`));
+  it('moved nothing: it and its sign came after everything before them, on forest they cleared, and every tile anyone walks is as far from home as without them', () => {
+    const at = woods.data.objects.indexOf(tower), sign = woods.data.objects[at + 1]!;
+    // After them, only what came later still: the places mended together.
+    expect(woods.data.objects.slice(at).map(o => o.kind)).toEqual(['lookout', 'sign', 'footbridge', 'lamp']);
+    const cleared = new Set([...objectTiles(tower), ...objectTiles(sign), [foot.x, foot.y] as const].map(([x, y]) => `${x},${y}`));
     const without = new TileMap({
-      ...woods.data, tiles: woods.data.tiles.map((r, y) => [...r].map((c, x) => (cleared.has(`${x},${y}`) ? 't' : c)).join('')), objects: woods.data.objects.slice(0, at),
+      ...woods.data, tiles: woods.data.tiles.map((r, y) => [...r].map((c, x) => (cleared.has(`${x},${y}`) ? 't' : c)).join('')), objects: woods.data.objects.filter(o => o !== tower && o !== sign),
+    });
+    expect(woods.deepest).toBe(without.deepest);
+    for (let y = 0; y < woods.height; y++) for (let x = 0; x < W; x++) {
+      if (!without.walkable(x, y)) continue;
+      expect(woods.walkable(x, y), `${x},${y}`).toBe(true);
+      expect(woods.homeSteps(x, y), `${x},${y}`).toBe(without.homeSteps(x, y));
+    }
+  });
+});
+
+describe('mending the woods together (roadmap/trail-works.md)', () => {
+  const woods = maps.get('near-woods')!, W = woods.width;
+  const works = items.works ?? [];
+  const bridge = woods.data.objects.find((o): o is Extract<MapObject, { kind: 'footbridge' }> => o.kind === 'footbridge')!;
+  const light = woods.data.objects.find((o): o is Extract<MapObject, { kind: 'lamp' }> => o.kind === 'lamp' && o.works !== undefined)!;
+  const pond = woods.data.places!.find(p => p.name === 'pond')!;
+  const STANDS = new Set([bridge.id]);
+  /** Walking steps from a tile to every other, as the game walks them, with what a pass opens. */
+  const walk = (from: readonly [number, number], pass?: ReadonlySet<string>) => {
+    const d = new Int32Array(W * woods.height).fill(-1), queue = [from[1] * W + from[0]];
+    d[queue[0]!] = 0;
+    for (let h = 0; h < queue.length; h++) {
+      const i = queue[h]!, x = i % W, y = Math.floor(i / W);
+      for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const) {
+        if (!woods.walkable(nx, ny, pass) || woods.exitAt(nx, ny) || d[ny * W + nx]! >= 0) continue;
+        d[ny * W + nx] = d[i]! + 1;
+        queue.push(ny * W + nx);
+      }
+    }
+    return ([x, y]: readonly [number, number]) => d[y * W + x]!;
+  };
+
+  it('are a footbridge by the pond that takes scrap, 5 a day to keep up, and a street light in its clearing that takes copper wire, 2 a day', () => {
+    expect(works.map(w => [w.id, w.build, w.item, w.wear])).toEqual([['pond-footbridge', 'footbridge', 'scrap', 5], ['pond-light', 'light', 'wire', 2]]);
+    for (const w of works) {
+      // More to stand again than a day's wear, and never more than a week of it put by ahead.
+      expect(w.need).toBeGreaterThan(w.wear);
+      expect(w.hold).toBeLessThanOrEqual(7 * w.wear);
+      expect(w.hold).toBeGreaterThanOrEqual(w.wear);
+    }
+    expect(validateItems(items, [...maps.values()].map(m => m.data))).toEqual([]);
+  });
+
+  it('spans the creek where it leaves the pond, bank to bank, walkable only while it stands: 14 steps shorter on the way home from the far bank', () => {
+    expect(bridge.id).toBe('pond-footbridge');
+    for (const [x, y] of objectTiles(bridge)) {
+      expect(woods.kind(x, y)).toBe('water');
+      expect(woods.walkable(x, y)).toBe(false);
+      expect(woods.walkable(x, y, STANDS)).toBe(true);
+    }
+    expect(Math.hypot(bridge.x - pond.x, bridge.y - pond.y)).toBeLessThan(6);
+    const west = [bridge.x - 1, bridge.y] as const, home = [31, woods.height - 2] as const;
+    expect(walk(west)(home) - walk(west, STANDS)(home)).toBe(14);
+    // How deep the far bank is does not change by it: only the walk home.
+    expect(woods.homeSteps(...west)).toBe(walk(west)(home) + 1);
+  });
+
+  it('lights the pond clearing only while it stands: what it lights keeps off surges and creatures then, like any street light', () => {
+    expect(light.works).toBe('pond-light');
+    expect(Math.hypot(light.x - pond.x, light.y - pond.y)).toBeLessThan(4);
+    const lit = new Set(['pond-light']);
+    for (const [x, y] of [[light.x - 1, light.y], [light.x - 2, light.y], [light.x - 1, light.y - 1], [light.x - 1, light.y + 1]] as const) {
+      expect(woods.walkable(x, y), `${x},${y}`).toBe(true);
+      expect(woods.lit(x, y), `${x},${y}`).toBe(false);
+      expect(woods.lit(x, y, lit), `${x},${y}`).toBe(true);
+      expect(woods.creatureMayStand(x, y, lit), `${x},${y}`).toBe(false);
+    }
+  });
+
+  it('moved nothing: they came last, the footbridge over the creek and the light on forest it cleared, and every tile anyone walks is as far from home as without them', () => {
+    const at = woods.data.objects.indexOf(bridge);
+    expect(woods.data.objects.slice(at)).toEqual([bridge, light]);
+    const without = new TileMap({
+      ...woods.data, tiles: woods.data.tiles.map((r, y) => (y === light.y ? `${r.slice(0, light.x)}t${r.slice(light.x + 1)}` : r)), objects: woods.data.objects.slice(0, at),
     });
     expect(woods.deepest).toBe(without.deepest);
     for (let y = 0; y < woods.height; y++) for (let x = 0; x < W; x++) {

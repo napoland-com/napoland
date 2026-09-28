@@ -105,6 +105,8 @@ export interface LightSource {
   /** The tile of the lamp or fireplace: a fire's light follows how big it burns. */
   tx: number;
   ty: number;
+  /** A street light mended together (works.ts): it shines only while that place stands. */
+  works?: string;
 }
 
 /** A map's lamps and fires, in the order of its objects. */
@@ -114,7 +116,7 @@ export function lightSources(map: TileMap): LightSource[] {
   for (const o of map.data.objects) {
     const ph = hash2(o.x, o.y) * 6;
     // Every third lamp flickers.
-    if (o.kind === 'lamp') out.push({ kind: 'lamp', x: o.x + 0.84, y: 1.1, z: o.y + 0.5, flicker: lamps++ % 3 === 1, ph, tx: o.x, ty: o.y });
+    if (o.kind === 'lamp') out.push({ kind: 'lamp', x: o.x + 0.84, y: 1.1, z: o.y + 0.5, flicker: lamps++ % 3 === 1, ph, tx: o.x, ty: o.y, ...(o.works ? { works: o.works } : {}) });
     // In front of a hearth's mouth, so it lights the room; over a campfire's middle.
     else if (o.kind === 'fireplace') out.push({ kind: 'fire', x: o.x + 0.5, y: 0.5, z: o.y + (hearthAt(map, o.x, o.y) ? 0.62 : 0.5), flicker: true, ph, tx: o.x, ty: o.y });
   }

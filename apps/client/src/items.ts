@@ -6,7 +6,7 @@
  */
 import {
   BAG_SLOTS, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, upgradable, upgradeChance, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef,
-  type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction, type Slot, type Upgrade, type Worn,
+  type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction, type Slot, type Upgrade, type Worn, type WorksDef,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
 import type { Look } from './view/characters';
@@ -25,6 +25,8 @@ export class Items {
   readonly upgrades: ItemsData['upgrades'];
   /** What the woods may be like on a day or in a week (sky.ts). */
   readonly conditions: ItemsData['conditions'];
+  /** The places everyone mends together, by id (works.ts): what each takes, and how fast it wears. */
+  readonly works: Map<string, WorksDef>;
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
 
   constructor(data: ItemsData | undefined) {
@@ -35,6 +37,7 @@ export class Items {
     this.mend = data?.mend;
     this.upgrades = data?.upgrades;
     this.conditions = data?.conditions;
+    this.works = new Map((data?.works ?? []).map(w => [w.id, w]));
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
 
@@ -128,6 +131,8 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'padlocked': return 'A padlock, rusted shut';
     case 'lamp_full': return 'The lamp holds as much as it can';
     case 'up': return 'Climb down first';
+    case 'not_wanted': return 'It takes something else';
+    case 'works_full': return 'It has all it can keep for now';
   }
 }
 

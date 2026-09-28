@@ -142,7 +142,7 @@ describe('gear on the road, over the network', () => {
       expect((await a.c.closed).code).toBe(1008);
     }
     // 20 brought wear and doff; outfits (21), calls (22) and thanks (23) came after them, then the rest saved up while away (24), merits (25),
-    // trades (26) and the fire lookout, climbed and its lamp fed (27).
+    // trades (26), and the fire lookout, climbed and its lamp fed, with the woods mended together (27, one release).
     expect(PROTOCOL_VERSION).toBe(27);
   });
 });

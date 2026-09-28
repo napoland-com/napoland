@@ -640,10 +640,35 @@ onForest({
   }
 }
 
+// ---- Mending the woods together (roadmap/trail-works.md) ----
+
+// Two places by the pond that stand broken until everyone brings what they take (content/items.json,
+// works): the footbridge over the creek where it leaves the pond, between the path round the pond and
+// the one east to the track, and a street light at the edge of the pond clearing. The footbridge changes
+// no tile (the creek stays water: its planks open with its id while it stands), and the light stands on
+// forest it clears; so, added last like the rest, they move nothing: every tile anyone walks is as far
+// from home as it was.
+const beforeWorks = tile.map(r => r.join('')), stepsBeforeWorks = stepsHome();
+const FOOTBRIDGE = { kind: 'footbridge', id: 'pond-footbridge', x: 17, y: 44, w: 2, h: 1 } as const;
+for (const [x, y] of objectTiles(FOOTBRIDGE)) if (at(x, y) !== 'w') throw new Error(`the footbridge at ${x},${y} spans ${at(x, y)}, not the creek`);
+const bridgeEnds = [[FOOTBRIDGE.x - 1, FOOTBRIDGE.y], [FOOTBRIDGE.x + FOOTBRIDGE.w, FOOTBRIDGE.y]] as const;
+for (const [x, y] of bridgeEnds) if (!walkable(x, y)) throw new Error(`the footbridge's end at ${x},${y} is not ground anyone walks`);
+must(FOOTBRIDGE);
+const POND_LIGHT = { kind: 'lamp', x: 21, y: 40, works: 'pond-light' } as const;
+onForest(POND_LIGHT);
+{
+  const d = stepsHome();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, was = beforeWorks[y]![x]!;
+    if (was !== tile[y]![x] && was !== 't') throw new Error(`the tile at ${x},${y} was ${was} and is now ${tile[y]![x]}: only forest may change`);
+    if (stepsBeforeWorks[i]! >= 0 && d[i] !== stepsBeforeWorks[i]) throw new Error(`the tile at ${x},${y} was ${stepsBeforeWorks[i]} steps from home and is now ${d[i]}`);
+  }
+}
+
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 11, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 12, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
@@ -710,6 +735,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
   // The loggers' fire lookout, west of the rocks.
   lookout: 'Y',
+  // The footbridge by the pond, whole or broken (its light is a lamp).
+  footbridge: '=',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', c: '%', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();
@@ -763,6 +790,10 @@ console.log(`the fire lookout: its ladder's foot ${tm.homeSteps(ladderFoot.x, la
   const shed = doorOf(SHED);
   console.log(`the ranger's shed: its door ${tm.homeSteps(shed.x, shed.y)} steps from home, padlocked (${shedDoor.lock})`);
   console.log(`the culvert: ${culvert.length} tiles from ${MOUTHS[0]!.join(',')} to ${MOUTHS[1]!.join(',')}; from the bog to where it comes out south of the creek ${plain(OUT)} steps round by the ford, ${wading(OUT)} through it; from the bog to the way home ${plain(homeTile) + 1} steps, ${wading(homeTile) + 1} through it`);
+  // What the footbridge is worth while it stands: from its west end, the way home, round by the ford and over it.
+  const standing = new Set([FOOTBRIDGE.id]), west = bridgeEnds[0] as P;
+  console.log(`the footbridge: from its west end (${west.join(',')}) to the way home ${walk(west)(homeTile) + 1} steps round by the ford, ${walk(west, standing)(homeTile) + 1} over it while it stands`);
+  console.log(`the pond light: ${POND_LIGHT.x},${POND_LIGHT.y}, ${tm.homeSteps(POND_LIGHT.x - 1, POND_LIGHT.y)} steps from home in front of it`);
 }
 // The tuning targets in energy.ts: how long a full bar lasts standing still in the rain.
 const lasts = (x: number, y: number) => (ENERGY_MAX / -energyRate(tm, x, y, 'rain') / 60).toFixed(1);

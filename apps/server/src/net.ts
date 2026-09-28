@@ -33,7 +33,7 @@ import { log } from './log';
 import { Calls } from './calls';
 import { Chat } from './chat';
 import { Social, type SocialMsg } from './social';
-import type { CacheItemRecord, DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord, WorksRecords } from './storage';
 import { Trades, type TradeMsg } from './trade';
 import { colorFor, type World } from './world';
 
@@ -163,6 +163,8 @@ export function attachNet(o: NetOptions): Net {
   /** The same for each thing left in a crate. */
   const pendingCaches = new Map<number, Promise<void>>();
   let pendingStone: Promise<void> = Promise.resolve();
+  /** The places mended together: one write at a time, in order, each with all of them as they were then. */
+  let pendingWorks: Promise<void> = Promise.resolve();
   let saving = false;
   let closing = false;
   /** Open sockets per client address. */
@@ -373,6 +375,9 @@ export function attachNet(o: NetOptions): Net {
         return flush();
       case 'climbDown':
         world.climbDown(s.id, now);
+        return flush();
+      case 'give':
+        world.give(s.id, msg.x, msg.y, msg.slot, now, msg.count);
         return flush();
       case 'cache':
         world.openCache(s.id, msg.x, msg.y, now);
@@ -660,6 +665,7 @@ export function attachNet(o: NetOptions): Net {
       items: world.itemsVersion,
       story: joined.story,
       thanked: joined.thanked,
+      ...(joined.works ? { works: joined.works } : {}),
       serverTime: Date.now(),
     });
     flush();
@@ -820,9 +826,14 @@ export function attachNet(o: NetOptions): Net {
     return pendingStone;
   }
 
-  /** Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag changed with one, the Old Stone. */
+  function persistWorks(works: WorksRecords): Promise<void> {
+    pendingWorks = pendingWorks.then(() => storage.saveWorks(works)).catch((err: unknown) => log.error('saving the places mended together failed', { err }));
+    return pendingWorks;
+  }
+
+  /** Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag changed with one, the Old Stone, the places mended together. */
   function store(): void {
-    const { drops, players, marks, stone, thanks, credits, caches } = world.takeWrites();
+    const { drops, players, marks, stone, thanks, credits, caches, works } = world.takeWrites();
     // Players first: a pile or a mark belongs to a player who must exist in the database.
     for (const rec of players) void persist(rec);
     for (const { owner, drop } of drops) void persistDrop(owner, drop);
@@ -831,6 +842,7 @@ export function attachNet(o: NetOptions): Net {
     for (const t of thanks) void persistThanks(t);
     for (const helper of credits) void persistCredit(helper);
     if (stone) void persistStone(stone);
+    if (works) void persistWorks(works);
   }
 
   /**
@@ -934,7 +946,7 @@ export function attachNet(o: NetOptions): Net {
       for (const rec of recs) void persist(rec);
       // Includes writes for players who left just before, so storage can be closed after this.
       await Promise.all([
-        ...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), ...pendingCaches.values(), pendingStone,
+        ...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), ...pendingCaches.values(), pendingStone, pendingWorks,
       ]);
       // Clients get a moment to answer the close; then their sockets are cut.
       const force = setTimeout(() => {

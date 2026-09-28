@@ -1,7 +1,7 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 11,
+  "version": 12,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
@@ -47,7 +47,7 @@
     "tttttttttmggmggghhhgtttttttttmmmttttttttttttgggggggggtttggtctttt",
     "ttttttttmmmmmmmmmhhggttttttttmmmttttttttttthggggggggmmmmggtctttt",
     "tttttttfmmmwwwwwmmgggtttttttmmmmmttttttttthhggggggggggtttttctttt",
-    "ttttttfffmwwwwwwwmgggttttttgggmmmmtttttttthhhhggggggfftttttctttt",
+    "ttttttfffmwwwwwwwmggggtttttgggmmmmtttttttthhhhggggggfftttttctttt",
     "tttttttffmwwwwwwwmgggmtttttmggmmmmtttttttthhgggggggffftttttctttt",
     "tttttttffmwwwwwwwmmgmgttttttggmmmgttttttttgggggggggffttttttctttt",
     "tttttttgmmmwwwwwwwmmgmmmmmmmmgmmmmmmtttttmmggggggggffttttttctttt",
@@ -314,7 +314,9 @@
     {"kind":"stump","x":28,"y":74,"s":1.061,"v":0.361,"burned":true},
     {"kind":"house","x":31,"y":2,"w":2,"h":2,"roof":"#4c5646","lit":0,"style":"shed"},
     {"kind":"lookout","x":28,"y":24},
-    {"kind":"sign","x":28,"y":26,"text":["Fire lookout. Stonebrook Timber Co.","Climb it to see the woods. Keep its lamp fed with resin: its beam brings the crews home.","Built the summer the mill opened."]}
+    {"kind":"sign","x":28,"y":26,"text":["Fire lookout. Stonebrook Timber Co.","Climb it to see the woods. Keep its lamp fed with resin: its beam brings the crews home.","Built the summer the mill opened."]},
+    {"kind":"footbridge","id":"pond-footbridge","x":17,"y":44,"w":2,"h":1},
+    {"kind":"lamp","x":21,"y":40,"works":"pond-light"}
   ],
   "surge": {"every":2400,"unstable":360,"surge":150,"sweep":90},
   "storm": {"every":2400,"warn":60,"length":180,"offset":1200},

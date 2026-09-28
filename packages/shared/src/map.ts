@@ -101,7 +101,8 @@ export type MapObject =
    * them; its windows never light.
    */
   | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' | 'mill' | 'shed'; curtains?: boolean }
-  | { kind: 'lamp'; x: number; y: number }
+  /** A street lamp. One with `works` (works.ts) lights only while that place stands, mended by everyone. */
+  | { kind: 'lamp'; x: number; y: number; works?: string }
   /**
    * A wooden signpost; with style 'napo' one of NAPO's yellow warning signs, 'cardboard' a piece of
    * cardboard someone wrote on, 'mailbox' the mailbox by a door with the family's name on it.
@@ -203,7 +204,12 @@ export type MapObject =
    * with a lamp in it, its ladder up the south face of its east column. Climbed from the tile in front
    * of the ladder (footOf); its lamp burns what someone feeds it there, and sweeps a beam round the woods.
    */
-  | { kind: 'lookout'; x: number; y: number };
+  | { kind: 'lookout'; x: number; y: number }
+  /**
+   * A footbridge over water, w by h (one of them 1), mended by everyone (works.ts, its `id`): only drawn,
+   * and its tiles, water to everyone else, are walkable only while it stands (they open with its id).
+   */
+  | { kind: 'footbridge'; id: string; x: number; y: number; w: number; h: number };
 
 /** The ways a paper to read can look (MapObject 'paper'); the first two lie on a table, the others hang on a wall. */
 export const PAPER_LOOKS = ['note', 'list', 'calendar', 'drawing'] as const;
@@ -298,7 +304,7 @@ const BLOCKING = new Set<MapObject['kind']>([
   'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'lookout',
 ]);
 /** Objects that are only drawn: you walk over or through them. */
-export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust']);
+export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'footbridge']);
 /**
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
@@ -308,7 +314,7 @@ export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'ches
 /** How many tiles an object covers, across and down: houses, vehicles, log decks, beds, rugs and a few more are bigger than one. */
 export function footprint(o: MapObject): [number, number] {
   switch (o.kind) {
-    case 'house': case 'rug': case 'truck': case 'jeep': case 'logs': return [o.w, o.h];
+    case 'house': case 'rug': case 'truck': case 'jeep': case 'logs': case 'footbridge': return [o.w, o.h];
     case 'car': return [o.w, o.h ?? 1];
     case 'carriage': return [o.w, 1];
     case 'bed': return [1, 2];
@@ -353,8 +359,10 @@ export class TileMap {
   readonly blocked: Uint8Array;
   /** Index into data.exits of the exit on each tile, or -1. */
   private readonly exitIndex: Int16Array;
-  /** 1 where a street light reaches. */
+  /** 1 where a street light reaches (one that always shines: not one of the works). */
   private readonly litTiles: Uint8Array;
+  /** The street lights that shine only while their place stands (a lamp with `works`): its id, and its tile. */
+  readonly worksLights: ReadonlyArray<{ id: string; x: number; y: number }>;
   /** 1 next to a fireplace, where energy comes back. */
   private readonly warmTiles: Uint8Array;
   /** Steps from each tile to the nearest home exit (-1: no way there); all 0 in towns. */
@@ -416,10 +424,14 @@ export class TileMap {
       if (!e.lock) continue;
       for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) if (this.inside(x, y)) gateAt(y * W + x, e.lock);
     }
+    // A footbridge's tiles open with its id, for everyone while it stands (the server puts the ids of the
+    // places that stand in every pass).
+    for (const o of data.objects) if (o.kind === 'footbridge') for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) gateAt(y * W + x, o.id);
     this.keys = keys;
     this.all = new Set(keys);
 
     this.litTiles = this.around('lamp', LAMP_RADIUS);
+    this.worksLights = data.objects.flatMap(o => (o.kind === 'lamp' && o.works ? [{ id: o.works, x: o.x, y: o.y }] : []));
     this.warmTiles = this.around('fireplace', FIRE_RADIUS);
 
     // Distance home, walking: breadth-first from every home exit tile at once. Only the wilds
@@ -481,9 +493,16 @@ export class TileMap {
     return { to: e.to, x: e.tx + (x - e.x), y: e.ty + (y - e.y), dir: e.dir };
   }
 
-  /** Is this tile in the light of a street lamp? (Light is for seeing; it does not give energy.) */
-  lit(x: number, y: number): boolean {
-    return this.inside(x, y) && this.litTiles[y * this.width + x] === 1;
+  /**
+   * Is this tile in the light of a street lamp? (Light is for seeing; it does not give energy.) A lamp of
+   * the works shines only while its place stands: while `standing` (a pass: the server's has the ids of
+   * the places that stand) holds its id.
+   */
+  lit(x: number, y: number, standing?: Pass): boolean {
+    if (!this.inside(x, y)) return false;
+    if (this.litTiles[y * this.width + x] === 1) return true;
+    if (standing) for (const l of this.worksLights) if (standing.has(l.id) && Math.hypot(x - l.x, y - l.y) <= LAMP_RADIUS) return true;
+    return false;
   }
 
   /** Is this tile next to a fireplace, where energy comes back? */
@@ -495,7 +514,7 @@ export class TileMap {
   private around(kind: MapObject['kind'], radius: number): Uint8Array {
     const out = new Uint8Array(this.width * this.height), r = Math.ceil(radius);
     for (const o of this.data.objects) {
-      if (o.kind !== kind) continue;
+      if (o.kind !== kind || (o.kind === 'lamp' && o.works)) continue;
       for (let y = o.y - r; y <= o.y + r; y++) for (let x = o.x - r; x <= o.x + r; x++) {
         if (this.inside(x, y) && Math.hypot(x - o.x, y - o.y) <= radius) out[y * this.width + x] = 1;
       }
@@ -530,9 +549,12 @@ export class TileMap {
     return out;
   }
 
-  /** Where a creature may stand, step or wake: open ground out of the light, away from fires and exits, and never in tall grass (hidden). */
-  creatureMayStand(x: number, y: number): boolean {
-    return this.walkable(x, y) && !this.exitAt(x, y) && !this.lit(x, y) && !this.warm(x, y) && !hidden(this, x, y);
+  /**
+   * Where a creature may stand, step or wake: open ground out of the light (of the works' lamps too, while
+   * `standing` holds them), away from fires and exits, and never in tall grass (hidden).
+   */
+  creatureMayStand(x: number, y: number, standing?: Pass): boolean {
+    return this.walkable(x, y) && !this.exitAt(x, y) && !this.lit(x, y, standing) && !this.warm(x, y) && !hidden(this, x, y);
   }
 
   /**

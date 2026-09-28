@@ -12,6 +12,7 @@ import type { Mods } from './feats';
 import type { Element, Piece, Quirk, Recipe, Slot, Tier, Upgrade } from './gear';
 import type { ParcelsData } from './parcels';
 import type { ConditionsData } from './sky';
+import type { WorksDef } from './works';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 
 /**
@@ -165,6 +166,8 @@ export interface ItemsData {
   conditions?: ConditionsData;
   /** The welcome parcel and the week's calendar of parcels (parcels.ts). None: no parcels. */
   parcels?: ParcelsData;
+  /** The places everyone mends together, what each takes and how fast it wears (works.ts). None: nothing to mend. */
+  works?: WorksDef[];
 }
 
 /**

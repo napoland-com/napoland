@@ -18,3 +18,4 @@ export * from './story';
 export * from './thanks';
 export * from './trade';
 export * from './validate';
+export * from './works';

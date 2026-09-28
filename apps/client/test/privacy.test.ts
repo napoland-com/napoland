@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { GUEST_DAYS } from '@napoland/shared';
+import { GUEST_DAYS, WORKS_GIVERS } from '@napoland/shared';
 
 const page = readFileSync(resolve(import.meta.dirname, '../public/privacy.html'), 'utf8');
 const words = page.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
@@ -26,5 +26,13 @@ describe('the privacy policy', () => {
     // "Your character" is kept until you ask only once you signed in with it.
     expect(kept.find(li => li.startsWith('Your character'))).toMatch(/^Your character once you signed in with it/);
     expect(words).toContain('counts as a guest');
+  });
+
+  it(`says what the places mended together keep: the ${WORKS_GIVERS} who gave the most, by id, their names read from the characters, and a guest's gifts under nobody`, () => {
+    const kept = listUnder('How long we keep it').find(li => li.startsWith('How much your character gave'));
+    expect(kept).toContain(`for the ${WORKS_GIVERS} characters who gave it the most`);
+    expect(kept).toMatch(/only the character's id and how much are written down/);
+    expect(words).toMatch(/a guest's gifts count, but are not kept under it/);
+    expect(words).toMatch(/what it gave to the places mended together \(and its name on their plaques\)/);
   });
 });

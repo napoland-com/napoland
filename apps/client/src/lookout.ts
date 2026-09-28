@@ -32,6 +32,8 @@ export interface FarLight {
   kind: 'steady' | 'blink' | 'breathe';
   /** How big its glow is, in world units. */
   size: number;
+  /** A street light mended together (works.ts): seen only while that place stands. */
+  works?: string;
 }
 
 /** Street lamps, orange; a lit window, warm; a mast's lamp, red; the Old Stone, violet. */
@@ -76,7 +78,7 @@ export function farLights(map: MapData, peek: (id: string) => MapData | undefine
       const x = o.x + dx, z = o.y + dy;
       if (o.kind === 'antenna') out.push({ x: x + 0.5, z: z + 0.5, y: 6.2, color: MAST, kind: 'blink', size: here ? 0.9 : 1.4 });
       else if (o.kind === 'stone') out.push({ x: x + 0.5, z: z + 0.5, y: 1.6, color: STONE, kind: 'breathe', size: here ? 1.6 : 3.2 });
-      else if (here && o.kind === 'lamp') out.push({ x: x + 0.84, z: z + 0.5, y: 1.3, color: LAMP, kind: 'steady', size: 1.3 });
+      else if (here && o.kind === 'lamp') out.push({ x: x + 0.84, z: z + 0.5, y: 1.3, color: LAMP, kind: 'steady', size: 1.3, ...(o.works ? { works: o.works } : {}) });
       // A shelter out there keeps its windows lit: its warm light shows through the trees.
       else if (here && o.kind === 'house' && o.lit) out.push({ x: x + o.w / 2, z: z + o.h / 2, y: 0.9, color: WINDOW, kind: 'steady', size: 1.5 });
     }

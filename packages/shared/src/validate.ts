@@ -136,6 +136,18 @@ export function validateMap(data: MapData): Problem[] {
       if (!map.walkable(foot.x, foot.y) || map.exitAt(foot.x, foot.y)) err(`lookout at ${o.x},${o.y}: the foot of its ladder (${foot.x},${foot.y}) is not open ground, so nobody can climb it`);
       if (data.kind !== 'wilds') err(`lookout at ${o.x},${o.y}: a fire lookout stands out in the wilds`);
     }
+    // A footbridge spans water from bank to bank, one tile across; its tiles open while it stands (works.ts).
+    if (o.kind === 'footbridge') {
+      if (!ID.test(o.id ?? '')) err(`footbridge at ${o.x},${o.y}: its id is lowercase words joined by hyphens (what it takes is kept under it)`);
+      const [w, h] = footprint(o);
+      if (!(Number.isInteger(w) && Number.isInteger(h) && Math.min(w, h) === 1 && Math.max(w, h) <= 4)) err(`footbridge at ${o.x},${o.y} is ${w} by ${h}: a footbridge is one tile across and 1 to 4 long`);
+      else {
+        for (const [x, y] of objectTiles(o)) if (map.kind(x, y) !== 'water') err(`footbridge at ${o.x},${o.y}: tile ${x},${y} is not water: a footbridge spans water`);
+        const ends: Array<[number, number]> = w >= h ? [[o.x - 1, o.y], [o.x + w, o.y]] : [[o.x, o.y - 1], [o.x, o.y + h]];
+        for (const [x, y] of ends) if (!map.walkable(x, y) || map.exitAt(x, y)) err(`footbridge at ${o.x},${o.y}: its end at ${x},${y} is not open ground, so nobody could step onto it`);
+      }
+    }
+    if (o.kind === 'lamp' && o.works !== undefined && !ID.test(o.works)) err(`lamp at ${o.x},${o.y}: works names the place it belongs to, by its id`);
   }
   const s = data.spawn;
   if (!map.walkable(s.x, s.y)) err(`spawn ${s.x},${s.y} is not walkable`);
@@ -513,6 +525,30 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (!tools.has(need)) err(`map ${m.id}: some of it opens only with ${need}, which is not a tool: what opens the way is yours for good`);
     }
   }
+  // The places mended together (works.ts): each is one footbridge or one lamp on the maps, and takes a resource there is.
+  const places = new Map<string, Array<{ map: string; kind: 'footbridge' | 'lamp' }>>();
+  for (const m of maps) for (const o of m.objects) {
+    const id = o.kind === 'footbridge' ? o.id : o.kind === 'lamp' ? o.works : undefined;
+    if (id !== undefined) places.set(id, [...(places.get(id) ?? []), { map: m.id, kind: o.kind === 'footbridge' ? 'footbridge' : 'lamp' }]);
+  }
+  const worksIds = new Set<string>();
+  for (const w of data.works ?? []) {
+    const name = `works ${JSON.stringify(w.id)}`;
+    if (!ID.test(w.id ?? '')) err(`${name}: ids are lowercase words joined by hyphens`);
+    if (worksIds.has(w.id)) err(`${name} is defined twice`);
+    worksIds.add(w.id);
+    if (w.build !== 'footbridge' && w.build !== 'light') err(`${name}: build is footbridge or light`);
+    if (!w.name?.trim() || !w.where?.trim()) err(`${name} needs a name and where it is`);
+    const takes = data.items.find(d => d.id === w.item);
+    if (!takes) err(`${name} takes ${w.item}, which is not an item`);
+    else if (takes.kind !== 'resource') err(`${name} takes ${w.item}: what a place takes is a resource`);
+    for (const [k, v] of [['need', w.need], ['wear', w.wear], ['hold', w.hold]] as const) if (!(Number.isInteger(v) && v >= 1)) err(`${name}: ${k} is a whole number from 1`);
+    if (Number.isInteger(w.hold) && Number.isInteger(w.wear) && w.hold < w.wear) err(`${name}: it keeps at least a day's wear put by (hold ${w.hold} is less than wear ${w.wear})`);
+    const at = places.get(w.id) ?? [];
+    if (at.length !== 1) err(`${name}: ${at.length ? 'more than one thing on the maps is it' : 'nothing on the maps is it'} (one footbridge, or one lamp with works ${w.id})`);
+    else if ((at[0]!.kind === 'footbridge') !== (w.build === 'footbridge')) err(`${name}: a ${w.build} is ${w.build === 'footbridge' ? 'a footbridge' : 'a lamp'} on its map`);
+  }
+  for (const [id, at] of places) if (!worksIds.has(id)) err(`map ${at[0]!.map}: a ${at[0]!.kind} belongs to ${id}, but no works says what it takes`);
   // What a radio listens for must be something that lies out there.
   for (const i of data.items) for (const f of Array.isArray(i.senses?.finds) ? i.senses.finds : []) {
     if (!ids.has(f.item)) err(`item ${JSON.stringify(i.id)} listens for ${f.item}, which is not an item`);

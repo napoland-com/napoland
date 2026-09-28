@@ -36,11 +36,12 @@
 import {
   BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, LAMP_BURNS, LOOKOUT_UP_S, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath,
   fireTakes, flashHits, footOf, inBeam, ladderOf, lampTakes, lookoutAtFoot,
-  inSurge, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter,
+  inSurge, journal, markLifetime, worksRoom, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter,
   upgradable, utcDay, whyNotBuy, DIR_VEC, type CacheItemView, type LookKind, type MeritsView, type Mods, type NextGear, type Pass,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type LampView, type OfferPick, type ParcelView, type RefusedAction, type StormView, type TradeEnd, type TradeView,
+  type WorksView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -50,7 +51,8 @@ import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
-  lampQuestion, mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, padlocked, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upText, upgradeQuestion, useQuestion,
+  WORKS_FULL, giveQuestion, lampQuestion, mendQuestion, noMerit, noShard, nothingToBurn, nothingToGive, openQuestion, padlocked, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upText,
+  upgradeQuestion, useQuestion, worksText, worksWho,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { easeZoom } from './lookout';
@@ -82,9 +84,11 @@ interface Mover {
  * may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'locked' | 'lookout';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'locked' | 'lookout' | 'works';
   /** A person's id (the map's npc id). */
   id?: string;
+  /** A place being mended (works.ts): its id. */
+  works?: string;
   story?: { talk: string } | { read: string };
 };
 
@@ -135,13 +139,13 @@ type Creature = Mover & { kind: CreatureView['kind']; chasing: string | undefine
 /** What a sign is called in the text box, by its style. */
 const SIGN_WHO = { plain: 'Sign', napo: 'NAPO sign', cardboard: 'Cardboard sign', mailbox: 'Mailbox' } as const;
 
+/** A lookout's lamp's key in Game.lamps: its corner as one number (maps are far narrower than 65536 tiles). */
+const lampKey = (x: number, y: number) => y * 65536 + x;
+
 /**
  * Everything you face and press A at on a map. A door locked with a tool `pass` does not hold (the shed's
  * padlock, without bolt cutters) says why it stays shut; one it holds is a door like any other.
  */
-/** A lookout's lamp's key in Game.lamps: its corner as one number (maps are far narrower than 65536 tiles). */
-const lampKey = (x: number, y: number) => y * 65536 + x;
-
 function talkersOf(map: TileMap, pass: Pass, items: Items): Talker[] {
   const locked = map.data.exits.flatMap((e): Talker[] => (e.lock && !pass.has(e.lock) ? [{ x: e.x, y: e.y, who: 'Padlock', lines: [padlocked(items.get(e.lock))], kind: 'locked' }] : []));
   return [...locked, ...map.data.objects.flatMap((o: MapObject): Talker[] => {
@@ -160,6 +164,9 @@ function talkersOf(map: TileMap, pass: Pass, items: Items): Talker[] {
     if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
     // A fire lookout is climbed, and its lamp fed, facing its ladder from its foot.
     if (o.kind === 'lookout') return [{ ...ladderOf(o), who: 'Lookout', lines: [], kind: 'lookout' }];
+    // A place being mended is given to, and read, facing it: any plank of a footbridge, broken or whole, or its street light.
+    const works = o.kind === 'footbridge' ? o.id : o.kind === 'lamp' ? o.works : undefined, def = works ? items.works.get(works) : undefined;
+    if (works && def) return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: worksWho(def), lines: [], kind: 'works', works }));
     return [];
   })];
 }
@@ -254,6 +261,8 @@ export class Game {
    * told, and when (lookout.ts). Keyed by a number, so the view asking every frame makes no string.
    */
   lamps = new Map<number, { left: number; at: number }>();
+  /** Every place mended together in the world, as the server last told it (works.ts). */
+  works = new Map<string, WorksView>();
   /** The fire lookouts on this map (their corners): whose beams may be over you. */
   private lookouts: Array<{ x: number; y: number }> = [];
   /** The lookout you are up (its corner), and until when (our clock); null down on the ground. */
@@ -421,7 +430,15 @@ export class Game {
   /** Your tools, whole: what they open, and the doors that say why they stay shut, follow them. */
   private setTools(tools: string[]) {
     this.tools = tools;
-    this.pass = new Set(tools);
+    this.repass();
+  }
+
+  /**
+   * What opens the tiles that open only for some, as the server has it: your tools, and every place mended
+   * together that stands (works.ts: a footbridge is walked, and a street light shines, while it stands).
+   */
+  private repass() {
+    this.pass = new Set([...this.tools, ...[...this.works.values()].filter(w => w.standing).map(w => w.id)]);
     this.talkers = talkersOf(this.current, this.pass, this.items);
   }
 
@@ -486,7 +503,8 @@ export class Game {
   caught(now: number): boolean {
     const me = this.me, rule = this.current.data.surge, s = this.surgeNow(now);
     if (!me || !rule || !s) return false;
-    return inSurge(this.current, me.tx, me.ty, surgeFront(rule, this.current.deepest, s), this.beamOver(me.tx, me.ty, now));
+    // A lookout's beam as it passes, or a street light mended together while it stands, keeps it off, as the server counts it.
+    return inSurge(this.current, me.tx, me.ty, surgeFront(rule, this.current.deepest, s), this.beamOver(me.tx, me.ty, now) || this.current.lit(me.tx, me.ty, this.pass));
   }
 
   /** Is tile x,y under a burning lookout's beam at `now`? As the server counts it (lookout.ts): a surge does not reach you there. */
@@ -548,6 +566,7 @@ export class Game {
         this.merits = msg.merits ?? { spent: 0, owned: [] };
         // Time away worth a word: stashing counts double for a while, and the arrival says so.
         if ((msg.restedAway ?? 0) >= RESTED_NOTICE && (msg.progress.rested ?? 0) > 0) this.news.push({ kind: 'rested', xp: msg.progress.rested! });
+        this.works = new Map((msg.works ?? []).map(w => [w.id, w]));
         this.setTools(msg.tools);
         this.chapter = msg.story.chapter;
         this.storyChanges++;
@@ -583,6 +602,13 @@ export class Game {
       case 'lamp':
         this.lamps.set(lampKey(msg.lamp.x, msg.lamp.y), { left: msg.lamp.left, at: now });
         break;
+      case 'works': {
+        const was = this.works.get(msg.works.id);
+        this.works.set(msg.works.id, msg.works);
+        // Stood again, or broke: its footbridge opens or closes for us from the next step, as for everyone.
+        if (was?.standing !== msg.works.standing) this.repass();
+        break;
+      }
       case 'up': {
         if (msg.on) this.ups.add(msg.id);
         else this.ups.delete(msg.id);
@@ -1060,6 +1086,7 @@ export class Game {
     if (t.kind === 'fire') return this.tend(t.x, t.y);
     if (t.kind === 'locked') return this.inform(t.who, t.lines[0] ?? padlocked(undefined));
     if (t.kind === 'lookout') return this.atLookout(t);
+    if (t.kind === 'works') return this.atWorks(t);
     if (t.kind === 'chest') {
       if (!this.online) return;
       this.opening = { x: t.x, y: t.y, at: this.clock };
@@ -1529,6 +1556,26 @@ export class Game {
   }
 
   /**
+   * A (or a tap) at a place being mended (works.ts): with what it takes in the bag and room for it, asks
+   * first ("Give 3 scrap to the footbridge?", and how many, up to what you carry and what it takes); YES
+   * gives it, and NO says how it stands. With none of it, or when it takes no more for now, it says how it
+   * stands and whose name is on its plaque.
+   */
+  private atWorks(t: Talker) {
+    const w = t.works ? this.items.works.get(t.works) : undefined;
+    if (!w || !this.online) return;
+    const def = this.items.get(w.item), view = this.works.get(w.id), who = worksWho(w), state = worksText(w, view, def);
+    const slot = this.bag.findIndex(b => b.item === w.item), room = worksRoom(w, view ?? { standing: false, held: 0 });
+    if (slot < 0) return this.inform(who, `${state} ${nothingToGive(def)}`);
+    if (room <= 0) return this.inform(who, `${state} ${WORKS_FULL}`);
+    this.ask({
+      who, text: n => giveQuestion(def, w, n), count: { min: 1, max: Math.min(countOf(this.bag, w.item), room, FEED_MAX) },
+      yes: n => this.actOn(slot, w.item, who, giveQuestion(def, w, n), i => ({ t: 'give', x: t.x, y: t.y, slot: i, ...(n > 1 ? { count: n } : {}) })),
+      no: () => this.inform(who, state),
+    });
+  }
+
+  /**
    * A (or a tap) at a fire lookout's ladder: its lamp first, then the climb. Carrying what the lamp burns,
    * while it takes more, you are asked to feed it ("Feed the lookout's lamp resin?", how many up to what
    * you carry and what fits); YES feeds it, and NO leaves it be, so A climbs next time. Otherwise A climbs:
@@ -1660,7 +1707,9 @@ export class Game {
     }
     // People and signs are tall: a tap on the head lands on the tile behind them. So is a padlocked
     // door you cannot open yet: its shed stands behind it, and tapped, it says why it stays shut.
-    const talker = this.talkerAt(x, y) ?? this.talkerAt(x, y + 1);
+    // A footbridge that stands is a way like any other: a tap on it walks there (A, facing it, gives to it).
+    const onBridge = this.talkerAt(x, y)?.kind === 'works' && this.map.walkable(x, y, this.pass);
+    const talker = onBridge ? undefined : this.talkerAt(x, y) ?? this.talkerAt(x, y + 1);
     if (talker) {
       this.goal = { talk: talker };
       this.path = findPath(this.map, from.x, from.y, talker.x, talker.y, true, undefined, this.pass);
