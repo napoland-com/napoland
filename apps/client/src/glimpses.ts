@@ -60,7 +60,8 @@ export class Passing {
     if (!n) return 0;
     const t = Math.max(0, now - this.start) / 1000, walk = (n - 1) * GLIMPSE_STEP_S;
     const along = Math.min(n - 1, t / GLIMPSE_STEP_S), i = Math.floor(along), f = along - i;
-    const [x0, y0] = this.steps[i]!, [x1, y1] = this.steps[Math.min(n - 1, i + 1)]!;
+    // Read by index: every frame, nothing new.
+    const here = this.steps[i]!, next = this.steps[Math.min(n - 1, i + 1)]!, x0 = here[0], y0 = here[1], x1 = next[0], y1 = next[1];
     this.x = x0 + (x1 - x0) * f;
     this.y = y0 + (y1 - y0) * f;
     if (x1 !== x0 || y1 !== y0) this.heading = Math.atan2(x1 - x0, y1 - y0);
