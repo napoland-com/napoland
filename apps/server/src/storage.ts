@@ -6,7 +6,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
-import type { BagSlot, Dir, Gear, NotebookState, ParcelState, Piece, ReportReason, Stash, Stats, ThanksFor, Worn } from '@napoland/shared';
+import type { BagSlot, Dir, Gear, NotebookState, ParcelState, Piece, ReportReason, Stash, Stats, ThanksFor, TownCount, Worn } from '@napoland/shared';
 import { log } from './log';
 
 export interface PlayerBests {
@@ -346,6 +346,19 @@ export interface StoneRecord {
 }
 
 /**
+ * The town (packages/shared/src/town.ts), one for everyone: since when (ms since the epoch) it counts,
+ * what it counted since (the Old Stone waking, fires fed out there, thanks given), what was given to each
+ * work of its ledger not done yet (by item), and what it has come to: the milestones reached and the
+ * works done, in the order they came, each with the Zone's day and when. Nothing about any one player.
+ */
+export interface TownRecord {
+  since: number;
+  counts: Partial<Record<TownCount, number>>;
+  given: Record<string, Record<string, number>>;
+  done: Array<{ id: string; day: number; at: number }>;
+}
+
+/**
  * The Long Night (world.ts), kept across restarts: the week (weekIndex) of the one on or the last one the
  * server saw, whether it had its bonus, when the lodge's fire runs out (ms since the epoch), whether it
  * went out, and whether that night is over (dawn came while the server ran).
@@ -363,6 +376,58 @@ export function cleanLongNight(v: unknown): LongNightRecord | null {
   const r = (typeof v === 'object' && v !== null ? v : {}) as Partial<Record<keyof LongNightRecord, unknown>>;
   const ok = Number.isSafeInteger(r.week) && typeof r.bonus === 'boolean' && Number.isFinite(r.outAt) && typeof r.out === 'boolean' && typeof r.over === 'boolean';
   return ok ? { week: r.week as number, bonus: r.bonus as boolean, outAt: r.outAt as number, out: r.out as boolean, over: r.over as boolean } : null;
+}
+
+/**
+ * A place mended together (works.ts), as the whole server shares it: whether it stands, what it holds
+ * (toward standing again, or put by for its upkeep), the last day (UTC, days since the epoch) whose wear
+ * was paid, and who gave it what, the most first (the plaque names the first).
+ */
+export interface WorksRecord {
+  standing: boolean;
+  held: number;
+  day: number;
+  givers: Array<{ id: string; name: string; count: number }>;
+}
+
+/** Every place mended together, by its id. */
+export type WorksRecords = Record<string, WorksRecord>;
+
+/**
+ * What storage keeps of the places mended together: each giver by the id of their character and how much
+ * they gave, never their name, which is read with their character (so a deleted character's name is gone
+ * with its row, and a renamed one's follows it).
+ */
+function storedWorks(works: WorksRecords): Record<string, Omit<WorksRecord, 'givers'> & { givers: Array<{ id: string; count: number }> }> {
+  return Object.fromEntries(Object.entries(works).map(([id, w]) => [id, { standing: w.standing, held: w.held, day: w.day, givers: w.givers.map(g => ({ id: g.id, count: g.count })) }]));
+}
+
+/**
+ * The places as saved (world_state is JSON: an older or damaged place is left out, and starts broken),
+ * each giver named as their character is named now (`nameOf`); one whose character is gone is left out.
+ */
+function namedWorks(saved: unknown, nameOf: (id: string) => string | undefined): WorksRecords {
+  const out: WorksRecords = {};
+  if (!saved || typeof saved !== 'object') return out;
+  for (const [id, v] of Object.entries(saved)) {
+    const r = v as Partial<WorksRecord> | null;
+    if (!r || typeof r !== 'object' || typeof r.standing !== 'boolean' || typeof r.held !== 'number' || typeof r.day !== 'number' || !Array.isArray(r.givers)) continue;
+    const givers = r.givers.flatMap(g => {
+      const name = g && typeof g.id === 'string' && typeof g.count === 'number' ? nameOf(g.id) : undefined;
+      return name === undefined ? [] : [{ id: g.id, name, count: g.count }];
+    });
+    out[id] = { standing: r.standing, held: r.held, day: r.day, givers };
+  }
+  return out;
+}
+
+/** The ids of the characters who gave to the places saved (for reading their names): only what reads as an id. */
+function giverIds(saved: unknown): string[] {
+  const ids = new Set<string>();
+  if (saved && typeof saved === 'object') for (const w of Object.values(saved) as Array<Partial<WorksRecord> | null>) {
+    for (const g of Array.isArray(w?.givers) ? w.givers : []) if (typeof g?.id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(g.id)) ids.add(g.id);
+  }
+  return [...ids];
 }
 
 /**
@@ -486,6 +551,9 @@ export interface Storage {
   /** The Old Stone as it was last saved, or null. */
   loadStone(): Promise<StoneRecord | null>;
   saveStone(stone: StoneRecord): Promise<void>;
+  /** The town as it was last saved, or null: a town that starts counting now. */
+  loadTown(): Promise<TownRecord | null>;
+  saveTown(town: TownRecord): Promise<void>;
   /** The Long Night as it was last saved, or null. */
   loadLongNight(): Promise<LongNightRecord | null>;
   saveLongNight(night: LongNightRecord): Promise<void>;
@@ -503,6 +571,9 @@ export interface Storage {
   refundPurchase(paymentIntent: string, at: number): Promise<{ player: string | null; look: string } | null>;
   /** The looks `player` bought, paid and not refunded, in the order they first bought each (PlayerRecord.shop). */
   shopLooksOf(player: string): Promise<string[]>;
+  /** The places mended together as they were last saved (none saved: empty). */
+  loadWorks(): Promise<WorksRecords>;
+  saveWorks(works: WorksRecords): Promise<void>;
   /** A player by id, or by name regardless of case. */
   findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null>;
   setRequestsOff(id: string, off: boolean): Promise<void>;
@@ -572,6 +643,16 @@ const savedStats = (stats: Stats | undefined): Stats => {
 };
 const thanksKey = (t: Pick<ThanksRecord, 'giver' | 'helper' | 'day'>) => `${t.giver} ${t.helper} ${t.day}`;
 const copyReturn = (r: ReturnRecord): ReturnRecord => ({ ...r, items: copyBag(r.items) });
+/** The town as saved, trusted only as far as it holds what the town keeps: anything else reads as none. */
+function cleanTown(v: unknown): TownRecord | null {
+  const t = (typeof v === 'object' && v !== null ? v : {}) as Partial<TownRecord>;
+  if (typeof t.since !== 'number') return null;
+  const whole = (n: unknown): n is number => Number.isInteger(n) && (n as number) > 0;
+  const counts = Object.fromEntries(Object.entries(t.counts ?? {}).filter(([, n]) => whole(n)));
+  const given = Object.fromEntries(Object.entries(t.given ?? {}).map(([w, g]) => [w, Object.fromEntries(Object.entries(g ?? {}).filter(([, n]) => whole(n)))]));
+  const done = (Array.isArray(t.done) ? t.done : []).filter(d => typeof d?.id === 'string' && typeof d.day === 'number' && typeof d.at === 'number').map(d => ({ id: d.id, day: d.day, at: d.at }));
+  return { since: t.since, counts, given, done };
+}
 
 export class MemoryStorage implements Storage {
   private readonly byId = new Map<string, PlayerRecord>();
@@ -587,7 +668,9 @@ export class MemoryStorage implements Storage {
   /** Purchases by Stripe's checkout id, in the order they were kept. */
   private readonly purchases = new Map<string, PurchaseRecord>();
   private stone: StoneRecord | null = null;
+  private town: TownRecord | null = null;
   private longNight: LongNightRecord | null = null;
+  private works: unknown = {};
   private since: number | undefined;
   private readonly off = new Set<string>();
   private readonly tradesOff = new Set<string>();
@@ -879,6 +962,14 @@ export class MemoryStorage implements Storage {
     this.stone = { ...stone };
   }
 
+  async loadTown(): Promise<TownRecord | null> {
+    return this.town && structuredClone(this.town);
+  }
+
+  async saveTown(town: TownRecord): Promise<void> {
+    this.town = structuredClone(town);
+  }
+
   async loadLongNight(): Promise<LongNightRecord | null> {
     return this.longNight && { ...this.longNight };
   }
@@ -910,6 +1001,14 @@ export class MemoryStorage implements Storage {
   /** The purchases kept, in the order they were, for tests. */
   storedPurchases(): PurchaseRecord[] {
     return [...this.purchases.values()].map(p => ({ ...p }));
+  }
+
+  async loadWorks(): Promise<WorksRecords> {
+    return namedWorks(this.works, id => this.byId.get(id)?.name);
+  }
+
+  async saveWorks(works: WorksRecords): Promise<void> {
+    this.works = JSON.parse(JSON.stringify(storedWorks(works))) as unknown;
   }
 
   async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {
@@ -1564,6 +1663,19 @@ export class PgStorage implements Storage {
     );
   }
 
+  async loadTown(): Promise<TownRecord | null> {
+    const r = await this.pool.query<{ value: unknown }>("SELECT value FROM world_state WHERE key = 'town'");
+    return cleanTown(r.rows[0]?.value);
+  }
+
+  async saveTown(town: TownRecord): Promise<void> {
+    // A key of world_state, like the Old Stone: no migration, and a release before the town never reads it.
+    await this.pool.query(
+      `INSERT INTO world_state (key, value) VALUES ('town', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [JSON.stringify(town)],
+    );
+  }
+
   async loadLongNight(): Promise<LongNightRecord | null> {
     const r = await this.pool.query<{ value: unknown }>("SELECT value FROM world_state WHERE key = 'long_night'");
     return cleanLongNight(r.rows[0]?.value);
@@ -1601,6 +1713,23 @@ export class PgStorage implements Storage {
       [player],
     );
     return r.rows.map(x => x.look);
+  }
+
+  async loadWorks(): Promise<WorksRecords> {
+    const r = await this.pool.query<{ value: unknown }>("SELECT value FROM world_state WHERE key = 'works'");
+    const saved = r.rows[0]?.value, ids = giverIds(saved), names = new Map<string, string>();
+    if (ids.length) {
+      const p = await this.pool.query<{ id: string; name: string }>('SELECT id, name FROM players WHERE id = ANY($1::uuid[])', [ids]);
+      for (const row of p.rows) names.set(row.id, row.name);
+    }
+    return namedWorks(saved, id => names.get(id));
+  }
+
+  async saveWorks(works: WorksRecords): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO world_state (key, value) VALUES ('works', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [JSON.stringify(storedWorks(works))],
+    );
   }
 
   async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {

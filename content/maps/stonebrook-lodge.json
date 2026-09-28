@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-lodge",
   "name": "Stonebrook Lodge",
-  "version": 6,
+  "version": 7,
   "kind": "inside",
   "depth": 0,
   "width": 11,
@@ -44,7 +44,9 @@
     {"kind":"barrel","x":1,"y":6},
     {"kind":"barrel","x":9,"y":6},
     {"kind":"woodpile","x":9,"y":3},
-    {"kind":"npc","id":"walt","name":"Walt","x":3,"y":2,"dir":"down","look":{"coat":"#5a4a3a","scarf":"#c98a2b","hair":"#9a958d","skin":"#c68b62","hat":"#d9a82b"},"lines":["Pull up a chair. Pruitt. Walt. I kept the north line for the power company, and then NAPO's. I strung its wire from the station to the Tower.","Before NAPO came, the Old Stone only hummed on cold nights. Nobody minded it.","Then the hum got into the radios, and every compass in town pointed at the woods. That's when the Observatory came.","The night they switched the Tower on, the woods lit up like a town and the Old Stone cracked. You can still see the crack.","Every forty minutes since, the woods surge. Regular as a clock. You'd think something out there was keeping time.","NAPO said two weeks, and I went with the rest. Came back for my truck, up where the north road gives out. It never started again, so I stayed.","Folks leave what they find here. Somebody's always glad of it."]},
+    {"kind":"npc","id":"walt","name":"Walt","x":3,"y":2,"dir":"down","look":{"coat":"#5a4a3a","scarf":"#c98a2b","hair":"#9a958d","skin":"#c68b62","hat":"#d9a82b"},"lines":["Pull up a chair. Pruitt. Walt. I kept the north line for the power company, and then NAPO's. I strung its wire from the station to the Tower.","Before NAPO came, the Old Stone only hummed on cold nights. Nobody minded it.","Then the hum got into the radios, and every compass in town pointed at the woods. That's when the Observatory came.","The night they switched the Tower on, the woods lit up like a town and the Old Stone cracked. You can still see the crack.","Every forty minutes since, the woods surge. Regular as a clock. You'd think something out there was keeping time.","NAPO said two weeks, and I went with the rest. Came back for my truck, up where the north road gives out. It never started again, so I stayed.","Glowcaps to spare? Ten buys you a cloth off me: I keep the lodge's lamps in them. Five scrap buys a road flare, company issue.","The ledger on the stand is the town's. What's broken, and what it needs. Put down what you can spare.","Folks leave what they find here. Somebody's always glad of it."]},
+    {"kind":"ledger","x":1,"y":4},
+    {"kind":"npc","id":"maud","name":"Maud","x":7,"y":2,"dir":"down","town":{"from":"lodge-cook"},"look":{"coat":"#d8cfbd","scarf":"#9b3d34","hair":"#b8683e","skin":"#e9c6a6"},"lines":["Maud. I cooked for NAPO's crews, three shifts, till there were no crews. Then I cooked for Ruth, who eats like a bird.","Folk up here thank each other, I hear. For fires, for arrows on the ground. A town that says thank you is a town worth cooking for.","There's coffee by the fire when there's coffee. Take a thermos. Bring it back or don't: I've a stack of NAPO's."]},
     {"kind":"lostfound","x":2,"y":2}
   ]
 }

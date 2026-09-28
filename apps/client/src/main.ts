@@ -24,7 +24,7 @@ import { Hud, type TagView } from './hud';
 import { badgeIcon } from './icons';
 import { crateView } from './crates';
 import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, upgradeOf, upgradeViews, wearText, wornViews } from './items';
-import { fieldNotesView, journalView, notesView } from './journal';
+import { fieldNotesView, journalView, notesView, peopleView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { mapFor, paperMap } from './papermap';
@@ -132,6 +132,9 @@ game.goTo = url => location.assign(url);
     history.replaceState(history.state, '', `${location.pathname}${withoutReturn(location.search)}${location.hash}`);
   }
 }
+/** How long a fire lookout's lamp burns on as of this frame (lampsAt), for the view: made once, not a function every frame. */
+let lampsAt = 0;
+const lampLeft = (x: number, y: number) => game.lampLeft(x, y, lampsAt) ?? 0;
 /** A panel is open over the world (the bag, the journal, the stash, a crate, a trade...), where it covers the banners. */
 const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.crateOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen
   || hud.tradeOpen;
@@ -305,6 +308,7 @@ const hud = new Hud(screen, {
   },
   fieldSeen: () => game.seenFieldNotes(),
   notesSeen: () => game.seenNotes(),
+  peopleSeen: () => game.seenScenes(),
   version: () => loadVersion(),
   sound: s => { sound.set(s); store.set(SOUND_KEY, JSON.stringify(s)); },
 });
@@ -319,7 +323,7 @@ function openMap() {
   const map = data && maps.get(data);
   if (!map) return game.noMap();
   hud.toggleBag(false);
-  hud.showPaper(paperMap(map, id => maps.find(id)?.name));
+  hud.showPaper(paperMap(map, id => maps.find(id)?.name, game.town.done.join()));
 }
 
 const keys = new Keys({
@@ -360,7 +364,13 @@ const arrival = new Arrival(held => {
     else if (msg.t === 'welcome') { collapsed = false; arrived = true; }
   }
   hud.setOnline(game.players.size);
-  if (view.map !== game.map || view.season !== game.season.view.season) buildView();
+  // Only the town changed this map (nobody arrived): drawn again, and no name to say.
+  const onlyTown = redraw && view.map === game.map && !held.length;
+  if (view.map !== game.map || view.season !== game.season.view.season || redraw) {
+    redraw = false;
+    buildView();
+  }
+  if (onlyTown) return;
   if (collapsed) hud.showBanner('You collapsed from exhaustion', leftPile ? 'You woke up at home.\nWhat you carried lies where you fell. It fades in an hour.' : 'You woke up at home');
   else if (signedInNews) hud.showBanner(signedInNews.title, signedInNews.sub);
   else hud.showBanner(game.placeName());
@@ -785,6 +795,15 @@ let storyShown = -1;
 let firstStepsShown = -1;
 let notebookShown = -1;
 let notesShown = -1;
+let peopleShown = '';
+let townShown = -1;
+/** The town changed the map you are on: its view is built again on the next dark screen. */
+let redraw = false;
+/** A person's name by their id, as a map has it: whoever told you a scene. */
+const personName = (id: string) => {
+  for (const m of maps.all()) for (const o of m.objects) if (o.kind === 'npc' && o.id === id) return o.name;
+  return id;
+};
 /** A map's name, for the field notes' headings. */
 const mapName = (id: string) => maps.find(id)?.name;
 /**
@@ -891,6 +910,12 @@ function frame(now: number) {
   }
   view.setStone(game.stone.awake);
   view.setSlab(slabGlows(game.surgeNow(now)));
+  // Fire lookouts: their lamps and beams, and how far the view is pulled back up one.
+  lampsAt = now;
+  view.setLamps(lampLeft, game.wallNow(now));
+  view.setZoom(game.zoom);
+  // The places mended together: a footbridge whole or broken, a street light lit or dark, as they stand.
+  view.setWorks(game.pass);
   const surge = game.surgeNow(now), caught = game.caught(now);
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
   hud.setSurge(surge, caught);
@@ -911,6 +936,10 @@ function frame(now: number) {
     if (n.kind === 'note' || n.kind === 'keepsake') { if (n.kind === 'keepsake') toSay.push(n); if (!(hud.journalOpen && hud.journalTab === 'notes')) hud.setNotesNews(true); continue; }
     // A first finder: one line for everyone online, waiting like the rest for panels and talk to be done.
     if (n.kind === 'first') { toSay.push(n); continue; }
+    // What the town came to, for everyone online (town.ts): it waits the same way.
+    if (n.kind === 'town') { toSay.push(n); continue; }
+    // A scene told needs no banner (the box is telling it), only a dot on the journal's People until they are looked at.
+    if (n.kind === 'scene') { if (!(hud.journalOpen && hud.journalTab === 'people')) hud.setPeopleNews(true); continue; }
     if (n.kind === 'feat') { toSay.push(n); continue; }
     // A dot on the chest's Wardrobe tab too, until it is looked at, when the level opened an outfit.
     if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
@@ -945,9 +974,24 @@ function frame(now: number) {
     notebookShown = game.notebookChanges;
     hud.setFieldNotes(fieldNotesView(notebook, game.fieldNotes, mapName, game.freshPages));
   }
-  if (game.notesChanges !== notesShown) {
+  if (game.notesChanges !== notesShown || game.townChanges !== townShown) {
     notesShown = game.notesChanges;
     hud.setNotes(notesView(maps.all(), game.notesRead, items.keepsakes, game.keepsakesHome, id => items.byId.get(id), game.freshNotes, game.firsts, game.myName()));
+  }
+  // What people told you: redrawn as scenes are told and looked at.
+  const people = `${game.stats.scenes ?? 0}|${[...game.freshScenes].join()}`;
+  if (people !== peopleShown) {
+    peopleShown = people;
+    hud.setPeople(peopleView(story, game.stats, personName, game.freshScenes));
+  }
+  // The town changed what stands on the map you are on (someone came home, a street light was mended):
+  // it is drawn again, behind a moment of dark, as when you arrive.
+  if (game.townChanges !== townShown) {
+    townShown = game.townChanges;
+    if (game.townMaps.has(view.map.data.id)) {
+      redraw = true;
+      if (!arrival.leaving) arrival.cut();
+    }
   }
   if (hud.statusOpen && (now - statusAt > 500 || game.statsChanges !== statsShown)) { statusAt = now; statsShown = game.statsChanges; showStatus(); }
   // A friend's card says whether they are near enough to trade with, as they walk.
@@ -1053,8 +1097,9 @@ function frame(now: number) {
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;
   const scene: Scene = {
-    map: map.data.id, kind: map.data.kind, weather: game.weather, snow: SEASONS[game.season.view.season].snow, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
-    me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty), ice: map.frozenAt(me.tx, me.ty) } : null,
+    map: map.data.id, kind: map.data.kind, up: !!game.up, weather: game.weather, snow: SEASONS[game.season.view.season].snow, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
+    // On a footbridge that stands, the planks under your feet, not the creek.
+    me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.needs(me.tx, me.ty) !== undefined && map.kind(me.tx, me.ty) === 'water' ? 'floor' : map.kind(me.tx, me.ty), ice: map.frozenAt(me.tx, me.ty) } : null,
     fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),
     poles: map.data.objects.filter(o => o.kind === 'pole'),
     teleports: map.data.objects.filter(o => o.kind === 'teleport'),

@@ -16,7 +16,7 @@ import { PgStorage, type CacheItemRecord, type DropRecord, type MarkRecord, type
 import {
   forgetsGuestsWhoStayedAway, keepsFirsts, keepsFriendsAndMessages, keepsMerits, keepsBests, keepsNotebook, keepsNotes, keepsParcels, keepsPurchases, keepsRested,
   keepsToolsParcelsAndOutfit, keepsTheWornOutMark, keepsWhatANewerReleaseSaved, keepsWholeRow, meritsKeptThroughARestart, outfitsKeptThroughARestart, parcelsThroughRestarts,
-  playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, savesATradeTogether, shopKeptThroughARestart, signInAndClaim, keepsReturns,
+  playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, savesATradeTogether, shopKeptThroughARestart, signInAndClaim, keepsReturns, keepsTown,
 } from './helpers';
 import { itemsData } from './fixtures';
 
@@ -735,6 +735,25 @@ describe.skipIf(!url)('PgStorage', () => {
     }
   });
 
+  it('keeps the town, trusting what was saved only as far as it holds what the town keeps', async () => {
+    const fresh = await freshSchema();
+    const s = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await s.init();
+      await keepsTown(s);
+      // A key of world_state, beside the Old Stone's: no migration.
+      const row = await admin.query(`SELECT value FROM ${fresh.schema}.world_state WHERE key = 'town'`);
+      expect(row.rows[0].value.done.map((d: { id: string }) => d.id)).toEqual(['edith-home', 'south-lights']);
+      const junk = { since: 5, counts: { woke: 2, fed: -1, thanks: 'x' }, given: { roof: { cloth: 1.5, scrap: 2 } }, done: [{ id: 'edith-home', day: 1, at: 2 }, { id: 7 }], more: true };
+      await admin.query(`UPDATE ${fresh.schema}.world_state SET value = $1::jsonb WHERE key = 'town'`, [JSON.stringify(junk)]);
+      expect(await s.loadTown()).toEqual({ since: 5, counts: { woke: 2 }, given: { roof: { scrap: 2 } }, done: [{ id: 'edith-home', day: 1, at: 2 }] });
+      await admin.query(`UPDATE ${fresh.schema}.world_state SET value = '"a town"'::jsonb WHERE key = 'town'`);
+      expect(await s.loadTown()).toBeNull();
+    } finally {
+      await s.close();
+    }
+  });
+
   it('keeps the Long Night beside the Old Stone, and reads back nothing it did not write', async () => {
     const fresh = await freshSchema();
     const s = new PgStorage(fresh.url, MIGRATIONS);
@@ -748,6 +767,30 @@ describe.skipIf(!url)('PgStorage', () => {
       expect(await s.loadStone()).toEqual({ charge: 3, awake: false, at: 1_800_000_000_000 });
       await admin.query(`UPDATE ${fresh.schema}.world_state SET value = '{"week":"soon"}'::jsonb WHERE key = 'long_night'`);
       expect(await s.loadLongNight()).toBeNull();
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('keeps the places mended together, each giver by the id of their character only: named as it is now, and left out once it is gone', async () => {
+    const fresh = await freshSchema();
+    const s = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await s.init();
+      expect(await s.loadWorks()).toEqual({});
+      const ann = player('Pg Works Ann');
+      expect(await s.create(ann)).toBe(true);
+      await s.saveWorks({
+        'pond-footbridge': { standing: true, held: 12, day: 20_500, givers: [{ id: ann.id, name: 'Not her name', count: 30 }, { id: randomUUID(), name: 'Gone', count: 2 }] },
+        'pond-light': { standing: false, held: 0, day: 0, givers: [] },
+      });
+      expect(await s.loadWorks()).toEqual({
+        'pond-footbridge': { standing: true, held: 12, day: 20_500, givers: [{ id: ann.id, name: 'Pg Works Ann', count: 30 }] },
+        'pond-light': { standing: false, held: 0, day: 0, givers: [] },
+      });
+      // No name is written down with it.
+      const raw = await admin.query<{ value: unknown }>(`SELECT value FROM ${fresh.schema}.world_state WHERE key = 'works'`);
+      expect(JSON.stringify(raw.rows[0]!.value)).not.toMatch(/Not her name|Gone/);
     } finally {
       await s.close();
     }

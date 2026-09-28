@@ -19,7 +19,7 @@
  */
 import * as THREE from 'three';
 import {
-  DIR_VEC, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Season, type TileKind,
+  BEAM_HALF, BEAM_REACH, DIR_VEC, beamAngle, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
   type TileMap, type Weather,
 } from '@napoland/shared';
 import { comfortModel, comfortShadow, lampLight } from './cabin';
@@ -34,13 +34,14 @@ import {
   type QuadFn, type WallShape,
 } from './interior';
 import {
-  bridgeModel, bridgeRails, cardboardModel, carModel, culvertMouthModel, culvertMouths, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding, shedBuilding,
+  LOOKOUT_DECK, LOOKOUT_LAMP_Y, LOOKOUT_STAND_Z, bridgeModel, bridgeRails, cardboardModel, carModel, culvertMouthModel, culvertMouths, curtainColor, curtainPanels, footbridgeModel, headlightCar, leftModel, lookoutModel, mailboxModel, millBuilding, porchModel, shedBuilding,
 } from './left';
 import { SNOW, ambience, assignBeams, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
 import { HUM, TELEPORT_RINGS, TELEPORT_ROCK_Y, napoBuilding, napoProp, napoSign, teleportCore, towerModel, type TeleportCore } from './napo';
 import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, riseTexture, softTexture, toon } from './toon';
 import { beamPose, type BeamPose } from '../beam';
+import { farGlow, farLights, placeFar, upness, type FarLight } from '../lookout';
 
 export interface Avatar {
   id: string;
@@ -66,6 +67,8 @@ export interface Avatar {
   down?: boolean;
   /** You, while NAPO's teleport takes you (beam.ts): going or coming, how many seconds into it, and its pad. */
   beam?: { phase: 'out' | 'in'; t: number; pad: { x: number; y: number } };
+  /** Up a fire lookout (lookout.ts): standing on its platform, in front of the cab. */
+  up?: boolean;
 }
 
 /** A player as drawn: their model, what it was built in, and while a teleport takes you, the materials it had (clipRig). */
@@ -81,6 +84,8 @@ interface RigEntry {
   /** From 0 to 1 as they wade into the culvert's water, waist-deep. */
   wade: number;
   clipped?: Map<THREE.Mesh, THREE.Material | THREE.Material[]>;
+  /** From 0 to 1 as they climb a lookout, and back as they come down. */
+  climb: number;
 }
 
 /** A flashlight someone holds at night: where the light is, and where on the ground it points (world units). */
@@ -92,6 +97,8 @@ interface Held {
   tx: number;
   ty: number;
   tz: number;
+  /** They are up the fire lookout at whose ladder they stand: drawn on its platform (lookout.ts). */
+  up?: boolean;
 }
 
 /** A creature as the game draws it: a watcher or a skulker, and whom it chases (if anyone). */
@@ -179,6 +186,28 @@ const SLUMP_LEAN = 1.35, SLUMP_LIFT = 0.1, SLUMP_BACK = 0.42, SLUMP_ROLL = 0.22,
 /** The water's surface (the pond's, the creek's and the culvert's), and how deep someone wading the culvert sinks into it. */
 const WATER_Y = -0.1;
 const WADE_DROP = 0.3;
+/**
+ * Up a lookout the view reaches three times as far, and draws what lies far from you more cheaply (the
+ * far look): the tree blocks whose middle is farther than this from where you stand up there keep only
+ * every other tree, and lose their outlines and shadows, their ferns and their grass; the fog closes in
+ * on the view's edge. Measured in the Near Woods (lookout.test.ts): drawn whole, the view from up there
+ * is about 345 draw calls and 400K triangles; with the far look, about as many calls as on the ground
+ * (100) and 160K triangles.
+ */
+const FAR_BLOCK = 10;
+const FAR_TREES = 0.5;
+/**
+ * The far trees seen from a lookout are drawn as its far forest: joined, for each lookout, into pieces this
+ * many tiles a side, a few draw calls for the whole far view instead of one for every block. Bigger pieces
+ * are fewer calls but more trees drawn off screen (at 16: 131 calls, 147K triangles; at 32: 100, 160K).
+ */
+const FAR_PIECE = 32;
+/** How much nearer the fog comes, all the way up: the far look fades out into it. */
+const FAR_FOG = 0.45;
+/** How quickly someone climbs up the ladder and down it again: all the way in well under a second. */
+const CLIMB_RATE = 1.8;
+/** The distant lights seen from up a lookout (lookout.ts, farLights): at most this many, and how big their glow is. */
+const FAR_LIGHTS = 40;
 /** A house's doorway: its width and height, and how deep it goes in (the front wall's thickness). */
 const DOOR_W = 0.6;
 const DOOR_H = 0.84;
@@ -309,7 +338,8 @@ export class WorldView {
   /** How this place looks in the current weather (lighting.ts). */
   private amb: Ambience;
   private readonly pitch = THREE.MathUtils.degToRad(62);
-  /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass, `slump` as they go down, `wade` as they wade into the culvert's water. */
+  /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass, `slump` as they go down, `wade` as they wade into the culvert's water,
+   * `climb` as they climb a lookout (and back to 0 as they come down). */
   private rigs = new Map<string, RigEntry>();
   /** The ground's colors (grass.ts), and the grass's material: null where no grass grows. */
   private ground!: Ground;
@@ -392,12 +422,48 @@ export class WorldView {
   private flickerAt: Array<{ x: number; y: number }> = [];
   private flashes = new Flashes();
   private echoes = new Echoes();
+  /** Roofs the town built over a few tiles (porches), and how solid each is drawn now: they fade over whoever stands under them. */
+  private porches: Array<{ roof: THREE.Mesh; x0: number; y0: number; x1: number; y1: number; k: number }> = [];
   /** What stands at the edge of the fog when you are uneasy (unease.ts): only on a map where watchers roam. */
   private farFigure: FarFigure | null = null;
   /** Someone's steps, glimpsed while you are alone out there (glimpses.ts): only on a map of the wilds. */
   private passer: Passer | null = null;
   private creatureList: CreatureAvatar[] = [];
   private flareLight = new THREE.PointLight(FLARE_COLOR, 0, 9, 2);
+  /** The fire lookouts on this map: their corners, and each one's beam, which turns round it while its lamp burns. */
+  private lookouts: Array<{ x: number; y: number; beam: THREE.Mesh }> = [];
+  /** The lamp in a lookout's cab: dark while it is out, bright while it burns. */
+  private beamLampMat = ownToon('#e8e1c8', { emissive: 0x000000 });
+  private beamMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  /** How far the view is pulled back (1: down on the ground; LOOKOUT_ZOOM up a lookout) and the far look's state. */
+  private zoom = 1;
+  private lodTile = NaN;
+  private lodOn = false;
+  /** Tree, fern and grass blocks, for the far look: each one's middle, its trees' mesh and how many, and what it drops when far. */
+  private blockLod = new Map<string, { x: number; z: number; body: THREE.InstancedMesh | null; trees: number; extras: THREE.Object3D[] }>();
+  /** For each lookout, where you stand up there and the far forest drawn from there: the far blocks' halves in a few big pieces. */
+  private farForests: Array<{ x: number; z: number; meshes: THREE.InstancedMesh[] }> = [];
+  /** The lights that never move seen from up a lookout, and the two sets of points they are drawn as (lights far off are bigger). */
+  private farList: FarLight[] = [];
+  private farSmall: THREE.Points | null = null;
+  private farBig: THREE.Points | null = null;
+  private farAt = { x: 0, y: 0, z: 0, far: false };
+  /** Each distant light's color (r, g, b, in farList's order), read once, and where a flare's light is: nothing is made while they are drawn. */
+  private farRgb = new Float32Array(0);
+  private flareAt = { x: 0, y: 0, z: 0 };
+  /** Where the camera looks, while you climb a lookout or stand up there: your climb, and where you are drawn. */
+  private climbing = 0;
+  private climbAt = new THREE.Vector3();
+  /** The flares burning on this map, as last told (setFlares): up a lookout their red light goes up over the trees. */
+  private flareList: Array<{ x: number; y: number; left: number }> = [];
+  /**
+   * The places mended together on this map (works.ts): each footbridge whole and broken (one shows), and
+   * each street light of the works with its head's own material (it glows only while it stands); and the
+   * ids of those that stand, as the game last said (setWorks).
+   */
+  private bridges: Array<{ id: string; whole: THREE.Group; broken: THREE.Group }> = [];
+  private worksLamps: Array<{ id: string; mat: THREE.MeshToonMaterial; on: boolean }> = [];
+  private standing: Pass | null = null;
   /** The fires of this map: their tiles in the order Fires draws them, how big each burns, and where the game says so. */
   private fireTiles: Array<[number, number]> = [];
   private fireLevels: number[] = [];
@@ -505,6 +571,7 @@ export class WorldView {
     this.animate = [];
     this.wisps = [];
     this.puffs = [];
+    this.porches = [];
   }
 
   /** Height of the ground a character stands on: on water frozen over, the ice. A flooded culvert lies as low as water, and is as full. */
@@ -687,12 +754,36 @@ export class WorldView {
       else if (burnt) o.scale.set(t.s * SNAG_SPREAD, t.s * SNAG_HEIGHT, t.s * SNAG_SPREAD);
       else o.scale.setScalar(t.s);
     };
+    const lookouts = this.objects('lookout').map(o => ({ x: o.x + 1, z: o.y + LOOKOUT_STAND_Z, far: [] as Tree[] }));
     for (const block of blocks(trees)) {
-      this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); }, bodyMat, true);
-      this.instanced(shell, block, place, OUTLINE_INSTANCED);
+      // In an order of their own, so any first part of a block is trees from all over it: the far look draws only the first half.
+      block.sort((a, b) => hash2(Math.floor(a.x * 7), Math.floor(a.y * 11)) - hash2(Math.floor(b.x * 7), Math.floor(b.y * 11)));
+      const lod = this.lod(block[0]!.x, block[0]!.y);
+      lod.body = this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); }, bodyMat, true);
+      lod.trees = block.length;
+      lod.extras.push(this.instanced(shell, block, place, OUTLINE_INSTANCED));
       // Outside the map the forest is only a backdrop, too dense to see the ground under it: no shadows, one draw call less a block.
       const shaded = block.filter(t => t.shade && map.inside(Math.floor(t.x), Math.floor(t.y)));
-      if (shaded.length) this.instanced(this.shadowGeo, shaded, (t, o) => { o.position.set(t.x, t.z + 0.012, t.y); o.scale.setScalar(0.46 * t.s); }, this.shadowMat);
+      if (shaded.length) lod.extras.push(this.instanced(this.shadowGeo, shaded, (t, o) => { o.position.set(t.x, t.z + 0.012, t.y); o.scale.setScalar(0.46 * t.s); }, this.shadowMat));
+      // Seen from up a lookout, a block this far off is half its trees, in the lookout's far forest below.
+      for (const l of lookouts) if ((lod.x - l.x) ** 2 + (lod.z - l.z) ** 2 > FAR_BLOCK * FAR_BLOCK) l.far.push(...block.slice(0, Math.ceil(block.length * FAR_TREES)));
+    }
+    // Each lookout's far forest: the far blocks' halves joined into a few big pieces (FAR_PIECE tiles a side), so the
+    // whole view from up there costs a few draw calls more than the view on the ground, not hundreds.
+    for (const l of lookouts) {
+      const pieces = new Map<string, Tree[]>();
+      for (const t of l.far) {
+        const key = `${Math.floor(t.x / FAR_PIECE)},${Math.floor(t.y / FAR_PIECE)}`;
+        let list = pieces.get(key);
+        if (!list) pieces.set(key, (list = []));
+        list.push(t);
+      }
+      const meshes = [...pieces.values()].map(list => {
+        const m = this.instanced(body, list, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); }, bodyMat, true);
+        m.visible = false;
+        return m;
+      });
+      this.farForests.push({ x: l.x, z: l.z, meshes });
     }
 
     const rocks = this.objects('rock');
@@ -729,6 +820,7 @@ export class WorldView {
     const frondAt = new Map<number, { mesh: THREE.InstancedMesh; start: number; fronds: Frond[] }>();
     for (const block of blocks(fernTiles)) {
       const mesh = this.instanced(frondGeo, block.flatMap(t => t.fronds), (b, o, c) => { placeFrond(b, o); this.ground.plant(c.set(['#2f4f33', '#39603d', '#2a4a30'][b.k % 3]!)); }, frondMat, true);
+      this.lod(block[0]!.x, block[0]!.y).extras.push(mesh);
       block.forEach((t, i) => frondAt.set(t.y * W + t.x, { mesh, start: i * PER, fronds: t.fronds }));
     }
     const rustle = new Map<number, number>(), bo = new THREE.Object3D();
@@ -760,6 +852,7 @@ export class WorldView {
           const m = this.instanced(geo, block, (c, o, col) => { o.position.set(c.x, c.h, c.y); o.rotation.y = c.rot; o.scale.set(c.spread, c.height, c.spread); col.copy(c.color); }, grass.material, true);
           // Swaying and parting move the blades a little past where they stand still.
           m.boundingSphere!.radius += 0.35;
+          this.lod(block[0]!.x, block[0]!.y).extras.push(m);
         }
       }
     }
@@ -774,6 +867,74 @@ export class WorldView {
 
   /** Set by buildNature: makes the ferns on a tile rustle. */
   private rustleAt: (x: number, y: number) => void = () => {};
+
+  /** The lookout whose ladder's foot is tile x,y (footOf), if any: asked every frame for whoever climbs, so a plain loop. */
+  private lookoutAtFoot(x: number, y: number): { x: number; y: number } | undefined {
+    for (const l of this.lookouts) if (l.x + 1 === x && l.y + 2 === y) return l;
+    return undefined;
+  }
+
+  /** The far look's record of the block the tile (in tile units) lies in, made the first time a block is asked for. */
+  private lod(x: number, y: number) {
+    const bx = Math.floor(x / CHUNK), by = Math.floor(y / CHUNK), key = `${bx},${by}`;
+    let b = this.blockLod.get(key);
+    if (!b) this.blockLod.set(key, (b = { x: (bx + 0.5) * CHUNK, z: (by + 0.5) * CHUNK, body: null, trees: 0, extras: [] }));
+    return b;
+  }
+
+  /**
+   * Up a lookout (the view pulled back), the blocks far from you get the cheap look: half their trees, no
+   * outlines or shadows, no ferns or grass; down again, all of it. Only switches what is drawn, and how many
+   * of a block's trees: no material changes, so nothing is compiled. Done again when you reach another tile.
+   */
+  private applyLod(fx: number, fz: number) {
+    const on = this.zoom > 1.05, tile = Math.floor(fz) * 65536 + Math.floor(fx), fog = (this.scene.fog as THREE.Fog).far;
+    if (on === this.lodOn && (!on || tile === this.lodTile)) return;
+    this.lodOn = on;
+    this.lodTile = tile;
+    const cam = this.camera.position;
+    // Up a lookout, its far forest stands in for every far block's trees, and near and far go by where you stand up there.
+    const tower = on ? this.farForests.find(f => (f.x - fx) ** 2 + (f.z - fz) ** 2 < 16) : undefined;
+    const cx = tower?.x ?? fx, cz = tower?.z ?? fz;
+    // A piece or a block wholly past where the fog closes in would be drawn the fog's own color: it is not drawn at all.
+    const lost = (m: THREE.InstancedMesh) => {
+      const b = m.boundingSphere!;
+      return Math.hypot(b.center.x - cam.x, b.center.y - cam.y, b.center.z - cam.z) - b.radius > fog;
+    };
+    for (const f of this.farForests) for (const m of f.meshes) m.visible = f === tower && !lost(m);
+    for (const b of this.blockLod.values()) {
+      const far = on && (b.x - cx) ** 2 + (b.z - cz) ** 2 > FAR_BLOCK * FAR_BLOCK;
+      for (const m of b.extras) m.visible = !far;
+      if (b.body) {
+        b.body.visible = !far || (!tower && !lost(b.body));
+        b.body.count = far ? Math.ceil(b.trees * FAR_TREES) : b.trees;
+      }
+    }
+  }
+
+  /** The distant lights up a lookout (lookout.ts): two sets of points, the small (lamps, masts, flares) and the big (the Old Stone, lit shelters), hidden on the ground. */
+  private buildFarLights() {
+    this.farList = farLights(this.map.data, this.peek);
+    this.farRgb = new Float32Array(this.farList.length * 3);
+    const c = new THREE.Color();
+    this.farList.forEach((l, i) => { c.set(l.color); this.farRgb[i * 3] = c.r; this.farRgb[i * 3 + 1] = c.g; this.farRgb[i * 3 + 2] = c.b; });
+    const make = (size: number) => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(FAR_LIGHTS * 3), 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(FAR_LIGHTS * 3), 3));
+      geo.setDrawRange(0, 0);
+      const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+        size, map: softTexture(0.2), vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, opacity: 0,
+      }));
+      // Each frame they move to where you see them from: their bounds would only be out of date.
+      pts.frustumCulled = false;
+      pts.visible = false;
+      this.scene.add(pts);
+      return pts;
+    };
+    this.farSmall = make(1.4);
+    this.farBig = make(3.4);
+  }
 
   /** Props that never move go into `still` (to be baked); what moves (the Old Stone's crystal and debris, smoke, people) goes straight into the scene. */
   private buildTown(still: THREE.Object3D[]) {
@@ -810,8 +971,11 @@ export class WorldView {
         continue;
       }
       if (h.style === 'mill') {
-        // The old sawmill (left.ts): the same doorway, dark; nothing has burned in there since it closed.
-        still.push(millBuilding(h, doorX, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }));
+        // The old sawmill (left.ts): the same doorway, dark until someone lights its stove again (town.ts);
+        // then the doorway glows, its windows warm, and its burner's stack smokes.
+        const { root, stack } = millBuilding(h, doorX, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }, fire ? { warm: this.warm, doorGlow: this.doorGlow } : undefined);
+        if (fire) chimneys.push(stack);
+        still.push(root);
         continue;
       }
       if (h.style === 'shed') {
@@ -916,6 +1080,22 @@ export class WorldView {
 
     // The culvert's mouths (a rusted steel pipe half under the water, in its stone headwall), where it opens onto ground.
     for (const m of culvertMouths(this.map)) still.push(culvertMouthModel(m.x, m.y, m.dir));
+    // The loggers' fire lookouts: the tower baked with the rest, its lamp glowing while it burns, and its beam.
+    const lookouts = this.objects('lookout');
+    if (lookouts.length) {
+      const beamGeo = beamGeometry();
+      for (const o of lookouts) {
+        still.push(lookoutModel(o, this.beamLampMat));
+        const beam = new THREE.Mesh(beamGeo, this.beamMat);
+        beam.position.set(o.x + 1, LOOKOUT_LAMP_Y, o.y + 1);
+        beam.visible = false;
+        // It turns every frame: its bounds are the whole circle it sweeps.
+        beam.frustumCulled = false;
+        this.scene.add(beam);
+        this.lookouts.push({ x: o.x, y: o.y, beam });
+      }
+      this.buildFarLights();
+    }
     for (const b of this.objects('board')) still.push(boardModel(b.x, b.y));
     for (const s of this.objects('sign')) {
       if (s.style === 'napo') { still.push(napoSign(s)); continue; }
@@ -931,9 +1111,37 @@ export class WorldView {
       const g = new THREE.Group();
       g.position.set(l.x + 0.5, 0, l.y + 0.5);
       g.add(part(flat(new THREE.CylinderGeometry(0.045, 0.06, 1.3, 6)), '#2f343c', 0, 0.65, 0, 0.02));
-      // The head keeps its own glowing material: all the lamp heads become one mesh of their own.
-      g.add(box(0.42, 0.05, 0.08, '#2f343c', 0.18, 1.3, 0), part(new THREE.BoxGeometry(0.2, 0.1, 0.16), this.lampMat, 0.34, 1.24, 0, 0.02));
+      // The head keeps its own glowing material: all the lamp heads become one mesh of their own. One the
+      // town has not mended yet (town.ts) stands dark, its glass broken grey. A lamp mended together has one
+      // of its own, dark until it stands, and its plaque on the post.
+      let head: THREE.Material | string = l.dark ? '#3a3f45' : this.lampMat;
+      if (l.works) {
+        const mat = ownToon('#ffcf8a', { emissive: 0x000000 });
+        this.worksLamps.push({ id: l.works, mat, on: false });
+        head = mat;
+        g.add(box(0.14, 0.1, 0.02, '#8a7a52', 0, 0.86, 0.07, 0.01));
+      }
+      g.add(box(0.42, 0.05, 0.08, '#2f343c', 0.18, 1.3, 0), part(new THREE.BoxGeometry(0.2, 0.1, 0.16), head, 0.34, 1.24, 0, 0.02));
       still.push(g);
+    }
+    // A roof on posts the town built (town.ts): over the notice board, where the rain keeps off. Its roof
+    // fades while someone stands under it, whom this camera would otherwise not see.
+    for (const p of this.objects('porch')) {
+      const { posts, roof } = porchModel(p);
+      still.push(posts);
+      this.scene.add(roof);
+      this.porches.push({ roof, x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h, k: 1 });
+    }
+    // The footbridges mended together: their sills always, the bridge whole or broken as it stands (setWorks),
+    // each baked into its own few meshes so that showing one or the other is only a switch.
+    for (const b of this.objects('footbridge')) {
+      const m = footbridgeModel(b), whole = new THREE.Group(), broken = new THREE.Group();
+      still.push(m.sills);
+      for (const mesh of bake([m.whole])) whole.add(mesh);
+      for (const mesh of bake([m.broken])) broken.add(mesh);
+      whole.visible = false;
+      this.scene.add(whole, broken);
+      this.bridges.push({ id: b.id, whole, broken });
     }
     // Utility poles with sagging wires, in the order the map lists them.
     const poles = this.objects('pole');
@@ -1182,6 +1390,7 @@ export class WorldView {
     (this.scene.background as THREE.Color).set(a.sky);
     (this.scene.fog as THREE.Fog).color.set(a.sky);
     this.lampMat.emissive.set(a.lampGlow);
+    for (const l of this.worksLamps) if (l.on) l.mat.emissive.set(a.lampGlow);
     this.warm.emissive.set(a.warmGlow);
     this.doorGlow.emissive.set(a.warmGlow);
     this.flash.intensity = a.flashlight ? 1.6 * L : 0;
@@ -1268,6 +1477,7 @@ export class WorldView {
   }
 
   setFlares(list: Array<{ x: number; y: number; left: number }>, focus: { x: number; y: number }) {
+    this.flareList = list;
     const near = [...list].sort((a, b) => Math.hypot(a.x - focus.x, a.y - focus.y) - Math.hypot(b.x - focus.x, b.y - focus.y));
     this.flares.set(near, (x, y) => this.groundAt(x, y));
   }
@@ -1275,6 +1485,49 @@ export class WorldView {
   /** The flashes on this map, every frame; the nearest to the player are drawn. */
   setFlashes(list: FlashView[]) {
     this.flashes.set(list, (x, y) => this.groundAt(x, y));
+  }
+
+  /**
+   * The fire lookouts' lamps, every frame: `left(x, y)` how long the one of the lookout whose corner is x,y
+   * burns on (0: out), and `wall` the server's clock (ms since the epoch), which turns every beam (beamAngle).
+   * A lamp that burns glows in its cab, and its beam sweeps the woods, for everyone on the map to see.
+   */
+  setLamps(left: (x: number, y: number) => number, wall: number) {
+    const angle = beamAngle(wall);
+    let lit = false;
+    for (const l of this.lookouts) {
+      const burning = left(l.x, l.y) > 0;
+      l.beam.visible = burning && this.outdoors;
+      if (burning) { l.beam.rotation.y = -angle; lit = true; }
+    }
+    this.beamLampMat.emissive.setHex(lit ? 0xffe2a0 : 0x000000);
+  }
+
+  /**
+   * The places mended together, every frame (works.ts): `standing` holds the ids of those that stand (the
+   * game's pass does). A footbridge shows whole or broken, and a street light of the works glows, and
+   * carries a real light, only while it stands. Only what shows and colors change: nothing is compiled.
+   */
+  setWorks(standing: Pass) {
+    this.standing = standing;
+    for (const b of this.bridges) {
+      const on = standing.has(b.id);
+      b.whole.visible = on;
+      b.broken.visible = !on;
+    }
+    for (const l of this.worksLamps) {
+      const on = standing.has(l.id);
+      if (on === l.on) continue;
+      l.on = on;
+      l.mat.emissive.set(on ? this.amb.lampGlow : 0x000000);
+    }
+  }
+
+  /** How far the view is pulled back, every frame (1 on the ground, LOOKOUT_ZOOM up a lookout): the camera's radius, the fog, the far look and the distant lights follow it. */
+  setZoom(zoom: number) {
+    if (zoom === this.zoom) return;
+    this.zoom = zoom;
+    this.updateFog();
   }
 
   /** A storm over this map: a dark sky, closer fog, heavy rain and lightning (outdoors only). */
@@ -1376,12 +1629,12 @@ export class WorldView {
   }
 
   private updateFog() {
-    const fog = this.scene.fog as THREE.Fog, f = this.amb.fog, d = this.dist;
+    const fog = this.scene.fog as THREE.Fog, f = this.amb.fog, d = this.dist * this.zoom;
     if (!f) { fog.near = 1e4; fog.far = 2e4; return; }
-    // A storm leaves less to see.
-    const storm = this.storm && this.outdoors ? 0.6 : 1;
+    // A storm leaves less to see; up a lookout the far look fades into the fog at the view's edge.
+    const storm = this.storm && this.outdoors ? 0.6 : 1, far = 1 - FAR_FOG * upness(this.zoom);
     fog.near = Math.max(1, d - 1.5);
-    fog.far = d + Math.max(f.min, d * f.share) * storm;
+    fog.far = d + Math.max(f.min, d * f.share) * storm * far;
     // Thick fog (a condition) closes in whatever the weather.
     if (this.fogCap !== undefined && this.outdoors) fog.far = Math.min(fog.far, d + this.fogCap);
   }
@@ -1421,13 +1674,21 @@ export class WorldView {
   }
 
   render(t: number, dt: number, focus: { x: number; y: number }, avatars: Avatar[], meId: string | null, marker: { x: number; y: number; t: number } | null) {
-    const fx = focus.x + 0.5, fz = focus.y + 0.5, gy = this.groundAt(fx, fz);
-    this.camera.position.set(fx, gy + Math.sin(this.pitch) * this.dist, fz + Math.cos(this.pitch) * this.dist);
-    this.camera.lookAt(fx, gy + 0.4, fz);
+    let fx = focus.x + 0.5, fz = focus.y + 0.5, gy = this.groundAt(fx, fz);
     for (const a of this.animate) a(t, dt);
     this.animateRain({ x: fx, y: fz }, dt);
     this.grass?.update(t);
     this.syncAvatars(avatars, meId, fx, fz, dt);
+    // Climbing a lookout, and up there, the view follows you up the ladder onto its platform.
+    if (this.climbing > 0) {
+      const k = this.climbing;
+      fx += (this.climbAt.x - fx) * k; fz += (this.climbAt.z - fz) * k; gy += (this.climbAt.y - gy) * k;
+    }
+    const dist = this.dist * this.zoom;
+    this.camera.position.set(fx, gy + Math.sin(this.pitch) * dist, fz + Math.cos(this.pitch) * dist);
+    this.camera.lookAt(fx, gy + 0.4, fz);
+    this.applyLod(fx, fz);
+    this.drawFarLights(fx, fz, t);
     const carriers = avatars.filter(a => a.live).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
     this.liveGlows.set(carriers.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
     const glowing = avatars.filter(a => a.afterglow).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
@@ -1435,6 +1696,12 @@ export class WorldView {
     this.creatures.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
     for (const c of this.creatureList) if (c.moving) this.rustleAt(c.x + 0.5, c.y + 0.5);
     this.echoes.update(t, (x, z) => this.groundAt(x, z));
+    for (const r of this.porches) {
+      // Under it, or a row in front, where its roof comes between this camera and whoever stands there.
+      const under = avatars.some(a => a.x + 0.5 >= r.x0 && a.x + 0.5 < r.x1 && a.y + 0.5 >= r.y0 && a.y + 0.5 < r.y1 + 1);
+      r.k += ((under ? 0.22 : 1) - r.k) * Math.min(1, dt * 8);
+      (r.roof.material as THREE.MeshToonMaterial).opacity = r.k;
+    }
     this.farFigure?.update(t, fx, fz);
     this.passer?.update(t);
     this.light(fx, fz, t, dt);
@@ -1477,11 +1744,46 @@ export class WorldView {
       if (!src) { s.light.intensity = 0; continue; }
       s.on = Math.min(1, s.on + dt / LIGHT_FADE_S);
       if (src.kind === 'fire') { s.light.intensity = FIRE_LIGHT * L * flicker(t, src.ph) * s.on * Math.min(1, this.fireLevel(src.tx, src.ty)); continue; }
+      // A street light mended together shines only while it stands.
+      if (src.works && !this.standing?.has(src.works)) { s.light.intensity = 0; continue; }
       // Some lamps flicker now and then; any lamp flickers hard while someone with a flickering quirk passes under it.
       const restless = this.flickerAt.some(p => (p.x + 0.5 - src.x) ** 2 + (p.y + 0.5 - src.z) ** 2 < 9);
       const off = (src.flicker && (Math.sin(t * 13 + src.ph) > 0.92 || Math.sin(t * 2.3 + src.ph) > 0.97)) || (restless && Math.sin(t * 29 + src.ph) * Math.sin(t * 7.3) > 0.1) ? 0.15 : 1;
       s.light.intensity = lamp * off * s.on;
     }
+  }
+
+  /**
+   * The distant lights seen from up a lookout, fading in as the view pulls back: every one that never moves
+   * where it is, or on the view's edge in its real direction (placeFar), and the flares burning, their red
+   * light going up over the trees. Nothing is made: the points' buffers are filled in place.
+   */
+  private drawFarLights(fx: number, fz: number, t: number) {
+    const small = this.farSmall, big = this.farBig, k = upness(this.zoom);
+    if (!small || !big) return;
+    small.visible = big.visible = k > 0.02;
+    if (!small.visible) return;
+    (small.material as THREE.PointsMaterial).opacity = k;
+    (big.material as THREE.PointsMaterial).opacity = k;
+    // Past this the view does not reach, up there: a light farther off shows on its edge.
+    const reach = 6.2 * this.zoom * 0.92, at = this.farAt, rgb = this.farRgb, fl = this.flareAt;
+    let ns = 0, nb = 0;
+    for (let i = 0; i < this.farList.length; i++) {
+      const l = this.farList[i]!;
+      if (l.works && !this.standing?.has(l.works)) continue;
+      placeFar(l, fx, fz, reach, at);
+      const glow = farGlow(l.kind, t);
+      if (l.size > 2 || at.far) { if (nb < FAR_LIGHTS) putPoint(big, nb++, at, rgb[i * 3]!, rgb[i * 3 + 1]!, rgb[i * 3 + 2]!, glow * (at.far ? 0.7 : 1)); }
+      else if (ns < FAR_LIGHTS) putPoint(small, ns++, at, rgb[i * 3]!, rgb[i * 3 + 1]!, rgb[i * 3 + 2]!, glow);
+    }
+    for (const f of this.flareList) {
+      if (ns >= FAR_LIGHTS) break;
+      fl.x = f.x + 0.5; fl.z = f.y + 0.5; fl.y = 1.4 + (1 - Math.min(1, f.left / 45)) * 2.6;
+      placeFar(fl, fx, fz, reach, at);
+      putPoint(small, ns++, at, FLARE_FAR.r, FLARE_FAR.g, FLARE_FAR.b, 0.8 + 0.2 * Math.sin(t * 17 + f.x));
+    }
+    endPoints(small, ns);
+    endPoints(big, nb);
   }
 
   /** The players as the game has them now: their models, crouched in tall grass, and the nearest to (fx, fz) parting the grass. */
@@ -1500,9 +1802,9 @@ export class WorldView {
       // A new jacket or new gear: the character is built again in it (as crouched, as slumped and as deep in the water as it was).
       const look = JSON.stringify(a.look ?? {});
       if (!e || e.color !== a.color || e.look !== look) {
-        const crouch = e ? e.crouch : inGrass ? 1 : 0, slump = e ? e.slump : a.down ? 1 : 0, wade = e ? e.wade : inWater ? 1 : 0;
+        const crouch = e ? e.crouch : inGrass ? 1 : 0, slump = e ? e.slump : a.down ? 1 : 0, wade = e ? e.wade : inWater ? 1 : 0, climb = e ? e.climb : a.up ? 1 : 0;
         if (e) this.dropRig(e);
-        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0), crouch, slump, wade };
+        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0), crouch, slump, wade, climb };
         // Turned to face first, then leaned: a crouch leans forward whichever way they face.
         e.rig.root.rotation.order = 'YXZ';
         this.scene.add(e.rig.root, e.shadow);
@@ -1520,6 +1822,18 @@ export class WorldView {
       rig.root.rotation.set(CROUCH_LEAN * c + SLUMP_LEAN * k, FACE[a.dir], SLUMP_ROLL * k);
       // On the water, the shadow lies on its surface.
       e.shadow.position.set(x, wd > 0.5 ? WATER_Y + 0.01 : gy + BLOB_Y, z);
+      // Up a lookout: up the ladder from its foot onto the platform, in front of the cab, and down again.
+      const cl = (e.climb = climbToward(e.climb, !!a.up, dt));
+      const tower = cl > 0 ? this.lookoutAtFoot(Math.round(a.x), Math.round(a.y)) : undefined;
+      if (tower) {
+        const k = cl * cl * (3 - 2 * cl), spread = (hash2(a.id.length * 31 + a.id.charCodeAt(0), a.id.charCodeAt(a.id.length - 1)) - 0.5) * 0.8;
+        rig.root.position.set(x + (tower.x + 1 + spread - x) * k, gy + (LOOKOUT_DECK + 0.06 - gy) * k, z + (tower.y + LOOKOUT_STAND_Z - z) * k);
+        e.shadow.visible = k < 0.5;
+        if (a.id === meId) { this.climbing = k; this.climbAt.copy(rig.root.position); }
+      } else {
+        e.shadow.visible = true;
+        if (a.id === meId) this.climbing = 0;
+      }
       const sw = (a.moving ? Math.sin(a.phase) * 0.95 : a.turnT > 0 ? Math.sin((1 - a.turnT / 0.14) * Math.PI) * 0.45 : 0) * (1 - c * 0.45) * (1 - k);
       rig.legL.rotation.x = sw + 0.25 * k; rig.legR.rotation.x = -sw - 0.1 * k;
       // The arms come forward as if pushing the grass aside; down, they lie loose, one flung ahead.
@@ -1685,6 +1999,60 @@ export class WorldView {
     this.scene.remove(e.rig.root, e.shadow);
     disposeTree(e.rig.root);
   }
+}
+
+/**
+ * A lookout's beam, from its lamp out along +x and down to the ground at its reach (lookout.ts): a cone of
+ * light, brightest at the lamp, and the pool it throws on the ground as it goes, faint near the tower and
+ * brightest out where it lands. One mesh, colored by vertex (the material adds it to what is behind).
+ */
+function beamGeometry(): THREE.BufferGeometry {
+  const R = BEAM_REACH, wide = Math.tan(BEAM_HALF), drop = Math.atan2(LOOKOUT_LAMP_Y, R);
+  const cone = new THREE.CylinderGeometry(R * wide, 0.14, R, 14, 1, true).toNonIndexed();
+  cone.rotateZ(-Math.PI / 2).translate(R / 2, 0, 0).rotateZ(-drop);
+  const pos: number[] = [], col: number[] = [];
+  const cp = cone.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < cp.count; i++) {
+    const x = cp.getX(i), k = 0.2 * Math.max(0, 1 - x / R) ** 1.4;
+    pos.push(x, cp.getY(i), cp.getZ(i));
+    col.push(k, k * 0.95, k * 0.8);
+  }
+  // The pool on the ground: a strip down the middle of the beam's path, in rings, faint where it starts.
+  const ground = -LOOKOUT_LAMP_Y + 0.05, rings = [3, 8, 14, R * 0.86, R];
+  const light = (x: number) => 0.16 * Math.min(1, Math.max(0, (x - 3) / 10)) * (x >= R ? 0 : 1);
+  for (let i = 0; i < rings.length - 1; i++) {
+    const a = rings[i]!, b = rings[i + 1]!, wa = a * wide, wb = b * wide, ka = light(a), kb = light(b);
+    for (const [x, z, k] of [[a, -wa, ka], [b, -wb, kb], [b, wb, kb], [a, -wa, ka], [b, wb, kb], [a, wa, ka]] as const) {
+      pos.push(x, ground, z);
+      col.push(k, k * 0.95, k * 0.8);
+    }
+  }
+  cone.dispose();
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return g;
+}
+
+/** A flare's red light going up, seen from up a lookout. */
+const FLARE_FAR = new THREE.Color('#ff4a2e');
+
+/** Point `n` of a set of distant lights: where it is drawn, and its color at `glow` of its brightness. */
+function putPoint(pts: THREE.Points, n: number, at: { x: number; y: number; z: number }, r: number, g: number, b: number, glow: number) {
+  (pts.geometry.attributes.position as THREE.BufferAttribute).setXYZ(n, at.x, at.y, at.z);
+  (pts.geometry.attributes.color as THREE.BufferAttribute).setXYZ(n, r * glow, g * glow, b * glow);
+}
+
+/** A set of distant lights filled with `n` points this frame: only those are drawn. */
+function endPoints(pts: THREE.Points, n: number) {
+  pts.geometry.setDrawRange(0, n);
+  pts.geometry.attributes.position!.needsUpdate = true;
+  pts.geometry.attributes.color!.needsUpdate = true;
+}
+
+/** Climbing a lookout: from 0 on the ground to 1 up on its platform (or back down), `dt` seconds on. */
+export function climbToward(climb: number, up: boolean, dt: number): number {
+  return Math.min(1, Math.max(0, climb + (up ? 1 : -1) * CLIMB_RATE * Math.max(0, dt)));
 }
 
 /** A gable roof: a triangular prism, ridge along x. */

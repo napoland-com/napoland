@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "chapters": [
     {"id":"home","title":"Home","text":"You woke up at home in Stonebrook, Pop. 23. The fire at home never goes out, and the chest beside it keeps what you bring back.","hints":{"mira":"New here? Glowcaps grow in the damp along the Near Woods' road, up north, and resin on the grass past the ford."}},
     {"id":"what-glows","title":"What glows","when":{"store":true},"text":"You brought something home and put it in your chest. What you bring home earns XP, and every level makes your energy last longer out there. The workbench beside the chest makes gear from what it holds.","hints":{"mira":"Go and sit by the old cabin's fire, past the crossroads in the Near Woods."}},
@@ -18,5 +18,35 @@
     {"id":"first-collapse","who":"mira","after":"collapsed","line":"You went down out there, didn't you? It happens to everyone once. What you carried lies where you fell for an hour, then it's gone: go back for it, and turn for home sooner next time."},
     {"id":"first-surge","who":"mira","after":"surged","line":"So a surge caught you out there. When the woods grow restless, get under a street light or a roof before it rolls in from the deep end. The board by me says when the next one comes."},
     {"id":"first-made","who":"walt","after":"made","line":"Made that yourself? Good. Mend it at your bench before it wears through. On the line we fixed what we had, and nobody's bringing anything new out here now."}
+  ],
+  "scenes": [
+    {"id":"walt-hum","who":"walt","title":"The hum on the line","when":{"level":3,"notes":["walt-n10","walt-n11"]},"lines":["You read my tags on ten and eleven. Nobody reads a lineman's tags.","Before NAPO, that line took the power up the north road to the cabins. Then one spring it started to hum with nothing on it.","I grounded it and reported it. The office sent a man who stood with his ear to a pole for ten minutes and said: that's the wind, Walt.","There was no wind. Thirty years I've heard wind in wire. That was something else, and it kept time.","Then the compass on my dash turned. Pointed up the line, into the woods. Six months on, NAPO came up the south road with its trucks."]},
+    {"id":"walt-answer","who":"walt","title":"The night of the answer","when":{"level":4,"notes":["walt-n16"]},"lines":["So you've been up to sixteen on a green night. Then you've heard the wire sing.","The night of the answer I was up that pole by eleven. The line had hummed all week, worse after dark, and I wanted to know where it went.","At twenty to twelve the Tower sent. I felt it come up the wire before I heard a thing. It jumped in my hands like something alive.","Then the woods lit up. Not a fire: all of it, north of me, bright as the town on a Saturday night. Not a sound.","My truck died where I'd left it on the road. I don't remember the walk home. I remember the light, and then my own bed, boots on."]},
+    {"id":"walt-two-weeks","who":"walt","title":"Two weeks","when":{"level":5,"notes":["walt-jam"]},"lines":["You found my note at the jam. I'd forgotten I left it.","NAPO said two weeks. We went a street at a time, and I went with mine: sat on the verge with one bag and waited our turn.","Edith got out at the bunker and wouldn't get back in. The rest of us crawled on down the road. About noon the whole line stopped, and nobody up front said why.","I sat there thinking about my truck up the north road, dead where I'd left it, with thirty years of tools in the back.","So I wrote that note for whoever cared, and walked back. Took me till dark. By the time I gave up on the truck, the road was empty. Just the cars."]},
+    {"id":"walt-stayed","who":"walt","title":"Why I stayed","when":{"level":8,"notes":["walt-n14"]},"lines":["Folks ask why I stayed. I tell them it was the truck.","It wasn't the truck. A line is walked. Somebody walks it every week, or it comes down in the first bad winter and nobody knows till the lights go.","Mine's been dead since the answer. It hums anyway, and copper I pulled down turns up new on the ground. Somebody ought to be walking it. Dead or not.","And somebody ought to be here when the ones who went come back up that road. Whenever that is.","Ruth has her bunker. Vera has her radio. I've got the lodge fire and a line. That'll do."]},
+    {"id":"edith-kept","who":"edith","title":"What I kept","when":{"town":"edith-home","notes":["barlow-tins","barlow-next-door"]},"lines":["You read their notes. I didn't throw them out. You don't throw out an apology.","A family, from the look of it. A man's boots on my mat, mud to the ankle. A child's hand. Somebody who folds blankets.","They'll have gone down the south road. Everybody does. Past the bunker, past the cars.","I was in the bunker then. I must have seen them go by. I don't remember a family. I remember a lot of people going by.","If they come back up that road, the beans are on me."]},
+    {"id":"edith-kari","who":"edith","title":"Kari","when":{"town":"edith-home","pages":["the-dahls"]},"lines":["You've been in the Dahl house, on the old road by the mill.","Kari Dahl is my daughter. She married the Dahl boy, and they had the baby that spring.","The night they called her street I was down at the bunker, helping Ruth with the ones who wouldn't go. By the time I heard, they'd gone.","She'll have left me a note. She always leaves notes. I haven't gone in to read it, and I won't have you read it to me.","They'll be somewhere. Kari always lands on her feet."]}
+  ],
+  "says": [
+    {"who":"walt","when":{"sky":"aurora"},"line":"Green out. The line's singing again, all the way up to sixteen. You can hear it from the lodge door if you listen."},
+    {"who":"walt","when":{"sky":"storm"},"line":"Hear that? Storm up in the woods. Shards come down by the old poles in weather like that. Don't stand under the wire."},
+    {"who":"walt","when":{"sky":"night"},"line":"Dark out. Going up the north road, take a flare. Whatever lies in the ferns doesn't like red."},
+    {"who":"walt","when":{"keepsake":"pole-tag"},"line":"You've got my tag off sixteen. Good. I told whoever found it to keep it."},
+    {"who":"walt","when":{"town":"edith-home"},"line":"Edith's home. First smoke out of that chimney in years. Mind your manners around her."},
+    {"who":"walt","when":{"town":"south-lights"},"line":"The street lights on the south road are on. First time since NAPO stopped paying for them."},
+    {"who":"walt","when":{"town":"mill-stove"},"line":"Arvid's back at the mill. Thirty-one winters on that saw. He'll outlast it."},
+    {"who":"walt","when":{"town":"mill-roof"},"line":"The mill's got a roof again. Dry floor, for the first time since it shut."},
+    {"who":"mira","when":{"town":"edith-home"},"line":"Edith's home, next door to you. She told me my board hangs crooked. It doesn't."},
+    {"who":"mira","when":{"town":"south-lights"},"line":"The south road's lit at night now. Makes the walk home feel shorter."},
+    {"who":"mira","when":{"town":"board-shelter"},"line":"A roof over the board at last. Stand under it and dry off before you go out."},
+    {"who":"ruth","when":{"town":"edith-home"},"line":"Edith went home. Took the good blanket. I'd have given it to her if she'd asked, which is why she didn't."},
+    {"who":"edith","when":{"sky":"aurora"},"line":"Green sky. My mother called it the stone's weather. It never came every third night, back then."},
+    {"who":"edith","when":{"sky":"rain","town":"edith-home"},"line":"Rain. Hang your things by the fire, not on my chairs."},
+    {"who":"edith","when":{"sky":"storm","town":"edith-home"},"line":"Storm up in the woods. Don't go. Or go, and come back. Either way, shut the door."},
+    {"who":"edith","when":{"town":"lodge-cook"},"line":"Maud's cooking at the lodge. Her coffee's too weak. I've told her."},
+    {"who":"arvid","when":{"sky":"rain"},"line":"Rain on a tin roof. Best sound there is, when the roof holds."},
+    {"who":"arvid","when":{"town":"mill-roof"},"line":"The roof's mended. First dry winter in here since the mill shut."},
+    {"who":"maud","when":{"town":"edith-home"},"line":"Walt takes his coffee black. Edith takes hers with an opinion."},
+    {"who":"maud","when":{"sky":"storm"},"line":"A storm up in the woods. Whoever's out in it will want something hot when they get back."}
   ]
 }

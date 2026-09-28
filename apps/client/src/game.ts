@@ -53,17 +53,17 @@
  * - the Long Night is the server's too (`longNight`): its banners, and what Walt says while it is on.
  */
 import {
-  BUBBLE_S, TILE_NEEDS, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes,
-  canRescue, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors,
-  markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf, stepTarget,
-  linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type ShopData, type ShopOpen, type CacheItemView,
-  type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page, type Pass, BUNDLE, carriesFood, cookable, cooks,
-  nearestCooking, whyNotEat,
+  BUBBLE_S, TILE_NEEDS, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf,
+  cacheTakes, canRescue, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal,
+  lotDoors, markLifetime, worksRoom, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf,
+  stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type ShopData, type ShopOpen,
+  type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page, type Pass, BUNDLE, carriesFood, cookable,
+  cooks, nearestCooking, whyNotEat, ledgerLines, levelOf, noTown, popOf, sceneDue, scenesAfter, stormAt, swapsFit, workWants, type SayContext, type TownView, LAMP_BURNS, LOOKOUT_UP_S, footOf, inBeam, ladderOf, lampTakes, lookoutAtFoot,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Recipe, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView,
   type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type LongNightView, type MapNote, type OfferPick, type ParcelView, type RefusedAction,
-  type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type VisitView, type Weather,
+  type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type VisitView, type Weather, type LampView, type WorksView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Answer, type Ask } from './ask';
 import { BEAM_IN_S, BEAM_OUT_S, padFor, popAt } from './beam';
@@ -79,11 +79,12 @@ import {
   floodedText, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, placedAlready, raisedText,
   rescueQuestion, rescueRefusal, rescueTooTired, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, visitedText,
   visitWho, waltOnTheLongNight, padlocked, IN_YOUR_CHEST, LOST_AND_FOUND, LOST_AND_FOUND_LINES, TAKE_HALF, bundleNotYours, carryLabel, handInQuestion, pileQuestion, returnedLine, thingsOf,
-  SLAB, slabRefusal, FIRE_CHOICE, FIRE_OPTIONS, TWO_MEALS, WHAT_TO_COOK, ateAlready, cookQuestion, cookShort,
+  SLAB, WORKS_FULL, bringQuestion, nothingToGive, worksText, worksWho, slabRefusal, FIRE_CHOICE, FIRE_OPTIONS, TWO_MEALS, WHAT_TO_COOK, ateAlready, cookQuestion, cookShort, giveQuestion, swapQuestion, lampQuestion, upText, type DidContext,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { SHOP_OPENING, SHOP_THANKS, payPage, refundedLine, returnLine, type ShopReturn } from './shop';
 import { trophiesIn } from './view/cabin';
+import { easeZoom } from './lookout';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, returnedLines, thankRefusal, thankedFloat, thankedLine, thanksFor, where, type Offer } from './thanks';
 import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
@@ -114,9 +115,11 @@ interface Mover {
  * may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport' | 'locked' | 'lostfound' | 'slab';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport' | 'locked' | 'lostfound' | 'slab' | 'ledger' | 'lookout' | 'works';
   /** A person's id (the map's npc id). */
   id?: string;
+  /** A place being mended (works.ts): its id. */
+  works?: string;
   story?: { talk: string } | { read: string };
   /** A place for furniture in your cabin (comfort.ts): which one, read as what stands there now. */
   what?: Comfort;
@@ -183,6 +186,9 @@ export const GATE_PULLED = 'You pull at the gate. It gives a little, and no more
 /** What a sign is called in the text box, by its style. */
 const SIGN_WHO = { plain: 'Sign', napo: 'NAPO sign', cardboard: 'Cardboard sign', mailbox: 'Mailbox' } as const;
 
+/** A lookout's lamp's key in Game.lamps: its corner as one number (maps are far narrower than 65536 tiles). */
+const lampKey = (x: number, y: number) => y * 65536 + x;
+
 /**
  * Everything you face and press A at on a map. A door locked with a tool `pass` does not hold (the shed's
  * padlock, without bolt cutters) says why it stays shut, under the name of what it leads into (`nameOf`,
@@ -208,11 +214,18 @@ function talkersOf(map: TileMap, pass: Pass, items: Items, nameOf: (id: string) 
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
     if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
+    // What the town's ledger says is the town as it stands (town.ts): read out as you open it.
+    if (o.kind === 'ledger') return [{ x: o.x, y: o.y, who: 'The town ledger', lines: [], kind: 'ledger' }];
     if (o.kind === 'teleport') return [{ x: o.x, y: o.y, who: TELEPORT, lines: [], kind: 'teleport' }];
     // Furniture in your cabin reads from any side of it; the rug is walked over, not faced.
     if (o.kind === 'comfort' && o.what !== 'rug') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: '', lines: [], kind: 'comfort', what: o.what }));
     if (o.kind === 'lostfound') return [{ x: o.x, y: o.y, who: LOST_AND_FOUND, lines: LOST_AND_FOUND_LINES, kind: 'lostfound' }];
     if (o.kind === 'slab') return [{ x: o.x, y: o.y, who: SLAB, lines: [], kind: 'slab' }];
+    // A fire lookout is climbed, and its lamp fed, facing its ladder from its foot.
+    if (o.kind === 'lookout') return [{ ...ladderOf(o), who: 'Lookout', lines: [], kind: 'lookout' }];
+    // A place being mended is given to, and read, facing it: any plank of a footbridge, broken or whole, or its street light.
+    const works = o.kind === 'footbridge' ? o.id : o.kind === 'lamp' ? o.works : undefined, def = works ? items.works.get(works) : undefined;
+    if (works && def) return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: worksWho(def), lines: [], kind: 'works', works }));
     return [];
   })];
 }
@@ -272,7 +285,11 @@ export type News =
    * A look you bought in the shop is yours now (Stripe told the server it is paid), as it goes in a sentence;
    * `said`: the text box said so already, coming back from Stripe's page, so only the wardrobe's dot is news.
    */
-  | { kind: 'bought'; noun: string; plural: boolean; said: boolean };
+  | { kind: 'bought'; noun: string; plural: boolean; said: boolean }
+  /** The town came to a milestone or a work of its ledger (town.ts): everyone online reads it; `pop` is how many live in town now. */
+  | { kind: 'town'; id: string; pop: number }
+  /** Someone told you a scene (story.ts): no banner (the box just told it), a dot on the journal's People. */
+  | { kind: 'scene'; id: string };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -287,7 +304,7 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'cook', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout', 'rescue', 'carry', 'handIn']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'cook', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout', 'rescue', 'carry', 'handIn', 'swap', 'give', 'bring']);
 /** If the server has not moved you this long after the teleport was sent, the trip is off: you are shown where you stand. */
 const BEAM_WAIT_MS = 4000;
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
@@ -330,6 +347,21 @@ export class Game {
   creatures = new Map<number, Creature>();
   /** Flares burning on this map, until when (our clock). */
   flares: Array<{ x: number; y: number; until: number }> = [];
+  /**
+   * The fire lookouts' lamps on this map, by their lookout's corner (lampKey): how long each burnt on, as
+   * told, and when (lookout.ts). Keyed by a number, so the view asking every frame makes no string.
+   */
+  lamps = new Map<number, { left: number; at: number }>();
+  /** Every place mended together in the world, as the server last told it (works.ts). */
+  works = new Map<string, WorksView>();
+  /** The fire lookouts on this map (their corners): whose beams may be over you. */
+  private lookouts: Array<{ x: number; y: number }> = [];
+  /** The lookout you are up (its corner), and until when (our clock); null down on the ground. */
+  up: { x: number; y: number; until: number } | null = null;
+  /** Who on this map is up a lookout (you too): they are drawn up in its cab. */
+  ups = new Set<string>();
+  /** How far the view is pulled back: 1 down on the ground, easing to LOOKOUT_ZOOM up a lookout. */
+  zoom = 1;
   /** This map's surge clock as told, and when (null: it never surges). */
   surge: { view: SurgeView; at: number } | null = null;
   /** This map's storm clock as told, and when (null: it never storms). */
@@ -437,6 +469,18 @@ export class Game {
   firsts = new Map<string, FirstView>();
   /** Every note on the maps by id, for what a secret is called (firsts.ts): worked out the first time it is needed. */
   private notesById: ReturnType<typeof notesOf> | null = null;
+  /** What the town has come to (town.ts), as the server said: the milestones reached, the works done, what was given to the rest. */
+  town: TownView = noTown();
+  /** Counts every change to the town, so what shows it is drawn again. */
+  townChanges = 0;
+  /** The maps the last change to the town changed (by id): the one you are on is drawn again. */
+  townMaps = new Set<string>();
+  /** Scenes told since the journal's People were last looked at (story.ts), by id. */
+  freshScenes = new Set<string>();
+  /** The world's clock (ms since the epoch, as the sky follows it) at our `now`: what follows the wall clock elsewhere (the storms over the wilds). */
+  private sky = { now: 0, ms: 0 };
+  /** What waits for the box once someone's lines are done: a swap offered, something to give at the ledger. Each asks, or does nothing when it no longer holds. */
+  private queued: Array<() => void> = [];
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
@@ -582,6 +626,8 @@ export class Game {
   private readonly stalker = new Stalker();
   /** The padlocked door you last walked into, so pushing against it says so once, not every frame. */
   private bumped: string | null = null;
+  /** The lookout whose lamp you said no to feeding: A climbs it now, until you step away from its foot. */
+  private lampDeclined: string | null = null;
 
   constructor(
     private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY, readonly notebook: NotebookData = NO_NOTEBOOK,
@@ -598,7 +644,15 @@ export class Game {
   /** Your tools, whole: what they open, and the doors that say why they stay shut, follow them. */
   private setTools(tools: string[]) {
     this.tools = tools;
-    this.pass = new Set(tools);
+    this.repass();
+  }
+
+  /**
+   * What opens the tiles that open only for some, as the server has it: your tools, and every place mended
+   * together that stands (works.ts: a footbridge is walked, and a street light shines, while it stands).
+   */
+  private repass() {
+    this.pass = new Set([...this.tools, ...[...this.works.values()].filter(w => w.standing).map(w => w.id)]);
     this.talkers = talkersOf(this.current, this.pass, this.items, this.nameOf);
   }
 
@@ -716,6 +770,17 @@ export class Game {
     return f.left === null ? null : Math.max(0, f.left - Math.max(0, now - f.at) / 1000);
   }
 
+  /** The server's wall clock at our `now` (ms since the epoch): a lookout's beam turns by it, as the server counts it. */
+  wallNow(now: number): number {
+    return this.wall.ms + (now - this.wall.now);
+  }
+
+  /** Seconds the lamp of the lookout whose corner is x,y burns on now (0: out), or undefined where there is none. */
+  lampLeft(x: number, y: number, now: number): number | undefined {
+    const l = this.lamps.get(lampKey(x, y));
+    return l && Math.max(0, l.left - Math.max(0, now - l.at) / 1000);
+  }
+
   /** The surge clock right now, counted on from the last report (it stays at 0 left until the next phase is told). */
   surgeNow(now: number): SurgeView | null {
     const s = this.surge;
@@ -728,7 +793,14 @@ export class Game {
   caught(now: number): boolean {
     const me = this.me, rule = this.current.data.surge, s = this.surgeNow(now);
     if (!me || !rule || !s) return false;
-    return inSurge(this.current, me.tx, me.ty, surgeFront(rule, this.current.deepest, s));
+    // A lookout's beam as it passes, or a street light mended together while it stands, keeps it off, as the server counts it.
+    return inSurge(this.current, me.tx, me.ty, surgeFront(rule, this.current.deepest, s), this.beamOver(me.tx, me.ty, now) || this.current.lit(me.tx, me.ty, this.pass));
+  }
+
+  /** Is tile x,y under a burning lookout's beam at `now`? As the server counts it (lookout.ts): a surge does not reach you there. */
+  beamOver(x: number, y: number, now: number): boolean {
+    for (const o of this.lookouts) if ((this.lampLeft(o.x, o.y, now) ?? 0) > 0 && inBeam(o, x, y, this.wallNow(now))) return true;
+    return false;
   }
 
   /** The storm clock right now, counted on from the last report. */
@@ -768,6 +840,9 @@ export class Game {
           this.disconnected(now);
           break;
         }
+        // The town first: who stands where on the map you arrive on follows it.
+        this.applyTown(msg.town ?? noTown(), false);
+        this.sky = { now, ms: msg.clock ?? msg.serverTime };
         // Someone else now (the account's own character after its guest, say): nothing of theirs stays open.
         const someoneElse = msg.you !== this.meId;
         this.meId = msg.you;
@@ -803,6 +878,7 @@ export class Game {
         this.shopOwned = [...msg.shop?.owned ?? []];
         // Time away worth a word: stashing counts double for a while, and the arrival says so.
         if ((msg.restedAway ?? 0) >= RESTED_NOTICE && (msg.progress.rested ?? 0) > 0) this.news.push({ kind: 'rested', xp: msg.progress.rested! });
+        this.works = new Map((msg.works ?? []).map(w => [w.id, w]));
         this.setTools(msg.tools);
         this.chapter = msg.story.chapter;
         this.storyChanges++;
@@ -925,6 +1001,27 @@ export class Game {
       case 'knocked':
         this.inform('Door', knockedText(msg.name));
         break;
+      case 'lamp':
+        this.lamps.set(lampKey(msg.lamp.x, msg.lamp.y), { left: msg.lamp.left, at: now });
+        break;
+      case 'works': {
+        const was = this.works.get(msg.works.id);
+        this.works.set(msg.works.id, msg.works);
+        // Stood again, or broke: its footbridge opens or closes for us from the next step, as for everyone.
+        if (was?.standing !== msg.works.standing) this.repass();
+        break;
+      }
+      case 'up': {
+        if (msg.on) this.ups.add(msg.id);
+        else this.ups.delete(msg.id);
+        if (msg.id !== this.meId) break;
+        const me = this.me, o = me && lookoutAtFoot(this.current.data.objects, me.tx, me.ty);
+        this.up = msg.on && o ? { x: o.x, y: o.y, until: now + (msg.left ?? LOOKOUT_UP_S) * 1000 } : null;
+        this.path = []; this.goal = null;
+        // Up there it says where you are, how long you may stay and how you come down.
+        if (this.up) this.inform('Lookout', upText(msg.left ?? LOOKOUT_UP_S));
+        break;
+      }
       case 'mark':
         this.marks.set(msg.mark.id, msg.mark);
         this.markChanges++;
@@ -1071,6 +1168,9 @@ export class Game {
         if (title) this.news.push({ kind: 'first', text: firstBanner(msg.first, title, msg.first.name === this.myName()) });
         break;
       }
+      case 'town':
+        this.applyTown(msg.town, true);
+        break;
       case 'keepsake': {
         if (this.keepsakesHome.includes(msg.item)) break;
         this.keepsakesHome = [...this.keepsakesHome, msg.item];
@@ -1140,7 +1240,7 @@ export class Game {
       case 'did':
         if (msg.did.kind === 'thanked') this.thankedToday.add(msg.did.who);
         // It takes the place of the question just said yes to, which waited for it in the box.
-        this.inform(didWho(msg.did, this.items), didText(msg.did, this.items));
+        this.inform(didWho(msg.did, this.items, this.didContext()), didText(msg.did, this.items, this.didContext()));
         break;
       case 'thanked': {
         // Out in the wilds, over your head; anywhere else the text box says what it was for.
@@ -1188,6 +1288,8 @@ export class Game {
         else this.afterglows.delete(msg.player.id);
         if (msg.player.down) this.downs.add(msg.player.id);
         else this.downs.delete(msg.player.id);
+        if (msg.player.up) this.ups.add(msg.player.id);
+        else this.ups.delete(msg.player.id);
         // A guest who signed in comes back in as someone who is not one.
         if (msg.player.guest) this.guests.add(msg.player.id);
         else this.guests.delete(msg.player.id);
@@ -1210,6 +1312,7 @@ export class Game {
         this.live.delete(msg.id);
         this.afterglows.delete(msg.id);
         this.downs.delete(msg.id);
+        this.ups.delete(msg.id);
         break;
       }
       case 'step': {
@@ -1369,6 +1472,8 @@ export class Game {
     this.beam = null;
     // Answers to what we asked went with the connection, and what was being asked may no longer hold.
     this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.benchCard = null; this.caching = null; this.cache = null;
+    // Coming back, the server has you down on the ground again.
+    this.up = null;
     // A trade lasts only while both are online: the server calls it off.
     if (this.trade) this.tradeChanges++;
     this.trade = null; this.tradeMine = []; this.tradeAsk = null; this.callingOff = null;
@@ -1391,6 +1496,7 @@ export class Game {
     if (map !== this.current || someoneElse) {
       this.current = map;
       this.talkers = talkersOf(map, this.pass, this.items, this.nameOf);
+      this.lookouts = map.data.objects.flatMap(o => (o.kind === 'lookout' ? [{ x: o.x, y: o.y }] : []));
       this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.benchCard = null; this.cache = null; this.caching = null;
       this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
       this.clearBox();
@@ -1406,6 +1512,10 @@ export class Game {
     this.patterns = new Map(players.flatMap(p => (p.pattern ? [[p.id, p.pattern] as const] : [])));
     this.badges = new Map(players.flatMap(p => (p.badge ? [[p.id, p.badge] as const] : [])));
     this.live = new Set(players.filter(p => p.live).map(p => p.id));
+    this.ups = new Set(players.filter(p => p.up).map(p => p.id));
+    // Arriving anywhere, you stand on the ground.
+    this.up = null;
+    this.lampDeclined = null;
     this.afterglows = new Map(players.flatMap(p => (p.afterglow ? [[p.id, this.clock + p.afterglow * 1000] as const] : [])));
     this.downs = new Set(players.filter(p => p.down).map(p => p.id));
     this.finds = new Map(finds.map(f => [f.id, f]));
@@ -1429,10 +1539,13 @@ export class Game {
 
   /** The fires, marks, creatures, flares, flashes, and surge and storm clocks of the map a welcome or zone put us on. */
   private scene(
-    msg: { fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: Array<{ x: number; y: number; left: number }>; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null },
+    msg: {
+      fires: FireView[]; lamps?: LampView[]; marks: MarkView[]; creatures: CreatureView[]; flares: Array<{ x: number; y: number; left: number }>; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null;
+    },
     now: number,
   ) {
     this.fires = new Map(msg.fires.map(f => [`${f.x},${f.y}`, { left: f.left, at: now, fed: f.fed ?? [] }]));
+    this.lamps = new Map((msg.lamps ?? []).map(l => [lampKey(l.x, l.y), { left: l.left, at: now }]));
     this.marks = new Map(msg.marks.map(m => [m.id, m]));
     this.markChanges++;
     this.creatures = new Map(msg.creatures.map(c => [c.id, this.creatureMover(c)]));
@@ -1480,8 +1593,8 @@ export class Game {
     if (this.dialog) return this.advanceDialog();
     if (this.beam) return;
     const me = this.me;
-    // Down, you cannot act: the countdown on screen says as much.
-    if (!me || me.anim || this.slump) return;
+    // Down, you cannot act: the countdown on screen says as much. Up a lookout there is nothing within reach: B climbs down.
+    if (!me || me.anim || this.slump || this.up) return;
     const act = this.action();
     if (!act) this.float('Nothing here', GREY, me.tx, me.ty);
     else if (act.kind === 'rescue') this.rescue(act.id, act.name);
@@ -1526,19 +1639,35 @@ export class Game {
     }
     if (t.kind === 'talk') {
       // What people say comes in one order (storyLines, story.ts): the chapter's hint, what they say once
-      // about what you did for the first time, what they have heard (Mira: what the woods are like today),
-      // then what they always say. The server hears who you talked to, or what you read.
-      // What they always say comes a few lines a talk (linesInTurn), taken up where the last talk left off.
-      const word = t.id === 'mira' ? this.miraWord() : t.id === 'walt' ? this.waltWord() : null, today = word ? [word] : [];
+      // about what you did for the first time, a scene of theirs that opened (in place of the rest), else
+      // what they have heard about the day (Mira: what the woods are like today; Walt: the lodge's fire on
+      // the Long Night; the sky), what they say about what you did or the town came to, then what they
+      // always say, a few lines a talk (linesInTurn), taken up where the last talk left off. The server
+      // hears who you talked to, or what you read.
+      const word = t.id === 'mira' ? this.miraWord() : t.id === 'walt' ? this.waltWord() : null;
       const person = t.story && 'talk' in t.story ? t.story.talk : undefined, key = t.id ?? `${t.x},${t.y}`;
+      const ctx = { ...this.sayContext(), day: word ? [word] : [] };
+      const scene = person ? sceneDue(this.story, person, this.stats, ctx) : undefined;
       const turn = linesInTurn(t.lines, this.heard.get(key) ?? 0);
-      this.heard.set(key, turn.next);
-      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, turn.lines, this.stats, today) : [...today, ...turn.lines] });
-      // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
-      const told = person ? toldAfter(this.story, person, this.stats) : undefined;
-      if (told !== undefined && told !== (this.stats.told ?? 0)) { this.stats = { ...this.stats, told }; this.statsChanges++; }
+      // A scene is told in place of the rest: what they always say waits where it was for the next talk.
+      if (!scene) this.heard.set(key, turn.next);
+      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, turn.lines, this.stats, ctx) : word ? [word, ...turn.lines] : turn.lines });
+      if (person) {
+        // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
+        const told = toldAfter(this.story, person, this.stats), scenes = scenesAfter(this.story, person, this.stats, ctx);
+        if (told !== (this.stats.told ?? 0) || scenes !== (this.stats.scenes ?? 0)) { this.stats = { ...this.stats, told, scenes }; this.statsChanges++; }
+        if (scene) { this.freshScenes.add(scene.id); this.news.push({ kind: 'scene', id: scene.id }); }
+        // Once their lines are done, whatever they swap for what you carry spare is offered, one by one (town.ts).
+        for (const swap of this.items.swaps.filter(x => x.who === person)) this.queued.push(() => this.offerSwap(swap.id, t.x, t.y));
+      }
       // Whom you talked to, or what you read and where (never what it says): the story, and the field notes, may follow.
       if (this.online) this.send({ t: 'talk', x: t.x, y: t.y });
+      return;
+    }
+    if (t.kind === 'ledger') {
+      // The town as it stands, read out; then what you carry that a work still wants is offered, work by work.
+      this.openDialog({ ...t, lines: ledgerLines(this.items.town, this.town, id => this.items.byId.get(id)) });
+      for (const w of this.items.town?.works ?? []) for (const n of w.needs) this.queued.push(() => this.offerGift(w.id, n.item, t.x, t.y));
       return;
     }
     if (t.kind === 'board') {
@@ -1556,6 +1685,8 @@ export class Game {
       return this.ask({ who: TELEPORT, text: teleportQuestion(!this.current.data.private), yes: () => this.beamOut(t) });
     }
     if (t.kind === 'locked') return this.inform(t.who, t.lines[0] ?? padlocked(undefined));
+    if (t.kind === 'lookout') return this.atLookout(t);
+    if (t.kind === 'works') return this.atWorks(t);
     if (t.kind === 'chest') {
       if (!this.online) return;
       this.opening = { x: t.x, y: t.y, at: this.clock };
@@ -2165,6 +2296,55 @@ export class Game {
   }
 
   /**
+   * A (or a tap) at a place being mended (works.ts): with what it takes in the bag and room for it, asks
+   * first ("Give 3 scrap to the footbridge? It is broken: it stands again with 30 scrap.", and how many, up
+   * to what you carry and what it takes); YES gives it, and NO says how it stands and whose name is on its
+   * plaque. With none of it, or when it takes no more for now, it says that and why.
+   */
+  private atWorks(t: Talker) {
+    const w = t.works ? this.items.works.get(t.works) : undefined;
+    if (!w || !this.online) return;
+    const def = this.items.get(w.item), view = this.works.get(w.id), who = worksWho(w), state = worksText(w, view, def);
+    const stands = view ?? { standing: false, held: 0 }, slot = this.bag.findIndex(b => b.item === w.item), room = worksRoom(w, stands);
+    if (slot < 0) return this.inform(who, `${state} ${nothingToGive(def)}`);
+    if (room <= 0) return this.inform(who, `${state} ${WORKS_FULL}`);
+    this.ask({
+      who, text: n => bringQuestion(def, w, stands, n), count: { min: 1, max: Math.min(countOf(this.bag, w.item), room, FEED_MAX) },
+      yes: n => this.actOn(slot, w.item, who, bringQuestion(def, w, stands, n), i => ({ t: 'bring', x: t.x, y: t.y, slot: i, ...(n > 1 ? { count: n } : {}) })),
+      no: () => this.inform(who, state),
+    });
+  }
+
+  /**
+   * A (or a tap) at a fire lookout's ladder: its lamp first, then the climb. Carrying what the lamp burns,
+   * while it takes more, you are asked to feed it ("Feed the lookout's lamp resin?", how many up to what
+   * you carry and what fits); YES feeds it, and NO leaves it be, so A climbs next time. Otherwise A climbs:
+   * the server puts you up, and says for how long. From anywhere but its foot, you walk there first.
+   */
+  private atLookout(t: Talker) {
+    const me = this.me;
+    const o = this.current.data.objects.find((l): l is Extract<MapObject, { kind: 'lookout' }> => l.kind === 'lookout' && ladderOf(l).x === t.x && ladderOf(l).y === t.y);
+    if (!me || !o || !this.online) return;
+    const foot = footOf(o), key = `${o.x},${o.y}`;
+    if (me.tx !== foot.x || me.ty !== foot.y) {
+      this.goal = { talk: t };
+      this.path = findPath(this.map, me.tx, me.ty, foot.x, foot.y, false, undefined, this.pass);
+      return;
+    }
+    const slot = this.bag.findIndex(b => b.item === LAMP_BURNS), fits = lampTakes(this.lampLeft(o.x, o.y, this.clock) ?? 0);
+    if (slot >= 0 && fits > 0 && this.lampDeclined !== key) {
+      const def = this.items.get(LAMP_BURNS), text = lampQuestion(def);
+      this.ask({
+        who: 'Lookout', text, count: { min: 1, max: Math.min(countOf(this.bag, def.id), fits, FEED_MAX) },
+        yes: n => this.actOn(slot, def.id, 'Lookout', text, i => ({ t: 'feed', x: o.x, y: o.y, slot: i, ...(n > 1 ? { count: n } : {}) })),
+        no: () => { this.lampDeclined = key; },
+      });
+      return;
+    }
+    this.send({ t: 'climb', x: o.x, y: o.y });
+  }
+
+  /**
    * A at a fire. With something to cook (meals.ts) at a fire that burns, a choice: feed it, or cook on it;
    * only one of the two when the other cannot happen (a fire someone keeps going takes no fuel, one that is
    * full no more, and nothing cooks on a dead one). Anything else is feeding it, as ever.
@@ -2273,6 +2453,8 @@ export class Game {
     if (this.question) { this.answer('back'); return true; }
     if (this.note) { this.closeNote(); return true; }
     if (this.dialog) { this.advanceDialog(); return true; }
+    // Up a lookout, B climbs down (the server says when you are).
+    if (this.up) { if (this.online) this.send({ t: 'climbDown' }); return true; }
     return false;
   }
 
@@ -2283,8 +2465,8 @@ export class Game {
     if (this.dialog) return this.advanceDialog();
     if (this.beam) return;
     const me = this.me;
-    // Down, you go nowhere.
-    if (!me || this.slump) return;
+    // Down, you go nowhere. Up a lookout nobody walks: the ground below is only to look at.
+    if (!me || this.slump || this.up) return;
     const from = { x: me.tx, y: me.ty };
     // Someone down: walk up to them, and A's question comes as you arrive.
     const down = this.downAt(x, y);
@@ -2294,6 +2476,12 @@ export class Game {
       const end = this.path.at(-1) ?? from;
       this.marker = { x: end.x, y: end.y, t: 0 };
       return;
+    }
+    // A lookout is tall: a tap anywhere on it, or on its cab above, goes to the foot of its ladder, and does what A does there.
+    const tower = this.current.data.objects.find(o => o.kind === 'lookout' && x >= o.x && x <= o.x + 1 && y >= o.y - 2 && y <= o.y + 1);
+    if (tower) {
+      const ladder = ladderOf(tower), talker = this.talkerAt(ladder.x, ladder.y);
+      if (talker) return this.atLookout(talker);
     }
     // Every way is found with what your tools open (the culvert in waders), as the server would take it.
     // Something to pick up: walk onto it (finds are small, so a tap on one lands on its own tile).
@@ -2306,7 +2494,9 @@ export class Game {
     }
     // People and signs are tall: a tap on the head lands on the tile behind them. So is a padlocked
     // door you cannot open yet: its shed stands behind it, and tapped, it says why it stays shut. A slab lies flat.
-    const behind = this.talkerAt(x, y + 1), talker = this.talkerAt(x, y) ?? (behind?.kind === 'slab' ? undefined : behind);
+    // A footbridge that stands is a way like any other: a tap on it walks there (A, facing it, gives to it).
+    const onBridge = this.talkerAt(x, y)?.kind === 'works' && this.map.walkable(x, y, this.pass);
+    const behind = this.talkerAt(x, y + 1), talker = onBridge ? undefined : this.talkerAt(x, y) ?? (behind?.kind === 'slab' ? undefined : behind);
     // A door on your street is walked into, as any house's: your own, and a neighbor's (the server lets you in,
     // or says why not). One nobody lives behind, or that stayed shut, is walked up to, and knocked at.
     if (talker?.kind === 'door' && !this.barred(talker.x, talker.y)) ({ x, y } = talker);
@@ -2582,7 +2772,11 @@ export class Game {
     });
   }
 
-  /** Says what waited for the box, once the box is free: a friend's ask to trade first, as it does not wait long. */
+  /**
+   * Says what waited for the box, once the box is free: a friend's ask to trade first, as it does not wait
+   * long; then what came to be said meanwhile; then what someone's lines left to offer (a swap, a gift at
+   * the ledger), one question at a time.
+   */
   private sayLater() {
     const p = this.tradeAsk;
     if (p && !this.question && !this.dialog) {
@@ -2590,15 +2784,83 @@ export class Game {
       this.tradeAsk = null;
     }
     const l = this.later;
-    if (!l || this.question || this.dialog || this.note) return;
-    this.later = null;
-    this.inform(l.who, l.text);
+    if (l && !this.question && !this.dialog && !this.note) {
+      this.later = null;
+      return this.inform(l.who, l.text);
+    }
+    while (this.queued.length && !this.question && !this.dialog && !this.note) this.queued.shift()!();
+  }
+
+  /**
+   * After talking to them: the swap `id` (town.ts) with the person on tile x,y, if you carry enough to make
+   * it and have room for what comes back. It asks first, how many times over; nothing when it would not fit.
+   */
+  private offerSwap(id: string, x: number, y: number) {
+    const swap = this.items.swaps.find(s => s.id === id), me = this.me;
+    if (!swap || !me || !this.online || Math.abs(me.tx - x) + Math.abs(me.ty - y) !== 1) return;
+    const max = swapsFit(this.bag, swap, this.items.byId, bagSlotsOf(this.myGear, this.items.byId));
+    if (max < 1) return;
+    const who = this.talkers.find(t => t.id === swap.who)?.who ?? 'Swap', text = (n: number) => swapQuestion(swap, n, this.items);
+    this.ask({ who, text, count: { min: 1, max }, yes: n => this.act(who, text(n), { t: 'swap', x, y, swap: id, ...(n > 1 ? { count: n } : {}) }) });
+  }
+
+  /** After reading the ledger: give it `item` for the work `work`, if you carry some and it still wants some. It asks first, how many. */
+  private offerGift(workId: string, item: string, x: number, y: number) {
+    const work = this.items.town?.works.find(w => w.id === workId), me = this.me;
+    if (!work || !me || !this.online || this.town.done.includes(workId) || Math.abs(me.tx - x) + Math.abs(me.ty - y) !== 1) return;
+    const wants = workWants(work, this.town.given[workId], item), have = countOf(this.bag, item);
+    if (!wants || !have) return;
+    const def = this.items.get(item), text = (n: number) => giveQuestion(work, def, n, wants);
+    this.ask({
+      who: 'The town ledger', text, count: { min: 1, max: Math.min(wants, have) },
+      yes: n => this.act('The town ledger', text(n), { t: 'give', x, y, work: workId, item, ...(n > 1 ? { count: n } : {}) }),
+    });
+  }
+
+  /** The town as the server says it is (town.ts): every map follows, and what it has just come to is news. */
+  private applyTown(view: TownView, news: boolean) {
+    const before = new Set(this.town.done), pop = popOf(this.items.town, view.done);
+    this.town = { done: [...view.done], given: structuredClone(view.given) };
+    this.townMaps = this.maps.setTown(new Set(view.done), pop);
+    if (this.townMaps.has(this.current.data.id)) this.talkers = talkersOf(this.current, this.pass, this.items, this.nameOf);
+    this.townChanges++;
+    if (news) for (const id of view.done) if (!before.has(id)) this.news.push({ kind: 'town', id, pop });
+  }
+
+  /** What a did about the town needs besides the items: a person's name, and the town as it stands. */
+  private didContext(): DidContext {
+    return {
+      name: id => this.talkers.find(t => t.id === id)?.who,
+      town: { view: this.town, works: this.items.town?.works ?? [], swaps: this.items.swaps },
+    };
+  }
+
+  /** The world's clock now (ms since the epoch, as the sky follows it). */
+  skyNow(): number {
+    return this.sky.ms + (this.clock - this.sky.now);
+  }
+
+  /** What people's words may follow besides the chapter and the counts (story.ts): your level, what you read, brought home and noted, the town, the sky. */
+  sayContext(): SayContext {
+    const wall = this.skyNow();
+    const storm = this.maps.all().some(m => m.kind === 'wilds' && m.storm !== undefined && stormAt(m.storm, wall).phase === 'storm');
+    return {
+      level: this.progress.level || levelOf(this.progress.xp), notes: this.notesRead, keepsakes: this.keepsakesHome, pages: this.fieldNotes.pages, town: this.town.done,
+      sky: { weather: this.weather, storm },
+    };
+  }
+
+  /** The journal's People were looked at: none of the scenes there is new any more. */
+  seenScenes() {
+    if (!this.freshScenes.size) return;
+    this.freshScenes = new Set();
+    this.townChanges++;
   }
 
   /** Nothing is asked or said any more: another map, or a lost connection. */
   private clearBox() {
     if (this.question || this.note) this.boxChanges++;
-    this.question = null; this.note = null; this.later = null;
+    this.question = null; this.note = null; this.later = null; this.queued = [];
     this.repeat.release();
   }
 
@@ -2777,6 +3039,8 @@ export class Game {
       p.phase += dt * (1000 / this.stepMs) * 3;
     }
     this.driveMe(now);
+    // The view pulls back up a lookout, and comes in again on the ground.
+    this.zoom = easeZoom(this.zoom, !!this.up, dt);
     // A lodestone you wear tugs while a shard lies near: the interface feels it (a pulse, a faint sound).
     const me = this.me;
     const near = !!me && Object.values(this.myWorn).some(p => p?.quirk === 'lodestone') && shardNear(this.finds.values(), this.items, me.tx, me.ty);
@@ -2797,6 +3061,15 @@ export class Game {
     const me = this.me;
     // Down, nobody walks: the stick and a tap on the world do nothing until someone gets you up.
     if (!me || me.anim || this.dialog || this.question || !this.online || this.held || this.slump || this.beam) { this.justStepped = false; return; }
+    // Up a lookout the stick only turns you, to look (and to hold a watcher still with it).
+    if (this.up) {
+      const turn = this.pad.dir;
+      if (turn && turn !== me.dir) { me.dir = turn; me.turnT = 0.14; this.send({ t: 'face', dir: turn }); }
+      this.path = []; this.goal = null;
+      return;
+    }
+    // Stepping away from a lookout's foot: its lamp is asked about again next time.
+    if (this.lampDeclined && !lookoutAtFoot(this.current.data.objects, me.tx, me.ty)) this.lampDeclined = null;
     // On an exit the server is about to move us to another map, and steps planned on this one would be refused.
     if (this.map.exitAt(me.tx, me.ty)) {
       this.exitSince ??= now;
@@ -2872,6 +3145,7 @@ export class Game {
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
       afterglow: (this.afterglows.get(p.id) ?? 0) > this.clock,
       look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id), this.shop), down: this.downs.has(p.id),
+      up: this.ups.has(p.id),
       ...(b && p.id === this.meId && { beam: { phase: b.phase, t: b.t, pad: b.pad } }),
     }));
   }

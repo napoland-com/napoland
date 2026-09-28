@@ -20,7 +20,9 @@ import type { ProgressView } from './progress';
 import type { ShopView } from './shop';
 import type { ConditionsView, FlashView, SeasonView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
+import type { TownView } from './town';
 import { OFFER_MAX } from './trade';
+import type { WorksView } from './works';
 
 /**
  * Bump when a change breaks older clients; they reload to get the new version. 30: the weather is each
@@ -34,8 +36,11 @@ import { OFFER_MAX } from './trade';
  * 36: the shop for looks (`checkout`, and `shop` in the welcome and when what you bought changes), and the window to be saved, someone down out in the wilds, whom an older page could not show or get up.
  * 37: the lost and found, whose bundles, questions and letters an older page could not show.
  * 38: the slab that needs two, which an older page could not put its hands to.
+ * 39: the town waking up: its milestones and ledger (`town`), townspeople's scenes, swaps and gifts, which an older page could not show.
+ * 40: the fire lookout: climbing it and feeding its lamp (`climb`, `lamp`, `up`), and in the same release the woods mended
+ *     together, the footbridge and the street light by the pond (`bring`, `works`), which an older page could not show or do.
  */
-export const PROTOCOL_VERSION = 38;
+export const PROTOCOL_VERSION = 40;
 
 /**
  * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
@@ -267,12 +272,31 @@ export const ClientMsg = z.discriminatedUnion('t', [
   }),
   /** Sing a call (calls.ts): everyone on your map within CALL_REACH hears it, you too. Anyone may, guests included. */
   z.object({ t: z.literal('call'), kind: z.enum(CALL_KINDS) }),
+  /**
+   * Climb the fire lookout whose corner is tile x,y (lookout.ts), from the foot of its ladder, where you
+   * stand: up there you see far, for up to LOOKOUT_UP_S. `climbDown` comes down sooner.
+   */
+  z.object({ t: z.literal('climb'), x: z.number().int(), y: z.number().int() }),
+  z.object({ t: z.literal('climbDown') }),
+  /**
+   * Give `count` (1 unless said) of what is in bag slot `slot` to the place being mended on tile x,y, next
+   * to you (works.ts: a footbridge's tile, or its street light): from that slot first, then from others
+   * holding the same, as many as it takes.
+   */
+  z.object({ t: z.literal('bring'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63), count: z.number().int().positive().max(FEED_MAX).optional() }),
   /** Open the crate on tile x,y, next to you (caches.ts): the server answers with what is in it. */
   z.object({ t: z.literal('cache'), x: z.number().int(), y: z.number().int() }),
   /** Leave one of what is in bag slot `slot` in the crate on tile x,y: once a visit, never gear. */
   z.object({ t: z.literal('cacheLeave'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63) }),
   /** Take the thing `id` out of the crate on tile x,y: once a visit; it thanks whoever left it. */
   z.object({ t: z.literal('cacheTake'), x: z.number().int(), y: z.number().int(), id: z.number().int().nonnegative() }),
+  /** Make the swap `swap` (town.ts) with the person on tile x,y, next to you, `count` times over (1 when left out). */
+  z.object({ t: z.literal('swap'), x: z.number().int(), y: z.number().int(), swap: z.string().min(1).max(40), count: z.number().int().positive().max(99).optional() }),
+  /** Give `count` (1 when left out) of `item` from your bag to the work `work` of the town's ledger on tile x,y, next to you (town.ts). */
+  z.object({
+    t: z.literal('give'), x: z.number().int(), y: z.number().int(), work: z.string().min(1).max(40), item: z.string().min(1).max(40),
+    count: z.number().int().positive().max(999).optional(),
+  }),
   /**
    * Get `who` back up (rescue.ts): they lie slumped on your tile or the one next to it, and you give them
    * RESCUE_ENERGY of your own energy, which you need more than. Their thanks comes with it.
@@ -384,6 +408,16 @@ export interface CreatureView {
   chasing?: string;
 }
 
+/**
+ * A fire lookout's lamp on your map (lookout.ts), by the lookout's corner x,y: it burns `left` more seconds
+ * (0: out). While it burns, its beam sweeps the woods, where the wall clock says (beamAngle).
+ */
+export interface LampView {
+  x: number;
+  y: number;
+  left: number;
+}
+
 /** A flare burning on tile x,y for `left` more seconds. */
 export interface FlareView {
   x: number;
@@ -422,6 +456,10 @@ export interface StoneView {
 export type Did =
   /** A fire took `count` of `item`, and has `left` seconds of fuel now; `lit`: it was out. */
   | { kind: 'fire'; item: string; count: number; left: number; lit?: true }
+  /** A fire lookout's lamp took `count` of `item`, and burns `left` seconds now; `lit`: it was out. */
+  | { kind: 'lamp'; item: string; count: number; left: number; lit?: true }
+  /** A place being mended (works.ts) took `count` of `item`, and stands so now; `built`: this made it stand again. */
+  | { kind: 'brought'; works: string; item: string; count: number; view: WorksView; built?: true }
   /** The Old Stone took `count` of `item`, and stands so now; `woke`: this woke it. */
   | { kind: 'stone'; item: string; count: number; stone: StoneView; woke?: true }
   /**
@@ -477,7 +515,11 @@ export type Did =
   /** You left what you carried for `names` in the lost and found box: it is back in their chests, and you earned `xp`. */
   | { kind: 'handedIn'; names: string[]; xp: number }
   /** You and `with` (their name) lifted the slab together (slab.ts): `got` is in your bag now. */
-  | { kind: 'slab'; with: string; got: BagSlot[] };
+  | { kind: 'slab'; with: string; got: BagSlot[] }
+  /** A townsperson made the swap `swap` with you `count` times over (town.ts): what it gives went, what it gets came into your bag. */
+  | { kind: 'swapped'; swap: string; count: number }
+  /** You gave `count` of `item` to the work `work` of the town's ledger (town.ts); `done`: that was the last of what it needed. */
+  | { kind: 'gave'; work: string; item: string; count: number; done?: true };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -600,7 +642,7 @@ export type Refusal =
   | 'padlocked'
   /** It is someone else's things, in a bundle (lostfound.ts): carried to the lodge, never opened, stashed, thrown away or left. */
   | 'not_yours'
-  /** The slab lies cold: it opens only while the woods are restless (slab.ts). */
+  /** Cold: the slab (it opens only while the woods are restless: slab.ts), or a hearth in town that nobody keeps yet (town.ts). */
   | 'cold'
   /** Nobody else put their hands to the slab with yours: it will not move for one pair. */
   | 'one_pair'
@@ -611,7 +653,17 @@ export type Refusal =
   /** You ate that meal this trip already: the same one twice does nothing more. */
   | 'ate_it'
   /** You ate two meals this trip already: a third waits for the next trip. */
-  | 'two_meals';
+  | 'two_meals'
+  /** The town's ledger wants no more of that for this work (it has all it needs of it, or it is done). */
+  | 'not_needed'
+  /** The lookout's lamp holds as much as it can. */
+  | 'lamp_full'
+  /** You are up the lookout: come down first. */
+  | 'up'
+  /** A place being mended takes something else. */
+  | 'not_wanted'
+  /** A place being mended has all it keeps put by for now. */
+  | 'works_full';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -714,6 +766,8 @@ export interface PlayerView {
   guest?: true;
   /** They lie slumped out in the wilds, out of energy, until someone gets them up or they collapse (rescue.ts). */
   down?: true;
+  /** They are up the fire lookout whose ladder they stand at the foot of (lookout.ts). */
+  up?: true;
 }
 
 /** A map by id and version; a client whose copy has another version reloads. */
@@ -785,12 +839,16 @@ export type ServerMsg =
       stash: BagSlot[];
       /** Your map's fires, marks, creatures, flares, flashes, and surge and storm clocks (null: a map that never surges, or never storms). */
       fires: FireView[];
+      /** Your map's fire lookouts' lamps (lookout.ts): how long each burns. None on a map without a lookout. */
+      lamps?: LampView[];
       marks: MarkView[];
       creatures: CreatureView[];
       flares: FlareView[];
       flashes: FlashView[];
       surge: SurgeView | null;
       storm: StormView | null;
+      /** Every place being mended in the world (works.ts), on any map: one state for everyone. None where nothing is. */
+      works?: WorksView[];
       body: BodyView;
       stone: StoneView;
       /** What the woods are like today, this week and next week (sky.ts, conditionsAt). */
@@ -828,6 +886,14 @@ export type ServerMsg =
       keepsakes: string[];
       /** Who was the first on the server to find each secret found so far (firsts.ts), and on which day. */
       firsts: FirstView[];
+      /** What the town has come to (town.ts): the milestones reached, the works of its ledger done, what was given to the rest. */
+      town: TownView;
+      /**
+       * The world's clock (ms since the epoch, as the sky follows it: a play-test's CLOCK_SHIFT_MS in it),
+       * as this was sent: from it the client works out what follows the wall clock without being told,
+       * the storms over other regions and the echoes' walks.
+       */
+      clock: number;
       /** In a cabin: the furniture made and set in its places (item ids), yours in your own, the owner's in a neighbor's (`visit`). */
       furniture?: string[];
       /** In a neighbor's cabin: whose it is, and what their trophy shelf shows. */
@@ -849,7 +915,7 @@ export type ServerMsg =
    */
   | {
       t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; finds: FindView[]; drops: DropView[]; reason: 'exit' | 'collapse';
-      fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
+      fires: FireView[]; lamps?: LampView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
       weather: Weather;
       /** In a cabin: the furniture made and set in its places (item ids), yours in your own, the owner's in a neighbor's (`visit`). */
       furniture?: string[];
@@ -937,6 +1003,15 @@ export type ServerMsg =
   | { t: 'tradeOver'; with: PersonView; end: TradeEnd }
   /** On your map: a fire was fed (or lit again). */
   | { t: 'fire'; fire: FireView }
+  /** On your map: a fire lookout's lamp was fed (or lit again), or went out. */
+  | { t: 'lamp'; lamp: LampView }
+  /** Anywhere: a place being mended (works.ts) was given something, stood again, wore down at midnight or broke. */
+  | { t: 'works'; works: WorksView }
+  /**
+   * On your map: someone climbed the fire lookout at whose ladder they stand (on), or came down. To the one
+   * who climbed, `left`: the seconds they may stay up there.
+   */
+  | { t: 'up'; id: string; on: boolean; left?: number }
   /** On your map: a mark was painted, or faded. */
   | { t: 'mark'; mark: MarkView }
   | { t: 'markGone'; id: number }
@@ -1013,6 +1088,8 @@ export type ServerMsg =
   | { t: 'keepsake'; item: string }
   /** To everyone online: someone (you too) is the first on the server to find a secret (firsts.ts). */
   | { t: 'first'; first: FirstView }
+  /** To everyone online: the town changed (town.ts): a milestone reached, something given at the ledger, a work done. Whole. */
+  | { t: 'town'; town: TownView }
   /** What is in your stash, whole, after you opened the chest or anything went in or out. */
   | { t: 'chest'; stash: BagSlot[] }
   /** A parcel came into your chest (parcels.ts): when you arrived signed in, or at midnight UTC while you played. */
@@ -1062,16 +1139,9 @@ export type ServerMsg =
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
-  | 'checkout'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue'
-  | 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab'
-  | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge'
-  | 'say' | 'call' | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
-  | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
-  | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
+  | 'checkout' | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'step' | 'carry' | 'handIn' | 'slab' | 'cook' | 'swap' | 'give' | 'climb' | 'climbDown' | 'bring'
+  | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends' | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm'
+  | 'tradeCancel';
 
 /**
  * need_name: signed in, but there is no character yet; say hello again with a name.

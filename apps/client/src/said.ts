@@ -7,7 +7,7 @@
 import {
   CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, RESCUE_ENERGY, aOf, amount, comfortMax, countable, fireFull, formatPrice, levelOf, meritLookOf, meritsLeft,
   nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear,
-  type Recipe, type Refusal, type ShopLook, type StoneView, type Upgrade, bagShort, type Mods,
+  type Recipe, type Refusal, type ShopLook, type StoneView, type Upgrade, bagShort, type Mods, workLeft, type SwapDef, type TownView, type TownWork, LAMP_MAX_S, worksDays, type WorksDef, type WorksView,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, bundleText, kgText, oddsText, pieceName, thingsOf, type Items } from './items';
 
@@ -55,6 +55,9 @@ export function howLong(seconds: number): string {
   return d === 1 ? 'a day' : `${d} days`;
 }
 
+/** A lookout's lamp that takes nothing more: within a second of LAMP_MAX_S. */
+const lampFull = (left: number) => left >= LAMP_MAX_S - 1;
+
 /** How long a fire burns on: "18 more minutes", "under a minute more". */
 function burnsOn(left: number): string {
   if (left < 60) return 'under a minute more';
@@ -76,6 +79,72 @@ export function effectWords(def: ItemDef): string {
 export function feedQuestion(fuel: ItemDef): string {
   return `Feed the fire ${pluralOf(fuel)}?`;
 }
+
+/** A: at the foot of a fire lookout's ladder, with what its lamp burns. "Feed the lookout's lamp resin?" (how many is asked beside it). */
+export function lampQuestion(fuel: ItemDef): string {
+  return `Feed the lookout's lamp ${pluralOf(fuel)}?`;
+}
+
+/** Up a fire lookout: what the text box says as you get there (LOOKOUT_UP_S: how long you may stay). */
+export function upText(seconds: number): string {
+  return `You climb up to the lookout and see the woods for miles. You can stay ${howLong(seconds)}: B climbs down.`;
+}
+
+/**
+ * A: at a place being mended (works.ts), with what it takes, and one line of how it stands, so that the
+ * first time you meet it you know what it is for. "Give 3 scrap to the footbridge? It is broken: it
+ * stands again with 30 scrap." "Give 2 wire to the street light? It is lit, with enough put by for 3 more days."
+ */
+export function bringQuestion(def: ItemDef, w: WorksDef, v: Pick<WorksView, 'standing' | 'held'>, n: number): string {
+  const q = `Give ${amount(def, n)} to ${w.name}?`, light = w.build === 'light', again = light ? 'it lights up again' : 'it stands again';
+  if (v.standing) {
+    const days = worksDays(w, v.held), up = light ? 'It is lit' : 'It stands';
+    return days > 0 ? `${q} ${up}, with enough put by for ${days} more day${days === 1 ? '' : 's'}.` : `${q} ${up}, but not past today.`;
+  }
+  const down = light ? 'It is dark' : 'It is broken';
+  return v.held > 0 ? `${q} ${down}: ${v.held} of ${w.need} given, ${w.need - v.held} more and ${again}.` : `${q} ${down}: ${again} with ${w.need} ${pluralOf(def)}.`;
+}
+
+/** What the text box calls a place being mended: "Footbridge", "Street light". */
+export function worksWho(w: Pick<WorksDef, 'name'>): string {
+  const n = w.name.replace(/^the /, '');
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+/** How long what is put by keeps a place standing: "enough for 3 more days"; or that it will not last past today. */
+function upkeep(w: WorksDef, held: number, def: ItemDef): string {
+  const days = worksDays(w, held), noun = pluralOf(def);
+  if (days > 0) return `${held} ${noun} put by, enough for ${days} more day${days === 1 ? '' : 's'} (it takes ${w.wear} a day).`;
+  return `It takes ${w.wear} ${noun} a day, and ${held === 0 ? 'none is' : `only ${held} ${held === 1 ? 'is' : 'are'}`} put by: it will not last past today.`;
+}
+
+/** How a place being mended stands: "The footbridge is broken: 12 of 30 scrap given, 18 more and it stands again." */
+function worksState(w: WorksDef, v: Pick<WorksView, 'standing' | 'held'>, def: ItemDef): string {
+  const name = w.name.charAt(0).toUpperCase() + w.name.slice(1), light = w.build === 'light', again = light ? 'it lights up again' : 'it stands again';
+  if (v.standing) return `${name} ${light ? 'is lit' : 'stands'}. ${upkeep(w, v.held, def)}`;
+  const down = light ? 'is dark' : 'is broken';
+  return v.held > 0
+    ? `${name} ${down}: ${v.held} of ${w.need} ${pluralOf(def)} given, ${w.need - v.held} more and ${again}.`
+    : `${name} ${down}: ${again} with ${w.need} ${pluralOf(def)}.`;
+}
+
+/**
+ * A: at a place being mended, with nothing it takes in the bag, or none it has room for, or after NO: how
+ * it stands, and the name on its plaque. "The footbridge stands. 18 scrap put by, enough for 3 more days
+ * (it takes 5 a day). Its plaque: Ana gave the most."
+ */
+export function worksText(w: WorksDef, v: WorksView | undefined, def: ItemDef): string {
+  const plaque = v?.top ? ` Its plaque: ${v.top} gave the most.` : ' Its plaque is blank: nobody has given anything yet.';
+  return `${worksState(w, v ?? { standing: false, held: 0 }, def)}${plaque}`;
+}
+
+/** Said after how a place stands, when you carry nothing it takes: "You have no scrap to give it." */
+export function nothingToGive(def: ItemDef): string {
+  return `You have no ${nounOf(def)} to give it.`;
+}
+
+/** Said after how a place stands, when it takes no more for now. */
+export const WORKS_FULL = 'It has all it can keep for now.';
 
 /** A: at the Old Stone. "Give the Old Stone a shard?", "Give the Old Stone 3 shards?" */
 export function stoneQuestion(def: ItemDef, n: number): string {
@@ -560,12 +629,34 @@ function boughtText(did: Extract<Did, { kind: 'bought' }>): string {
   return did.left > 0 ? `${got} ${did.left === 1 ? 'One merit' : `${did.left} merits`} left to spend.` : got;
 }
 
+// ---------- the town: Walt's swaps and the ledger (town.ts) ----------
+
+/** Before a swap: "Swap 20 glowcaps for 2 cloth?" */
+export function swapQuestion(swap: SwapDef, n: number, items: Items): string {
+  return `Swap ${amount(items.get(swap.give.item), n * swap.give.count)} for ${amount(items.get(swap.get.item), n * swap.get.count)}?`;
+}
+
+/** Before giving at the ledger: "Give 4 copper wire to the street lights on the south road? The ledger wants 12 copper wire for it." */
+export function giveQuestion(work: TownWork, def: ItemDef, n: number, wants: number): string {
+  return `Give ${amount(def, n)} to ${lower(work.name)}? The ledger wants ${amount(def, wants)} for it.`;
+}
+
+/** What a did about the town needs besides the items: a person's name by their id, and the town as it stands now. */
+export interface DidContext {
+  name?: (npc: string) => string | undefined;
+  town?: { view: TownView; works: readonly TownWork[]; swaps: readonly SwapDef[] };
+}
+
+const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
+
 // ---------- what it did ----------
 
 /** The name over the box for what something did. */
-export function didWho(did: Did, items: Items): string {
+export function didWho(did: Did, items: Items, ctx: DidContext = {}): string {
   switch (did.kind) {
     case 'fire': case 'cooked': return 'Fire';
+    case 'lamp': return 'Lookout';
+    case 'brought': { const w = items.works.get(did.works); return w ? worksWho(w) : 'Mending'; }
     case 'stone': return 'The Old Stone';
     case 'made': case 'mended': case 'upgraded': return 'Workbench';
     case 'used': case 'opened': case 'ate': return items.get(did.item).name;
@@ -573,6 +664,8 @@ export function didWho(did: Did, items: Items): string {
     case 'thanked': return did.what === 'fire' ? 'Fire' : 'Arrow';
     case 'left': case 'took': return 'Crate';
     case 'bought': return 'Wardrobe';
+    case 'swapped': { const who = ctx.town?.swaps.find(x => x.id === did.swap)?.who; return (who && ctx.name?.(who)) ?? 'Swap'; }
+    case 'gave': return 'The town ledger';
     case 'moved': return YOUR_CABIN;
     case 'rescued': return did.name;
     case 'carried': return thingsOf(did.names[0] ?? 'Someone');
@@ -582,11 +675,17 @@ export function didWho(did: Did, items: Items): string {
 }
 
 /** What something did, in words, from the server's answer. */
-export function didText(did: Did, items: Items): string {
+export function didText(did: Did, items: Items, ctx: DidContext = {}): string {
   // Thanks carry no item: the helper, by name (never a pronoun).
   if (did.kind === 'thanked') return did.what === 'fire' ? `You thank ${did.name} for feeding the fire.` : `You thank ${did.name} for the arrow.`;
   // Merits buy looks, not items.
   if (did.kind === 'bought') return boughtText(did);
+  if (did.kind === 'swapped') {
+    const swap = ctx.town?.swaps.find(x => x.id === did.swap);
+    if (!swap) return 'The swap is made.';
+    const who = ctx.name?.(swap.who) ?? 'They';
+    return `${who} takes ${amount(items.get(swap.give.item), did.count * swap.give.count)} and hands you ${amount(items.get(swap.get.item), did.count * swap.get.count)}.`;
+  }
   // Nor does a move: your cabin, next to the friend's, by name.
   if (did.kind === 'moved') return `Your cabin stands next to ${did.name}'s now.`;
   if (did.kind === 'rescued') return `You give ${did.name} ${RESCUE_ENERGY} of your energy. ${did.name} is back up.`;
@@ -598,6 +697,18 @@ export function didText(did: Did, items: Items): string {
     case 'fire': {
       const took = `The fire takes ${amount(def, did.count)}${did.lit ? ' and catches again' : ''}.`;
       return `${took} ${fireFull(did.left) ? 'It is full: it' : 'It'} will burn ${burnsOn(did.left)}.`;
+    }
+    case 'lamp': {
+      const took = `The lamp takes ${amount(def, did.count)}${did.lit ? ' and lights up' : ''}.`;
+      return `${took} ${lampFull(did.left) ? 'It is full: it' : 'It'} will burn ${burnsOn(did.left)}, its beam sweeping the woods.`;
+    }
+    case 'brought': {
+      const w = items.works.get(did.works), v = did.view;
+      if (!w) return `You give ${amount(def, did.count)}.`;
+      const gave = `You give ${amount(def, did.count)} to ${w.name}`;
+      if (did.built) return `${gave}, and ${w.build === 'light' ? 'it lights up again' : 'it stands again'}! ${upkeep(w, v.held, def)}`;
+      if (v.standing) return `${gave}. ${upkeep(w, v.held, def)}`;
+      return `${gave}: ${v.held} of ${w.need}, ${w.need - v.held} more and ${w.build === 'light' ? 'it lights up again' : 'it stands again'}.`;
     }
     case 'stone': {
       const what = did.count === 1 ? `the ${nounOf(def)}` : amount(def, did.count), s = did.stone;
@@ -670,6 +781,15 @@ export function didText(did: Did, items: Items): string {
       if (did.mine) return `You take back the ${n} you left.`;
       // By name, never a pronoun: the thanks goes with it, unless you thanked them today already.
       return did.thanked ? `You take the ${n} ${did.name} left, and thank ${did.name} for it.` : `You take the ${n} ${did.name} left.`;
+    }
+    case 'gave': {
+      // The town as it stands after it (the server says the town first): what the work still wants, or what it does now.
+      const work = ctx.town?.works.find(w => w.id === did.work);
+      const took = `The ledger takes ${amount(def, did.count)}${work ? ` for ${lower(work.name)}` : ''}.`;
+      if (!work) return took;
+      if (did.done) return `${took} That was the last of what it needed. ${work.perk}`;
+      const left = workLeft(work, ctx.town!.view.given[work.id]).map(n => amount(items.get(n.item), n.count));
+      return left.length ? `${took} It still wants ${listOf(left)}.` : took;
     }
   }
 }

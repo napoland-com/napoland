@@ -3,11 +3,12 @@
  * reached (story.ts), the latest first, with no count of chapters and nothing to finish, since the story
  * goes on as the world grows; the field notes (notebook.ts), area by area, each area with a count of
  * its pages ("The Near Woods: 23 of 41"), and the pages you opened in the order the notebook keeps them;
- * and the notes people left (notes.ts), by who wrote them, with the keepsakes you brought home.
+ * the notes people left (notes.ts), by who wrote them, with the keepsakes you brought home; and what
+ * people told you at length (story.ts, scenes), by who told it.
  */
 import {
-  ANYWHERE, AUTHOR_NAMES, NOTE_AUTHORS, firstInJournal, notesOf, secretKey, type Chapter, type FirstView, type ItemDef, type KeepsakesData, type MapData, type NoteAuthor, type NotebookData,
-  type NotebookState,
+  ANYWHERE, AUTHOR_NAMES, NOTE_AUTHORS, firstInJournal, notesOf, scenesTold, secretKey, type Chapter, type FirstView, type ItemDef, type KeepsakesData, type MapData, type NoteAuthor,
+  type NotebookData, type NotebookState, type Stats, type StoryData,
 } from '@napoland/shared';
 
 export interface JournalView {
@@ -171,4 +172,47 @@ const firstLine = (first: string | undefined) => (first ? `<p class="first">${es
 
 function esc(t: string): string {
   return t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+}
+
+/** A scene someone told you, as the journal keeps it: its title and what they said. */
+export interface SceneView {
+  id: string;
+  title: string;
+  lines: string[];
+  /** Told since the journal's People were last looked at. */
+  fresh: boolean;
+}
+
+/** Someone who told you things at length: their name, how many of theirs you heard of how many there are, and those, in the story's order. */
+export interface PersonScenes {
+  who: string;
+  name: string;
+  have: number;
+  total: number;
+  scenes: SceneView[];
+}
+
+/**
+ * The People part of the journal: whoever told you a scene (story.ts, scenesTold), in the order the story
+ * first names them, each with the scenes of theirs you heard. Nobody you heard nothing from shows: who
+ * else has something to tell is for you to find out. `name` is a person's name by their id.
+ */
+export function peopleView(story: StoryData, stats: Stats, name: (id: string) => string, fresh: ReadonlySet<string> = new Set()): PersonScenes[] {
+  const told = scenesTold(story, stats), all = story.scenes ?? [];
+  const who = [...new Set(all.map(s => s.who))];
+  return who.flatMap(w => {
+    const heard = told.filter(s => s.who === w);
+    return heard.length
+      ? [{ who: w, name: name(w), have: heard.length, total: all.filter(s => s.who === w).length, scenes: heard.map(s => ({ id: s.id, title: s.title, lines: [...s.lines], fresh: fresh.has(s.id) })) }]
+      : [];
+  });
+}
+
+/** "Walt: 2 of 5": someone who told you things, and how many of theirs you heard. */
+export const personHeading = (p: Pick<PersonScenes, 'name' | 'have' | 'total'>): string => `${p.name}: ${p.have} of ${p.total}`;
+
+/** The People part as the journal draws it: each person under their heading, then their scenes, or that there is nothing yet. */
+export function peopleHtml(v: readonly PersonScenes[]): string {
+  return v.map(p => `<section class="area"><h3>${esc(personHeading(p))}</h3>${p.scenes.map(s => `<article class="page note"${s.fresh ? ' data-fresh' : ''}><h4>${esc(s.title)}</h4>`
+    + `${s.lines.map(l => `<p>${esc(l)}</p>`).join('')}</article>`).join('')}</section>`).join('') || `<p class="none">${NOTHING_YET}</p>`;
 }

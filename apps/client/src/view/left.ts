@@ -13,7 +13,7 @@
  */
 import * as THREE from 'three';
 import { DIRS, DIR_VEC, type Dir, type MapObject, type TileMap } from '@napoland/shared';
-import { box, flat, hash2, part, pivot, toon } from './toon';
+import { box, flat, hash2, part, pivot, toon, ownToon } from './toon';
 
 type House = Extract<MapObject, { kind: 'house' }>;
 type Car = Extract<MapObject, { kind: 'car' }>;
@@ -405,7 +405,9 @@ export const MILL_WALL_H = 1.2;
  * it, small windows, and the stack of its burner at the back. The doorway is open, like every door,
  * and black: nothing burns in there any more.
  */
-export function millBuilding(h: House, doorX: number, door: { w: number; h: number; back: number }): THREE.Group {
+export function millBuilding(
+  h: House, doorX: number, door: { w: number; h: number; back: number }, lit?: { warm: THREE.Material; doorGlow: THREE.Material },
+): { root: THREE.Group; stack: THREE.Vector3 } {
   const cx = h.x + h.w / 2, cz = h.y + h.h / 2;
   const g = pivot(cx, 0, cz);
   const wall = '#5e5246', batten = '#473d34', H = MILL_WALL_H;
@@ -441,21 +443,40 @@ export function millBuilding(h: House, doorX: number, door: { w: number; h: numb
   // The burner's stack at the back, taller than anything in town but the trees.
   g.add(part(flat(new THREE.CylinderGeometry(0.16, 0.19, 3.1, 8)), '#6b3a22', W / 2 - 0.45, 1.55, back + 0.3, 0.02));
   g.add(part(flat(new THREE.CylinderGeometry(0.22, 0.2, 0.12, 8)), '#4a2a18', W / 2 - 0.45, 3.1, back + 0.3, 0.015));
-  // The doorway, black inside; its frame; the big door slid aside on its rail; the company's board over it.
-  g.add(part(new THREE.BoxGeometry(door.w - 0.02, door.h - 0.02, fd), toon('#0a0807', { side: THREE.BackSide }), dx, door.h / 2, fz + 0.005, false));
+  // The doorway, black inside, or warm once someone lights the stove again (town.ts); its frame; the big
+  // door slid aside on its rail; the company's board over it.
+  g.add(part(new THREE.BoxGeometry(door.w - 0.02, door.h - 0.02, fd), lit ? lit.doorGlow : toon('#0a0807', { side: THREE.BackSide }), dx, door.h / 2, fz + 0.005, false));
   for (const s of [-1, 1]) g.add(box(0.07, door.h + 0.05, 0.08, '#2e241c', dx + s * (door.w / 2 + 0.035), (door.h + 0.05) / 2, front + 0.01, 0.015));
   g.add(box(door.w + 1.3, 0.05, 0.05, '#2a2724', dx + 0.5, door.h + 0.12, front + 0.04, false));
   g.add(box(0.9, door.h + 0.06, 0.05, '#51463c', dx + door.w / 2 + 0.5, (door.h + 0.06) / 2, front + 0.06, 0.015));
   for (const y of [0.25, 0.6]) g.add(box(0.86, 0.03, 0.012, batten, dx + door.w / 2 + 0.5, y, front + 0.09, false));
   g.add(box(1.5, 0.2, 0.03, '#b9ad94', dx - 0.1, H - 0.14, front + 0.03, 0.012));
   for (let k = 0; k < 9; k++) g.add(box(0.07, 0.09, 0.005, '#2a2420', dx - 0.72 + k * 0.155, H - 0.14, front + 0.05, false));
-  // Small windows either side, dark; one boarded.
+  // Small windows either side, dark, one boarded; with the stove lit, the first of them is warm.
   const spots = [dx - 1.1, dx - 2.0, dx + 2.05].filter(x => Math.abs(x) < W / 2 - 0.3);
   spots.forEach((wx, k) => {
-    g.add(box(0.42, 0.34, 0.03, '#2a221b', wx, 0.78, front + 0.02, false), box(0.34, 0.26, 0.035, '#1c1f24', wx, 0.78, front + 0.03, false));
+    g.add(box(0.42, 0.34, 0.03, '#2a221b', wx, 0.78, front + 0.02, false));
+    g.add(lit && k === 0 ? part(new THREE.BoxGeometry(0.34, 0.26, 0.035), lit.warm, wx, 0.78, front + 0.03, false) : box(0.34, 0.26, 0.035, '#1c1f24', wx, 0.78, front + 0.03, false));
     if (k === 1) { const p = box(0.44, 0.07, 0.02, '#6b5a44', wx, 0.8, front + 0.06, false); p.rotation.z = 0.3; g.add(p); }
   });
-  return g;
+  return { root: g, stack: new THREE.Vector3(cx + W / 2 - 0.45, 3.2, cz + back + 0.3) };
+}
+
+/**
+ * A roof on posts the town built over a few tiles (town.ts, the notice board's shelter): its posts, baked
+ * with the other props, and its roof apart, in a material of its own, so it can fade while someone stands
+ * under it (this camera would hide them).
+ */
+export function porchModel(p: { x: number; y: number; w: number; h: number }): { posts: THREE.Group; roof: THREE.Mesh } {
+  const cx = p.x + p.w / 2, cz = p.y + p.h / 2, hw = p.w / 2 - 0.1, hh = p.h / 2 - 0.1;
+  const posts = pivot(cx, 0, cz);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) posts.add(box(0.08, 1.5, 0.08, '#6b5134', sx * hw, 0.75, sz * hh));
+  for (const sz of [-1, 1]) posts.add(box(p.w - 0.1, 0.07, 0.07, '#5a432c', 0, 1.46, sz * hh, false));
+  // New tin over fresh boards, tipped toward the front so the rain runs off it.
+  const roof = new THREE.Mesh(flat(new THREE.BoxGeometry(p.w + 0.24, 0.06, p.h + 0.24)), ownToon('#7b8288', { transparent: true }));
+  roof.position.set(cx, 1.56, cz);
+  roof.rotation.x = 0.1;
+  return { posts, roof };
 }
 
 /** How tall a shed's front wall stands (a cabin's are 1.15); its lean-to roof rises from there to the back. */
@@ -561,6 +582,67 @@ export function culvertMouthModel(x: number, y: number, dir: Dir): THREE.Group {
   // The headwall: a lintel of stone over the pipe, and a pier each side, as tall as the bank it holds.
   g.add(box(1.02, 0.16, 0.2, stone, 0, 0.3, 0.42, 0.02));
   for (const s of [-1, 1]) g.add(box(0.2, 0.62, 0.2, stone, s * 0.52, 0.0, 0.42, 0.02));
+  return g;
+}
+
+/** How high a fire lookout's platform stands, where whoever climbs it stands, and where its lamp hangs (world units). */
+export const LOOKOUT_DECK = 3.2;
+export const LOOKOUT_LAMP_Y = LOOKOUT_DECK + 0.72;
+/** Where on the platform someone up there stands: on the catwalk in front of the cab, where the camera sees them (x: 0 to 2 across the tower). */
+export const LOOKOUT_STAND_Z = 1.74;
+
+/**
+ * The loggers' fire lookout on its 2 by 2 tiles: four timber legs leaning in, braced crosswise in two
+ * stages, a platform with a railing round it, a small cab of weathered boards at its back with windows
+ * all round and a pyramid roof, and the ladder up the south face of its east column. The lamp in the
+ * cab's front window is drawn with `lamp` (its glow follows how long it burns); the rest is baked.
+ */
+export function lookoutModel(o: { x: number; y: number }, lamp: THREE.Material): THREE.Group {
+  const g = pivot(o.x + 1, 0, o.y + 1);
+  const timber = '#6b5540', brace = '#57442f', boards = '#6e6254', D = LOOKOUT_DECK;
+  // The legs, from the tiles' corners in toward the platform's.
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+    const foot = [sx * 0.86, sz * 0.86], top = [sx * 0.62, sz * 0.62];
+    const leg = box(0.13, Math.hypot(D, 0.24 * Math.SQRT2), 0.13, timber, (foot[0]! + top[0]!) / 2, D / 2, (foot[1]! + top[1]!) / 2, 0.02);
+    leg.rotation.set(sz * -0.074, 0, sx * 0.074);
+    g.add(leg);
+  }
+  // Crosswise braces on every face, two stages of them, and a girt where the stages meet.
+  for (const [a, b] of [[0.2, 1.6], [1.6, 3.0]] as const) {
+    const wa = 0.86 - (a / D) * 0.24, wb = 0.86 - (b / D) * 0.24, w = (wa + wb), h = b - a, len = Math.hypot(w, h), tilt = Math.atan2(h, w);
+    for (const [face, turn] of [[1, 0], [-1, 0], [1, Math.PI / 2], [-1, Math.PI / 2]] as const) {
+      for (const s of [-1, 1]) {
+        const x = turn ? face * (wa + wb) / 2 : 0, z = turn ? 0 : face * (wa + wb) / 2;
+        const b2 = box(len, 0.06, 0.05, brace, x, (a + b) / 2, z, false);
+        b2.rotation.set(0, turn, s * tilt);
+        g.add(b2);
+      }
+    }
+    const wg = 0.86 - (b / D) * 0.24;
+    for (const s of [-1, 1]) g.add(box(wg * 2, 0.08, 0.07, timber, 0, b, s * wg, false), box(0.07, 0.08, wg * 2, timber, s * wg, b, 0, false));
+  }
+  // The platform, its railing round the edge, and the cab at its back.
+  g.add(box(1.72, 0.12, 1.72, timber, 0, D, 0, 0.02));
+  for (const s of [-1, 1]) {
+    g.add(box(1.72, 0.05, 0.05, brace, 0, D + 0.52, s * 0.84, false), box(0.05, 0.05, 1.72, brace, s * 0.84, D + 0.52, 0, false));
+    for (const t of [-0.84, 0, 0.84]) g.add(box(0.05, 0.52, 0.05, brace, t, D + 0.26, s * 0.84, false), box(0.05, 0.52, 0.05, brace, s * 0.84, D + 0.26, t, false));
+  }
+  const cabZ = -0.28, cabW = 1.16, cabD = 0.9, cabH = 0.92;
+  g.add(box(cabW, 0.34, cabD, boards, 0, D + 0.23, cabZ, 0.02));
+  for (const [px, pz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) g.add(box(0.07, cabH, 0.07, timber, px * (cabW / 2 - 0.035), D + 0.06 + cabH / 2, cabZ + pz * (cabD / 2 - 0.035), false));
+  // Its windows, dark, all round above the boards; the lamp in the front one.
+  g.add(box(cabW - 0.1, cabH - 0.4, cabD - 0.1, '#1a2026', 0, D + 0.66, cabZ, false));
+  g.add(part(new THREE.CylinderGeometry(0.13, 0.17, 0.2, 8).rotateX(Math.PI / 2), lamp, 0, LOOKOUT_LAMP_Y - 0.1, cabZ + cabD / 2 + 0.02, 0.015));
+  const roof = part(new THREE.ConeGeometry(0.98, 0.52, 4, 1).rotateY(Math.PI / 4), '#4b3f35', 0, D + 0.06 + cabH + 0.26, cabZ, 0.025);
+  g.add(roof);
+  // The ladder, up the south face of the east column: two rails and the rungs between them.
+  const lx = 0.5, lz = 0.97, rails = Math.hypot(D + 0.1, 0.12);
+  for (const s of [-1, 1]) {
+    const rail = box(0.045, rails, 0.045, brace, lx + s * 0.17, (D + 0.1) / 2, lz - 0.06, false);
+    rail.rotation.x = -0.035;
+    g.add(rail);
+  }
+  for (let y = 0.28; y < D; y += 0.3) g.add(box(0.34, 0.03, 0.03, '#7a6248', lx, y, lz - 0.06 + (y / D) * 0.1, false));
   return g;
 }
 
@@ -724,4 +806,51 @@ export function leftModel(o: MapObject): THREE.Object3D | null {
     case 'birdcage': return birdcageModel(o);
     default: return null;
   }
+}
+
+/** How high the planks of a footbridge are, their tops (world units): whoever crosses it stands on them. */
+export const DECK_Y = 0.03;
+
+/**
+ * A footbridge mended together (works.ts) over `w` by `h` tiles of water, from bank to bank: the timber
+ * sills it rests on at each end (always there), the bridge whole (planks across two stringers, a post at
+ * each end and in the middle, a handrail each side and a small plaque on the first post), and what is
+ * left of it broken (the stringers' ends on the sills, a plank down in the water, a post leaning out and
+ * its rail hanging from it). World.ts shows whole or broken as the server says it stands; the map, and
+ * the creek under it, stay as they are either way.
+ */
+export function footbridgeModel(o: { x: number; y: number; w: number; h: number }): { sills: THREE.Group; whole: THREE.Group; broken: THREE.Group } {
+  const along = o.w >= o.h, L = along ? o.w : o.h;
+  const at = () => {
+    const g = pivot(o.x + o.w / 2, 0, o.y + o.h / 2);
+    // Built along +x; a bridge that runs north to south is turned.
+    if (!along) g.rotation.y = Math.PI / 2;
+    return g;
+  };
+  const wood = '#6b5334', dark = '#4a3a2c', worn = ['#7a6246', '#6f5a40', '#83694a'], half = L / 2, span = L + 0.5;
+  const sills = at(), whole = at(), broken = at();
+  for (const s of [-1, 1]) sills.add(box(0.3, 0.14, 1.06, dark, s * (half + 0.12), -0.04, 0, 0.02));
+  // Whole: two stringers, planks across them, posts and rails, and the plaque.
+  for (const z of [-0.3, 0.3]) whole.add(box(span, 0.1, 0.1, dark, 0, DECK_Y - 0.1, z, 0.015));
+  const planks = Math.round(span / 0.22);
+  for (let i = 0; i < planks; i++) {
+    const x = -span / 2 + 0.11 + i * (span / planks);
+    whole.add(box(0.19, 0.05, 0.84, worn[Math.floor(hash2(o.x * 5 + i, o.y * 3) * worn.length) % worn.length]!, x, DECK_Y - 0.025, 0, 0.012));
+  }
+  for (const x of [-half - 0.1, 0, half + 0.1]) for (const z of [-0.44, 0.44]) whole.add(box(0.07, 0.52, 0.07, wood, x, DECK_Y + 0.24, z, 0.015));
+  for (const z of [-0.44, 0.44]) whole.add(box(span + 0.1, 0.05, 0.05, wood, 0, DECK_Y + 0.48, z, 0.015));
+  whole.add(box(0.18, 0.12, 0.02, '#8a7a52', -half - 0.1, DECK_Y + 0.34, 0.48, 0.01));
+  // Broken: the stringers' ends still on the sills, one plank in the water, a post leaning out with its rail hanging.
+  for (const s of [-1, 1]) for (const z of [-0.3, 0.3]) broken.add(box(0.34, 0.1, 0.1, dark, s * (half - 0.05), DECK_Y - 0.1, z, 0.015));
+  const plank = box(0.19, 0.05, 0.84, worn[0]!, 0.1, -0.14, 0.05, 0.012);
+  plank.rotation.set(0.25, 0.5, 0.35);
+  broken.add(plank);
+  const post = box(0.07, 0.52, 0.07, wood, -half - 0.1, DECK_Y + 0.22, 0.44, 0.015);
+  post.rotation.z = -0.35;
+  broken.add(post);
+  const rail = box(half + 0.2, 0.05, 0.05, wood, -half / 2 + 0.05, DECK_Y + 0.12, 0.46, 0.015);
+  rail.rotation.z = -0.5;
+  broken.add(rail);
+  broken.add(box(0.18, 0.12, 0.02, '#8a7a52', -half - 0.18, DECK_Y + 0.3, 0.49, 0.01));
+  return { sills, whole, broken };
 }

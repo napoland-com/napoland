@@ -78,11 +78,16 @@ export interface Sketch {
   things: Array<{ at: Pt; kind: Thing }>;
   /** Flooded culverts, each the middles of its tiles from one mouth to the other: a dashed line, and "flooded" beside it. */
   culverts: Pt[][];
+  /**
+   * Footbridges (works.ts), from bank to bank: two lines across the water, with the planks' ends between.
+   * Drawn whole or broken alike: the paper map was drawn once, and the bridge was always there.
+   */
+  footbridges: Array<[Pt, Pt]>;
   labels: Array<{ x: number; y: number; text: string }>;
 }
 
 /** The small things the paper map marks, each its own way. */
-type Thing = 'luggage' | 'boxes' | 'rocker' | 'piano' | 'bike' | 'birdcage' | 'pump' | 'cage' | 'mailbox' | 'yarder' | 'spool';
+type Thing = 'luggage' | 'boxes' | 'rocker' | 'piano' | 'bike' | 'birdcage' | 'pump' | 'cage' | 'mailbox' | 'yarder' | 'spool' | 'lookout';
 const THINGS = new Set<string>(['luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage', 'yarder', 'spool']);
 
 /**
@@ -118,7 +123,7 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
   const { width: W, height: H } = map;
   const s: Sketch = {
     title: map.data.name, width: W, height: H, forest: [], trees: [], ground: [], grass: [], water: [], roads: [], houses: [], poles: [], wires: [], masts: [], fences: [], cars: [], signs: [],
-    logs: [], stumps: [], stakes: [], skids: [], ruins: [], bridges: [], things: [], culverts: [], labels: [],
+    logs: [], stumps: [], stakes: [], skids: [], ruins: [], bridges: [], things: [], culverts: [], footbridges: [], labels: [],
   };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const kind = map.kind(x, y), r = hash(x, y, 1);
@@ -154,7 +159,12 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
     else if (o.kind === 'bridge') {
       if (o.dir === 'v') s.bridges.push([[o.x + 0.1, o.y], [o.x + 0.1, o.y + 1]], [[o.x + 0.9, o.y], [o.x + 0.9, o.y + 1]]);
       else s.bridges.push([[o.x, o.y + 0.1], [o.x + 1, o.y + 0.1]], [[o.x, o.y + 0.9], [o.x + 1, o.y + 0.9]]);
-    } else if (THINGS.has(o.kind)) s.things.push({ at: o.kind === 'piano' || o.kind === 'yarder' ? [o.x + 1, o.y + (o.kind === 'yarder' ? 1 : 0.5)] : drift(o.x, o.y, 19), kind: o.kind as Thing });
+    }
+    // A footbridge, from bank to bank along the way it runs, a little onto each.
+    else if (o.kind === 'footbridge') s.footbridges.push(o.w >= o.h ? [[o.x - 0.2, o.y + 0.5], [o.x + o.w + 0.2, o.y + 0.5]] : [[o.x + 0.5, o.y - 0.2], [o.x + 0.5, o.y + o.h + 0.2]]);
+    // The loggers' fire lookout, a landmark to steer by: drawn standing over the middle of its tiles, not a little off.
+    else if (o.kind === 'lookout') s.things.push({ at: [o.x + 1, o.y + 1], kind: 'lookout' });
+    else if (THINGS.has(o.kind)) s.things.push({ at: o.kind === 'piano' || o.kind === 'yarder' ? [o.x + 1, o.y + (o.kind === 'yarder' ? 1 : 0.5)] : drift(o.x, o.y, 19), kind: o.kind as Thing });
   }
   s.poles.forEach((a, i) => s.poles.slice(i + 1).forEach(b => { if (Math.hypot(a[0] - b[0], a[1] - b[1]) <= MAX_WIRE) s.wires.push([a, b]); }));
   s.culverts = culvertRuns(map);
@@ -262,7 +272,8 @@ function biggest(map: TileMap, kind: string): Pt[] {
  * A small thing, drawn the way a hand would mark it at px, py: a suitcase with its handle, a pair of
  * boxes, a rocking chair from the side, a piano with its keys, a bike's two wheels, a birdcage's dome,
  * NAPO's pump with its hose and its cages crosshatched, a mailbox on its post, the loggers' yarder (its
- * boiler and its drum on a sled) and a cable spool from the side.
+ * boiler and its drum on a sled), a cable spool from the side, and the fire lookout's cab up on its splayed,
+ * braced legs.
  */
 function thing(g: CanvasRenderingContext2D, kind: Thing, px: number, py: number) {
   g.beginPath();
@@ -278,6 +289,11 @@ function thing(g: CanvasRenderingContext2D, kind: Thing, px: number, py: number)
     case 'mailbox': g.rect(px - 2.5, py - 4, 5, 3); g.moveTo(px, py - 1); g.lineTo(px, py + 4); break;
     case 'yarder': g.moveTo(px - 11, py + 6); g.lineTo(px + 11, py + 6); g.rect(px - 9, py - 7, 6, 13); g.moveTo(px + 9, py); g.arc(px + 5, py, 4, 0, Math.PI * 2); g.moveTo(px - 6, py - 7); g.lineTo(px - 6, py - 11); break;
     case 'spool': g.moveTo(px + 4.5, py); g.arc(px, py, 4.5, 0, Math.PI * 2); g.moveTo(px + 1.5, py); g.arc(px, py, 1.5, 0, Math.PI * 2); break;
+    case 'lookout':
+      g.moveTo(px - 5, py + 6); g.lineTo(px - 2.5, py - 4); g.moveTo(px + 5, py + 6); g.lineTo(px + 2.5, py - 4);
+      g.moveTo(px - 4, py + 2); g.lineTo(px + 3.3, py - 1.5); g.moveTo(px + 4, py + 2); g.lineTo(px - 3.3, py - 1.5);
+      g.rect(px - 4, py - 9, 8, 5); g.moveTo(px - 5, py - 9); g.lineTo(px, py - 12); g.lineTo(px + 5, py - 9);
+      break;
   }
   g.stroke();
 }
@@ -290,9 +306,12 @@ const HAND = '"Bradley Hand", "Segoe Print", "Comic Sans MS", cursive';
 
 const drawn = new Map<string, HTMLCanvasElement>();
 
-/** The drawing of a map, made once per map version. */
-export function paperMap(map: TileMap, nameOf: (id: string) => string | undefined): HTMLCanvasElement {
-  const key = `${map.data.id}@${map.data.version}`;
+/**
+ * The drawing of a map, made once per map version and what the town has come to (`town`: a room it names
+ * may be called something else once someone comes home to it, town.ts).
+ */
+export function paperMap(map: TileMap, nameOf: (id: string) => string | undefined, town = ''): HTMLCanvasElement {
+  const key = `${map.data.id}@${map.data.version}#${town}`;
   let c = drawn.get(key);
   if (!c) drawn.set(key, (c = draw(sketchOf(map, nameOf))));
   return c;
@@ -469,6 +488,17 @@ function draw(s: Sketch): HTMLCanvasElement {
   for (const [x, y] of s.stakes) { g.moveTo(X(x), Y(y) + 4); g.lineTo(X(x), Y(y) - 5); g.lineTo(X(x) + 5, Y(y) - 3); g.lineTo(X(x), Y(y) - 1); }
   g.stroke();
   for (const t of s.things) thing(g, t.kind, X(t.at[0]), Y(t.at[1]));
+  // Footbridges: two lines from bank to bank, and the planks across between them.
+  g.beginPath();
+  for (const [a, b] of s.footbridges) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy), nx = (-dy / len) * 0.32, ny = (dx / len) * 0.32;
+    for (const k of [-1, 1]) { g.moveTo(X(a[0] + nx * k), Y(a[1] + ny * k)); g.lineTo(X(b[0] + nx * k), Y(b[1] + ny * k)); }
+    for (let i = 1; i < len * 3; i++) {
+      const t = i / (len * 3), px = a[0] + dx * t, py = a[1] + dy * t;
+      g.moveTo(X(px - nx), Y(py - ny)); g.lineTo(X(px + nx), Y(py + ny));
+    }
+  }
+  g.stroke();
   g.lineWidth = 1.6;
 
   // Words in handwriting, each a little tilted.

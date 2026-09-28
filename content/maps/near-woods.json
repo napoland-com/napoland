@@ -1,7 +1,7 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 14,
+  "version": 16,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
@@ -31,9 +31,9 @@
     "ttttttttttttttttmmtttttttttttttttggglllllgtttttttttttttttttttttt",
     "ttttttttttttttttmmttttttttttttttggggllllllgttttttttttttttmmttttt",
     "ttttttttttttffffgmttttttttttttttggggllllllgtttttttttttwwmmmftttt",
-    "ttttttttttffffffttttttttttttttmmgggglllllgtttttttttttwwwwmmftttt",
-    "tttttttttggfffffgtttttttttttttmmmgggghlhhgtttttttttttmmmmmfftttt",
-    "tttttttttgffffffgtttttttttttttmmtttghhhhhtmmtttttttttgmmggmmmttt",
+    "ttttttttttffffffttttttttttttggmmgggglllllgtttttttttttwwwwmmftttt",
+    "tttttttttggfffffgtttttttttttggmmmgggghlhhgtttttttttttmmmmmfftttt",
+    "tttttttttgffffffgtttttttttttgmmmtttghhhhhtmmtttttttttgmmggmmmttt",
     "ttttttttttgfffffttttttttttttmmmmttttthhtttmmtttttttttggggmmwwttt",
     "tttttttttttgffggtttttttttfftgmmmttttttttttgggmtttttttttggmmttttt",
     "tttttttttttgttttttttttttffffmmttttttttttttggggttttttttttttmttttt",
@@ -47,7 +47,7 @@
     "tttttttttmggmggghhhgtttttttttmmmttttttttttttgggggggggtttggtctttt",
     "ttttttttmmmmmmmmmhhggttttttttmmmttttttttttthggggggggmmmmggtctttt",
     "tttttttfmmmwwwwwmmgggtttttttmmmmmttttttttthhggggggggggtttttctttt",
-    "ttttttfffmwwwwwwwmgggttttttgggmmmmtttttttthhhhggggggfftttttctttt",
+    "ttttttfffmwwwwwwwmggggtttttgggmmmmtttttttthhhhggggggfftttttctttt",
     "tttttttffmwwwwwwwmgggmtttttmggmmmmtttttttthhgggggggffftttttctttt",
     "tttttttffmwwwwwwwmmgmgttttttggmmmgttttttttgggggggggffttttttctttt",
     "tttttttgmmmwwwwwwwmmgmmmmmmmmgmmmmmmtttttmmggggggggffttttttctttt",
@@ -315,7 +315,11 @@
     {"kind":"stump","x":28,"y":74,"s":1.061,"v":0.361,"burned":true},
     {"kind":"sign","x":52,"y":2,"text":["The Far Woods, up the trappers' trail.","Past here the old trappers went in pairs. Up there you tire twice as fast as down here.","Feed the fire in the trapper's cabin on the way in, so it still burns on your way out."]},
     {"kind":"house","x":31,"y":2,"w":2,"h":2,"roof":"#4c5646","lit":0,"style":"shed"},
+    {"kind":"lookout","x":28,"y":24},
+    {"kind":"sign","x":28,"y":26,"text":["Fire lookout. Stonebrook Timber Co.","Climb it to see the woods. Keep its lamp fed with resin: its beam brings the crews home.","Built the summer the mill opened."]},
     {"kind":"slab","x":6,"y":5,"name":"the slab in the ring of stones","holds":[{"item":"strange","count":2},{"item":"shard","count":1}]},
+    {"kind":"footbridge","id":"pond-footbridge","x":17,"y":44,"w":2,"h":1},
+    {"kind":"lamp","x":21,"y":40,"works":"pond-light"},
     {"kind":"note","x":33,"y":72,"id":"walt-n8","by":"walt","name":"Nailed to the pole","text":["N-8. Walked the line, 7 to 16. All sound. W.P."]},
     {"kind":"note","x":34,"y":58,"id":"walt-n10","by":"walt","name":"Nailed to the pole","text":["N-10. Hum on the cond., no load on it. Grounded it. Still hums. Reported. W.P."]},
     {"kind":"note","x":32,"y":54,"id":"walt-n11","by":"walt","name":"Nailed to the pole","text":["N-11. Compass on the dash points up the line, not north. Since spring. Office says get a new compass. W.P."]},
@@ -342,6 +346,7 @@
     {"name":"the long grass","x":17,"y":36},
     {"name":"the deer beds","x":37,"y":19},
     {"name":"the log landing","x":44,"y":69},
-    {"name":"the burned jeep","x":28,"y":72}
+    {"name":"the burned jeep","x":28,"y":72},
+    {"name":"the fire lookout","x":29,"y":26}
   ]
 }

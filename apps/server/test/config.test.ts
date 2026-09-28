@@ -157,6 +157,13 @@ describe('loadConfig: signing in', () => {
     expect(problem({ RESTED_EVERY_MS: 'a second' })).toMatch(/RESTED_EVERY_MS must be a whole number/);
   });
 
+  it('starts the town where a play-test says (TOWN_DONE), never in production', () => {
+    expect(loadConfig({}, REPO).townDone).toEqual([]);
+    expect(loadConfig({ TOWN_DONE: ' edith-home, south-lights ,,edith-home' }, REPO).townDone).toEqual(['edith-home', 'south-lights']);
+    expect(problem({ TOWN_DONE: 'edith-home', NODE_ENV: 'production' })).toMatch(/TOWN_DONE .* refused when NODE_ENV=production/);
+    expect(problem({ TOWN_DONE: 'Edith Home' })).toMatch(/TOWN_DONE lists milestones and works of the town by their ids, got "Edith Home"/);
+  });
+
   it('makes a crowd of a few players for a play-test of copies, never in production', () => {
     expect(loadConfig({}, REPO)).toMatchObject({ townCrowd: 0, regionCrowd: 0 });
     expect(loadConfig({ TOWN_CROWD: '2', REGION_CROWD: '3' }, REPO)).toMatchObject({ townCrowd: 2, regionCrowd: 3 });

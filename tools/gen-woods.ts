@@ -18,7 +18,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, objectTiles, underfoot, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, footOf, objectTiles, underfoot, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
 import { noteAt, type NoteId } from './notes-left';
 import { FAR_WOODS_END, NEAR_WOODS_END } from './trappers-trail';
@@ -653,14 +653,68 @@ for (const [x, y] of culvert) {
   }
 }
 
+// ---- The fire lookout (roadmap/lookout-tower.md) ----
+
+// The loggers' fire lookout, older than NAPO: a timber tower on the forest's edge by the track, west of
+// the rocks, its ladder up its south face, climbed from a tile cut out of the firs beside the track, and
+// the timber company's sign beside it. Added last like the rest, on forest it clears, with the same
+// checks: only forest changes, and every tile anyone walks is as far from home as it was.
+const beforeLookout = tile.map(r => r.join('')), stepsBeforeLookout = stepsHome();
+const LOOKOUT = { kind: 'lookout', x: 28, y: 24 } as const;
+onForest(LOOKOUT);
+const ladderFoot = footOf(LOOKOUT);
+clear(ladderFoot.x, ladderFoot.y, 'm');
+onForest({
+  kind: 'sign', x: ladderFoot.x - 1, y: ladderFoot.y,
+  text: [
+    'Fire lookout. Stonebrook Timber Co.',
+    'Climb it to see the woods. Keep its lamp fed with resin: its beam brings the crews home.',
+    'Built the summer the mill opened.',
+  ],
+});
+{
+  const d = stepsHome();
+  if (d[ladderFoot.y * W + ladderFoot.x]! < 0) throw new Error('nobody can reach the foot of the lookout\'s ladder');
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, was = beforeLookout[y]![x]!;
+    if (was !== tile[y]![x] && was !== 't') throw new Error(`the tile at ${x},${y} was ${was} and is now ${tile[y]![x]}: only forest may change`);
+    if (stepsBeforeLookout[i]! >= 0 && d[i] !== stepsBeforeLookout[i]) throw new Error(`the tile at ${x},${y} was ${stepsBeforeLookout[i]} steps from home and is now ${d[i]}`);
+  }
+}
+
 // ---- The slab (slab.ts) ----
 
 // In the middle of the ring of stones, where the rocks hum back, a flat slab lies in the ground: the
 // stones' own sealed crate, which two people open together while the woods are restless. Placed after
-// everything that stands in the woods, so nothing placed before it moves (only the notes people left
-// come after it: they lie last on every map); walked over like the ground (and over the glowcaps drawn
-// on its tile), so every way through the ring stays as it was.
+// everything that stood in the woods before it, so nothing placed before it moves (only what came later
+// still, and the notes people left, laid last on every map, come after it); walked over like the ground
+// (and over the glowcaps drawn on its tile), so every way through the ring stays as it was.
 place({ kind: 'slab', x: Math.floor(RING.x), y: Math.floor(RING.y), name: 'the slab in the ring of stones', holds: [{ item: 'strange', count: 2 }, { item: 'shard', count: 1 }] });
+
+// ---- Mending the woods together (roadmap/trail-works.md) ----
+
+// Two places by the pond that stand broken until everyone brings what they take (content/items.json,
+// works): the footbridge over the creek where it leaves the pond, between the path round the pond and
+// the one east to the track, and a street light at the edge of the pond clearing. The footbridge changes
+// no tile (the creek stays water: its planks open with its id while it stands), and the light stands on
+// forest it clears; so, added after everything else but the notes (laid last), they move nothing: every
+// tile anyone walks is as far from home as it was.
+const beforeWorks = tile.map(r => r.join('')), stepsBeforeWorks = stepsHome();
+const FOOTBRIDGE = { kind: 'footbridge', id: 'pond-footbridge', x: 17, y: 44, w: 2, h: 1 } as const;
+for (const [x, y] of objectTiles(FOOTBRIDGE)) if (at(x, y) !== 'w') throw new Error(`the footbridge at ${x},${y} spans ${at(x, y)}, not the creek`);
+const bridgeEnds = [[FOOTBRIDGE.x - 1, FOOTBRIDGE.y], [FOOTBRIDGE.x + FOOTBRIDGE.w, FOOTBRIDGE.y]] as const;
+for (const [x, y] of bridgeEnds) if (!walkable(x, y)) throw new Error(`the footbridge's end at ${x},${y} is not ground anyone walks`);
+must(FOOTBRIDGE);
+const POND_LIGHT = { kind: 'lamp', x: 21, y: 40, works: 'pond-light' } as const;
+onForest(POND_LIGHT);
+{
+  const d = stepsHome();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, was = beforeWorks[y]![x]!;
+    if (was !== tile[y]![x] && was !== 't') throw new Error(`the tile at ${x},${y} was ${was} and is now ${tile[y]![x]}: only forest may change`);
+    if (stepsBeforeWorks[i]! >= 0 && d[i] !== stepsBeforeWorks[i]) throw new Error(`the tile at ${x},${y} was ${stepsBeforeWorks[i]} steps from home and is now ${d[i]}`);
+  }
+}
 
 // ---- Notes people left (notes-left.ts) ----
 
@@ -682,7 +736,7 @@ place({ kind: 'slab', x: Math.floor(RING.x), y: Math.floor(RING.y), name: 'the s
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 14, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 16, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
@@ -709,6 +763,7 @@ const map: MapData = {
   places: [
     ...NAMED, ...TALL.flatMap(p => (p.name ? [{ name: p.name, x: p.at[0], y: p.at[1] }] : [])),
     { name: 'the log landing', x: Math.floor(LANDING.x), y: Math.floor(LANDING.y) }, { name: 'the burned jeep', x: 28, y: 72 },
+    { name: 'the fire lookout', x: ladderFoot.x, y: ladderFoot.y },
   ],
 };
 
@@ -739,7 +794,7 @@ writeFileSync(out, json);
 
 // A glance at the result, two map rows per line because a terminal character is about twice as tall
 // as it is wide. Of the two tiles in a character, the one listed first in ORDER wins.
-const ORDER = '*!HCJ@SFvibBnLc#-T^ox%~=";,_. ';
+const ORDER = '*!YHCJ@SFvibBnLc#-T^ox%~=";,_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', sign: '!', board: '!', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
@@ -756,12 +811,18 @@ const GLYPH: Record<MapObject['kind'], string> = {
   ruin: 'H', yarder: '#', spool: 'o', bridge: '=', traps: 'L', gate: 'G',
   // A note lies on something else, which shows.
   note: ' ',
+  // What the town builds and keeps stands in town (gen-map.ts, gen-interiors.ts).
+  porch: '_', ledger: 'n',
   // The furniture of your own cabin stands there alone (gen-interiors.ts).
   comfort: 'n',
   // NAPO's teleport stands in every cabin and by the notice board in town (gen-interiors.ts, gen-map.ts).
   teleport: 'N',
   // The ring of stones' slab, in its middle.
   slab: '=',
+  // The loggers' fire lookout, west of the rocks.
+  lookout: 'Y',
+  // The footbridge by the pond, whole or broken (its light is a lamp).
+  footbridge: '=',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', c: '%', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();
@@ -775,7 +836,7 @@ const frame = '+' + '-'.repeat(W) + '+';
 const rows = [frame];
 for (let y = 0; y < H; y += 2) rows.push('|' + Array.from({ length: W }, (_, x) => pick(glyph(x, y), glyph(x, y + 1))).join('') + '|');
 console.log([...rows, frame].join('\n'));
-console.log(' . ground  " ferns  ; tall grass  = old road  ~ water  % flooded culvert  ^ rocks  * street light  ! sign or stake  H cabin or shed  C car  J jeep  i pole  o rock  x stump  # log deck  T fir  , shrooms  v way home');
+console.log(' . ground  " ferns  ; tall grass  = old road  ~ water  % flooded culvert  ^ rocks  * street light  ! sign or stake  Y fire lookout  H cabin or shed  C car  J jeep  i pole  o rock  x stump  # log deck  T fir  , shrooms  v way home');
 
 // How deep it goes, measured like the game does (TileMap.homeSteps drives the energy drain).
 const tm = new TileMap(map);
@@ -796,6 +857,7 @@ console.log(`tall grass, ${patches.length} patches: ${patches.map((p, k) => {
   return `${TALL[k]!.name ?? `at ${TALL[k]!.at.join(',')}`} ${p.length} tiles ${Math.min(...s)}-${Math.max(...s)} steps`;
 }).join(', ')}`);
 console.log(`shelter doors: ${shelters.map((s, i) => { const d = doorOf(s); return `${cabins[i]!.inside} ${tm.homeSteps(d.x, d.y)} steps`; }).join(', ')}`);
+console.log(`the fire lookout: its ladder's foot ${tm.homeSteps(ladderFoot.x, ladderFoot.y)} steps from home`);
 // What the culvert is worth to whoever wades it: walking steps, as the game counts them, with and without waders.
 {
   const walk = (from: P, pass?: ReadonlySet<string>) => {
@@ -816,6 +878,10 @@ console.log(`shelter doors: ${shelters.map((s, i) => { const d = doorOf(s); retu
   const shed = doorOf(SHED);
   console.log(`the ranger's shed: its door ${tm.homeSteps(shed.x, shed.y)} steps from home, padlocked (${shedDoor.lock})`);
   console.log(`the culvert: ${culvert.length} tiles from ${MOUTHS[0]!.join(',')} to ${MOUTHS[1]!.join(',')}; from the bog to where it comes out south of the creek ${plain(OUT)} steps round by the ford, ${wading(OUT)} through it; from the bog to the way home ${plain(homeTile) + 1} steps, ${wading(homeTile) + 1} through it`);
+  // What the footbridge is worth while it stands: from its west end, the way home, round by the ford and over it.
+  const standing = new Set([FOOTBRIDGE.id]), west = bridgeEnds[0] as P;
+  console.log(`the footbridge: from its west end (${west.join(',')}) to the way home ${walk(west)(homeTile) + 1} steps round by the ford, ${walk(west, standing)(homeTile) + 1} over it while it stands`);
+  console.log(`the pond light: ${POND_LIGHT.x},${POND_LIGHT.y}, ${tm.homeSteps(POND_LIGHT.x - 1, POND_LIGHT.y)} steps from home in front of it`);
 }
 // The tuning targets in energy.ts: how long a full bar lasts standing still in the rain.
 const lasts = (x: number, y: number) => (ENERGY_MAX / -energyRate(tm, x, y, 'rain') / 60).toFixed(1);

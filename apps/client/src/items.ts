@@ -7,7 +7,7 @@
 import {
   BAG_SLOTS, SLOTS, WEAR_FADES, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, shopLookOf, upgradable, upgradeChance,
   wearSeconds, type BagSlot, type EffectView, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction,
-  type ShopData, type Slot, type Upgrade, type Worn, slotKg,
+  type ShopData, type Slot, type Upgrade, type Worn, type WorksDef, slotKg,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
 import type { Look } from './view/characters';
@@ -30,8 +30,13 @@ export class Items {
   readonly conditions: ItemsData['conditions'];
   /** Where the keepsakes lie, and what the whole set home gives (notes.ts). */
   readonly keepsakes: ItemsData['keepsakes'];
+  /** The town's milestones and the works of its ledger, and what the townspeople swap (town.ts). */
+  readonly town: ItemsData['town'];
+  readonly swaps: NonNullable<ItemsData['swaps']>;
   /** What the Long Night's bonus does, in words ("wire and strange objects grow back twice as fast"); empty without one. */
   readonly longNight: string;
+  /** The places everyone mends together, by id (works.ts): what each takes, and how fast it wears. */
+  readonly works: Map<string, WorksDef>;
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
 
   constructor(data: ItemsData | undefined) {
@@ -44,7 +49,10 @@ export class Items {
     this.upgrades = data?.upgrades;
     this.conditions = data?.conditions;
     this.keepsakes = data?.keepsakes;
+    this.town = data?.town;
+    this.swaps = data?.swaps ?? [];
     this.longNight = longNightWords(data?.longNight, this.byId);
+    this.works = new Map((data?.works ?? []).map(w => [w.id, w]));
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
 
@@ -104,7 +112,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'not_gear': return 'That is not something you wear';
     case 'bag_too_full': return 'What you carry does not fit in that bag';
     case 'keep_bag': return 'You always carry a bag';
-    case 'missing': return action === 'cook' ? 'You do not carry what it takes' : 'Your stash lacks what it needs';
+    case 'missing': return action === 'cook' ? 'You do not carry what it takes' : action === 'swap' ? 'You do not carry enough of it' : 'Your stash lacks what it needs';
     case 'unknown_player': return 'Nobody by that name';
     case 'requests_off': return 'They take no friend requests';
     case 'not_friends': return action === 'move' ? 'You can only move next to friends' : 'You can only message friends';
@@ -141,6 +149,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'trading': return 'Finish the trade you are in first';
     case 'their_bag_full': return 'Their bag has no room for it';
     case 'nothing_to_trade': return 'There is nothing to trade yet';
+    case 'not_needed': return 'The ledger wants no more of that for it';
     case 'placed': return 'It stands in its place already';
     case 'street_full': return 'Their street has no lot free';
     case 'neighbors': return 'You live on the same street already';
@@ -150,12 +159,16 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'too_tired': return 'You need more energy than that';
     case 'padlocked': return 'A padlock, rusted shut';
     case 'not_yours': return 'That is someone else\'s bundle: carry it to the lost and found box in the lodge';
-    case 'cold': return 'It lies cold until the woods grow restless';
+    case 'cold': return action === 'slab' ? 'It lies cold until the woods grow restless' : 'Nobody keeps this hearth yet. It stays cold';
     case 'one_pair': return 'It will not move for one pair of hands';
     case 'opened': return 'You opened it this time already';
     case 'fire_out': return 'The fire is out: nothing cooks on it';
     case 'ate_it': return 'You ate that this trip already';
     case 'two_meals': return 'You ate two meals this trip already';
+    case 'lamp_full': return 'The lamp holds as much as it can';
+    case 'up': return 'Climb down first';
+    case 'not_wanted': return 'It takes something else';
+    case 'works_full': return 'It has all it can keep for now';
   }
 }
 

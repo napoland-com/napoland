@@ -1,12 +1,16 @@
 /**
  * Every map of the world ships with the client (content/maps/*.json, bundled by Vite), so walking
- * into the woods needs no download. The server says which map you are on; this finds our copy.
+ * into the woods needs no download. The server says which map you are on; this finds our copy, as the
+ * town has it now (town.ts): who is where, which lamps and hearths are lit, what a room is called.
  */
-import { TileMap, type MapData, type MapRef } from '@napoland/shared';
+import { NO_TOWN, TileMap, townData, type MapData, type MapRef } from '@napoland/shared';
 
 export class Maps {
   private readonly data = new Map<string, MapData>();
   private readonly built = new Map<string, TileMap>();
+  /** What the town has come to, and how many live in it, as the server last said. */
+  private done: ReadonlySet<string> = NO_TOWN;
+  private pop = 0;
   /** Winter: the water the maps mark as ice is walked on (the server's rule, TileMap.freeze), on every map, built or not yet. */
   private frozen = false;
 
@@ -21,7 +25,7 @@ export class Maps {
     let map = this.built.get(d.id);
     // Built on first use: a big map of the wilds takes a moment, and many visits never leave town.
     if (!map) {
-      this.built.set(d.id, (map = new TileMap(d)));
+      this.built.set(d.id, (map = new TileMap(d, this.done, this.pop)));
       map.freeze(this.frozen);
     }
     return map;
@@ -40,14 +44,32 @@ export class Maps {
     return [...this.data.values()].sort((a, b) => a.id.localeCompare(b.id)).flatMap(d => (d.ice ?? []).map(w => `${w.name} in ${d.name.replace(/^The /, 'the ')}`));
   }
 
-  /** A bundled map's data by id, whatever its version: to see where an exit leads (does the room behind a door keep a fire?). */
+  /**
+   * A bundled map's data by id, whatever its version, as the town has it now: to see where an exit leads
+   * (does the room behind a door keep a fire?) and what a door's room is called.
+   */
   find(id: string): MapData | undefined {
-    return this.data.get(id);
+    const built = this.built.get(id);
+    if (built) return built.data;
+    const d = this.data.get(id);
+    return d && townData(d, this.done, this.pop);
   }
 
-  /** Every bundled map's data, in the order they came: to list what lies on all of them (the notes people left). */
+  /** Every bundled map's data, in the order they came, as the town has it now: to list what lies on all of them (the notes people left) and where. */
   all(): MapData[] {
-    return [...this.data.values()];
+    return [...this.data.keys()].map(id => this.find(id)!);
+  }
+
+  /**
+   * The town has come to `done`, with `pop` people in it (town.ts): every map follows. The ids of the maps
+   * that changed, so what is drawn of them can be drawn again.
+   */
+  setTown(done: ReadonlySet<string>, pop: number): Set<string> {
+    this.done = done;
+    this.pop = pop;
+    const changed = new Set<string>();
+    for (const [id, map] of this.built) if (map.setTown(done, pop)) changed.add(id);
+    return changed;
   }
 
   /** What to show before the server says where you are: a town. */

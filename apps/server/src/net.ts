@@ -39,7 +39,7 @@ import { Chat } from './chat';
 import type { ShopSettings } from './config';
 import { Shop, type WebhookAnswer } from './shop';
 import { Social, type SocialMsg } from './social';
-import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, MarkRecord, PlayerRecord, ReturnRecord, Storage, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, MarkRecord, PlayerRecord, ReturnRecord, Storage, StoneRecord, ThanksRecord, TownRecord, WorksRecords } from './storage';
 import type { Fetch } from './stripe';
 import { Trades, type TradeMsg } from './trade';
 import { colorFor, type World } from './world';
@@ -181,7 +181,10 @@ export function attachNet(o: NetOptions): Net {
   /** The same for each thing carried back to the lodge. */
   const pendingReturns = new Map<number, Promise<void>>();
   let pendingStone: Promise<void> = Promise.resolve();
+  let pendingTown: Promise<void> = Promise.resolve();
   let pendingNight: Promise<void> = Promise.resolve();
+  /** The places mended together: one write at a time, in order, each with all of them as they were then. */
+  let pendingWorks: Promise<void> = Promise.resolve();
   let saving = false;
   let closing = false;
   /** Open sockets per client address. */
@@ -414,6 +417,15 @@ export function attachNet(o: NetOptions): Net {
         // Guests too: a thanks carries no words.
         world.thank(s.id, msg.who, msg.what, now);
         return flush();
+      case 'climb':
+        world.climb(s.id, msg.x, msg.y, now);
+        return flush();
+      case 'climbDown':
+        world.climbDown(s.id, now);
+        return flush();
+      case 'bring':
+        world.bring(s.id, msg.x, msg.y, msg.slot, now, msg.count);
+        return flush();
       case 'cache':
         world.openCache(s.id, msg.x, msg.y, now);
         return flush();
@@ -422,6 +434,12 @@ export function attachNet(o: NetOptions): Net {
         return flush();
       case 'cacheTake':
         world.cacheTake(s.id, msg.x, msg.y, msg.id, now);
+        return flush();
+      case 'swap':
+        world.swapWith(s.id, msg.x, msg.y, msg.swap, msg.count ?? 1, now);
+        return flush();
+      case 'give':
+        world.give(s.id, msg.x, msg.y, msg.work, msg.item, msg.count ?? 1, now);
         return flush();
       case 'knock':
         // Guests too: a knock carries no words.
@@ -715,6 +733,7 @@ export function attachNet(o: NetOptions): Net {
       bag: joined.bag,
       stash: joined.stash,
       fires: joined.fires,
+      ...(joined.lamps ? { lamps: joined.lamps } : {}),
       marks: joined.marks,
       creatures: joined.creatures,
       flares: joined.flares,
@@ -739,12 +758,15 @@ export function attachNet(o: NetOptions): Net {
       notes: joined.notes,
       keepsakes: joined.keepsakes,
       firsts: joined.firsts,
+      town: joined.town,
+      clock: joined.clock,
       ...(joined.furniture && { furniture: joined.furniture }),
       ...(joined.visit && { visit: joined.visit }),
       ...(joined.street && { street: joined.street }),
       ...(joined.doorOff && { doorOff: true }),
       ...(joined.visitsOff && { visitsOff: true }),
       ...(joined.firstSteps && { firstSteps: joined.firstSteps }),
+      ...(joined.works ? { works: joined.works } : {}),
       serverTime: Date.now(),
     });
     flush();
@@ -931,15 +953,29 @@ export function attachNet(o: NetOptions): Net {
     return pendingStone;
   }
 
+  /** The town, as the World last had it: saves in order, so the last one written is the latest. */
+  function persistTown(town: TownRecord): Promise<void> {
+    pendingTown = pendingTown.then(() => storage.saveTown(town)).catch((err: unknown) => log.error('saving the town failed', { err }));
+    return pendingTown;
+  }
+
   /** The Long Night, in order like the Old Stone: the last write is how it stands. */
   function persistNight(night: LongNightRecord): Promise<void> {
     pendingNight = pendingNight.then(() => storage.saveLongNight(night)).catch((err: unknown) => log.error('saving the Long Night failed', { err }));
     return pendingNight;
   }
 
-  /** Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag changed with one, the Old Stone, the Long Night. */
+  function persistWorks(works: WorksRecords): Promise<void> {
+    pendingWorks = pendingWorks.then(() => storage.saveWorks(works)).catch((err: unknown) => log.error('saving the places mended together failed', { err }));
+    return pendingWorks;
+  }
+
+  /**
+   * Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag
+   * changed with one, the Old Stone, the Long Night, the town, the places mended together.
+   */
   function store(): void {
-    const { drops, players, marks, stone, thanks, credits, caches, firsts, returns, longNight } = world.takeWrites();
+    const { drops, players, marks, stone, thanks, credits, caches, firsts, returns, longNight, town, works } = world.takeWrites();
     // Players first: a pile or a mark belongs to a player who must exist in the database.
     for (const rec of players) void persist(rec);
     for (const { owner, drop } of drops) void persistDrop(owner, drop);
@@ -950,7 +986,9 @@ export function attachNet(o: NetOptions): Net {
     for (const helper of credits) void persistCredit(helper);
     for (const f of firsts) void persistFirst(f);
     if (stone) void persistStone(stone);
+    if (town) void persistTown(town);
     if (longNight) void persistNight(longNight);
+    if (works) void persistWorks(works);
   }
 
   /**
@@ -1059,7 +1097,7 @@ export function attachNet(o: NetOptions): Net {
       // Includes writes for players who left just before, so storage can be closed after this.
       await Promise.all([
         ...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), ...pendingCaches.values(), ...pendingFirsts.values(),
-        ...pendingReturns.values(), pendingStone, pendingNight,
+        ...pendingReturns.values(), pendingStone, pendingNight, pendingTown, pendingWorks,
       ]);
       // Clients get a moment to answer the close; then their sockets are cut.
       const force = setTimeout(() => {

@@ -1,5 +1,5 @@
 {
-  "version": 29,
+  "version": 31,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -90,7 +90,7 @@
     {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"steps":[20,999],"count":3,"respawn":[600,1200]},
     {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"count":4,"respawn":[120,300],"when":"aurora"},
     {"item":"cloth","map":"near-woods","near":{"kinds":["car","barrel","house"],"radius":3},"count":4,"respawn":[315,630]},
-    {"item":"cloth","map":"stonebrook-empty-house","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":2,"respawn":[2700,5400]},
+    {"item":"cloth","map":"stonebrook-empty-house","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":2,"respawn":[2700,5400],"town":{"until":"edith-home"}},
     {"item":"cloth","map":"near-woods-old-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":2,"respawn":[1800,3600]},
     {"item":"cloth","map":"near-woods-end-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":2,"respawn":[1200,2400]},
     {"item":"shard","map":"near-woods","steps":[95,999],"count":2,"respawn":[1800,3600]},
@@ -177,7 +177,10 @@
     {"item":"fir-tips","map":"near-woods","on":["grass"],"by":{"tiles":["forest"],"radius":1},"steps":[8,70],"count":5,"respawn":[120,300]},
     {"item":"huckleberries","map":"near-woods","on":["grass"],"clear":{"tiles":["forest"],"radius":1.5},"steps":[18,999],"count":5,"respawn":[150,360]},
     {"item":"fiddleheads","map":"near-woods","on":["mud","ferns","grass"],"by":{"tiles":["water"],"radius":1.5},"count":4,"respawn":[180,420]},
-    {"item":"chanterelles","map":"near-woods","on":["ferns","mud"],"by":{"tiles":["forest"],"radius":1},"steps":[45,999],"count":5,"respawn":[60,180],"when":"rain","after":480}
+    {"item":"chanterelles","map":"near-woods","on":["ferns","mud"],"by":{"tiles":["forest"],"radius":1},"steps":[45,999],"count":5,"respawn":[60,180],"when":"rain","after":480},
+    {"item":"cloth","map":"stonebrook-lodge","near":{"kinds":["shelf"],"radius":1.5},"count":2,"respawn":[2700,5400],"town":{"from":"edith-home"}},
+    {"item":"thermos","map":"stonebrook-lodge","near":{"kinds":["fireplace"],"radius":1.5},"count":1,"respawn":[1200,2400],"town":{"from":"lodge-cook"}},
+    {"item":"scrap","map":"stonebrook-sawmill","near":{"kinds":["carriage","saw","crate","logs"],"radius":1.5},"count":2,"respawn":[1800,3600],"town":{"from":"mill-roof"}}
   ],
   "recipes": [
     {"id":"radio","make":"radio","needs":[{"item":"wire","count":2},{"item":"scrap","count":1}]},
@@ -280,5 +283,26 @@
       {"item":"staff-badge","map":"south-road","x":45,"y":37}
     ]
   },
+  "swaps": [
+    {"id":"glowcaps-for-cloth","who":"walt","give":{"item":"glowcap","count":10},"get":{"item":"cloth","count":1}},
+    {"id":"scrap-for-flare","who":"walt","give":{"item":"scrap","count":5},"get":{"item":"flare","count":1}}
+  ],
+  "town": {
+    "pop": 23,
+    "milestones": [
+      {"id":"edith-home","when":{"count":"woke","n":1},"back":"Edith","title":"Edith is home","text":"The Old Stone woke, and Edith came up from the bunker, as she said she would.\nA fire burns in the house next to yours again."},
+      {"id":"mill-stove","when":{"count":"fed","n":300},"back":"Arvid","title":"Smoke from the mill","text":"The fires out there stayed fed, and Arvid Holm came up from the bunker\nto the mill he ran. Its stove is lit again."},
+      {"id":"lodge-cook","when":{"count":"thanks","n":150},"back":"Maud","title":"Coffee at the lodge","text":"Maud, who cooked for NAPO's crews, heard how the town thanks each other.\nShe cooks at the lodge now."}
+    ],
+    "works": [
+      {"id":"south-lights","name":"The street lights on the south road","needs":[{"item":"wire","count":12},{"item":"scrap","count":6}],"perk":"The south road through town is lit at night.","title":"The street lights are on","text":"The south road through town is lit at night again:\nthe way out, and the way home."},
+      {"id":"board-shelter","name":"A roof over the notice board","needs":[{"item":"cloth","count":6},{"item":"scrap","count":6},{"item":"resin","count":4}],"perk":"Under it the rain keeps off, and you dry off.","title":"A roof over the notice board","text":"Under it the rain keeps off,\nand you dry off before you go out."},
+      {"id":"mill-roof","name":"The sawmill's roof","needs":[{"item":"scrap","count":24},{"item":"resin","count":8}],"perk":"The mill's floor stays dry: more scrap turns up in there.","title":"The sawmill's roof is mended","text":"Its floor stays dry now,\nand more scrap turns up in there."}
+    ]
+  },
+  "works": [
+    {"id":"pond-footbridge","build":"footbridge","name":"the footbridge","where":"by the pond, in the Near Woods","item":"scrap","need":30,"wear":5,"hold":35},
+    {"id":"pond-light","build":"light","name":"the street light","where":"in the pond clearing, in the Near Woods","item":"wire","need":12,"wear":2,"hold":14}
+  ],
   "longNight": { "items": ["wire", "strange"], "regrow": 2 }
 }
