@@ -83,8 +83,8 @@ describe('what the interface says about gear', () => {
     expect(wornViews({ shirt: 'coat' }, items).map(w => w?.name ?? null)).toEqual([null, 'Raincoat', null, null, null, null]);
     expect(resistText({ shirt: 'coat' }, items)).toBe('Cold 10%, Wind 35%');
     expect(resistText({}, items)).toBeNull();
-    expect(factsOf(items.get('coat'))).toEqual(['Wind 35%', 'Cold 10%', 'Sturdy', 'Worn: shirt']);
-    expect(factsOf(items.get('pack'))).toEqual(['12 slots', '+5 energy', 'Worn: bag']);
+    expect(factsOf(items.get('coat'))).toEqual(['Wind 35%', 'Cold 10%', 'Sturdy', 'Shirt slot']);
+    expect(factsOf(items.get('pack'))).toEqual(['12 slots', '+5 energy', 'Bag slot']);
     expect(slotViews([{ item: 'coat', count: 1 }], items)[0]).toMatchObject({ slot: 'shirt' });
   });
 
