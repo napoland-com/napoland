@@ -123,7 +123,9 @@ first, then list it. Both send players to Supabase's callback,
 4. **The game:** in [deploy/compose.yaml](../deploy/compose.yaml), under `game`, `environment`, add
    `AUTH_PROVIDERS: google,apple` (or only the one that is set up), then release. The buttons show from
    the next page load; `curl https://www.napoland.com/auth-config` lists them. Try each on a phone:
-   a guest who signs in keeps their character.
+   a guest who signs in keeps their character. Try an email code too: with a provider listed, the
+   client switches Supabase to the PKCE flow those need, which also carries the email sign-in. Before
+   the switch, try it on a test project with the same settings if you can.
 
 Supabase links an account's sign-ins by their email address: someone who played with an email code
 and signs in with Google or Apple under the same address plays the same character. Apple's hidden

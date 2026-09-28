@@ -534,7 +534,7 @@ async function boot() {
     }
   }
   let backend: AuthBackend | undefined;
-  if (config.mode === 'supabase') backend = (await import('./supabase')).supabaseBackend(config.url, config.publishableKey);
+  if (config.mode === 'supabase') backend = (await import('./supabase')).supabaseBackend(config.url, config.publishableKey, (config.providers ?? []).length > 0);
   signin = new SignIn({
     // Google and Apple send the player back to this game's address (it lives at the root of it).
     config, backend, store, tab: tabStore, now: () => Date.now(), returnTo: location.origin,

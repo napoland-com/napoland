@@ -12,9 +12,14 @@
 import { createClient, isAuthRetryableFetchError, type AuthError } from '@supabase/supabase-js';
 import { AuthProblem, type AuthBackend } from './signin';
 
-export function supabaseBackend(url: string, publishableKey: string): AuthBackend {
+/**
+ * `oauth`: the server offers Google or Apple (auth-config's providers). Only then does the client use
+ * the PKCE flow they need: until the owner turns a provider on, the email code keeps the flow it was
+ * tested with in production.
+ */
+export function supabaseBackend(url: string, publishableKey: string, oauth = false): AuthBackend {
   const { auth } = createClient(url, publishableKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' },
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: oauth ? 'pkce' : 'implicit' },
   });
   // Starting, supabase-js reads a provider's answer from the address and takes out a code it used, but
   // leaves an error, or a code it could not use: tidied once it has read them, so a reload does not
