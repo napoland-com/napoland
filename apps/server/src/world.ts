@@ -129,6 +129,7 @@ import {
   takeFromBag,
   takeItem,
   toldAfter,
+  turnedInto,
   toolsOf,
   untilSurge,
   weatherAt,
@@ -955,8 +956,10 @@ export class World {
       }
     }
     p.rec.bag = bag;
-    // Used up: if it came out of the stash, it will never go back.
-    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
+    // Used up: if it came out of the stash, it will never go back. What a strange object from the stash
+    // turns into is owed in its place, so it earns no XP brought back (turnedInto): no double dip.
+    const stash = p.rec.stash ?? emptyStash();
+    p.rec.stash = into ? turnedInto(stash, def.id, into) : usedUp(stash, def.id, 1);
     const before = p.rec.energy;
     if (use.energy) {
       p.rec.energy = Math.min(p.max, Math.max(0, p.rec.energy + use.energy));
