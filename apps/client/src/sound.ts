@@ -21,6 +21,9 @@ const LOOP_GAIN: Record<Loop, number> = { rain: 0.35, wind: 0.5, fire: 0.6, wire
 const EASE_S = 0.1;
 /** How loud a call beside you is, against the rest. */
 const CALL_PEAK = 0.5;
+/** Steps that are not yours begin this long after they are due (s), and come this far apart, a little more now and then. */
+const STALK_AFTER_S = 0.28;
+const STALK_PACE_S = 0.42;
 
 interface Voice {
   gain: GainNode;
@@ -241,6 +244,22 @@ export class Sound {
       case 'click': return this.click(now);
       // A lodestone's tug: two low, soft beats, the same in both ears, so it never says which way.
       case 'tug': this.tone(now, 'sine', 110, 82, 0.34, 0.1); return this.tone(now + 0.17, 'sine', 98, 74, 0.3, 0.07);
+      case 'stalk': return this.stalk(s.surface, s.steps, now);
+    }
+  }
+
+  /**
+   * Steps that are not yours (unease.ts): a moment after, slower than you run and a little uneven, heavier
+   * than yours and muffled, as what is behind you sounds. The same in both ears: they never say where.
+   */
+  private stalk(surface: Surface, steps: number, now: number) {
+    const [, f, , len, g] = STEPS[surface];
+    let at = now + STALK_AFTER_S;
+    for (let i = 0; i < steps; i++) {
+      this.burst(at, 'lowpass', Math.min(f, 900) * (0.5 + Math.random() * 0.1), len * 1.4, g * 0.5, 0.012);
+      // Weight under it: a soft thud your own steps do not have.
+      this.tone(at, 'sine', 92, 58, 0.09, 0.07);
+      at += STALK_PACE_S + Math.random() * 0.09;
     }
   }
 

@@ -41,14 +41,14 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, emptyNotebook,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, emptyNotebook,
   energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe,
   nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type Comfort, type ConditionsView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView, type StreetView,
-  type TradeEnd, type TradeView, type Weather,
+  type TileKind, type TradeEnd, type TradeView, type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -66,6 +66,7 @@ import { trophiesIn } from './view/cabin';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
 import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
+import { Stalker } from './unease';
 import type { Avatar } from './view/world';
 
 interface Mover {
@@ -212,7 +213,9 @@ export type News =
   /** You stood by your own fire long enough: cozy, for this many minutes once you leave it (comfort.ts). */
   | { kind: 'cozy'; minutes: number }
   /** Your lodestone tugs (lodestone.ts): a shard lies near. It never says where. */
-  | { kind: 'tug' };
+  | { kind: 'tug' }
+  /** Steps that are not yours, behind you (unease.ts): how many, and on what ground. For the ears alone. */
+  | { kind: 'stalk'; steps: number; ground: TileKind | undefined };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -276,6 +279,11 @@ export class Game {
   flashes: Array<{ x: number; y: number; kind: FlashKind; until: number }> = [];
   /** How wet you are, your load and whether something clings to you, as told and when. */
   body: { view: BodyView; at: number } = { view: { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} }, at: 0 };
+  /**
+   * How uneasy you are, as the server last told it (unease.ts): 0 to UNEASE_LEVELS. No bar shows it: the
+   * screen's edges, steps that are not yours and, where watchers roam, something at the edge of the fog.
+   */
+  unease = 0;
   /** The Old Stone in town, and your counts toward feats (each feat's rank follows from its count). */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
@@ -443,6 +451,8 @@ export class Game {
   private tradeAsk: PersonView | null = null;
   /** A lodestone you wear (a quirk): when it tugs. */
   private readonly lodestone = new Lodestone();
+  /** Uneasy out in the wilds: when steps that are not yours sound behind you. */
+  private readonly stalker = new Stalker();
 
   constructor(
     private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY, readonly notebook: NotebookData = NO_NOTEBOOK,
@@ -573,6 +583,8 @@ export class Game {
         this.stash = msg.stash ?? null;
         this.lastEnergy = { view: msg.energy, at: now };
         this.body = { view: msg.body, at: now };
+        // Nobody comes into the game uneasy: the server starts everyone at none.
+        this.unease = 0;
         this.stone = msg.stone;
         this.conditions = msg.conditions;
         this.stats = msg.stats;
@@ -683,6 +695,9 @@ export class Game {
       }
       case 'hitch':
         this.floatOverMe(msg.on ? 'Something clings to you. Find a light' : 'It let go of you', msg.on ? EERIE : GAIN);
+        break;
+      case 'unease':
+        this.unease = Math.min(UNEASE_LEVELS, Math.max(0, Math.round(msg.level) || 0));
         break;
       case 'flare':
         this.flares.push({ x: msg.flare.x, y: msg.flare.y, until: now + msg.flare.left * 1000 });
@@ -2154,6 +2169,15 @@ export class Game {
     const me = this.me;
     const near = !!me && Object.values(this.myWorn).some(p => p?.quirk === 'lodestone') && shardNear(this.finds.values(), this.items, me.tx, me.ty);
     if (this.lodestone.update(near, now)) this.news.push({ kind: 'tug' });
+    // Uneasy out in the wilds: now and then steps that are not yours, on the ground behind you.
+    const steps = this.stalker.update(now, this.online ? this.unease : 0, this.current.data.kind === 'wilds', !!me?.anim);
+    if (steps && me) this.news.push({ kind: 'stalk', steps, ground: this.behind(me) });
+  }
+
+  /** The ground behind you (your own, where there is none to walk on): what steps that are not yours sound like. */
+  private behind(me: Mover): TileKind | undefined {
+    const [dx, dy] = DIR_VEC[me.dir], x = me.tx - dx, y = me.ty - dy;
+    return this.current.walkable(x, y) ? this.current.kind(x, y) : this.current.kind(me.tx, me.ty);
   }
 
   /** Decide the local player's next step once they stand on a tile. */

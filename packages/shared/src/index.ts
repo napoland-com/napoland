@@ -20,4 +20,5 @@ export * from './sky';
 export * from './story';
 export * from './thanks';
 export * from './trade';
+export * from './unease';
 export * from './validate';

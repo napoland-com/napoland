@@ -1,14 +1,14 @@
 /**
  * What the world does to you out there, drawn: arrows people painted on the ground, creatures, flares, flashes,
  * the echoes of people who collapsed walking their last steps again, the thing that clings to you at
- * night, and the notice board in town. Each is a small class or model that world.ts owns and
- * feeds from the game's lists; nothing here decides anything.
+ * night, what stands at the edge of the fog when you are uneasy, and the notice board in town. Each is a
+ * small class or model that world.ts owns and feeds from the game's lists; nothing here decides anything.
  */
 import * as THREE from 'three';
 import { FLASH_BURST_S, FLASH_GLOW_S, FLASH_RADIUS, type Dir, type DropView, type FlashView, type MarkView } from '@napoland/shared';
 import { makePlayer } from './characters';
 import { Puffs } from './fire';
-import { OUTLINE, box, disposeTree, flat, ownToon, part, pivot, softTexture } from './toon';
+import { OUTLINE, box, disposeTree, flat, merge, ownToon, part, pivot, softTexture } from './toon';
 import type { CreatureAvatar } from './world';
 
 const TURN: Record<Dir, number> = { up: 0, right: -Math.PI / 2, down: Math.PI, left: Math.PI / 2 };
@@ -111,6 +111,55 @@ function watcherModel(eyes: THREE.Material): THREE.Group {
   g.add(head);
   for (const x of [-0.055, 0.055]) g.add(part(new THREE.BoxGeometry(0.035, 0.02, 0.01), eyes, x, 1.2, 0.14, false));
   return g;
+}
+
+/** How tall what stands at the edge of the fog is (FarFigure): a watcher's height, a head taller than you. */
+export const FAR_FIGURE_H = 1.4;
+/**
+ * How much of it shows at most. It is drawn unlit, so it would glow against the night: dimmer than it is
+ * pale, it reads as a shape out there rather than a thing lit up, and the fog takes a good part of the rest.
+ */
+const FAR_FIGURE_OPACITY = 0.62;
+
+/**
+ * What stands at the edge of the fog (unease.ts): a watcher's shape, tall and thin, in one pale see-through
+ * stuff with nothing on its face, too far to make out. It is drawn for you alone and is never a creature.
+ * One mesh, built with the map's view and always in its scene (hidden while nothing is there), so showing it
+ * compiles nothing (world.ts compiles it with the rest).
+ */
+export class FarFigure {
+  readonly root: THREE.Mesh;
+  private readonly mat = new THREE.MeshBasicMaterial({ color: 0xc8c2b4, transparent: true, opacity: 0, depthWrite: false });
+  private ground = 0;
+
+  constructor() {
+    // Its eyes go in the outlines' stuff, and are left out with them: from that far, the face is a blank.
+    const model = watcherModel(OUTLINE), parts: Array<[THREE.BufferGeometry, null]> = [];
+    model.updateMatrixWorld(true);
+    model.traverse(o => {
+      if (!(o instanceof THREE.Mesh) || o.material === OUTLINE) return;
+      parts.push([(o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone()).applyMatrix4(o.matrixWorld), null]);
+    });
+    disposeTree(model);
+    this.root = new THREE.Mesh(merge(parts), this.mat);
+  }
+
+  /** It stands on tile x,y, whose ground is `ground` high, showing `k` of itself (0: nothing there). */
+  set(x: number, y: number, k: number, ground: number) {
+    this.root.visible = k > 0;
+    if (!this.root.visible) return;
+    this.mat.opacity = FAR_FIGURE_OPACITY * k;
+    this.ground = ground;
+    this.root.position.set(x + 0.5, ground, y + 0.5);
+  }
+
+  /** Every frame it is there: it hangs a little over the ground as the watchers do, turned toward you at fx, fz. */
+  update(t: number, fx: number, fz: number) {
+    if (!this.root.visible) return;
+    const p = this.root.position;
+    p.y = this.ground + 0.06 + Math.sin(t * 1.3) * 0.03;
+    this.root.rotation.y = Math.atan2(fx - p.x, fz - p.z);
+  }
 }
 
 /**

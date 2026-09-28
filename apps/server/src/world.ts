@@ -17,7 +17,9 @@
  * Out there more wears you down (energy.ts): a heavy bag, rain soaking you, a surge sweeping the
  * region (its clock is the wall clock's, sky.ts), a storm blowing over it (a clock like a surge's), a
  * flash discharging where you stand (started near someone out there, glowing first so they can step
- * out of it), a hitchhiker clinging to you at night. Fires in the
+ * out of it), a hitchhiker clinging to you at night. Alone in the dark, away from any light, a player
+ * grows uneasy (unease.ts): it drains nothing, but full, it makes hitchhikers find them twice as often,
+ * and company calms it fastest. Fires in the
  * wilds burn down unless fed (fires.ts). Watchers roam some regions: they come closer only while
  * nobody on the map looks their way, and one that reaches you takes energy and something you carry.
  * Skulkers lie in the deep ferns at night and in storms: one that hears or sees you chases you, a
@@ -110,6 +112,9 @@ import {
   WHOLE_WEEK,
   FLASH_BURST_S,
   FLASH_GLOW_S,
+  UNEASE_COMPANY,
+  UNEASE_MODS,
+  UNEASE_SHAKEN_S,
   activeConditions,
   addAllToBag,
   addToBag,
@@ -148,6 +153,7 @@ import {
   cozySeconds,
   dries,
   energyRate,
+  faces,
   featOf,
   fitPieces,
   gather,
@@ -167,6 +173,7 @@ import {
   hidden,
   halfOf,
   inSurge,
+  inTheDark,
   emptyStash,
   itemIndex,
   levelOf,
@@ -208,6 +215,9 @@ import {
   toldAfter,
   turnedInto,
   toolsOf,
+  uneaseAfter,
+  uneaseFull,
+  uneaseLevel,
   untilSurge,
   utcDay,
   weatherAt,
@@ -288,7 +298,7 @@ import {
 import { FIRE_LOW_S, Fires, type Fire } from './fires';
 import type { CacheItemRecord, DropRecord, FirstRecord, LotRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
 
-export { MARK_LIFETIME_MS };
+export { MARK_LIFETIME_MS, faces };
 
 /** A step may start this much early: messages sent at a steady pace arrive bunched up. */
 export const STEP_TOLERANCE_MS = 40;
@@ -561,6 +571,14 @@ interface Online {
   /** Something clings to their back, and when that was last checked. */
   hitched: boolean;
   hitchAt: number;
+  /**
+   * How uneasy they are (unease.ts), 0 to 1 as of uneaseAt, and the level they were last told; until when
+   * a flash that started near them keeps them shaken (game time). Kept only while they are online.
+   */
+  unease: number;
+  uneaseAt: number;
+  uneaseLevel: number;
+  shakenUntil?: number;
   /** The last tiles walked on this map, out in the wilds. */
   trail: Array<[number, number]>;
   /** What the player last heard, and when: the client counts on from there. */
@@ -1326,7 +1344,7 @@ export class World {
     this.resting.delete(r.id);
     const p: Online = {
       rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
-      hitchAt: now, trail: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
+      hitchAt: now, unease: 0, uneaseAt: now, uneaseLevel: 0, trail: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
       fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity,
     };
     this.refresh(p, now);
@@ -2446,6 +2464,7 @@ export class World {
       if (p.live) this.fadeLive(p, now);
       this.surged(p, now);
       this.hitch(p, now);
+      this.unnerve(p, now);
       this.snug(p, now);
       this.notice(p, now);
       this.rerate(p, now);
@@ -2688,6 +2707,10 @@ export class World {
     p.rec.energy = this.maxOf(p.rec);
     p.rec.wet = 0;
     p.hitched = false;
+    // Awake by their own fire, whatever was out there is not.
+    p.unease = 0;
+    p.shakenUntil = undefined;
+    if (p.uneaseLevel) this.tellUnease(p, 0);
     // The warmth of their own fire ends early: they have to stand by it again.
     delete p.rec.cozy;
     p.fireside = 0;
@@ -2792,8 +2815,11 @@ export class World {
   /** The rates and load for where the player stands now, and their mods. Nobody is told. */
   private refresh(p: Online, now: number): void {
     const { x, y } = p.rec;
-    // Being cozy changes Mods like a charm does (comfort.ts): out in the wilds they tire slower.
-    p.mods = modsOf(p.rec.stats ?? {}, [...charmsIn(p.rec.bag, this.items), ...(this.cozy(p, now) ? [COZY_MODS] : [])]);
+    // Being cozy changes Mods like a charm does (comfort.ts): out in the wilds they tire slower. Full of
+    // unease (unease.ts), hitchhikers find them twice as often.
+    p.mods = modsOf(p.rec.stats ?? {}, [
+      ...charmsIn(p.rec.bag, this.items), ...(this.cozy(p, now) ? [COZY_MODS] : []), ...(uneaseFull(p.uneaseLevel) ? [UNEASE_MODS] : []),
+    ]);
     p.load = bagLoad(p.rec.bag, this.items, p.mods.load);
     p.max = this.maxOf(p.rec);
     p.slots = bagSlotsOf(p.rec.gear ?? {}, this.items);
@@ -3319,7 +3345,12 @@ export class World {
       const flash: Flash = { x, y, kind: this.rng() < 0.5 ? 'spark' : 'fire', until: now + (FLASH_GLOW_S + FLASH_BURST_S) * 1000 };
       zone.flashes.push(flash);
       this.toZone(zone.key, { t: 'flash', flash: flashView(flash, now) });
-      for (const q of zone.players) if (Math.hypot(q.rec.x - x, q.rec.y - y) <= FLASH_NEAR) this.saw(q, 'flash');
+      for (const q of zone.players) {
+        if (Math.hypot(q.rec.x - x, q.rec.y - y) > FLASH_NEAR) continue;
+        this.saw(q, 'flash');
+        // Shaken: for a while, unease builds faster.
+        q.shakenUntil = now + UNEASE_SHAKEN_S * 1000;
+      }
     }
   }
 
@@ -3368,8 +3399,7 @@ export class World {
       if (safe || this.nearFlare(p.zone, x, y, now)) this.unhitch(p);
       return;
     }
-    const dark = this.sky === 'night' || this.sky === 'aurora';
-    if (safe || !dark || p.map.homeSteps(x, y) < HITCH_STEPS || this.nearFlare(p.zone, x, y, now)) return;
+    if (safe || !inTheDark(this.sky) || p.map.homeSteps(x, y) < HITCH_STEPS || this.nearFlare(p.zone, x, y, now)) return;
     if (this.rng() < 1 - Math.exp((-dt / HITCH_EVERY_S) * p.mods.hitch)) {
       p.hitched = true;
       this.outbox.push({ to: p.rec.id, msg: { t: 'hitch', on: true } });
@@ -3441,6 +3471,39 @@ export class World {
     const wall = now + this.epochOffset;
     for (const m of [...this.marks.values()]) if (wall >= markUntil(m)) this.removeMark(m);
     this.markFadeAt = [...this.marks.values()].reduce((at, m) => Math.min(at, markUntil(m) - this.epochOffset), Infinity);
+  }
+
+  // ---------- unease (unease.ts) ----------
+
+  /**
+   * Alone in the dark, out in the wilds and away from any light, fire or flare, a player grows uneasy, faster
+   * with a watcher in sight or after a flash near them; with anyone within UNEASE_COMPANY tiles it lifts
+   * fastest, and anywhere else it lifts too. Tall grass hides nobody from it. Only a new level is told
+   * (a few, so a client hears of it seldom); full, it makes hitchhikers find them twice as often (refresh).
+   */
+  private unnerve(p: Online, now: number): void {
+    const dt = Math.max(0, now - p.uneaseAt) / 1000;
+    p.uneaseAt = now;
+    const dark = p.map.data.kind === 'wilds' && inTheDark(this.sky) && this.exposed(p, now);
+    // Nothing builds, and nothing is left to lift.
+    if (!dark && p.unease === 0) return;
+    const { x, y } = p.rec;
+    let company = false;
+    for (const q of p.zone.players) {
+      if (q === p || Math.hypot(q.rec.x - x, q.rec.y - y) > UNEASE_COMPANY) continue;
+      company = true;
+      break;
+    }
+    const watcher = dark && !company && p.zone.watchers.some(w => w.awake && Math.hypot(w.x - x, w.y - y) <= SEEN_TILES);
+    p.unease = uneaseAfter(p.unease, { dark, company, watcher, shaken: (p.shakenUntil ?? -Infinity) > now }, dt);
+    const level = uneaseLevel(p.unease, p.uneaseLevel);
+    if (level !== p.uneaseLevel) this.tellUnease(p, level);
+  }
+
+  /** The player hears their new level of unease; full or no longer, their Mods follow on the next refresh. */
+  private tellUnease(p: Online, level: number): void {
+    p.uneaseLevel = level;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'unease', level } });
   }
 
   // ---------- watchers ----------
@@ -4531,16 +4594,6 @@ function less(all: readonly BagSlot[], left: readonly BagSlot[]): BagSlot[] {
     const n = s.count - (rest.get(s.item) ?? 0);
     return n > 0 ? [{ item: s.item, count: n }] : [];
   });
-}
-
-/** Does someone at x,y facing `dir` look toward tile tx,ty? Anything on the side they face counts. */
-export function faces(x: number, y: number, dir: Dir, tx: number, ty: number): boolean {
-  switch (dir) {
-    case 'up': return ty < y;
-    case 'down': return ty > y;
-    case 'left': return tx < x;
-    case 'right': return tx > x;
-  }
 }
 
 function dirTo(dx: number, dy: number): Dir | undefined {

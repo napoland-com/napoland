@@ -22,7 +22,7 @@ import { comfortModel, comfortShadow, lampLight } from './cabin';
 import { Afterglows, LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
 import { CROUCH_DROP, CROUCH_LEAN, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial } from './grass';
-import { Creatures, Echoes, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
+import { Creatures, Echoes, FAR_FIGURE_H, FarFigure, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
@@ -267,6 +267,8 @@ export class WorldView {
   private flickerAt: Array<{ x: number; y: number }> = [];
   private flashes = new Flashes();
   private echoes = new Echoes();
+  /** What stands at the edge of the fog when you are uneasy (unease.ts): only on a map where watchers roam. */
+  private farFigure: FarFigure | null = null;
   private creatureList: CreatureAvatar[] = [];
   private flareLight = new THREE.PointLight(FLARE_COLOR, 0, 9, 2);
   /** The fires of this map: their tiles in the order Fires draws them, how big each burns, and where the game says so. */
@@ -319,6 +321,7 @@ export class WorldView {
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
     this.scene.add(this.liveGlows.root, this.afterglows.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
+    if (map.data.kind === 'wilds' && map.data.watchers) this.scene.add((this.farFigure = new FarFigure()).root);
     this.puffs.push(this.flares.sparks);
     this.animate.push(t => this.loot.update(t));
     this.animate.push(t => { this.marks.update(t); this.flares.update(t); this.flashes.update(t); });
@@ -332,8 +335,10 @@ export class WorldView {
     this.marker.visible = false;
     this.scene.add(this.marker);
     this.setWeather('rain');
-    // Compile the shaders now (behind the black screen), not on the first frame you see.
+    // Compile the shaders now (behind the black screen), not on the first frame you see. What stands at
+    // the edge of the fog is compiled with the rest, showing nothing, and hidden until it stands there.
     this.renderer.compile(this.scene, this.camera);
+    if (this.farFigure) this.farFigure.root.visible = false;
   }
 
   /** Frees everything this view put on the GPU. The renderer and the shared toon materials stay for the next map. */
@@ -1042,6 +1047,29 @@ export class WorldView {
     if (this.outdoors) this.setWeather(this.weather);
   }
 
+  /**
+   * Something at the edge of the fog (unease.ts) standing on tile x,y, showing `k` of itself (0: nothing
+   * there): every frame. A map where no watchers roam has none.
+   */
+  setApparition(x: number, y: number, k: number) {
+    this.farFigure?.set(x, y, k, k > 0 ? this.groundAt(x + 0.5, y + 0.5) : 0);
+  }
+
+  /**
+   * How far out on the screen something standing on tile x,y is seen, from its feet to a head FAR_FIGURE_H
+   * up: the larger of across and up, 0 in the middle to 1 at the edge (more: off it); null behind the camera.
+   * As last drawn: for what stands at the edge of the fog (unease.ts, EdgeOf).
+   */
+  edgeOf(x: number, y: number): number | null {
+    const feet = this.edgeAt(x, y, 0), head = this.edgeAt(x, y, FAR_FIGURE_H);
+    return feet === null || head === null ? null : Math.max(feet, head);
+  }
+
+  private edgeAt(x: number, y: number, lift: number): number | null {
+    this.tmp.set(x + 0.5, this.groundAt(x + 0.5, y + 0.5) + lift, y + 0.5).project(this.camera);
+    return this.tmp.z > 1 ? null : Math.max(Math.abs(this.tmp.x), Math.abs(this.tmp.y));
+  }
+
   /** The piles on this map, for the echoes that walk to them: call it when they change or you move to another tile. */
   setEchoes(drops: Iterable<DropView>, focus: { x: number; y: number }) {
     this.echoes.set(drops, focus);
@@ -1147,6 +1175,7 @@ export class WorldView {
     this.creatures.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
     for (const c of this.creatureList) if (c.moving) this.rustleAt(c.x + 0.5, c.y + 0.5);
     this.echoes.update(t, (x, z) => this.groundAt(x, z));
+    this.farFigure?.update(t, fx, fz);
     this.light(fx, fz, t, dt);
     const dark = this.weather === 'night' || this.weather === 'aurora';
     if (this.storm && this.outdoors) this.hemi.intensity = this.amb.hemi.intensity * L * (lightningAt(t) ? 2.6 : 0.8);

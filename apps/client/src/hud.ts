@@ -18,6 +18,7 @@ import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import { fieldNotesHtml, notesHtml, type FieldNotesView, type JournalView, type NotesView } from './journal';
 import type { SoundSetting } from './sound';
 import type { OfferRow, TradePanel } from './trade';
+import { uneaseLook } from './unease';
 import { BADGES_HINT, PATTERNS_HINT, WARDROBE_GATE, WARDROBE_HINT, type OutfitTile, type WardrobePart, type WardrobeView } from './wardrobe';
 
 const svg = (inner: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
@@ -338,7 +339,7 @@ export class Hud {
   private callNoteEls = new Map<number, HTMLElement>();
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
   private shown = {
-    fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
+    fill: -1, level: '', refill: false, pct: -1, vignette: -1, unease: 0, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
     friends: '', personActs: '', talk: '', journal: '', field: '', notes: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', badge: '', tradeMine: '', tradeTheirs: '',
     tradeBag: '',
   };
@@ -403,6 +404,7 @@ export class Hud {
     this.root.innerHTML = `
       <div class="labels" data-el="labels"></div>
       <div class="floats" data-el="floats"></div>
+      <div class="unease" data-el="unease" aria-hidden="true"><i></i></div>
       <div class="vignette" data-el="vignette"></div>
       <div class="fade" data-el="fade"></div>
       <div class="banner panel" data-el="banner" role="status" aria-live="polite"><b data-el="bannerTitle"></b><span data-el="bannerSub"></span></div>
@@ -1705,6 +1707,22 @@ export class Hud {
       // Scaled up, the dark edge sits off screen; as energy runs out it closes in.
       vignette.style.transform = `scale(${(1.35 - 0.35 * v).toFixed(3)})`;
     }
+  }
+
+  /**
+   * How uneasy you are (unease.ts): the edges of the screen close in, deeper with each level, slowly (the
+   * page eases between levels), and at full they breathe. No bar and no words: only the edges. Called every
+   * frame; it only writes when the level changed.
+   */
+  setUnease(level: number) {
+    const s = this.shown;
+    if (level === s.unease) return;
+    s.unease = level;
+    const look = uneaseLook(level), el = this.el.unease!;
+    el.toggleAttribute('data-on', look.opacity > 0);
+    el.toggleAttribute('data-breathe', look.breathe);
+    el.style.opacity = String(look.opacity);
+    el.style.transform = `scale(${look.scale})`;
   }
 
   /**
