@@ -61,6 +61,8 @@ export interface SocialOptions {
 }
 
 const has = (links: LinkRecord[], from: string, to: string, kind: LinkRecord['kind']) => links.some(l => l.from === from && l.to === to && l.kind === kind);
+/** Nobody: the friends of someone the World asks about who is not online (it asks about everyone online as a player arrives somewhere). */
+const NOBODY: ReadonlySet<string> = new Set();
 
 export class Social {
   private readonly tellLimit: RollingLimit;
@@ -82,7 +84,7 @@ export class Social {
 
   /** Who `id` is friends with, while they are online (nobody before joined() has run, and nobody for a guest). */
   friends(id: string): ReadonlySet<string> {
-    return this.befriended.get(id) ?? new Set();
+    return this.befriended.get(id) ?? NOBODY;
   }
 
   /** A player left: nothing of theirs is kept at hand. */

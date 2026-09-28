@@ -11,7 +11,7 @@ import { createHttpServer } from './http';
 import { log } from './log';
 import { attachNet } from './net';
 import type { Storage } from './storage';
-import { MARK_LIFETIME_MS, World } from './world';
+import { MARK_LIFETIME_MS, World, type Crowd } from './world';
 
 export interface ServerOptions {
   host: string;
@@ -60,6 +60,8 @@ export interface ServerOptions {
   xpMultiplier?: number;
   /** Development only (RESTED_EVERY_MS): the time away that fills one XP of rest. 20 minutes unless set. */
   restedEveryMs?: number;
+  /** How many make a crowd, in a copy of a town square and of a region (TOWN_CROWD and REGION_CROWD unless set): tests set fewer, and play-tests (TOWN_CROWD, REGION_CROWD). */
+  crowd?: Partial<Crowd>;
   /** With sign-in, how often guests who stayed away GUEST_DAYS are looked for (after start-up); default once a day. */
   forgetGuestsEveryMs?: number;
   /** How often thanks older than THANKS_KEPT_DAYS are deleted (after start-up); default once an hour. */
@@ -159,6 +161,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     ...(o.parcelDayMs ? { calendar: quickCalendar(o.parcelDayMs, Date.now() + shift) } : {}),
     xpTimes: o.xpMultiplier,
     ...(o.restedEveryMs ? { restedEveryMs: o.restedEveryMs } : {}),
+    ...(o.crowd ? { crowd: o.crowd } : {}),
   });
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world!.size, version: o.version, auth: auth.config });
   const net = attachNet({

@@ -74,6 +74,12 @@
  * and a window is lit while its owner is home. At their own door a player may move their cabin next to a
  * friend's, onto the friend's street, if a lot is free there. Who lives where is kept for everyone, online
  * or not, loaded at start-up.
+ *
+ * Crowds: a town square holds about TOWN_CROWD players, and a region of the wilds REGION_CROWD, before
+ * another copy of it opens; the rooms off a place (its houses, its shelters) follow the copy they are
+ * entered from, and count with it. Someone arriving where a friend of theirs is goes into the friend's
+ * copy if it has room; otherwise into the first copy with room, the main one first. copyFor decides it
+ * all, and no client ever learns a copy: it only ever hears the map.
  */
 import {
   AFTERGLOW_NEAR,
@@ -351,6 +357,19 @@ export const HUM_NEAR = 2;
 export const KNOCK_EVERY_MS = 3000;
 /** A player moves their cabin at most once in this long: every move is saved at once, and both streets hear of it. */
 export const MOVE_EVERY_MS = 10_000;
+/**
+ * A copy of a town square holds this many players (with those in its rooms) before another opens: about
+ * as many as the square has room for without everyone walking through everyone else.
+ */
+export const TOWN_CROWD = 150;
+/** A copy of a region of the wilds holds this many (with those in its shelters) before another opens: only an overcrowded region splits. */
+export const REGION_CROWD = 300;
+
+/** How many make a crowd, by kind of place: in a copy of a town square, and of a region of the wilds. */
+export interface Crowd {
+  town: number;
+  region: number;
+}
 
 /** Jacket colors, all easy to tell apart in the rain and at night. */
 export const JACKET_COLORS = [
@@ -511,6 +530,8 @@ export interface WorldOptions {
   xpTimes?: number;
   /** Development only (RESTED_EVERY_MS): the time away that fills one XP of rest, to play-test it without the days away. RESTED_EVERY_MS unless set. */
   restedEveryMs?: number;
+  /** How many make a crowd (TOWN_CROWD and REGION_CROWD unless set): tests, and play-tests with a few tabs (TOWN_CROWD, REGION_CROWD), set fewer. */
+  crowd?: Partial<Crowd>;
 }
 
 interface Online {
@@ -744,6 +765,11 @@ const thanksDay = (giver: string, helper: string, day: number) => `${giver} ${he
 /** A crate by the key of its zone (each copy of a map has its own crates) and its tile. */
 const crateKey = (zone: string, x: number, y: number) => `${zone} ${x},${y}`;
 const NOBODY: ReadonlySet<string> = new Set();
+/** Copies in the order they fill: the main one (''), then the others by number (2, 3...). */
+const copyOrder = (a: string, b: string): number => {
+  const n = (c: string) => (c === '' ? 1 : Number.isFinite(Number(c)) ? Number(c) : Infinity);
+  return n(a) - n(b) || (a < b ? -1 : a > b ? 1 : 0);
+};
 /** The key of the zone a pile, a mark or a thing in a crate lies in: one saved without a copy lies in the map's main copy. */
 const recordZone = (r: { map: string; zone?: string }): string => zoneKey(r.map, typeof r.zone === 'string' ? r.zone : '');
 /** What a pile, a mark or a thing in a crate made in copy `copy` remembers of it: nothing for the main copy, as before copies existed. */
@@ -959,6 +985,10 @@ export class World {
   private calendarAt: number | undefined;
   /** The rooms that are someone's home: an inside with the chest, where each player's stash is. Walking into one ends a trip. */
   private readonly homes = new Set<string>();
+  /** The rooms off each town square and region, by its id, that follow its copies (every room but a home of one's own). */
+  private readonly roomsOff = new Map<string, TileMap[]>();
+  /** How many make a crowd here (WorldOptions.crowd). */
+  private readonly crowd: Crowd;
   /** Who thanked whom in the last THANKS_KEPT_DAYS, by giver, helper and UTC day (thanksDay): one each. */
   private readonly thanks = new Map<string, ThanksRecord>();
   private readonly thanksWrites = new Map<string, ThanksRecord>();
@@ -1023,6 +1053,15 @@ export class World {
       for (const e of m.data.exits) if (this.maps.get(e.to)!.data.kind === 'inside') { this.outside.set(e.to, m.data.kind); this.around.set(e.to, m); }
     }
     for (const m of this.maps.values()) if (m.data.kind === 'inside' && m.data.objects.some(o => o.kind === 'chest')) this.homes.add(m.data.id);
+    for (const [room, out] of this.around) {
+      const m = this.maps.get(room)!;
+      if (m.data.private) continue;
+      let list = this.roomsOff.get(out.data.id);
+      if (!list) this.roomsOff.set(out.data.id, (list = []));
+      list.push(m);
+    }
+    const crowd = (n: number | undefined, def: number) => (Number.isInteger(n) && n! >= 1 ? n! : def);
+    this.crowd = { town: crowd(options.crowd?.town, TOWN_CROWD), region: crowd(options.crowd?.region, REGION_CROWD) };
     const home = this.maps.get(homeId);
     if (!home) throw new Error(`the home map ${homeId} does not exist`);
     this.home = home;
@@ -2548,11 +2587,13 @@ export class World {
   }
 
   /**
-   * The copy of `map` a player walks into (an exit, or waking up at home): the one place that decides
-   * it, so what comes (crowded places splitting into copies, streets) changes only this. `player` is as
-   * they are before they go: where they come from. A private room (the home) is each player's own copy of
-   * it, keyed by them, where nobody else ever is; every other map has only its main copy, the world
-   * everyone shares.
+   * The copy of `map` a player walks into (an exit, waking up at home, or coming back into the game where
+   * the copy they were in is no more): the one place that decides it. `player` is as they are before they
+   * go: where they come from. A private room (the home) is each player's own copy of it, keyed by them,
+   * where nobody else ever is, and the street their own street's. A room follows the copy of the place it
+   * is entered from, and walking back out of one leads into that copy again: a copy is a place with its
+   * rooms. Anywhere else (a town square, a region of the wilds, or a room come back to from elsewhere)
+   * the crowd decides (crowdCopy).
    */
   protected copyFor(player: PlayerRecord, map: TileMap): string {
     // Coming home is when a player is given a lot, if they have none yet: their cabin stands on a street.
@@ -2562,18 +2603,68 @@ export class World {
     }
     // The street is the player's own: their neighbors' copy of it.
     if (map === this.street) return String(this.lotOf(player).street);
-    return '';
+    const place = this.placeOf(map), from = this.maps.get(player.map);
+    // Into a room from its place, or out of a room onto it: the copy they are in already, and counted in.
+    if (from && from !== map && this.placeOf(from) === place && (from === place || map === place)) return player.zone ?? '';
+    return this.crowdCopy(player, place);
+  }
+
+  /** The town square or region a map is part of: itself, or for a room (not a home of one's own) the place its door opens onto. */
+  private placeOf(map: TileMap): TileMap {
+    return (map.data.kind === 'inside' && !map.data.private && this.around.get(map.data.id)) || map;
   }
 
   /**
-   * The copy of `map` a player comes back into when they join: their own, always, in a private room;
-   * elsewhere the one they were saved in if it still makes sense (it is open: someone is in it), else
-   * the main copy.
+   * The copy of a town square or a region of the wilds (and its rooms) someone arriving goes into: where
+   * most of their friends online are, if it has room for one more; else the first copy with room, the
+   * main one first, then the others by number; else a new one, the first number free. A copy holds its
+   * crowd (Crowd) with whoever is in its rooms.
+   */
+  private crowdCopy(player: PlayerRecord, place: TileMap): string {
+    const people = this.peopleIn(place), limit = this.crowdOf(place), room = (copy: string) => (people.get(copy) ?? 0) < limit;
+    // Friends are known both ways: whoever lists them as a friend (the World may not know theirs yet, as they join).
+    const mine = this.friends(player.id), friendsAt = new Map<string, number>();
+    for (const q of this.players.values()) {
+      if (q.rec.id === player.id || this.placeOf(q.map) !== place || !(mine.has(q.rec.id) || this.friends(q.rec.id).has(player.id))) continue;
+      friendsAt.set(q.zone.copy, (friendsAt.get(q.zone.copy) ?? 0) + 1);
+    }
+    const withFriends = [...friendsAt].filter(([copy]) => room(copy)).sort((a, b) => b[1] - a[1] || copyOrder(a[0], b[0]))[0];
+    if (withFriends) return withFriends[0];
+    const first = [...people.keys()].sort(copyOrder).find(room);
+    if (first !== undefined) return first;
+    let n = 2;
+    while (people.has(String(n))) n++;
+    return String(n);
+  }
+
+  /** How many make a crowd in a copy of this place: a region of the wilds holds more than a town square. */
+  private crowdOf(place: TileMap): number {
+    return place.data.kind === 'wilds' ? this.crowd.region : this.crowd.town;
+  }
+
+  /**
+   * How many are in each copy of a place in use (open, or a room of it open), with those in its rooms,
+   * by copy: the main copy always, even empty.
+   */
+  private peopleIn(place: TileMap): Map<string, number> {
+    const out = new Map<string, number>([['', 0]]);
+    const count = (zone: Zone) => out.set(zone.copy, (out.get(zone.copy) ?? 0) + zone.players.size);
+    for (const zone of this.copiesOf(place.data.id)) count(zone);
+    for (const room of this.roomsOff.get(place.data.id) ?? []) for (const zone of this.copiesOf(room.data.id)) count(zone);
+    return out;
+  }
+
+  /**
+   * The copy of `map` a player comes back into when they join: their own, always, in a private room, and
+   * their own street; elsewhere the one they were saved in while it still makes sense (it is in use:
+   * someone is in it, or in a room of it; and it has room for them), else wherever copyFor sends anyone
+   * coming in.
    */
   private rejoin(r: PlayerRecord, map: TileMap): string {
     if (map.data.private || map === this.street) return this.copyFor(r, map);
-    const copy = typeof r.zone === 'string' ? r.zone : '';
-    return copy && this.zones.has(zoneKey(map.data.id, copy)) ? copy : '';
+    const copy = typeof r.zone === 'string' ? r.zone : '', place = this.placeOf(map), people = this.peopleIn(place);
+    if (people.has(copy) && people.get(copy)! < this.crowdOf(place)) return copy;
+    return this.copyFor(r, map);
   }
 
   /** Out of energy while online: the player wakes up at home, and both zones see it. */
