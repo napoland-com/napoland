@@ -1,0 +1,40 @@
+{
+  "id": "stonebrook-lindqvist-house",
+  "name": "The Lindqvist house",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 9,
+  "height": 6,
+  "tiles": [
+    "xxxxxxxxx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xxxxpxxxx"
+  ],
+  "levels": [
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000"
+  ],
+  "spawn": {"x":4,"y":4,"dir":"up"},
+  "exits": [
+    {"x":4,"y":5,"w":1,"h":1,"to":"stonebrook","tx":25,"ty":28,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"clock","x":1,"y":1},
+    {"kind":"hearth","x":4,"y":1},
+    {"kind":"shelf","x":7,"y":1},
+    {"kind":"rug","x":3,"y":2,"w":3,"h":1},
+    {"kind":"sheeted","x":7,"y":2},
+    {"kind":"sheeted","x":2,"y":3},
+    {"kind":"paper","x":5,"y":3,"look":"list","name":"List on the table","text":["TAKE: papers, pills, the photo albums, Dad's saw files, the good blankets, the cat.","LEAVE: the piano (ask about a truck), the rocker, the bird?","Under it, in another pen: \"No truck. Mrs. Okada says let the bird go.\""]},
+    {"kind":"boxes","x":1,"y":4},
+    {"kind":"bed","x":7,"y":3}
+  ]
+}

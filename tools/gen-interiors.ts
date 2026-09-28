@@ -16,7 +16,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DECOR, TileMap, doorOf, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { DECOR, TileMap, doorOf, hangs, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 
 type House = Extract<MapObject, { kind: 'house' }>;
 
@@ -32,8 +32,8 @@ interface Room {
   door: readonly [number, number];
   rows: readonly string[];
   things: readonly MapObject[];
-  /** One of NAPO's rooms (concrete): its house outside must be one of NAPO's buildings too. */
-  style?: 'napo';
+  /** One of NAPO's rooms (concrete), or the mill's floor (boards): its house outside must be of the same style. */
+  style?: 'napo' | 'mill';
 }
 
 /** The camera shows about six tiles around you: a room this size fits on any screen. */
@@ -401,6 +401,165 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 5, y: 4 },
     ],
   },
+  // The houses of four families who left Stonebrook when NAPO said two weeks, and never came back
+  // (gen-map.ts puts them on its streets, dark behind their curtains). Each room is as they left it
+  // the night their street's turn came: cold, dust sheets over what they could not take, and one thing
+  // to read that says a little of that night. Nothing burns in any of them.
+  {
+    // An older couple, and tidy: everything under a sheet, the boxes they packed and could not take
+    // stacked by the door, and the calendar still on the month they left.
+    id: 'stonebrook-okada-house', name: 'The Okada house', version: 1, outside: 'stonebrook', door: [5, 15],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      {
+        kind: 'paper', x: 2, y: 0, look: 'calendar', name: 'Calendar',
+        text: [
+          'A calendar from the feed store, still on the month they left.',
+          'One day is circled in red pencil: "Our turn. At the verge by six."',
+          'Two weeks on, in the same pencil: "Home."',
+        ],
+      },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'hearth', x: 4, y: 1 },
+      { kind: 'shelf', x: 7, y: 1 },
+      { kind: 'sheeted', x: 6, y: 2 },
+      { kind: 'sheeted', x: 3, y: 3 },
+      { kind: 'boxes', x: 1, y: 4 },
+      { kind: 'boxes', x: 2, y: 4 },
+      { kind: 'table', x: 6, y: 4 },
+    ],
+  },
+  {
+    // A family with a girl of seven: her bed and her drawing of the lights in the woods pinned above it,
+    // the toys they got as far as boxing, the rest under sheets.
+    id: 'stonebrook-hale-house', name: 'The Hale house', version: 1, outside: 'stonebrook', door: [19, 15],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      {
+        kind: 'paper', x: 2, y: 0, look: 'drawing', name: 'A child\'s drawing',
+        text: [
+          'Crayon on the back of a NAPO form: black trees, and green lights coming up between them.',
+          'Across the top, in careful capitals: "THE LIGHTS IN THE WOODS. BY NORA, AGE 7."',
+          'On the other side, the form is filled in halfway: "Hale, D. Motor pool."',
+        ],
+      },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'boxes', x: 3, y: 1 },
+      { kind: 'sheeted', x: 7, y: 1 },
+      { kind: 'rug', x: 3, y: 2, w: 3, h: 2 },
+      { kind: 'sheeted', x: 6, y: 3 },
+      { kind: 'table', x: 1, y: 4 },
+      { kind: 'boxes', x: 6, y: 4 },
+    ],
+  },
+  {
+    // A young couple with a baby. They went the night their street was called, in a hurry: boxes half
+    // packed, the crib left because it would not fit, and a note on the table for her mother.
+    id: 'stonebrook-dahl-house', name: 'The Dahl house', version: 1, outside: 'stonebrook', door: [21, 27],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      { kind: 'shelf', x: 1, y: 1 },
+      { kind: 'crib', x: 3, y: 1 },
+      { kind: 'bed', x: 6, y: 1 },
+      { kind: 'sheeted', x: 1, y: 3 },
+      {
+        kind: 'paper', x: 4, y: 3, look: 'note', name: 'Note on the table',
+        text: [
+          'Mom, they came by at nine. Our street goes tonight, so we go tonight.',
+          'We took the baby\'s things and the photographs. The crib would not fit with the car seat in, so it stays.',
+          'Key is under the blue pot. Water the fern if you get the chance. Kari',
+        ],
+      },
+      { kind: 'boxes', x: 1, y: 4 },
+      { kind: 'boxes', x: 2, y: 4 },
+      { kind: 'boxes', x: 7, y: 4 },
+    ],
+  },
+  {
+    // The family by the mill: the father filed its saws. Their clock stopped on the mantel wall, the
+    // rug still down, and the list of what to take and what to leave (the piano and the rocker are on
+    // the verge by the south road, where the town waited its turn).
+    id: 'stonebrook-lindqvist-house', name: 'The Lindqvist house', version: 1, outside: 'stonebrook', door: [25, 27],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      { kind: 'clock', x: 1, y: 1 },
+      { kind: 'hearth', x: 4, y: 1 },
+      { kind: 'shelf', x: 7, y: 1 },
+      { kind: 'rug', x: 3, y: 2, w: 3, h: 1 },
+      { kind: 'sheeted', x: 7, y: 2 },
+      { kind: 'sheeted', x: 2, y: 3 },
+      {
+        kind: 'paper', x: 5, y: 3, look: 'list', name: 'List on the table',
+        text: [
+          'TAKE: papers, pills, the photo albums, Dad\'s saw files, the good blankets, the cat.',
+          'LEAVE: the piano (ask about a truck), the rocker, the bird?',
+          'Under it, in another pen: "No truck. Mrs. Okada says let the bird go."',
+        ],
+      },
+      { kind: 'boxes', x: 1, y: 4 },
+      { kind: 'bed', x: 7, y: 3 },
+    ],
+  },
+  {
+    // The old sawmill's floor, dark since it closed: the head saw against the back wall, the carriage on
+    // its rails in front of it with the last log still dogged on, belts up to the line shaft, sawdust
+    // drifted where it fell, and a few logs that were never cut. No fire, nobody.
+    id: 'stonebrook-sawmill', name: 'The sawmill', version: 1, outside: 'stonebrook', door: [36, 28], style: 'mill',
+    rows: [
+      'xxxxxxxxxxx',
+      'xpppppppppx',
+      'xpppppppppx',
+      'xpppppppppx',
+      'xpppppppppx',
+      'xpppppppppx',
+      'xxxxxpxxxxx',
+    ],
+    things: [
+      { kind: 'shelf', x: 1, y: 1 },
+      { kind: 'barrel', x: 3, y: 1 },
+      { kind: 'crate', x: 4, y: 1 },
+      { kind: 'saw', x: 5, y: 1 },
+      { kind: 'crate', x: 6, y: 1 },
+      { kind: 'barrel', x: 7, y: 1 },
+      { kind: 'shelf', x: 9, y: 1 },
+      { kind: 'carriage', x: 3, y: 2, w: 5 },
+      { kind: 'sawdust', x: 4, y: 3 },
+      { kind: 'sawdust', x: 6, y: 3 },
+      { kind: 'sawdust', x: 7, y: 4 },
+      { kind: 'logs', x: 1, y: 4, w: 2, h: 1 },
+      { kind: 'crate', x: 9, y: 4 },
+      { kind: 'crate', x: 9, y: 5 },
+      { kind: 'sawdust', x: 3, y: 5 },
+    ],
+  },
 ];
 
 /** The way out: the middle of the bottom wall. You come in on the tile above it. */
@@ -419,7 +578,7 @@ export function doorInto(id: string, outside: string, house: House): MapExit {
   if (room.outside !== outside || room.door[0] !== d.x || room.door[1] !== d.y) {
     throw new Error(`the room ${id} expects its door at ${room.door.join(',')} in ${room.outside}, but this house's door is at ${d.x},${d.y} in ${outside}`);
   }
-  if ((room.style ?? null) !== (house.style ?? null)) throw new Error(`the room ${id} is ${room.style ? 'one of NAPO\'s' : 'a cabin\'s'}, but its house is ${house.style ? 'one of NAPO\'s buildings' : 'a cabin'}`);
+  if ((room.style ?? null) !== (house.style ?? null)) throw new Error(`the room ${id} is ${room.style ?? 'a cabin\'s'} style, but its house is ${house.style ?? 'a cabin'}`);
   const way = wayOut(room);
   return { x: d.x, y: d.y, w: 1, h: 1, to: id, tx: way.x, ty: way.y - 1, dir: 'up' };
 }
@@ -453,8 +612,11 @@ function planProblems(room: Room, map: MapData): string[] {
   });
   const tm = new TileMap(map);
   for (const o of room.things) {
-    if (objectTiles(o).some(([x, y]) => room.rows[y]?.[x] !== 'p')) out.push(`the ${o.kind} at ${o.x},${o.y} is not on the floor`);
-    if (o.kind === 'fireplace' && (o.y !== 1 || !tm.walkable(o.x, o.y + 1))) out.push(`the fireplace at ${o.x},${o.y} must stand against the top wall with floor in front`);
+    // A calendar or a drawing hangs on the back wall, over the floor it is read from (validateMap checks the rest).
+    const hung = o.kind === 'paper' && hangs(o.look);
+    if (hung && (o.y !== 0 || room.rows[1]?.[o.x] !== 'p')) out.push(`the ${o.look} at ${o.x},${o.y} must hang on the top wall, over the floor`);
+    else if (!hung && objectTiles(o).some(([x, y]) => room.rows[y]?.[x] !== 'p')) out.push(`the ${o.kind} at ${o.x},${o.y} is not on the floor`);
+    if ((o.kind === 'fireplace' || o.kind === 'hearth') && (o.y !== 1 || !tm.walkable(o.x, o.y + 1))) out.push(`the ${o.kind} at ${o.x},${o.y} must stand against the top wall with floor in front`);
   }
   return out;
 }
@@ -478,7 +640,10 @@ function json(map: MapData): string {
 }
 
 /** A glance at a room: # wall, . floor, + warm floor (next to the fire), v the way out, letters for furniture. */
-const GLYPH: Partial<Record<MapObject['kind'], string>> = { fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@' };
+const GLYPH: Partial<Record<MapObject['kind'], string>> = {
+  fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@',
+  hearth: 'f', sheeted: 's', boxes: 'n', crib: 'C', clock: 'k', paper: '?', saw: 'S', carriage: '=', sawdust: ':', logs: 'l', luggage: 'u',
+};
 function glance(map: MapData): string[] {
   const tm = new TileMap(map);
   const things = new Map<string, string>();

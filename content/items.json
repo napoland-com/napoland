@@ -1,5 +1,5 @@
 {
-  "version": 18,
+  "version": 19,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -50,7 +50,7 @@
     {"item":"scrap","map":"near-woods","near":{"kinds":["car","barrel","house"],"radius":3},"count":4,"respawn":[480,900]},
     {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"steps":[20,999],"count":3,"respawn":[600,1200]},
     {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"count":4,"respawn":[120,300],"when":"aurora"},
-    {"item":"cloth","map":"near-woods","near":{"kinds":["car","barrel","house"],"radius":3},"count":4,"respawn":[300,600]},
+    {"item":"cloth","map":"near-woods","near":{"kinds":["car","barrel","house"],"radius":3},"count":4,"respawn":[315,630]},
     {"item":"cloth","map":"stonebrook-empty-house","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":2,"respawn":[2700,5400]},
     {"item":"cloth","map":"near-woods-old-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":2,"respawn":[1800,3600]},
     {"item":"cloth","map":"near-woods-end-cabin","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":2,"respawn":[1200,2400]},
@@ -81,6 +81,11 @@
     {"item":"thermos","map":"south-road-laboratory","near":{"kinds":["fireplace","table"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"thermos","map":"south-road-checkpoint","near":{"kinds":["fireplace","table"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"flare","map":"south-road-checkpoint","near":{"kinds":["bed","crate"],"radius":1.5},"count":1,"respawn":[1200,2400]},
+    {"item":"cloth","map":"stonebrook-okada-house","near":{"kinds":["sheeted","boxes","bed"],"radius":1.5},"count":1,"respawn":[5400,10800]},
+    {"item":"cloth","map":"stonebrook-hale-house","near":{"kinds":["sheeted","boxes","bed"],"radius":1.5},"count":1,"respawn":[5400,10800]},
+    {"item":"cloth","map":"stonebrook-dahl-house","near":{"kinds":["sheeted","boxes","crib"],"radius":1.5},"count":1,"respawn":[5400,10800]},
+    {"item":"cloth","map":"stonebrook-lindqvist-house","near":{"kinds":["sheeted","boxes","bed"],"radius":1.5},"count":1,"respawn":[5400,10800]},
+    {"item":"scrap","map":"stonebrook-sawmill","near":{"kinds":["carriage","saw","crate","logs"],"radius":1.5},"count":2,"respawn":[2700,5400]},
     {"item":"scrap","map":"near-woods","around":{"x":20,"y":41,"r":4},"count":3,"respawn":[86400,86400],"condition":"napo-cache"},
     {"item":"wire","map":"near-woods","around":{"x":20,"y":41,"r":4},"count":3,"respawn":[86400,86400],"condition":"napo-cache"},
     {"item":"glowcap","map":"near-woods","on":["mud","ferns","grass"],"steps":[5,90],"count":12,"respawn":[60,180],"condition":"glowcap-bloom"},
