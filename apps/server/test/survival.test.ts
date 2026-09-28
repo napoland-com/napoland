@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, STEP_MS, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, findTiles, hidden, weatherAt,
+  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, STEP_MS, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, findTiles, fireTakes, hidden, weatherAt,
   type ConditionDef, type ConditionsData, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather,
 } from '@napoland/shared';
 import { loadMaps } from '../src/content';
@@ -126,6 +126,34 @@ describe('fires out there', () => {
     expect(w.get('a')!.stats).toEqual({ fed: 1 });
   });
 
+  it('take as many as asked, one by one while not full, from every slot of it; the player hears how many went in and how long it burns', () => {
+    // rng 0: it starts half full. At 1 s, 899 s are left: twigs burn 120 s, so eight go in (the eighth tops it up).
+    expect(fireTakes(899, 120)).toBe(8);
+    const w = world(withFire(), 'overcast', {}, rec('a', 'field', 4, 5, 'up', { bag: [{ item: 'twig', count: 5 }, { item: 'rock', count: 1 }, { item: 'twig', count: 10 }] }));
+    w.feed('a', 4, 4, 0, 1000, 20);
+    const heard = w.drain();
+    expect(onMap(heard, 'field')).toContainEqual({ t: 'fire', fire: { x: 4, y: 4, left: FIRE_MAX_S } });
+    // What it did comes last, after everything it changed.
+    expect(to(heard, 'a').at(-1)).toEqual({ t: 'did', did: { kind: 'fire', item: 'twig', count: 8, left: FIRE_MAX_S } });
+    // From the slot asked for first, then from the other one of twigs; each counts for the fire keeper.
+    expect(w.get('a')!.bag).toEqual([{ item: 'rock', count: 1 }, { item: 'twig', count: 7 }]);
+    expect(w.get('a')!.stats).toEqual({ fed: 8 });
+    // Full: none go in, and nothing is spent.
+    w.feed('a', 4, 4, 1, 1000, 3);
+    expect(to(w.drain(), 'a')).toEqual([{ t: 'refused', action: 'feed', reason: 'fire_full' }]);
+    expect(w.get('a')!.bag).toEqual([{ item: 'rock', count: 1 }, { item: 'twig', count: 7 }]);
+  });
+
+  it('say so when one that went out catches again, and take no more than you carry', () => {
+    const w = world(withFire(), 'overcast', {}, rec('a', 'field', 4, 5, 'up', { bag: [{ item: 'twig', count: 2 }] }));
+    const out = (FIRE_MAX_S / 2 + 10) * 1000;
+    w.tick(out);
+    w.drain();
+    w.feed('a', 4, 4, 0, out, 5);
+    expect(of(to(w.drain(), 'a'), 'did')).toEqual([{ t: 'did', did: { kind: 'fire', item: 'twig', count: 2, left: 240, lit: true } }]);
+    expect(w.get('a')!.bag).toEqual([]);
+  });
+
   it('never needs feeding in town, and never burns past full', () => {
     const w = world(withFire(), 'overcast', {}, rec('a', 'house', 2, 2, 'up', { bag: [{ item: 'twig', count: 10 }] }), rec('b', 'field', 4, 5, 'up', { bag: [{ item: 'twig', count: 10 }] }));
     w.feed('a', 2, 1, 0, 1000);
@@ -224,6 +252,25 @@ describe('surges', () => {
     expect(lastEnergy(later, 'near')?.energy.rate).toBe(r3(SURGE_DRAIN * energyRate(field, 4, 9, 'overcast')));
     // The one in the light drains as ever (repeated every few seconds, the same rate).
     for (const m of of(to(later, 'lit'), 'energy')) expect(m.energy.rate).toBe(r3(energyRate(field, 1, 3, 'overcast')));
+  });
+
+  it('the Old Stone takes as many shards as asked, from every slot of them; the giver hears how it stands, and that it woke', () => {
+    const fives = Array.from({ length: 4 }, () => ({ item: 'shard', count: 5 }));
+    const w = world(data(), 'overcast', {}, rec('s', 'town', 3, 4, 'up', { bag: [...fives, { item: 'twig', count: 1 }, { item: 'shard', count: 2 }] }), rec('d', 'field', 8, 1));
+    w.feed('s', 3, 3, 0, 1000, 7);
+    const first = w.drain();
+    expect(to(first, 's').at(-1)).toEqual({ t: 'did', did: { kind: 'stone', item: 'shard', count: 7, stone: { charge: 7, need: STONE_NEED, awake: false, left: 0 } } });
+    expect(of(to(first, 'd'), 'stone')).toEqual([{ t: 'stone', stone: { charge: 7, need: STONE_NEED, awake: false, left: 0 } }]);
+    expect(w.get('s')!.bag).toEqual([{ item: 'shard', count: 3 }, { item: 'shard', count: 5 }, { item: 'shard', count: 5 }, { item: 'twig', count: 1 }, { item: 'shard', count: 2 }]);
+    // More than it needs: it takes them all, and wakes; awake, it takes more and stays awake longer.
+    w.feed('s', 3, 3, 0, 1000, 14);
+    expect(to(w.drain(), 's').at(-1)).toEqual({ t: 'did', did: { kind: 'stone', item: 'shard', count: 14, stone: { charge: 21, need: STONE_NEED, awake: true, left: 21 * STONE_SHARD_S }, woke: true } });
+    w.feed('s', 3, 3, 1, 1000, 30);
+    expect(to(w.drain(), 's').at(-1)).toEqual({ t: 'did', did: { kind: 'stone', item: 'shard', count: 1, stone: { charge: 22, need: STONE_NEED, awake: true, left: 22 * STONE_SHARD_S } } });
+    expect(w.get('s')!.bag).toEqual([{ item: 'twig', count: 1 }]);
+    // What does not wake it is refused, and stays.
+    w.feed('s', 3, 3, 0, 1000, 1);
+    expect(to(w.drain(), 's')).toEqual([{ t: 'refused', action: 'feed', reason: 'not_fuel' }]);
   });
 
   it('is gentler while the Old Stone is awake; it wakes on enough shards and sleeps when they burn away', () => {
@@ -367,9 +414,10 @@ describe('watchers', () => {
     w.tick(7 * WATCHER_STEP_MS);
     expect(of(onMap(w.drain(), 'field'), 'creature').length).toBeGreaterThan(0);
     w.use('a', 0, 8 * WATCHER_STEP_MS);
-    const lit = onMap(w.drain(), 'field');
+    const out = w.drain(), lit = onMap(out, 'field');
     expect(lit).toContainEqual({ t: 'flare', flare: { x: 4, y: 6, left: 30 } });
     expect(lit).toContainEqual({ t: 'creatureGone', id: 1 });
+    expect(of(to(out, 'a'), 'did')).toEqual([{ t: 'did', did: { kind: 'used', item: 'flare', flare: 30 } }]);
   });
 
   it('never come for someone crouched in tall grass, however long their back is turned; out of it, they come', () => {
@@ -722,6 +770,8 @@ describe('marks', () => {
     const heard = w.drain();
     expect(onMap(heard, 'field')).toContainEqual({ t: 'mark', mark });
     expect(of(to(heard, 'a'), 'bag').at(-1)).toEqual({ t: 'bag', bag: [{ item: 'cap', count: 2 }] });
+    // The painter hears which way it points and how long everyone sees it.
+    expect(of(to(heard, 'a'), 'did')).toEqual([{ t: 'did', did: { kind: 'used', item: 'cap', mark: { dir: 'left', left: MARK_LIFETIME_MS / 1000 } } }]);
     expect(w.takeWrites().marks).toEqual([{ id: 1, mark: { id: 1, owner: 'a', name: 'A', color: colorFor('a'), map: 'field', x: 3, y: 5, dir: 'left', placedAt: 1000 } }]);
     // One per tile.
     w.use('a', 0, 2000);
@@ -760,8 +810,10 @@ describe('strange objects, charms and feats', () => {
     expect(of(to(w.drain(), 'out'), 'refused')).toEqual([{ t: 'refused', action: 'use', reason: 'not_here' }]);
     w.use('in', 0, 0);
     const heard = to(w.drain(), 'in');
-    expect(of(heard, 'got')).toEqual([{ t: 'got', items: [{ item: 'feather', count: 1 }], from: 'identify' }]);
+    // What it turned out to be is said once, in the text box: nothing floats as picked up.
+    expect(of(heard, 'got')).toEqual([]);
     expect(of(heard, 'bag').at(-1)).toEqual({ t: 'bag', bag: [{ item: 'feather', count: 1 }] });
+    expect(heard.at(-1)).toEqual({ t: 'did', did: { kind: 'used', item: 'odd', into: { item: 'feather', count: 1 } } });
   });
 
   it('earn a feat for good once its count is reached, and tell the player', () => {

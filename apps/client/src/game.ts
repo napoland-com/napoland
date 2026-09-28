@@ -7,6 +7,9 @@
  *   pile walks onto it and picks it up;
  * - A picks up what lies on your tile or the one you face, else feeds the fire or the Old Stone you
  *   face (with the best you carry for it), reads the notice board, talks to people and reads signs;
+ * - anything that uses up what you carry or keep asks first in the text box (ask.ts), or says why it
+ *   cannot happen when that is known already; YES sends it, and the box then says what it did, from
+ *   the server's answer (`did`, worded by said.ts);
  * - people and NAPO's desks are in the story (story.ts): what someone says follows the chapter you
  *   are in, and the server hears whom you talked to or what you read; it says when a chapter is reached;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
@@ -16,13 +19,20 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, STEP_MS, activeConditions, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, journal, stepTarget, storyLines, surgeFront, DIR_VEC,
-  type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
+  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, stepTarget, storyLines,
+  surgeFront, takeFromBag, DIR_VEC,
+  type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type ChatTo, type ConditionsView, type FlashKind, type FlashView, type RefusedAction, type StormView,
 } from '@napoland/shared';
+import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import type { FriendsMsg, TalkLine } from './friends';
-import { countOf, lookOf, refusalText, useText, type Items } from './items';
+import type { AskView, NoteView } from './hud';
+import { countOf, lookOf, refusalText, type Items } from './items';
+import {
+  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, makeQuestion, mendQuestion, noShard, nothingToBurn, sentence, shortOf, stashShort,
+  stoneQuestion, tossQuestion, useQuestion,
+} from './said';
 import type { Maps } from './maps';
 import type { Avatar } from './view/world';
 
@@ -74,9 +84,9 @@ const MAX_UNCONFIRMED = 2;
  */
 const EXIT_WAIT_MS = 3000;
 /**
- * A pick, or a use, waits this long for the server's answer before another may be asked. The answer
- * normally comes within a round trip; asking twice meanwhile would earn a "Someone got there first"
- * for a find we took ourselves.
+ * A pick waits this long for the server's answer before another may be asked, and after YES the box
+ * waits this long for what it did. The answer normally comes within a round trip; asking twice
+ * meanwhile would earn a "Someone got there first" for a find we took ourselves.
  */
 const ANSWER_WAIT_MS = 2500;
 /**
@@ -87,12 +97,10 @@ const ANSWER_WAIT_MS = 2500;
 const JUST_NOW_MS = 1000;
 /** Piles show whose they are while you are this close (tiles, center to center). */
 export const PILE_TAG_TILES = 3.5;
-/** Float colors: something gained, energy back, a gentle no, nothing there. */
+/** Float colors: something gained, a gentle no, nothing there, something eerie. */
 const GAIN = '#ffe3a1';
-const ENERGY = '#ffcf5a';
 const NO = '#ffae98';
 const GREY = '#c9c2b0';
-const FIRE = '#ffb36b';
 const EERIE = '#c7a6ff';
 /** How long a creature takes to walk a tile, as drawn: each a little quicker than the server moves it, so it never lags. */
 const CREATURE_STEP_MS: Record<CreatureView['kind'], number> = { watcher: 420, skulker: 230 };
@@ -138,6 +146,8 @@ export const CHAT_LOG = 100;
 
 /** What a `refused` can answer among friends: the friends panel says why. */
 const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
+/** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend']);
 
 export class Game {
   meId: string | null = null;
@@ -230,6 +240,16 @@ export class Game {
   gear = new Map<string, Gear>();
   /** Feats just earned, for the interface to announce (it empties the list). */
   news: News[] = [];
+  /** A question in the text box (ask.ts): until it is answered, nobody walks and A, B and the stick answer it. */
+  question: Question | null = null;
+  /**
+   * What the text box says by itself: why something cannot happen, or what it did. It closes at `until`
+   * (our clock) or with any press, and that press does nothing else. `waiting`: the question just said
+   * yes to, kept up (without its choices, and no press closes it) until the server says how it went.
+   */
+  note: { who: string; text: string; until: number; waiting: boolean } | null = null;
+  /** Counts every change to the question and the note, so the box is drawn again only when it changed. */
+  boxChanges = 0;
   private fid = 0;
   private seq = 0;
   private pending: Array<{ seq: number; x: number; y: number }> = [];
@@ -247,10 +267,10 @@ export class Game {
   private clock = 0;
   /** A pick asked for and not answered yet. */
   private picking: { at: number } | null = null;
-  /** A use asked for: the item and how many the bag held, to tell when it went through. */
-  private using: { item: string; had: number; at: number } | null = null;
-  /** A fire fed and not answered yet, to say how it took it. */
-  private feeding: { x: number; y: number; at: number } | null = null;
+  /** − or + held (or the stick held to a side) while a question asks how many. */
+  private readonly repeat = new Repeat();
+  /** What came to be said while a question or someone's lines had the box: said once they are done. */
+  private later: { who: string; text: string } | null = null;
   /** A chest asked to open and not answered yet. */
   private opening: { x: number; y: number; at: number } | null = null;
   /** A workbench asked to open and not answered yet. */
@@ -381,15 +401,9 @@ export class Game {
         this.lastEnergy = { view: msg.energy, at: now };
         this.body = { view: msg.body, at: now };
         break;
-      case 'fire': {
+      case 'fire':
         this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now });
-        const f = this.feeding;
-        if (f && f.x === msg.fire.x && f.y === msg.fire.y && now - f.at < ANSWER_WAIT_MS) {
-          this.feeding = null;
-          this.floatOverMe(msg.fire.left === null ? 'It burns on its own' : `It burns ${minutes(msg.fire.left)}`, FIRE);
-        }
         break;
-      }
       case 'mark':
         this.marks.set(msg.mark.id, msg.mark);
         this.markChanges++;
@@ -482,17 +496,15 @@ export class Game {
         this.gear.set(msg.id, msg.gear);
         this.quirks.set(msg.id, msg.quirks);
         break;
-      case 'mended':
-        this.floatOverMe(`Mended: ${this.items.get(msg.item).name}`, GAIN);
-        break;
       case 'bench': {
         const b = this.benching;
         if (b && this.clock - b.at < ANSWER_WAIT_MS) { this.bench = { x: b.x, y: b.y, stash: msg.stash }; this.benching = null; }
         else if (this.bench) this.bench = { ...this.bench, stash: msg.stash };
         break;
       }
-      case 'crafted':
-        this.floatOverMe(`Made: ${this.items.get(msg.item).name}`, GAIN);
+      case 'did':
+        // It takes the place of the question just said yes to, which waited for it in the box.
+        this.inform(didWho(msg.did, this.items), didText(msg.did, this.items));
         break;
       case 'progress':
         if (msg.gained > 0) this.floatOverMe(`+${msg.gained} XP`, GAIN);
@@ -558,14 +570,6 @@ export class Game {
         if (this.drops.delete(msg.id)) this.lootChanges++;
         break;
       case 'bag': {
-        // A use went through when the bag holds one fewer of it. One never answered is forgotten, so
-        // it cannot take a later change for its answer.
-        const u = this.using;
-        if (u && now - u.at >= ANSWER_WAIT_MS) this.using = null;
-        else if (u && countOf(msg.bag, u.item) < u.had) {
-          this.using = null;
-          this.floatOverMe(useText(this.items.get(u.item)), ENERGY);
-        }
         if (this.bag.length && !msg.bag.length) this.emptiedAt = now;
         this.bag = msg.bag;
         this.bagAt = now;
@@ -608,9 +612,12 @@ export class Game {
       case 'refused':
         if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
         if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
+        // What was asked first is answered in the same box; the rest (picking up, the chest) over your head.
+        if (ASKED_FIRST.has(msg.action)) {
+          this.inform(this.note?.waiting ? this.note.who : '', sentence(refusalText(msg.reason, msg.action)));
+          break;
+        }
         if (msg.action === 'pick') this.picking = null;
-        if (msg.action === 'use') this.using = null;
-        if (msg.action === 'feed') this.feeding = null;
         this.floatOverMe(refusalText(msg.reason), NO);
         break;
       default:
@@ -622,8 +629,9 @@ export class Game {
   disconnected(now: number) {
     this.online = false;
     this.pending = []; this.path = []; this.goal = null;
-    // Answers to what we asked went with the connection.
-    this.picking = null; this.using = null; this.feeding = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null;
+    // Answers to what we asked went with the connection, and what was being asked may no longer hold.
+    this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null;
+    this.clearBox();
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
     if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
@@ -639,6 +647,7 @@ export class Game {
       this.talkers = talkersOf(map);
       this.chest = null; this.opening = null; this.bench = null; this.benching = null;
       this.dialog = null; this.marker = null; this.floats = [];
+      this.clearBox();
     }
     this.players.clear();
     for (const p of players) this.players.set(p.id, this.mover(p));
@@ -699,10 +708,23 @@ export class Game {
     this.pad.dir = dir;
     this.pad.changedAt = now;
     this.pad.facingAtPress = !!dir && this.me?.dir === dir;
+    const q = this.question;
+    if (q) {
+      // While it asks, the stick answers: up and down choose, a side takes one away or adds one (held, it repeats).
+      this.repeat.release();
+      const changed = dir === 'left' || dir === 'right' ? q.step(this.repeat.press(dir === 'left' ? -1 : 1, now)) : !!dir && q.move(dir);
+      if (changed) this.boxChanges++;
+      return;
+    }
+    // Walking off is fine while the box only says something; it closes.
+    if (dir && this.note && !this.note.waiting) this.closeNote();
     if (dir && this.dialog) this.advanceDialog();
   }
 
   pressA() {
+    if (this.question) return this.answer(this.question.choice);
+    // A press that closes what the box says does nothing else.
+    if (this.note) return this.closeNote();
     if (this.dialog) return this.advanceDialog();
     const me = this.me;
     if (!me || me.anim) return;
@@ -823,10 +845,20 @@ export class Game {
     if (c && this.online) this.send({ t: 'equip', x: c.x, y: c.y, item, ...(n ? { n } : {}) });
   }
 
-  /** Mends what you wear in `slot`, at the open workbench. */
+  /**
+   * At the open workbench: mend what you wear in `slot`. It asks first ("Mend your raincoat? It uses 2
+   * cloth and 1 scrap."), or says what the stash lacks. Making and mending go through here and craft()
+   * only, whatever the workbench's panel looks like.
+   */
   mend(slot: Slot) {
-    const b = this.bench;
-    if (b && this.online) this.send({ t: 'mend', x: b.x, y: b.y, slot });
+    const b = this.bench, id = this.myGear[slot];
+    if (!b || !this.online || !id) return;
+    const def = this.items.get(id), cost = mendCost(def, this.items.mend);
+    if (!cost) return;
+    const short = shortOf(cost, b.stash);
+    if (short.length) return this.inform('Workbench', stashShort(short, this.items, { mend: def }));
+    const text = mendQuestion(def, cost, this.items);
+    this.ask({ who: 'Workbench', text, yes: () => this.act('Workbench', text, { t: 'mend', x: b.x, y: b.y, slot }) });
   }
 
   unequip(slot: Slot) {
@@ -834,10 +866,14 @@ export class Game {
     if (c && this.online) this.send({ t: 'unequip', x: c.x, y: c.y, slot });
   }
 
-  /** At the open workbench: make a recipe. */
+  /** At the open workbench: make a recipe. It asks first ("Make a raincoat? It uses 8 cloth and 4 resin."), or says what the stash lacks. */
   craft(recipe: string) {
-    const b = this.bench;
-    if (b && this.online) this.send({ t: 'craft', x: b.x, y: b.y, recipe });
+    const b = this.bench, r = this.items.recipes.find(x => x.id === recipe);
+    if (!b || !this.online || !r) return;
+    const short = shortOf(r.needs, b.stash);
+    if (short.length) return this.inform('Workbench', stashShort(short, this.items, { make: this.items.get(r.make) }));
+    const text = makeQuestion(r, this.items);
+    this.ask({ who: 'Workbench', text, yes: () => this.act('Workbench', text, { t: 'craft', x: b.x, y: b.y, recipe }) });
   }
 
   closeBench() {
@@ -855,25 +891,37 @@ export class Game {
   }
 
   /**
-   * Feeds the fire on tile x,y with what burns longest of what you carry; with nothing to burn, says
-   * how long it has left. A tended fire needs nothing.
+   * A at a fire: asks to feed it what burns longest of what you carry, and how many (as many as you
+   * carry and as fit), or says why not: someone keeps it going, it is full, or nothing you carry burns.
    */
   private tend(x: number, y: number) {
     const left = this.fireLeft(x, y, this.clock);
-    if (left === null) return this.floatOverMe('Someone keeps this fire going', GREY);
+    if (left === null) return this.inform('Fire', TENDED);
     const slot = this.bestSlot(def => def.fuel ?? 0);
-    if (slot < 0) return this.floatOverMe(left ? `It burns ${minutes(left)} more. Nothing to feed it` : 'It went out. Bring something that burns', left ? GREY : NO);
-    if (!this.online) return;
-    this.feeding = { x, y, at: this.clock };
-    this.send({ t: 'feed', x, y, slot });
+    if (slot < 0) return this.inform('Fire', nothingToBurn(left ?? 0, this.fuels()));
+    const def = this.items.get(this.bag[slot].item), fits = fireTakes(left ?? 0, def.fuel ?? 0);
+    if (fits <= 0) return this.inform('Fire', fullFire(left ?? 0));
+    const text = feedQuestion(def);
+    this.ask({
+      who: 'Fire', text, count: { min: 1, max: Math.min(countOf(this.bag, def.id), fits, FEED_MAX) },
+      yes: n => this.actOn(slot, def.id, 'Fire', text, i => ({ t: 'feed', x, y, slot: i, ...(n > 1 ? { count: n } : {}) })),
+    });
   }
 
-  /** Gives the Old Stone a shard, if you carry one; else says how far it is from waking. */
+  /** A at the Old Stone: asks to give it shards, and how many (up to what you carry), or says how it stands when you have none. */
   private offer(x: number, y: number) {
     const slot = this.bestSlot(def => def.charge ?? 0);
-    const st = this.stone;
-    if (slot < 0) return this.floatOverMe(st.awake ? `It is awake for ${minutes(st.left)}` : `${st.charge} of ${st.need} shards. It wants more`, EERIE);
-    if (this.online) this.send({ t: 'feed', x, y, slot });
+    if (slot < 0) return this.inform('The Old Stone', noShard(this.stone));
+    const def = this.items.get(this.bag[slot].item);
+    this.ask({
+      who: 'The Old Stone', text: n => stoneQuestion(def, n), count: { min: 1, max: Math.min(countOf(this.bag, def.id), FEED_MAX) },
+      yes: n => this.actOn(slot, def.id, 'The Old Stone', stoneQuestion(def, n), i => ({ t: 'feed', x, y, slot: i, ...(n > 1 ? { count: n } : {}) })),
+    });
+  }
+
+  /** What burns, the longest first: what a fire that went out wants. */
+  private fuels(): ItemDef[] {
+    return [...this.items.byId.values()].filter(d => (d.fuel ?? 0) > 0).sort((a, b) => b.fuel! - a.fuel!);
   }
 
   /** The bag slot whose item scores highest (above 0), or -1. */
@@ -909,13 +957,18 @@ export class Game {
     return undefined;
   }
 
-  /** B: back. Returns true when it handled something (so the caller does not open the bag). */
+  /** B: back, and NO to a question. Returns true when it handled something (so the caller does not open the bag). */
   pressB(): boolean {
+    if (this.question) { this.answer('no'); return true; }
+    if (this.note) { this.closeNote(); return true; }
     if (this.dialog) { this.advanceDialog(); return true; }
     return false;
   }
 
   tapTile(x: number, y: number) {
+    // A tap on the world is outside the box: NO to a question, and what the box says closes.
+    if (this.question) return this.answer('no');
+    if (this.note) return this.closeNote();
     if (this.dialog) return this.advanceDialog();
     const me = this.me;
     if (!me) return;
@@ -954,20 +1007,159 @@ export class Game {
     this.send({ t: 'pick', x, y });
   }
 
-  /** Use what is in bag slot `slot` (a thermos: energy back). The server says whether it went through. */
-  use(slot: number) {
+  /**
+   * Use one of what is in bag slot `slot` (drink a thermos, light a flare, crush a glowcap, look closely
+   * at a strange object). It asks first, or says why it cannot be done here; `done` runs on YES.
+   */
+  use(slot: number, done?: () => void) {
     const s = this.bag[slot];
     if (!s || !this.online) return;
-    this.using = { item: s.item, had: countOf(this.bag, s.item), at: this.clock };
-    this.send({ t: 'use', slot });
+    const def = this.items.get(s.item), why = this.whyNotUse(slot, def);
+    if (why) return this.inform(def.name, why);
+    const text = useQuestion(def, this.energy(this.clock));
+    this.ask({ who: def.name, text, yes: () => { done?.(); this.actOn(slot, def.id, def.name, text, i => ({ t: 'use', slot: i })); } });
   }
 
-  /** Throw away everything in bag slot `slot`. */
+  /** Throw away some of what is in bag slot `slot`: it asks how many, from one up to all of it. */
   discard(slot: number) {
-    if (!this.bag[slot] || !this.online) return;
-    // A use still waiting would take this for its answer.
-    this.using = null;
-    this.send({ t: 'discard', slot });
+    const s = this.bag[slot];
+    if (!s || !this.online) return;
+    const def = this.items.get(s.item), all = s.count, text = (n: number) => tossQuestion(def, n, all);
+    this.ask({
+      who: def.name, text, count: { min: 1, max: all },
+      yes: n => this.actOn(slot, def.id, def.name, text(n), i => ({ t: 'discard', slot: i, count: n })),
+    });
+  }
+
+  /** Why using `def` from bag slot `slot` cannot work here, when the game knows it already (the server checks it anyway); null when it can. */
+  private whyNotUse(slot: number, def: ItemDef): string | null {
+    const u = def.use ?? {}, me = this.me;
+    if (u.identify) {
+      if (!this.inTown()) return TOO_DARK;
+      // Its own slot frees up; whatever it turns out to be must fit somewhere.
+      const bag = takeFromBag(this.bag, slot, 1), room = bagSlotsOf(this.myGear, this.items.byId);
+      if (def.reveals?.length && !def.reveals.some(r => !addToBag(bag, this.items.get(r.item), r.count, room).left)) return NO_ROOM;
+    }
+    if (u.mark && this.current.data.kind === 'inside') return INDOORS;
+    if (u.mark && me && [...this.marks.values()].some(m => m.x === me.tx && m.y === me.ty)) return MARKED;
+    return null;
+  }
+
+  /** In town, or in one of its houses: light enough to look at something closely (the server's rule). */
+  private inTown(): boolean {
+    const d = this.current.data;
+    return d.kind === 'town' || (d.kind === 'inside' && d.exits.some(e => this.maps.find(e.to)?.kind === 'town'));
+  }
+
+  // ---------- the text box: asking first, and saying what it did ----------
+
+  /**
+   * Asks first, in the text box (ask.ts): YES runs `yes` with how many, NO (B, or a tap outside the box)
+   * runs `no`. Until it is answered nobody walks, and A, B and the stick answer it.
+   */
+  ask(a: Ask) {
+    this.question = new Question(a);
+    this.note = null;
+    this.dialog = null;
+    this.path = []; this.goal = null;
+    this.repeat.release();
+    this.boxChanges++;
+  }
+
+  /** YES or NO to the open question: A, B, a tap on either, or a tap outside the box (NO). */
+  answer(choice: Choice) {
+    const q = this.question;
+    if (!q) return;
+    this.question = null;
+    this.repeat.release();
+    // A direction held while it asked walks only once it is pressed again.
+    this.pad.dir = null;
+    this.boxChanges++;
+    if (choice === 'yes') q.ask.yes(q.n);
+    else q.ask.no?.();
+    // Whatever was said meanwhile is old news once a new answer is on its way.
+    if (this.note?.waiting) this.later = null;
+    else this.sayLater();
+  }
+
+  /** − or + pressed on the question (-1 or 1), held until let go (0): one step at once, then faster and faster. */
+  holdCount(dir: -1 | 0 | 1, now: number) {
+    this.repeat.release();
+    const q = this.question;
+    if (q && dir && q.step(this.repeat.press(dir, now))) this.boxChanges++;
+  }
+
+  /** A tap outside the text box: NO to a question, and what the box says closes. */
+  dismiss() {
+    if (this.question) return this.answer('no');
+    this.closeNote();
+  }
+
+  /** A tap on the text box itself: it closes what the box says, or moves someone's lines on. A question waits for YES or NO. */
+  boxTap() {
+    if (this.question) return;
+    if (this.note) return this.closeNote();
+    this.advanceDialog();
+  }
+
+  /** The question as the text box draws it, or null. */
+  askView(): AskView | null {
+    return this.question?.view() ?? null;
+  }
+
+  /** What the box says by itself as it draws it, with how long it stays up from `now`; or null. */
+  noteView(now: number): NoteView | null {
+    const n = this.note;
+    return n && { who: n.who, text: n.text, ms: Math.max(0, n.until - now), waiting: n.waiting };
+  }
+
+  /**
+   * YES to something about the item that was in bag slot `slot`: the bag may have changed while it asked
+   * (a watcher took something, a live shard faded), so it goes to wherever that item lies now, or the
+   * box says it is gone.
+   */
+  private actOn(slot: number, item: string, who: string, text: string, msg: (slot: number) => ClientMsg) {
+    const i = this.bag[slot]?.item === item ? slot : this.bag.findIndex(s => s.item === item);
+    if (i < 0) return this.inform(who, GONE);
+    this.act(who, text, msg(i));
+  }
+
+  /** YES: the message goes, and the box keeps the question up (without its choices) until the server says how it went. */
+  private act(who: string, text: string, msg: ClientMsg) {
+    if (!this.online) return;
+    this.send(msg);
+    this.note = { who, text, until: this.clock + ANSWER_WAIT_MS, waiting: true };
+    this.boxChanges++;
+  }
+
+  /** Says something in the text box that closes by itself, or with any press: why something cannot happen, or what it did. */
+  private inform(who: string, text: string) {
+    // A question or someone's lines keep the box until they are done.
+    if (this.question || this.dialog) { this.later = { who, text }; return; }
+    this.note = { who, text, until: this.clock + noteMs(text), waiting: false };
+    this.boxChanges++;
+  }
+
+  private closeNote() {
+    if (!this.note || this.note.waiting) return;
+    this.note = null;
+    this.boxChanges++;
+    this.sayLater();
+  }
+
+  /** Says what waited for the box, once the box is free. */
+  private sayLater() {
+    const l = this.later;
+    if (!l || this.question || this.dialog || this.note) return;
+    this.later = null;
+    this.inform(l.who, l.text);
+  }
+
+  /** Nothing is asked or said any more: another map, or a lost connection. */
+  private clearBox() {
+    if (this.question || this.note) this.boxChanges++;
+    this.question = null; this.note = null; this.later = null;
+    this.repeat.release();
   }
 
   /**
@@ -999,6 +1191,8 @@ export class Game {
 
   private openDialog(t: Talker) {
     this.dialog = { who: t.who, lines: t.lines, i: 0, shown: 0 };
+    // Someone's lines take the box from what it said by itself.
+    if (this.note && !this.note.waiting) { this.note = null; this.boxChanges++; }
   }
 
   /** "Word from the woods today: thick fog, and a NAPO cache. This week: copper week." Null when nothing is going on. */
@@ -1030,7 +1224,10 @@ export class Game {
     const line = d.lines[d.i] ?? '';
     if (d.shown < line.length) { d.shown = line.length; return; }
     d.i++; d.shown = 0;
-    if (d.i >= d.lines.length) this.dialog = null;
+    if (d.i >= d.lines.length) {
+      this.dialog = null;
+      this.sayLater();
+    }
   }
 
   private float(text: string, color: string, x: number, y: number, row = 0) {
@@ -1055,6 +1252,14 @@ export class Game {
     this.floats = this.floats.filter(f => f.t < 1.3);
     if (this.marker) { this.marker.t += dt; if (this.marker.t > 0.8) this.marker = null; }
     if (this.dialog) { const line = this.dialog.lines[this.dialog.i] ?? ''; this.dialog.shown = Math.min(line.length, this.dialog.shown + dt * 48); }
+    // − or + held keeps counting; what the box says by itself closes when its time is up.
+    const q = this.question, by = q && this.repeat.held ? this.repeat.due(now) : 0;
+    if (q && by && q.step(by)) this.boxChanges++;
+    if (this.note && now >= this.note.until) {
+      this.note = null;
+      this.boxChanges++;
+      this.sayLater();
+    }
 
     for (const c of this.creatures.values()) {
       if (!c.anim) continue;
@@ -1080,7 +1285,7 @@ export class Game {
   /** Decide the local player's next step once they stand on a tile. */
   private driveMe(now: number) {
     const me = this.me;
-    if (!me || me.anim || this.dialog || !this.online || this.held) { this.justStepped = false; return; }
+    if (!me || me.anim || this.dialog || this.question || !this.online || this.held) { this.justStepped = false; return; }
     // On an exit the server is about to move us to another map, and steps planned on this one would be refused.
     if (this.map.exitAt(me.tx, me.ty)) {
       this.exitSince ??= now;

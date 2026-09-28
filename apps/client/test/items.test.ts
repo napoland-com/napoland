@@ -3,9 +3,9 @@ import { resolve } from 'node:path';
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { Weather, type ItemsData } from '@napoland/shared';
-import { bannerMs, tossQuestion } from '../src/hud';
+import { bannerMs } from '../src/hud';
 import { DRAWN_ITEMS, iconFor, itemIcon } from '../src/icons';
-import { Items, countOf, plainName, slotViews, useText } from '../src/items';
+import { Items, countOf, plainName, slotViews, useLabel } from '../src/items';
 import { ITEM_LOOKS, lookOf, lootGlow, lootModel, type Look } from '../src/view/loot';
 import { ITEMS, itemsData } from './fixtures';
 
@@ -32,9 +32,9 @@ describe('the items catalog', () => {
     expect(plainName('')).toBe('Something');
   });
 
-  it('says what using something did', () => {
-    expect(useText(ITEMS.get('thermos'))).toBe('+30 energy');
-    expect(useText({ ...ITEMS.get('thermos'), name: 'Hand warmer', use: {} })).toBe('Used the hand warmer');
+  it('names what the bag\'s button does with something (what it did is said in the text box: said.test.ts)', () => {
+    expect(useLabel(ITEMS.get('thermos'))).toBe('Drink');
+    expect(useLabel({ ...ITEMS.get('thermos'), name: 'Hand warmer', use: {} })).toBe('Use');
   });
 
   it('shows each bag slot with its name and text, and offers Use only for consumables', () => {
@@ -109,12 +109,7 @@ describe('what items look like', () => {
   });
 });
 
-describe('the bag sheet', () => {
-  it('asks once before throwing a slot away, in plain words', () => {
-    expect(tossQuestion(1)).toBe('Throw it away?');
-    expect(tossQuestion(7)).toBe('Throw all 7 away?');
-  });
-
+describe('banners', () => {
   it('keeps longer news up longer, so it can be read', () => {
     const place = bannerMs('The Near Woods', '');
     const pile = bannerMs('You collapsed from exhaustion', 'You woke up at home.\nWhat you carried lies where you fell. It fades in an hour.');

@@ -60,16 +60,6 @@ export function plainName(id: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : 'Something';
 }
 
-/** What using an item did, for a float over your head: "+30 energy". */
-export function useText(item: ItemDef): string {
-  const u = item.use ?? {};
-  if (u.energy) return `${u.energy > 0 ? '+' : ''}${u.energy} energy`;
-  if (u.mark) return 'You marked the way';
-  if (u.flare) return 'The flare hisses red';
-  if (u.identify) return 'You turn it over in the light';
-  return `Used the ${item.name.toLowerCase()}`;
-}
-
 /** The word on the bag's button for using an item. */
 export function useLabel(item: ItemDef): string {
   const u = item.use ?? {};
@@ -80,7 +70,10 @@ export function useLabel(item: ItemDef): string {
   return 'Use';
 }
 
-/** Why the server said no, in plain words, for a float over your head (or the chat's or friends' note: `action` says which). */
+/**
+ * Why the server said no, in plain words: over your head, in the text box for what was asked first, or
+ * in the chat's or friends' note (`action` says which).
+ */
 export function refusalText(reason: Refusal, action?: RefusedAction): string {
   switch (reason) {
     case 'bag_full': return 'Your bag is full';

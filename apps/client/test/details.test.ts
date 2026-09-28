@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { BagSlot, Gear, ItemsData, Worn } from '@napoland/shared';
 import {
-  DOUBLE_TAP_MS, DOUBLE_TAP_SLOP, DoubleTap, actText, detailView, listWords, pieceName, pieceStats, refKey, statText, tierName, type DetailRef, type DetailState, type DetailView,
+  DOUBLE_TAP_MS, DOUBLE_TAP_SLOP, DoubleTap, actText, cardPress, detailView, listWords, pieceName, pieceStats, refKey, statText, tierName, type DetailRef, type DetailState, type DetailView,
 } from '../src/details';
 import { cardHtml } from '../src/hud';
 import { Items, conditionText, slotName } from '../src/items';
@@ -251,6 +251,20 @@ describe('the cards at the workbench', () => {
     expect(v.costs!.title).toBe('Mending takes');
     expect(v.act).toMatchObject({ label: 'Mend', enabled: true, does: { kind: 'mend', slot: 'shirt' } });
     expect(v.notes.map(n => n.text)).toEqual(['Mended, it is like new again.']);
+  });
+
+  it('makes and mends through the game when pressed, even greyed out: it asks first, or says in the text box what the stash lacks', () => {
+    const ready = view({ from: 'recipe', id: 'raincoat' }, { stash: [{ item: 'cloth', count: 8 }, { item: 'resin', count: 4 }] });
+    expect(cardPress(ready)).toEqual({ does: { kind: 'make', recipe: 'raincoat' }, close: true, shake: false });
+    // Short: the button shakes and the card stays, and the game still hears it (and sends nothing).
+    expect(cardPress(view({ from: 'recipe', id: 'raincoat' }))).toEqual({ does: { kind: 'make', recipe: 'raincoat' }, close: false, shake: true });
+    expect(cardPress(view({ from: 'mend', slot: 'shirt' }))).toEqual({ does: { kind: 'mend', slot: 'shirt' }, close: false, shake: true });
+    // Anything else greyed out only shakes: a bag too small for what you carry is not worn.
+    const tote = view({ from: 'stash', item: 'tote', n: 0 }, { stash: [{ item: 'tote', count: 1, piece: { cond: 1 } }], bag: Array.from({ length: 6 }, () => ({ item: 'cloth', count: 1 })) });
+    expect(tote.act!.enabled).toBe(false);
+    expect(cardPress(tote)).toEqual({ close: false, shake: true });
+    // Nothing to do (the bag you wear): the card just stays.
+    expect(cardPress(view({ from: 'worn', slot: 'bag' }))).toEqual({ close: false, shake: false });
   });
 
   it('has nothing to mend once it is whole, or in what never wears', () => {

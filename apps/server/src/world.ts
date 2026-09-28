@@ -98,6 +98,7 @@ import {
   surgeAt,
   surgeFront,
   takeFromBag,
+  takeItem,
   untilSurge,
   weatherAt,
   wetRate,
@@ -107,6 +108,7 @@ import {
   type ConditionsData,
   type ConditionsView,
   type CreatureView,
+  type Did,
   type Dir,
   type DropView,
   type EnergyView,
@@ -848,20 +850,21 @@ export class World {
     if (use.mark && this.markTiles.get(mapId)!.has(y * p.map.width + x)) return this.refuse(p, 'use', 'marked');
     if (use.identify && !this.inTown(p.map)) return this.refuse(p, 'use', 'not_here');
     let bag = takeFromBag(p.rec.bag, slot, 1);
-    let got: BagSlot | undefined;
+    let into: BagSlot | undefined;
     if (use.identify) {
       const r = reveal(def.reveals ?? [], this.rng);
-      const into = r && this.items.get(r.item);
-      if (into) {
-        const put = addToBag(bag, into, r.count, p.slots);
+      const it = r && this.items.get(r.item);
+      if (it) {
+        const put = addToBag(bag, it, r.count, p.slots);
         if (put.left) return this.refuse(p, 'use', 'bag_full');
         bag = put.bag;
-        got = { item: into.id, count: r.count };
+        into = { item: it.id, count: r.count };
       }
     }
     p.rec.bag = bag;
     // Used up: if it came out of the stash, it will never go back.
     p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
+    const before = p.rec.energy;
     if (use.energy) {
       p.rec.energy = Math.min(p.max, Math.max(0, p.rec.energy + use.energy));
     }
@@ -870,14 +873,21 @@ export class World {
     // The bar may have jumped, the bag got lighter: the client counts on from the new values.
     this.refresh(p, now);
     this.tell(p, now);
-    if (got) this.outbox.push({ to: id, msg: { t: 'got', items: [got], from: 'identify' } });
     this.sendBag(p, now);
+    // What it did, as far as the bar had room for it.
+    this.did(p, {
+      kind: 'used', item: def.id,
+      ...(use.energy ? { energy: Math.round(p.rec.energy - before) } : {}),
+      ...(use.flare ? { flare: use.flare } : {}),
+      ...(use.mark ? { mark: { dir: p.rec.dir, left: MARK_LIFETIME_MS / 1000 } } : {}),
+      ...(into ? { into } : {}),
+    });
     // Something that takes energy could empty the bar.
     if (p.rec.energy <= 0) this.collapse(p, now);
   }
 
-  /** Throws away everything in bag slot `slot`. */
-  discard(id: string, slot: number, now: number): void {
+  /** Throws away `count` of what is in bag slot `slot`, or all of it. */
+  discard(id: string, slot: number, now: number, count = Infinity): void {
     const p = this.players.get(id);
     if (!p) return;
     if (this.advance(p, now) <= 0) {
@@ -887,18 +897,21 @@ export class World {
     }
     const thrown = p.rec.bag[slot];
     if (!thrown) return this.refuse(p, 'discard', 'empty_slot');
-    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), thrown.item, thrown.count);
-    p.rec.bag = takeFromBag(p.rec.bag, slot);
+    const n = Math.min(thrown.count, Math.max(1, Math.floor(count)));
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), thrown.item, n);
+    p.rec.bag = takeFromBag(p.rec.bag, slot, n);
     this.sendBag(p, now);
     this.rerate(p, now);
+    this.did(p, { kind: 'thrown', item: thrown.item, count: n });
   }
 
   /**
-   * Feeds one of what is in bag slot `slot` to the fire on tile x,y (next to the player, diagonals
-   * too: a fire warms the tiles around it) or to the Old Stone. Everyone on the map sees the fire
-   * burn higher; everyone online hears about the Stone.
+   * Feeds `count` of what is in bag slot `slot` (then of the same item in other slots) to the fire on
+   * tile x,y (next to the player, diagonals too: a fire warms the tiles around it) or to the Old Stone.
+   * A fire takes them one by one while it is not full, so it takes as many as fit; the Old Stone takes
+   * them all. Everyone on the map sees the fire burn higher; everyone online hears about the Stone.
    */
-  feed(id: string, x: number, y: number, slot: number, now: number): void {
+  feed(id: string, x: number, y: number, slot: number, now: number, count = 1): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
@@ -913,28 +926,37 @@ export class World {
     const stone = this.stone;
     if (stone && stone.map === p.map && stone.x === x && stone.y === y) {
       if (!def?.charge) return this.refuse(p, 'feed', 'not_fuel');
-      p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
-      p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
-      this.chargeStone(def.charge, now);
+      const r = takeItem(p.rec.bag, slot, count);
+      p.rec.bag = r.bag;
+      p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, r.taken);
+      const woke = this.chargeStone(def.charge * r.taken, now);
       this.sendBag(p, now);
       this.saveNow.set(id, p.rec);
       this.moveStory(p, { feed: 'stone' });
-      return this.rerate(p, now);
+      this.rerate(p, now);
+      return this.did(p, { kind: 'stone', item: def.id, count: r.taken, stone: this.stoneView(now), ...(woke ? { woke: true as const } : {}) });
     }
     const fire = this.fires.at(p.map, x, y);
     if (!fire) return this.refuse(p, 'feed', 'gone');
     if (fire.tended) return this.refuse(p, 'feed', 'tended');
     if (!def?.fuel) return this.refuse(p, 'feed', 'not_fuel');
-    if (!this.fires.feed(fire, def.fuel, now)) return this.refuse(p, 'feed', 'fire_full');
-    p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
-    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
+    const lit = this.fires.left(fire, now) <= 0;
+    const have = p.rec.bag.reduce((n, b) => n + (b.item === def.id ? b.count : 0), 0);
+    let fed = 0;
+    while (fed < Math.min(count, have) && this.fires.feed(fire, def.fuel, now)) fed++;
+    if (!fed) return this.refuse(p, 'feed', 'fire_full');
+    p.rec.bag = takeItem(p.rec.bag, slot, fed).bag;
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, fed);
     this.sendBag(p, now);
-    this.toMap(p.map.data.id, { t: 'fire', fire: this.fires.view(fire, now) });
-    this.count(p, 'fed', now);
+    const burning = this.fires.view(fire, now);
+    this.toMap(p.map.data.id, { t: 'fire', fire: burning });
+    // Each one counts for the fire keeper, as when they went in one press at a time.
+    for (let i = 0; i < fed; i++) this.count(p, 'fed', now);
     // The story waits for a fire out in the wilds ("Whoever comes next"), never one in town.
     if (this.wild(p.map)) this.moveStory(p, { feed: 'fire' });
     // A dead fire lit again warms whoever stands by it.
     for (const q of this.onMap.get(p.map.data.id)!) this.rerate(q, now);
+    this.did(p, { kind: 'fire', item: def.id, count: fed, left: burning.left ?? 0, ...(lit ? { lit: true as const } : {}) });
   }
 
   /** Opens the chest on tile x,y (next to the player): they hear what is in their stash. */
@@ -1050,8 +1072,8 @@ export class World {
     // Gear made comes new, piece by piece.
     p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
     this.saveNow.set(id, p.rec);
-    this.outbox.push({ to: id, msg: { t: 'crafted', item: recipe.make, count } });
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
+    this.did(p, { kind: 'made', item: recipe.make, count });
   }
 
   /** Mends the piece the player wears in `slot`, at the workbench on tile x,y next to them, paying from their stash: it is whole again. */
@@ -1073,12 +1095,13 @@ export class World {
     p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
     p.rec.worn = { ...p.rec.worn, [slot]: { ...piece, cond: 1 } };
     this.saveNow.set(id, p.rec);
-    this.outbox.push({ to: id, msg: { t: 'mended', item } });
+    // Once for every piece mended, toward the mender's ranks.
     this.count(p, 'mended', now);
     // Its condition (in the body) before the bench, so the bench's mend row is gone when it redraws.
     this.refresh(p, now);
     this.tell(p, now);
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
+    this.did(p, { kind: 'mended', item });
   }
 
   /** Takes up to `count` of an item out of the player's stash, in the chest on tile x,y, as much as fits in the bag. */
@@ -1629,7 +1652,8 @@ export class World {
     }
   }
 
-  private chargeStone(charge: number, now: number): void {
+  /** Adds `charge` shards to the Old Stone; true when that woke it. */
+  private chargeStone(charge: number, now: number): boolean {
     this.burnStone(now);
     this.stoneCharge += charge;
     const woke = !this.stoneAwake && this.stoneCharge >= STONE_NEED;
@@ -1637,6 +1661,7 @@ export class World {
     this.stoneWrite = { charge: this.stoneCharge, awake: this.stoneAwake, at: now + this.epochOffset };
     this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
     if (woke) for (const p of this.players.values()) this.rerate(p, now);
+    return woke;
   }
 
   // ---------- hitchhikers, flares, marks ----------
@@ -2319,6 +2344,11 @@ export class World {
 
   private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
+  }
+
+  /** What an action the player asked for did, for their text box: queued after everything the action changed. */
+  private did(p: Online, did: Did): void {
+    this.outbox.push({ to: p.rec.id, msg: { t: 'did', did } });
   }
 
   /** A message for everyone on a map, but `except`. */
