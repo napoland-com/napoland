@@ -473,6 +473,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .friends-sheet .say input { flex: 1; min-width: 0; font: 600 max(16px, calc(var(--u) * 1.2)) var(--font-text); padding: .45em .7em; border-radius: 9px; border: 1px solid #4a5468; background: #131820; color: #f1ece0; }
 .friends-sheet .setting { display: flex; align-items: center; gap: .5em; color: #d3ccbb; }
 .friends-sheet .setting input { width: 1.2em; height: 1.2em; accent-color: #e0873a; }
+/* The door's setting stands outside the list (a guest sees it too): the list's type, and its room above. */
+.friends-sheet > .setting { margin-top: calc(var(--u) * .6); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); }
 .person .where { margin: 0; color: #b9b2a2; }
 .person .acts { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--u) * .5); }
 .person .ask { font-weight: 700; }

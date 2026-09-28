@@ -389,6 +389,10 @@ export function attachNet(o: NetOptions): Net {
       case 'move':
         world.moveNextTo(s.id, msg.to, now);
         return flush();
+      case 'doorOff':
+        // Guests too: a guest's name is on a door as well.
+        world.doorOff(s.id, msg.off, now);
+        return flush();
       case 'befriend':
       case 'answer':
       case 'unfriend':
@@ -671,6 +675,7 @@ export function attachNet(o: NetOptions): Net {
       firsts: joined.firsts,
       ...(joined.furniture && { furniture: joined.furniture }),
       ...(joined.street && { street: joined.street }),
+      ...(joined.doorOff && { doorOff: true }),
       serverTime: Date.now(),
     });
     flush();

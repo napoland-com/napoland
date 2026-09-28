@@ -16,6 +16,7 @@ import type { FriendsView } from './friends';
 import { CALL_GLYPHS, NOTEBOOK_ICON } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import { fieldNotesHtml, notesHtml, type FieldNotesView, type JournalView, type NotesView } from './journal';
+import { DOOR_SETTING } from './said';
 import type { SoundSetting } from './sound';
 import type { OfferRow, TradePanel } from './trade';
 import { BADGES_HINT, PATTERNS_HINT, WARDROBE_GATE, WARDROBE_HINT, type OutfitTile, type WardrobePart, type WardrobeView } from './wardrobe';
@@ -306,6 +307,8 @@ export type SocialAction =
   | { a: 'tell'; id: string; text: string }
   | { a: 'requests'; off: boolean }
   | { a: 'tradeRequests'; off: boolean }
+  /** Your door's setting (anyone's, guests' too): your name off it and your window dark (`off`), or both shown. */
+  | { a: 'door'; off: boolean }
   /** Their card's Trade: ask them to trade (greyed out when they are not near: the game says why). */
   | { a: 'trade'; id: string; name: string };
 
@@ -539,6 +542,7 @@ export class Hud {
           <label class="setting"><input type="checkbox" data-el="requestsOn"> Let people ask me to be friends</label>
           <label class="setting"><input type="checkbox" data-el="tradesOn"> Let friends ask me to trade</label>
         </div>
+        <label class="setting" data-el="doorSetting"><input type="checkbox" data-el="doorOn"> ${DOOR_SETTING}</label>
         <div class="person" data-el="personView" hidden>
           <p class="where" data-el="personWhere"></p>
           <div class="acts" data-el="personActs"></div>
@@ -711,6 +715,7 @@ export class Hud {
     });
     this.el.requestsOn!.addEventListener('change', e => this.h.social?.({ a: 'requests', off: !(e.target as HTMLInputElement).checked }));
     this.el.tradesOn!.addEventListener('change', e => this.h.social?.({ a: 'tradeRequests', off: !(e.target as HTMLInputElement).checked }));
+    this.el.doorOn!.addEventListener('change', e => this.h.social?.({ a: 'door', off: !(e.target as HTMLInputElement).checked }));
     // The trade panel: its X calls the trade off, as any way of closing it does.
     this.el.tradeClose!.addEventListener('click', () => this.toggleTrade(false));
     this.el.tradeReady!.addEventListener('click', () => this.h.trade?.({ a: 'ready' }));
@@ -892,6 +897,9 @@ export class Hud {
     if (rows !== this.shown.friends) { this.shown.friends = rows; this.el.friendsRows!.innerHTML = rows; }
     (this.el.requestsOn as HTMLInputElement).checked = !v.requestsOff;
     (this.el.tradesOn as HTMLInputElement).checked = !v.tradesOff;
+    (this.el.doorOn as HTMLInputElement).checked = !v.doorOff;
+    // Anyone's, guests' too (a guest's name is on a door as well): below the list, or below the card a guest finds.
+    this.el.doorSetting!.hidden = !!p && !this.guest;
     this.el.friendsTitle!.textContent = p ? p.name : 'Friends';
     // A guest has no friends yet: one card says what signing in opens, whoever's name tag brought them here.
     this.el.friendsGate!.hidden = !this.guest;

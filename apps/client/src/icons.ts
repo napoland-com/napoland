@@ -132,6 +132,20 @@ const ICONS: Record<string, string> = {
     <path d="M16 10.5v11" stroke-width="1.8"/>
     <path d="M15 9.5c-.8-1.6-2-2.6-3.2-3M17 9.5c.8-1.6 2-2.6 3.2-3" stroke-width="1.1"/>
     <circle cx="10" cy="11" r="1.4" fill="#b9ad90" stroke="none"/><circle cx="22" cy="11" r="1.4" fill="#b9ad90" stroke="none"/>`),
+  // Curled strips of red cedar bark, one across the others.
+  'cedar-bark': icon(`<path d="M5 22.5c3.5-1.6 13-6.8 19.5-12.3 1.3-1.1 3 .4 2 1.7-4.6 6-14.6 12.1-19.8 13.6-1.8.5-3.4-2.1-1.7-3z" fill="#9c5436"/>
+    <path d="M6.5 16c4.4.7 14 1.3 20.5 4.4 1.5.7.9 2.8-.7 2.5-6.9-1.3-15.8-1.7-20.3-3.7-1.6-.7-1.3-3.4.5-3.2z" fill="#b8683f"/>
+    <path d="M9.5 17.3c4.2.5 10.4 1 15.5 2.9M8.8 22.4c4.6-2.3 10-5.5 15.4-10" stroke="#e9b98a" stroke-width="1.1"/>`),
+  // An old dry cell stamped NAPO: dark steel, a band of NAPO yellow, a spring terminal on top.
+  battery: icon(`<rect x="10" y="7.5" width="12" height="21" rx="1.8" fill="#4d5963"/>
+    <path d="M10 15h12v5H10z" fill="#d6ad2f" stroke="none"/>
+    <path d="M13.5 5.2h5v2.3h-5z" fill="#aebbc1"/>
+    <path d="M13 11h6M16 22.5v3.4M14.3 24.2h3.4" stroke="#e8dfc8" stroke-width="1.3"/>`),
+  // A drop of amber with a seed caught inside it.
+  'resin-tear': icon(`${halo(16, 17, 12, '#ffb347')}
+    <path d="M16 4.5c-2.8 5.2-8 9.6-8 15 0 4.6 3.6 8 8 8s8-3.4 8-8c0-5.4-5.2-9.8-8-15z" fill="#f2a53c"/>
+    <path d="M14.5 17.2c1.4-1.8 3.8-1.6 4.4.4.6 2.2-1.4 4.4-3.4 3.8-1.8-.6-2.2-2.6-1-4.2z" fill="#6b4020"/>
+    <path d="M12.4 14.2c.6-1.4 1.4-2.6 2.2-3.4" stroke="#ffe3a8" stroke-width="1.3"/>`),
   // NAPO's grey steel lockbox: a lid, a band of NAPO yellow and a padlock that has not been opened since the evacuation.
   lockbox: icon(`<path d="M4.5 13h23v13.5c0 .8-.7 1.5-1.5 1.5H6c-.8 0-1.5-.7-1.5-1.5z" fill="#7d8b92"/>
     <path d="M4 9.8c0-1 .8-1.8 1.8-1.8h20.4c1 0 1.8.8 1.8 1.8V13H4z" fill="#aebbc1"/>

@@ -227,6 +227,7 @@ const hud = new Hud(screen, {
       case 'block': return game.social({ t: 'block', id: a.id, on: a.on });
       case 'requests': return game.social({ t: 'requests', off: a.off });
       case 'tradeRequests': return game.social({ t: 'tradeRequests', off: a.off });
+      case 'door': return game.setDoorOff(a.off);
       // Face to face only: from farther away, the card says so (the server checks it again).
       case 'trade': {
         const reach = game.tradeReach(a.id);
@@ -285,7 +286,7 @@ function openMap() {
   const item = mapFor(game.map.data.id, game.tools, t => items.get(t).chart, id => maps.find(id));
   const data = item ? maps.find(items.get(item).chart!) : undefined;
   const map = data && maps.get(data);
-  if (!map) return game.murmur('No map of this place');
+  if (!map) return game.noMap();
   hud.toggleBag(false);
   hud.showPaper(paperMap(map, id => maps.find(id)?.name));
 }

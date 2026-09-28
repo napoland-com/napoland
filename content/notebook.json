@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "pages": [
     {
       "id": "pop-23",
@@ -277,6 +277,62 @@
       "title": "The checkpoint log",
       "when": { "read": "checkpoint-log" },
       "text": "The last guard wrote it day by day: the road closed, the last cars through, no relief. Then only the woods lighting up every forty minutes."
+    },
+    {
+      "id": "the-trappers-trail",
+      "area": "far-woods",
+      "title": "The trappers' trail",
+      "when": { "read": { "map": "near-woods", "x": 52, "y": 2 } },
+      "text": "The trappers went up it in pairs. Up there the woods are older, and they wear you down twice as fast. Feed the fire going in, the sign says, so it still burns on the way out."
+    },
+    {
+      "id": "the-far-woods",
+      "area": "far-woods",
+      "title": "The Far Woods",
+      "when": { "read": { "map": "far-woods", "x": 37, "y": 87 } },
+      "text": "Old growth, older than the town: firs and cedars too wide to reach around, ferns to the waist. Out here I tire twice as fast as in the Near Woods. There is one fire, and nobody keeps it: whoever passes feeds it."
+    },
+    {
+      "id": "the-trapper",
+      "area": "far-woods",
+      "title": "The trapper",
+      "when": { "read": { "map": "far-woods-trapper-cabin", "x": 2, "y": 3 } },
+      "text": "His tally in pencil: marten, fisher, and one lynx, underlined twice. Farther in, his traps came back sprung, and empty. Never alone past the gorge, he wrote, and leave wood for the next one."
+    },
+    {
+      "id": "camp-4",
+      "area": "far-woods",
+      "title": "Camp 4",
+      "when": { "read": { "map": "far-woods", "x": 62, "y": 57 } },
+      "text": "Stonebrook Timber Co., Camp 4: the loggers' last camp. The bunkhouse has fallen in, the yarder rusted where it stood, and the cable is still on its spools. Chalked on the board: back in the spring."
+    },
+    {
+      "id": "the-hollow",
+      "area": "far-woods",
+      "title": "The hollow",
+      "when": { "read": { "map": "far-woods", "x": 40, "y": 19 } },
+      "text": "NAPO kept a post out here, in a dark hollow where the rocks hum back louder than anywhere. Its crews came two at a time and logged every visit. Its mast is snapped halfway, and its light is dead."
+    },
+    {
+      "id": "cedar-bark",
+      "area": "far-woods",
+      "title": "Cedar bark",
+      "when": { "find": "cedar-bark" },
+      "text": "Long dry strips off the old cedars. It burns hot and slow, nearly as long as resin, and it weighs less."
+    },
+    {
+      "id": "old-batteries",
+      "area": "far-woods",
+      "title": "Old batteries",
+      "when": { "find": "battery" },
+      "text": "Heavy dry cells stamped NAPO, with a little charge still in them. Its field kit ran on them: the radios, the lamps, the instruments. Nothing I can make takes them yet."
+    },
+    {
+      "id": "resin-tears",
+      "area": "far-woods",
+      "title": "Resin tears",
+      "when": { "find": "resin-tear" },
+      "text": "A drop of old resin gone hard and clear, with a seed caught inside. Only the oldest cedars weep them. Carried deep in, one makes the going a little easier."
     },
     {
       "id": "glowcaps",

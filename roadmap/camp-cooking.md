@@ -2,7 +2,7 @@
 id: camp-cooking
 title: Cooking at a fire
 status: done
-order: 510
+order: 520
 area: gameplay
 depends: [survival-dynamics]
 ---

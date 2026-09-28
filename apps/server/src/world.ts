@@ -73,7 +73,9 @@
  * the player's own street, in front of their own door; the others' doors are knocked at, not walked into,
  * and a window is lit while its owner is home. At their own door a player may move their cabin next to a
  * friend's, onto the friend's street, if a lot is free there. Who lives where is kept for everyone, online
- * or not, loaded at start-up.
+ * or not, loaded at start-up. Anyone may keep their name off their door and their window dark (the setting
+ * in the menu): the street sees a resident then, and a knock is answered only for friends. The first time
+ * each player comes home since streets came, a letter says what the street sees of them.
  *
  * Crowds: a town square holds about TOWN_CROWD players, and a region of the wilds REGION_CROWD, before
  * another copy of it opens; the rooms off a place (its houses, its shelters) follow the copy they are
@@ -89,9 +91,12 @@ import {
   COZY_AFTER_S,
   COZY_MODS,
   DIR_VEC,
+  AURORA_WATCHER_STEP_MS,
   MARK_LIFETIME_MS,
   NOTE_XP,
   QUIRKS,
+  SKULKER_STEP_MS,
+  WATCHER_STEP_MS,
   SLOTS,
   STARTER_GEAR,
   STARTER_TOOLS,
@@ -149,6 +154,8 @@ import {
   secretTitle,
   weekIndex,
   seeded,
+  skulkerStepMs,
+  watcherStepMs,
   charmsIn,
   chapterOf,
   comfortOf,
@@ -295,7 +302,8 @@ import {
 import { FIRE_LOW_S, Fires, type Fire } from './fires';
 import type { CacheItemRecord, DropRecord, FirstRecord, LotRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
 
-export { MARK_LIFETIME_MS };
+// How often creatures step is their region's (map.ts, watcherStepMs, skulkerStepMs); these are the paces a rule leaves out.
+export { AURORA_WATCHER_STEP_MS, MARK_LIFETIME_MS, SKULKER_STEP_MS, WATCHER_STEP_MS };
 
 /** A step may start this much early: messages sent at a steady pace arrive bunched up. */
 export const STEP_TOLERANCE_MS = 40;
@@ -310,9 +318,6 @@ export const ENERGY_RATE_CHANGE = 0.1;
 export const MARKS_PER_PLAYER = 6;
 /** A pile keeps this many of the last steps its owner walked out there: their echo. */
 export const TRAIL_STEPS = 16;
-/** A watcher takes a step this often (on aurora nights, AURORA_WATCHER_STEP_MS); players are faster. */
-export const WATCHER_STEP_MS = 520;
-export const AURORA_WATCHER_STEP_MS = 400;
 /** A watcher goes after players at most this many steps away (as the crow walks), and freezes while any player this close faces it. */
 export const WATCHER_HUNT = 9;
 /** Someone carrying a live find glows: watchers come for them from this far. */
@@ -325,8 +330,6 @@ export const WATCHER_AWAY_S: [number, number] = [60, 150];
 export const WATCHER_WAKE_AWAY = 8;
 /** Watchers look this many tiles ahead for a way to you. */
 const WATCHER_PATH_NODES = 600;
-/** A skulker takes a step this often: a quarter slower than a walking player (STEP_MS), so moving away in time escapes it. */
-export const SKULKER_STEP_MS = 250;
 /** A skulker notices a player out in the open this close (as the crow walks): farther if they are walking (it hears them). */
 export const SKULKER_HEAR = 6;
 export const SKULKER_SEE = 3;
@@ -364,6 +367,8 @@ export const HUM_NEAR = 2;
 export const KNOCK_EVERY_MS = 3000;
 /** A player moves their cabin at most once in this long: every move is saved at once, and both streets hear of it. */
 export const MOVE_EVERY_MS = 10_000;
+/** A player's door setting changes at most once in this long: each change is saved at once, and their whole street hears of it. */
+export const DOOR_EVERY_MS = 1000;
 /**
  * A copy of a town square holds this many players (with those in its rooms) before another opens: about
  * as many as the square has room for without everyone walking through everyone else.
@@ -466,6 +471,8 @@ export interface Joined extends Scene {
   furniture?: string[];
   /** On their street: its lots, and which is theirs. */
   street?: StreetView;
+  /** They keep their name off their door and their window dark. */
+  doorOff?: true;
 }
 
 /** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
@@ -597,6 +604,8 @@ interface Online {
   knockAt: number;
   /** When they last moved their cabin (game time): once in MOVE_EVERY_MS. */
   movedAt: number;
+  /** When they last changed their door's setting (game time): once in DOOR_EVERY_MS. */
+  doorAt: number;
 }
 
 /** A player's lot: whose it is (their name goes on its plate), on which street, and which. */
@@ -605,6 +614,8 @@ interface Lot {
   name: string;
   street: number;
   lot: number;
+  /** Its owner keeps their name off the door and the window dark (PlayerRecord.doorOff): the street sees a resident, never home. */
+  off?: true;
 }
 
 /** Where a player stands with their own fire (comfort.ts): away, warming by it (under COZY_AFTER_S), or held there, cozy in full. */
@@ -1145,7 +1156,7 @@ export class World {
     for (const l of options.lots ?? []) {
       if (!this.street || !Number.isInteger(l.street) || l.street < 1 || !Number.isInteger(l.lot) || l.lot < 0 || l.lot >= this.lotDoor.length) continue;
       if (this.lots.has(l.id) || this.streetLots(l.street)[l.lot]) continue;
-      this.settle({ id: l.id, name: l.name, street: l.street, lot: l.lot });
+      this.settle({ id: l.id, name: l.name, street: l.street, lot: l.lot, ...(l.off && { off: true as const }) });
     }
 
     // Where each map's creatures may wake is the same in every copy of it: worked out once.
@@ -1234,9 +1245,18 @@ export class World {
     return this.guests && r.authSub === null;
   }
 
-  /** What lies in a zone to pick up. */
-  findViews(zone: string): FindView[] {
-    return [...(this.zones.get(zone)?.finds.values() ?? [])].map(findView);
+  /**
+   * What lies in a zone to pick up; with `seer` (a player's id), as they see it: a tool they own lies
+   * there for someone else, so they never see it (sees).
+   */
+  findViews(zone: string, seer?: string): FindView[] {
+    const p = seer === undefined ? undefined : this.players.get(seer);
+    return [...(this.zones.get(zone)?.finds.values() ?? [])].filter(f => !p || this.sees(p, f)).map(findView);
+  }
+
+  /** Does a player see this find? Every one but a tool they own already: it lies there for whoever does not (pickTool). */
+  private sees(p: Online, f: Find): boolean {
+    return f.rule.item.kind !== 'tool' || !this.owns(p, f.rule.item.id);
   }
 
   /** The piles lying in a zone, open or not. */
@@ -1244,7 +1264,7 @@ export class World {
     return [...(this.pileTiles.get(zone)?.values() ?? [])].flat().map(dropView);
   }
 
-  /** Everything a zone holds besides players, as of `now`. */
+  /** Everything a zone holds besides players, as of `now`. A player hears its finds as they see them (findsFor). */
   scene(key: string, now: number): Scene {
     const zone = this.zones.get(key);
     return {
@@ -1304,6 +1324,10 @@ export class World {
     else delete r.meals;
     // Where their cabin stands is what the World keeps of it (it may have been given to someone else meanwhile, or never saved).
     this.recordLot(r);
+    if (r.doorOff !== true) delete r.doorOff;
+    if (r.streetTold !== true) delete r.streetTold;
+    // Their door's setting is theirs: the lot kept for them follows it, and so does their street.
+    this.markDoor(r.id, r.doorOff === true);
     // Cozy is a time on the wall clock: it went on counting down while they were away.
     if (!(Number.isFinite(r.cozy) && r.cozy! > now + this.epochOffset)) delete r.cozy;
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
@@ -1345,7 +1369,7 @@ export class World {
     const p: Online = {
       rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
       hitchAt: now, trail: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
-      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity,
+      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity, doorAt: -Infinity,
     };
     this.refresh(p, now);
     this.revisit(p);
@@ -1375,6 +1399,7 @@ export class World {
       finds: this.findsFor(r, zone),
       ...this.cabinOf(p),
       ...this.streetOf(p),
+      ...(r.doorOff && { doorOff: true as const }),
     };
   }
 
@@ -2102,6 +2127,8 @@ export class World {
     p.rec.tools = [...(p.rec.tools ?? STARTER_TOOLS), item];
     this.saveNow.set(id, p.rec);
     this.outbox.push({ to: id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items) } });
+    // Another of it lying where they are is someone else's to find from now on: it goes from their sight.
+    for (const f of p.zone.finds.values()) if (f.rule.item.id === item) this.outbox.push({ to: id, msg: { t: 'findGone', id: f.id } });
     return true;
   }
 
@@ -2259,6 +2286,13 @@ export class World {
    */
   private homecoming(p: Online, now: number): void {
     p.gifts = 0;
+    // The first time home since streets came (a new player's too): a letter says what the street sees of
+    // them and where to hide it, once, before any thanks.
+    if (this.street && !p.rec.streetTold) {
+      p.rec.streetTold = true;
+      this.saveNow.set(p.rec.id, p.rec);
+      this.outbox.push({ to: p.rec.id, msg: { t: 'streetLetter', doorOff: p.rec.doorOff === true } });
+    }
     // Only what is still kept: one older than THANKS_KEPT_DAYS may wait for the tick that forgets it.
     const kept = now + this.epochOffset - THANKS_KEPT_MS;
     const unread = [...this.thanks.values()].filter(t => t.helper === p.rec.id && !t.told && t.at > kept).sort((a, b) => b.at - a.at);
@@ -2402,7 +2436,10 @@ export class World {
     if (now - p.knockAt < KNOCK_EVERY_MS) return this.refuse(p, 'knock', 'slow_down');
     p.knockAt = now;
     const them = owner && this.players.get(owner.id), home = !!them && this.ownCabin(them);
-    this.outbox.push({ to: id, msg: { t: 'door', x, y, name: owner?.name ?? null, home } });
+    // A door kept to oneself answers only friends (asked both ways): to anyone else, a resident, and nobody answers.
+    const answers = !!owner && (!owner.off || this.friends(id).has(owner.id) || this.friends(owner.id).has(id));
+    const view: LotView | null = !owner ? null : answers ? { name: owner.name, ...(home && { home: true as const }) } : {};
+    this.outbox.push({ to: id, msg: { t: 'door', x, y, lot: view } });
     // Someone who blocks the knocker hears nothing from them, and the knocker is not told (the lit window says they are home anyway).
     if (them && home && !this.blocks(them.rec.id).has(id)) this.outbox.push({ to: them.rec.id, msg: { t: 'knocked', name: p.rec.name } });
   }
@@ -2428,7 +2465,7 @@ export class World {
     p.movedAt = now;
     this.unsettle(mine);
     this.tellLot(mine.street, mine.lot);
-    const moved = this.settle({ id, name: p.rec.name, street: friend.street, lot });
+    const moved = this.settle({ id, name: p.rec.name, street: friend.street, lot, ...(p.rec.doorOff && { off: true as const }) });
     this.recordLot(p.rec);
     this.saveNow.set(id, p.rec);
     this.tellLot(moved.street, moved.lot);
@@ -2436,6 +2473,24 @@ export class World {
     this.place(p, this.zoneFor(this.street!, String(moved.street), now), at.x, at.y, 'down');
     this.arrive(p, from, 'exit', now);
     this.did(p, { kind: 'moved', name: friend.name });
+  }
+
+  /**
+   * The setting in the menu: the player keeps their name off their door and their window dark to their
+   * street (`off`), or shows both, as everyone does until they choose. Saved at once, and their street sees
+   * the change; they hear the setting back as it stands (unchanged, when it changed too soon before).
+   */
+  doorOff(id: string, off: boolean, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    if (off !== (p.rec.doorOff === true) && now - p.doorAt >= DOOR_EVERY_MS) {
+      p.doorAt = now;
+      if (off) p.rec.doorOff = true;
+      else delete p.rec.doorOff;
+      this.markDoor(id, off);
+      this.saveNow.set(id, p.rec);
+    }
+    this.outbox.push({ to: id, msg: { t: 'doorOff', off: p.rec.doorOff === true } });
   }
 
   /** Players deleted from storage (guests who stayed away): their lots are free again. */
@@ -3113,9 +3168,12 @@ export class World {
     }
   }
 
-  /** What lies in a zone for this player to pick up: the zone's finds, and the keepsakes lying on its map for them alone. */
+  /**
+   * What lies in a zone for this player to pick up: the zone's finds as they see them (no tool they own:
+   * findViews), and the keepsakes lying on its map for them alone.
+   */
   private findsFor(r: PlayerRecord, zone: Zone): FindView[] {
-    return [...this.findViews(zone.key), ...(this.keepsakes?.places ?? []).flatMap((k, i) => (k.map === zone.map.data.id && this.lying(r, k.item) ? [{ id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y }] : []))];
+    return [...this.findViews(zone.key, r.id), ...(this.keepsakes?.places ?? []).flatMap((k, i) => (k.map === zone.map.data.id && this.lying(r, k.item) ? [{ id: keepsakeFindId(i), item: k.item, x: k.x, y: k.y }] : []))];
   }
 
   /** A keepsake lies where it was left for a player until they carry it, and for good once it is home. */
@@ -3574,9 +3632,10 @@ export class World {
    * nothing to it.
    */
   private walkWatchers(now: number): void {
-    const every = this.sky === 'aurora' ? AURORA_WATCHER_STEP_MS : WATCHER_STEP_MS;
     for (const zone of this.zones.values()) {
       if (!zone.watchers.length || this.asleep.has(zone.map.data.id)) continue;
+      // Each region's own pace: deeper ones keep quicker watchers, and an aurora quickens them all.
+      const every = watcherStepMs(zone.map.data.watchers, this.sky === 'aurora');
       for (const w of zone.watchers) {
         // Asked again for each watcher: another one's touch may have just sent someone home.
         const here = [...zone.players];
@@ -3667,7 +3726,8 @@ export class World {
     w.x = t % w.map.width;
     w.y = Math.floor(t / w.map.width);
     w.awake = true;
-    w.readyAt = now + WATCHER_STEP_MS;
+    // Just awake, it waits a step of its region's watchers before it moves, whatever it is.
+    w.readyAt = now + watcherStepMs(w.map.data.watchers, false);
     this.toZone(w.zone.key, { t: 'creature', creature: creatureView(w) });
   }
 
@@ -3739,7 +3799,7 @@ export class World {
           continue;
         }
         if (now < s.readyAt) continue;
-        s.readyAt = now + SKULKER_STEP_MS;
+        s.readyAt = now + skulkerStepMs(s.rule);
         if (this.nearFlare(zone, s.x, s.y, now)) {
           this.sendAway(s, now);
           continue;
@@ -3854,14 +3914,16 @@ export class World {
       lines.push(`${WEATHER_WORDS[this.sky]} now. ${capital(WEATHER_WORDS[next])} ${about(w.left)}.`);
     } else lines.push(`${WEATHER_WORDS[this.sky]}.`);
     lines.push(...this.conditionLines(now));
-    for (const map of this.maps.values()) {
+    // The regions nearest town first: a board read on the way out says what comes first on it.
+    const regions = [...this.maps.values()].sort((a, b) => a.data.depth - b.data.depth);
+    for (const map of regions) {
       const s = this.surgeOf(map, now), rule = map.data.surge;
       if (!s || !rule) continue;
       if (s.phase === 'surge') lines.push(`${map.data.name}: a surge is on, ${about(s.left)} more. Get to a light.`);
       else if (s.phase === 'unstable') lines.push(`${map.data.name}: restless. A surge comes ${about(s.left)}.`);
       else lines.push(`${map.data.name}: calm. The next surge comes ${about(untilSurge(rule, s))}.`);
     }
-    for (const map of this.maps.values()) {
+    for (const map of regions) {
       const s = this.stormOf(map, now), rule = map.data.storm;
       if (!s || !rule) continue;
       if (s.phase === 'storm') lines.push(`${map.data.name}: a storm is on, ${about(s.left, true)} more. Get under a roof.`);
@@ -4118,7 +4180,7 @@ export class World {
     for (let i = 0; i < rule.count; i++) {
       const find = this.put(rule, zone, undefined);
       if (!find) this.later(rule, zone, -Infinity, undefined);
-      else if (now !== undefined) this.toZone(zone.key, { t: 'find', find: findView(find) });
+      else if (now !== undefined) this.showFind(find);
     }
   }
 
@@ -4154,8 +4216,15 @@ export class World {
       const find = this.put(g.rule, g.zone, g.not);
       // Every tile it may grow on is taken (by other finds and by piles): it tries again a while later.
       if (!find) this.later(g.rule, g.zone, now + g.rule.respawn[0] * 1000, g.not);
-      else this.toZone(g.zone.key, { t: 'find', find: findView(find) });
+      else this.showFind(find);
     }
+  }
+
+  /** A find that grew: everyone in its zone hears it, but whoever owns the tool it is, for whom it lies there for someone else (sees). */
+  private showFind(find: Find): void {
+    const msg: ServerMsg = { t: 'find', find: findView(find) };
+    if (find.rule.item.kind !== 'tool') return this.toZone(find.zone.key, msg);
+    for (const p of find.zone.players) if (this.sees(p, find)) this.outbox.push({ to: p.rec.id, msg });
   }
 
   private later(rule: Rule, zone: Zone, at: number, not: number | undefined): void {
@@ -4440,7 +4509,7 @@ export class World {
     if (had) return had;
     let street = 1;
     while (!this.streetLots(street).includes(undefined)) street++;
-    const lot = this.settle({ id: r.id, name: r.name, street, lot: this.streetLots(street).indexOf(undefined) });
+    const lot = this.settle({ id: r.id, name: r.name, street, lot: this.streetLots(street).indexOf(undefined), ...(r.doorOff && { off: true as const }) });
     this.recordLot(r);
     this.saveNow.set(r.id, this.players.get(r.id)?.rec ?? r);
     this.tellLot(lot.street, lot.lot);
@@ -4471,8 +4540,19 @@ export class World {
   /** A lot as its street sees it: whose it is, and whether they are home (online, in their own cabin: a lit window). */
   private lotView(lot: Lot | undefined): LotView | null {
     if (!lot) return null;
+    // Kept to themselves: a resident, whose window never lights.
+    if (lot.off) return {};
     const owner = this.players.get(lot.id);
     return { name: lot.name, ...(owner && this.ownCabin(owner) ? { home: true as const } : {}) };
+  }
+
+  /** The lot kept for a player follows their door's setting; their street sees it at once if it changed. */
+  private markDoor(id: string, off: boolean): void {
+    const lot = this.lots.get(id);
+    if (!lot || !!lot.off === off) return;
+    if (off) lot.off = true;
+    else delete lot.off;
+    this.tellLot(lot.street, lot.lot);
   }
 
   /** Everyone on street `n` hears how a lot on it stands now (nobody is told when nobody is out on it). */
