@@ -40,8 +40,11 @@ const theFire = { kind: 'fire' as const, map: 'woods', x: 5, y: 5 };
 const HOME: Dir[] = ['left', 'down', 'down', 'down', 'right', 'right', 'up'];
 /** From the house's way in, out to the town and back in. */
 const OUT_AND_IN: Dir[] = ['down', 'up'];
-/** The wait from the wall clock now to a minute into the next UTC day. */
-const nextDay = () => DAY - (Date.now() % DAY) + 60_000;
+/**
+ * The wait from the server's wall clock `wall` (a welcome's `clock`) to a minute into the next UTC day. Never the
+ * real clock: every test here moves the game clock on, and the server's wall with it, hours past the real one.
+ */
+const nextDay = (wall: number) => DAY - (wall % DAY) + 60_000;
 
 describe('thanks over the network', () => {
   let now = 1_000_000;
@@ -185,7 +188,8 @@ describe('thanks over the network', () => {
     expect(await h.c.next('thanked')).toEqual({ t: 'thanked', name: g.welcome.name, what: { kind: 'mark', map: 'town', x: 2, y: 4 }, line: true });
     g.c.send({ t: 'thank', who: h.id, what: { kind: 'mark', id: mark.id } });
     expect(await g.c.next('refused')).toEqual({ t: 'refused', action: 'thank', reason: 'thanked' });
-    now += nextDay();
+    // g came in at this game time: the server's wall clock is where its welcome said.
+    now += nextDay(g.welcome.clock);
     g.c.send({ t: 'thank', who: h.id, what: { kind: 'mark', id: mark.id } });
     expect(await g.c.next('did')).toMatchObject({ did: { kind: 'thanked', who: h.id } });
     expect(world().get(h.id)!.stats).toEqual({ thanked: 27 });
