@@ -257,6 +257,8 @@ describe('World: turning, joining and leaving', () => {
       stats: {},
       // Nothing stashed yet: level 1, and the next level at 30 XP.
       progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: ENERGY_MAX },
+      // Seen just before joining: no time away to rest in.
+      restedAway: 0,
       // No items, so no paper map to carry.
       tools: [],
       // No story in this world: no chapter to be in.

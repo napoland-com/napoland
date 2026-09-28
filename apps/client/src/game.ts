@@ -24,7 +24,7 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe, nextUpgrade,
+  BUBBLE_S, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe, nextUpgrade,
   objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, DIR_VEC, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
@@ -144,11 +144,18 @@ export function minutes(seconds: number): string {
   return `${m} minute${m === 1 ? '' : 's'}`;
 }
 
+/** What floats over your head as stashing earns: "+24 XP", and the part the cup of rest paid, "+24 XP (12 rested)". */
+export function xpFloat(gained: number, fromRest = 0): string {
+  return fromRest > 0 ? `+${gained} XP (${fromRest} rested)` : `+${gained} XP`;
+}
+
 /** News from the world for the interface to announce (status.ts, newsBanner). A feat's is the rank just reached. */
 export type News =
   | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView }
   /** A new level: where it stands now, and the level before (one stash can climb several). */
   | { kind: 'level'; progress: ProgressView; from: number }
+  /** You arrive rested: time away filled the cup, which holds `xp` of doubled stashing now. */
+  | { kind: 'rested'; xp: number }
   /** A new day's conditions, by name. */
   | { kind: 'conditions'; names: string[] }
   | { kind: 'chapter'; chapter: Chapter }
@@ -399,6 +406,8 @@ export class Game {
         this.stats = msg.stats;
         this.statsChanges++;
         this.progress = msg.progress;
+        // Time away worth a word: stashing counts double for a while, and the arrival says so.
+        if ((msg.restedAway ?? 0) >= RESTED_NOTICE && (msg.progress.rested ?? 0) > 0) this.news.push({ kind: 'rested', xp: msg.progress.rested! });
         this.tools = msg.tools;
         this.chapter = msg.story.chapter;
         this.storyChanges++;
@@ -544,7 +553,7 @@ export class Game {
         this.inform(didWho(msg.did, this.items), didText(msg.did, this.items));
         break;
       case 'progress':
-        if (msg.gained > 0) this.floatOverMe(`+${msg.gained} XP`, GAIN);
+        if (msg.gained > 0) this.floatOverMe(xpFloat(msg.gained, msg.fromRest), GAIN);
         if (msg.progress.level > this.progress.level) this.news.push({ kind: 'level', progress: msg.progress, from: this.progress.level });
         this.progress = msg.progress;
         break;

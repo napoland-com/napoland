@@ -63,10 +63,12 @@ async function main(): Promise<void> {
     clockShiftMs: cfg.clockShiftMs,
     parcelDayMs: cfg.parcelDayMs,
     xpMultiplier: cfg.xpMultiplier,
+    restedEveryMs: cfg.restedEveryMs,
     auth,
   });
   // Only ever in development (the configuration refuses it in production): nobody should wonder later why levels came so fast.
   if (cfg.xpMultiplier !== 1) log.warn('XP_MULTIPLIER: stashing earns more XP than it should (play-tests only)', { times: cfg.xpMultiplier });
+  if (cfg.restedEveryMs) log.warn('RESTED_EVERY_MS: time away fills the cup of rest faster than it should (play-tests only)', { everyMs: cfg.restedEveryMs });
   log.info('server started', {
     version: cfg.version,
     port: server.port,

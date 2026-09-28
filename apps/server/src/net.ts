@@ -552,6 +552,7 @@ export function attachNet(o: NetOptions): Net {
       conditions: joined.conditions,
       stats: joined.stats,
       progress: joined.progress,
+      ...(joined.restedAway > 0 && { restedAway: joined.restedAway }),
       tools: joined.tools,
       items: world.itemsVersion,
       story: joined.story,

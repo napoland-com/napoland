@@ -283,6 +283,7 @@ describe('what the interface says', () => {
     });
     expect(v.rows[0]).toEqual({ label: 'Level', text: 'Level 2 · 40 XP, 80 to go', bar: 10 / 90, tone: 'good' });
     expect(v.rows.slice(1).map(r => [r.label, r.text])).toEqual([
+      ['Rested', 'Empty. It fills while you are not playing, and then what you stash counts double.'],
       ['Energy', '40 of 100, draining'],
       ['Wet', '50%, getting wetter'],
       ['Load', '80% of what you carry easily'],

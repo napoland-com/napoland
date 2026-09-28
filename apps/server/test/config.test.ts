@@ -144,6 +144,14 @@ describe('loadConfig: signing in', () => {
     expect(problem({ XP_MULTIPLIER: '2.5' })).toMatch(/XP_MULTIPLIER must be a whole number/);
   });
 
+  it('fills the cup of rest faster for a play-test, never in production', () => {
+    expect(loadConfig({}, REPO).restedEveryMs).toBe(0);
+    expect(loadConfig({ RESTED_EVERY_MS: '1000' }, REPO).restedEveryMs).toBe(1000);
+    expect(problem({ RESTED_EVERY_MS: '1000', NODE_ENV: 'production' })).toMatch(/RESTED_EVERY_MS .* refused when NODE_ENV=production/);
+    expect(problem({ RESTED_EVERY_MS: '10' })).toMatch(/RESTED_EVERY_MS must be a whole number from 100 to 3600000/);
+    expect(problem({ RESTED_EVERY_MS: 'a second' })).toMatch(/RESTED_EVERY_MS must be a whole number/);
+  });
+
   it('takes a Supabase project: its address (as an origin) and its publishable key', () => {
     expect(loadConfig(supabase, REPO).auth).toEqual({ mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: PUBLISHABLE, jwtSecret: undefined, providers: [] });
     expect(loadConfig({ ...supabase, SUPABASE_URL: 'https://abcd.supabase.co/' }, REPO).auth).toMatchObject({ url: 'https://abcd.supabase.co' });

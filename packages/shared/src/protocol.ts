@@ -13,7 +13,7 @@ import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 21;
+export const PROTOCOL_VERSION = 23;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -443,8 +443,13 @@ export type ServerMsg =
       conditions: ConditionsView;
       /** What you did so far that counts toward feats: each feat's rank follows from its count (feats.ts, rankOf). */
       stats: Stats;
-      /** Your XP and level (progress.ts). */
+      /** Your XP and level, and the rest saved up while you were away (progress.ts). */
       progress: ProgressView;
+      /**
+       * The rest your time away was worth, since you were last seen (progress.ts, restFor), whether or not
+       * the cup had room for all of it: an arrival worth a word says so. None: no time worth any.
+       */
+      restedAway?: number;
       /** Your tools (item ids, items.ts, toolsOf), in the order you got them: kept for good, apart from the bag. */
       tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
@@ -526,8 +531,11 @@ export type ServerMsg =
   | { t: 'chest'; stash: BagSlot[] }
   /** A parcel came into your chest (parcels.ts): when you arrived signed in, or at midnight UTC while you played. */
   | { t: 'parcel'; parcel: ParcelView }
-  /** Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did). */
-  | { t: 'progress'; progress: ProgressView; gained: number }
+  /**
+   * Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did), and the rest
+   * left: `fromRest` is the part of `gained` the cup of rest paid, doubling what stashing earned (progress.ts).
+   */
+  | { t: 'progress'; progress: ProgressView; gained: number; fromRest?: number }
   /** On your map: what someone wears now (you too, after you changed it). */
   | { t: 'gear'; id: string; gear: Gear; quirks: Quirk[] }
   /** On your map: the outfit someone wears now (you too, after you chose it); null: none, their gear shows. */

@@ -63,6 +63,8 @@ export interface Config {
   parcelDayMs: number;
   /** Development only: stashing earns this many times the XP, to play-test the levels (and the outfits they open) without the trips. */
   xpMultiplier: number;
+  /** Development only: the time away (ms) that fills one XP of rest (0: 20 minutes, as it should), to play-test the cup of rest without days away. */
+  restedEveryMs: number;
   auth: AuthSettings;
 }
 
@@ -158,6 +160,12 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   const xpMultiplier = int('XP_MULTIPLIER', 1, 1, 100_000);
   // Levels are earned by bringing things home, for everyone alike: a live server never hands them out.
   if (get('NODE_ENV') === 'production' && xpMultiplier !== 1) errors.push('XP_MULTIPLIER hands out levels, so it is refused when NODE_ENV=production');
+  let restedEveryMs = 0;
+  if (get('RESTED_EVERY_MS') !== undefined) {
+    // Rest is a gift for real time away: a live server never fills it faster.
+    if (get('NODE_ENV') === 'production') errors.push('RESTED_EVERY_MS fills everyone\'s rest faster than time away does, so it is refused when NODE_ENV=production');
+    else restedEveryMs = int('RESTED_EVERY_MS', 0, 100, 3_600_000);
+  }
 
   let auth: AuthSettings = { mode: 'legacy' };
   const authMode = oneOf('AUTH_MODE', AUTH_MODES, 'legacy');
@@ -197,7 +205,7 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
     port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, storyFile: storyFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
-    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, auth,
+    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, restedEveryMs, auth,
   };
 }
 
