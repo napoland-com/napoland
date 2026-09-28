@@ -259,6 +259,8 @@ describe('World: turning, joining and leaving', () => {
       progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: ENERGY_MAX },
       // Seen just before joining: no time away to rest in.
       restedAway: 0,
+      // No merits spent and no looks bought.
+      merits: { spent: 0, owned: [] },
       // No items, so no paper map to carry.
       tools: [],
       // No story in this world: no chapter to be in.

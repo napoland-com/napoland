@@ -56,7 +56,7 @@ describe('the wardrobe\'s tiles', () => {
   });
 
   it('are one card for a guest: signing in keeps what you wear', () => {
-    expect(wardrobeView({ guest: true, level: 20, wearing: null })).toEqual({ gate: WARDROBE_GATE, tiles: [] });
+    expect(wardrobeView({ guest: true, level: 20, wearing: null })).toEqual({ gate: WARDROBE_GATE, tiles: [], patterns: [], badges: [], merits: '' });
     expect(WARDROBE_GATE).toBe('Sign in to keep what you wear. Signing in keeps your character.');
   });
 

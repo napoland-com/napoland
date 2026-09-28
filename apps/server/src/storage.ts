@@ -73,6 +73,19 @@ export interface PlayerRecord {
    * none). Loaded only when they wear one. A save without it keeps what was saved.
    */
   outfit?: string | null;
+  /**
+   * Merits (merits.ts): how many the player spent, and the looks they bought with them (ids, in the order
+   * they bought them). How many they earned follows from their XP. None: none spent, none bought. A save
+   * without them keeps what was saved, so nothing bought is ever lost.
+   */
+  meritsSpent?: number;
+  looks?: string[];
+  /**
+   * The jacket pattern and the name tag badge the player wears (merits.ts); null: none (saved as none).
+   * Loaded only when they wear one. A save without one keeps what was saved, like the outfit.
+   */
+  pattern?: string | null;
+  badge?: string | null;
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
@@ -274,13 +287,16 @@ const copyWorn = (w: Worn): Worn => Object.fromEntries(Object.entries(w).map(([s
 const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...rec, bag: copyBag(rec.bag), ...(rec.stats ? { stats: { ...rec.stats } } : {}), ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
   ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
-  ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}),
+  ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}),
 });
-/** As the database keeps a player: no outfit at all when they wear none, and no rest when the cup is empty, so both storages read back the same. */
-const stored = (rec: PlayerRecord): PlayerRecord => {
-  const out = copyRecord(rec);
-  if (!out.outfit) delete out.outfit;
-  if (!out.rested) delete out.rested;
+/**
+ * As the database keeps a player: no outfit, pattern or badge at all when they wear none, no rest when the
+ * cup is empty, and no merits when none were spent, so both storages read back the same.
+ */
+const stored = (rec: PlayerRecord): PlayerRecord => tidy(copyRecord(rec));
+const tidy = (out: PlayerRecord): PlayerRecord => {
+  for (const k of ['outfit', 'pattern', 'badge', 'rested', 'meritsSpent'] as const) if (!out[k]) delete out[k];
+  if (!out.looks?.length) delete out.looks;
   return out;
 };
 /** The counts a save writes: all but the thanks received, which only creditThanks adds to. */
@@ -355,11 +371,14 @@ export class MemoryStorage implements Storage {
         xp: rec.xp ?? 0, rested: rec.rested ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
         ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), lastSeenAt: rec.lastSeenAt,
+        ...(rec.meritsSpent !== undefined ? { meritsSpent: rec.meritsSpent } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}),
       });
-      // Taken off (null) is none; a record without an outfit keeps what was saved, like the tools and parcels.
-      if (rec.outfit) cur.outfit = rec.outfit;
-      else if (rec.outfit === null) delete cur.outfit;
-      if (!cur.rested) delete cur.rested;
+      // Taken off (null) is none; a record without an outfit (or a pattern, or a badge) keeps what was saved, like the tools and parcels.
+      for (const k of ['outfit', 'pattern', 'badge'] as const) {
+        if (rec[k]) cur[k] = rec[k];
+        else if (rec[k] === null) delete cur[k];
+      }
+      tidy(cur);
     }
   }
 
@@ -583,6 +602,11 @@ interface PlayerRow {
   outfit: string | null;
   /** Thanks received (migration 015): only creditThanks adds to it. */
   thanked: number;
+  /** Merits spent, the looks bought (null: none) and the pattern and badge worn (null: none) (018_merits.sql). */
+  merits_spent: number;
+  looks: unknown;
+  pattern: string | null;
+  badge: string | null;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -676,6 +700,11 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.parcel_welcome || r.parcel_day !== null ? { parcels: { welcome: r.parcel_welcome, day: r.parcel_day, days: r.parcel_days } } : {}),
   // What the World checks again when the player joins: an outfit they may not wear (or that no longer exists) shows as none.
   ...(r.outfit ? { outfit: r.outfit } : {}),
+  // What the World checks again when the player joins, as for the outfit.
+  ...(r.merits_spent > 0 ? { meritsSpent: r.merits_spent } : {}),
+  ...(Array.isArray(r.looks) && r.looks.some(l => typeof l === 'string') ? { looks: r.looks.filter((l): l is string => typeof l === 'string') } : {}),
+  ...(r.pattern ? { pattern: r.pattern } : {}),
+  ...(r.badge ? { badge: r.badge } : {}),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -737,14 +766,14 @@ export class PgStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
-         parcel_welcome, parcel_day, parcel_days, outfit, thanked, rested)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25)
+         parcel_welcome, parcel_day, parcel_days, outfit, thanked, rested, merits_spent, looks, pattern, badge)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27::jsonb, $28, $29)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
         rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.outfit ?? null,
-        Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.rested ?? 0,
+        Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.rested ?? 0, rec.meritsSpent ?? 0, rec.looks?.length ? JSON.stringify(rec.looks) : null, rec.pattern ?? null, rec.badge ?? null,
       ],
     );
     return r.rowCount === 1;
@@ -752,18 +781,22 @@ export class PgStorage implements Storage {
 
   async save(rec: PlayerRecord): Promise<void> {
     // A record without parcels (never had one) leaves the parcel columns as they are, as a save without a
-    // chapter leaves the story; so does one without an outfit, while null (taken off) saves none.
+    // chapter leaves the story; so does one without an outfit, a pattern or a badge, while null (taken off)
+    // saves none; and one without merits or looks leaves them, so nothing bought is ever lost.
     const p = rec.parcels;
     await this.pool.query(
       `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
        gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
        parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
-       parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, rested = $23, last_seen_at = $13 WHERE id = $1`,
+       parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, rested = $23,
+       merits_spent = COALESCE($24::integer, merits_spent), looks = COALESCE($25::jsonb, looks), pattern = CASE WHEN $26::boolean THEN $27::text ELSE pattern END,
+       badge = CASE WHEN $28::boolean THEN $29::text ELSE badge END, last_seen_at = $13 WHERE id = $1`,
       [
         rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
         rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
-        rec.outfit !== undefined, rec.outfit ?? null, rec.rested ?? 0,
+        rec.outfit !== undefined, rec.outfit ?? null, rec.rested ?? 0, rec.meritsSpent ?? null, rec.looks ? JSON.stringify(rec.looks) : null,
+        rec.pattern !== undefined, rec.pattern ?? null, rec.badge !== undefined, rec.badge ?? null,
       ],
     );
   }

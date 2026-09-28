@@ -14,8 +14,8 @@ import { DROP_LIFETIME_MS, utcDay } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
 import {
-  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsWholeRow, outfitsKeptThroughARestart, parcelsThroughRestarts,
-  playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, signInAndClaim,
+  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsMerits, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsWholeRow, meritsKeptThroughARestart,
+  outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, signInAndClaim,
 } from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
@@ -61,7 +61,7 @@ describe.skipIf(!url)('PgStorage', () => {
   it('applies each migration once', async () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
-      '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql', '016_caches.sql', '017_rested.sql',
+      '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql', '016_caches.sql', '017_rested.sql', '018_merits.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -283,6 +283,41 @@ describe.skipIf(!url)('PgStorage', () => {
       [old.id, old.name, old.tokenHash, old.x, old.y, old.dir, old.color, new Date(old.createdAt), new Date(old.lastSeenAt)],
     );
     expect((await storage.findByTokenHash(old.tokenHash))!.rested).toBeUndefined();
+  });
+
+  it('keeps merits: what was spent, the looks bought in order, the pattern and badge worn; never lost to a save without them, and the previous release\'s saves leave them alone', async () => {
+    await keepsMerits(storage);
+    const rec = { ...player('Pg Merits'), meritsSpent: 2, looks: ['chevron', 'old-stone'], pattern: 'chevron', badge: 'old-stone' };
+    expect(await storage.create(rec)).toBe(true);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(rec);
+    const row = await admin.query(`SELECT merits_spent, looks, pattern, badge FROM ${schema}.players WHERE id = $1`, [rec.id]);
+    expect(row.rows).toEqual([{ merits_spent: 2, looks: ['chevron', 'old-stone'], pattern: 'chevron', badge: 'old-stone' }]);
+    // The release before 018 saves with the statement it knows: what was bought and worn stays as it is.
+    await admin.query(
+      `UPDATE ${schema}.players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
+       gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
+       parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
+       parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, rested = $23, last_seen_at = $13 WHERE id = $1`,
+      [rec.id, 'stonebrook', 8, 21, 'down', rec.color, 90, '[]', 0, '{}', 13_000, '{"items": {}, "out": {}}', new Date(rec.lastSeenAt), null, null, null, null, null, null, null, false, null, 0],
+    );
+    expect(await storage.findByTokenHash(rec.tokenHash)).toMatchObject({ xp: 13_000, meritsSpent: 2, looks: ['chevron', 'old-stone'], pattern: 'chevron', badge: 'old-stone' });
+    // Whatever else the looks column holds reads as none bought (the World checks every id too).
+    await admin.query(`UPDATE ${schema}.players SET looks = '{"not": "a list"}' WHERE id = $1`, [rec.id]);
+    expect((await storage.findByTokenHash(rec.tokenHash))!.looks).toBeUndefined();
+  });
+
+  it('keeps merits through a restart of the server, over the network', async () => {
+    const fresh = await freshSchema();
+    const first = new PgStorage(fresh.url, MIGRATIONS);
+    const second = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await first.init();
+      await second.init();
+      await meritsKeptThroughARestart(first, second);
+    } finally {
+      await first.close();
+      await second.close();
+    }
   });
 
   it('keeps the cup of rest through a restart of the server, over the network', async () => {
