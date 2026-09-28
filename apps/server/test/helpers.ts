@@ -568,6 +568,25 @@ export async function keepsWhatANewerReleaseSaved(storage: Storage, items: Items
 }
 
 /**
+ * The mark that what a player wears was counted as taken out of the stash, once (PlayerRecord.wornOut), on
+ * `storage` (in memory, or a real database): kept with the counts but never among them, and never
+ * forgotten by a save of a record without it.
+ */
+export async function keepsTheWornOutMark(storage: Storage): Promise<void> {
+  const { token } = await savedPlayer(storage, { stats: { found: 2 } });
+  const load = async () => (await storage.findByTokenHash(hashToken(token)))!;
+  const rec = await load();
+  expect(rec.wornOut).toBeUndefined();
+  await storage.save({ ...rec, wornOut: true, lastSeenAt: rec.lastSeenAt + 1000 });
+  const marked = await load();
+  expect(marked.wornOut).toBe(true);
+  expect(marked.stats).toEqual({ found: 2 });
+  const { wornOut: _mark, ...without } = marked;
+  await storage.save({ ...without, lastSeenAt: marked.lastSeenAt + 1000 });
+  expect((await load()).wornOut).toBe(true);
+}
+
+/**
  * Tools, parcels and the outfit kept side by side in one player (on `storage`, in memory or a real
  * database): made with all three, saved with all three changed, and a save with none of them (a record
  * that never had them) loses none. Returns the player's identity and what was kept.

@@ -1053,6 +1053,18 @@ export class World {
     r.map = map.data.id;
     if (zone.copy) r.zone = zone.copy;
     else delete r.zone;
+    // What they wear counts as taken out of the stash (equip), which the releases before gear went on the
+    // road never counted: counted now, once, so a piece put on back then (stashed first, for its XP) earns
+    // nothing again when it comes off at the chest. Only what earns XP: for the rest, out never matters.
+    if (!r.wornOut) {
+      const stash = r.stash ?? emptyStash(), out = { ...stash.out };
+      for (const slot of SLOTS) {
+        const item = r.gear?.[slot];
+        if (item && (this.items.get(item)?.xp ?? 0) > 0) out[item] = (out[item] ?? 0) + 1;
+      }
+      r.stash = { ...stash, out };
+      r.wornOut = true;
+    }
     // An outfit shows only while they may wear it (signed in, the level reached). One they may not (it
     // is from a newer release, or they play as a guest now) shows as none, and stays saved for when they may.
     if (r.outfit && !mayWear(r.outfit, levelOf(r.xp ?? 0), !this.guest(r))) delete r.outfit;

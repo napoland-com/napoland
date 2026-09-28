@@ -14,7 +14,7 @@ import { DROP_LIFETIME_MS, utcDay } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type CacheItemRecord, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
 import {
-  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsMerits, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsWhatANewerReleaseSaved, keepsWholeRow, meritsKeptThroughARestart,
+  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsMerits, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsTheWornOutMark, keepsWhatANewerReleaseSaved, keepsWholeRow, meritsKeptThroughARestart,
   outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, signInAndClaim,
 } from './helpers';
 import { itemsData } from './fixtures';
@@ -403,6 +403,10 @@ describe.skipIf(!url)('PgStorage', () => {
       old.id, 'stonebrook', 8, 21, 90, '[]', '{"items": {}, "out": {}}', new Date(old.lastSeenAt),
     ]);
     expect((await storage.findByTokenHash(old.tokenHash))!.tools).toEqual(['radio']);
+  });
+
+  it('keeps the mark of what was worn counted as taken out, with the counts but not among them, never lost to a save without it', async () => {
+    await keepsTheWornOutMark(storage);
   });
 
   it('keeps what a newer release saved that this one does not know, written back as it was saved', async () => {

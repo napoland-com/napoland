@@ -99,6 +99,12 @@ export interface PlayerRecord {
    * apart: a read has them back in the bag.
    */
   kept?: Kept;
+  /**
+   * What the player wears was counted as taken out of the stash, once (World.join): the releases before
+   * gear went on the road put pieces on without counting them. Kept with the counts (`wornOut` in the
+   * stats' jsonb, no migration), and never forgotten by a save without it.
+   */
+  wornOut?: true;
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
@@ -339,6 +345,8 @@ const tidy = (out: PlayerRecord): PlayerRecord => {
   }
   return out;
 };
+/** The counts' jsonb as a save writes it: the counts, and the mark of what was worn counted as taken out (PlayerRecord.wornOut). */
+const savedCounts = (rec: PlayerRecord): Record<string, unknown> => ({ ...savedStats(rec.stats), ...(rec.wornOut ? { wornOut: 1 } : {}) });
 /** The counts a save writes: all but the thanks received, which only creditThanks adds to. */
 const savedStats = (stats: Stats | undefined): Stats => {
   const { thanked: _thanked, ...rest } = stats ?? {};
@@ -393,7 +401,7 @@ export class MemoryStorage implements Storage {
     const taken = (key: string | null, index: Map<string, string>) => key !== null && index.has(key);
     if (this.byId.has(rec.id) || taken(rec.tokenHash, this.idByToken) || taken(rec.authSub, this.idBySub) || this.idByName.has(name)) return false;
     const thanked = Math.max(0, Math.floor(rec.stats?.thanked ?? 0));
-    this.byId.set(rec.id, { ...stored(rec), stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) } });
+    this.byId.set(rec.id, { ...stored(rec), stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) }, ...(rec.wornOut ? { wornOut: true as const } : {}) });
     if (rec.tokenHash !== null) this.idByToken.set(rec.tokenHash, rec.id);
     if (rec.authSub !== null) this.idBySub.set(rec.authSub, rec.id);
     this.idByName.set(name, rec.id);
@@ -407,7 +415,7 @@ export class MemoryStorage implements Storage {
       const thanked = cur.stats?.thanked;
       Object.assign(cur, {
         map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(savedBag(rec)), wet: rec.wet ?? 0,
-        stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) },
+        stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) }, ...(rec.wornOut || cur.wornOut ? { wornOut: true as const } : {}),
         xp: rec.xp ?? 0, rested: rec.rested ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
         ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), lastSeenAt: rec.lastSeenAt,
@@ -712,6 +720,11 @@ const trail = (json: unknown): Array<[number, number]> =>
   Array.isArray(json) ? json.filter((t): t is [number, number] => Array.isArray(t) && t.length === 2 && t.every(Number.isInteger)) : [];
 /** A jsonb object of counts as the server wrote it; anything else reads as none (the World checks it again). */
 const stats = (json: unknown): Stats => (typeof json === 'object' && json !== null && !Array.isArray(json) ? (json as Stats) : {});
+/** Saved counts without the mark of what was worn counted as taken out (PlayerRecord.wornOut). */
+const withoutMark = (s: Stats): Stats => {
+  const { wornOut: _mark, ...counts } = s as Stats & { wornOut?: unknown };
+  return counts;
+};
 /** A jsonb stash as the server wrote it; anything else reads as empty (the World checks every count too). */
 const stash = (json: unknown): Stash => {
   const o = (typeof json === 'object' && json !== null && !Array.isArray(json) ? json : {}) as Partial<Stash>;
@@ -734,8 +747,10 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   energy: r.energy,
   bag: slots(r.bag),
   wet: r.wet,
-  // The thanks received live in a column of their own; one among the other counts (it never is) is left out.
-  stats: { ...savedStats(stats(r.stats)), ...(Number.isInteger(r.thanked) && r.thanked > 0 ? { thanked: r.thanked } : {}) },
+  // The thanks received live in a column of their own; one among the other counts (it never is) is left out,
+  // and so is the mark of what was worn counted as taken out, which the record has apart (wornOut).
+  stats: { ...savedStats(withoutMark(stats(r.stats))), ...(Number.isInteger(r.thanked) && r.thanked > 0 ? { thanked: r.thanked } : {}) },
+  ...((stats(r.stats) as Record<string, unknown>).wornOut ? { wornOut: true as const } : {}),
   xp: r.xp,
   // An empty cup reads as none, as a new player's record has it.
   ...(r.rested > 0 ? { rested: r.rested } : {}),
@@ -821,7 +836,7 @@ export class PgStorage implements Storage {
          $28::jsonb, $29, $30)
        ON CONFLICT DO NOTHING`,
       [
-        rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)),
+        rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedCounts(rec)),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
         rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.outfit ?? null,
         Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? 0, rec.looks?.length ? JSON.stringify(rec.looks) : null,
@@ -838,14 +853,15 @@ export class PgStorage implements Storage {
     // always said, as the map is: a record without one is in the main copy. So is the cup of rest: none is empty.
     const p = rec.parcels;
     await this.pool.query(
-      `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
+      `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9,
+       stats = $10::jsonb || CASE WHEN players.stats ? 'wornOut' THEN '{"wornOut": 1}'::jsonb ELSE '{}'::jsonb END, xp = $11, stash = $12::jsonb,
        gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
        parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
        parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23, rested = $24,
        merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
        badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, last_seen_at = $13 WHERE id = $1`,
       [
-        rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)), rec.xp ?? 0,
+        rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedCounts(rec)), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
         rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
         rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? null, rec.looks ? JSON.stringify(rec.looks) : null,
