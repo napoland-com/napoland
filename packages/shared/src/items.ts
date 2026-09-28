@@ -72,6 +72,11 @@ export interface ItemUse {
    */
   resist?: Partial<Record<Element, number>>;
   lasts?: number;
+  /**
+   * A meal cooked at a fire (meals.ts), eaten or drunk as this says: what it does is the item's `eaten`,
+   * until you come home or collapse.
+   */
+  meal?: 'eat' | 'drink';
 }
 
 export interface ItemDef {
@@ -110,6 +115,8 @@ export interface ItemDef {
   seal?: string;
   /** What a charm does while it is in your bag, as factors (feats.ts). */
   charm?: Partial<Mods>;
+  /** A meal (use.meal): what it does once eaten, until you come home or collapse, the same way (meals.ts). */
+  eaten?: Partial<Mods>;
   /** Gear only: the slot it is worn in, its tier, what it resists (0.3: 30% of the loss) and extra energy it gives. */
   slot?: Slot;
   tier?: Tier;
@@ -150,15 +157,22 @@ export interface FindRule {
   steps?: [number, number];
   /** Only within `radius` tiles (center to center) of any tile one of these objects covers, e.g. scrap near wrecks. */
   near?: { kinds: Array<MapObject['kind']>; radius: number };
+  /** Only within `radius` tiles (center to center) of a tile of one of these kinds: fiddleheads by the water, fir tips at the forest's edge. */
+  by?: { tiles: TileKind[]; radius: number };
+  /** Only where no tile of these kinds lies within `radius` (center to center): berries out in the open of a clearing, away from the trees. */
+  clear?: { tiles: TileKind[]; radius: number };
   /** How many lie out there at once. */
   count: number;
   /** Seconds before a picked one grows back somewhere else: a random time in this range. */
   respawn: [number, number];
   /**
    * Only then, and gone as soon as it is over: while the region is restless before a surge (and
-   * during it), during an aurora night, or while a storm blows over the region. Left out: always.
+   * during it), during an aurora night, while a storm blows over the region, or while it rains over it
+   * (and `after` seconds more). Left out: always.
    */
   when?: FindWhen;
+  /** With `when: 'rain'`: it still grows this many seconds after the rain stops (chanterelles, for a while after it). */
+  after?: number;
   /** Only while this daily or weekly condition is on (sky.ts, conditionsAt), and gone when it is over. Never with `when`. */
   condition?: string;
   /** Only within `r` tiles (center to center) of tile x,y: crates by the pond. */
@@ -167,7 +181,7 @@ export interface FindRule {
   season?: Season;
 }
 
-export type FindWhen = 'unstable' | 'aurora' | 'storm';
+export type FindWhen = 'unstable' | 'aurora' | 'storm' | 'rain';
 
 export interface ItemsData {
   /** Bump when items or finds change; a client with another version reloads. */
@@ -176,6 +190,8 @@ export interface ItemsData {
   finds: FindRule[];
   /** What the workbench at home makes (gear.ts). None: it makes nothing. */
   recipes?: Recipe[];
+  /** What cooks at a burning fire, from what you carry, into a meal in your bag (meals.ts). None: nothing cooks. */
+  cooking?: Recipe[];
   /** Seconds out in the wilds that wear gear of each tier out (gear.ts); a tier left out never wears. */
   wear?: Partial<Record<Tier, number>>;
   /** What mending a piece of each tier costs at the workbench, from the stash. */
@@ -545,7 +561,20 @@ export function findTiles(map: TileMap, rule: FindRule): Array<{ x: number; y: n
     }
     if (rule.around && Math.hypot(rule.around.x - x, rule.around.y - y) > rule.around.r) continue;
     if (rule.near && !near.some(([ox, oy]) => Math.hypot(ox - x, oy - y) <= rule.near!.radius)) continue;
+    if (rule.by && !tileNear(map, x, y, rule.by.tiles, rule.by.radius)) continue;
+    if (rule.clear && tileNear(map, x, y, rule.clear.tiles, rule.clear.radius)) continue;
     out.push({ x, y });
   }
   return out;
+}
+
+/** Is a tile of one of these kinds within `radius` of tile x,y (center to center), itself included? Off the map counts as nothing. */
+function tileNear(map: TileMap, x: number, y: number, kinds: readonly TileKind[], radius: number): boolean {
+  const r = Math.ceil(radius);
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    if (Math.hypot(dx, dy) > radius) continue;
+    const k = map.kind(x + dx, y + dy);
+    if (k && kinds.includes(k)) return true;
+  }
+  return false;
 }

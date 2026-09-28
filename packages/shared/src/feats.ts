@@ -9,8 +9,8 @@
  * server and the client always agree, and counts kept from before ranks existed are worth their rank
  * the moment a player joins.
  *
- * Charms (items.ts) change the same things while they are in your bag. Both go into one set of Mods,
- * so they add up the same way.
+ * Charms (items.ts) change the same things while they are in your bag, and a meal eaten (meals.ts) until
+ * you come home. They all go into one set of Mods, so they add up the same way.
  */
 import type { TileMap } from './map';
 import type { Weather } from './protocol';
@@ -41,13 +41,17 @@ export interface Mods {
   markEnergy: number;
   /** How hard the whole drain is out in the wilds (cozy, comfort.ts: you tire slower after warming at your own fire). */
   drain: number;
+  /** More energy on the bar (a fir-tip tea, meals.ts: until you come home). */
+  energy: number;
+  /** Cold resistance on top of what you wear, under the same cap (a chanterelle stew, meals.ts). */
+  cold: number;
 }
 
-export const NO_MODS: Readonly<Mods> = { wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0, marks: 1, markEnergy: 0, drain: 1 };
+export const NO_MODS: Readonly<Mods> = { wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0, marks: 1, markEnergy: 0, drain: 1, energy: 0, cold: 0 };
 /** Every value in Mods; the chances among them add up as separate tries, the amounts add up, the rest multiply. */
-export const MODS: readonly (keyof Mods)[] = ['wetting', 'load', 'hitch', 'warmth', 'wear', 'farDrain', 'double', 'marks', 'markEnergy', 'drain'];
+export const MODS: readonly (keyof Mods)[] = ['wetting', 'load', 'hitch', 'warmth', 'wear', 'farDrain', 'double', 'marks', 'markEnergy', 'drain', 'energy', 'cold'];
 export const CHANCES: readonly (keyof Mods)[] = ['double'];
-export const AMOUNTS: readonly (keyof Mods)[] = ['markEnergy'];
+export const AMOUNTS: readonly (keyof Mods)[] = ['markEnergy', 'energy', 'cold'];
 
 /** Does value `v` of Mods key `k` change anything (a charm that does not is a mistake in the content)? */
 export function modChanges(k: keyof Mods, v: unknown): boolean {
@@ -177,7 +181,7 @@ function put(out: Mods, k: keyof Mods, v: number): void {
   else out[k] = CHANCES.includes(k) ? 1 - (1 - out[k]) * (1 - Math.min(1, Math.max(0, v))) : out[k] * v;
 }
 
-/** Every rank reached and every charm carried (and anything else that changes them the same way: being cozy), in one set of Mods. */
+/** Every rank reached and every charm carried (and anything else that changes them the same way: being cozy, a meal eaten), in one set of Mods. */
 export function modsOf(stats: Stats, charms: ReadonlyArray<Partial<Mods>> = []): Mods {
   const out: Mods = { ...NO_MODS };
   for (const f of FEATS) {

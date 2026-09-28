@@ -11,7 +11,7 @@ import { minutes, type News } from './game';
 import type { FeatView, StatusView } from './hud';
 import { ELEMENT_WORDS, type Items } from './items';
 import { parcelBanner } from './parcels';
-import { cozyText, meritText, thousands } from './said';
+import { cozyText, mealsText, meritText, thousands } from './said';
 import { inWardrobe } from './shop';
 import { outfitWords } from './wardrobe';
 
@@ -163,6 +163,9 @@ export function statusView(s: StatusInput): StatusView {
   // The warmth of your own fire (comfort.ts): out in the wilds you tire slower while it lasts.
   const cozy = cozyText(s.body.cozy ?? 0, s.body.fireside);
   if (cozy) rows.push({ label: 'Cozy', text: cozy, tone: 'good' });
+  // What you ate this trip (meals.ts), and what it does, until you come home.
+  const meals = mealsText(s.body.meals ?? [], s.items);
+  if (meals) rows.push({ label: 'Meals', text: meals, tone: 'good' });
   const charms = [...new Set(s.bag.map(b => s.items.get(b.item)).filter(d => d.kind === 'charm').map(d => d.name))];
   if (charms.length) rows.push({ label: 'Charms', text: charms.join(', '), tone: 'good' });
   if (s.surge && s.surge.phase !== 'calm') {

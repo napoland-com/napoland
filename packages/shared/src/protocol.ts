@@ -146,6 +146,11 @@ export const ClientMsg = z.discriminatedUnion('t', [
    * x,y, next to you: from that slot first, then from others holding the same. A fire takes as many as fit.
    */
   z.object({ t: z.literal('feed'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63), count: z.number().int().positive().max(FEED_MAX).optional() }),
+  /**
+   * Cook `recipe` (meals.ts, `cooking` in content/items.json) at the fire on tile x,y, next to you, while it
+   * burns: from what you carry, into a meal in your bag.
+   */
+  z.object({ t: z.literal('cook'), x: z.number().int(), y: z.number().int(), recipe: z.string().min(1).max(40) }),
   /** Read the notice board on tile x,y, next to you: how things stand out there. */
   z.object({ t: z.literal('board'), x: z.number().int(), y: z.number().int() }),
   /** Open the chest (your stash) on tile x,y, next to you: the server answers with what is in it. */
@@ -410,7 +415,7 @@ export interface StoneView {
 
 /**
  * What something you asked for did, once the server carried it out: the client says it in the text box,
- * in its own words, from these facts (never guessed). One of these follows every feed, use, discard,
+ * in its own words, from these facts (never guessed). One of these follows every feed, cook, use, discard,
  * craft, mend, upgrade, open and thanks that went through (an upgrade that did not take went through:
  * its materials are spent), after everything else the action changed; a refusal is `refused`.
  */
@@ -431,6 +436,10 @@ export type Did =
       kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number };
       effect?: { lasts: number; again?: true };
     }
+  /** You cooked `count` of the meal `item` at a fire: it is in your bag. */
+  | { kind: 'cooked'; item: string; count: number }
+  /** You ate (or drank) the meal `item` (meals.ts): it works until you come home or collapse; `energy`, what it gave the bar at once. */
+  | { kind: 'ate'; item: string; energy?: number }
   /**
    * The workbench made `count` of `item`, into your stash. A tool (its kind says so) went to your tools
    * instead, yours for good: your tools came before this in a `tools` message. Furniture went into its
@@ -487,6 +496,8 @@ export interface BodyView {
   cozy?: number;
   /** Seconds you have stood by your own fire, in your own cabin, as of this message (counting on while you stay). None: you are not by it. */
   fireside?: number;
+  /** The meals you ate this trip (meals.ts), in the order you ate them: they work until you come home or collapse. None: no meal. */
+  meals?: string[];
 }
 
 /** Why the server did not do what was asked. */
@@ -594,7 +605,13 @@ export type Refusal =
   /** Nobody else put their hands to the slab with yours: it will not move for one pair. */
   | 'one_pair'
   /** You opened the slab this restless time already: once each. */
-  | 'opened';
+  | 'opened'
+  /** The fire is out: nothing cooks on it until someone lights it again. */
+  | 'fire_out'
+  /** You ate that meal this trip already: the same one twice does nothing more. */
+  | 'ate_it'
+  /** You ate two meals this trip already: a third waits for the next trip. */
+  | 'two_meals';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -884,7 +901,7 @@ export type ServerMsg =
    * out to be comes in `did` instead.
    */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool'; double?: true }
-  /** What a feed, use, discard, craft, mend, upgrade, open or thanks you asked for did (for the text box). */
+  /** What a feed, cook, use, discard, craft, mend, upgrade, open or thanks you asked for did (for the text box). */
   | { t: 'did'; did: Did }
   /**
    * Someone (by `name`) thanked you, for `what` (thanks.ts). Out in the wilds it gave you `energy` (none:
@@ -1051,6 +1068,8 @@ export type RefusedAction =
   | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
   | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn'
   | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge'
+  | 'say' | 'call' | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 

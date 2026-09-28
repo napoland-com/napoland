@@ -43,6 +43,42 @@ const ICONS: Record<string, string> = {
     <path d="M5 12.6h22M5 15h22" stroke="#e9cfa4" stroke-width="1.3"/>
     <path d="M27 17v6.5h-6.5z" fill="#d7806f"/>
     <path d="M7.5 23.5v2.2M10.5 23.5v2.8M13.5 23.5v2M16.5 23.5v2.6"/></g>`),
+  // What cooks at a fire (meals.ts). A sprig of huckleberries: dark-blue berries, each with its pale crown, and two leaves.
+  huckleberries: icon(`<path d="M6 7.5c3.5 2 6 5.5 7.2 10.5M13.2 18c2-3.4 5.2-5.6 9.3-6.4" stroke-width="1.4"/>
+    <path d="M6.2 7.6c-2.8.6-3.6 3.6-2.3 5.7 2.5-.3 3.6-2.9 2.3-5.7z" fill="#5d9c4c"/><path d="M22.5 11.6c1.5 2.6.2 5.4-2.3 5.9-1-2.3.1-5.1 2.3-5.9z" fill="#5d9c4c"/>
+    <circle cx="11" cy="21.5" r="3.6" fill="#3b4a9c"/><circle cx="17.8" cy="21" r="3.3" fill="#4a5bb4"/><circle cx="14.5" cy="26" r="3.2" fill="#34438c"/>
+    <path d="M10 20.3l1 .6 1-.6M16.9 19.9l.9.6.9-.6M13.6 24.9l.9.6.9-.6" stroke="#c9d2f5" stroke-width="1"/>`),
+  // Two fiddleheads: young fern fronds, each tightly curled at the top of its stem.
+  fiddleheads: icon(`<path d="M11 28c-.5-6 .2-11 1.8-14.2" stroke-width="3.6"/><path d="M11 28c-.5-6 .2-11 1.8-14.2" stroke="#6bab4f" stroke-width="2"/>
+    <path d="M21.5 28c.4-5 0-8.6-1.2-11.5" stroke-width="3.6"/><path d="M21.5 28c.4-5 0-8.6-1.2-11.5" stroke="#6bab4f" stroke-width="2"/>
+    <circle cx="10.2" cy="10" r="5.2" fill="#7fc15a"/><path d="M10.2 10c0-1.4 1.6-1.7 2.3-.7.9 1.4-.5 3.3-2.3 3.2-2.4-.1-3.5-2.8-2.4-4.7 1.3-2.3 4.8-2.5 6.3-.3" stroke="#3f7a2f" stroke-width="1.2"/>
+    <circle cx="21.6" cy="13.2" r="4.4" fill="#8fd068"/><path d="M21.6 13.2c0-1.2 1.4-1.4 1.9-.6.7 1.2-.4 2.8-1.9 2.7-2-.1-2.9-2.3-2-3.9 1.1-1.9 4-2.1 5.3-.3" stroke="#3f7a2f" stroke-width="1.1"/>`),
+  // The end of a fir branch: a woody stem and its soft new needles, bright green.
+  'fir-tips': icon(`<path d="M5 27L25.5 6.5" stroke-width="2.4"/><path d="M5 27L25.5 6.5" stroke="#7a5a3a" stroke-width="1.1"/>
+    <path d="M9 23l-3.6-2.2M9 23l1.6 3.8M13 19l-4.2-2.4M13 19l1.8 4.4M17 15l-4.4-2.6M17 15l2 4.6M21 11l-4.2-2.6M21 11l2.2 4.2M24.2 7.8l-3.2-2.2M24.2 7.8l2 3.4" stroke="#8ee06a" stroke-width="2.4"/>
+    <path d="M25.5 6.5l1.8-2" stroke="#c9f5a8" stroke-width="2"/>`),
+  // Two chanterelles: golden funnels, their gills running down the stem.
+  chanterelles: icon(`${halo(16, 18, 12, '#ffb84a')}
+    <path d="M6 12.5c0-1.5 2.4-2.6 6-2.6s6 1.1 6 2.6c0 1.4-2.2 1.7-3.1 3.2l-1 9.3h-3.8l-1-9.3C8.2 14.2 6 13.9 6 12.5z" fill="#f0a93c"/>
+    <path d="M9.5 13.8l2 8M12 14.2v9M14.5 13.8l-2 8" stroke="#b86f1c" stroke-width="1"/>
+    <path d="M17 17.5c0-1.2 2-2.1 4.8-2.1s4.8.9 4.8 2.1c0 1.1-1.7 1.4-2.4 2.6l-.8 7.4h-3.1l-.8-7.4c-.7-1.2-2.5-1.5-2.5-2.6z" fill="#f7bf57"/>
+    <path d="M3.5 28h25"/>`),
+  // A tin cup of fir-tip tea: green, steaming, a sprig on its rim.
+  'fir-tip-tea': icon(`<path d="M11 8.5c-1-1.6 1-2.8 0-4.5M16 8c-1-1.6 1-2.8 0-4.5M21 8.5c-1-1.6 1-2.8 0-4.5" stroke-width="1.3"/>
+    <path d="M23 15h2.2c1.5 0 2.6 1.2 2.6 2.7s-1.1 2.8-2.6 2.8H23" stroke-width="1.8"/>
+    <path d="M6.5 11.5h17v13c0 2-1.6 3.5-3.5 3.5H10c-1.9 0-3.5-1.5-3.5-3.5z" fill="#a7b6be"/>
+    <ellipse cx="15" cy="11.5" rx="8.5" ry="2.2" fill="#6fae52"/>
+    <path d="M9 11.2l3.2-3.4M10.6 9.2l-2 .2M11.8 8.4l.1-2" stroke="#8ee06a" stroke-width="1.5"/>`),
+  // A tin of chanterelle stew over the coals: golden pieces, green bits, and the steam off it.
+  'chanterelle-stew': icon(`<path d="M12 9c-1-1.6 1-2.8 0-4.5M17 8.5c-1-1.6 1-2.8 0-4.5" stroke-width="1.3"/>
+    <path d="M4.5 13h23M5.5 13v8.5c0 3.6 4.7 6.5 10.5 6.5s10.5-2.9 10.5-6.5V13" fill="#6d7c85"/>
+    <ellipse cx="16" cy="13" rx="10.5" ry="3" fill="#c99a4a"/>
+    <path d="M10 12.5l2-.8M15 13.8l2.2-.6M19.5 12.2l2 .8" stroke="#f7c35a" stroke-width="2"/><path d="M12.5 14l1.4-.4M18 12l1.2.4" stroke="#6bab4f" stroke-width="1.6"/>`),
+  // Berry pemmican: two dense dark cakes, flecked with berries, on a scrap of wax paper.
+  'berry-pemmican': icon(`<path d="M3.5 22.5l10-6.5 15 5-10.5 7z" fill="#e9dfc4"/>
+    <path d="M6.5 18.5l7.5-4.6 8 3v5.4l-7.5 4.6-8-3z" fill="#5a3b33"/><path d="M6.5 18.5l7.5-4.6 8 3-7.5 4.7z" fill="#7a5044"/>
+    <path d="M12.5 12.5l6.8-4.2 7.2 2.7v4.8l-6.8 4.2-7.2-2.7z" fill="#5a3b33"/><path d="M12.5 12.5l6.8-4.2 7.2 2.7-6.8 4.3z" fill="#7a5044"/>
+    <circle cx="11" cy="18.4" r="1" fill="#6f7fd6" stroke="none"/><circle cx="15.6" cy="17.4" r="1" fill="#6f7fd6" stroke="none"/><circle cx="18.6" cy="11.4" r="1" fill="#6f7fd6" stroke="none"/><circle cx="21.8" cy="12.6" r="1" fill="#6f7fd6" stroke="none"/>`),
   // A violet crystal floating over its shadow.
   shard: icon(`${halo(16, 14, 13, '#a77dff')}
     <ellipse cx="16" cy="29.2" rx="4.6" ry="1.2" fill="#000" opacity=".4" stroke="none"/>

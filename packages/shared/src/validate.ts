@@ -654,12 +654,20 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       if (i.color !== undefined && !/^#[0-9a-f]{6}$/i.test(i.color)) err(`${name}: color is #rrggbb`);
     } else if (i.slot || i.resist || i.bag || i.bonus || i.tier) err(`${name}: only gear has a slot, a tier, resistances, a bag or bonus energy`);
     if (!Number.isInteger(i.stack) || i.stack < 1) err(`${name}: stack must be a whole number from 1`);
-    const effects = Object.values(i.use ?? {}).filter(v => (typeof v === 'number' && v !== 0) || v === true).length;
+    const effects = Object.values(i.use ?? {}).filter(v => (typeof v === 'number' && v !== 0) || v === true || v === 'eat' || v === 'drink').length;
     if (i.kind === 'consumable' && !effects) err(`${name} is a consumable that does nothing when used`);
     if (i.use && !effects) err(`${name}: use does nothing`);
     if (i.kind === 'charm' && !MODS.some(k => modChanges(k, i.charm?.[k]))) err(`${name} is a charm that does nothing`);
     if (i.kind !== 'charm' && i.charm) err(`${name}: only charms have a charm`);
     for (const k of Object.keys(i.charm ?? {})) if (!MODS.includes(k as keyof Mods)) err(`${name}: a charm changes ${MODS.slice(0, -1).join(', ')} or ${MODS.at(-1)}, not ${k}`);
+    // A meal (meals.ts) is eaten or drunk from the bag, and does something until you come home: nothing else, and nothing but it.
+    if (i.use?.meal !== undefined || i.eaten !== undefined) {
+      if (i.use?.meal !== 'eat' && i.use?.meal !== 'drink') err(`${name}: a meal is eaten or drunk (use.meal: eat or drink)`);
+      if (i.kind !== 'consumable') err(`${name}: a meal is a consumable, used up as it is eaten`);
+      if (!MODS.some(k => modChanges(k, i.eaten?.[k]))) err(`${name} is a meal that does nothing (eaten)`);
+      for (const k of Object.keys(i.eaten ?? {})) if (!MODS.includes(k as keyof Mods)) err(`${name}: a meal changes ${MODS.slice(0, -1).join(', ')} or ${MODS.at(-1)}, not ${k}`);
+      if (Object.keys(i.use ?? {}).some(k => k !== 'meal')) err(`${name}: eating a meal is all it does (its use has nothing but meal)`);
+    }
     for (const [field, v] of [['weight', i.weight], ['fuel', i.fuel], ['charge', i.charge], ['xp', i.xp]] as const) {
       if (v !== undefined && !(typeof v === 'number' && v > 0)) err(`${name}: ${field} must be a number above 0`);
     }
@@ -811,6 +819,28 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (!tools.has(need)) err(`map ${m.id}: some of it opens only with ${need}, which is not a tool: what opens the way is yours for good`);
     }
   }
+  // What cooks at a fire (meals.ts): a meal, from things carried in the bag that grow out there.
+  const cookIds = new Set<string>();
+  for (const r of data.cooking ?? []) {
+    const name = `cooking ${JSON.stringify(r.id)}`;
+    if (!/^[a-z][a-z0-9-]*$/.test(r.id ?? '')) err(`${name}: ids are lowercase letters, digits and -`);
+    if (cookIds.has(r.id)) err(`${name} is defined twice`);
+    cookIds.add(r.id);
+    const made = data.items.find(d => d.id === r.make);
+    if (!made) err(`${name} makes ${r.make}, which is not an item`);
+    else if (!made.use?.meal || !made.eaten) err(`${name} makes ${r.make}, which is not a meal`);
+    if (r.count !== undefined && !(Number.isInteger(r.count) && r.count >= 1)) err(`${name}: count is a whole number from 1`);
+    if (!r.needs?.length) err(`${name} needs nothing`);
+    for (const n of r.needs ?? []) {
+      const def = data.items.find(d => d.id === n.item);
+      if (!def) err(`${name} needs ${n.item}, which is not an item`);
+      // What cooks is carried: never something that stays out of a bag, a piece of gear, a live find or another meal.
+      else if (['tool', 'sealed', 'furniture', 'keepsake', 'gear'].includes(def.kind) || def.live || def.use?.meal) err(`${name} needs ${n.item}, which does not cook`);
+      else if (!data.finds.some(f => f.item === n.item)) warn(`${name} needs ${n.item}, which grows nowhere`);
+      if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
+    }
+  }
+  for (const i of data.items) if (i.use?.meal && !(data.cooking ?? []).some(r => r.make === i.id)) warn(`item ${JSON.stringify(i.id)}: a meal nothing cooks`);
   // What a radio listens for must be something that lies out there.
   for (const i of data.items) for (const f of Array.isArray(i.senses?.finds) ? i.senses.finds : []) {
     if (!ids.has(f.item)) err(`item ${JSON.stringify(i.id)} listens for ${f.item}, which is not an item`);
@@ -895,9 +925,16 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (f.steps && !(f.steps.length === 2 && f.steps[0] >= 0 && f.steps[0] <= f.steps[1])) err(`${name}: steps is [nearest, farthest], from 0`);
     for (const k of f.on ?? []) if (!tileKinds.has(k)) err(`${name}: unknown tile kind ${k as TileKind}`);
     if (f.near && !(f.near.radius > 0 && f.near.kinds.length)) err(`${name}: near needs kinds and a radius above 0`);
-    if (f.when !== undefined && f.when !== 'unstable' && f.when !== 'aurora' && f.when !== 'storm') err(`${name}: when is unstable, aurora or storm`);
+    for (const [field, t] of [['by', f.by], ['clear', f.clear]] as const) {
+      if (t === undefined) continue;
+      if (!(t.radius > 0 && Array.isArray(t.tiles) && t.tiles.length)) err(`${name}: ${field} needs tile kinds and a radius above 0`);
+      for (const k of Array.isArray(t.tiles) ? t.tiles : []) if (!tileKinds.has(k)) err(`${name}: ${field}: unknown tile kind ${k as TileKind}`);
+    }
+    if (f.when !== undefined && f.when !== 'unstable' && f.when !== 'aurora' && f.when !== 'storm' && f.when !== 'rain') err(`${name}: when is unstable, aurora, storm or rain`);
     if (f.when === 'unstable' && !mapData.surge) err(`${name}: grows while the map is restless, but ${f.map} never surges`);
     if (f.when === 'storm' && !mapData.storm) err(`${name}: grows during a storm, but ${f.map} never storms`);
+    if (f.when === 'rain' && mapData.kind === 'inside') err(`${name}: grows in the rain, but it never rains indoors`);
+    if (f.after !== undefined && (f.when !== 'rain' || !(typeof f.after === 'number' && f.after >= 0))) err(`${name}: after is some seconds from 0, and only for what grows in the rain`);
     if (f.condition !== undefined) {
       if (!conditionIds.has(f.condition)) err(`${name}: grows while ${f.condition} is on, which is not a condition`);
       if (f.when !== undefined) err(`${name}: grows with a condition or at a time (when), not both`);

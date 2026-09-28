@@ -5,9 +5,9 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, RESCUE_ENERGY, aOf, amount, comfortMax, countable, fireFull, formatPrice, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands,
-  toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type Refusal, type ShopLook, type StoneView,
-  type Upgrade,
+  CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, RESCUE_ENERGY, aOf, amount, comfortMax, countable, fireFull, formatPrice, levelOf, meritLookOf, meritsLeft,
+  nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear,
+  type Recipe, type Refusal, type ShopLook, type StoneView, type Upgrade, bagShort, type Mods,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, bundleText, kgText, oddsText, pieceName, thingsOf, type Items } from './items';
 
@@ -91,6 +91,7 @@ export function stoneQuestion(def: ItemDef, n: number): string {
  */
 export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000, lift?: { charm: ItemDef; energy: number }, running?: number): string {
   const u = def.use ?? {}, n = nounOf(def);
+  if (u.meal) return eatQuestion(def);
   if (u.identify) return `Look closely at the ${n}? It will be used up.`;
   if (u.resist && u.lasts) {
     const does = `${effectWords(def)} for ${howLong(u.lasts)}`;
@@ -141,6 +142,68 @@ export function mendQuestion(def: ItemDef, cost: readonly BagSlot[], items: Item
 export function upgradeQuestion(def: ItemDef, to: number, next: Upgrade, items: Items): string {
   const uses = `Upgrade your ${nounOf(def)} to +${to}? It uses ${listOf(next.needs.map(x => amount(items.get(x.item), x.count)))}.`;
   return next.chance === undefined || next.chance >= 1 ? uses : `${uses} ${oddsText(next)}`;
+}
+
+// ---------- cooking at a fire, and meals (meals.ts) ----------
+
+/** A at a fire that burns and takes fuel, with something to cook in the bag: which of the two. */
+export const FIRE_CHOICE = 'Feed the fire, or cook on it?';
+export const FIRE_OPTIONS = ['Feed the fire', 'Cook'] as const;
+/** The bag can cook more than one thing: which. */
+export const WHAT_TO_COOK = 'What will you cook?';
+
+/** At a fire: "Cook fir-tip tea? It uses 3 fir tips." */
+export function cookQuestion(recipe: Recipe, items: Items): string {
+  const n = recipe.count ?? 1, made = items.get(recipe.make);
+  return `Cook ${n === 1 ? nounOf(made) : amount(made, n)}? It uses ${listOf(recipe.needs.map(x => counted(items.get(x.item), x.count)))}.`;
+}
+
+/** Something to cook, but not enough for anything: what the nearest meal still lacks. "For fir-tip tea you need 2 more fir tips." */
+export function cookShort(recipe: Recipe, bag: readonly BagSlot[], items: Items): string {
+  const more = bagShort(recipe, bag).map(s => { const d = items.get(s.item); return `${s.count} more ${s.count === 1 ? nounOf(d) : pluralOf(d)}`; });
+  return `For ${nounOf(items.get(recipe.make))} you need ${listOf(more)}.`;
+}
+
+/** What one Mods value a meal (or a charm) changes does, in plain words, lowercase: "cold bites 15% less". Null: nothing to say. */
+function modDoes(k: keyof Mods, v: number): string | null {
+  const pct = (x: number) => `${Math.round(Math.abs(x) * 100)}%`;
+  switch (k) {
+    case 'energy': return `${Math.round(v)} more energy on your bar`;
+    case 'cold': return `cold bites ${pct(v)} less`;
+    case 'load': return `your bag feels ${pct(1 - v)} lighter`;
+    case 'wetting': return `rain soaks you ${pct(1 - v)} slower`;
+    case 'hitch': return `hitchhikers find you ${pct(1 - v)} less often`;
+    case 'warmth': return `fires warm you ${pct(v - 1)} faster`;
+    case 'wear': return `your gear wears ${pct(1 - v)} slower`;
+    case 'drain': return `you tire ${pct(1 - v)} slower out there`;
+    case 'farDrain': return `far out, you tire ${pct(1 - v)} slower`;
+    case 'double': return `finds come up double ${pct(v)} of the time`;
+    case 'marks': return `your arrows last ${Math.round(v * 10) / 10} times as long`;
+    case 'markEnergy': return `a crushed glowcap gives you ${Math.round(v)} energy`;
+  }
+}
+
+/** What a meal does once eaten, lowercase: "15 more energy on your bar", "cold bites 15% less". */
+export function mealDoes(def: ItemDef): string {
+  const said = (Object.entries(def.eaten ?? {}) as Array<[keyof Mods, number]>).flatMap(([k, v]) => { const d = modDoes(k, v); return d ? [d] : []; });
+  return listOf(said) || 'it does you good';
+}
+
+/** From the bag: "Drink the fir-tip tea? 15 more energy on your bar until you come home." */
+export function eatQuestion(def: ItemDef): string {
+  return `${def.use?.meal === 'drink' ? 'Drink' : 'Eat'} the ${nounOf(def)}? ${capital(mealDoes(def))} until you come home.`;
+}
+
+/** The same meal twice, or a third: why not, before anything is asked. */
+export function ateAlready(def: ItemDef): string {
+  return `You ${def.use?.meal === 'drink' ? 'drank' : 'ate'} the ${nounOf(def)} this trip already. It works until you come home.`;
+}
+export const TWO_MEALS = 'You ate two meals this trip already. Another waits until you are home again.';
+
+/** The status panel's Meals row: what you ate and what it does. "Fir-tip tea: 15 more energy on your bar. Until you come home." */
+export function mealsText(meals: readonly string[], items: Items): string | null {
+  if (!meals.length) return null;
+  return `${meals.map(id => { const d = items.get(id); return `${d.name}: ${mealDoes(d)}`; }).join('. ')}. Until you come home.`;
 }
 
 /** At the chest, before a sealed thing is opened: "Open the NAPO lockbox? It has been sealed since the evacuation." */
@@ -497,10 +560,10 @@ function boughtText(did: Extract<Did, { kind: 'bought' }>): string {
 /** The name over the box for what something did. */
 export function didWho(did: Did, items: Items): string {
   switch (did.kind) {
-    case 'fire': return 'Fire';
+    case 'fire': case 'cooked': return 'Fire';
     case 'stone': return 'The Old Stone';
     case 'made': case 'mended': case 'upgraded': return 'Workbench';
-    case 'used': case 'opened': return items.get(did.item).name;
+    case 'used': case 'opened': case 'ate': return items.get(did.item).name;
     case 'thrown': return pieceName(items.get(did.item), did.level);
     case 'thanked': return did.what === 'fire' ? 'Fire' : 'Arrow';
     case 'left': case 'took': return 'Crate';
@@ -573,6 +636,10 @@ export function didText(did: Did, items: Items): string {
       const pl = they(def, did.count), gear = def.kind === 'gear';
       return `You make ${did.count === 1 ? aOf(def) : amount(def, did.count)}. ${pl ? 'They wait' : 'It waits'} in your stash${gear ? `: put ${pl ? 'them' : 'it'} on at the chest` : ''}.`;
     }
+    case 'cooked':
+      return `You cook ${did.count === 1 ? nounOf(def) : amount(def, did.count)}. ${did.count === 1 ? 'It is' : 'They are'} in your bag.`;
+    case 'ate':
+      return `You ${def.use?.meal === 'drink' ? 'drink' : 'eat'} the ${nounOf(def)}. ${capital(mealDoes(def))} until you come home.`;
     case 'mended':
       return `You mend your ${pieceNoun(def, did.level)}: as good as new.`;
     case 'upgraded': {

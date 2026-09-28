@@ -20,6 +20,8 @@ export class Items {
   readonly byId: Map<string, ItemDef>;
   /** What the workbench makes. */
   readonly recipes: Recipe[];
+  /** What cooks at a fire (meals.ts). */
+  readonly cooking: Recipe[];
   /** How gear wears out, what mending and upgrading it cost, and the quirks' names and words. */
   readonly wear: ItemsData['wear'];
   readonly mend: ItemsData['mend'];
@@ -36,6 +38,7 @@ export class Items {
     this.version = data?.version ?? 0;
     this.byId = data ? itemIndex(data) : new Map();
     this.recipes = data?.recipes ?? [];
+    this.cooking = data?.cooking ?? [];
     this.wear = data?.wear;
     this.mend = data?.mend;
     this.upgrades = data?.upgrades;
@@ -72,6 +75,7 @@ export function plainName(id: string): string {
 /** The word on the bag's button for using an item. */
 export function useLabel(item: ItemDef): string {
   const u = item.use ?? {};
+  if (u.meal) return u.meal === 'drink' ? 'Drink' : 'Eat';
   if (u.mark) return 'Mark the way';
   if (u.flare) return 'Light it';
   if (u.identify) return 'Look closely';
@@ -100,7 +104,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'not_gear': return 'That is not something you wear';
     case 'bag_too_full': return 'What you carry does not fit in that bag';
     case 'keep_bag': return 'You always carry a bag';
-    case 'missing': return 'Your stash lacks what it needs';
+    case 'missing': return action === 'cook' ? 'You do not carry what it takes' : 'Your stash lacks what it needs';
     case 'unknown_player': return 'Nobody by that name';
     case 'requests_off': return 'They take no friend requests';
     case 'not_friends': return action === 'move' ? 'You can only move next to friends' : 'You can only message friends';
@@ -149,6 +153,9 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'cold': return 'It lies cold until the woods grow restless';
     case 'one_pair': return 'It will not move for one pair of hands';
     case 'opened': return 'You opened it this time already';
+    case 'fire_out': return 'The fire is out: nothing cooks on it';
+    case 'ate_it': return 'You ate that this trip already';
+    case 'two_meals': return 'You ate two meals this trip already';
   }
 }
 
@@ -198,7 +205,7 @@ export function slotViews(bag: readonly BagSlot[], items: Items): SlotView[] {
   return bag.map(s => {
     const def = items.get(s.item), p = s.piece;
     const base: SlotView = {
-      item: s.item, name: def.name, text: def.text, count: s.count, usable: !!def.use, useLabel: useLabel(def), facts: factsOf(def), icon: iconFor(def),
+      item: s.item, name: def.name, text: def.text, count: s.count, usable: !!def.use, useLabel: useLabel(def), facts: factsOf(def, items), icon: iconFor(def),
       ...(def.slot ? { slot: def.slot } : {}), ...(def.live && s.age !== undefined ? { live: { def, into: items.has(def.live.into) ? items.get(def.live.into) : undefined, age: s.age } } : {}),
     };
     // Someone else's things: named for them, as heavy as what it holds, and nothing to do with it but carry it.
@@ -264,8 +271,8 @@ export function quirkNames(worn: Worn, items: Items): string[] {
   return SLOTS.flatMap(s => (worn[s]?.quirk ? [items.quirk(worn[s]!.quirk!).name] : []));
 }
 
-/** What is worth knowing about an item besides its text, in a few words each. */
-export function factsOf(def: ItemDef): string[] {
+/** What is worth knowing about an item besides its text, in a few words each; with `items`, also whether a meal cooks from it. */
+export function factsOf(def: ItemDef, items?: Items): string[] {
   const out: string[] = [];
   if (def.kind === 'gear') {
     for (const [e, v] of Object.entries(def.resist ?? {})) out.push(`${ELEMENT_WORDS[e as Element]} ${Math.round(v * 100)}%`);
@@ -281,6 +288,8 @@ export function factsOf(def: ItemDef): string[] {
   // An effect: what it gives, and for how long.
   if (def.use?.resist && def.use.lasts) for (const [e, v] of Object.entries(def.use.resist)) out.push(`${ELEMENT_WORDS[e as Element]} +${Math.round((v ?? 0) * 100)}% for ${Math.round(def.use.lasts / 60)} min`);
   if (def.charge) out.push('The Old Stone wants it');
+  if (def.use?.meal) out.push('A meal: it works until you come home');
+  if (items?.cooking.some(r => r.needs.some(n => n.item === def.id))) out.push('Cooks at a fire');
   if (def.kind === 'charm') out.push('Works while in your bag');
   if (def.kind === 'tool') out.push('A tool, yours for good');
   if (def.kind === 'keepsake') out.push('One of a kind: bring it home');

@@ -12,6 +12,7 @@ export * from './items';
 export * from './landmarks';
 export * from './lostfound';
 export * from './map';
+export * from './meals';
 export * from './merits';
 export * from './movement';
 export * from './notebook';

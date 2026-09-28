@@ -12,12 +12,12 @@
  */
 import {
   CACHE_SIZE, RESIST_MAX, WEAR_FADES, bagSlotsOf, cacheTakes, formatPrice, mayWear, meritLookOf, meritsLeft, mendCost, nextUpgrade, outfitOf, pieceFactor, slotKg, priceOf, shopLookOf, upgradable,
-  upgradeFactor, wearSeconds, whyNotBuy, whyNotCheckout, xpFor, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type LookKind, type Piece, type PieceAt, type Slot,
+  upgradeFactor, wearSeconds, whyNotBuy, whyNotCheckout, whyNotEat, xpFor, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type LookKind, type Piece, type PieceAt, type Slot,
   type Tier, type Worn,
 } from '@napoland/shared';
 import { NO_BADGE_ICON, NO_OUTFIT_ICON, NO_PATTERN_ICON, iconFor, outfitIcon } from './icons';
 import { ELEMENT_WORDS, bundleText, conditionText, countOf, factsOf, kgText, oddsText, pieceName, slotName, thingsOf, useLabel, type Items } from './items';
-import { CRATE_FULL, CRATE_NO_GEAR, KEEPSAKE_STAYS, LEFT_ONE, TOOK_ONE, bundleNotYours, holdsText, leftBy, merits, noMerit, price } from './said';
+import { CRATE_FULL, CRATE_NO_GEAR, KEEPSAKE_STAYS, LEFT_ONE, TOOK_ONE, TWO_MEALS, ateAlready, bundleNotYours, holdsText, leftBy, merits, noMerit, price } from './said';
 import { SHOP_WHERE, YOURS, shopIcon } from './shop';
 import { NO_BADGE, NO_OUTFIT, NO_PATTERN, lookIcon, outfitWords, type WardrobeState } from './wardrobe';
 
@@ -194,6 +194,8 @@ export interface DetailState {
   wardrobe?: WardrobeState;
   /** The crate you opened: what lies in it (ages in seconds as of now), what you did at it this visit, and you (to tell your own things). */
   crate?: { items: readonly CacheItemView[]; left: boolean; took: boolean; me: string };
+  /** The meals you ate this trip (meals.ts): a meal's card says when another cannot be eaten yet. None known: none. */
+  meals?: readonly string[];
 }
 
 /** "Sturdy". */
@@ -275,7 +277,7 @@ export function cardPress(v: DetailView): { does?: DetailAct; close: boolean; sh
   if (!act) return { close: false, shake: false };
   // Using and buying ask first, with the card still open behind the question; bought, it offers to wear it.
   if (act.enabled) return { does: act.does, close: act.does.kind !== 'use' && act.does.kind !== 'buy' && act.does.kind !== 'checkout', shake: false };
-  const asks = act.does.kind === 'make' || act.does.kind === 'mend' || act.does.kind === 'upgrade' || act.does.kind === 'crateLeave';
+  const asks = act.does.kind === 'make' || act.does.kind === 'mend' || act.does.kind === 'upgrade' || act.does.kind === 'crateLeave' || act.does.kind === 'use';
   return { ...(asks ? { does: act.does } : {}), close: false, shake: true };
 }
 
@@ -307,11 +309,16 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       if (!slot || slot.item !== ref.item) return null;
       if (slot.bundle) return bundleCard(slot, ref.slot, s);
       const def = items.get(slot.item), gear = def.kind === 'gear';
-      const card = gear ? gearCard(def, slot.piece ?? { cond: 1 }, s) : itemCard(def, slot.count);
+      const card = gear ? gearCard(def, slot.piece ?? { cond: 1 }, s) : itemCard(def, slot.count, items);
       if (s.panel === 'crate') return s.crate ? leaveCard(card, def, ref.slot, s.crate) : null;
       if (!road) return { ...card, act: { label: 'Put away', enabled: true, does: { kind: 'store', slot: ref.slot } } };
       const more = { label: 'Throw away', enabled: true, tone: 'toss', does: { kind: 'toss', slot: ref.slot } } as const;
-      if (!gear) return { ...card, ...(def.use ? { act: { label: useLabel(def), enabled: true, does: { kind: 'use', slot: ref.slot } } } : {}), more };
+      if (!gear) {
+        // A meal eaten already this trip, or a third: greyed out, and the card says why (so does the text box, pressed).
+        const why = def.use?.meal ? whyNotEat(def.id, s.meals ?? []) : null;
+        if (why) card.notes.push({ text: why === 'ate_it' ? ateAlready(def) : TWO_MEALS, tone: 'bad' });
+        return { ...card, ...(def.use ? { act: { label: useLabel(def), enabled: !why, does: { kind: 'use', slot: ref.slot } } } : {}), more };
+      }
       if (def.slot === 'bag') {
         card.notes.push({ text: BAG_AT_HOME, tone: 'plain' });
         return { ...card, more };
@@ -326,13 +333,13 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
         const have = countOf(s.stash, ref.item);
         if (!have) return null;
         // It never leaves the chest: its one button opens it (which asks first), one at a time.
-        return { ...itemCard(def, have), notes: [{ text: holdsText(def, items), tone: 'plain' }], act: { label: have > 1 ? 'Open one' : 'Open', enabled: true, does: { kind: 'open', item: ref.item } } };
+        return { ...itemCard(def, have, items), notes: [{ text: holdsText(def, items), tone: 'plain' }], act: { label: have > 1 ? 'Open one' : 'Open', enabled: true, does: { kind: 'open', item: ref.item } } };
       }
       if (def.kind !== 'gear') {
         const have = countOf(s.stash, ref.item);
         if (!have) return null;
         const n = Math.min(have, def.stack);
-        return { ...itemCard(def, have), act: { label: n > 1 ? `Take out ${n}` : 'Take it out', enabled: true, does: { kind: 'take', item: ref.item } } };
+        return { ...itemCard(def, have, items), act: { label: n > 1 ? `Take out ${n}` : 'Take it out', enabled: true, does: { kind: 'take', item: ref.item } } };
       }
       const n = ref.n ?? 0, entry = s.stash.filter(b => b.item === ref.item)[n];
       if (!entry) return null;
@@ -368,8 +375,8 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       const recipe = items.recipes.find(r => r.id === ref.id);
       if (!recipe) return null;
       if (items.get(recipe.make).kind === 'furniture') return furnitureCard(recipe.id, items.get(recipe.make), needViews(recipe.needs, s), s);
-      // Only gear is worn: a tool or a consumable (a hand warmer) has a card that says what it is, like anything else's.
-      const def = items.get(recipe.make), count = recipe.count ?? 1, card = def.kind === 'gear' ? gearCard(def, undefined, s) : itemCard(def, count);
+      // Only gear is worn: a tool or a consumable (a hand warmer, a meal) has a card that says what it is, like anything else's.
+      const def = items.get(recipe.make), count = recipe.count ?? 1, card = def.kind === 'gear' ? gearCard(def, undefined, s) : itemCard(def, count, items);
       const needs = needViews(recipe.needs, s);
       if (count > 1) card.count = count;
       card.costs = { title: 'It takes', needs };
@@ -408,7 +415,7 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
     case 'crate': {
       const c = s.crate, e = c?.items.find(x => x.id === ref.id);
       if (!c || !e) return null;
-      const card = itemCard(items.get(e.item), 1);
+      const card = itemCard(items.get(e.item), 1, items);
       card.notes.push({ text: `${capital(leftBy(e.name, e.owner === c.me, e.age))}.`, tone: 'plain' });
       // Taking asks nothing: it is someone's gift. One a visit.
       if (c.took) card.notes.push({ text: TOOK_ONE, tone: 'bad' });
@@ -454,7 +461,7 @@ function shopCard(id: string, w: WardrobeState): DetailView | null {
  * the game says why in the text box, as for a tool you have).
  */
 function furnitureCard(recipe: string, def: ItemDef, needs: NeedView[], s: DetailState): DetailView {
-  const card = itemCard(def, 1);
+  const card = itemCard(def, 1, s.items);
   card.costs = { title: 'It takes', needs };
   if (s.furniture?.includes(def.id)) {
     card.notes.push({ text: 'It stands in its place in your cabin.', tone: 'plain' });
@@ -571,8 +578,8 @@ function gearCard(def: ItemDef, piece: Piece | undefined, s: DetailState): Detai
 }
 
 /** Anything else: what it is and how many, and the facts the bag shows. */
-function itemCard(def: ItemDef, count: number): DetailView {
-  return { icon: iconFor(def), name: def.name, count, text: def.text, stats: [], facts: factsOf(def), notes: [] };
+function itemCard(def: ItemDef, count: number, items: Items): DetailView {
+  return { icon: iconFor(def), name: def.name, count, text: def.text, stats: [], facts: factsOf(def, items), notes: [] };
 }
 
 /** "your worn cap goes into your bag", "your fingerless gloves go into the stash": what wearing a piece in `slot` puts where. Nothing, when nothing is worn there. */

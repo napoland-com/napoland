@@ -131,8 +131,8 @@ export interface HudHandlers {
   cancelCall?(): void;
   /** A tap on the text box itself (not on its buttons). */
   dialogTap(): void;
-  /** The question in the text box: YES or NO tapped; − or + pressed (-1 or 1) and let go (0); a tap anywhere outside the box. */
-  answer?(choice: 'yes' | 'no'): void;
+  /** The question in the text box: YES or NO tapped (or an answer of a choice, by its place); − or + pressed (-1 or 1) and let go (0); a tap anywhere outside the box. */
+  answer?(choice: 'yes' | 'no' | number): void;
   count?(dir: -1 | 0 | 1): void;
   dismiss?(): void;
   logout(): void;
@@ -343,9 +343,10 @@ export interface CallNoteView { id: number; kind: CallKind; color: string; x: nu
 export interface DialogView { who: string; text: string; done: boolean }
 /**
  * A question in the text box (ask.ts): its words, the choice highlighted, and how many (null: it does not
- * ask how many); `labels`, words on the two choices where they are not YES and NO.
+ * ask how many); `labels`, words on the two choices where they are not YES and NO. A choice between answers
+ * in words has them in `options`, and `choice` is the place of one.
  */
-export interface AskView { who: string; text: string; choice: 'yes' | 'no'; count: { n: number; min: number; max: number } | null; labels?: { yes: string; no: string } }
+export interface AskView { who: string; text: string; choice: 'yes' | 'no' | number; count: { n: number; min: number; max: number } | null; labels?: { yes: string; no: string }; options?: string[] }
 /** What the text box says by itself: it stays up `ms` more (a thin line along its bottom runs out), or it waits for the server. */
 export interface NoteView { who: string; text: string; ms: number; waiting: boolean }
 
@@ -359,7 +360,7 @@ export class Hud {
   private shown = {
     fill: -1, level: '', refill: false, pct: -1, vignette: -1, unease: 0, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
     friends: '', personActs: '', talk: '', journal: '', field: '', notes: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', shop: '', badge: '', tradeMine: '', tradeTheirs: '',
-    tradeBag: '', slump: '',
+    tradeBag: '', slump: '', choices: '',
   };
   /** The chest's tab: the stash (with what came in parcels, the first goal and what you wear), or the wardrobe. */
   private chestTab: 'stash' | 'wardrobe' = 'stash';
@@ -666,7 +667,10 @@ export class Hud {
     });
     this.el.dialog!.addEventListener('click', e => {
       const t = e.target as Element, choice = t.closest<HTMLElement>('[data-choice]'), step = t.closest<HTMLElement>('[data-step]');
-      if (choice) return this.h.answer?.(choice.dataset.choice as 'yes' | 'no');
+      if (choice) {
+        const c = choice.dataset.choice!;
+        return this.h.answer?.(c === 'yes' || c === 'no' ? c : Number(c));
+      }
       // − and + count on pointerdown (and repeat while held); a click that came from the keyboard is one step.
       if (step) {
         if (e.detail === 0) { this.h.count?.(Number(step.dataset.step) as -1 | 1); this.h.count?.(0); }
@@ -1938,11 +1942,19 @@ export class Hud {
     s.ask = ask;
     // Two things to choose between: their words on the buttons, which then stand under the question.
     this.el.dialog!.toggleAttribute('data-labels', !!ask?.labels);
+    // YES over NO, or a choice's answers in words, the same frame and the same caret.
+    const answers = ask?.options?.length ? ask.options.map((o, i) => [String(i), o] as const) : ([['yes', 'YES'], ['no', 'NO']] as const);
+    const html = answers.map(([c, label]) => `<button type="button" data-choice="${c}">${esc(label)}</button>`).join('');
+    if (html !== this.shown.choices) {
+      this.shown.choices = html;
+      this.el.choices!.innerHTML = html;
+      this.el.choices!.toggleAttribute('data-words', !!ask?.options?.length);
+    }
     for (const b of this.el.choices!.querySelectorAll<HTMLElement>('[data-choice]')) {
-      const on = b.dataset.choice === ask?.choice;
+      const on = b.dataset.choice === String(ask?.choice);
       b.toggleAttribute('data-on', on);
       b.setAttribute('aria-pressed', String(on));
-      const word = ask?.labels ? ask.labels[b.dataset.choice as 'yes' | 'no'] : b.dataset.choice === 'yes' ? 'YES' : 'NO';
+      const word = ask?.options?.length ? ask.options[Number(b.dataset.choice)] ?? '' : ask?.labels ? ask.labels[b.dataset.choice as 'yes' | 'no'] : b.dataset.choice === 'yes' ? 'YES' : 'NO';
       if (b.textContent !== word) b.textContent = word;
     }
     const c = ask?.count;

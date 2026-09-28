@@ -568,7 +568,7 @@ describe.skipIf(!url)('PgStorage', () => {
     const { sub, kept } = await keepsWholeRow(storage);
     const row = await admin.query(
       `SELECT map, x, y, dir, energy, bag, wet, stats, xp, stash, gear, worn, story, tools, parcel_welcome, parcel_day, parcel_days, outfit, thanked, notebook, furniture, cozy_until, street, lot,
-         door_off, street_told, first_steps
+         door_off, street_told, first_steps, meals
        FROM ${schema}.players WHERE auth_sub = $1`,
       [sub],
     );
@@ -577,7 +577,7 @@ describe.skipIf(!url)('PgStorage', () => {
     expect(row.rows).toEqual([{
       map: kept.map, x: kept.x, y: kept.y, dir: kept.dir, energy: kept.energy, bag: kept.bag, wet: kept.wet, stats: counts, xp: kept.xp, stash: kept.stash, gear: kept.gear,
       worn: kept.worn, story: kept.story, tools: kept.tools, parcel_welcome: true, parcel_day: 20_725, parcel_days: 0b11, outfit: 'rain-cape', thanked: 8, notebook: kept.notebook,
-      furniture: ['iron-stove', 'bed'], cozy_until: new Date(1_700_000_400_000), street: 3, lot: 0, door_off: false, street_told: true, first_steps: 3,
+      furniture: ['iron-stove', 'bed'], cozy_until: new Date(1_700_000_400_000), street: 3, lot: 0, door_off: false, street_told: true, first_steps: 3, meals: ['stew', 'tea'],
     }]);
   });
 

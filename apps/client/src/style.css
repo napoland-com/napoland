@@ -238,6 +238,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud.talking .dialog[data-mode="ask"][data-labels] { grid-template-columns: minmax(0, 1fr); }
 .dialog[data-labels] .choices { grid-column: 1; grid-row: 2; align-self: end; }
 .hud .dialog[data-labels] .choices button { height: auto; min-height: var(--hit); padding-block: .3em; font-size: calc(var(--u) * 1.2); letter-spacing: .02em; line-height: 1.2; text-align: left; }
+/* A choice between answers in words ("Feed the fire", "Cook"): the same frame and caret, the words as they are said. */
+.hud .dialog .choices[data-words] button { letter-spacing: .01em; font-size: calc(var(--u) * 1.2); white-space: nowrap; }
 /* What the box says by itself closes on its own: a thin line along its bottom runs out meanwhile. */
 .dialog .timer { position: absolute; left: calc(var(--u) * 1.5); right: calc(var(--u) * 1.5); bottom: calc(var(--u) * .5); height: 2px; border-radius: 1px; background: rgba(217, 207, 184, .4); transform-origin: left; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .dialog .timer { display: none; } }

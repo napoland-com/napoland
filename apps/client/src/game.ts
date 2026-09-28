@@ -57,9 +57,11 @@ import {
   canRescue, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors,
   markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf, stepTarget,
   linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type ShopData, type ShopOpen, type CacheItemView,
-  type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page, type Pass, BUNDLE,
+  type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page, type Pass, BUNDLE, carriesFood, cookable, cooks,
+  nearestCooking, whyNotEat,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
-  type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
+  type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Recipe, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView,
+  type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type LongNightView, type MapNote, type OfferPick, type ParcelView, type RefusedAction,
   type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type VisitView, type Weather,
 } from '@napoland/shared';
@@ -77,7 +79,7 @@ import {
   knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, FIRST_WAKE, placedAlready, raisedText,
   rescueQuestion, rescueRefusal, rescueTooTired, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, visitedText,
   visitWho, waltOnTheLongNight, padlocked, IN_YOUR_CHEST, LOST_AND_FOUND, LOST_AND_FOUND_LINES, TAKE_HALF, bundleNotYours, carryLabel, handInQuestion, pileQuestion, returnedLine, thingsOf,
-  SLAB, slabRefusal,
+  SLAB, slabRefusal, FIRE_CHOICE, FIRE_OPTIONS, TWO_MEALS, WHAT_TO_COOK, ateAlready, cookQuestion, cookShort,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { SHOP_OPENING, SHOP_THANKS, payPage, refundedLine, returnLine, type ShopReturn } from './shop';
@@ -285,7 +287,7 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout', 'rescue', 'carry', 'handIn']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'cook', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout', 'rescue', 'carry', 'handIn']);
 /** If the server has not moved you this long after the teleport was sent, the trip is off: you are shown where you stand. */
 const BEAM_WAIT_MS = 4000;
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
@@ -848,6 +850,8 @@ export class Game {
         const was = this.body.view.cozy ?? 0, is = msg.body.cozy ?? 0;
         if (!was && is > 0) this.news.push({ kind: 'cozy', minutes: Math.round(is / 60) });
         else if (was > 0 && !is && msg.body.fireside === undefined) this.murmur('The warmth of home wears off');
+        // The trip is over (home again, or a collapse), and what you ate for it with it.
+        if (this.body.view.meals?.length && !msg.body.meals?.length) this.murmur('What you ate has worn off');
         this.lastEnergy = { view: msg.energy, at: now };
         this.body = { view: msg.body, at: now };
         break;
@@ -2160,10 +2164,44 @@ export class Game {
   }
 
   /**
-   * A at a fire: asks to feed it what burns longest of what you carry, and how many (as many as you
-   * carry and as fit), or says why not: someone keeps it going, it is full, or nothing you carry burns.
+   * A at a fire. With something to cook (meals.ts) at a fire that burns, a choice: feed it, or cook on it;
+   * only one of the two when the other cannot happen (a fire someone keeps going takes no fuel, one that is
+   * full no more, and nothing cooks on a dead one). Anything else is feeding it, as ever.
    */
   private tend(x: number, y: number) {
+    const left = this.fireLeft(x, y, this.clock);
+    if (!carriesFood(this.items.cooking, this.bag) || !cooks(left)) return this.feed(x, y);
+    const fuel = this.bestSlot(def => def.fuel ?? 0);
+    const feeds = left !== null && fuel >= 0 && fireTakes(left ?? 0, this.items.get(this.bag[fuel].item).fuel ?? 0) > 0;
+    if (!feeds) return this.cookAt(x, y);
+    this.ask({ who: 'Fire', text: FIRE_CHOICE, options: FIRE_OPTIONS, yes: () => {}, pick: i => (i === 0 ? this.feed(x, y) : this.cookAt(x, y)) });
+  }
+
+  /**
+   * Cooking at a fire that burns: what the bag can cook, asked first with what it uses ("Cook fir-tip tea?
+   * It uses 3 fir tips."), after a choice of which when it can cook more than one; with too little for any,
+   * what the nearest one still lacks.
+   */
+  private cookAt(x: number, y: number) {
+    const can = cookable(this.items.cooking, this.bag);
+    if (!can.length) {
+      const near = nearestCooking(this.items.cooking, this.bag);
+      return near && this.inform('Fire', cookShort(near, this.bag, this.items));
+    }
+    if (can.length === 1) return this.cook(x, y, can[0]!);
+    this.ask({ who: 'Fire', text: WHAT_TO_COOK, options: can.map(r => this.items.get(r.make).name), yes: () => {}, pick: i => this.cook(x, y, can[i]!) });
+  }
+
+  private cook(x: number, y: number, recipe: Recipe) {
+    const text = cookQuestion(recipe, this.items);
+    this.ask({ who: 'Fire', text, yes: () => this.act('Fire', text, { t: 'cook', x, y, recipe: recipe.id }) });
+  }
+
+  /**
+   * Feeding a fire: asks to feed it what burns longest of what you carry, and how many (as many as you
+   * carry and as fit), or says why not: someone keeps it going, it is full, or nothing you carry burns.
+   */
+  private feed(x: number, y: number) {
     const left = this.fireLeft(x, y, this.clock);
     if (left === null) return this.inform('Fire', TENDED);
     const slot = this.bestSlot(def => def.fuel ?? 0);
@@ -2358,6 +2396,10 @@ export class Game {
   private whyNotUse(slot: number, def: ItemDef): string | null {
     const u = def.use ?? {}, me = this.me;
     if (this.slump) return YOU_ARE_DOWN;
+    if (u.meal) {
+      const why = whyNotEat(def.id, this.body.view.meals ?? []);
+      if (why) return why === 'ate_it' ? ateAlready(def) : TWO_MEALS;
+    }
     if (u.identify) {
       if (!this.inTown()) return TOO_DARK;
       // Its own slot frees up; whatever it turns out to be must fit somewhere.

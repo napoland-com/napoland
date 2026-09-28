@@ -130,7 +130,8 @@ export const noResist = (): Resist => ({ heat: 0, cold: 0, wind: 0, electricity:
 
 /**
  * Every element's resistance over what is worn (as worn down and as upgraded as `pieces` say), with
- * `extra` on top (effects running, effects.ts), each at most RESIST_MAX in all: nothing makes anyone immune.
+ * `extra` on top (effects running, effects.ts, and what a meal eaten adds, meals.ts), each at most RESIST_MAX
+ * in all: nothing makes anyone immune.
  */
 export function resistOf(gear: Gear, items: Map<string, ItemDef>, pieces: Worn = {}, extra: Partial<Resist> = {}): Resist {
   const out = noResist();
