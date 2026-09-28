@@ -266,6 +266,25 @@ describe('validateMap', () => {
     expect(validateMap(woodsMap())).toEqual([]);
     expect(validateMap(townWithExit()).filter(p => p.level === 'error')).toEqual([]);
   });
+  it('lets only a room with a chest be private (a home of one\'s own), and only such a home have a place to wake up in, by its fire', () => {
+    const home = (more: Partial<MapData> = {}): MapData => ({
+      ...tinyHouse(), objects: [...tinyHouse().objects, { kind: 'chest', x: 3, y: 1 }], private: true, wake: { x: 2, y: 2, dir: 'down' }, ...more,
+    });
+    const errors = (d: MapData) => validateMap(d).filter(p => p.level === 'error').map(p => p.message).join('\n');
+    expect(errors(home())).toBe('');
+    expect(errors({ ...tinyHouse(), private: true })).toMatch(/only a room with a chest \(a home\) is private/);
+    expect(errors({ ...tinyMap(), private: true })).toMatch(/only a room with a chest \(a home\) is private/);
+    expect(errors(home({ private: false as never }))).toMatch(/and then it is true/);
+    expect(errors(home({ private: undefined }))).toMatch(/wake: only a private room/);
+    expect(errors(home({ wake: { x: 2, y: 4, dir: 'down' } }))).toMatch(/wake 2,4 is not a walkable tile of the room \(an exit is none either\)/);
+    expect(errors(home({ wake: { x: 0, y: 1, dir: 'down' } }))).toMatch(/wake 0,1 is not a walkable tile/);
+    expect(errors(home({ wake: { x: 2, y: 3, dir: 'down' } }))).toMatch(/wake 2,3 is not by the fire/);
+    expect(errors(home({ wake: { x: 2, y: 2, dir: 'north' as never } }))).toMatch(/wake: dir must be up, down, left or right/);
+  });
+  it('wants a map id of lowercase words joined by hyphens, which the copies of a map are told apart by', () => {
+    for (const id of ['near-woods', 'room2']) expect(validateMap({ ...tinyMap(), id }).filter(p => p.level === 'error'), id).toEqual([]);
+    for (const id of ['Near Woods', 'woods:2', '', 'woods-']) expect(validateMap({ ...tinyMap(), id }).map(p => p.message).join('\n'), id).toMatch(/its id is lowercase words joined by hyphens/);
+  });
   it('catches bad kinds, depths and exits', () => {
     const noHome = woodsMap();
     noHome.exits[0]!.home = undefined;
@@ -512,6 +531,19 @@ describe('validateWorld', () => {
     const problem = { level: 'error', map: 'near-hut', message: expect.stringMatching(/nearest to the way home from woods must keep a fire that never goes out/) };
     expect(world(false, false)).toEqual([problem]);
     expect(world(false, true)).toEqual([problem]);
+  });
+  it('wants one home to wake up in, whose door opens onto the home town', () => {
+    const home = (id: string, to: string): MapData => ({
+      ...tinyHouse(), id, exits: [{ ...tinyHouse().exits[0]!, to }], objects: [...tinyHouse().objects, { kind: 'chest', x: 3, y: 1 }], private: true, wake: { x: 2, y: 2, dir: 'down' },
+    });
+    expect(validateWorld([townWithExit(), woodsMap(), home('tiny-house', 'tiny')], 'tiny')).toEqual([]);
+    const wakes = (maps: MapData[]) => validateWorld(maps, 'tiny').filter(p => /wake/.test(p.message));
+    expect(wakes([townWithExit(), woodsMap(), tinyHouse(), home('woods-home', 'woods')])).toEqual([
+      { level: 'error', map: 'woods-home', message: 'wake: only the home off the home town (tiny) is where you wake up, and this room\'s door opens elsewhere' },
+    ]);
+    expect(wakes([townWithExit(), woodsMap(), home('tiny-house', 'tiny'), home('second-home', 'tiny')])).toEqual([
+      { level: 'error', map: 'second-home', message: 'wake: tiny-house and second-home both have one, but everyone wakes up in the same home' },
+    ]);
   });
   it('wants a town at home and every map reachable from it', () => {
     expect(validateWorld([woodsMap()], 'tiny').map(p => p.message).join('\n')).toMatch(/home map tiny does not exist/);

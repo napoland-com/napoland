@@ -17,6 +17,11 @@
  *   what you read; it says when a chapter is reached;
  * - the bag and the chest say what gear you could make next (nextGear), from your stash as the server
  *   last told it;
+ * - a crate for whoever comes next (A, facing it) opens a panel like the chest's: take one thing out
+ *   (it asks nothing, and thanks whoever left it) and leave one (it asks first), once each a visit;
+ * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
+ *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
+ *   said in the text box anywhere else, and come in a letter when you walk in at home;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
  *   it tells us, we show them; so is what everyone wears, gear and outfits (you choose yours at the chest);
  * - a call (calls.ts) goes to the server, which says who heard it: each one heard, yours too, is sung
@@ -29,8 +34,9 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, CALL_EVERY_MS, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, modsOf, nearestRecipe,
-  nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, DIR_VEC, type NextGear,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits,
+  inSurge, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter,
+  upgradable, utcDay, whyNotBuy, DIR_VEC, type CacheItemView, type LookKind, type MeritsView, type Mods, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type OfferPick, type ParcelView, type RefusedAction, type StormView, type TradeEnd, type TradeView,
@@ -42,11 +48,12 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, makeQuestion, mendQuestion, noShard, nothingToBurn, openQuestion, sentence,
-  shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
+  mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import type { Maps } from './maps';
+import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
 import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
 import type { Avatar } from './view/world';
 
@@ -72,7 +79,7 @@ interface Mover {
  * the story (`story`): talking to one, or reading one, may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
@@ -139,6 +146,7 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
+    if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
     return [];
   });
 }
@@ -152,11 +160,20 @@ export function minutes(seconds: number): string {
   return `${m} minute${m === 1 ? '' : 's'}`;
 }
 
+/** What floats over your head as stashing earns: "+24 XP", and the part the cup of rest paid, "+24 XP (12 rested)". */
+export function xpFloat(gained: number, fromRest = 0): string {
+  return fromRest > 0 ? `+${gained} XP (${fromRest} rested)` : `+${gained} XP`;
+}
+
 /** News from the world for the interface to announce (status.ts, newsBanner). A feat's is the rank just reached. */
 export type News =
   | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView }
   /** A new level: where it stands now, and the level before (one stash can climb several). */
   | { kind: 'level'; progress: ProgressView; from: number }
+  /** You arrive rested: time away filled the cup, which holds `xp` of doubled stashing now. */
+  | { kind: 'rested'; xp: number }
+  /** Past level 20, stashing earned `earned` merits (merits.ts), and `left` are to spend now. */
+  | { kind: 'merit'; earned: number; left: number }
   /** A new day's conditions, by name. */
   | { kind: 'conditions'; names: string[] }
   /** Someone (`id`, you too) sang a call from tile x,y, heard `at` (our clock): the ears announce it (soundscape.ts), nothing is shown but the note over their head. */
@@ -178,7 +195,9 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy']);
+/** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
+const WARDROBE = new Set<RefusedAction>(['outfit', 'pattern', 'badge']);
 
 export class Game {
   meId: string | null = null;
@@ -208,8 +227,8 @@ export class Game {
   bag: BagSlot[] = [];
   /** When the bag was told (`now`): a live find's age counts on from there. */
   bagAt = 0;
-  /** The fires on this map by "x,y": fuel left as told, and when (null: tended, it never goes out). */
-  fires = new Map<string, { left: number | null; at: number }>();
+  /** The fires on this map by "x,y": fuel left as told, and when (null: tended, it never goes out), and who fed it last. */
+  fires = new Map<string, { left: number | null; at: number; fed: PersonView[] }>();
   /** Marks painted on this map, by id; `markChanges` counts changes, like lootChanges. */
   marks = new Map<number, MarkView>();
   markChanges = 0;
@@ -244,6 +263,11 @@ export class Game {
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
   bench: { x: number; y: number; stash: BagSlot[] } | null = null;
+  /**
+   * The crate you opened (its tile): what lies in it, the newest first, with each one's age as told at
+   * `at`, and whether you left one thing and took one this visit; null while none is open.
+   */
+  cache: { x: number; y: number; items: CacheItemView[]; left: boolean; took: boolean; at: number } | null = null;
   /** Parcels that came since the chest was last opened: it says what came in them, once (takeParcels). */
   parcels: ParcelView[] = [];
   /** What your stash holds, as the server last told it (the welcome, and every chest and workbench after); null before. */
@@ -285,6 +309,11 @@ export class Game {
   gear = new Map<string, Gear>();
   /** The outfit each player on this map wears over their gear, by player id (you too); none: their gear shows. */
   outfits = new Map<string, string>();
+  /** The pattern on each jacket and the badge on each name tag on this map, by player id (you too); none: none worn (merits.ts). */
+  patterns = new Map<string, string>();
+  badges = new Map<string, string>();
+  /** What you spent of your merits, and the looks you bought, as the server last told it; what you earned follows from your XP. */
+  merits: MeritsView = { spent: 0, owned: [] };
   /** Feats just earned, for the interface to announce (it empties the list). */
   news: News[] = [];
   /** A question in the text box (ask.ts): until it is answered, nobody walks and A, B and the stick answer it. */
@@ -327,8 +356,19 @@ export class Game {
   private benching: { x: number; y: number; at: number; card?: DetailRef } | null = null;
   /** The card the workbench that just opened is to show: taken once (takeBenchCard). */
   private benchCard: DetailRef | null = null;
+  /** A crate asked to open and not answered yet. */
+  private caching: { x: number; y: number; at: number } | null = null;
   /** When the server last emptied a bag that held something. */
   private emptiedAt = -Infinity;
+  /** When to offer thanks (thanks.ts), whom you thanked today (UTC day `thankedDay`), and the thanks asked for, for the words of the answer. */
+  private readonly offers = new Offers();
+  private thankedToday = new Set<string>();
+  private thankedDay = -1;
+  private thanking: { id: string; name: string } | null = null;
+  /** The server's wall clock at our `now` (the welcome says it): the UTC day turns by it. */
+  private wall = { now: 0, ms: 0 };
+  /** A letter from home (thanks while you were away), until the text box is free to show it. */
+  private letter: string[] | null = null;
   /** Whom you last asked to trade: a refusal names them (the trade is the server's to make). */
   private tradeWith: PersonView | null = null;
   /** You called off the trade with this player: what the server says of it until it has heard you is old news. */
@@ -436,9 +476,15 @@ export class Game {
         this.stats = msg.stats;
         this.statsChanges++;
         this.progress = msg.progress;
+        this.merits = msg.merits ?? { spent: 0, owned: [] };
+        // Time away worth a word: stashing counts double for a while, and the arrival says so.
+        if ((msg.restedAway ?? 0) >= RESTED_NOTICE && (msg.progress.rested ?? 0) > 0) this.news.push({ kind: 'rested', xp: msg.progress.rested! });
         this.tools = msg.tools;
         this.chapter = msg.story.chapter;
         this.storyChanges++;
+        this.wall = { now, ms: msg.serverTime };
+        this.thankedDay = utcDay(msg.serverTime);
+        this.thankedToday = new Set(msg.thanked ?? []);
         break;
       }
       case 'zone': {
@@ -463,7 +509,7 @@ export class Game {
         this.body = { view: msg.body, at: now };
         break;
       case 'fire':
-        this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now });
+        this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now, fed: msg.fire.fed ?? [] });
         break;
       case 'mark':
         this.marks.set(msg.mark.id, msg.mark);
@@ -562,11 +608,29 @@ export class Game {
         if (msg.outfit) this.outfits.set(msg.id, msg.outfit);
         else this.outfits.delete(msg.id);
         break;
+      case 'pattern':
+        if (msg.pattern) this.patterns.set(msg.id, msg.pattern);
+        else this.patterns.delete(msg.id);
+        break;
+      case 'badge':
+        if (msg.badge) this.badges.set(msg.id, msg.badge);
+        else this.badges.delete(msg.id);
+        break;
+      case 'merits':
+        this.merits = msg.merits;
+        break;
       case 'parcel': {
         this.parcels = [...this.parcels, msg.parcel];
         // The welcome parcel comes with the first sign-in, which opens the wardrobe too: its banner names what is new in it.
         const outfits = msg.parcel.weekday === null ? this.newOutfits() : [];
         this.news.push({ kind: 'parcel', parcel: msg.parcel, ...(outfits.length ? { outfits } : {}) });
+        break;
+      }
+      case 'cache': {
+        // The answer to opening it, or news of the one open (someone left or took something).
+        const o = this.caching, c = this.cache, fresh = { x: msg.x, y: msg.y, items: msg.items, left: msg.left, took: msg.took, at: now };
+        if (o && o.x === msg.x && o.y === msg.y && this.clock - o.at < ANSWER_WAIT_MS) { this.cache = fresh; this.caching = null; }
+        else if (c && c.x === msg.x && c.y === msg.y) this.cache = fresh;
         break;
       }
       case 'bench': {
@@ -577,12 +641,28 @@ export class Game {
         break;
       }
       case 'did':
+        if (msg.did.kind === 'thanked') this.thankedToday.add(msg.did.who);
         // It takes the place of the question just said yes to, which waited for it in the box.
         this.inform(didWho(msg.did, this.items), didText(msg.did, this.items));
         break;
+      case 'thanked': {
+        // Out in the wilds, over your head; anywhere else the text box says what it was for.
+        if (msg.line) this.inform('Thanks', thankedLine(msg.name, thanksFor(msg.what, id => this.maps.find(id), this.items)));
+        else this.floatOverMe(thankedFloat(msg.name, msg.energy), GAIN);
+        break;
+      }
+      case 'letter': {
+        const lines = letterLines(msg.thanks, id => this.maps.find(id), this.items);
+        if (lines.length) this.letter = lines;
+        break;
+      }
       case 'progress':
-        if (msg.gained > 0) this.floatOverMe(`+${msg.gained} XP`, GAIN);
+        if (msg.gained > 0) this.floatOverMe(xpFloat(msg.gained, msg.fromRest), GAIN);
         if (msg.progress.level > this.progress.level) this.news.push({ kind: 'level', progress: msg.progress, from: this.progress.level });
+        // Past level 20, what stashing earns counts toward merits: a new one is news.
+        if (meritsOf(msg.progress.xp) > meritsOf(this.progress.xp)) {
+          this.news.push({ kind: 'merit', earned: meritsOf(msg.progress.xp) - meritsOf(this.progress.xp), left: meritsLeft(msg.progress.xp, this.merits.spent) });
+        }
         this.progress = msg.progress;
         break;
       case 'join':
@@ -591,6 +671,10 @@ export class Game {
         this.quirks.set(msg.player.id, msg.player.quirks ?? []);
         if (msg.player.outfit) this.outfits.set(msg.player.id, msg.player.outfit);
         else this.outfits.delete(msg.player.id);
+        if (msg.player.pattern) this.patterns.set(msg.player.id, msg.player.pattern);
+        else this.patterns.delete(msg.player.id);
+        if (msg.player.badge) this.badges.set(msg.player.id, msg.player.badge);
+        else this.badges.delete(msg.player.id);
         if (msg.player.live) this.live.add(msg.player.id);
         else this.live.delete(msg.player.id);
         if (msg.player.afterglow) this.afterglows.set(msg.player.id, now + msg.player.afterglow * 1000);
@@ -713,13 +797,21 @@ export class Game {
         if (TRADE_ACTIONS.has(msg.action)) { this.inform('Trade', tradeRefusal(msg.reason, this.trade?.with.name ?? this.tradeWith?.name ?? 'them')); break; }
         if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
         if (msg.action === 'call') { this.murmur(refusalText(msg.reason, msg.action)); break; }
+        // A thanks is answered with the helper's name: the one asked about.
+        if (msg.action === 'thank' && this.thanking) {
+          if (msg.reason === 'thanked') this.thankedToday.add(this.thanking.id);
+          this.inform(this.note?.waiting ? this.note.who : '', thankRefusal(msg.reason, this.thanking.name));
+          break;
+        }
+        // Taking out of a crate asks nothing, but is answered in the box like what does.
+        if (msg.action === 'cacheTake') { this.inform('Crate', sentence(refusalText(msg.reason, msg.action))); break; }
         // What was asked first is answered in the same box; the rest (picking up, the chest) over your head.
         if (ASKED_FIRST.has(msg.action)) {
           this.inform(this.note?.waiting ? this.note.who : '', sentence(refusalText(msg.reason, msg.action)));
           break;
         }
         // The wardrobe's panel would hide anything said over your head: the box stands above it.
-        if (msg.action === 'outfit') { this.inform('Wardrobe', sentence(refusalText(msg.reason, msg.action))); break; }
+        if (WARDROBE.has(msg.action)) { this.inform('Wardrobe', sentence(refusalText(msg.reason, msg.action))); break; }
         if (msg.action === 'pick') this.picking = null;
         this.floatOverMe(refusalText(msg.reason, msg.action), NO);
         break;
@@ -733,11 +825,12 @@ export class Game {
     this.online = false;
     this.pending = []; this.path = []; this.goal = null;
     // Answers to what we asked went with the connection, and what was being asked may no longer hold.
-    this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.benchCard = null;
+    this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.benchCard = null; this.caching = null; this.cache = null;
     // A trade lasts only while both are online: the server calls it off.
     if (this.trade) this.tradeChanges++;
     this.trade = null; this.tradeMine = []; this.tradeAsk = null; this.callingOff = null;
     this.clearBox();
+    this.offers.reset();
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
     if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
@@ -751,9 +844,10 @@ export class Game {
     if (map !== this.current) {
       this.current = map;
       this.talkers = talkersOf(map);
-      this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.benchCard = null;
+      this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.benchCard = null; this.cache = null; this.caching = null;
       this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
       this.clearBox();
+      this.offers.reset();
     }
     this.players.clear();
     for (const p of players) this.players.set(p.id, this.mover(p));
@@ -762,6 +856,8 @@ export class Game {
     this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
     this.quirks = new Map(players.map(p => [p.id, p.quirks ?? []]));
     this.outfits = new Map(players.flatMap(p => (p.outfit ? [[p.id, p.outfit] as const] : [])));
+    this.patterns = new Map(players.flatMap(p => (p.pattern ? [[p.id, p.pattern] as const] : [])));
+    this.badges = new Map(players.flatMap(p => (p.badge ? [[p.id, p.badge] as const] : [])));
     this.live = new Set(players.filter(p => p.live).map(p => p.id));
     this.afterglows = new Map(players.flatMap(p => (p.afterglow ? [[p.id, this.clock + p.afterglow * 1000] as const] : [])));
     this.finds = new Map(finds.map(f => [f.id, f]));
@@ -788,7 +884,7 @@ export class Game {
     msg: { fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: Array<{ x: number; y: number; left: number }>; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null },
     now: number,
   ) {
-    this.fires = new Map(msg.fires.map(f => [`${f.x},${f.y}`, { left: f.left, at: now }]));
+    this.fires = new Map(msg.fires.map(f => [`${f.x},${f.y}`, { left: f.left, at: now, fed: f.fed ?? [] }]));
     this.marks = new Map(msg.marks.map(m => [m.id, m]));
     this.markChanges++;
     this.creatures = new Map(msg.creatures.map(c => [c.id, this.creatureMover(c)]));
@@ -872,6 +968,12 @@ export class Game {
       if (!this.online) return;
       this.benching = { x: t.x, y: t.y, at: this.clock };
       this.send({ t: 'bench', x: t.x, y: t.y });
+      return;
+    }
+    if (t.kind === 'cache') {
+      if (!this.online) return;
+      this.caching = { x: t.x, y: t.y, at: this.clock };
+      this.send({ t: 'cache', x: t.x, y: t.y });
       return;
     }
     return this.offer(t.x, t.y);
@@ -1149,6 +1251,27 @@ export class Game {
     if (c && this.online) this.send({ t: 'outfit', x: c.x, y: c.y, outfit });
   }
 
+  /** At the open chest: wear a pattern or a badge of yours from the wardrobe, or none (null). Like an outfit, it asks nothing. */
+  wearLook(kind: LookKind, id: string | null) {
+    const c = this.chest;
+    if (!c || !this.online) return;
+    this.send(kind === 'pattern' ? { t: 'pattern', x: c.x, y: c.y, pattern: id } : { t: 'badge', x: c.x, y: c.y, badge: id });
+  }
+
+  /**
+   * At the open chest: spend merits on a look, a jacket pattern or a name tag badge (merits.ts). It uses
+   * them up, so it asks first ("Spend a merit on the chevron pattern? You have 3."), or says why it cannot;
+   * the box then says what it did.
+   */
+  buyLook(id: string) {
+    const c = this.chest, look = meritLookOf(id);
+    if (!c || !this.online || !look) return;
+    const why = whyNotBuy(look, this.progress.xp, this.merits, !this.guest);
+    if (why) return this.inform('Wardrobe', why === 'no_merits' ? noMerit(this.progress.xp) : sentence(refusalText(why, 'buy')));
+    const text = buyQuestion(look, meritsLeft(this.progress.xp, this.merits.spent));
+    this.ask({ who: 'Wardrobe', text, yes: () => this.act('Wardrobe', text, { t: 'buy', x: c.x, y: c.y, look: id }) });
+  }
+
   /**
    * The outfits signing in just gave you, which the welcome parcel's banner names: all your level opens
    * (the NAPO work suit first), as none were yours before. None for a guest, and none once you wear one:
@@ -1239,6 +1362,46 @@ export class Game {
     return c;
   }
 
+  // ---------- a crate for whoever comes next ----------
+
+  /** What lies in the open crate, each one's age counted on to `now`. */
+  cacheItemsNow(now: number): CacheItemView[] {
+    const c = this.cache;
+    if (!c) return [];
+    const by = Math.max(0, now - c.at) / 1000;
+    return c.items.map(e => ({ ...e, age: e.age + by }));
+  }
+
+  /**
+   * At the open crate: leave one of what is in bag slot `slot` for whoever comes next. It asks first
+   * ("Leave 1 resin in the crate for whoever comes next?"), or says why not: gear stays out, you left
+   * one this visit already, or the crate is full.
+   */
+  leaveInCache(slot: number) {
+    const c = this.cache, s = this.bag[slot];
+    if (!c || !s || !this.online) return;
+    const def = this.items.get(s.item);
+    if (!cacheTakes(def)) return this.inform('Crate', CRATE_NO_GEAR);
+    if (c.left) return this.inform('Crate', LEFT_ONE);
+    if (c.items.length >= CACHE_SIZE) return this.inform('Crate', CRATE_FULL);
+    const text = leaveQuestion(def);
+    this.ask({ who: 'Crate', text, yes: () => this.actOn(slot, def.id, 'Crate', text, i => ({ t: 'cacheLeave', x: c.x, y: c.y, slot: i })) });
+  }
+
+  /** At the open crate: take the thing `id` out. Someone left it for you: it asks nothing, and the box then says what it did (and whom it thanked). */
+  takeFromCache(id: number) {
+    const c = this.cache, e = c?.items.find(x => x.id === id);
+    if (!c || !e || !this.online) return;
+    if (c.took) return this.inform('Crate', TOOK_ONE);
+    if (addToBag(this.bag, this.items.get(e.item), 1, bagSlotsOf(this.myGear, this.items.byId)).left) return this.inform('Crate', NO_ROOM);
+    this.send({ t: 'cacheTake', x: c.x, y: c.y, id });
+  }
+
+  /** Close the crate (its panel went away). */
+  closeCache() {
+    this.cache = null;
+  }
+
   /** What you wear. */
   get myGear(): Gear {
     return (this.meId && this.gear.get(this.meId)) || {};
@@ -1247,6 +1410,15 @@ export class Game {
   /** The outfit you wear, or null: your gear shows. */
   get myOutfit(): string | null {
     return (this.meId && this.outfits.get(this.meId)) || null;
+  }
+
+  /** The pattern on your jacket and the badge on your name tag, or null: none. */
+  get myPattern(): string | null {
+    return (this.meId && this.patterns.get(this.meId)) || null;
+  }
+
+  get myBadge(): string | null {
+    return (this.meId && this.badges.get(this.meId)) || null;
   }
 
   /** What you wear, piece by piece (condition and quirk), as the server last told it. */
@@ -1380,7 +1552,9 @@ export class Game {
     if (!s || !this.online) return;
     const def = this.items.get(s.item), why = this.whyNotUse(slot, def);
     if (why) return this.inform(def.name, why);
-    const text = useQuestion(def, this.energy(this.clock), def.use?.mark ? this.markLift() : undefined);
+    // An arrow shows as long as your feats and charms say (Good neighbor), and a pale moth gives energy back: the server's rules.
+    const mods = modsOf(this.stats, charmsIn(this.bag, this.items.byId));
+    const text = useQuestion(def, this.energy(this.clock), markLifetime(mods) / 1000, def.use?.mark ? this.markLift(mods) : undefined);
     this.ask({ who: def.name, text, yes: () => { done?.(); this.actOn(slot, def.id, def.name, text, i => ({ t: 'use', slot: i })); } });
   }
 
@@ -1411,11 +1585,12 @@ export class Game {
 
   /**
    * What a charm in your bag gives back as a glowcap is crushed (a pale moth), and which one: the server's
-   * rule (Mods.markEnergy), when the bar has room for it; undefined when nothing would.
+   * rule (Mods.markEnergy, in the `mods` your feats and charms make), when the bar has room for it;
+   * undefined when nothing would.
    */
-  private markLift(): { charm: ItemDef; energy: number } | undefined {
+  private markLift(mods: Mods): { charm: ItemDef; energy: number } | undefined {
     const charm = this.bag.map(s => this.items.get(s.item)).find(d => d.kind === 'charm' && (d.charm?.markEnergy ?? 0) > 0);
-    const e = this.energy(this.clock), energy = modsOf({}, charmsIn(this.bag, this.items.byId)).markEnergy;
+    const e = this.energy(this.clock), energy = mods.markEnergy;
     return charm && energy > 0 && (!e || e.max - e.value >= 0.5) ? { charm, energy } : undefined;
   }
 
@@ -1519,6 +1694,45 @@ export class Game {
     this.note = null;
     this.boxChanges++;
     this.sayLater();
+  }
+
+  // ---------- thanks, and the letter home ----------
+
+  /**
+   * What the game brings up by itself when nothing else holds the box: the letter home, then an offer to
+   * thank someone (thanks.ts). Call it every frame after update(); `covered`: a panel, the menu or the
+   * dark between maps is up, and nothing new may show.
+   */
+  idle(now: number, covered: boolean) {
+    // The UTC day turns: whom you thanked yesterday may be thanked again.
+    const day = utcDay(this.wall.ms + (now - this.wall.now));
+    if (day !== this.thankedDay) { this.thankedDay = day; this.thankedToday.clear(); }
+    const free = this.online && !covered && !this.held && !this.question && !this.note && !this.dialog;
+    if (free && this.letter) {
+      this.openDialog({ x: 0, y: 0, who: 'Letter', lines: this.letter, kind: 'talk' });
+      this.letter = null;
+      return;
+    }
+    const me = this.online ? this.me : undefined, blocked = new Set((this.friends?.blocked ?? []).map(p => p.id));
+    const offer = this.offers.due({
+      now, map: this.current.data.id, marks: this.marks, free,
+      me: me ? { id: me.id, x: me.tx, y: me.ty, moving: !!me.anim || !!this.pad.dir || this.path.length > 0 || !!this.goal } : null,
+      fires: [...this.fires].map(([k, f]) => { const [x, y] = k.split(',').map(Number) as [number, number]; return { x, y, left: this.fireLeft(x, y, now) ?? null, fed: f.fed }; }),
+      skip: id => this.thankedToday.has(id) || blocked.has(id),
+    });
+    if (offer) this.offerThanks(offer);
+  }
+
+  /** "Ana fed this fire. Thank Ana?" YES sends the thanks; NO means never again for that fire or arrow this session. */
+  private offerThanks(o: Offer) {
+    const who = o.kind === 'fire' ? 'Fire' : 'Arrow', name = o.helper.name;
+    const text = o.kind === 'fire' ? fireThanksQuestion(name) : markThanksQuestion(name);
+    const what = o.kind === 'fire' ? { kind: 'fire' as const, x: o.x, y: o.y } : { kind: 'mark' as const, id: o.id };
+    this.ask({
+      who, text,
+      yes: () => { this.thanking = { id: o.helper.id, name }; this.act(who, text, { t: 'thank', who: o.helper.id, what }); },
+      no: () => this.offers.decline(o.key),
+    });
   }
 
   /** Says what waited for the box, once the box is free: a friend's ask to trade first, as it does not wait long. */
@@ -1708,6 +1922,8 @@ export class Game {
       return;
     }
     if (this.path.length) this.path.shift();
+    // Stepping off an arrow the way it points follows it (thanks.ts).
+    this.offers.stepped(me.tx, me.ty, dir, to, this.marks);
     const seq = ++this.seq;
     this.pending.push({ seq, x: to.x, y: to.y });
     this.walk(me, to.x, to.y, dir, now);
@@ -1736,7 +1952,7 @@ export class Game {
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
       afterglow: (this.afterglows.get(p.id) ?? 0) > this.clock,
-      look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id)),
+      look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id)),
     }));
   }
 

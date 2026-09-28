@@ -3,19 +3,22 @@
  * Everything the client sends is validated with these schemas; the server never trusts it.
  */
 import { z } from 'zod';
+import type { CacheItemView } from './caches';
 import { CALL_KINDS, type CallKind } from './calls';
 import { MAX_SAY_CHARS, type ChatTo } from './chat';
 import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { Gear, Quirk, Worn } from './gear';
 import type { BagSlot } from './items';
+import type { MeritsView } from './merits';
 import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
+import type { ThanksFor, ThanksGroup } from './thanks';
 import { OFFER_MAX } from './trade';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 23;
+export const PROTOCOL_VERSION = 26;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -160,6 +163,12 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('open'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40) }),
   /** Wear an outfit (outfits.ts) from the wardrobe at the chest on tile x,y, or none (null): your gear shows again. */
   z.object({ t: z.literal('outfit'), x: z.number().int(), y: z.number().int(), outfit: z.string().min(1).max(40).nullable() }),
+  /** Spend merits on a look (merits.ts: a jacket pattern or a name tag badge), at the chest on tile x,y: it is yours for good. */
+  z.object({ t: z.literal('buy'), x: z.number().int(), y: z.number().int(), look: z.string().min(1).max(40) }),
+  /** Wear a jacket pattern of yours from the wardrobe at the chest on tile x,y, or none (null). */
+  z.object({ t: z.literal('pattern'), x: z.number().int(), y: z.number().int(), pattern: z.string().min(1).max(40).nullable() }),
+  /** Wear a name tag badge of yours from the wardrobe at the chest on tile x,y, or none (null). */
+  z.object({ t: z.literal('badge'), x: z.number().int(), y: z.number().int(), badge: z.string().min(1).max(40).nullable() }),
   /** Ask someone to be your friend, by id (tapping their name tag) or by name. If they asked you already, you are friends. */
   z.object({ t: z.literal('befriend'), id: z.uuid().optional(), name: PlayerName.optional() }),
   /** Answer someone's friend request: yes makes you friends, no drops it. */
@@ -207,8 +216,25 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('stats') }),
   /** Say something to everyone online (world) or to whoever is near you (local). Only signed-in players can. */
   z.object({ t: z.literal('say'), to: z.enum(['world', 'local']), text: z.string().trim().min(1).max(MAX_SAY_CHARS) }),
+  /**
+   * Thank `who` (thanks.ts), who fed the fire on tile x,y of your map (you warm at it) or painted the
+   * arrow `id` (you stand where it points). Once a UTC day for each helper; guests too: it carries no words.
+   */
+  z.object({
+    t: z.literal('thank'), who: z.uuid(),
+    what: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('fire'), x: z.number().int(), y: z.number().int() }),
+      z.object({ kind: z.literal('mark'), id: z.number().int().nonnegative() }),
+    ]),
+  }),
   /** Sing a call (calls.ts): everyone on your map within CALL_REACH hears it, you too. Anyone may, guests included. */
   z.object({ t: z.literal('call'), kind: z.enum(CALL_KINDS) }),
+  /** Open the crate on tile x,y, next to you (caches.ts): the server answers with what is in it. */
+  z.object({ t: z.literal('cache'), x: z.number().int(), y: z.number().int() }),
+  /** Leave one of what is in bag slot `slot` in the crate on tile x,y: once a visit, never gear. */
+  z.object({ t: z.literal('cacheLeave'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63) }),
+  /** Take the thing `id` out of the crate on tile x,y: once a visit; it thanks whoever left it. */
+  z.object({ t: z.literal('cacheTake'), x: z.number().int(), y: z.number().int(), id: z.number().int().nonnegative() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -233,20 +259,28 @@ export interface DropView {
   trail: Array<[number, number]>;
 }
 
-/** A fire on your map. `left`: seconds of fuel when sent (it counts down), or null for a tended fire that never goes out. */
+/**
+ * A fire on your map. `left`: seconds of fuel when sent (it counts down), or null for a tended fire that
+ * never goes out. `fed`: the last players who fed it, the most recent first (none until someone has).
+ */
 export interface FireView {
   x: number;
   y: number;
   left: number | null;
+  fed?: PersonView[];
 }
 
-/** An arrow someone painted on the ground, pointing `dir`, in their jacket color; it fades at `until` (ms since the epoch). */
+/**
+ * An arrow someone painted on the ground, pointing `dir`, in their jacket color; it fades at `until` (ms
+ * since the epoch). `owner` and `name`: who painted it.
+ */
 export interface MarkView {
   id: number;
   x: number;
   y: number;
   dir: Dir;
   color: string;
+  owner: string;
   name: string;
   until: number;
 }
@@ -285,8 +319,8 @@ export interface StoneView {
 /**
  * What something you asked for did, once the server carried it out: the client says it in the text box,
  * in its own words, from these facts (never guessed). One of these follows every feed, use, discard,
- * craft, mend, upgrade and open that went through (an upgrade that did not take went through: its
- * materials are spent), after everything else the action changed; a refusal is `refused`.
+ * craft, mend, upgrade, open and thanks that went through (an upgrade that did not take went through:
+ * its materials are spent), after everything else the action changed; a refusal is `refused`.
  */
 export type Did =
   /** A fire took `count` of `item`, and has `left` seconds of fuel now; `lit`: it was out. */
@@ -313,7 +347,18 @@ export type Did =
   /** You threw away `count` of `item` (a piece at `level`, when upgraded). */
   | { kind: 'thrown'; item: string; count: number; level?: number }
   /** You opened a sealed `item` (a NAPO lockbox) at the chest: what it held (`got`) is in your stash now. */
-  | { kind: 'opened'; item: string; got: BagSlot[] };
+  | { kind: 'opened'; item: string; got: BagSlot[] }
+  /** You thanked `who` (their `name`) for feeding the fire or painting the arrow. */
+  | { kind: 'thanked'; who: string; name: string; what: 'fire' | 'mark' }
+  /** You left one `item` in a crate, for whoever comes next. */
+  | { kind: 'left'; item: string }
+  /**
+   * You took one `item` out of a crate, left there by `name`: `mine`, you had left it yourself; `thanked`,
+   * it thanked them (not when you had thanked them today already).
+   */
+  | { kind: 'took'; item: string; name: string; mine?: true; thanked?: true }
+  /** You spent merits on `look` (merits.ts): it is yours for good, and `left` merits are still to spend. */
+  | { kind: 'bought'; look: string; left: number };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -378,6 +423,21 @@ export type Refusal =
   | 'sealed_stays'
   /** Your level has not reached that outfit yet. */
   | 'locked'
+  /** You thanked them today already: each helper once a UTC day. */
+  | 'thanked'
+  /** The crate holds as many things as it can. */
+  | 'crate_full'
+  /** Gear (and tools) stay out of a crate. */
+  | 'no_gear'
+  /** You left one thing in this crate this visit already, or took one. */
+  | 'left_one'
+  | 'took_one'
+  /** You have that look already: each is bought once, and kept. */
+  | 'owned'
+  /** You have no merit to spend on it (past level 20, every MERIT_XP earns one). */
+  | 'no_merits'
+  /** That look is not yours: buy it first. */
+  | 'not_owned'
   /** They take no trade requests. */
   | 'trades_off'
   /** They are trading with someone else, or being asked to. */
@@ -449,6 +509,10 @@ export interface PlayerView {
   quirks: Quirk[];
   /** The outfit they wear over it (outfits.ts): how they look, whatever their gear. None: their gear shows. */
   outfit?: string;
+  /** The pattern on their jacket (merits.ts), over an outfit too; none: their jacket as it is. */
+  pattern?: string;
+  /** The badge beside their name on their name tag (merits.ts); none: their name alone. */
+  badge?: string;
   /** They carry a live find (items.ts): a column of light over them that everyone on the map sees. */
   live?: true;
   /** Seconds left of their afterglow (a quirk, gear.ts): they glow faintly, and watchers keep off them. */
@@ -512,14 +576,23 @@ export type ServerMsg =
       conditions: ConditionsView;
       /** What you did so far that counts toward feats: each feat's rank follows from its count (feats.ts, rankOf). */
       stats: Stats;
-      /** Your XP and level (progress.ts). */
+      /** Your XP and level, and the rest saved up while you were away (progress.ts). */
       progress: ProgressView;
+      /**
+       * The rest your time away was worth, since you were last seen (progress.ts, restFor), whether or not
+       * the cup had room for all of it: an arrival worth a word says so. None: no time worth any.
+       */
+      restedAway?: number;
+      /** What you spent of your merits and the looks you bought (merits.ts); what you earned follows from your XP. */
+      merits: MeritsView;
       /** Your tools (item ids, items.ts, toolsOf), in the order you got them: kept for good, apart from the bag. */
       tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
       items: number;
       /** Where you are in the story. */
       story: StoryView;
+      /** Whom you thanked today (UTC), by id: nobody is thanked twice in a day, so none of them is offered again. */
+      thanked: string[];
       serverTime: number;
     }
   /**
@@ -543,8 +616,21 @@ export type ServerMsg =
    * out to be comes in `did` instead.
    */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool'; double?: true }
-  /** What a feed, use, discard, craft, mend, upgrade or open you asked for did (for the text box). */
+  /** What a feed, use, discard, craft, mend, upgrade, open or thanks you asked for did (for the text box). */
   | { t: 'did'; did: Did }
+  /**
+   * Someone (by `name`) thanked you, for `what` (thanks.ts). Out in the wilds it gave you `energy` (none:
+   * no more gifts this trip, or a full bar), a float over your head; `line`: you are not out there, so the
+   * text box says it, and it will not be in your letter.
+   */
+  | { t: 'thanked'; name: string; what: ThanksFor; energy?: number; line?: true }
+  /** You came home: who thanked you while you were away, and for what, the most thanked first. */
+  | { t: 'letter'; thanks: ThanksGroup[] }
+  /**
+   * The crate on tile x,y of your map, as you opened it, or since it changed while you visit it: what is
+   * in it, the newest first, and whether you left one and took one this visit.
+   */
+  | { t: 'cache'; x: number; y: number; items: CacheItemView[]; left: boolean; took: boolean }
   /** Something asked for that did not happen, and why. */
   | { t: 'refused'; action: RefusedAction; reason: Refusal }
   /** Someone said something you can hear: to everyone online, or near them on your map (a bubble over their head). You hear your own too. */
@@ -606,12 +692,21 @@ export type ServerMsg =
   | { t: 'chest'; stash: BagSlot[] }
   /** A parcel came into your chest (parcels.ts): when you arrived signed in, or at midnight UTC while you played. */
   | { t: 'parcel'; parcel: ParcelView }
-  /** Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did). */
-  | { t: 'progress'; progress: ProgressView; gained: number }
+  /**
+   * Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did), and the rest
+   * left: `fromRest` is the part of `gained` the cup of rest paid, doubling what stashing earned (progress.ts).
+   */
+  | { t: 'progress'; progress: ProgressView; gained: number; fromRest?: number }
   /** On your map: what someone wears now (you too, after you changed it). */
   | { t: 'gear'; id: string; gear: Gear; quirks: Quirk[] }
   /** On your map: the outfit someone wears now (you too, after you chose it); null: none, their gear shows. */
   | { t: 'outfit'; id: string; outfit: string | null }
+  /** On your map: the pattern on someone's jacket now (you too, after you chose it); null: none. */
+  | { t: 'pattern'; id: string; pattern: string | null }
+  /** On your map: the badge on someone's name tag now (you too, after you chose it); null: none. */
+  | { t: 'badge'; id: string; badge: string | null }
+  /** Your merits, whole, after you spent some: what you spent, and every look you bought. */
+  | { t: 'merits'; merits: MeritsView }
   /** The workbench you opened: what your stash holds, whole, after opening it, making or mending something, or a parcel came. */
   | { t: 'bench'; stash: BagSlot[] }
   /** On your map: a find grew here, or someone took one / it went. */
@@ -636,7 +731,8 @@ export type ServerMsg =
 
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
-  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'say' | 'call'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
+  | 'thank' | 'cacheLeave' | 'cacheTake'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 

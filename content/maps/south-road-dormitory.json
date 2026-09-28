@@ -1,7 +1,7 @@
 {
   "id": "south-road-dormitory",
   "name": "The dormitory",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -34,7 +34,8 @@
     {"kind":"bed","x":7,"y":1},
     {"kind":"rug","x":3,"y":2,"w":3,"h":1},
     {"kind":"crate","x":1,"y":4},
-    {"kind":"crate","x":7,"y":4}
+    {"kind":"crate","x":7,"y":4},
+    {"kind":"cache","x":5,"y":3,"name":"the dormitory's crate"}
   ],
   "style": "napo"
 }

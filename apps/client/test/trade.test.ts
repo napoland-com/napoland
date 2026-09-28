@@ -16,6 +16,7 @@ const data: ItemsData = {
     { id: 'shard', name: 'Anomaly shard', noun: 'shard', kind: 'resource', stack: 5, text: 'Warm.' },
     { id: 'live', name: 'Live shard', kind: 'resource', stack: 1, text: 'Humming.', live: { xp: 40, fresh: 240, fade: 5, into: 'shard' } },
     { id: 'coat', name: 'Raincoat', kind: 'gear', stack: 1, slot: 'shirt', tier: 'sturdy', resist: { wind: 0.35 }, text: 'Yellow.' },
+    { id: 'gloves', name: 'Rubber gloves', kind: 'gear', stack: 1, slot: 'gloves', tier: 'sturdy', resist: { electricity: 0.25 }, text: 'Thick.' },
   ],
   finds: [],
   wear: { sturdy: 5400 },
@@ -124,6 +125,9 @@ describe('what the text box says about a trade', () => {
     expect(done([{ item: 'resin', count: 3 }, coat(1, 2)], [{ item: 'shard', count: 1 }])).toBe('You traded with Ana. You gave 3 resin and a raincoat +2 and got a shard.');
     expect(done([{ item: 'resin', count: 1 }], [])).toBe('You gave Ana 1 resin.');
     expect(done([], [coat(1)])).toBe('Ana gave you a raincoat.');
+    // A piece is one of its kind, a pair too: never "1 rubber gloves".
+    expect(done([{ item: 'gloves', count: 1, piece: { cond: 0.5 } }], [{ item: 'gloves', count: 1, piece: { cond: 1, level: 3 } }]))
+      .toBe('You traded with Ana. You gave rubber gloves and got rubber gloves +3.');
     const off = (why: Parameters<typeof tradeOverText>[0] & { kind: 'off' }) => tradeOverText(why, 'Ana', items);
     expect(off({ kind: 'off', why: 'cancel', by: 'them' })).toBe('Ana called off the trade.');
     expect(off({ kind: 'off', why: 'cancel', by: 'you' })).toBe('You called off the trade.');

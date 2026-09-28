@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AMOUNTS, CHANCES, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, FAR_STEPS, FEATS, HEAVY_LOAD, MILESTONES, MODS, NO_MODS, RANKS, STATS, STEP_STATS, TileMap, energyRate, featOf, modChanges, modsOf, rankOf,
-  rankText, rankValue, stepCounts, validateItems, type Feat, type MapData, type Mods,
+  AMOUNTS, CHANCES, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, FAR_STEPS, FEATS, HEAVY_LOAD, MARK_LIFETIME_MS, MILESTONES, MODS, NO_MODS, RANKS, STATS, STEP_STATS, TileMap, energyRate, featOf,
+  markLifetime, modChanges, modsOf, rankOf, rankText, rankValue, stepCounts, validateItems, type Feat, type MapData, type Mods,
 } from '../src';
 
 const feat = (id: string): Feat => FEATS.find(f => f.id === id)!;
@@ -32,6 +32,8 @@ describe('the table of feats and ranks', () => {
       mender: { stat: 'mended', mod: 'wear', way: 'less', need: [5, 15, 40, 100, 250], by: [0.05, 0.1, 0.15, 0.2, 0.25] },
       forager: { stat: 'found', mod: 'double', way: 'chance', need: [200, 700, 2_000, 5_000, 12_000], by: [0.05, 0.08, 0.11, 0.13, 0.15] },
       pathfinder: { stat: 'farSteps', mod: 'farDrain', way: 'less', need: [500, 1_500, 5_000, 12_000, 30_000], by: [0.03, 0.06, 0.09, 0.12, 0.15] },
+      // Arrows last 2, 3, 4, 5 and 7 days: a day, times 1 and what it adds.
+      'good-neighbor': { stat: 'thanked', mod: 'marks', way: 'more', need: [25, 75, 200, 500, 1_200], by: [1, 2, 3, 4, 6] },
     });
     expect(FAR_STEPS).toBe(85);
   });
@@ -42,7 +44,8 @@ describe('the table of feats and ranks', () => {
       expect(f.ranks, f.id).toHaveLength(RANKS);
       f.ranks.forEach((r, i) => {
         expect(Number.isInteger(r.need) && r.need > 0, f.id).toBe(true);
-        expect(r.by > 0 && r.by < 1, f.id).toBe(true);
+        // Less of something never goes to nothing, and a chance is a share; more of something may double and more.
+        expect(r.by > 0 && (f.way === 'more' || r.by < 1), f.id).toBe(true);
         if (i) expect(r.need > f.ranks[i - 1]!.need && r.by > f.ranks[i - 1]!.by, `${f.id} rank ${i + 1}`).toBe(true);
       });
       expect(featOf(f.stat)).toBe(f);
@@ -91,6 +94,19 @@ describe('ranks', () => {
     expect(rankText(feat('mender'), 1)).toBe('Gear wears 5% slower out there');
     expect(rankText(feat('forager'), 2)).toBe('Finds come up double 8% of the time');
     expect(rankText(feat('pathfinder'), 3)).toBe('85 steps or more from home, you tire 9% slower');
+    expect([1, 2, 3, 4, 5].map(r => rankText(feat('good-neighbor'), r))).toEqual([
+      'Your arrows last 2 days', 'Your arrows last 3 days', 'Your arrows last 4 days', 'Your arrows last 5 days', 'Your arrows last 7 days',
+    ]);
+  });
+});
+
+describe('the good neighbor\'s arrows', () => {
+  it('last a day, and as many days as the rank says: counted by thanks received', () => {
+    expect(MARK_LIFETIME_MS).toBe(86_400_000);
+    expect(markLifetime(NO_MODS)).toBe(MARK_LIFETIME_MS);
+    expect(markLifetime(modsOf({ thanked: 24 }))).toBe(MARK_LIFETIME_MS);
+    expect([25, 75, 200, 500, 1_200, 99_999].map(n => markLifetime(modsOf({ thanked: n })) / MARK_LIFETIME_MS)).toEqual([2, 3, 4, 5, 7, 7]);
+    expect(featOf('thanked')).toBe(feat('good-neighbor'));
   });
 });
 
@@ -134,7 +150,7 @@ describe('mods', () => {
     expect(charm({ double: 0 })).toEqual(['item "bead" is a charm that does nothing']);
     expect(charm({ luck: 2 } as Partial<Mods>)).toEqual([
       'item "bead" is a charm that does nothing',
-      'item "bead": a charm changes wetting, load, hitch, warmth, wear, farDrain, double or markEnergy, not luck',
+      'item "bead": a charm changes wetting, load, hitch, warmth, wear, farDrain, double, marks or markEnergy, not luck',
     ]);
   });
 });

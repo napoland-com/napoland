@@ -5,13 +5,22 @@
 import { describe, expect, it } from 'vitest';
 import { ENERGY_MAX, ENERGY_PER_LEVEL, TileMap, XP_CURVE, type Dir, type ItemsData, type ServerMsg } from '@napoland/shared';
 import type { PlayerRecord } from '../src/storage';
-import { World, colorFor, type Outgoing } from '../src/world';
+import { World, colorFor, zoneKey, type Outgoing, type WorldOptions } from '../src/world';
 import { fixtureMaps, houseData } from './fixtures';
 
 /** The fixture house with a chest at 3,1, next to the fireplace: stand at 3,2 facing up to reach it. */
 const withChest = () => {
   const h = houseData();
   return new TileMap({ ...h, objects: [...h.objects, { kind: 'chest', x: 3, y: 1 }] });
+};
+/**
+ * The same house made a home of one's own, as the real one is (cabin.test.ts): each player who walks in
+ * is in a copy of it of their own, and wakes up in it at 2,2. Its way out at 2,4 leads onto the town's
+ * 7,3, and the town's door at 7,2 back in onto 2,3.
+ */
+const cabin = () => {
+  const h = houseData();
+  return new TileMap({ ...h, objects: [...h.objects, { kind: 'chest', x: 3, y: 1 }], private: true, wake: { x: 2, y: 2, dir: 'down' } });
 };
 
 const ITEMS: ItemsData = {
@@ -29,8 +38,12 @@ const rec = (id: string, x: number, y: number, more: Partial<PlayerRecord> = {},
 });
 
 function world(...players: PlayerRecord[]): World {
+  return worldWith({}, ...players);
+}
+/** A world with its own options (a play-test's XP or rest), everyone joined at time 0. */
+function worldWith(options: WorldOptions, ...players: PlayerRecord[]): World {
   const maps = [...fixtureMaps().filter(m => m.data.id !== 'house'), withChest()];
-  const w = new World(maps, 'town', 'overcast', { items: ITEMS, rng: () => 0 });
+  const w = new World(maps, 'town', 'overcast', { items: ITEMS, rng: () => 0, ...options });
   for (const p of players) w.join(p, 0);
   w.drain();
   w.takeWrites();
@@ -105,5 +118,74 @@ describe('levels', () => {
     const w = world(rec('a', 3, 2, { xp: -5, stash: { items: { moss: 2, gone: 4, shard: 1.5 }, out: { moss: -1 } } as never }));
     expect(w.get('a')!.xp).toBe(0);
     expect(w.get('a')!.stash).toEqual({ items: { moss: 2 }, out: {} });
+  });
+});
+
+describe('rest while away', () => {
+  const HOUR = 3_600_000;
+
+  it('fills as they join, from when they were last seen by the world\'s clock, and the welcome says what the time away was worth', () => {
+    const w = worldWith({ epochOffset: 10 * HOUR });
+    const joined = w.join(rec('a', 3, 2, { lastSeenAt: 8 * HOUR - 60_000 }), 0);
+    expect(joined.progress.rested).toBe(6);
+    expect(joined.restedAway).toBe(6);
+    expect(w.get('a')!.rested).toBe(6);
+    // Seen as they leave: straight back is no time away, even with the record as it left.
+    const left = w.leave('a', 30_000)!;
+    expect(left.lastSeenAt).toBe(10 * HOUR + 30_000);
+    const again = w.join(left, 30_000);
+    expect(again).toMatchObject({ restedAway: 0, progress: expect.objectContaining({ rested: 6 }) });
+  });
+
+  it('fills only with time away: walking out of their own cabin into town and back in, or waking up in it after a collapse, is no leaving', () => {
+    const w = new World([...fixtureMaps().filter(m => m.data.id !== 'house'), cabin()], 'town', 'overcast', { items: ITEMS, rng: () => 0, epochOffset: 10 * HOUR });
+    const seen = 8 * HOUR - 60_000;
+    expect(w.join(rec('a', 3, 2, { zone: 'a', lastSeenAt: seen, bag: [{ item: 'moss', count: 2 }] }), 0).progress.rested).toBe(6);
+    expect(w.join(rec('b', 3, 6, { map: 'woods', energy: 1, lastSeenAt: 9 * HOUR }), 0).progress.rested).toBe(3);
+    expect(w.zoneOf('a')).toBe(zoneKey('house', 'a'));
+    w.drain();
+    // Out through the door into the town everyone shares, back into their own cabin and over to the chest.
+    (['left', 'down', 'down', 'up', 'up', 'right'] as const).forEach((dir, i) => w.step('a', dir, i + 1, 1000 + i * 200));
+    const walked = to(w.drain(), 'a');
+    expect(of(walked, 'zone').map(z => z.map.id)).toEqual(['town', 'house']);
+    expect(of(walked, 'progress')).toEqual([]);
+    expect(w.zoneOf('a')).toBe(zoneKey('house', 'a'));
+    // b's energy runs out in the woods: they wake up in their own cabin, still not gone.
+    w.tick(5000);
+    expect(w.zoneOf('b')).toBe(zoneKey('house', 'b'));
+    expect(['a', 'b'].map(id => [w.get(id)!.lastSeenAt, w.get(id)!.rested])).toEqual([[seen, 6], [9 * HOUR, 3]]);
+    // Stashing in the cabin earns double out of the cup, as at any chest.
+    w.store('a', 3, 1, undefined, 5200);
+    expect(of(to(w.drain(), 'a'), 'progress')).toEqual([{ t: 'progress', progress: expect.objectContaining({ xp: 8, rested: 2 }), gained: 8, fromRest: 4 }]);
+    // Leaving is what ends a visit: seen until then.
+    expect(w.leave('a', 6000)!.lastSeenAt).toBe(10 * HOUR + 6000);
+  });
+
+  it('fills faster only for a play-test (RESTED_EVERY_MS), and never past three days\' worth', () => {
+    const w = worldWith({ epochOffset: 10 * HOUR, restedEveryMs: 1000 });
+    expect(w.join(rec('a', 3, 2, { lastSeenAt: 10 * HOUR - 30_000 }), 0).progress.rested).toBe(30);
+    expect(w.join(rec('b', 3, 2, { lastSeenAt: 0, rested: 100 }), 0).progress.rested).toBe(216);
+  });
+
+  it('counts a saved cup that makes no sense as empty', () => {
+    const w = world(rec('a', 3, 2, { rested: -40 }), rec('b', 3, 2, { rested: 'lots' as never }), rec('c', 3, 2, { rested: 9999 }));
+    expect(['a', 'b', 'c'].map(id => w.get(id)!.rested)).toEqual([0, 0, 216]);
+  });
+
+  it('doubles a play-test\'s multiple of what stashing earns too, the cup paying as much as it holds', () => {
+    const w = worldWith({ xpTimes: 10 }, rec('a', 3, 2, { rested: 30, bag: [{ item: 'moss', count: 3 }] }));
+    w.store('a', 3, 1, undefined, 1000);
+    expect(of(to(w.drain(), 'a'), 'progress')).toEqual([{ t: 'progress', progress: expect.objectContaining({ xp: 90 }), gained: 90, fromRest: 30 }]);
+    expect(w.takeWrites().players.map(p => [p.xp, p.rested])).toEqual([[90, 0]]);
+  });
+
+  it('is saved at once with what stashing earned, and only stashing spends it', () => {
+    const w = world(rec('a', 3, 2, { rested: 50, bag: [{ item: 'shard', count: 1 }, { item: 'tea', count: 1 }] }));
+    // Drunk out there, the tea earns nothing and the cup stays as it is.
+    w.use('a', 1, 500);
+    expect(w.get('a')!.rested).toBe(50);
+    w.store('a', 3, 1, undefined, 1000);
+    expect(of(to(w.drain(), 'a'), 'progress')).toEqual([{ t: 'progress', progress: expect.objectContaining({ xp: 24, rested: 38 }), gained: 24, fromRest: 12 }]);
+    expect(w.takeWrites().players.map(p => [p.xp, p.rested])).toEqual([[24, 38]]);
   });
 });

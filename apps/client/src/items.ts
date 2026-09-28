@@ -5,7 +5,7 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, nextUpgrade, outfitOf, resistOf, upgradable, upgradeChance, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef,
+  BAG_SLOTS, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, upgradable, upgradeChance, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef,
   type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction, type Slot, type Upgrade, type Worn,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
@@ -101,7 +101,8 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'slow_down': return action === 'call' ? 'Catch your breath first' : 'Slow down a little';
     case 'sign_in_first':
       if (action === 'say' || action === undefined) return 'Sign in to talk';
-      if (action === 'outfit') return 'Sign in to wear an outfit';
+      if (action === 'outfit' || action === 'pattern' || action === 'badge') return `Sign in to wear ${action === 'outfit' ? 'an outfit' : `a ${action}`}`;
+      if (action === 'buy') return 'Sign in to spend merits';
       return action.startsWith('trade') ? 'Sign in to trade' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'bag_at_home': return 'The bag you wear changes only at home';
@@ -111,6 +112,14 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'top_level': return 'It goes no higher';
     case 'sealed_stays': return 'It stays in the chest: open it there';
     case 'locked': return 'Your level has not reached it yet';
+    case 'thanked': return 'Thanks go once a day to each person';
+    case 'crate_full': return 'The crate is full';
+    case 'no_gear': return 'Gear stays with you: a crate takes none';
+    case 'left_one': return 'You left something here this time already';
+    case 'took_one': return 'You took something here this time already';
+    case 'owned': return 'It is yours already';
+    case 'no_merits': return 'You have no merit to spend on it';
+    case 'not_owned': return 'It is not yours yet: spend a merit on it first';
     case 'trades_off': return 'They take no trade requests';
     case 'busy': return 'They are trading with someone else';
     case 'trading': return 'Finish the trade you are in first';
@@ -241,7 +250,7 @@ export function factsOf(def: ItemDef): string[] {
  * or, in an outfit (outfits.ts), the outfit and the bag alone, since nothing else of the gear shows.
  * An outfit this copy does not have leaves them in their gear.
  */
-export function lookOf(gear: Gear, items: Items, outfit?: string): Look {
+export function lookOf(gear: Gear, items: Items, outfit?: string, pattern?: string): Look {
   // No cap: the hair shows. (Other slots, left bare, keep the old look: nobody walks out barefoot.)
   const out: Look = gear.cap ? {} : { cap: null };
   for (const slot of SLOTS) {
@@ -251,9 +260,11 @@ export function lookOf(gear: Gear, items: Items, outfit?: string): Look {
     out[slot] = def.color;
     if (slot === 'bag' && def.bag) out.bagSize = Math.sqrt(def.bag / BAG_SLOTS);
   }
-  if (!outfitOf(outfit)) return out;
+  // A pattern goes on the jacket, whatever is worn: the gear's, or an outfit's.
+  const patterned = meritLookOf(pattern, 'pattern') ? { pattern: pattern! } : {};
+  if (!outfitOf(outfit)) return { ...out, ...patterned };
   // The pack still shows over any outfit: how much someone carries matters out there.
-  return { outfit, ...(out.bag ? { bag: out.bag } : {}), ...(out.bagSize ? { bagSize: out.bagSize } : {}) };
+  return { outfit, ...(out.bag ? { bag: out.bag } : {}), ...(out.bagSize ? { bagSize: out.bagSize } : {}), ...patterned };
 }
 
 /**

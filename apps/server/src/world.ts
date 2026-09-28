@@ -4,8 +4,13 @@
  * hear is queued as Outgoing messages for the network layer to drain and send, and what storage must
  * hear at once (piles, marks, the Old Stone) is queued for it the same way (takeWrites).
  *
- * The world is several maps joined by exits (a house's door is one, into the house); players see
- * and hear only the players on their own map. Everyone online has energy, which drains in the wilds,
+ * The world is several maps joined by exits (a house's door is one, into the house). A map can have
+ * several copies, each a zone of its own (Zone): its main copy is the world everyone shares, and any
+ * other copy has a key of its own. Players see and hear only the players in their own zone, and what
+ * lies there to pick up, its fires, creatures, flares and flashes, piles and marks are each zone's own;
+ * the sky, the surge and storm clocks and the day's conditions belong to the map, so every copy of it
+ * shares them, and the Old Stone is the whole world's. Which copy an exit leads into is decided in one
+ * place (copyFor). Everyone online has energy, which drains in the wilds,
  * holds in town and inside buildings, and only comes back next to a burning fire (the rules and
  * numbers are in shared/energy.ts). At zero a player collapses and wakes up at home.
  *
@@ -20,7 +25,7 @@
  * you stand. Tall grass hides you from them all (shared hidden()): no creature steps into it or notices
  * anyone in it, and a chase ends there; nothing else out there cares. A flare keeps them all off and
  * shakes off a hitchhiker. Anyone can paint arrows on the ground with a
- * glowcap; they last a day. The Old Stone in town wakes when enough shards are fed to it, and while
+ * glowcap; they last a day (longer for a good neighbor). The Old Stone in town wakes when enough shards are fed to it, and while
  * awake it calms every surge. Strange objects found deep in turn into something when looked at in
  * town. Feats, earned rank by rank by what you do out there, make it a little easier for good (feats.ts).
  *
@@ -31,10 +36,12 @@
  * in the bag, one to a slot, and keeps its piece wherever it goes (the bag, a pile, someone else's
  * half of it); it goes on and comes off at the chest, and anywhere from and into the bag. The bag
  * you wear changes only at the chest. Over it all, a player signed in may wear an outfit (outfits.ts),
- * which changes how they look and nothing else.
+ * which changes how they look and nothing else; past level 20, merits buy a pattern for their jacket and
+ * a badge for their name tag (merits.ts), looks too.
  *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
- * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). On a server
+ * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). Time away fills
+ * a cup of rest, counted as they arrive; while it holds any, stashing earns double out of it. On a server
  * with sign-in, whoever plays signed in finds a parcel in it the first time they play on each calendar
  * day, a welcome parcel the very first time (parcels.ts): gifts, which earn no XP. A NAPO lockbox, which
  * Sunday's parcel holds for whoever came back all week, is opened at the chest.
@@ -46,10 +53,24 @@
  * gets it all back, anyone else a random half (the rest is lost), and it fades an hour after the
  * collapse. The rules for items and bags are in shared/items.ts. Tools are each player's own for good,
  * apart from the bag (giveTool): made at the workbench or found, and never in a pile.
+ *
+ * Thanks (shared/thanks.ts): a fire out there remembers who fed it last, an arrow who painted it, and
+ * whoever warms at the one or follows the other can thank them, once a UTC day each. The helper hears it
+ * at once if online (a little energy out in the wilds, a line anywhere else), or in a letter when they
+ * next walk into their home room. Who thanked whom is kept THANKS_KEPT_DAYS, in memory and in storage.
+ *
+ * Crates for whoever comes next (shared/caches.ts): where people rest by a fire out there, a crate holds
+ * a few things anyone left. Each visit (in its room, or near one in the open) a player may leave one
+ * thing from their bag and take one out; taking thanks whoever left it, and counts as taken out of the
+ * taker's stash, so it earns no XP at home. What lies in each crate is kept across restarts.
  */
 import {
   AFTERGLOW_NEAR,
   AFTERGLOW_S,
+  CACHE_NEAR,
+  CACHE_SIZE,
+  DIR_VEC,
+  MARK_LIFETIME_MS,
   QUIRKS,
   SLOTS,
   STARTER_GEAR,
@@ -60,6 +81,10 @@ import {
   STEP_STATS,
   STEP_MS,
   SURGE_DRAIN,
+  THANKS_ENERGY,
+  THANKS_KEPT_MS,
+  THANKS_PER_TRIP,
+  THANKS_REACH,
   UTC_CALENDAR,
   WEEKDAYS,
   WHOLE_WEEK,
@@ -71,8 +96,10 @@ import {
   amount,
   bagLoad,
   bagSlotsOf,
+  cacheTakes,
   calendarDay,
   canMake,
+  cleanRested,
   conditionsAt,
   dayIndex,
   daysThisWeek,
@@ -105,9 +132,13 @@ import {
   levelOf,
   liveEnds,
   liveXp,
+  markLifetime,
   maxEnergy,
   merge,
   mayWear,
+  mayWearLook,
+  meritLookOf,
+  meritsLeft,
   modsOf,
   nextParcel,
   openInStash,
@@ -117,6 +148,9 @@ import {
   rankOf,
   reachedBy,
   resistOf,
+  restAfter,
+  restFor,
+  spendRest,
   stashList,
   store,
   storeLive,
@@ -130,13 +164,16 @@ import {
   surgeFront,
   takeFromBag,
   takeItem,
+  thanksKey,
   toldAfter,
   turnedInto,
   toolsOf,
   untilSurge,
+  utcDay,
   weatherAt,
   weekdayOf,
   wetRate,
+  whyNotBuy,
   keptOffer,
   offerFrom,
   swapOffers,
@@ -145,6 +182,7 @@ import {
   type Arrival,
   type BagSlot,
   type BodyView,
+  type CacheItemView,
   type Calendar,
   type ConditionsData,
   type ConditionsView,
@@ -162,6 +200,8 @@ import {
   type Gear,
   type ItemDef,
   type ItemsData,
+  type LookKind,
+  type MeritsView,
   type Piece,
   type Quirk,
   type Worn,
@@ -170,6 +210,7 @@ import {
   type Mods,
   type ParcelState,
   type ParcelsData,
+  type PersonView,
   type PieceAt,
   type PlayerView,
   type ProgressView,
@@ -188,11 +229,15 @@ import {
   type SurgeView,
   type Slot,
   type SkulkerRule,
+  type ThanksFor,
+  type ThanksGroup,
   type TileMap,
   type Weather,
 } from '@napoland/shared';
 import { FIRE_LOW_S, Fires, type Fire } from './fires';
-import type { DropRecord, MarkRecord, PlayerRecord, StoneRecord } from './storage';
+import type { CacheItemRecord, DropRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
+
+export { MARK_LIFETIME_MS };
 
 /** A step may start this much early: messages sent at a steady pace arrive bunched up. */
 export const STEP_TOLERANCE_MS = 40;
@@ -203,8 +248,7 @@ export const STEP_QUEUE_MAX = 2;
  * last heard. Smaller changes (one more step into the woods) wait for the regular repeat.
  */
 export const ENERGY_RATE_CHANGE = 0.1;
-/** Marks fade this long after they are painted, and each player has at most this many. */
-export const MARK_LIFETIME_MS = 24 * 60 * 60 * 1000;
+/** Each player has at most this many marks (they fade MARK_LIFETIME_MS after they are painted, longer for a good neighbor). */
 export const MARKS_PER_PLAYER = 6;
 /** A pile keeps this many of the last steps its owner walked out there: their echo. */
 export const TRAIL_STEPS = 16;
@@ -270,14 +314,25 @@ export function colorFor(id: string): string {
 }
 
 /**
- * A message for one player (by id), or for everyone on a map ('*'), optionally leaving one player
- * out, or for everyone online ('all'). '*' means everyone on the map when the message was queued: the
- * network layer sends the messages in order and moves a player over to the new map's audience at
- * their `zone` message.
+ * A message for one player (by id), or for everyone in a zone ('*': `map` is the zone's key, the map's
+ * id for its main copy), optionally leaving one player out, or for everyone online ('all'). '*' means
+ * everyone in the zone when the message was queued: the network layer sends the messages in order and
+ * moves a player over to the new zone's audience at their `zone` message, which names the zone's key
+ * beside it when that is a copy other than the main one (`zone`). The client never hears a copy's key:
+ * to it, every copy of a map is that map.
  */
-export type Outgoing = { to: string; msg: ServerMsg } | { to: '*'; map: string; except?: string; msg: ServerMsg } | { to: 'all'; msg: ServerMsg };
+export type Outgoing =
+  | { to: string; msg: ServerMsg; zone?: string }
+  | { to: '*'; map: string; except?: string; msg: ServerMsg }
+  | { to: 'all'; msg: ServerMsg };
 
-/** What a map holds besides players, as its welcome or zone lists it. */
+/**
+ * A zone's key: a map's id for its main copy (the world everyone shares), else the id and the copy's
+ * key. Map ids are lowercase words joined by hyphens (validateMap), so no two zones share a key.
+ */
+export const zoneKey = (map: string, copy: string): string => (copy ? `${map}:${copy}` : map);
+
+/** What a zone holds besides players, as its welcome or zone lists it. */
 export interface Scene {
   finds: FindView[];
   drops: DropView[];
@@ -293,8 +348,9 @@ export interface Scene {
 /** What a player who joins is told in the welcome: where they are, who and what is there, their energy, body and bag. */
 export interface Joined extends Scene {
   player: PlayerView;
+  /** The map of the player's zone: whichever copy of it they are in, the client knows only the map. */
   map: MapRef;
-  /** Everyone on the player's map, the player included. */
+  /** Everyone in the player's zone, the player included. */
   players: PlayerView[];
   energy: EnergyView;
   body: BodyView;
@@ -305,9 +361,15 @@ export interface Joined extends Scene {
   conditions: ConditionsView;
   stats: Stats;
   progress: ProgressView;
+  /** The rest their time away was worth, since they were last seen (restFor): whether the cup had room for it or not. */
+  restedAway: number;
+  /** What they spent of their merits, and the looks they bought (those this release has). */
+  merits: MeritsView;
   /** Every tool the player owns, in the order they got them (toolsOf): the starter tools until they got one of their own. */
   tools: string[];
   story: StoryView;
+  /** Whom the player thanked today (UTC), by id. */
+  thanked: string[];
 }
 
 /** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
@@ -320,6 +382,12 @@ export interface Writes {
   players: PlayerRecord[];
   marks: Array<{ id: number; mark: MarkRecord | undefined }>;
   stone?: StoneRecord;
+  /** Thanks given, or told since (thanks.ts), as they are now. */
+  thanks: ThanksRecord[];
+  /** The helpers of the thanks given since, one entry for each: their count of thanks received grows by one each (Storage.creditThanks). */
+  credits: string[];
+  /** Things left in crates (or taken out of them: undefined), by id. */
+  caches: Array<{ id: number; item: CacheItemRecord | undefined }>;
 }
 
 export interface WorldOptions {
@@ -337,6 +405,10 @@ export interface WorldOptions {
   drops?: DropRecord[];
   /** Marks saved before a restart. */
   marks?: MarkRecord[];
+  /** Thanks given in the last THANKS_KEPT_DAYS, as saved before a restart. */
+  thanks?: ThanksRecord[];
+  /** What lay in the crates before a restart. */
+  cacheItems?: CacheItemRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
   /**
@@ -359,10 +431,14 @@ export interface WorldOptions {
   calendar?: Calendar;
   /** Development only (XP_MULTIPLIER): stashing earns this many times the XP, to play-test the levels without the trips. 1 unless set. */
   xpTimes?: number;
+  /** Development only (RESTED_EVERY_MS): the time away that fills one XP of rest, to play-test it without the days away. RESTED_EVERY_MS unless set. */
+  restedEveryMs?: number;
 }
 
 interface Online {
   rec: PlayerRecord;
+  /** The zone the player is in, and its map (zone.map, at hand). */
+  zone: Zone;
   map: TileMap;
   /** When the current step is over and the next one may start. */
   readyAt: number;
@@ -392,13 +468,35 @@ interface Online {
   heardAt: number;
   /** Live finds in the bag (sendBag keeps it up to date), so only their carriers are looked at for fading. */
   live: number;
+  /** Thanks that gave them energy this trip (THANKS_PER_TRIP at most): a trip ends at home, or with a collapse. */
+  gifts: number;
   /** The last surge that caught them out in the wilds (map and round), so each is counted once. */
   surgedIn?: string;
+  /** The crate they visit (its key: in its room, or near it in the open), and whether they left one thing and took one this visit. */
+  visit: { cache: string; left: boolean; took: boolean } | null;
   /** Their afterglow (a quirk, gear.ts) lasts until then (game time): they glow faintly, and watchers keep off them. */
   afterglowUntil?: number;
 }
 
-/** A find rule of items.json, ready to use. */
+/** A crate for whoever comes next (caches.ts) on its map and tile, and what lies in it, oldest first. */
+interface Crate {
+  /** crateKey: its zone's key and its tile. */
+  key: string;
+  /** The key of the zone it stands in, and that zone's copy (none for the main copy): each copy of a map has crates of its own. */
+  zone: string;
+  copy: string;
+  map: TileMap;
+  x: number;
+  y: number;
+  /** In a room, the whole room is the visit; in the open, CACHE_NEAR around it. */
+  inside: boolean;
+  items: CacheItemRecord[];
+}
+
+/**
+ * A find rule of items.json, ready to use. Whether it is open follows the map's clocks and conditions,
+ * which every copy of the map shares; each copy grows its own finds of it.
+ */
 interface Rule {
   item: ItemDef;
   map: TileMap;
@@ -417,20 +515,50 @@ interface Rule {
 interface Find {
   id: number;
   rule: Rule;
+  /** The zone it lies in (a copy of the rule's map). */
+  zone: Zone;
   /** y * width + x on the rule's map. */
   tile: number;
 }
 
-/** A find that grows at `at`, on another tile than `not` (where the last one was taken) if it can. */
+/** A find that grows in `zone` at `at`, on another tile than `not` (where the last one was taken) if it can. */
 interface Growing {
   rule: Rule;
+  zone: Zone;
   at: number;
   not: number | undefined;
+}
+
+/**
+ * A copy of a map, and what happens in it: who is in it (who hears whom), what lies there to pick up,
+ * its fires, creatures, flares and flashes. Piles and marks are kept by the zone's key instead, apart
+ * from its players, since they outlive a copy nobody is in. Each map's main copy is the world everyone
+ * shares and stays open as long as the World runs; any other copy opens when someone walks into it and
+ * closes on the tick after its last player left, so an empty copy costs nothing.
+ */
+interface Zone {
+  /** zoneKey(map, copy): messages for everyone in it go by it. */
+  readonly key: string;
+  readonly map: TileMap;
+  /** '' for the map's main copy; any other copy has a key of its own (copyFor). */
+  readonly copy: string;
+  readonly players: Set<Online>;
+  /** The finds lying in it, by tile: never two on one tile. */
+  readonly finds: Map<number, Find>;
+  readonly fires: Fires;
+  readonly watchers: Watcher[];
+  readonly skulkers: Skulker[];
+  flares: Flare[];
+  flashes: Flash[];
+  /** When its next flash starts (game time); unset until its first tick. */
+  nextFlash?: number;
 }
 
 interface Watcher {
   id: number;
   kind: CreatureView['kind'];
+  /** The zone it roams, and its map (zone.map, at hand). */
+  zone: Zone;
   map: TileMap;
   x: number;
   y: number;
@@ -456,8 +584,8 @@ interface Skulker extends Watcher {
   calmUntil: number;
 }
 
+/** A flash in a zone (Zone.flashes). */
 interface Flash {
-  map: string;
   x: number;
   y: number;
   kind: FlashKind;
@@ -467,8 +595,8 @@ interface Flash {
   glowed?: Set<string>;
 }
 
+/** A flare burning in a zone (Zone.flares). */
 interface Flare {
-  map: string;
   x: number;
   y: number;
   /** Game time when it burns out. */
@@ -478,7 +606,8 @@ interface Flare {
 const quirksOf = (w: Worn | undefined): Quirk[] => SLOTS.flatMap(s => (w?.[s]?.quirk ? [w[s]!.quirk!] : []));
 const view = (r: PlayerRecord, live = false, guest = false, afterglow = 0): PlayerView => ({
   id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn), ...(live ? { live: true as const } : {}),
-  ...(guest ? { guest: true as const } : {}), ...(r.outfit ? { outfit: r.outfit } : {}), ...(afterglow > 0 ? { afterglow } : {}),
+  ...(guest ? { guest: true as const } : {}), ...(r.outfit ? { outfit: r.outfit } : {}), ...(r.pattern ? { pattern: r.pattern } : {}), ...(r.badge ? { badge: r.badge } : {}),
+  ...(afterglow > 0 ? { afterglow } : {}),
 });
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
@@ -496,7 +625,24 @@ const findView = (f: Find): FindView => ({ id: f.id, item: f.rule.item.id, x: f.
 const dropView = (d: DropRecord): DropView => ({
   id: d.owner, x: d.x, y: d.y, owner: d.owner, name: d.name, until: d.droppedAt + DROP_LIFETIME_MS, trail: (d.trail ?? []).map(([x, y]) => [x, y]),
 });
-const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, name: m.name, until: m.placedAt + MARK_LIFETIME_MS });
+/** When a mark fades: its own time, or a day after it was painted for one saved without (by an older release). */
+const markUntil = (m: MarkRecord): number => m.until ?? m.placedAt + MARK_LIFETIME_MS;
+const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, owner: m.owner, name: m.name, until: markUntil(m) });
+/** One thanks a day from a giver to a helper: its key. */
+const thanksDay = (giver: string, helper: string, day: number) => `${giver} ${helper} ${day}`;
+/** A crate by the key of its zone (each copy of a map has its own crates) and its tile. */
+const crateKey = (zone: string, x: number, y: number) => `${zone} ${x},${y}`;
+const NOBODY: ReadonlySet<string> = new Set();
+/** The key of the zone a pile, a mark or a thing in a crate lies in: one saved without a copy lies in the map's main copy. */
+const recordZone = (r: { map: string; zone?: string }): string => zoneKey(r.map, typeof r.zone === 'string' ? r.zone : '');
+/** What a pile, a mark or a thing in a crate made in copy `copy` remembers of it: nothing for the main copy, as before copies existed. */
+const copyField = (copy: string): { zone?: string } => (copy ? { zone: copy } : {});
+/** The tiles of zone `key` in an index kept by zone key, made when first needed. */
+function tilesOf<T>(index: Map<string, Map<number, T>>, key: string): Map<number, T> {
+  let tiles = index.get(key);
+  if (!tiles) index.set(key, (tiles = new Map()));
+  return tiles;
+}
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: w.kind, x: w.x, y: w.y, dir: w.dir, ...(w.chasing !== undefined && { chasing: w.chasing }) });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] =>
   bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}), ...(s.piece ? { piece: { ...s.piece } } : {}) }));
@@ -511,6 +657,7 @@ const copyStash = (s: Stash): Stash => ({
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
+  ...(r.looks ? { looks: [...r.looks] } : {}),
 });
 /** A saved piece as the server writes them: a condition from 0 to 1, a quirk the game knows (or none), a level up to UPGRADE_MAX (or none). */
 const isPiece = (p: unknown): p is Piece => {
@@ -563,8 +710,13 @@ const manhattan = (ax: number, ay: number, bx: number, by: number) => Math.abs(a
 
 export class World {
   readonly stepMs: number;
-  /** Where new players start and collapsed players wake up. */
+  /** The home town: where the home is, and the roads out start. */
   readonly home: TileMap;
+  /**
+   * Where new players start and collapsed players wake up: the wake point of the home off the home town
+   * (in their own copy of it, when it is private: their cabin), or the town's spawn if it has none.
+   */
+  readonly wakeUp: { map: TileMap; x: number; y: number; dir: Dir };
   /** The version of the items (content/items.json): a client with another one reloads. */
   readonly itemsVersion: number;
   /** The story's chapters (story.ts): where each player is in it is theirs (PlayerRecord.story). */
@@ -573,8 +725,12 @@ export class World {
   /** For each inside, the kind of map its door opens onto: a shelter in the wilds, or a house in town. */
   private readonly outside = new Map<string, TileMap['data']['kind']>();
   private readonly players = new Map<string, Online>();
-  /** Who is on each map, by map id. */
-  private readonly onMap = new Map<string, Set<Online>>();
+  /** Every zone that is open, by key (zoneKey): each map's main copy always, any other copy while someone is in it. */
+  private readonly zones = new Map<string, Zone>();
+  /** The same zones by map id, the main copy first: what happens to a whole map (its clocks, its conditions) reaches every copy of it. */
+  private readonly copies = new Map<string, Set<Zone>>();
+  /** Copies whose last player left: they close at the next tick, unless someone came back meanwhile. */
+  private readonly emptied = new Set<Zone>();
   /** readyAt of players who left mid-step, so leaving and joining again cannot skip the wait. */
   private readonly resting = new Map<string, number>();
   private outbox: Outgoing[] = [];
@@ -584,6 +740,8 @@ export class World {
   private readonly guests: boolean;
   /** Stashing earns this many times an item's XP: 1, but for play-tests (WorldOptions.xpTimes). */
   private readonly xpTimes: number;
+  /** The time away that fills one XP of rest (WorldOptions.restedEveryMs). */
+  private readonly restedEvery: number | undefined;
   private readonly onCollapse: WorldOptions['onCollapse'];
   private readonly items: Map<string, ItemDef>;
   /** The items in the order of content/items.json: a stash lists them so. */
@@ -597,41 +755,35 @@ export class World {
   private readonly rng: () => number;
   private readonly epochOffset: number;
   private readonly rules: Rule[] = [];
-  /** The finds lying on each map, by map id and tile: never two on one tile. */
-  private readonly finds = new Map<string, Map<number, Find>>();
   private growing: Growing[] = [];
   /** The earliest time in `growing`, so tick() only looks through it when something is due. */
   private growAt = Infinity;
   private nextFindId = 1;
   /** Piles by owner: each player has at most one. */
   private readonly piles = new Map<string, DropRecord>();
-  /** The same piles by map id and tile (several players may fall on one tile). */
+  /**
+   * The same piles by zone key and tile (several players may fall on one tile). Kept whether the zone is
+   * open or not: a pile in a copy nobody is in waits for the copy to open again, until it fades.
+   */
   private readonly pileTiles = new Map<string, Map<number, DropRecord[]>>();
   /** The game time when the next pile fades (or later), so tick() only looks when one is due. */
   private fadeAt = Infinity;
   private readonly pileWrites = new Map<string, DropRecord | undefined>();
   /** By id: the record itself, which stays whole after a player leaves (their collapse on the way out counts too). */
   private readonly saveNow = new Map<string, PlayerRecord>();
-  private readonly fires: Fires;
-  /** Marks by id, and by map id and tile (one per tile). */
+  /** Marks by id, and by zone key and tile (one per tile), whether the zone is open or not, like piles. */
   private readonly marks = new Map<number, MarkRecord>();
   private readonly markTiles = new Map<string, Map<number, MarkRecord>>();
   private readonly markWrites = new Map<number, MarkRecord | undefined>();
   private nextMarkId = 1;
   private markFadeAt = Infinity;
-  /** Each surging map's phase as its players last heard it. */
+  /** Each surging map's phase as its players last heard it (every copy of the map hears it together). */
   private readonly surgePhase = new Map<string, SurgePhase>();
   /** The map each inside's door opens onto: its storm is the one heard drumming on the roof. */
   private readonly around = new Map<string, TileMap>();
   /** Each storming map's phase (an inside's: the one around it) as its players last heard it. */
   private readonly stormPhase = new Map<string, StormPhase>();
-  private flashes: Flash[] = [];
-  /** When each map with flashes starts its next one (game time). */
-  private readonly nextFlash = new Map<string, number>();
-  private readonly watchers = new Map<string, Watcher[]>();
-  private readonly skulkers = new Map<string, Skulker[]>();
   private nextCreatureId = 1;
-  private flares: Flare[] = [];
   /** The Old Stone: where it stands (if anywhere), its charge in shards, and when that charge was so (game time). */
   private readonly stone: { map: TileMap; x: number; y: number } | undefined;
   private stoneCharge = 0;
@@ -646,8 +798,14 @@ export class World {
   /** Where each map's watchers wake as a rule, and where while a condition moves them (by condition id). */
   private readonly baseLairs = new Map<string, number[]>();
   private readonly conditionLairs = new Map<string, number[]>();
-  /** Maps whose watchers sleep (a condition). */
+  /** Where each map's watchers wake today (the rule's, or a condition's): a copy opening later wakes its own there too. */
+  private readonly lairsNow = new Map<string, number[]>();
+  /** Where each map's skulkers may lie in wait (fern tiles in their range). */
+  private readonly skulkerLairs = new Map<string, number[]>();
+  /** Maps whose watchers sleep (a condition), in every copy. */
   private readonly asleep = new Set<string>();
+  /** The fireplaces a condition put out today (a copy that opens later finds them out too). */
+  private doused: Array<{ map: string; x: number; y: number }> = [];
   /** Collapses in the last hour, for the notice board. */
   private collapses: Array<{ map: string; at: number }> = [];
   /** The parcels (content/items.json), and the calendar whose days they follow. */
@@ -655,6 +813,27 @@ export class World {
   private readonly calendar: Calendar;
   /** The calendar day as the last tick saw it: when it turns, whoever plays signed in gets the new day's parcel. */
   private calendarAt: number | undefined;
+  /** The rooms that are someone's home: an inside with the chest, where each player's stash is. Walking into one ends a trip. */
+  private readonly homes = new Set<string>();
+  /** Who thanked whom in the last THANKS_KEPT_DAYS, by giver, helper and UTC day (thanksDay): one each. */
+  private readonly thanks = new Map<string, ThanksRecord>();
+  private readonly thanksWrites = new Map<string, ThanksRecord>();
+  private credits: string[] = [];
+  /** The wall time when the oldest thanks is to be forgotten (or later), so tick() only looks when one is due. */
+  private thanksForgetAt = Infinity;
+  /**
+   * Whom each player online blocks (net.ts sets it from social.ts): someone who blocks a player hears
+   * nothing from them, thanks included. Nobody, until it is set.
+   */
+  blocks: (id: string) => ReadonlySet<string> = () => NOBODY;
+  /**
+   * The crates, by key (crateKey), and the same by zone key: every main copy's from the start, another
+   * copy's from when it opens, kept while the copy is closed only if something lies in them.
+   */
+  private readonly crates = new Map<string, Crate>();
+  private readonly cratesOn = new Map<string, Crate[]>();
+  private readonly cacheWrites = new Map<number, CacheItemRecord | undefined>();
+  private nextCacheId = 1;
   /** The game time of the last tick: what everyone sees of an afterglow is counted from it. */
   private tickAt = 0;
 
@@ -663,10 +842,6 @@ export class World {
     for (const m of maps) {
       if (this.maps.has(m.data.id)) throw new Error(`two maps have the id ${m.data.id}`);
       this.maps.set(m.data.id, m);
-      this.onMap.set(m.data.id, new Set());
-      this.finds.set(m.data.id, new Map());
-      this.pileTiles.set(m.data.id, new Map());
-      this.markTiles.set(m.data.id, new Map());
     }
     // loadMaps checks this and more; a world without it would lose players walking through an exit.
     for (const m of this.maps.values()) {
@@ -676,18 +851,24 @@ export class World {
       if (m.data.kind === 'inside') continue;
       for (const e of m.data.exits) if (this.maps.get(e.to)!.data.kind === 'inside') { this.outside.set(e.to, m.data.kind); this.around.set(e.to, m); }
     }
+    for (const m of this.maps.values()) if (m.data.kind === 'inside' && m.data.objects.some(o => o.kind === 'chest')) this.homes.add(m.data.id);
     const home = this.maps.get(homeId);
     if (!home) throw new Error(`the home map ${homeId} does not exist`);
     this.home = home;
+    // validateWorld keeps it to one home, whose door opens onto the home town.
+    const room = [...this.maps.values()].find(m => m.data.wake && this.around.get(m.data.id) === home);
+    this.wakeUp = room ? { map: room, ...room.data.wake! } : { map: home, ...home.data.spawn };
     this.sky = weather;
     this.cycle = options.cycle ?? false;
     this.guests = options.guests ?? false;
     this.xpTimes = options.xpTimes ?? 1;
+    this.restedEvery = options.restedEveryMs;
     this.stepMs = options.stepMs ?? STEP_MS;
     this.onCollapse = options.onCollapse;
     this.rng = options.rng ?? Math.random;
     this.epochOffset = options.epochOffset ?? 0;
-    this.fires = new Fires(this.maps.values(), m => this.wild(m), this.rng, options.now ?? 0);
+    // Every map's main copy, the world everyone shares: its fires start burning now.
+    for (const m of this.maps.values()) this.newZone(m, '', options.now ?? 0);
 
     const items = options.items ?? { version: 0, items: [], finds: [] };
     this.items = itemIndex(items);
@@ -712,28 +893,34 @@ export class World {
     }
     // The piles first: finds never grow on a tile that has one.
     for (const d of options.drops ?? []) this.restore(d);
-    for (const rule of this.rules) if (rule.open) this.sow(rule);
+    for (const rule of this.rules) if (rule.open) this.sow(rule, this.main(rule.map));
     for (const m of options.marks ?? []) this.restoreMark(m);
+    for (const t of options.thanks ?? []) {
+      this.thanks.set(thanksDay(t.giver, t.helper, t.day), { ...t, what: { ...t.what } });
+      this.thanksForgetAt = Math.min(this.thanksForgetAt, t.at + THANKS_KEPT_MS);
+    }
+    for (const m of this.maps.values()) this.cratesIn(m, '');
+    for (const c of options.cacheItems ?? []) this.restoreCacheItem(c);
 
+    // Where each map's creatures may wake is the same in every copy of it: worked out once.
     for (const m of this.maps.values()) {
       const w = m.data.watchers;
       if (m.data.kind !== 'wilds' || !w) continue;
       const lairs = m.lairs(w.steps);
       if (!lairs.length) continue;
       this.baseLairs.set(m.data.id, lairs);
-      // They all wake on the first tick, each where nobody is.
-      this.watchers.set(m.data.id, Array.from({ length: w.count }, () => ({ id: this.nextCreatureId++, kind: 'watcher', map: m, x: 0, y: 0, dir: 'down', awake: false, wakeAt: -Infinity, readyAt: 0, lairs })));
+      this.lairsNow.set(m.data.id, lairs);
     }
     for (const m of this.maps.values()) {
       const rule = m.data.skulkers;
       if (m.data.kind !== 'wilds' || !rule) continue;
       const lairs: number[] = [];
       for (let y = 0; y < m.height; y++) for (let x = 0; x < m.width; x++) if (m.kind(x, y) === 'ferns' && this.skulkerMayStand(m, rule, x, y)) lairs.push(y * m.width + x);
-      if (!lairs.length) continue;
-      this.skulkers.set(m.data.id, Array.from({ length: rule.count }, () => ({
-        id: this.nextCreatureId++, kind: 'skulker', rule, map: m, x: 0, y: 0, dir: 'down', awake: false, wakeAt: -Infinity, readyAt: 0, lairs, lair: 0, chaseUntil: 0, calmUntil: 0,
-      })));
+      if (lairs.length) this.skulkerLairs.set(m.data.id, lairs);
     }
+    // They all wake on the first tick, each where nobody is: every watcher first, then every skulker.
+    for (const m of this.maps.values()) this.addWatchers(this.main(m));
+    for (const m of this.maps.values()) this.addSkulkers(this.main(m));
 
     this.conditionsData = items.conditions;
     for (const c of [...items.conditions?.daily ?? [], ...items.conditions?.weekly ?? []]) {
@@ -775,9 +962,19 @@ export class World {
     return [...this.players.values()].map(p => copyRecord(p.rec));
   }
 
-  /** Everyone on a map. */
-  views(mapId: string): PlayerView[] {
-    return [...(this.onMap.get(mapId) ?? [])].map(p => this.viewOf(p));
+  /** The key of the zone an online player is in (zoneKey): whom they hear, and who hears them. */
+  zoneOf(id: string): string | undefined {
+    return this.players.get(id)?.zone.key;
+  }
+
+  /** The keys of the zones open now: every map's main copy, and each other copy someone is in. */
+  zoneKeys(): string[] {
+    return [...this.zones.keys()];
+  }
+
+  /** Everyone in a zone (by its key: a map's id is its main copy). */
+  views(zone: string): PlayerView[] {
+    return [...(this.zones.get(zone)?.players ?? [])].map(p => this.viewOf(p));
   }
 
   /** A player as everyone sees them (an afterglow's seconds left as of the last tick). */
@@ -791,29 +988,29 @@ export class World {
     return this.guests && r.authSub === null;
   }
 
-  /** What lies on a map to pick up. */
-  findViews(mapId: string): FindView[] {
-    return [...(this.finds.get(mapId)?.values() ?? [])].map(findView);
+  /** What lies in a zone to pick up. */
+  findViews(zone: string): FindView[] {
+    return [...(this.zones.get(zone)?.finds.values() ?? [])].map(findView);
   }
 
-  /** The piles lying on a map. */
-  dropViews(mapId: string): DropView[] {
-    return [...(this.pileTiles.get(mapId)?.values() ?? [])].flat().map(dropView);
+  /** The piles lying in a zone, open or not. */
+  dropViews(zone: string): DropView[] {
+    return [...(this.pileTiles.get(zone)?.values() ?? [])].flat().map(dropView);
   }
 
-  /** Everything a map holds besides players, as of `now`. */
-  scene(mapId: string, now: number): Scene {
-    const map = this.maps.get(mapId);
+  /** Everything a zone holds besides players, as of `now`. */
+  scene(key: string, now: number): Scene {
+    const zone = this.zones.get(key);
     return {
-      finds: this.findViews(mapId),
-      drops: this.dropViews(mapId),
-      fires: this.fires.views(mapId, now),
-      marks: [...(this.markTiles.get(mapId)?.values() ?? [])].map(markView),
-      creatures: [...(this.watchers.get(mapId) ?? []), ...(this.skulkers.get(mapId) ?? [])].filter(w => w.awake).map(creatureView),
-      flares: this.flares.filter(f => f.map === mapId && f.until > now).map(f => ({ x: f.x, y: f.y, left: round((f.until - now) / 1000, 1) })),
-      flashes: this.flashes.filter(f => f.map === mapId && f.until > now).map(f => flashView(f, now)),
-      surge: map ? this.surgeOf(map, now) : null,
-      storm: map ? this.stormOf(map, now) : null,
+      finds: this.findViews(key),
+      drops: this.dropViews(key),
+      fires: zone?.fires.views(now) ?? [],
+      marks: [...(this.markTiles.get(key)?.values() ?? [])].map(markView),
+      creatures: zone ? [...zone.watchers, ...zone.skulkers].filter(w => w.awake).map(creatureView) : [],
+      flares: (zone?.flares ?? []).filter(f => f.until > now).map(f => ({ x: f.x, y: f.y, left: round((f.until - now) / 1000, 1) })),
+      flashes: (zone?.flashes ?? []).filter(f => f.until > now).map(f => flashView(f, now)),
+      surge: zone ? this.surgeOf(zone.map, now) : null,
+      storm: zone ? this.stormOf(zone.map, now) : null,
     };
   }
 
@@ -823,71 +1020,97 @@ export class World {
     return { charge: Math.ceil(this.stoneCharge), need: STONE_NEED, awake: this.stoneAwake, left: this.stoneAwake ? Math.round(this.stoneCharge * STONE_SHARD_S) : 0 };
   }
 
-  /** Puts a player in the world, tells everyone on their map and returns what goes in the welcome. */
+  /** Puts a player in the world, tells everyone in their zone and returns what goes in the welcome. */
   join(rec: PlayerRecord, now: number): Joined {
     if (this.players.has(rec.id)) throw new Error(`player ${rec.id} is already online`);
     const gear = this.cleanGear(rec.gear);
+    // Time away since they were last seen fills the cup of rest (progress.ts), a guest's too.
+    const away = now + this.epochOffset - rec.lastSeenAt;
     const r: PlayerRecord = {
       ...rec, gear, worn: this.cleanWorn(rec.worn, gear), bag: this.fitBag(rec.bag, bagSlotsOf(gear, this.items)), stats: cleanStats(rec.stats),
       // Gear counted in the stash gets its pieces (all of it, for a stash saved before pieces existed).
       stash: fitPieces(cleanStash(rec.stash, this.items), this.items, this.rng),
       xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
+      rested: restAfter(cleanRested(rec.rested), away, this.restedEvery),
       // Kept as saved, ids this release does not know included (toolsOf).
       tools: cleanTools(rec.tools),
+      // Merits spent stay spent, and every look bought stays theirs, a newer release's too (a list of ids, as the tools are).
+      meritsSpent: Number.isInteger(rec.meritsSpent) && rec.meritsSpent! > 0 ? rec.meritsSpent : 0,
+      looks: cleanTools(rec.looks) ?? [],
       ...(rec.parcels !== undefined ? { parcels: cleanParcels(rec.parcels) } : {}),
     };
-    // Maps change between visits: a map may be gone (start over at home), or the saved tile may be
-    // inside something new or part of an exit now (start at that map's spawn). Never start inside
-    // a wall, or on an exit that would move you the moment you step.
-    let map = this.maps.get(r.map);
+    // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
+    // saved tile may be inside something new or part of an exit now (start at that map's spawn). Never
+    // start inside a wall, or on an exit that would move you the moment you step.
+    let map = this.maps.get(r.map), copy: string;
     if (!map) {
-      map = this.home;
-      toSpawn(r, map);
-    } else if (!map.walkable(r.x, r.y) || map.exitAt(r.x, r.y)) {
-      toSpawn(r, map);
+      ({ map, x: r.x, y: r.y, dir: r.dir } = this.wakeUp);
+      copy = this.copyFor(r, map);
+    } else {
+      if (!map.walkable(r.x, r.y) || map.exitAt(r.x, r.y)) toSpawn(r, map);
+      copy = this.rejoin(r, map);
     }
+    const zone = this.zoneFor(map, copy, now);
     r.map = map.data.id;
+    if (zone.copy) r.zone = zone.copy;
+    else delete r.zone;
     // An outfit shows only while they may wear it (signed in, the level reached). One they may not (it
     // is from a newer release, or they play as a guest now) shows as none, and stays saved for when they may.
     if (r.outfit && !mayWear(r.outfit, levelOf(r.xp ?? 0), !this.guest(r))) delete r.outfit;
+    // A pattern and a badge likewise: only one of theirs, only signed in.
+    for (const kind of ['pattern', 'badge'] as const) if (r[kind] && !mayWearLook(r[kind], kind, r.looks!, !this.guest(r))) delete r[kind];
     r.energy = Number.isFinite(r.energy) ? Math.min(this.maxOf(r), Math.max(0, r.energy)) : this.maxOf(r);
     r.wet = Number.isFinite(r.wet) ? clamp01(r.wet!) : 0;
     const readyAt = this.resting.get(r.id) ?? -Infinity;
     this.resting.delete(r.id);
     const p: Online = {
-      rec: r, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false, hitchAt: now, trail: [],
-      heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag),
+      rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
+      hitchAt: now, trail: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
     };
     this.refresh(p, now);
+    this.revisit(p);
     this.players.set(r.id, p);
-    this.onMap.get(map.data.id)!.add(p);
+    zone.players.add(p);
     const player = this.viewOf(p);
-    this.toMap(map.data.id, { t: 'join', player }, r.id);
+    this.toZone(zone.key, { t: 'join', player }, r.id);
     // The welcome has the energy too; the message after it is what a client listens to from then on.
     this.tell(p, now);
     // Their first time today, signed in: the day's parcel waits in the chest (the welcome parcel, the very first time).
     this.giveParcel(p, now);
-    const here = map.data.id;
+    const here = zone.key, today = utcDay(now + this.epochOffset);
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
-      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
-      tools: toolsOf(r.tools, this.items),
+      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats },
+      progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
+      thanked: [...this.thanks.values()].filter(t => t.giver === r.id && t.day === today).map(t => t.helper),
     };
   }
 
-  /** Takes a player out of the world, tells everyone on their map and returns the record to save. */
+  /**
+   * A player who joined is settled in: whom they block is known (net.ts calls it once social.ts has read
+   * it). Back in the game at home (they left it there), they read their letter now, as if they had
+   * walked in: it leaves out thanks from whoever they block.
+   */
+  returned(id: string, now: number): void {
+    const p = this.players.get(id);
+    if (p && this.homes.has(p.map.data.id)) this.homecoming(p, now);
+  }
+
+  /** Takes a player out of the world, tells everyone in their zone and returns the record to save (with the copy they were in). */
   leave(id: string, now: number): PlayerRecord | undefined {
     const p = this.players.get(id);
     if (!p) return undefined;
-    const from = p.map;
+    const from = p.zone;
     // Energy that runs out on the way out still counts: the bag drops, and the player wakes up at home next time.
     if (this.advance(p, now) <= 0) this.fall(p, now);
+    // Seen until now: coming straight back (another tab, the same record) is no time away to rest in.
+    p.rec.lastSeenAt = Math.floor(now + this.epochOffset);
     this.players.delete(id);
-    this.onMap.get(p.map.data.id)!.delete(p);
+    this.quit(p);
     if (p.readyAt > -Infinity) this.resting.set(id, p.readyAt);
-    this.toMap(from.data.id, { t: 'leave', id }, id);
+    this.toZone(from.key, { t: 'leave', id }, id);
     return copyRecord(p.rec);
   }
 
@@ -911,13 +1134,13 @@ export class World {
     const p = this.players.get(id);
     if (!p || p.rec.dir === dir) return;
     p.rec.dir = dir;
-    this.toMap(p.map.data.id, { t: 'face', id, dir }, id);
+    this.toZone(p.zone.key, { t: 'face', id, dir }, id);
   }
 
   /**
-   * Picks up what lies on tile x,y of the player's map: their own tile or one of the four next to it.
+   * Picks up what lies on tile x,y of the player's zone: their own tile or one of the four next to it.
    * A pile there comes first, then a find. The player hears what they got and their bag, or why not;
-   * everyone on the map hears what went.
+   * everyone in the zone hears what went.
    */
   pick(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
@@ -930,9 +1153,9 @@ export class World {
       return this.refuse(p, 'pick', 'too_far');
     }
     if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return this.refuse(p, 'pick', 'too_far');
-    const pile = this.pileAt(p.map, x, y, id);
+    const pile = this.pileAt(p.zone, x, y, id);
     if (pile) return this.pickPile(p, pile, now);
-    const find = p.map.inside(x, y) ? this.finds.get(p.map.data.id)!.get(y * p.map.width + x) : undefined;
+    const find = p.map.inside(x, y) ? p.zone.finds.get(y * p.map.width + x) : undefined;
     if (find) return this.pickFind(p, find, now);
     this.refuse(p, 'pick', 'gone');
   }
@@ -955,10 +1178,10 @@ export class World {
     const def = this.items.get(s.item);
     const use = def?.use;
     if (!def || !use) return this.refuse(p, 'use', 'not_usable');
-    const { x, y, map: mapId } = p.rec;
+    const { x, y } = p.rec;
     // Everything that can fail is checked before the item is spent.
     if (use.mark && (p.map.data.kind === 'inside' || p.map.exitAt(x, y))) return this.refuse(p, 'use', 'not_here');
-    if (use.mark && this.markTiles.get(mapId)!.has(y * p.map.width + x)) return this.refuse(p, 'use', 'marked');
+    if (use.mark && this.markTiles.get(p.zone.key)?.has(y * p.map.width + x)) return this.refuse(p, 'use', 'marked');
     if (use.identify && !this.inTown(p.map)) return this.refuse(p, 'use', 'not_here');
     let bag = takeFromBag(p.rec.bag, slot, 1);
     let into: BagSlot | undefined;
@@ -999,7 +1222,7 @@ export class World {
       kind: 'used', item: def.id,
       ...(use.energy ? { energy: Math.round(p.rec.energy - before) } : {}),
       ...(use.flare ? { flare: use.flare } : {}),
-      ...(use.mark ? { mark: { dir: p.rec.dir, left: MARK_LIFETIME_MS / 1000 } } : {}),
+      ...(use.mark ? { mark: { dir: p.rec.dir, left: markLifetime(p.mods) / 1000 } } : {}),
       ...(into ? { into } : {}),
       ...(lift ? { lift } : {}),
     });
@@ -1030,7 +1253,8 @@ export class World {
    * Feeds `count` of what is in bag slot `slot` (then of the same item in other slots) to the fire on
    * tile x,y (next to the player, diagonals too: a fire warms the tiles around it) or to the Old Stone.
    * A fire takes them one by one while it is not full, so it takes as many as fit; the Old Stone takes
-   * them all. Everyone on the map sees the fire burn higher; everyone online hears about the Stone.
+   * them all. Everyone in the zone sees the fire burn higher (the fire of that copy: each copy's fires
+   * are its own); everyone online hears about the Stone, which is one for the whole world.
    */
   feed(id: string, x: number, y: number, slot: number, now: number, count = 1): void {
     const p = this.players.get(id);
@@ -1057,26 +1281,28 @@ export class World {
       this.rerate(p, now);
       return this.did(p, { kind: 'stone', item: def.id, count: r.taken, stone: this.stoneView(now), ...(woke ? { woke: true as const } : {}) });
     }
-    const fire = this.fires.at(p.map, x, y);
+    const fires = p.zone.fires, fire = fires.at(x, y);
     if (!fire) return this.refuse(p, 'feed', 'gone');
     if (fire.tended) return this.refuse(p, 'feed', 'tended');
     if (!def?.fuel) return this.refuse(p, 'feed', 'not_fuel');
-    const lit = this.fires.left(fire, now) <= 0;
+    const lit = fires.left(fire, now) <= 0;
     const have = p.rec.bag.reduce((n, b) => n + (b.item === def.id ? b.count : 0), 0);
     let fed = 0;
-    while (fed < Math.min(count, have) && this.fires.feed(fire, def.fuel, now)) fed++;
+    while (fed < Math.min(count, have) && fires.feed(fire, def.fuel, now)) fed++;
     if (!fed) return this.refuse(p, 'feed', 'fire_full');
     p.rec.bag = takeItem(p.rec.bag, slot, fed).bag;
     p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, fed);
     this.sendBag(p, now);
-    const burning = this.fires.view(fire, now);
-    this.toMap(p.map.data.id, { t: 'fire', fire: burning });
+    // Whoever warms at it later may thank them (thanks.ts): at this copy's fire, the one they fed.
+    fires.fedBy(fire, { id, name: p.rec.name });
+    const burning = fires.view(fire, now);
+    this.toZone(p.zone.key, { t: 'fire', fire: burning });
     // Each one counts for the fire keeper, as when they went in one press at a time.
     for (let i = 0; i < fed; i++) this.count(p, 'fed', now);
     // The story waits for a fire out in the wilds ("Whoever comes next"), never one in town.
     if (this.wild(p.map)) this.moveStory(p, { feed: 'fire' });
     // A dead fire lit again warms whoever stands by it.
-    for (const q of this.onMap.get(p.map.data.id)!) this.rerate(q, now);
+    for (const q of p.zone.players) this.rerate(q, now);
     this.did(p, { kind: 'fire', item: def.id, count: fed, left: burning.left ?? 0, ...(lit ? { lit: true as const } : {}) });
   }
 
@@ -1110,18 +1336,16 @@ export class World {
       r.stash = lr.stash;
       r.xp += lr.xp;
     }
-    r.xp *= this.xpTimes;
     // Carried gear goes in as it is, piece by piece; fitPieces keeps the stash's pieces and its counts one.
     p.rec.stash = fitPieces(r.stash, this.items, this.rng);
     p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
     const before = levelOf(p.rec.xp ?? 0);
-    p.rec.xp = (p.rec.xp ?? 0) + r.xp;
     this.saveNow.set(id, p.rec);
     this.sendBag(p, now);
     this.sendStash(p);
-    this.outbox.push({ to: id, msg: { t: 'progress', progress: progressOf(p.rec.xp), gained: r.xp } });
+    this.earn(p, r.xp, true);
     // A bigger bar: the player hears it (and at home, by the fire, it fills up).
-    if (levelOf(p.rec.xp) !== before) this.refresh(p, now);
+    if (levelOf(p.rec.xp ?? 0) !== before) this.refresh(p, now);
     this.tell(p, now);
     this.moveStory(p, { store: true });
   }
@@ -1243,7 +1467,68 @@ export class World {
     // Taken off is null, not left out: a save without an outfit keeps the one saved.
     p.rec.outfit = def ? def.id : null;
     this.saveNow.set(id, p.rec);
-    this.toMap(p.map.data.id, { t: 'outfit', id, outfit: def?.id ?? null });
+    this.toZone(p.zone.key, { t: 'outfit', id, outfit: def?.id ?? null });
+  }
+
+  /**
+   * Spends merits on a look (merits.ts), a jacket pattern or a name tag badge, at the chest on tile x,y
+   * next to the player: it is theirs for good. Only signed in (a guest earns merits, and spends them once
+   * signed in), only a look the game has, once, and with merits enough to spend; the client asks first,
+   * and says what it did from `did`. Saved at once.
+   */
+  buy(id: string, x: number, y: number, lookId: string, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.guest(p.rec)) return this.refuse(p, 'buy', 'sign_in_first');
+    if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'buy', 'too_far');
+    const look = meritLookOf(lookId);
+    if (!look) return this.refuse(p, 'buy', 'gone');
+    const xp = p.rec.xp ?? 0, why = whyNotBuy(look, xp, { spent: p.rec.meritsSpent ?? 0, owned: p.rec.looks ?? [] }, true);
+    if (why) return this.refuse(p, 'buy', why);
+    p.rec.meritsSpent = (p.rec.meritsSpent ?? 0) + look.cost;
+    p.rec.looks = [...(p.rec.looks ?? []), look.id];
+    this.saveNow.set(id, p.rec);
+    this.outbox.push({ to: id, msg: { t: 'merits', merits: this.meritsOf(p.rec) } });
+    this.did(p, { kind: 'bought', look: look.id, left: meritsLeft(xp, p.rec.meritsSpent) });
+  }
+
+  /** Wears a jacket pattern of the player's, or none (null), at the chest on tile x,y next to them (adorn). */
+  pattern(id: string, x: number, y: number, pattern: string | null, now: number): void {
+    this.adorn(id, x, y, 'pattern', pattern, now);
+  }
+
+  /** Wears a name tag badge of the player's, or none (null), at the chest on tile x,y next to them (adorn). */
+  badge(id: string, x: number, y: number, badge: string | null, now: number): void {
+    this.adorn(id, x, y, 'badge', badge, now);
+  }
+
+  /**
+   * Puts on a look the player bought (a pattern or a badge: one of each at a time), or takes it off (null),
+   * at the chest: like an outfit, how they look and nothing else, so nothing asks first. Only signed in,
+   * and only one of theirs. It is saved, and everyone in their zone sees it: in their own cabin nobody
+   * else is, so the others see it as they walk out (their view has it).
+   */
+  private adorn(id: string, x: number, y: number, kind: LookKind, lookId: string | null, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.guest(p.rec)) return this.refuse(p, kind, 'sign_in_first');
+    if (!this.chestNextTo(p, x, y)) return this.refuse(p, kind, 'too_far');
+    const look = lookId === null ? undefined : meritLookOf(lookId, kind);
+    if (lookId !== null && !look) return this.refuse(p, kind, 'gone');
+    if (look && !(p.rec.looks ?? []).includes(look.id)) return this.refuse(p, kind, 'not_owned');
+    const wears = look?.id ?? null;
+    if ((p.rec[kind] ?? null) === wears) return;
+    // Taken off is null, not left out: a save without one keeps the one saved.
+    p.rec[kind] = wears;
+    this.saveNow.set(id, p.rec);
+    this.toZone(p.zone.key, kind === 'pattern' ? { t: 'pattern', id, pattern: wears } : { t: 'badge', id, badge: wears });
+  }
+
+  /** What the player hears of their merits: what they spent, and the looks they bought that this release has. */
+  private meritsOf(r: PlayerRecord): MeritsView {
+    return { spent: r.meritsSpent ?? 0, owned: (r.looks ?? []).filter(l => meritLookOf(l)) };
   }
 
   /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. */
@@ -1478,6 +1763,214 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'board', lines: [...this.news(now), ...this.parcelLines(p, now)] } });
   }
 
+  /**
+   * `id` thanks `who` (thanks.ts): one of the last players who fed the fire on tile x,y of their map (they
+   * warm at it), or the painter of the arrow `id` (they stand where it points), from within THANKS_REACH.
+   * Once a UTC day for each helper, never oneself. The thanker hears what it did (`did`); the helper, at
+   * once if online, or in the letter when they come home.
+   */
+  thank(id: string, who: string, what: { kind: 'fire'; x: number; y: number } | { kind: 'mark'; id: number }, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    // Steps whose time has come first: the thanks comes from where the player really is.
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'thank', 'too_far');
+    }
+    const found = who === id ? undefined : this.thankable(p, who, what);
+    if (!found) return this.refuse(p, 'thank', 'gone');
+    const [nx, ny] = found.near;
+    if (Math.max(Math.abs(nx - p.rec.x), Math.abs(ny - p.rec.y)) > THANKS_REACH) return this.refuse(p, 'thank', 'too_far');
+    if (!this.giveThanks(p, found.helper, found.what, now)) return this.refuse(p, 'thank', 'thanked');
+    this.did(p, { kind: 'thanked', who, name: found.helper.name, what: found.what.kind });
+  }
+
+  /** Who a thanks is for (one of the fire's last feeders, or the arrow's painter), what for, and the tile it is given from; undefined when that no longer holds. */
+  private thankable(p: Online, who: string, what: { kind: 'fire'; x: number; y: number } | { kind: 'mark'; id: number }): { helper: PersonView; what: Extract<ThanksFor, { kind: 'fire' | 'mark' }>; near: [number, number] } | undefined {
+    const map = p.map.data.id;
+    if (what.kind === 'fire') {
+      const fire = p.zone.fires.at(what.x, what.y), helper = fire?.fed.find(f => f.id === who);
+      if (!fire || !helper) return undefined;
+      return { helper: { ...helper }, what: { kind: 'fire', map, x: fire.x, y: fire.y }, near: [fire.x, fire.y] };
+    }
+    const m = this.marks.get(what.id);
+    if (!m || recordZone(m) !== p.zone.key || m.owner !== who) return undefined;
+    // Thanked by whoever followed it: from the tile it points to.
+    const [dx, dy] = DIR_VEC[m.dir];
+    return { helper: { id: m.owner, name: m.name }, what: { kind: 'mark', map, x: m.x, y: m.y }, near: [m.x + dx, m.y + dy] };
+  }
+
+  /**
+   * Records `from`'s thanks to `helper` for `what`, and tells the helper if they are online (deliver);
+   * otherwise it waits for their letter home. It counts toward their Good neighbor wherever they are.
+   * False, and nothing happens, for oneself or a helper `from` thanked today already.
+   */
+  private giveThanks(from: Online, helper: PersonView, what: ThanksFor, now: number): boolean {
+    const wall = now + this.epochOffset, day = utcDay(wall), key = thanksDay(from.rec.id, helper.id, day);
+    if (helper.id === from.rec.id || this.thanks.has(key)) return false;
+    const h = this.players.get(helper.id);
+    // Someone who blocks the giver hears nothing from them, thanks included, and the giver is not told
+    // (nobody learns who blocks them). Blocks are known for players online; the letter leaves out the rest.
+    if (h && this.blocks(helper.id).has(from.rec.id)) return true;
+    const t: ThanksRecord = { giver: from.rec.id, helper: helper.id, day, at: Math.floor(wall), what: { ...what }, told: false, name: from.rec.name };
+    if (h) this.deliver(h, t, now);
+    this.thanks.set(key, t);
+    this.thanksWrites.set(key, t);
+    this.credits.push(helper.id);
+    this.thanksForgetAt = Math.min(this.thanksForgetAt, t.at + THANKS_KEPT_MS);
+    return true;
+  }
+
+  /**
+   * A thanks reaches a helper online. Out in the wilds (or a shelter out there) it warms them by
+   * THANKS_ENERGY, THANKS_PER_TRIP times a trip at most, and floats over their head; the letter home says
+   * what it was for. Anywhere else a line in the text box says it all, and the letter leaves it out.
+   */
+  private deliver(h: Online, t: ThanksRecord, now: number): void {
+    let energy = 0;
+    if (!this.wild(h.map)) t.told = true;
+    else if (h.gifts < THANKS_PER_TRIP && this.advance(h, now) > 0) {
+      // A bar with no room to speak of takes nothing, and the gift is not spent on it.
+      const room = Math.min(THANKS_ENERGY, h.max - h.rec.energy);
+      if (room >= 0.5) {
+        h.rec.energy += room;
+        h.gifts++;
+        energy = Math.round(room);
+      }
+    }
+    this.outbox.push({ to: h.rec.id, msg: { t: 'thanked', name: t.name, what: { ...t.what }, ...(energy ? { energy } : {}), ...(t.told ? { line: true as const } : {}) } });
+    this.count(h, 'thanked', now);
+    if (energy) this.tell(h, now);
+  }
+
+  /**
+   * The player walked into their home room (or is back in the game there): a new trip starts from here,
+   * and a letter says who thanked them while they were away, and for what, the most thanked first. What
+   * the text box already said, and thanks from someone they block, are left out.
+   */
+  private homecoming(p: Online, now: number): void {
+    p.gifts = 0;
+    // Only what is still kept: one older than THANKS_KEPT_DAYS may wait for the tick that forgets it.
+    const kept = now + this.epochOffset - THANKS_KEPT_MS;
+    const unread = [...this.thanks.values()].filter(t => t.helper === p.rec.id && !t.told && t.at > kept).sort((a, b) => b.at - a.at);
+    if (!unread.length) return;
+    const blocks = this.blocks(p.rec.id);
+    const groups = new Map<string, { group: ThanksGroup; givers: Set<string>; at: number }>();
+    for (const t of unread) {
+      t.told = true;
+      this.thanksWrites.set(thanksDay(t.giver, t.helper, t.day), t);
+      if (blocks.has(t.giver)) continue;
+      const k = thanksKey(t.what);
+      let g = groups.get(k);
+      if (!g) groups.set(k, (g = { group: { what: { ...t.what }, count: 0, people: 0, names: [] }, givers: new Set(), at: t.at }));
+      g.group.count++;
+      if (g.givers.has(t.giver)) continue;
+      g.givers.add(t.giver);
+      g.group.people++;
+      // The latest first: the list is newest first.
+      if (g.group.names.length < 2) g.group.names.push(t.name);
+    }
+    if (!groups.size) return;
+    const thanks = [...groups.values()].sort((a, b) => b.group.count - a.group.count || b.at - a.at).map(g => g.group);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'letter', thanks } });
+  }
+
+  /** Thanks older than THANKS_KEPT_DAYS are forgotten (storage deletes its own: Storage.forgetThanks). */
+  private forgetThanks(now: number): void {
+    const wall = now + this.epochOffset;
+    if (wall < this.thanksForgetAt) return;
+    let next = Infinity;
+    for (const [k, t] of this.thanks) {
+      if (t.at + THANKS_KEPT_MS <= wall) this.thanks.delete(k);
+      else next = Math.min(next, t.at + THANKS_KEPT_MS);
+    }
+    this.thanksForgetAt = next;
+  }
+
+  /** Opens the crate on tile x,y (next to the player): they hear what is in it, and what they did at it this visit. */
+  openCache(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    const c = this.crateNextTo(p, x, y);
+    if (c) this.sendCache(p, c, now);
+  }
+
+  /**
+   * Leaves one of what is in bag slot `slot` in the crate on tile x,y next to the player, for whoever comes
+   * next: once a visit, never gear (or a tool), and only while the crate has room. A live find put down
+   * goes dim, as in a pile. It leaves the player for good: if it came out of their stash, it no longer
+   * counts as out. Everyone visiting the crate sees it.
+   */
+  cacheLeave(id: string, x: number, y: number, slot: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'cacheLeave', 'too_far');
+    }
+    const c = this.crateNextTo(p, x, y);
+    if (!c) return this.refuse(p, 'cacheLeave', 'too_far');
+    const s = p.rec.bag[slot], def = s && this.items.get(s.item);
+    if (!s || !def) return this.refuse(p, 'cacheLeave', 'empty_slot');
+    if (!cacheTakes(def)) return this.refuse(p, 'cacheLeave', 'no_gear');
+    const visit = this.visitAt(p, c);
+    if (visit.left) return this.refuse(p, 'cacheLeave', 'left_one');
+    if (c.items.length >= CACHE_SIZE) return this.refuse(p, 'cacheLeave', 'crate_full');
+    const item = (def.live && this.items.get(def.live.into)?.id) || def.id;
+    p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
+    const left: CacheItemRecord = { id: this.nextCacheId++, map: c.map.data.id, ...copyField(c.copy), x: c.x, y: c.y, item, owner: id, name: p.rec.name, at: Math.floor(now + this.epochOffset) };
+    c.items.push(left);
+    this.cacheWrites.set(left.id, left);
+    visit.left = true;
+    // Saved now, with the crate's write, not at the next periodic save: a restart in between would
+    // otherwise find the thing both in the crate and still in the bag.
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    this.tellVisitors(c, now);
+    this.did(p, { kind: 'left', item });
+  }
+
+  /**
+   * Takes the thing `thing` out of the crate on tile x,y next to the player: once a visit, as far as the
+   * bag has room. It counts as taken out of their stash (out), so it earns no XP at home: crates cannot
+   * be farmed. It thanks whoever left it (thanks.ts), unless that is the player or they thanked them today.
+   */
+  cacheTake(id: string, x: number, y: number, thing: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'cacheTake', 'too_far');
+    }
+    const c = this.crateNextTo(p, x, y);
+    if (!c) return this.refuse(p, 'cacheTake', 'too_far');
+    const visit = this.visitAt(p, c);
+    if (visit.took) return this.refuse(p, 'cacheTake', 'took_one');
+    const i = c.items.findIndex(e => e.id === thing), e = c.items[i], def = e && this.items.get(e.item);
+    if (!e || !def) return this.refuse(p, 'cacheTake', 'gone');
+    const r = addToBag(p.rec.bag, def, 1, p.slots);
+    if (r.left) return this.refuse(p, 'cacheTake', 'bag_full');
+    p.rec.bag = r.bag;
+    const stash = p.rec.stash ?? emptyStash();
+    p.rec.stash = { ...stash, out: { ...stash.out, [def.id]: (stash.out[def.id] ?? 0) + 1 } };
+    c.items.splice(i, 1);
+    this.cacheWrites.set(e.id, undefined);
+    visit.took = true;
+    const mine = e.owner === id;
+    const thanked = !mine && this.giveThanks(p, { id: e.owner, name: e.name }, { kind: 'cache', map: c.map.data.id, x: c.x, y: c.y, item: def.id }, now);
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    this.tellVisitors(c, now);
+    this.did(p, { kind: 'took', item: def.id, name: e.name, ...(mine ? { mine: true as const } : {}), ...(thanked ? { thanked: true as const } : {}) });
+  }
+
   /** The player's counts toward feats as they are now: the status panel asks when it opens. */
   stats(id: string): void {
     const p = this.players.get(id);
@@ -1486,10 +1979,13 @@ export class World {
 
   // ---------- trades (trade.ts keeps them; this is only what they do to the bags) ----------
 
-  /** Where an online player is: the zone whose news they hear (for now, a map is one zone) and their tile. */
+  /**
+   * Where an online player is: their zone (a copy of a map: two players in two copies of one map, two
+   * cabins say, never meet, so they never trade) and their tile.
+   */
   where(id: string): { zone: string; x: number; y: number } | undefined {
     const p = this.players.get(id);
-    return p && { zone: p.map.data.id, x: p.rec.x, y: p.rec.y };
+    return p && { zone: p.zone.key, x: p.rec.x, y: p.rec.y };
   }
 
   /** What these picks of an online player's bag offer in a trade (offerFrom): only ever what the bag holds. */
@@ -1536,6 +2032,8 @@ export class World {
   tick(now: number): void {
     const wall = now + this.epochOffset;
     this.tickAt = now;
+    // A copy nobody is in costs nothing from here on (its piles and marks stay, and so does storage's copy of them).
+    this.closeEmptied();
     if (this.cycle) this.setWeather(weatherAt(wall).weather, now);
     this.moveSurges(now);
     this.moveStorms(now);
@@ -1561,11 +2059,14 @@ export class World {
     }
     this.walkWatchers(now);
     this.walkSkulkers(now);
-    if (this.flares.length) this.flares = this.flares.filter(f => f.until > now);
-    if (this.flashes.length) this.flashes = this.flashes.filter(f => f.until > now);
+    for (const z of this.zones.values()) {
+      if (z.flares.length) z.flares = z.flares.filter(f => f.until > now);
+      if (z.flashes.length) z.flashes = z.flashes.filter(f => f.until > now);
+    }
     for (const [id, readyAt] of this.resting) if (readyAt <= now) this.resting.delete(id);
     this.fadePiles(now);
     this.fadeMarks(now);
+    this.forgetThanks(now);
     this.growFinds(now);
   }
 
@@ -1574,7 +2075,7 @@ export class World {
     if (weather === this.sky) return;
     const aurora = weather === 'aurora' || this.sky === 'aurora';
     this.sky = weather;
-    for (const [map, here] of this.onMap) if (here.size) this.outbox.push({ to: '*', map, msg: { t: 'weather', weather } });
+    for (const z of this.zones.values()) if (z.players.size) this.outbox.push({ to: '*', map: z.key, msg: { t: 'weather', weather } });
     if (aurora) for (const rule of this.rules) if (rule.when === 'aurora') this.openRule(rule, weather === 'aurora', now);
     for (const p of this.players.values()) {
       // Up to now at the rate of the old weather, which the player still has.
@@ -1597,11 +2098,17 @@ export class World {
       players: [...this.saveNow.values()].map(copyRecord),
       marks: [...this.markWrites].map(([id, m]) => ({ id, mark: m && { ...m } })),
       ...(this.stoneWrite ? { stone: { ...this.stoneWrite } } : {}),
+      thanks: [...this.thanksWrites.values()].map(t => ({ ...t, what: { ...t.what } })),
+      credits: this.credits,
+      caches: [...this.cacheWrites].map(([id, c]) => ({ id, item: c && { ...c } })),
     };
     this.pileWrites.clear();
     this.saveNow.clear();
     this.markWrites.clear();
     this.stoneWrite = undefined;
+    this.thanksWrites.clear();
+    this.credits = [];
+    this.cacheWrites.clear();
     return out;
   }
 
@@ -1638,7 +2145,7 @@ export class World {
     p.rec.dir = dir;
     p.readyAt = Math.max(now, p.readyAt) + this.stepMs;
     this.outbox.push({ to: id, msg: { t: 'step', id, x, y, dir, seq } });
-    this.toMap(p.map.data.id, { t: 'step', id, x, y, dir }, id);
+    this.toZone(p.zone.key, { t: 'step', id, x, y, dir }, id);
     if (p.map.data.kind === 'wilds') {
       p.trail.push([x, y]);
       if (p.trail.length > TRAIL_STEPS) p.trail.shift();
@@ -1649,7 +2156,10 @@ export class World {
     }
     const exit = p.map.exitAt(x, y);
     if (exit) this.cross(p, exit, now);
-    else this.rerate(p, now);
+    else {
+      this.rerate(p, now);
+      this.revisit(p);
+    }
   }
 
   /** Refuses step `seq`, telling the mover where they really are. */
@@ -1659,33 +2169,64 @@ export class World {
   }
 
   /**
-   * The player stepped onto an exit and goes on to the other map at once. readyAt stays as it is,
-   * so changing maps never lets anyone walk faster.
+   * The player stepped onto an exit and goes on to the other map at once, into the copy of it copyFor
+   * decides. readyAt stays as it is, so changing maps never lets anyone walk faster.
    */
   private cross(p: Online, to: Arrival, now: number): void {
-    const from = p.map;
-    this.place(p, this.maps.get(to.to)!, to.x, to.y, to.dir);
+    const from = p.zone, map = this.maps.get(to.to)!;
+    this.place(p, this.zoneFor(map, this.copyFor(p.rec, map), now), to.x, to.y, to.dir);
     this.arrive(p, from, 'exit', now);
-    this.moveStory(p, { reach: p.map.data.id });
+    this.moveStory(p, { reach: map.data.id });
+    // Home, whichever copy of it (their own cabin): the letter waits there.
+    if (this.homes.has(map.data.id)) this.homecoming(p, now);
   }
 
-  /** Out of energy while online: the player wakes up at home, and both maps see it. */
+  /**
+   * The copy of `map` a player walks into (an exit, or waking up at home): the one place that decides
+   * it, so what comes (crowded places splitting into copies, streets) changes only this. `player` is as
+   * they are before they go: where they come from. A private room (the home) is each player's own copy of
+   * it, keyed by them, where nobody else ever is; every other map has only its main copy, the world
+   * everyone shares.
+   */
+  protected copyFor(player: PlayerRecord, map: TileMap): string {
+    return map.data.private ? player.id : '';
+  }
+
+  /**
+   * The copy of `map` a player comes back into when they join: their own, always, in a private room;
+   * elsewhere the one they were saved in if it still makes sense (it is open: someone is in it), else
+   * the main copy.
+   */
+  private rejoin(r: PlayerRecord, map: TileMap): string {
+    if (map.data.private) return this.copyFor(r, map);
+    const copy = typeof r.zone === 'string' ? r.zone : '';
+    return copy && this.zones.has(zoneKey(map.data.id, copy)) ? copy : '';
+  }
+
+  /** Out of energy while online: the player wakes up at home, and both zones see it. */
   private collapse(p: Online, now: number): void {
-    const from = p.map;
+    const from = p.zone;
     this.fall(p, now);
     this.arrive(p, from, 'collapse', now);
+    // Woken up in the home (their cabin), they are home as if they had walked in: the letter is there.
+    if (this.homes.has(p.map.data.id)) this.homecoming(p, now);
   }
 
-  /** Out of energy: what the player carries falls out where they are, and they go home to the spawn with a full bar, dry and alone. */
+  /**
+   * Out of energy: what the player carries falls out where they are, and they wake up at home (by the
+   * fire in their own cabin, where the home is theirs) with a full bar, dry and alone.
+   */
   private fall(p: Online, now: number): void {
     const { id, map, x, y } = p.rec;
     this.dropBag(p, now);
-    const { spawn } = this.home.data;
-    this.place(p, this.home, spawn.x, spawn.y, spawn.dir);
+    const w = this.wakeUp;
+    this.place(p, this.zoneFor(w.map, this.copyFor(p.rec, w.map), now), w.x, w.y, w.dir);
     p.rec.energy = this.maxOf(p.rec);
     p.rec.wet = 0;
     p.hitched = false;
     p.afterglowUntil = undefined;
+    // They wake up at home: the next time out is a new trip.
+    p.gifts = 0;
     this.collapses = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
     this.collapses.push({ map, at: now });
     // Mira has a word for the first one (story.ts, remarks); the zone that follows carries the count too.
@@ -1695,8 +2236,8 @@ export class World {
 
   /**
    * The player's bag (or only its slot `slot`, when a skulker catches them) becomes their pile on the
-   * tile where they stand, and their old pile is gone: each player has at most one. With nothing in
-   * the bag, only the old pile goes. Only a collapse leaves an echo.
+   * tile where they stand, in the zone they are in, and their old pile is gone: each player has at most
+   * one. With nothing in the bag, only the old pile goes. Only a collapse leaves an echo.
    */
   private dropBag(p: Online, now: number, slot?: number): void {
     const { id, name, map, x, y, bag } = p.rec;
@@ -1710,44 +2251,52 @@ export class World {
       const into = this.items.get(s.item)?.live?.into;
       return into ? { item: into, count: s.count } : s;
     }));
-    const pile: DropRecord = { owner: id, name, map, x, y, items, droppedAt: Math.floor(now + this.epochOffset), trail };
+    const pile: DropRecord = { owner: id, name, map, ...copyField(p.zone.copy), x, y, items, droppedAt: Math.floor(now + this.epochOffset), trail };
     this.addPile(pile);
     this.pileWrites.set(id, pile);
-    this.toMap(map, { t: 'drop', drop: dropView(pile) });
+    this.toZone(p.zone.key, { t: 'drop', drop: dropView(pile) });
     p.rec.bag = slot === undefined ? [] : bag.filter((_, i) => i !== slot);
     this.sendBag(p, now);
     this.saveNow.set(id, p.rec);
   }
 
   /**
-   * Puts a player on a tile of a map. Queued steps go: they were planned on the old map, and so do the
-   * talk or look waiting behind them (it was about something there) and the trail.
+   * Puts a player on a tile of a zone. Queued steps go: they were planned on the old map, and so do the
+   * talk or look waiting behind them (it was about something there) and the trail. The record says the
+   * copy they are in (none for a main copy), so they come back into it if it still makes sense (rejoin).
    */
-  private place(p: Online, map: TileMap, x: number, y: number, dir: Dir): void {
-    this.onMap.get(p.map.data.id)!.delete(p);
-    this.onMap.get(map.data.id)!.add(p);
-    p.map = map;
-    p.rec.map = map.data.id;
+  private place(p: Online, zone: Zone, x: number, y: number, dir: Dir): void {
+    this.quit(p);
+    zone.players.add(p);
+    p.zone = zone;
+    p.map = zone.map;
+    p.rec.map = zone.map.data.id;
+    if (zone.copy) p.rec.zone = zone.copy;
+    else delete p.rec.zone;
     p.rec.x = x;
     p.rec.y = y;
     p.rec.dir = dir;
     p.queue.length = 0;
     p.after = undefined;
     p.trail = [];
+    this.revisit(p);
   }
 
   /**
-   * Tells everyone about a map change that just happened: the old map sees the player leave, the
-   * new one sees them join, and the player hears where they are, who and what is there, and their energy.
+   * Tells everyone about a zone change that just happened: the old zone sees the player leave, the new
+   * one sees them join, and the player hears where they are, who and what is there, and their energy.
+   * Their `zone` message names the map alone, whichever copy of it they are in.
    */
-  private arrive(p: Online, from: TileMap, reason: 'exit' | 'collapse', now: number): void {
+  private arrive(p: Online, from: Zone, reason: 'exit' | 'collapse', now: number): void {
     const { id, x, y, dir } = p.rec;
-    const here = p.map.data.id;
-    this.toMap(from.data.id, { t: 'leave', id }, id);
-    this.toMap(here, { t: 'join', player: this.viewOf(p) }, id);
+    const here = p.zone.key;
+    this.toZone(from.key, { t: 'leave', id }, id);
+    this.toZone(here, { t: 'join', player: this.viewOf(p) }, id);
     this.outbox.push({
       to: id,
       msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), stats: { ...p.rec.stats }, reason },
+      // Where the network hears them from now on, when it is not the map's main copy (its key is the map's id).
+      ...(p.zone.copy ? { zone: here } : {}),
     });
     // A roof or town shakes off whatever clung to you.
     if (p.hitched && p.map.data.kind !== 'wilds') this.unhitch(p);
@@ -1763,7 +2312,7 @@ export class World {
     p.max = this.maxOf(p.rec);
     p.slots = bagSlotsOf(p.rec.gear ?? {}, this.items);
     const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn);
-    const warmth = p.map.warm(x, y) ? this.fires.warmth(p.map, x, y, now) : 0;
+    const warmth = p.map.warm(x, y) ? p.zone.fires.warmth(x, y, now) : 0;
     const storm = this.stormOf(p.map, now)?.phase === 'storm';
     p.rate = energyRate(p.map, x, y, this.sky, {
       warmth: warmth * p.mods.warmth,
@@ -1774,7 +2323,7 @@ export class World {
       surgeDrain: this.stoneAwake ? 1 + (SURGE_DRAIN - 1) / 2 : SURGE_DRAIN,
       hitched: p.hitched,
       storm,
-      flash: this.flashes.find(f => f.map === p.map.data.id && flashHits(flashView(f, now), x, y))?.kind,
+      flash: p.zone.flashes.find(f => flashHits(flashView(f, now), x, y))?.kind,
       resist,
       farDrain: p.mods.farDrain,
     });
@@ -1893,14 +2442,14 @@ export class World {
     this.count(p, 'surged', now);
   }
 
-  /** Tells each surging map when its phase changes, and grows (or clears away) the finds of restless times. */
+  /** Tells each surging map (every copy of it) when its phase changes, and grows (or clears away) the finds of restless times. */
   private moveSurges(now: number): void {
     for (const map of this.maps.values()) {
       const s = this.surgeOf(map, now);
       if (!s || this.surgePhase.get(map.data.id) === s.phase) continue;
       const first = !this.surgePhase.has(map.data.id);
       this.surgePhase.set(map.data.id, s.phase);
-      if (!first) this.toMap(map.data.id, { t: 'surge', surge: s });
+      if (!first) this.toCopies(map.data.id, { t: 'surge', surge: s });
       for (const rule of this.rules) if (rule.when === 'unstable' && rule.map === map) this.openRule(rule, s.phase !== 'calm', now);
     }
     // The first tick also opens aurora finds if the world starts on an aurora night.
@@ -1916,14 +2465,14 @@ export class World {
     return { phase: s.phase, left: round(s.left, 1) };
   }
 
-  /** Tells each storming map when its phase changes, and grows (or clears away) the finds a storm leaves. */
+  /** Tells each storming map (every copy of it) when its phase changes, and grows (or clears away) the finds a storm leaves. */
   private moveStorms(now: number): void {
     for (const map of this.maps.values()) {
       const s = this.stormOf(map, now);
       if (!s || this.stormPhase.get(map.data.id) === s.phase) continue;
       const first = !this.stormPhase.has(map.data.id);
       this.stormPhase.set(map.data.id, s.phase);
-      if (!first) this.toMap(map.data.id, { t: 'storm', storm: s });
+      if (!first) this.toCopies(map.data.id, { t: 'storm', storm: s });
       for (const rule of this.rules) if (rule.when === 'storm' && rule.map === map) this.openRule(rule, s.phase === 'storm', now);
     }
   }
@@ -1959,20 +2508,23 @@ export class World {
       if (newDay && daily.has(rule.condition)) this.openRule(rule, false, now);
       this.openRule(rule, ids.has(rule.condition), now);
     }
-    for (const [mapId, list] of this.watchers) {
+    for (const [mapId, base] of this.baseLairs) {
       const here = on.filter(c => c.map === mapId && c.watchers);
       const asleep = here.some(c => c.watchers!.asleep);
       const moved = here.find(c => this.conditionLairs.has(c.id));
-      const lairs = moved ? this.conditionLairs.get(moved.id)! : this.baseLairs.get(mapId)!;
+      const lairs = moved ? this.conditionLairs.get(moved.id)! : base;
       if (asleep) this.asleep.add(mapId);
       else this.asleep.delete(mapId);
+      this.lairsNow.set(mapId, lairs);
       const allowed = new Set(lairs);
-      for (const w of list) {
+      for (const zone of this.copiesOf(mapId)) for (const w of zone.watchers) {
         w.lairs = lairs;
         if (w.awake && (asleep || !allowed.has(w.y * w.map.width + w.x))) this.sendAway(w, now);
       }
     }
-    if (newDay) for (const c of on) if (c.fireOut && daily.has(c.id)) this.fireOut(c.map, day, now);
+    if (!newDay) return;
+    this.doused = [];
+    for (const c of on) if (c.fireOut && daily.has(c.id)) this.fireOut(c.map, day, now);
   }
 
   /**
@@ -2013,32 +2565,39 @@ export class World {
     return this.guests && p.rec.authSub !== null;
   }
 
-  /** One untended fire on the map (or in its shelters) goes out, the same one for everyone that day. */
+  /**
+   * One untended fire on the map (or in its shelters) goes out, the same one for everyone that day: in
+   * every copy of its map, and in a copy that opens later that day too (openZone).
+   */
   private fireOut(mapId: string, day: number, now: number): void {
-    const fires = this.fires.all()
+    const fires = [...this.maps.values()].flatMap(m => this.main(m).fires.all())
       .filter(f => !f.tended && (f.map.data.id === mapId || this.around.get(f.map.data.id)?.data.id === mapId))
       .sort((a, b) => a.map.data.id.localeCompare(b.map.data.id) || a.x - b.x || a.y - b.y);
     const f = fires[Math.floor(seeded(day)() * fires.length)];
     if (!f) return;
-    this.fires.douse(f, now);
-    this.toMap(f.map.data.id, { t: 'fire', fire: this.fires.view(f, now) });
+    this.doused.push({ map: f.map.data.id, x: f.x, y: f.y });
+    for (const zone of this.copiesOf(f.map.data.id)) {
+      const here = zone.fires.at(f.x, f.y)!;
+      zone.fires.douse(here, now);
+      this.toZone(zone.key, { t: 'fire', fire: zone.fires.view(here, now) });
+    }
   }
 
   /**
-   * Every so often on each map with flashes, a patch of ground starts to glow near someone out in the
-   * open at the rule's distance from home, often right under them: they have FLASH_GLOW_S to step out.
+   * Every so often in each zone of a map with flashes, a patch of ground starts to glow near someone out
+   * in the open there at the rule's distance from home, often right under them: they have FLASH_GLOW_S to step out.
    */
   private startFlashes(now: number): void {
-    for (const map of this.maps.values()) {
-      const rule = map.data.kind === 'wilds' ? map.data.flashes : undefined;
+    for (const zone of this.zones.values()) {
+      const map = zone.map, rule = map.data.kind === 'wilds' ? map.data.flashes : undefined;
       if (!rule) continue;
-      const id = map.data.id, at = this.nextFlash.get(id);
+      const at = zone.nextFlash;
       if (at === undefined || now < at) {
-        if (at === undefined) this.nextFlash.set(id, now + rule.every * 1000);
+        if (at === undefined) zone.nextFlash = now + rule.every * 1000;
         continue;
       }
-      this.nextFlash.set(id, now + rule.every * 1000);
-      const out = [...this.onMap.get(id)!].filter(p => {
+      zone.nextFlash = now + rule.every * 1000;
+      const out = [...zone.players].filter(p => {
         const steps = p.map.homeSteps(p.rec.x, p.rec.y);
         return steps >= rule.steps[0] && steps <= rule.steps[1] && this.exposed(p, now);
       });
@@ -2050,9 +2609,9 @@ export class World {
         if (map.walkable(x, y) && !map.lit(x, y) && !map.warm(x, y) && map.homeSteps(x, y) >= 0) near.push([x, y]);
       }
       const [x, y] = near[Math.floor(this.rng() * near.length)] ?? [who.rec.x, who.rec.y];
-      const flash: Flash = { map: id, x, y, kind: this.rng() < 0.5 ? 'spark' : 'fire', until: now + (FLASH_GLOW_S + FLASH_BURST_S) * 1000 };
-      this.flashes.push(flash);
-      this.toMap(id, { t: 'flash', flash: flashView(flash, now) });
+      const flash: Flash = { x, y, kind: this.rng() < 0.5 ? 'spark' : 'fire', until: now + (FLASH_GLOW_S + FLASH_BURST_S) * 1000 };
+      zone.flashes.push(flash);
+      this.toZone(zone.key, { t: 'flash', flash: flashView(flash, now) });
     }
   }
 
@@ -2093,13 +2652,13 @@ export class World {
     const dt = Math.max(0, now - p.hitchAt) / 1000;
     p.hitchAt = now;
     const { x, y } = p.rec;
-    const safe = p.map.data.kind !== 'wilds' || p.map.lit(x, y) || (p.map.warm(x, y) && this.fires.warmth(p.map, x, y, now) > 0);
+    const safe = p.map.data.kind !== 'wilds' || p.map.lit(x, y) || (p.map.warm(x, y) && p.zone.fires.warmth(x, y, now) > 0);
     if (p.hitched) {
-      if (safe || this.nearFlare(p.map.data.id, x, y, now)) this.unhitch(p);
+      if (safe || this.nearFlare(p.zone, x, y, now)) this.unhitch(p);
       return;
     }
     const dark = this.sky === 'night' || this.sky === 'aurora';
-    if (safe || !dark || p.map.homeSteps(x, y) < HITCH_STEPS || this.nearFlare(p.map.data.id, x, y, now)) return;
+    if (safe || !dark || p.map.homeSteps(x, y) < HITCH_STEPS || this.nearFlare(p.zone, x, y, now)) return;
     if (this.rng() < 1 - Math.exp((-dt / HITCH_EVERY_S) * p.mods.hitch)) {
       p.hitched = true;
       this.outbox.push({ to: p.rec.id, msg: { t: 'hitch', on: true } });
@@ -2111,55 +2670,63 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'hitch', on: false } });
   }
 
-  private nearFlare(map: string, x: number, y: number, now: number): boolean {
-    return this.flares.some(f => f.map === map && f.until > now && Math.hypot(f.x - x, f.y - y) <= FLARE_RADIUS);
+  /** Is a flare burning in `zone` within reach of tile x,y? */
+  private nearFlare(zone: Zone, x: number, y: number, now: number): boolean {
+    return zone.flares.some(f => f.until > now && Math.hypot(f.x - x, f.y - y) <= FLARE_RADIUS);
   }
 
-  /** A flare where the player stands: whatever clings to them lets go, and watchers nearby slink off. */
+  /** A flare where the player stands, in their zone: whatever clings to them lets go, and creatures nearby slink off. */
   private light(p: Online, seconds: number, now: number): void {
-    const { x, y } = p.rec, map = p.map.data.id;
-    this.flares.push({ map, x, y, until: now + seconds * 1000 });
-    this.toMap(map, { t: 'flare', flare: { x, y, left: seconds } });
+    const { x, y } = p.rec, zone = p.zone;
+    zone.flares.push({ x, y, until: now + seconds * 1000 });
+    this.toZone(zone.key, { t: 'flare', flare: { x, y, left: seconds } });
     if (p.hitched) this.unhitch(p);
-    for (const w of [...(this.watchers.get(map) ?? []), ...(this.skulkers.get(map) ?? [])]) if (w.awake && Math.hypot(w.x - x, w.y - y) <= FLARE_RADIUS + 3) this.sendAway(w, now);
+    for (const w of [...zone.watchers, ...zone.skulkers]) if (w.awake && Math.hypot(w.x - x, w.y - y) <= FLARE_RADIUS + 3) this.sendAway(w, now);
   }
 
-  /** An arrow on the player's tile, pointing where they face. Their oldest goes when they have too many. */
+  /**
+   * An arrow on the player's tile, in their zone, pointing where they face, for a day (longer for a good
+   * neighbor: markLifetime). Their oldest goes when they have too many.
+   */
   private paint(p: Online, now: number): void {
     const { id, name, color, map, x, y, dir } = p.rec;
     const mine = [...this.marks.values()].filter(m => m.owner === id).sort((a, b) => a.placedAt - b.placedAt);
     for (const m of mine.slice(0, Math.max(0, mine.length - MARKS_PER_PLAYER + 1))) this.removeMark(m);
-    const mark: MarkRecord = { id: this.nextMarkId++, owner: id, name, color, map, x, y, dir, placedAt: Math.floor(now + this.epochOffset) };
+    const placedAt = Math.floor(now + this.epochOffset);
+    const mark: MarkRecord = { id: this.nextMarkId++, owner: id, name, color, map, ...copyField(p.zone.copy), x, y, dir, placedAt, until: placedAt + markLifetime(p.mods) };
     this.addMark(mark);
     this.markWrites.set(mark.id, mark);
-    this.toMap(map, { t: 'mark', mark: markView(mark) });
+    this.toZone(p.zone.key, { t: 'mark', mark: markView(mark) });
   }
 
   private restoreMark(m: MarkRecord): void {
     const map = this.maps.get(m.map);
-    if (!map || !map.inside(m.x, m.y) || this.markTiles.get(m.map)!.has(m.y * map.width + m.x)) return;
+    if (!map || !map.inside(m.x, m.y) || this.markTiles.get(recordZone(m))?.has(m.y * map.width + m.x)) return;
     this.addMark({ ...m });
     this.nextMarkId = Math.max(this.nextMarkId, m.id + 1);
   }
 
   private addMark(m: MarkRecord): void {
     this.marks.set(m.id, m);
-    this.markTiles.get(m.map)!.set(m.y * this.maps.get(m.map)!.width + m.x, m);
-    this.markFadeAt = Math.min(this.markFadeAt, m.placedAt + MARK_LIFETIME_MS - this.epochOffset);
+    tilesOf(this.markTiles, recordZone(m)).set(m.y * this.maps.get(m.map)!.width + m.x, m);
+    this.markFadeAt = Math.min(this.markFadeAt, markUntil(m) - this.epochOffset);
   }
 
+  /** A mark goes (faded, or its painter's oldest): everyone in its zone hears it, and storage forgets it. */
   private removeMark(m: MarkRecord): void {
+    const key = recordZone(m), tiles = this.markTiles.get(key)!;
     this.marks.delete(m.id);
-    this.markTiles.get(m.map)!.delete(m.y * this.maps.get(m.map)!.width + m.x);
+    tiles.delete(m.y * this.maps.get(m.map)!.width + m.x);
+    if (!tiles.size) this.markTiles.delete(key);
     this.markWrites.set(m.id, undefined);
-    this.toMap(m.map, { t: 'markGone', id: m.id });
+    this.toZone(key, { t: 'markGone', id: m.id });
   }
 
   private fadeMarks(now: number): void {
     if (now < this.markFadeAt) return;
     const wall = now + this.epochOffset;
-    for (const m of [...this.marks.values()]) if (wall >= m.placedAt + MARK_LIFETIME_MS) this.removeMark(m);
-    this.markFadeAt = [...this.marks.values()].reduce((at, m) => Math.min(at, m.placedAt + MARK_LIFETIME_MS - this.epochOffset), Infinity);
+    for (const m of [...this.marks.values()]) if (wall >= markUntil(m)) this.removeMark(m);
+    this.markFadeAt = [...this.marks.values()].reduce((at, m) => Math.min(at, markUntil(m) - this.epochOffset), Infinity);
   }
 
   // ---------- watchers ----------
@@ -2170,17 +2737,18 @@ export class World {
   }
 
   /**
-   * Each watcher that may step: wakes up where nobody is, or freezes while someone on its map faces
-   * it, or takes one step toward the nearest player out of the light; reaching one, it takes energy
-   * and something they carry, and goes away for a while.
+   * Each watcher that may step, zone by zone: wakes up where nobody is, or freezes while someone in its
+   * zone faces it, or takes one step toward the nearest player out of the light; reaching one, it takes
+   * energy and something they carry, and goes away for a while. Players in other copies of its map are
+   * nothing to it.
    */
   private walkWatchers(now: number): void {
     const every = this.sky === 'aurora' ? AURORA_WATCHER_STEP_MS : WATCHER_STEP_MS;
-    for (const [mapId, list] of this.watchers) {
-      if (this.asleep.has(mapId)) continue;
-      for (const w of list) {
+    for (const zone of this.zones.values()) {
+      if (!zone.watchers.length || this.asleep.has(zone.map.data.id)) continue;
+      for (const w of zone.watchers) {
         // Asked again for each watcher: another one's touch may have just sent someone home.
-        const here = [...this.onMap.get(mapId)!];
+        const here = [...zone.players];
         if (!w.awake) {
           if (now >= w.wakeAt) this.wake(w, here, now);
           continue;
@@ -2188,7 +2756,7 @@ export class World {
         if (now < w.readyAt) continue;
         w.readyAt = now + every;
         const map = w.map;
-        if (this.nearFlare(mapId, w.x, w.y, now)) {
+        if (this.nearFlare(zone, w.x, w.y, now)) {
           this.sendAway(w, now);
           continue;
         }
@@ -2199,12 +2767,12 @@ export class World {
           .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && !this.glowing(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
           .sort((a, b) => manhattan(a.rec.x, a.rec.y, w.x, w.y) - manhattan(b.rec.x, b.rec.y, w.x, w.y))[0];
         if (!prey) continue;
-        const next = pathStep(map, w.x, w.y, prey.rec.x, prey.rec.y, (x, y) => this.watcherMayStand(map, x, y) && !this.nearFlare(mapId, x, y, now) && !this.creatureAt(mapId, x, y));
+        const next = pathStep(map, w.x, w.y, prey.rec.x, prey.rec.y, (x, y) => this.watcherMayStand(map, x, y) && !this.nearFlare(zone, x, y, now) && !this.creatureAt(zone, x, y));
         if (next) {
           w.dir = dirTo(next.x - w.x, next.y - w.y) ?? w.dir;
           w.x = next.x;
           w.y = next.y;
-          this.toMap(mapId, { t: 'creature', creature: creatureView(w) });
+          this.toZone(zone.key, { t: 'creature', creature: creatureView(w) });
         }
         if (manhattan(prey.rec.x, prey.rec.y, w.x, w.y) <= 1) this.touch(w, prey, now);
       }
@@ -2223,31 +2791,33 @@ export class World {
 
   /**
    * Afterglows (a quirk, gear.ts): a flash discharging within AFTERGLOW_NEAR tiles of someone whose gear has
-   * it leaves them glowing for AFTERGLOW_S, once for each flash (a second flash starts it again). Everyone on
-   * their map hears it start and end.
+   * it leaves them glowing for AFTERGLOW_S, once for each flash (a second flash starts it again). Everyone in
+   * their zone hears it start and end.
    */
   private afterglows(now: number): void {
-    for (const f of this.flashes) {
-      if (f.until <= now || (f.until - now) / 1000 > FLASH_BURST_S) continue;
-      for (const p of this.onMap.get(f.map) ?? []) {
-        if (f.glowed?.has(p.rec.id) || Math.hypot(f.x - p.rec.x, f.y - p.rec.y) > AFTERGLOW_NEAR || !quirksOf(p.rec.worn).includes('afterglow')) continue;
-        (f.glowed ??= new Set()).add(p.rec.id);
-        p.afterglowUntil = now + AFTERGLOW_S * 1000;
-        this.toMap(f.map, { t: 'afterglow', id: p.rec.id, left: AFTERGLOW_S });
+    for (const zone of this.zones.values()) {
+      for (const f of zone.flashes) {
+        if (f.until <= now || (f.until - now) / 1000 > FLASH_BURST_S) continue;
+        for (const p of zone.players) {
+          if (f.glowed?.has(p.rec.id) || Math.hypot(f.x - p.rec.x, f.y - p.rec.y) > AFTERGLOW_NEAR || !quirksOf(p.rec.worn).includes('afterglow')) continue;
+          (f.glowed ??= new Set()).add(p.rec.id);
+          p.afterglowUntil = now + AFTERGLOW_S * 1000;
+          this.toZone(zone.key, { t: 'afterglow', id: p.rec.id, left: AFTERGLOW_S });
+        }
       }
     }
     for (const p of this.players.values()) {
       if (p.afterglowUntil === undefined || now < p.afterglowUntil) continue;
       p.afterglowUntil = undefined;
-      this.toMap(p.map.data.id, { t: 'afterglow', id: p.rec.id, left: 0 });
+      this.toZone(p.zone.key, { t: 'afterglow', id: p.rec.id, left: 0 });
     }
   }
 
   /** Out in the open: not by a burning fire, not in a street light, not near a flare. A flash still finds you in tall grass. */
   private exposed(p: Online, now: number): boolean {
     const { x, y } = p.rec;
-    if (p.map.lit(x, y) || this.nearFlare(p.map.data.id, x, y, now)) return false;
-    return !(p.map.warm(x, y) && this.fires.warmth(p.map, x, y, now) > 0);
+    if (p.map.lit(x, y) || this.nearFlare(p.zone, x, y, now)) return false;
+    return !(p.map.warm(x, y) && p.zone.fires.warmth(x, y, now) > 0);
   }
 
   /** Whom creatures notice and go after: someone out in the open, and not hidden in tall grass. */
@@ -2257,7 +2827,7 @@ export class World {
 
   private wake(w: Watcher, here: Online[], now: number): void {
     const W = w.map.width;
-    const far = w.lairs.filter(t => !this.creatureAt(w.map.data.id, t % W, Math.floor(t / W)) && here.every(p => manhattan(p.rec.x, p.rec.y, t % W, Math.floor(t / W)) >= WATCHER_WAKE_AWAY));
+    const far = w.lairs.filter(t => !this.creatureAt(w.zone, t % W, Math.floor(t / W)) && here.every(p => manhattan(p.rec.x, p.rec.y, t % W, Math.floor(t / W)) >= WATCHER_WAKE_AWAY));
     if (!far.length) {
       w.wakeAt = now + 10_000;
       return;
@@ -2267,7 +2837,7 @@ export class World {
     w.y = Math.floor(t / w.map.width);
     w.awake = true;
     w.readyAt = now + WATCHER_STEP_MS;
-    this.toMap(w.map.data.id, { t: 'creature', creature: creatureView(w) });
+    this.toZone(w.zone.key, { t: 'creature', creature: creatureView(w) });
   }
 
   private sendAway(w: Watcher, now: number): void {
@@ -2275,7 +2845,7 @@ export class World {
     w.awake = false;
     w.chasing = undefined;
     w.wakeAt = now + (soonest + this.rng() * (latest - soonest)) * 1000;
-    this.toMap(w.map.data.id, { t: 'creatureGone', id: w.id });
+    this.toZone(w.zone.key, { t: 'creatureGone', id: w.id });
   }
 
   /** A watcher reached a player: energy lost, one thing they carried taken (at random), and it goes away. */
@@ -2315,21 +2885,21 @@ export class World {
   }
 
   /**
-   * Each skulker that may step: out of its time it sinks into the ferns; awake, it lies still in its
-   * lair until it hears someone walking or sees someone standing near, out in the open; then it chases
-   * them until it catches them or gives up (the time is over, they reached light, a fire or tall grass,
-   * or its range ends), and goes back to its lair.
+   * Each skulker that may step, zone by zone: out of its time it sinks into the ferns; awake, it lies
+   * still in its lair until it hears someone walking or sees someone standing near, out in the open in its
+   * zone; then it chases them until it catches them or gives up (the time is over, they reached light, a
+   * fire or tall grass, they left the zone, or its range ends), and goes back to its lair.
    */
   private walkSkulkers(now: number): void {
-    for (const [mapId, list] of this.skulkers) {
-      for (const s of list) {
+    for (const zone of this.zones.values()) {
+      for (const s of zone.skulkers) {
         const map = s.map;
         if (!this.skulkersOut(map, s.rule, now)) {
           if (s.awake) this.sendAway(s, now);
           continue;
         }
         // Asked again for each skulker: another one's catch may have just sent someone home.
-        const here = [...this.onMap.get(mapId)!];
+        const here = [...zone.players];
         if (!s.awake) {
           if (now >= s.wakeAt) this.wake(s, here, now);
           if (s.awake) s.lair = s.y * map.width + s.x;
@@ -2337,11 +2907,11 @@ export class World {
         }
         if (now < s.readyAt) continue;
         s.readyAt = now + SKULKER_STEP_MS;
-        if (this.nearFlare(mapId, s.x, s.y, now)) {
+        if (this.nearFlare(zone, s.x, s.y, now)) {
           this.sendAway(s, now);
           continue;
         }
-        const may = (x: number, y: number) => this.skulkerMayStand(map, s.rule, x, y) && !this.nearFlare(mapId, x, y, now) && !this.creatureAt(mapId, x, y);
+        const may = (x: number, y: number) => this.skulkerMayStand(map, s.rule, x, y) && !this.nearFlare(zone, x, y, now) && !this.creatureAt(zone, x, y);
         let prey = s.chasing === undefined ? undefined : here.find(p => p.rec.id === s.chasing);
         if (s.chasing !== undefined && (!prey || prey.rec.energy <= 0 || now >= s.chaseUntil || !this.noticeable(prey, now))) {
           this.giveUp(s, now);
@@ -2364,7 +2934,7 @@ export class World {
             s.chaseUntil = now + SKULKER_CHASE_MS;
           }
           if (next) this.creatureTo(s, next.x, next.y);
-          else this.toMap(mapId, { t: 'creature', creature: creatureView(s) });
+          else this.toZone(zone.key, { t: 'creature', creature: creatureView(s) });
           if (manhattan(prey.rec.x, prey.rec.y, s.x, s.y) <= 1) this.caught(s, prey, now);
           continue;
         }
@@ -2383,9 +2953,9 @@ export class World {
     }
   }
 
-  /** Is an awake creature on this tile? */
-  private creatureAt(mapId: string, x: number, y: number): boolean {
-    return [...(this.watchers.get(mapId) ?? []), ...(this.skulkers.get(mapId) ?? [])].some(c => c.awake && c.x === x && c.y === y);
+  /** Is an awake creature on this tile of the zone? */
+  private creatureAt(zone: Zone, x: number, y: number): boolean {
+    return zone.watchers.some(c => c.awake && c.x === x && c.y === y) || zone.skulkers.some(c => c.awake && c.x === x && c.y === y);
   }
 
   /** A creature moves to x,y (a step, or a jump the clients show at once). */
@@ -2393,13 +2963,13 @@ export class World {
     c.dir = dirTo(x - c.x, y - c.y) ?? c.dir;
     c.x = x;
     c.y = y;
-    this.toMap(c.map.data.id, { t: 'creature', creature: creatureView(c) });
+    this.toZone(c.zone.key, { t: 'creature', creature: creatureView(c) });
   }
 
   private giveUp(s: Skulker, now: number): void {
     s.chasing = undefined;
     s.calmUntil = now + SKULKER_CALM_MS;
-    this.toMap(s.map.data.id, { t: 'creature', creature: creatureView(s) });
+    this.toZone(s.zone.key, { t: 'creature', creature: creatureView(s) });
   }
 
   /**
@@ -2462,16 +3032,17 @@ export class World {
       else if (s.phase === 'coming') lines.push(`${map.data.name}: a storm is coming ${about(s.left)}.`);
       else lines.push(`${map.data.name}: clear. The next storm comes ${about(s.left + rule.warn)}.`);
     }
-    const low: string[] = [], out: string[] = [];
-    for (const f of this.fires.all()) {
+    // The fires of the world everyone shares: each map's main copy.
+    const low: string[] = [], out: string[] = [], fires = [...this.maps.values()].map(m => this.main(m).fires);
+    for (const zone of fires) for (const f of zone.all()) {
       if (f.tended) continue;
-      const left = this.fires.left(f, now);
+      const left = zone.left(f, now);
       if (left <= 0) out.push(fireName(f));
       else if (left < FIRE_LOW_S * 2) low.push(fireName(f));
     }
     if (out.length) lines.push(`Gone out: ${listOf(out)}. Bring something that burns.`);
     if (low.length) lines.push(`Burning low: ${listOf(low)}.`);
-    if (!out.length && !low.length && this.fires.all().some(f => !f.tended)) lines.push('Every shelter fire is burning.');
+    if (!out.length && !low.length && fires.some(zone => zone.all().some(f => !f.tended))) lines.push('Every shelter fire is burning.');
     const recent = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
     if (recent.length) {
       const by = new Map<string, number>();
@@ -2593,11 +3164,11 @@ export class World {
     const again = wild && !rule.item.live && p.mods.double > 0 && this.rng() < p.mods.double ? this.addNew(r.bag, rule.item, 1, p.slots) : undefined;
     const double = again !== undefined && again.left === 0;
     p.rec.bag = again && double ? again.bag : r.bag;
-    this.finds.get(rule.map.data.id)!.delete(find.tile);
+    find.zone.finds.delete(find.tile);
     const [soonest, latest] = rule.respawn;
-    this.later(rule, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
+    this.later(rule, find.zone, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
     this.got(p, [{ item: rule.item.id, count: double ? 2 : 1 }], 'find', now, double);
-    this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
+    this.toZone(find.zone.key, { t: 'findGone', id: find.id });
     if (wild) this.count(p, 'found', now);
     this.rerate(p, now);
     this.moveStory(p, { pick: rule.item.id });
@@ -2612,12 +3183,12 @@ export class World {
   private pickTool(p: Online, find: Find, now: number): void {
     const { rule } = find;
     if (this.owns(p, rule.item.id)) return this.refuse(p, 'pick', 'have_tool');
-    this.finds.get(rule.map.data.id)!.delete(find.tile);
+    find.zone.finds.delete(find.tile);
     const [soonest, latest] = rule.respawn;
-    this.later(rule, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
+    this.later(rule, find.zone, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
     this.outbox.push({ to: p.rec.id, msg: { t: 'got', items: [{ item: rule.item.id, count: 1 }], from: 'tool' } });
     this.giveTool(p.rec.id, rule.item.id);
-    this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
+    this.toZone(find.zone.key, { t: 'findGone', id: find.id });
     if (this.wild(p.map)) this.count(p, 'found', now);
     this.moveStory(p, { pick: rule.item.id });
   }
@@ -2639,35 +3210,37 @@ export class World {
     if (mine && r.left.length) {
       d.items = gather(r.left);
       this.pileWrites.set(d.owner, d);
-      this.toMap(d.map, { t: 'drop', drop: dropView(d) });
+      this.toZone(recordZone(d), { t: 'drop', drop: dropView(d) });
     } else {
       this.removePile(d);
     }
     this.rerate(p, now);
   }
 
-  /** The pile on a tile, the picker's own first (that one they get all of). */
-  private pileAt(map: TileMap, x: number, y: number, picker: string): DropRecord | undefined {
-    if (!map.inside(x, y)) return undefined;
-    const here = this.pileTiles.get(map.data.id)!.get(y * map.width + x);
+  /** The pile on a tile of the zone, the picker's own first (that one they get all of). */
+  private pileAt(zone: Zone, x: number, y: number, picker: string): DropRecord | undefined {
+    if (!zone.map.inside(x, y)) return undefined;
+    const here = this.pileTiles.get(zone.key)?.get(y * zone.map.width + x);
     return here?.find(d => d.owner === picker) ?? here?.[0];
   }
 
   /**
-   * A pile saved before a restart. Items that no longer exist are gone; so is a pile with nothing left or
-   * on a map that is gone. Gear in it is a piece each (gear that fell before pieces travelled gets a new one).
+   * A pile saved before a restart, in the copy it was dropped in (none: the main copy). Items that no
+   * longer exist are gone; so is a pile with nothing left or on a map that is gone. Gear in it is a piece
+   * each (gear that fell before pieces travelled gets a new one).
    */
   private restore(d: DropRecord): void {
     const map = this.maps.get(d.map);
     const items = gather(this.pieced((Array.isArray(d.items) ? d.items : []).filter(s => isSlot(s) && this.items.has(s.item))));
     if (!map || !map.inside(d.x, d.y) || !items.length || this.piles.has(d.owner)) return;
     const trail = (Array.isArray(d.trail) ? d.trail : []).filter(([x, y]) => map.inside(x, y)).slice(-TRAIL_STEPS);
-    this.addPile({ ...d, items, trail });
+    const { zone: _zone, ...rest } = d;
+    this.addPile({ ...rest, ...(typeof d.zone === 'string' && d.zone ? { zone: d.zone } : {}), items, trail });
   }
 
   private addPile(d: DropRecord): void {
     this.piles.set(d.owner, d);
-    const tiles = this.pileTiles.get(d.map)!;
+    const tiles = tilesOf(this.pileTiles, recordZone(d));
     const tile = d.y * this.maps.get(d.map)!.width + d.x;
     const here = tiles.get(tile);
     if (here) here.push(d);
@@ -2675,16 +3248,17 @@ export class World {
     this.fadeAt = Math.min(this.fadeAt, d.droppedAt + DROP_LIFETIME_MS - this.epochOffset);
   }
 
-  /** A pile goes (taken, faded or replaced): everyone on its map hears it, and storage forgets it. */
+  /** A pile goes (taken, faded or replaced): everyone in its zone hears it, and storage forgets it. */
   private removePile(d: DropRecord): void {
     this.piles.delete(d.owner);
-    const tiles = this.pileTiles.get(d.map)!;
+    const key = recordZone(d), tiles = this.pileTiles.get(key)!;
     const tile = d.y * this.maps.get(d.map)!.width + d.x;
     const rest = tiles.get(tile)!.filter(o => o !== d);
     if (rest.length) tiles.set(tile, rest);
     else tiles.delete(tile);
+    if (!tiles.size) this.pileTiles.delete(key);
     this.pileWrites.set(d.owner, undefined);
-    this.toMap(d.map, { t: 'dropGone', id: d.owner });
+    this.toZone(key, { t: 'dropGone', id: d.owner });
   }
 
   /** Piles whose hour is over fade. */
@@ -2695,30 +3269,37 @@ export class World {
     this.fadeAt = [...this.piles.values()].reduce((at, d) => Math.min(at, d.droppedAt + DROP_LIFETIME_MS - this.epochOffset), Infinity);
   }
 
-  /** All of a rule's finds, on free tiles; those with no free tile grow as soon as there is one. */
-  private sow(rule: Rule, now?: number): void {
+  /** All of a rule's finds in a zone, on free tiles; those with no free tile grow as soon as there is one. With `now`, the zone hears them. */
+  private sow(rule: Rule, zone: Zone, now?: number): void {
     for (let i = 0; i < rule.count; i++) {
-      const find = this.put(rule, undefined);
-      if (!find) this.later(rule, -Infinity, undefined);
-      else if (now !== undefined) this.toMap(rule.map.data.id, { t: 'find', find: findView(find) });
+      const find = this.put(rule, zone, undefined);
+      if (!find) this.later(rule, zone, -Infinity, undefined);
+      else if (now !== undefined) this.toZone(zone.key, { t: 'find', find: findView(find) });
     }
   }
 
-  /** A rule's time has come (its finds grow, and everyone on its map sees them) or is over (its finds go). */
+  /**
+   * A rule's time has come (its finds grow in every copy of its map, and everyone there sees them) or
+   * is over (its finds go from every copy).
+   */
   private openRule(rule: Rule, open: boolean, now: number): void {
     if (rule.open === open) return;
     rule.open = open;
-    if (open) return this.sow(rule, now);
+    if (open) {
+      for (const zone of this.copiesOf(rule.map.data.id)) this.sow(rule, zone, now);
+      return;
+    }
     this.growing = this.growing.filter(g => g.rule !== rule);
-    const finds = this.finds.get(rule.map.data.id)!;
-    for (const [tile, f] of [...finds]) {
-      if (f.rule !== rule) continue;
-      finds.delete(tile);
-      this.toMap(rule.map.data.id, { t: 'findGone', id: f.id });
+    for (const zone of this.copiesOf(rule.map.data.id)) {
+      for (const [tile, f] of [...zone.finds]) {
+        if (f.rule !== rule) continue;
+        zone.finds.delete(tile);
+        this.toZone(zone.key, { t: 'findGone', id: f.id });
+      }
     }
   }
 
-  /** Finds whose time has come grow, and everyone on their map hears it. */
+  /** Finds whose time has come grow, and everyone in their zone hears it. */
   private growFinds(now: number): void {
     if (now < this.growAt) return;
     const due = this.growing.filter(g => g.at <= now).sort((a, b) => a.at - b.at);
@@ -2726,36 +3307,36 @@ export class World {
     this.growAt = this.growing.reduce((at, g) => Math.min(at, g.at), Infinity);
     for (const g of due) {
       if (!g.rule.open) continue;
-      const find = this.put(g.rule, g.not);
+      const find = this.put(g.rule, g.zone, g.not);
       // Every tile it may grow on is taken (by other finds and by piles): it tries again a while later.
-      if (!find) this.later(g.rule, now + g.rule.respawn[0] * 1000, g.not);
-      else this.toMap(g.rule.map.data.id, { t: 'find', find: findView(find) });
+      if (!find) this.later(g.rule, g.zone, now + g.rule.respawn[0] * 1000, g.not);
+      else this.toZone(g.zone.key, { t: 'find', find: findView(find) });
     }
   }
 
-  private later(rule: Rule, at: number, not: number | undefined): void {
-    this.growing.push({ rule, at, not });
+  private later(rule: Rule, zone: Zone, at: number, not: number | undefined): void {
+    this.growing.push({ rule, zone, at, not });
     this.growAt = Math.min(this.growAt, at);
   }
 
-  /** A find of the rule on a free tile (freeTile); undefined if none is free. Nobody is told here. */
-  private put(rule: Rule, not: number | undefined): Find | undefined {
-    const tile = this.freeTile(rule, not);
+  /** A find of the rule on a free tile of the zone (freeTile); undefined if none is free. Nobody is told here. */
+  private put(rule: Rule, zone: Zone, not: number | undefined): Find | undefined {
+    const tile = this.freeTile(rule, zone, not);
     if (tile === undefined) return undefined;
-    const find: Find = { id: this.nextFindId++, rule, tile };
-    this.finds.get(rule.map.data.id)!.set(tile, find);
+    const find: Find = { id: this.nextFindId++, rule, zone, tile };
+    zone.finds.set(tile, find);
     return find;
   }
 
   /**
-   * A random tile the rule's finds may grow on, with no find and no pile on it. `not` (where the last
-   * one was taken) only when no other tile is free, so that a find moves on whenever it can.
+   * A random tile of the zone the rule's finds may grow on, with no find and no pile on it. `not` (where
+   * the last one was taken) only when no other tile is free, so that a find moves on whenever it can.
    */
-  private freeTile(rule: Rule, not: number | undefined): number | undefined {
+  private freeTile(rule: Rule, zone: Zone, not: number | undefined): number | undefined {
     const { tiles } = rule;
-    const finds = this.finds.get(rule.map.data.id)!;
-    const piles = this.pileTiles.get(rule.map.data.id)!;
-    const empty = (t: number) => !finds.has(t) && !piles.has(t);
+    const finds = zone.finds;
+    const piles = this.pileTiles.get(zone.key);
+    const empty = (t: number) => !finds.has(t) && !piles?.has(t);
     // Finds are few next to the tiles they may grow on, so a few random tries nearly always hit a free one.
     for (let i = 0; i < 8 && tiles.length; i++) {
       const t = tiles[this.roll(tiles.length)]!;
@@ -2785,7 +3366,7 @@ export class World {
     p.rec.gear = gear;
     p.rec.worn = worn;
     this.saveNow.set(p.rec.id, p.rec);
-    this.toMap(p.map.data.id, { t: 'gear', id: p.rec.id, gear: { ...gear }, quirks: quirksOf(worn) });
+    this.toZone(p.zone.key, { t: 'gear', id: p.rec.id, gear: { ...gear }, quirks: quirksOf(worn) });
     if (stash) this.sendStash(p);
     this.refresh(p, now);
     // A bar that shrank (a piece with extra energy came off) cannot hold more than it can.
@@ -2793,12 +3374,18 @@ export class World {
     this.tell(p, now);
   }
 
-  /** XP earned by a piece coming home off the player's back (the first time it ever does): they hear it. The bar follows on the next refresh. */
-  private earn(p: Online, xp: number): void {
-    if (xp <= 0) return;
-    const gained = xp * this.xpTimes;
-    p.rec.xp = (p.rec.xp ?? 0) + gained;
-    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp), gained } });
+  /**
+   * XP earned by bringing something home: stashing it, or a piece that never was home coming off the
+   * player's back at the chest (the first time it ever does). A play-test's multiple of it, and while the
+   * cup of rest holds any, as much again out of it (spendRest); what earns nothing touches neither. They
+   * hear it, after a store even when it earned nothing (`always`). The bar follows on the next refresh.
+   */
+  private earn(p: Online, xp: number, always = false): void {
+    const r = spendRest(xp * this.xpTimes, p.rec.rested ?? 0);
+    if (r.gained <= 0 && !always) return;
+    p.rec.xp = (p.rec.xp ?? 0) + r.gained;
+    p.rec.rested = r.cup;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, r.cup), gained: r.gained, ...(r.fromRest ? { fromRest: r.fromRest } : {}) } });
   }
 
   /** A full bar: the level's, plus what the gear worn gives. */
@@ -2852,7 +3439,7 @@ export class World {
   private sendBag(p: Online, now: number): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'bag', bag: bagView(p.rec.bag, now + this.epochOffset) } });
     const live = this.liveIn(p.rec.bag);
-    if ((live > 0) !== (p.live > 0)) this.toMap(p.map.data.id, { t: 'glow', id: p.rec.id, on: live > 0 });
+    if ((live > 0) !== (p.live > 0)) this.toZone(p.zone.key, { t: 'glow', id: p.rec.id, on: live > 0 });
     p.live = live;
   }
 
@@ -2886,7 +3473,88 @@ export class World {
     this.saveNow.set(p.rec.id, p.rec);
   }
 
-  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit', reason: Refusal): void {
+  // ---------- crates for whoever comes next ----------
+
+  /**
+   * The crates of copy `copy` of `map` (its zone, open or not), made empty the first time they are
+   * needed. None are kept for a map without crates.
+   */
+  private cratesIn(map: TileMap, copy: string): Crate[] {
+    const zone = zoneKey(map.data.id, copy), made = this.cratesOn.get(zone);
+    if (made) return made;
+    const list = map.data.objects.flatMap((o): Crate[] => (o.kind === 'cache'
+      ? [{ key: crateKey(zone, o.x, o.y), zone, copy, map, x: o.x, y: o.y, inside: map.data.kind === 'inside', items: [] }]
+      : []));
+    if (!list.length) return list;
+    this.cratesOn.set(zone, list);
+    for (const c of list) this.crates.set(c.key, c);
+    return list;
+  }
+
+  /**
+   * A thing left in a crate before a restart, back in it (in the copy it was left in) if the crate still
+   * stands, it is still something a crate takes and there is room (else it is forgotten).
+   */
+  private restoreCacheItem(e: CacheItemRecord): void {
+    const map = this.maps.get(e.map);
+    if (map) this.cratesIn(map, typeof e.zone === 'string' ? e.zone : '');
+    const c = this.crates.get(crateKey(recordZone(e), e.x, e.y));
+    this.nextCacheId = Math.max(this.nextCacheId, e.id + 1);
+    if (!c || !cacheTakes(this.items.get(e.item)) || c.items.length >= CACHE_SIZE) {
+      this.cacheWrites.set(e.id, undefined);
+      return;
+    }
+    const { zone: _zone, ...rest } = e;
+    c.items.push({ ...rest, ...copyField(c.copy) });
+  }
+
+  /** The crate on tile x,y of the player's zone, right next to them. */
+  private crateNextTo(p: Online, x: number, y: number): Crate | undefined {
+    const c = this.crates.get(crateKey(p.zone.key, x, y));
+    return c && manhattan(x, y, p.rec.x, p.rec.y) === 1 ? c : undefined;
+  }
+
+  /** The crate the player visits where they are now: the one in their room, or the nearest in the open within CACHE_NEAR. */
+  private crateHere(p: Online): Crate | undefined {
+    let best: Crate | undefined, far = Infinity;
+    for (const c of this.cratesOn.get(p.zone.key) ?? []) {
+      const d = Math.max(Math.abs(c.x - p.rec.x), Math.abs(c.y - p.rec.y));
+      if ((c.inside || d <= CACHE_NEAR) && d < far) [best, far] = [c, d];
+    }
+    return best;
+  }
+
+  /** A visit to a crate starts as the player comes to it (into its room, or near it in the open), and ends as they leave. */
+  private revisit(p: Online): void {
+    const c = this.crateHere(p);
+    if (!c) p.visit = null;
+    else if (p.visit?.cache !== c.key) p.visit = { cache: c.key, left: false, took: false };
+  }
+
+  /** The player's visit to this crate (they stand next to it, so they are visiting it). */
+  private visitAt(p: Online, c: Crate): NonNullable<Online['visit']> {
+    if (p.visit?.cache !== c.key) p.visit = { cache: c.key, left: false, took: false };
+    return p.visit;
+  }
+
+  /** What is in a crate, the newest first, and what the player did at it this visit, for them. */
+  private sendCache(p: Online, c: Crate, now: number): void {
+    const wall = now + this.epochOffset, v = p.visit?.cache === c.key ? p.visit : null;
+    const items: CacheItemView[] = c.items.map(e => ({ id: e.id, item: e.item, owner: e.owner, name: e.name, age: Math.max(0, Math.round((wall - e.at) / 1000)) })).reverse();
+    this.outbox.push({ to: p.rec.id, msg: { t: 'cache', x: c.x, y: c.y, items, left: !!v?.left, took: !!v?.took } });
+  }
+
+  /** A crate changed: everyone visiting it (in its zone) sees it as it is now (whoever has it open follows it). */
+  private tellVisitors(c: Crate, now: number): void {
+    for (const q of this.zones.get(c.zone)?.players ?? []) if (q.visit?.cache === c.key) this.sendCache(q, c, now);
+  }
+
+  private refuse(
+    p: Online,
+    action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
+      | 'thank' | 'cacheLeave' | 'cacheTake',
+    reason: Refusal,
+  ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
   }
 
@@ -2895,9 +3563,114 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'did', did } });
   }
 
-  /** A message for everyone on a map, but `except`. */
-  private toMap(map: string, msg: ServerMsg, except?: string): void {
-    this.outbox.push(except === undefined ? { to: '*', map, msg } : { to: '*', map, except, msg });
+  /** A message for everyone in a zone (by its key), but `except`. */
+  private toZone(zone: string, msg: ServerMsg, except?: string): void {
+    this.outbox.push(except === undefined ? { to: '*', map: zone, msg } : { to: '*', map: zone, except, msg });
+  }
+
+  /** A message for everyone on a map, whichever copy of it they are in: news of what the copies share (the map's clocks). */
+  private toCopies(mapId: string, msg: ServerMsg): void {
+    for (const zone of this.copiesOf(mapId)) this.toZone(zone.key, msg);
+  }
+
+  // ---------- zones ----------
+
+  /** A map's main copy, the world everyone shares: open as long as the World runs. */
+  private main(map: TileMap): Zone {
+    return this.zones.get(map.data.id)!;
+  }
+
+  /** Every open copy of a map, the main copy first. */
+  private copiesOf(mapId: string): Iterable<Zone> {
+    return this.copies.get(mapId) ?? [];
+  }
+
+  /** Copy `copy` of `map`: the open one, or it opens now. */
+  private zoneFor(map: TileMap, copy: string, now: number): Zone {
+    return this.zones.get(zoneKey(map.data.id, copy)) ?? this.openZone(map, copy, now);
+  }
+
+  /** A zone with its fires, burning from `now`, and nothing else yet: nobody in it, nothing to pick up, no creatures. */
+  private newZone(map: TileMap, copy: string, now: number): Zone {
+    const zone: Zone = {
+      key: zoneKey(map.data.id, copy), map, copy, players: new Set(), finds: new Map(), fires: new Fires(map, this.wild(map), this.rng, now),
+      watchers: [], skulkers: [], flares: [], flashes: [],
+    };
+    this.zones.set(zone.key, zone);
+    let all = this.copies.get(map.data.id);
+    if (!all) this.copies.set(map.data.id, (all = new Set()));
+    all.add(zone);
+    return zone;
+  }
+
+  /**
+   * A copy of `map` other than its main one opens as the main copy did when the World started: its
+   * wild fires burn from now at a random level (one a condition put out today is out here too), the
+   * finds of its map's open rules lie there, and its creatures wake on the next tick where nobody is.
+   * Its piles and marks were kept all along. Nobody hears of it: whoever walks in hears it all in their
+   * `zone` message.
+   */
+  private openZone(map: TileMap, copy: string, now: number): Zone {
+    const zone = this.newZone(map, copy, now);
+    for (const d of this.doused) {
+      const f = d.map === map.data.id ? zone.fires.at(d.x, d.y) : undefined;
+      if (f) zone.fires.douse(f, now);
+    }
+    for (const rule of this.rules) if (rule.open && rule.map === map) this.sow(rule, zone);
+    this.cratesIn(map, copy);
+    this.addWatchers(zone);
+    this.addSkulkers(zone);
+    return zone;
+  }
+
+  /** Takes the player out of their zone's players; a copy left empty closes at the next tick (closeEmptied). */
+  private quit(p: Online): void {
+    const zone = p.zone;
+    zone.players.delete(p);
+    if (zone.copy && !zone.players.size) this.emptied.add(zone);
+  }
+
+  /**
+   * Closes the copies whose last player left, unless someone came back meanwhile: nothing in them is
+   * looked at again, and the finds waiting to grow in them are forgotten. A main copy never closes. Their
+   * piles and marks stay, in memory and in storage, until they fade: they lie there again if the copy
+   * opens again.
+   */
+  private closeEmptied(): void {
+    if (!this.emptied.size) return;
+    for (const zone of this.emptied) {
+      if (zone.players.size || this.zones.get(zone.key) !== zone) continue;
+      this.zones.delete(zone.key);
+      this.copies.get(zone.map.data.id)!.delete(zone);
+      this.growing = this.growing.filter(g => g.zone !== zone);
+      const crates = this.cratesOn.get(zone.key);
+      if (crates?.every(c => !c.items.length)) {
+        this.cratesOn.delete(zone.key);
+        for (const c of crates) this.crates.delete(c.key);
+      }
+    }
+    this.emptied.clear();
+  }
+
+  /** The watchers of a zone whose map has them, away until the next tick: they wake where nobody is. */
+  private addWatchers(zone: Zone): void {
+    const rule = zone.map.data.watchers, lairs = this.lairsNow.get(zone.map.data.id);
+    if (!rule || !lairs) return;
+    for (let i = 0; i < rule.count; i++) {
+      zone.watchers.push({ id: this.nextCreatureId++, kind: 'watcher', zone, map: zone.map, x: 0, y: 0, dir: 'down', awake: false, wakeAt: -Infinity, readyAt: 0, lairs });
+    }
+  }
+
+  /** The skulkers of a zone whose map has them, away until their time comes. */
+  private addSkulkers(zone: Zone): void {
+    const rule = zone.map.data.skulkers, lairs = this.skulkerLairs.get(zone.map.data.id);
+    if (!rule || !lairs) return;
+    for (let i = 0; i < rule.count; i++) {
+      zone.skulkers.push({
+        id: this.nextCreatureId++, kind: 'skulker', rule, zone, map: zone.map, x: 0, y: 0, dir: 'down', awake: false, wakeAt: -Infinity, readyAt: 0, lairs, lair: 0, chaseUntil: 0,
+        calmUntil: 0,
+      });
+    }
   }
 }
 

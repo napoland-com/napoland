@@ -2,7 +2,7 @@
 id: more-strange
 title: More strange objects, charms and quirks
 status: done
-order: 410
+order: 440
 area: gameplay
 depends: [gear-wear-quirks, survival-dynamics, gear-on-the-road]
 ---

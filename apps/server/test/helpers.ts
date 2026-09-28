@@ -5,7 +5,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
-import { CALENDAR_DAY_MS, DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, PROTOCOL_VERSION, xpFor, type BagSlot, type ClientMsg, type DropView, type ItemsData, type ServerMsg } from '@napoland/shared';
+import {
+  CALENDAR_DAY_MS, DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, utcDay, xpFor, type BagSlot, type ClientMsg, type DropView, type ItemsData, type ServerMsg,
+} from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
@@ -104,14 +106,17 @@ export async function eventually<T>(attempt: () => Promise<T>, what: string, tim
 let names = 0;
 export const newName = (): string => `Player ${++names}`;
 
-/** A player saved in `storage` where the test wants them (in the town at the spawn, full, with an empty bag, unless `where` says otherwise). */
+/**
+ * A player saved in `storage` where the test wants them (in the town at the spawn, full, with an empty bag,
+ * last seen a moment ago, unless `where` says otherwise: time away would fill their cup of rest).
+ */
 export async function savedPlayer(storage: Storage, where: Partial<PlayerRecord> = {}): Promise<{ id: string; name: string; token: string }> {
   const token = randomBytes(32).toString('base64url');
   const id = randomUUID();
   const name = newName();
   await storage.create({
     id, name, tokenHash: hashToken(token), authSub: null, map: 'town', x: 1, y: 2, dir: 'down', color: colorFor(id), energy: ENERGY_MAX, bag: [],
-    createdAt: 1, lastSeenAt: 1, ...where,
+    createdAt: 1, lastSeenAt: Date.now(), ...where,
   });
   return { id, name, token };
 }
@@ -228,6 +233,139 @@ export async function outfitsKeptThroughARestart(first: Storage, second: Storage
 }
 
 /**
+ * The cup of rest through a restart, on `first` and then `second` (the same storage, or two connections to
+ * the same database). Ten hours away fill it with 30 XP as the player arrives, and three nails stashed (9
+ * XP) take 9 more out of it; after the restart the player comes back, straight away, with the 21 left.
+ */
+export async function restKeptThroughARestart(first: Storage, second: Storage): Promise<void> {
+  setLogLevel('silent');
+  const items: ItemsData = { ...itemsData(), items: itemsData().items.map(i => (i.id === 'nail' ? { ...i, xp: 3 } : i)) };
+  const options = (storage: Storage): ServerOptions => ({ ...serverDefaults(), storage, maps: chestMaps(), items });
+  const saved = await savedPlayer(first, { map: 'house', x: 3, y: 2, dir: 'up', lastSeenAt: Date.now() - 10 * 3_600_000 - 60_000, bag: [{ item: 'nail', count: 3 }] });
+
+  const one = await startServer(options(first));
+  try {
+    const { c, welcome } = await loginTo(one.port, saved.token);
+    expect(welcome.progress.rested).toBe(30);
+    c.send({ t: 'store', x: 3, y: 1 });
+    expect(await c.next('progress')).toEqual({ t: 'progress', progress: expect.objectContaining({ xp: 18, rested: 21 }), gained: 18, fromRest: 9 });
+    c.ws.terminate();
+    await waitFor(() => one.world.size === 0, 'the player to leave');
+  } finally {
+    await one.stop();
+  }
+  expect(await second.findByTokenHash(hashToken(saved.token))).toMatchObject({ xp: 18, rested: 21 });
+
+  const two = await startServer(options(second));
+  try {
+    const { c, welcome } = await loginTo(two.port, saved.token);
+    expect(welcome.progress).toMatchObject({ xp: 18, rested: 21 });
+    expect(welcome.restedAway).toBeUndefined();
+    c.ws.terminate();
+  } finally {
+    await two.stop();
+  }
+}
+
+/**
+ * Merits through a restart, over the network with dev sign-in, on `first` and then `second` (the same
+ * storage, or two connections to the same database). Signed in with two merits' XP, a player spends one on
+ * the chevron and wears it, and one on the lamp badge and wears it, then takes the badge off; after the
+ * restart they come back with both bought, one merit spent each, the chevron on and no badge, and whoever
+ * joins sees it; a merit is left for nobody.
+ */
+export async function meritsKeptThroughARestart(first: Storage, second: Storage): Promise<void> {
+  setLogLevel('silent');
+  const options = (storage: Storage): ServerOptions => ({ ...serverDefaults(), storage, maps: chestMaps(), items: itemsData(), auth: devAuth() });
+  const who = randomUUID().slice(0, 8), mail = `merits-${who}@example.test`;
+  const saved = await savedPlayer(first, { map: 'house', x: 3, y: 2, dir: 'up', tokenHash: null, authSub: `dev:${mail}`, xp: xpFor(20) + 2 * 1500 + 10 });
+  const signIn = async (port: number, email: string) => {
+    const c = await Client.open(port);
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, auth: email, name: `M ${who}` });
+    return { c, welcome: await c.next('welcome') };
+  };
+
+  const one = await startServer(options(first));
+  try {
+    const { c, welcome } = await signIn(one.port, mail);
+    expect(welcome.merits).toEqual({ spent: 0, owned: [] });
+    c.send({ t: 'buy', x: 3, y: 1, look: 'chevron' });
+    c.send({ t: 'pattern', x: 3, y: 1, pattern: 'chevron' });
+    c.send({ t: 'buy', x: 3, y: 1, look: 'lamp' });
+    c.send({ t: 'badge', x: 3, y: 1, badge: 'lamp' });
+    c.send({ t: 'badge', x: 3, y: 1, badge: null });
+    expect(await c.next('badge', m => m.badge === null)).toEqual({ t: 'badge', id: saved.id, badge: null });
+    c.ws.terminate();
+    await waitFor(() => one.world.size === 0, 'the player to leave');
+  } finally {
+    await one.stop();
+  }
+  expect(await second.findByAuthSub(`dev:${mail}`)).toMatchObject({ meritsSpent: 2, looks: ['chevron', 'lamp'], pattern: 'chevron' });
+  expect((await second.findByAuthSub(`dev:${mail}`))!.badge).toBeUndefined();
+
+  const two = await startServer(options(second));
+  try {
+    const { c, welcome } = await signIn(two.port, mail);
+    expect(welcome.merits).toEqual({ spent: 2, owned: ['chevron', 'lamp'] });
+    expect(welcome.players.find(p => p.id === saved.id)).toMatchObject({ pattern: 'chevron' });
+    expect(welcome.players.find(p => p.id === saved.id)!.badge).toBeUndefined();
+    // Both merits are spent: a third look waits for the next 1,500 XP.
+    c.send({ t: 'buy', x: 3, y: 1, look: 'fir' });
+    expect(await c.next('refused')).toEqual({ t: 'refused', action: 'buy', reason: 'no_merits' });
+    c.ws.terminate();
+  } finally {
+    await two.stop();
+  }
+}
+
+/**
+ * Merits kept with a player, on `storage` (in memory, or a real database): none for a new player; what a
+ * save writes (merits spent, the looks bought in their order, a pattern and a badge worn); a save without
+ * them loses none (nothing bought is ever lost); and null takes off what is worn.
+ */
+export async function keepsMerits(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  // Whole, as a save writes it back (every storage fills in a stash, counts, XP and wetness), so what is read back compares as it is.
+  await savedPlayer(storage, { tokenHash: null, authSub: sub, wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect([rec.meritsSpent, rec.looks, rec.pattern, rec.badge]).toEqual([undefined, undefined, undefined, undefined]);
+  const bought = { ...rec, meritsSpent: 3, looks: ['moth', 'stripes', 'fir'], pattern: 'stripes', badge: 'moth', lastSeenAt: rec.lastSeenAt + 1000 };
+  await storage.save(bought);
+  expect(await load()).toEqual(bought);
+  const { meritsSpent: _spent, looks: _looks, pattern: _pattern, badge: _badge, ...without } = bought;
+  await storage.save({ ...without, lastSeenAt: bought.lastSeenAt + 1000 });
+  expect(await load()).toEqual({ ...bought, lastSeenAt: bought.lastSeenAt + 1000 });
+  await storage.save({ ...bought, pattern: null, badge: null, lastSeenAt: bought.lastSeenAt + 2000 });
+  expect(await load()).toMatchObject({ meritsSpent: 3, looks: ['moth', 'stripes', 'fir'] });
+  expect([(await load()).pattern, (await load()).badge]).toEqual([undefined, undefined]);
+  // Made with them too.
+  const other = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: other, meritsSpent: 1, looks: ['lamp'], badge: 'lamp' });
+  expect(await storage.findByAuthSub(other)).toMatchObject({ meritsSpent: 1, looks: ['lamp'], badge: 'lamp' });
+}
+
+/**
+ * The cup of rest kept with a player, on `storage` (in memory, or a real database): none for a new player,
+ * what a save writes, and none once it is spent; a player made with some keeps it too.
+ */
+export async function keepsRested(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  // Whole, as a save writes it back (every storage fills in a stash, counts, XP and wetness), so what is read back compares as it is.
+  await savedPlayer(storage, { tokenHash: null, authSub: sub, wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect(rec.rested).toBeUndefined();
+  await storage.save({ ...rec, rested: 140, lastSeenAt: rec.lastSeenAt + 1000 });
+  expect(await load()).toEqual({ ...rec, rested: 140, lastSeenAt: rec.lastSeenAt + 1000 });
+  await storage.save({ ...rec, rested: 0, lastSeenAt: rec.lastSeenAt + 2000 });
+  expect((await load()).rested).toBeUndefined();
+  const other = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: other, rested: 12 });
+  expect((await storage.findByAuthSub(other))!.rested).toBe(12);
+}
+
+/**
  * Signing in with an identity (dev mode here, so on any storage): a character made before sign-in
  * is claimed with its token by the first identity that brings it, and is theirs from then on, with
  * or without the token; for anyone else the token claims nothing, and they make their own. Runs on
@@ -330,8 +468,9 @@ export async function playFirstThenSignIn(storage: Storage): Promise<void> {
 
 /**
  * Guests who stayed away GUEST_DAYS are forgotten, on `storage` (in memory, or a real database, with
- * nobody else in it): with their pile, marks, links and messages, and their name is free again. A guest
- * seen since, and anyone signed in however long ago, stay. Returns who went, and who reported them.
+ * nobody else in it): with their pile, marks, links, messages, thanks and what they left in crates, and
+ * their name is free again. A guest seen since, and anyone signed in however long ago, stay. Returns who
+ * went, and who reported them.
  */
 export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ away: string; reporter: string }> {
   const now = Date.now(), cutoff = now - GUEST_DAYS * 86_400_000;
@@ -344,6 +483,12 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   await storage.setLink(away.id, signed.id, 'friend', true);
   await storage.setLink(signed.id, away.id, 'friend', true);
   await storage.addTell({ from: away.id, to: signed.id, text: 'see you out there', at: now - 1000 });
+  const thanks = { day: utcDay(now), at: now - 1000, what: { kind: 'fire' as const, map: 'woods', x: 4, y: 2 }, told: false, name: '' };
+  await storage.saveThanks({ ...thanks, giver: away.id, helper: signed.id });
+  await storage.saveThanks({ ...thanks, giver: signed.id, helper: away.id });
+  await storage.saveThanks({ ...thanks, giver: signed.id, helper: lately.id });
+  await storage.saveCacheItem({ id: 7_000_002, map: 'woods', x: 4, y: 4, item: 'moss', owner: away.id, name: away.name, at: now - 1000 });
+  await storage.saveCacheItem({ id: 7_000_003, map: 'woods', x: 4, y: 4, item: 'moss', owner: lately.id, name: lately.name, at: now - 1000 });
   await storage.addReport({ reporter: signed.id, reported: away.id, reason: 'spam', quote: null, at: now - 1000 });
   // Coming back counts: seen now, it stays.
   expect(await storage.seen(back.id, now)).toBe(true);
@@ -352,9 +497,11 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   expect(await storage.findByTokenHash(hashToken(away.token))).toBeNull();
   expect(await storage.nameTaken(away.name)).toBe(false);
   expect((await storage.loadDrops(now - DROP_LIFETIME_MS)).map(d => d.owner)).not.toContain(away.id);
-  expect((await storage.loadMarks(now - 86_400_000)).map(m => m.owner)).not.toContain(away.id);
+  expect((await storage.loadMarks(now, MARK_LIFETIME_MS)).map(m => m.owner)).not.toContain(away.id);
   expect(await storage.linksOf(signed.id)).toEqual([]);
   expect(await storage.tellsTo(signed.id)).toEqual([]);
+  expect((await storage.loadThanks(now - 60_000)).map(t => [t.giver, t.helper])).toEqual([[signed.id, lately.id]]);
+  expect((await storage.loadCacheItems()).map(c => c.owner)).toEqual([lately.id]);
   expect(await storage.seen(away.id, now)).toBe(false);
   for (const stays of [lately, signed, back]) expect(await storage.findPerson({ id: stays.id }), stays.name).not.toBeNull();
   // Nobody else has stayed away that long.
@@ -414,6 +561,49 @@ export async function keepsToolsParcelsAndOutfit(storage: Storage): Promise<{ su
   await storage.save({ ...none, lastSeenAt: later.lastSeenAt + 1000 });
   const kept = await load();
   expect(kept).toEqual({ ...later, lastSeenAt: later.lastSeenAt + 1000 });
+  return { sub, kept };
+}
+
+/**
+ * One player whole, on `storage` (in memory, or a real database): made with everything a new character
+ * can have (the tools, the parcels, the outfit and the thanks received among it), then saved whole,
+ * every field comes back as it went (a carried piece and a live find in the bag, the counts, the stash
+ * with its pieces, what is worn and how worn, the chapter). A save writes every field it carries but the
+ * thanks received, which only creditThanks adds to (a save from an older copy of the player never undoes
+ * one), and a save without tools, parcels or an outfit loses none of them. Returns the player's identity
+ * and what was kept.
+ */
+export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; kept: PlayerRecord }> {
+  const sub = `dev:${randomUUID()}@example.test`, id = randomUUID();
+  const rec: PlayerRecord = {
+    id, name: newName(), tokenHash: null, authSub: sub, map: 'woods', x: 3, y: 4, dir: 'left', color: colorFor(id), energy: 61.5, wet: 0.25,
+    bag: [{ item: 'moss', count: 3 }, { item: 'coat', count: 1, piece: { cond: 0.5, quirk: 'hum', level: 2 } }, { item: 'spark', count: 1, since: 1_800_000_000_000 }],
+    stats: { rainSteps: 40, fed: 3, made: 1, collapsed: 2, surged: 1, told: 0b101, thanked: 7 },
+    xp: 120, stash: { items: { moss: 9, coat: 1 }, out: { moss: 2 }, pieces: { coat: [{ cond: 1, level: 1 }] } },
+    gear: { shirt: 'coat' }, worn: { shirt: { cond: 0.75, level: 2 } }, story: 'the-lineman', tools: ['stonebrook-map', 'radio'],
+    parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
+  };
+  expect(await storage.create(rec)).toBe(true);
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const { worn: _worn, story: _story, ...made } = rec;
+  expect(await load()).toMatchObject(made);
+  await storage.save(rec);
+  expect(await load()).toEqual(rec);
+  // Thanked meanwhile, by someone else: a save from the copy online before it leaves the count as it is.
+  await storage.creditThanks(id);
+  const later: PlayerRecord = {
+    ...rec, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
+    stash: { items: { moss: 11, coat: 1 }, out: {}, pieces: { coat: [{ cond: 1, level: 1 }] } }, worn: { shirt: { cond: 1, level: 2 } }, tools: [...rec.tools!, 'near-woods-map'],
+    parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', lastSeenAt: rec.lastSeenAt + 1000,
+  };
+  await storage.save(later);
+  expect(await load()).toEqual({ ...later, stats: { ...later.stats, thanked: 8 } });
+  // A save that carries no tools, parcels or outfit (and no thanks received) keeps them all.
+  const { tools: _tools, parcels: _parcels, outfit: _outfit, ...none } = later;
+  const { thanked: _thanked, ...counts } = later.stats!;
+  await storage.save({ ...none, stats: counts, lastSeenAt: later.lastSeenAt + 1000 });
+  const kept = await load();
+  expect(kept).toEqual({ ...later, stats: { ...later.stats, thanked: 8 }, lastSeenAt: later.lastSeenAt + 1000 });
   return { sub, kept };
 }
 

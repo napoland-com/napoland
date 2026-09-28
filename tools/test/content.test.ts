@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, objectTiles, upgradable, upgradeChance, validateItems, type ItemsData, type MapData, type MapObject, type StoryData } from '@napoland/shared';
+import { CACHE_NEAR, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, objectTiles, upgradable, upgradeChance, validateItems, type ItemsData, type MapData, type MapObject, type StoryData } from '@napoland/shared';
 
 /** The content as it ships: content/items.json and every map. */
 const content = resolve(import.meta.dirname, '../../content');
@@ -80,6 +80,28 @@ describe('a first goal on the first day (roadmap/first-day.md)', () => {
   });
 });
 
+describe('your own cabin (roadmap/own-cabin.md)', () => {
+  const home = maps.get('stonebrook-home')!, town = maps.get('stonebrook')!;
+
+  it('is private: everyone who walks in is in a cabin of their own, the one room anyone wakes up in', () => {
+    expect(home.data.private).toBe(true);
+    expect([...maps.values()].filter(m => m.data.private || m.data.wake).map(m => m.data.id)).toEqual(['stonebrook-home']);
+  });
+
+  it('wakes you right in front of the fire, facing the room, a step from the chest', () => {
+    const { x, y, dir } = home.data.wake!;
+    const fire = home.data.objects.find(o => o.kind === 'fireplace')!, chest = home.data.objects.find(o => o.kind === 'chest')!;
+    expect([x, y, dir]).toEqual([fire.x, fire.y + 1, 'down']);
+    expect(home.walkable(x, y) && home.warm(x, y) && !home.exitAt(x, y)).toBe(true);
+    expect(findPath(home, x, y, chest.x, chest.y + 1)).toEqual([{ x: chest.x, y: chest.y + 1 }]);
+  });
+
+  it('lets you out in front of the house in Stonebrook', () => {
+    const out = home.data.exits[0]!, door = town.data.exits.find(e => e.to === 'stonebrook-home')!;
+    expect([out.to, out.tx, out.ty, out.dir]).toEqual(['stonebrook', door.x, door.y + 1, 'down']);
+  });
+});
+
 describe('the workbench at home (roadmap/workbench-at-home.md)', () => {
   const home = maps.get('stonebrook-home')!, lodge = maps.get('stonebrook-lodge')!;
   const all = (map: TileMap, kind: 'chest' | 'workbench') => map.data.objects.filter(o => o.kind === kind);
@@ -113,6 +135,62 @@ describe('the workbench at home (roadmap/workbench-at-home.md)', () => {
     expect(lodge.data.objects.some(o => o.kind === 'npc' && o.id === 'walt')).toBe(true);
     const wood = lodge.data.objects.find(o => o.kind === 'woodpile')!;
     expect(lodge.walkable(wood.x, wood.y)).toBe(false);
+  });
+});
+
+describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
+  const all = [...maps.values()];
+  // Where people rest by a fire out there: every room off the wilds that keeps one, and every fire in the open.
+  const shelters = all.filter(m => m.data.kind === 'wilds').flatMap(w => w.data.exits.map(e => maps.get(e.to)!))
+    .filter(m => m.data.kind === 'inside' && m.data.objects.some(o => o.kind === 'fireplace'));
+  const openFires = all.filter(m => m.data.kind === 'wilds').flatMap(m => m.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ map: m, x: o.x, y: o.y }] : [])));
+  const crates = all.flatMap(m => m.data.objects.flatMap(o => (o.kind === 'cache' ? [{ map: m, o }] : [])));
+  /** Every tile reachable from the map's spawn. */
+  const reach = (m: TileMap) => {
+    const seen = new Set<string>([`${m.data.spawn.x},${m.data.spawn.y}`]);
+    const queue = [[m.data.spawn.x, m.data.spawn.y] as const];
+    for (let i = 0; i < queue.length; i++) {
+      const [x, y] = queue[i]!;
+      for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const) {
+        if (!m.walkable(nx, ny) || seen.has(`${nx},${ny}`)) continue;
+        seen.add(`${nx},${ny}`);
+        queue.push([nx, ny]);
+      }
+    }
+    return seen;
+  };
+
+  it('stands in every place out there where people rest by a fire: the shelters, and by the fire in the open', () => {
+    expect(shelters.map(m => m.data.id).sort()).toEqual([
+      'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'south-road-bunker', 'south-road-checkpoint', 'south-road-dormitory', 'south-road-laboratory',
+    ]);
+    for (const m of shelters) expect(crates.filter(c => c.map === m), m.data.id).toHaveLength(1);
+    expect(openFires.map(f => `${f.map.data.id} ${f.x},${f.y}`)).toEqual(['south-road 22,22']);
+    // In the open, with the fire within a visit's reach of it (CACHE_NEAR), on forest cleared for it: the ground people walk stays as it was.
+    for (const f of openFires) expect(crates.filter(c => c.map === f.map && Math.max(Math.abs(c.o.x - f.x), Math.abs(c.o.y - f.y)) <= CACHE_NEAR), 'by the fire').toHaveLength(1);
+    // And nowhere else: not in town, not in a room without a fire.
+    expect(crates).toHaveLength(shelters.length + openFires.length);
+  });
+
+  it('has a name each, for the letter of whoever left something in it', () => {
+    expect(crates.map(c => c.o.kind === 'cache' && c.o.name).sort()).toEqual([
+      'the bunker\'s crate', 'the checkpoint\'s crate', 'the crate at the leavers\' camp', 'the crate in the cabin at the end', 'the dormitory\'s crate',
+      'the laboratory\'s crate', 'the old cabin\'s crate', 'the ranger\'s crate',
+    ]);
+  });
+
+  it('moved nothing: each is the last thing on its map, on ground that was open, and cuts nobody off', () => {
+    for (const { map, o } of crates) {
+      expect(map.data.objects.at(-1), map.data.id).toBe(o);
+      const before = new TileMap({ ...map.data, objects: map.data.objects.slice(0, -1) });
+      expect(before.walkable(o.x, o.y), map.data.id).toBe(true);
+      // Everywhere anyone could walk to before, they still can, but onto the crate itself.
+      const was = reach(before), is = reach(map);
+      was.delete(`${o.x},${o.y}`);
+      expect([...is].sort(), map.data.id).toEqual([...was].sort());
+      // You open it from the tile in front of it, as you do the chest.
+      expect(map.walkable(o.x, o.y + 1), map.data.id).toBe(true);
+    }
   });
 });
 

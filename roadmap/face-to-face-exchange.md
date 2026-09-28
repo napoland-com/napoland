@@ -2,7 +2,7 @@
 id: face-to-face-exchange
 title: Face-to-face exchange
 status: done
-order: 400
+order: 430
 area: social
 depends: [friends-messages, gear-on-the-road]
 ---

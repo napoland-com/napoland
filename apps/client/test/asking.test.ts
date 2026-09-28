@@ -224,13 +224,13 @@ describe('why it does not ask', () => {
     g.use(0);
     expect(g.note?.text).toBe('An arrow needs open ground. Paint it outdoors.');
     g.pressA();
-    g.handle(welcome(woods(), [me(2, 2, 'left')], FULL, { bag: [{ item: 'cap', count: 3 }], marks: [{ id: 1, x: 2, y: 2, dir: 'up', color: '#fff', name: 'Bea', until: 1e13 }] }), now);
+    g.handle(welcome(woods(), [me(2, 2, 'left')], FULL, { bag: [{ item: 'cap', count: 3 }], marks: [{ id: 1, x: 2, y: 2, dir: 'up', color: '#fff', owner: 'bea', name: 'Bea', until: 1e13 }] }), now);
     g.use(0);
     expect(g.note?.text).toBe('There is an arrow here already. Step onto another tile first.');
     g.pressA();
     g.handle({ t: 'markGone', id: 1 }, now);
     g.use(0);
-    expect(g.question?.text).toBe('Crush a glowcap to paint an arrow where you face?');
+    expect(g.question?.text).toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day.');
   });
 
   it('a strange object that nothing it may turn out to be would fit', () => {

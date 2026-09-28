@@ -386,6 +386,24 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .slot.outfit[data-picked] { background: #262d3a; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
 .slot.outfit .on { position: absolute; right: 6%; top: 6%; width: max(14px, calc(var(--u) * 1.5)); height: max(14px, calc(var(--u) * 1.5)); border-radius: 50%; background: #8fd98a; }
 .slot.outfit .on::after { content: ""; position: absolute; left: 36%; top: 20%; width: 24%; height: 44%; border: solid #12301a; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+/* The wardrobe's three parts, each behind a tab of its own: outfits, and the patterns and badges merits buy. */
+.stash-sheet .wardrobe-tabs { flex: none; display: flex; gap: calc(var(--u) * .5); width: 100%; max-width: var(--col); margin-inline: auto; }
+.hud .wardrobe-tabs button { position: relative; flex: 1; min-width: 0; min-height: var(--btn); padding: 0 .6em; border-radius: 9px; border: 1px solid #3a4356; background: #131820; box-shadow: none;
+  font-size: calc(var(--u) * 1.1); font-weight: 600; color: #b9b2a2; white-space: nowrap; }
+.hud .wardrobe-tabs button[aria-selected="true"] { background: #262d3a; border-color: #ffcf5a; color: #ffcf5a; }
+/* Over the patterns and the badges: the merits there are to spend, or how they come. */
+.stash-sheet .merit-note { flex: none; width: 100%; max-width: var(--col); margin: 0 auto; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #ffe3a1; }
+.stash-sheet .merit-note[hidden] { display: none; }
+/* A look not yours yet shows its price: bright while merits can buy it. */
+.hud .slot.outfit[data-buy] .lbl { color: #ffcf5a; }
+.hud .slot.outfit[data-buy] { box-shadow: inset 0 0 0 2px #8a7440; }
+/* A badge (merits.ts) before a name, on a name tag and in the status panel, as tall as the letters. */
+.tag .badge, .status .name .badge { display: inline-block; width: 1.2em; height: 1.2em; margin-right: .25em; vertical-align: -.25em; }
+.tag .badge svg, .status .name .badge svg { display: block; width: 100%; height: 100%; }
+.status .name .badge[hidden] { display: none; }
+/* Rested: while the cup holds any, the stash says how much more of what comes home counts double. */
+.stash-sheet .rest-note { flex: none; width: 100%; max-width: var(--col); margin: 0 auto; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #b8f0a8; }
+.stash-sheet .rest-note[hidden] { display: none; }
 /* What came in the parcels since the chest last opened, said once, at the top of the stash. */
 .stash-sheet .parcel-note { flex: none; display: grid; gap: .25em; width: 100%; max-width: var(--col); margin-inline: auto; padding: calc(var(--u) * .6) calc(var(--u) * .9);
   border-radius: 10px; background: #1d2230; box-shadow: inset 0 0 0 1px #8a7440; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #ffe3a1; }
@@ -397,6 +415,11 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .sheet .goal[data-ready] { box-shadow: inset 0 0 0 1px #5c8f58; color: #cfe9c3; }
 .hud .sheet .goal[data-act] { cursor: pointer; box-shadow: inset 0 0 0 1px #8a7440; }
 .hud .sheet .goal[hidden] { display: none; }
+/* A crate for whoever comes next: a row for each thing in it (what, who left it and when), your bag below
+   to leave one; like the stash, a tap opens the card and the card docks in the panel. */
+.crate-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.crate-sheet .hint, .crate-sheet .recipes { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.crate-sheet .hint[hidden], .crate-sheet .recipes[hidden] { display: none; }
 .hud .act:disabled, .hud .act[aria-disabled="true"] { opacity: .45; cursor: default; }
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }

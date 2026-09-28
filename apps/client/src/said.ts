@@ -4,7 +4,10 @@
  * concrete, and every number from the data (content/items.json: nouns, fuel, uses, recipes, what
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
-import { aOf, amount, countable, fireFull, nounOf, pluralOf, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type NextGear, type Recipe, type StoneView, type Upgrade } from '@napoland/shared';
+import {
+  CACHE_SIZE, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, toNextMerit, type BagSlot, type Did, type Dir,
+  type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
+} from '@napoland/shared';
 import { oddsText, pieceName, type Items } from './items';
 
 // ---------- naming things in a sentence ----------
@@ -72,10 +75,11 @@ export function stoneQuestion(def: ItemDef, n: number): string {
 }
 
 /**
- * Use, in the bag: what it does, and a word when the bar has little room for what a drink gives. `lift`: a
- * charm in the bag that gives energy back as a glowcap is crushed (a pale moth), and how much.
+ * Use, in the bag: what it does, and a word when the bar has little room for what a drink gives. An
+ * arrow shows `markS` seconds (a day, longer for a good neighbor: markLifetime). `lift`: a charm in the bag
+ * that gives energy back as a glowcap is crushed (a pale moth), and how much.
  */
-export function useQuestion(def: ItemDef, energy: EnergyView | null, lift?: { charm: ItemDef; energy: number }): string {
+export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000, lift?: { charm: ItemDef; energy: number }): string {
   const u = def.use ?? {}, n = nounOf(def);
   if (u.identify) return `Look closely at the ${n}? It will be used up.`;
   if (u.energy) {
@@ -86,7 +90,7 @@ export function useQuestion(def: ItemDef, energy: EnergyView | null, lift?: { ch
   }
   if (u.flare) return `Light ${aOf(def)}? It burns ${howLong(u.flare)}.`;
   if (u.mark) {
-    const ask = `Crush ${aOf(def)} to paint an arrow where you face?`;
+    const ask = `Crush ${aOf(def)} to paint an arrow where you face? Everyone sees it for ${howLong(markS)}.`;
     return lift ? `${ask} Your ${nounOf(lift.charm)} gives you ${lift.energy} energy.` : ask;
   }
   return `Use the ${n}? It will be used up.`;
@@ -209,6 +213,81 @@ export function shortOf(needs: readonly BagSlot[], stash: readonly BagSlot[]): B
   });
 }
 
+// ---------- a crate for whoever comes next ----------
+
+/** What an empty crate says. */
+export const CRATE_EMPTY = 'Nothing in it yet. Leave something for whoever comes next.';
+/** A crate with no room left. */
+export const CRATE_FULL = `The crate is full: it holds ${CACHE_SIZE} things. Someone has to take one out first.`;
+/** Gear stays out of a crate (tools and lockboxes are never in the bag). */
+export const CRATE_NO_GEAR = 'Gear stays with you: a crate takes none.';
+/** One thing left, and one taken, each visit. */
+export const LEFT_ONE = 'You left something here this time. Leave more the next time you come by.';
+export const TOOK_ONE = 'You took something here this time. Take more the next time you come by.';
+
+/** Leaving asks first: "Leave 1 resin in the crate for whoever comes next?", "Leave a glowcap in the crate for whoever comes next?" */
+export function leaveQuestion(def: ItemDef): string {
+  return `Leave ${amount(def, 1)} in the crate for whoever comes next?`;
+}
+
+/** How long ago, short: "just now", "5 min ago", "2 h ago", "a day ago", "3 days ago". */
+export function agoText(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86_400) return `${Math.floor(s / 3600)} h ago`;
+  const d = Math.floor(s / 86_400);
+  return d === 1 ? 'a day ago' : `${d} days ago`;
+}
+
+/** Who left a thing in a crate and when: "left by Ana, 2 h ago", or "left by you, just now". */
+export function leftBy(name: string, mine: boolean, ageS: number): string {
+  return `left by ${mine ? 'you' : name}, ${agoText(ageS)}`;
+}
+
+// ---------- merits ----------
+
+/** "12,345": a count with its thousands apart, the same in every language the browser speaks. */
+export function thousands(n: number): string {
+  return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * Past level 20, what merits there are: "3 to spend, 1,240 XP to the next" (a guest spends them once
+ * signed in). The status panel shows it under Merits, and the wardrobe over its patterns and badges.
+ */
+export function meritText(xp: number, spent: number, guest = false): string {
+  const left = meritsLeft(xp, spent), next = `${thousands(toNextMerit(xp))} XP to the next`;
+  if (!left) return `None to spend, ${next}`;
+  return guest ? `${left} to spend once you sign in, ${next}` : `${left} to spend, ${next}`;
+}
+
+/** "a merit", "2 merits": in a sentence. */
+export const merits = (n: number) => (n === 1 ? 'a merit' : `${n} merits`);
+/** "1 merit", "2 merits": what a look costs, on its tile and its Buy button. */
+export const price = (n: number) => `${n} merit${n === 1 ? '' : 's'}`;
+
+/** Before spending merits on a look, at the wardrobe: "Spend a merit on the chevron pattern? You have 3." */
+export function buyQuestion(look: MeritLook, left: number): string {
+  return `Spend ${merits(look.cost)} on ${look.noun}? You have ${left}.`;
+}
+
+/**
+ * Why merits cannot buy a look yet: below level 20, how they are earned; past it, how far the next one is
+ * ("You have no merit to spend. 1,240 XP to the next.").
+ */
+export function noMerit(xp: number): string {
+  if (levelOf(xp) < LEVEL_MAX) return `Past level ${LEVEL_MAX}, every ${thousands(MERIT_XP)} XP earns a merit.`;
+  return `You have no merit to spend. ${thousands(toNextMerit(xp))} XP to the next.`;
+}
+
+/** After: "The chevron pattern is yours for good. 2 merits left to spend." */
+function boughtText(did: Extract<Did, { kind: 'bought' }>): string {
+  const look = meritLookOf(did.look), noun = look ? look.noun : 'it';
+  const got = `${noun.charAt(0).toUpperCase()}${noun.slice(1)} ${look?.plural ? 'are' : 'is'} yours for good.`;
+  return did.left > 0 ? `${got} ${did.left === 1 ? 'One merit' : `${did.left} merits`} left to spend.` : got;
+}
+
 // ---------- what it did ----------
 
 /** The name over the box for what something did. */
@@ -219,11 +298,18 @@ export function didWho(did: Did, items: Items): string {
     case 'made': case 'mended': case 'upgraded': return 'Workbench';
     case 'used': case 'opened': return items.get(did.item).name;
     case 'thrown': return pieceName(items.get(did.item), did.level);
+    case 'thanked': return did.what === 'fire' ? 'Fire' : 'Arrow';
+    case 'left': case 'took': return 'Crate';
+    case 'bought': return 'Wardrobe';
   }
 }
 
 /** What something did, in words, from the server's answer. */
 export function didText(did: Did, items: Items): string {
+  // Thanks carry no item: the helper, by name (never a pronoun).
+  if (did.kind === 'thanked') return did.what === 'fire' ? `You thank ${did.name} for feeding the fire.` : `You thank ${did.name} for the arrow.`;
+  // Merits buy looks, not items.
+  if (did.kind === 'bought') return boughtText(did);
   const def = items.get(did.item);
   switch (did.kind) {
     case 'fire': {
@@ -277,6 +363,14 @@ export function didText(did: Did, items: Items): string {
       const about = did.got.length === 1 ? items.get(did.got[0]!.item).about : undefined;
       if (!did.got.length) return `The ${nounOf(def)} is empty.`;
       return `Inside: ${listOf(did.got.map(s => amount(items.get(s.item), s.count)))}.${about ? ` ${about}` : ''}`;
+    }
+    case 'left':
+      return `You leave ${amount(def, 1)} in the crate. Whoever comes next will find it.`;
+    case 'took': {
+      const n = nounOf(def);
+      if (did.mine) return `You take back the ${n} you left.`;
+      // By name, never a pronoun: the thanks goes with it, unless you thanked them today already.
+      return did.thanked ? `You take the ${n} ${did.name} left, and thank ${did.name} for it.` : `You take the ${n} ${did.name} left.`;
     }
   }
 }

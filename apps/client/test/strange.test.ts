@@ -31,10 +31,23 @@ describe('what the new things say', () => {
 
   it('asks before a glowcap is crushed what a pale moth gives back, and says it after', () => {
     const cap = items.get('glowcap'), moth = items.get('pale-moth');
-    expect(useQuestion(cap, { value: 50, max: 100, rate: 0 }, { charm: moth, energy: 1 })).toBe('Crush a glowcap to paint an arrow where you face? Your pale moth gives you 1 energy.');
-    expect(useQuestion(cap, { value: 50, max: 100, rate: 0 })).toBe('Crush a glowcap to paint an arrow where you face?');
+    expect(useQuestion(cap, { value: 50, max: 100, rate: 0 }, 86_400, { charm: moth, energy: 1 }))
+      .toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day. Your pale moth gives you 1 energy.');
+    expect(useQuestion(cap, { value: 50, max: 100, rate: 0 })).toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day.');
     expect(didText({ kind: 'used', item: 'glowcap', mark: { dir: 'up', left: 86_400 }, lift: { item: 'pale-moth', energy: 1 } }, items))
       .toBe('You crush the glowcap. An arrow glows where you stand, pointing north. Everyone sees it for a day. The pale moth in your bag stirs: +1 energy.');
+  });
+
+  it('says the pale moth when the game asks, as long as the bar has room for what it gives', () => {
+    const me: PlayerView = { id: 'me', name: 'Aldo', x: 2, y: 2, dir: 'up', color: '#fff', gear: {}, quirks: [] };
+    const asked = (value: number) => {
+      const g = new Game(new Maps([tinyWoods()]), () => {}, items);
+      g.handle(welcome(tinyWoods(), [me], { value, max: 100, rate: 0 }, { items: items.version, bag: [{ item: 'glowcap', count: 2 }, { item: 'pale-moth', count: 1 }] }), 0);
+      g.use(0);
+      return g.question?.text;
+    };
+    expect(asked(50)).toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day. Your pale moth gives you 1 energy.');
+    expect(asked(100)).toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day.');
   });
 });
 

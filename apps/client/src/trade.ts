@@ -213,7 +213,9 @@ export function tradeQuestion(name: string): string {
 function goods(list: readonly BagSlot[], items: Items): string {
   return listOf(list.map(s => {
     const def = items.get(s.item);
-    return s.piece?.level ? `${aOf(def)} +${s.piece.level}` : amount(def, s.count);
+    // A piece is one of its kind, a pair of gloves too: "a raincoat +2", "crew gloves".
+    if (s.piece) return s.piece.level ? `${aOf(def)} +${s.piece.level}` : aOf(def);
+    return amount(def, s.count);
   }));
 }
 
