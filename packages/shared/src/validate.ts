@@ -154,7 +154,7 @@ export function validateMap(data: MapData): Problem[] {
       let lairs = 0;
       for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
         const d = map.homeSteps(x, y);
-        if (map.kind(x, y) === 'ferns' && map.walkable(x, y) && !map.lit(x, y) && !map.warm(x, y) && d >= s.steps[0] && d <= s.steps[1]) lairs++;
+        if (map.kind(x, y) === 'ferns' && map.creatureMayStand(x, y) && d >= s.steps[0] && d <= s.steps[1]) lairs++;
       }
       if (!lairs) err('skulkers: no ferns to lie in that far from home, out of the light and away from fires');
     }
@@ -166,6 +166,7 @@ export function validateMap(data: MapData): Problem[] {
     for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (map.walkable(x, y) && map.homeSteps(x, y) < 0) lost++;
     if (lost) warn(`${lost} walkable tiles have no way to a home exit`);
   }
+  validateTallGrass(data, map, err, warn);
   const named = new Set<string>();
   for (const p of data.places ?? []) {
     if (!p.name?.trim()) err(`the place at ${p.x},${p.y} needs a name`);
@@ -174,6 +175,33 @@ export function validateMap(data: MapData): Problem[] {
     if (!Number.isInteger(p.x) || !Number.isInteger(p.y) || !map.inside(p.x, p.y)) err(`the place ${p.name} at ${p.x},${p.y} is not on the map`);
   }
   return out;
+}
+
+/**
+ * Tall grass (hidden) is ground you wade into: never under something that stands there, never raised,
+ * never an exit. The tiles in front of a door and of what you read or talk to stay plain ground, so
+ * nobody comes out of a shelter or reads a sign crouched in the grass. It only hides you from
+ * creatures, and they live in the wilds, out of the light and away from fires: anywhere else it is
+ * only grass, which is worth a warning.
+ */
+function validateTallGrass(data: MapData, map: TileMap, err: (message: string) => void, warn: (message: string) => void): void {
+  const fronts = new Map<string, string>();
+  for (const o of data.objects) {
+    if (o.kind === 'house') { const d = doorOf(o); fronts.set(`${d.x},${d.y + 1}`, `the door of the house at ${o.x},${o.y}`); }
+    if (o.kind === 'sign' || o.kind === 'npc' || o.kind === 'board' || o.kind === 'chest' || o.kind === 'workbench' || o.kind === 'console') fronts.set(`${o.x},${o.y + 1}`, `the ${o.kind} at ${o.x},${o.y}`);
+  }
+  let tiles = 0, lit = 0;
+  for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
+    if (map.kind(x, y) !== 'tallgrass') continue;
+    tiles++;
+    if (!map.walkable(x, y)) err(`tall grass at ${x},${y} cannot be walked into: something stands there, or it is raised`);
+    else if (map.exitAt(x, y)) err(`tall grass at ${x},${y} is on an exit`);
+    const front = fronts.get(`${x},${y}`);
+    if (front) err(`tall grass at ${x},${y} is in front of ${front}: that tile stays plain ground`);
+    if (map.lit(x, y) || map.warm(x, y)) lit++;
+  }
+  if (tiles && data.kind !== 'wilds') warn(`${tiles} tiles of tall grass in ${data.kind === 'town' ? 'a town' : 'an inside'}, where no creature comes: it hides nobody from anything`);
+  if (lit) warn(`${lit} tiles of tall grass in a street light or by a fire, where creatures never come anyway`);
 }
 
 /**

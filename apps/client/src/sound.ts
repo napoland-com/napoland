@@ -196,8 +196,11 @@ export class Sound {
 
   private step(surface: Surface, now: number) {
     const [type, f, q, len, g] = STEPS[surface];
-    this.burst(now, type, f * (0.85 + Math.random() * 0.3), len, g, 0, q);
+    // Tall grass swells in rather than thuds: the blades brush your legs, and a lighter rustle follows.
+    const swish = surface === 'swish';
+    this.burst(now, type, f * (0.85 + Math.random() * 0.3), len, g, swish ? 0.06 : 0, q);
     if (surface === 'floor') this.tone(now, 'sine', 110, 70, 0.08, 0.25);
+    if (swish) this.burst(now + 0.08 + Math.random() * 0.04, 'highpass', 4200, 0.14, g * 0.45, 0.02);
   }
 
   /** A burst of filtered noise from `at`, dying away over `len` seconds (after `attack` rising). */
@@ -233,4 +236,5 @@ const STEPS: Record<Surface, [BiquadFilterType, number, number, number, number]>
   mud: ['lowpass', 380, 2, 0.14, 0.45],
   floor: ['bandpass', 600, 3, 0.07, 0.35],
   water: ['bandpass', 1300, 2.5, 0.16, 0.4],
+  swish: ['bandpass', 2600, 0.8, 0.2, 0.32],
 };

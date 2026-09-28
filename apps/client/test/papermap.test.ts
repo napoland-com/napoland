@@ -91,6 +91,19 @@ describe('the paper map', () => {
     for (const l of g.labels) expect(Math.abs(l.y - (grounds.places!.find(p => p.name === l.text)!.y + 0.5)), l.text).toBeCloseTo(1.9);
   });
 
+  it('hatches every tile of tall grass, a little off, and puts no ground dots there', () => {
+    const tall = woods();
+    tall.tiles = tall.tiles.map((r, y) => (y === 6 || y === 7 ? `${r.slice(0, 5)}hhh${r.slice(8)}` : r));
+    const g = sketchOf(new TileMap(tall), id => names[id]);
+    expect(g.grass).toHaveLength(6);
+    for (const [x, y] of g.grass) {
+      expect(x >= 5 && x <= 8 && y >= 6 && y <= 8, `${x},${y}`).toBe(true);
+      expect(Math.abs(x - Math.floor(x) - 0.5)).toBeLessThanOrEqual(0.35);
+    }
+    expect(g.ground.filter(([x, y]) => x > 5 && x < 8 && y > 6 && y < 8)).toEqual([]);
+    expect(s.grass).toEqual([]);
+  });
+
   it('is the same drawing every time, and knows nothing of who looks at it', () => {
     expect(sketchOf(new TileMap(woods()), id => names[id])).toEqual(s);
     expect(sketchOf.length).toBe(2);
