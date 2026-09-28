@@ -28,8 +28,8 @@ const items = new Items({
   ...itemsData(),
   items: [
     ...itemsData().items,
-    { id: 'resin', name: 'Fir resin', kind: 'resource', stack: 20, text: 'Sticky.', fuel: 300, weight: 0.2 },
-    { id: 'cloth', name: 'Cloth scraps', kind: 'resource', stack: 10, text: 'Dry.', fuel: 90 },
+    { id: 'resin', name: 'Fir resin', noun: 'resin', plural: 'resin', kind: 'resource', stack: 20, text: 'Sticky.', fuel: 300, weight: 0.2 },
+    { id: 'cloth', name: 'Cloth scraps', noun: 'cloth', plural: 'cloth', kind: 'resource', stack: 10, text: 'Dry.', fuel: 90 },
     { id: 'ore', name: 'Shard', kind: 'resource', stack: 5, text: 'Warm.', charge: 1 },
     { id: 'cap', name: 'Glowcap', kind: 'resource', stack: 20, text: 'Glows.', use: { mark: true } },
     { id: 'pebble', name: 'Warm pebble', kind: 'charm', stack: 1, text: 'Warm.', charm: { wetting: 0.6 } },
@@ -50,33 +50,86 @@ beforeEach(() => {
 });
 
 describe('A at a fire, the Old Stone and the notice board', () => {
-  it('feeds a wild fire with what burns longest, and says how it took it', () => {
+  it('asks before feeding a wild fire what burns longest, then says what it took, from the server', () => {
     g.handle(welcome(camp(), [me(3, 2)], FULL, { fires: [{ x: 3, y: 1, left: 100 }], bag: [{ item: 'cloth', count: 2 }, { item: 'resin', count: 1 }] }), now);
     g.pressA();
+    // One resin is all there is of it: nothing to count.
+    expect(g.askView()).toEqual({ who: 'Fire', text: 'Feed the fire resin?', choice: 'yes', count: null });
+    expect(sent).toEqual([]);
+    g.pressA();
     expect(sent).toEqual([{ t: 'feed', x: 3, y: 1, slot: 1 }]);
+    // The box keeps the question up until the server says how it went.
+    expect(g.note).toMatchObject({ text: 'Feed the fire resin?', waiting: true });
     g.handle({ t: 'fire', fire: { x: 3, y: 1, left: 400 } }, now);
-    expect(texts()).toEqual(['It burns 7 minutes']);
+    g.handle({ t: 'did', did: { kind: 'fire', item: 'resin', count: 1, left: 400 } }, now);
+    expect(g.note).toMatchObject({ who: 'Fire', text: 'The fire takes 1 resin. It will burn 7 more minutes.', waiting: false });
+    expect(texts()).toEqual([]);
     expect(g.fireLeft(3, 1, now + 100_000)).toBe(300);
   });
 
-  it('says how long a fire has left when you carry nothing that burns, and leaves a tended one alone', () => {
+  it('asks how many, up to what you carry and what fits, and sends them all at once', () => {
+    // 1400 s of fuel: two resin fit (the second tops it up past what it holds).
+    g.handle(welcome(camp(), [me(3, 2)], FULL, { fires: [{ x: 3, y: 1, left: 1400 }], bag: [{ item: 'resin', count: 20 }, { item: 'resin', count: 5 }] }), now);
+    g.pressA();
+    expect(g.askView()?.count).toEqual({ n: 1, min: 1, max: 2 });
+    g.padChange('right', now);
+    g.padChange(null, now);
+    g.padChange('right', now);
+    expect(g.askView()?.count?.n).toBe(2);
+    g.pressA();
+    expect(sent).toEqual([{ t: 'feed', x: 3, y: 1, slot: 0, count: 2 }]);
+    g.handle({ t: 'did', did: { kind: 'fire', item: 'resin', count: 2, left: 1800 } }, now);
+    expect(g.note?.text).toBe('The fire takes 2 resin. It is full: it will burn 30 more minutes.');
+    // A fire that went out takes as many as you carry of it, up to what it holds.
+    g.handle({ t: 'fire', fire: { x: 3, y: 1, left: 0 } }, now);
+    g.handle({ t: 'bag', bag: [{ item: 'cloth', count: 10 }, { item: 'cap', count: 1 }, { item: 'cloth', count: 10 }, { item: 'cloth', count: 10 }] }, now);
+    g.pressA();
+    g.pressA();
+    expect(g.askView()).toMatchObject({ text: 'Feed the fire cloth?', count: { n: 1, max: 20 } });
+    g.pressB();
+    g.handle({ t: 'bag', bag: [{ item: 'resin', count: 20 }] }, now);
+    g.pressA();
+    expect(g.askView()?.count?.max).toBe(6);
+  });
+
+  it('says why instead of asking: nothing that burns, a fire someone keeps, a fire as full as it gets', () => {
     g.handle(welcome(camp(), [me(3, 2)], FULL, { fires: [{ x: 3, y: 1, left: 600 }] }), now);
     g.pressA();
     expect(sent).toEqual([]);
-    expect(texts()).toEqual(['It burns 10 minutes more. Nothing to feed it']);
-    g.handle({ t: 'fire', fire: { x: 3, y: 1, left: null } }, now);
-    g.floats = [];
+    expect(g.question).toBeNull();
+    expect(g.note).toMatchObject({ who: 'Fire', text: 'It will burn 10 more minutes. You have nothing that burns.', waiting: false });
     g.pressA();
-    expect(texts()).toEqual(['Someone keeps this fire going']);
+    g.handle({ t: 'fire', fire: { x: 3, y: 1, left: 0 } }, now);
+    g.pressA();
+    expect(g.note?.text).toBe('The fire is out. Bring something that burns: resin or cloth.');
+    g.pressA();
+    g.handle({ t: 'fire', fire: { x: 3, y: 1, left: null } }, now);
+    g.handle({ t: 'bag', bag: [{ item: 'resin', count: 3 }] }, now);
+    g.pressA();
+    expect(g.note?.text).toBe('Someone keeps this fire going. It needs nothing.');
+    g.pressA();
+    g.handle({ t: 'fire', fire: { x: 3, y: 1, left: FIRE_MAX_S - 0.5 } }, now);
+    g.pressA();
+    expect(g.note?.text).toBe('The fire is as full as it gets. It will burn 30 more minutes.');
+    expect(sent).toEqual([]);
+    expect(texts()).toEqual([]);
   });
 
-  it('gives the Old Stone a shard, or says how far it is from waking', () => {
+  it('asks before giving the Old Stone shards, how many of what you carry, or says how it stands', () => {
     g.handle(welcome(camp(), [me(5, 4)], FULL, { stone: { ...ASLEEP, charge: 7 } }), now);
     g.pressA();
-    expect(texts()).toEqual(['7 of 20 shards. It wants more']);
-    g.handle({ t: 'bag', bag: [{ item: 'ore', count: 2 }] }, now);
+    expect(g.note).toMatchObject({ who: 'The Old Stone', text: 'The Old Stone sleeps: 7 of 20 shards. You have no shard to give it.' });
     g.pressA();
-    expect(sent).toEqual([{ t: 'feed', x: 5, y: 3, slot: 0 }]);
+    g.handle({ t: 'bag', bag: [{ item: 'ore', count: 2 }, { item: 'cap', count: 1 }, { item: 'ore', count: 5 }] }, now);
+    g.pressA();
+    expect(g.askView()).toEqual({ who: 'The Old Stone', text: 'Give the Old Stone a shard?', choice: 'yes', count: { n: 1, min: 1, max: 7 } });
+    g.holdCount(1, now);
+    g.holdCount(0, now);
+    expect(g.question?.text).toBe('Give the Old Stone 2 shards?');
+    g.pressA();
+    expect(sent).toEqual([{ t: 'feed', x: 5, y: 3, slot: 0, count: 2 }]);
+    g.handle({ t: 'did', did: { kind: 'stone', item: 'ore', count: 2, stone: { ...ASLEEP, charge: 9 } } }, now);
+    expect(g.note?.text).toBe('The Old Stone takes 2 shards: 9 of 20.');
   });
 
   it('asks the server for the notice board, and shows what it says', () => {
@@ -87,7 +140,7 @@ describe('A at a fire, the Old Stone and the notice board', () => {
     expect(g.dialog).toMatchObject({ who: 'Notice board', lines: ['Rain.', 'Nobody collapsed in the last hour.'] });
   });
 
-  it('walks up to a fire that is tapped, and feeds it', () => {
+  it('walks up to a fire that is tapped, and asks to feed it', () => {
     g.handle(welcome(camp(), [me(3, 4)], FULL, { fires: [{ x: 3, y: 1, left: 10 }], bag: [{ item: 'resin', count: 1 }] }), now);
     g.tapTile(3, 1);
     let confirmed = 0;
@@ -98,8 +151,10 @@ describe('A at a fire, the Old Stone and the notice board', () => {
       const last = sent.at(-1);
       if (last?.t === 'step' && last.seq > confirmed) { confirmed = last.seq; g.handle({ t: 'step', id: 'me', x: g.me!.tx, y: g.me!.ty, dir: last.dir, seq: last.seq }, now); }
     }
-    // Two steps up, to 3,2 next to the fire, and then it is fed.
+    // Two steps up, to 3,2 next to the fire, and then it asks.
     expect(sent.filter(m => m.t === 'step')).toHaveLength(2);
+    expect(g.question?.text).toBe('Feed the fire resin?');
+    g.pressA();
     expect(sent.at(-1)).toEqual({ t: 'feed', x: 3, y: 1, slot: 0 });
   });
 });

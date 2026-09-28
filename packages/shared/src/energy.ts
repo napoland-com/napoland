@@ -62,6 +62,21 @@ export function fireHeat(left: number | null): number {
   return left >= FIRE_LOW_S ? 1 : left > 0 ? EMBERS : 0;
 }
 
+/** A fire with `left` seconds of fuel takes nothing more: within a second of FIRE_MAX_S (fuel is told in whole seconds). */
+export function fireFull(left: number): boolean {
+  return left >= FIRE_MAX_S - 1;
+}
+
+/**
+ * How many of an item that burns `fuel` seconds a fire with `left` seconds takes, one after another,
+ * before it is full: each goes in while the fire is not full yet, and the last may top it up past what
+ * it holds (the rest of that one burns away). The server feeds them so; the client asks how many.
+ */
+export function fireTakes(left: number, fuel: number): number {
+  if (!(fuel > 0)) return 0;
+  return Math.max(0, Math.ceil((FIRE_MAX_S - 1 - Math.max(0, left)) / fuel));
+}
+
 /** Seconds of steady rain to soak you through, dry to wet 1. */
 export const WET_SECONDS = 150;
 /** Seconds to dry off completely: by a burning fire, under a roof, outdoors when it does not rain. */

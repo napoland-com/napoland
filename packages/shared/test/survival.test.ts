@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AURORA_EVERY, CARRY_KG, DAY_S, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, DRY_AIR_SECONDS, DRY_FIRE_SECONDS, DRY_ROOF_SECONDS, FEATS, HITCH_DRAIN, LOAD_DRAIN,
-  REFILL_PER_SECOND, SURGE_DRAIN, TileMap, WET_DRAIN, WET_SECONDS, bagLoad, charmsIn, energyRate, featsOf, inSurge, itemIndex, modsOf, reveal, surgeAt,
+  AURORA_EVERY, CARRY_KG, DAY_S, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, DRY_AIR_SECONDS, DRY_FIRE_SECONDS, DRY_ROOF_SECONDS, FEATS, FIRE_MAX_S, HITCH_DRAIN, LOAD_DRAIN,
+  REFILL_PER_SECOND, SURGE_DRAIN, TileMap, WET_DRAIN, WET_SECONDS, bagLoad, charmsIn, energyRate, featsOf, fireFull, fireTakes, inSurge, itemIndex, modsOf, reveal, surgeAt,
   surgeFront, untilSurge, validateItems, validateMap, weatherAt, wetRate, type ItemsData, type MapData,
 } from '../src';
 
@@ -39,6 +39,23 @@ describe('what wears you down', () => {
     expect(energyRate(map, 3, 1, 'rain', { warmth: 0.4 })).toBeCloseTo(REFILL_PER_SECOND * 0.4, 10);
     // Out: the tile drains like any other.
     expect(energyRate(map, 3, 1, 'overcast', { warmth: 0 })).toBeCloseTo(-DRAIN_PER_SECOND * (1 + 5 / DRAIN_GROWTH_STEPS), 10);
+  });
+
+  it('knows how many of what burns a fire takes before it is full: the last one may top it up past what it holds', () => {
+    expect(fireTakes(0, 300)).toBe(6);
+    expect(fireTakes(0, 90)).toBe(20);
+    expect(fireTakes(900, 120)).toBe(8);
+    expect(fireTakes(FIRE_MAX_S - 300, 300)).toBe(1);
+    expect(fireTakes(FIRE_MAX_S - 302, 300)).toBe(2);
+    // Within a second of full it takes nothing more, and nothing burns for no time at all.
+    expect([fireFull(FIRE_MAX_S - 1), fireFull(FIRE_MAX_S - 1.5)]).toEqual([true, false]);
+    expect([fireTakes(FIRE_MAX_S - 1, 300), fireTakes(FIRE_MAX_S - 1.5, 300), fireTakes(0, 0)]).toEqual([0, 1, 0]);
+    // Fed one by one as the server does, a fire takes exactly that many.
+    for (const [left, fuel] of [[0, 300], [0, 90], [900, 120], [1500, 300], [1799.5, 90], [37, 1000]] as const) {
+      let now: number = left, n = 0;
+      while (!fireFull(now)) { now = Math.min(FIRE_MAX_S, now + fuel); n++; }
+      expect(n, `${left} s, ${fuel} a piece`).toBe(fireTakes(left, fuel));
+    }
   });
 
   it('shelters you from a surge under a street light, and only in the wilds', () => {
@@ -162,5 +179,22 @@ describe('validation of the new content', () => {
     expect(problems([{ id: 'log', name: 'Log', kind: 'resource', stack: 1, text: 'Wood.', fuel: -5 }])).toEqual(['item "log": fuel must be a number above 0']);
     expect(problems([{ id: 'cap', name: 'Cap', kind: 'resource', stack: 5, text: 'Glows.' }], [{ item: 'cap', map: 'strip', count: 1, respawn: [1, 2], when: 'unstable' }]))
       .toEqual(['find 0 (cap in strip): grows while the map is restless, but strip never surges']);
+  });
+
+  it('checks the words items give sentences, and warns when a strange object may turn into something that says nothing of what it is for', () => {
+    const maps = [strip()];
+    const all = (list: ItemsData['items']) => validateItems({ version: 1, items: list, finds: [] }, maps);
+    const odd = (into: string) => ({ id: 'odd', name: 'Odd', kind: 'resource' as const, stack: 1, text: '?', use: { identify: true }, reveals: [{ item: into, count: 1, weight: 1 }] });
+    expect(all([
+      { id: 'resin', name: 'Fir resin', noun: 'resin', plural: 'resin', kind: 'resource', stack: 20, text: 'Sticky.', fuel: 300 },
+      { id: 'feather', name: 'Feather', kind: 'charm', stack: 1, text: 'Light.', charm: { load: 0.5 }, about: 'While it is in your bag, what you carry feels lighter.' },
+      odd('feather'),
+    ])).toEqual([]);
+    expect(all([{ id: 'resin', name: 'Fir resin', noun: ' ', plural: '', kind: 'resource', stack: 20, text: 'Sticky.', about: '' }]).map(p => p.message)).toEqual([
+      'item "resin": noun, when given, says something', 'item "resin": plural, when given, says something', 'item "resin": about, when given, says something',
+    ]);
+    expect(all([{ id: 'feather', name: 'Feather', kind: 'charm', stack: 1, text: 'Light.', charm: { load: 0.5 } }, odd('feather')])).toEqual([
+      { level: 'warning', message: 'item "feather": odd may turn out to be it, but it has no about line to say what it is good for' },
+    ]);
   });
 });

@@ -260,6 +260,9 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     ids.add(i.id);
     if (!i.name?.trim()) err(`${name} has no name`);
     if (!i.text?.trim()) err(`${name} has no text`);
+    for (const [field, v] of [['noun', i.noun], ['plural', i.plural], ['about', i.about]] as const) {
+      if (v !== undefined && !(typeof v === 'string' && v.trim())) err(`${name}: ${field}, when given, says something`);
+    }
     if (!['resource', 'consumable', 'charm', 'gear', 'tool'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear or tool`);
     if (i.kind === 'tool') {
       if (i.stack !== 1) err(`${name}: a tool stacks one to a slot`);
@@ -346,6 +349,9 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!ids.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, which is not an item`);
     if (r.item === i.id) err(`item ${JSON.stringify(i.id)} reveals itself`);
     if (!Number.isInteger(r.count) || r.count < 1 || !(r.weight > 0)) err(`item ${JSON.stringify(i.id)}: a reveal needs a count from 1 and a weight above 0`);
+    // Looking closely says what it turned out to be and what that is good for: the `about` line.
+    const into = data.items.find(d => d.id === r.item);
+    if (into && !into.about?.trim()) warn(`item ${JSON.stringify(r.item)}: ${i.id} may turn out to be it, but it has no about line to say what it is good for`);
   }
   const byId = new Map(maps.map(m => [m.id, m]));
   const conditionIds = validateConditions(data, byId, err);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  TileMap, addAllToBag, addToBag, findTiles, halfOf, itemIndex, liveEnds, liveXp, merge, takeFromBag, validateItems,
+  TileMap, addAllToBag, addToBag, findTiles, halfOf, itemIndex, liveEnds, liveXp, merge, takeFromBag, takeItem, validateItems,
   type ItemDef, type ItemsData, type MapData,
 } from '../src';
 
@@ -47,6 +47,21 @@ describe('the bag', () => {
     expect(takeFromBag(bag, 1)).toEqual([{ item: 'glowcap', count: 4 }]);
     expect(takeFromBag(bag, 5)).toEqual(bag);
   });
+  it('takes several of one item: from the slot asked for, then from the others that hold it, never more than there is', () => {
+    const bag = [{ item: 'glowcap', count: 4 }, { item: 'thermos', count: 1 }, { item: 'glowcap', count: 10 }, { item: 'glowcap', count: 2 }];
+    expect(takeItem(bag, 0, 3)).toEqual({ bag: [{ item: 'glowcap', count: 1 }, ...bag.slice(1)], taken: 3 });
+    expect(takeItem(bag, 2, 12)).toEqual({ bag: [{ item: 'glowcap', count: 2 }, { item: 'thermos', count: 1 }, { item: 'glowcap', count: 2 }], taken: 12 });
+    expect(takeItem(bag, 3, 99)).toEqual({ bag: [{ item: 'thermos', count: 1 }], taken: 16 });
+    expect(takeItem(bag, 1, 5)).toEqual({ bag: [bag[0], bag[2], bag[3]], taken: 1 });
+    // Nothing asked, or nothing there: nothing taken, and the bag it was given is left alone.
+    expect(takeItem(bag, 0, 0).taken).toBe(0);
+    expect(takeItem(bag, 9, 3)).toEqual({ bag, taken: 0 });
+    expect(bag).toEqual([{ item: 'glowcap', count: 4 }, { item: 'thermos', count: 1 }, { item: 'glowcap', count: 10 }, { item: 'glowcap', count: 2 }]);
+    // A live one keeps when it was picked, whatever is taken around it.
+    const live = [{ item: 'shard', count: 1, since: 5 }, { item: 'shard', count: 1, since: 9 }];
+    expect(takeItem(live, 1, 1)).toEqual({ bag: [{ item: 'shard', count: 1, since: 5 }], taken: 1 });
+  });
+
   it('joins equal items', () => {
     expect(merge([{ item: 'a', count: 2 }, { item: 'b', count: 1 }, { item: 'a', count: 3 }, { item: 'c', count: 0 }])).toEqual([{ item: 'a', count: 5 }, { item: 'b', count: 1 }]);
   });

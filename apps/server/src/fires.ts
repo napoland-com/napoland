@@ -8,7 +8,7 @@
  * Pure bookkeeping on game time (`now`, ms): nobody is told anything here, the World does that.
  * Fuel lives in memory only: after a restart the wild fires burn again, at a random level.
  */
-import { EMBERS, FIRE_LOW_S, FIRE_MAX_S, FIRE_RADIUS, fireHeat, type FireView, type TileMap } from '@napoland/shared';
+import { EMBERS, FIRE_LOW_S, FIRE_MAX_S, FIRE_RADIUS, fireFull, fireHeat, type FireView, type TileMap } from '@napoland/shared';
 
 export { EMBERS, FIRE_LOW_S, FIRE_MAX_S };
 
@@ -82,9 +82,9 @@ export class Fires {
     return best;
   }
 
-  /** Burns `seconds` more, up to FIRE_MAX_S; a dead fire lights again. False when it is already full. */
+  /** Burns `seconds` more, up to FIRE_MAX_S; a dead fire lights again. False when it is already full (fireFull). */
   feed(f: Fire, seconds: number, now: number): boolean {
-    if (f.tended || this.left(f, now) >= FIRE_MAX_S - 1) return false;
+    if (f.tended || fireFull(this.left(f, now))) return false;
     f.outAt = Math.min(now + FIRE_MAX_S * 1000, Math.max(now, f.outAt) + seconds * 1000);
     return true;
   }

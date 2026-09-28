@@ -770,17 +770,19 @@ describe('World: finds', () => {
 });
 
 describe('World: the bag', () => {
-  it('uses a consumable: its energy, up to a full bar, and one unit is gone; the player hears the energy, then the bag', () => {
+  it('uses a consumable: its energy, up to a full bar, and one unit is gone; the player hears the energy, the bag, then what it did', () => {
     const w = itemsWorld({}, inTown('a', 0, 5, 'down', { energy: 50, bag: [{ item: 'tea', count: 2 }, { item: 'moss', count: 1 }] }));
     w.use('a', 0, 1000);
     expect(w.drain()).toEqual([
       { to: 'a', msg: { t: 'energy', energy: told(80, 0), body: expect.any(Object) } },
       { to: 'a', msg: { t: 'bag', bag: [{ item: 'tea', count: 1 }, { item: 'moss', count: 1 }] } },
+      { to: 'a', msg: { t: 'did', did: { kind: 'used', item: 'tea', energy: 30 } } },
     ]);
-    w.use('a', 0, 2000); // 80 + 30 is more than a full bar
+    w.use('a', 0, 2000); // 80 + 30 is more than a full bar: it gives what the bar has room for
     expect(w.drain()).toEqual([
       { to: 'a', msg: { t: 'energy', energy: told(ENERGY_MAX, 0), body: expect.any(Object) } },
       { to: 'a', msg: { t: 'bag', bag: [{ item: 'moss', count: 1 }] } },
+      { to: 'a', msg: { t: 'did', did: { kind: 'used', item: 'tea', energy: 20 } } },
     ]);
     expect(w.get('a')).toMatchObject({ energy: ENERGY_MAX, bag: [{ item: 'moss', count: 1 }] });
   });
@@ -791,6 +793,7 @@ describe('World: the bag', () => {
     expect(w.drain()).toEqual([
       { to: 'a', msg: { t: 'energy', energy: told(20 + 10 * edge + 30, edge), body: expect.any(Object) } },
       { to: 'a', msg: { t: 'bag', bag: [] } },
+      { to: 'a', msg: { t: 'did', did: { kind: 'used', item: 'tea', energy: 30 } } },
     ]);
     w.tick(11_000);
     expect(w.get('a')!.energy).toBeCloseTo(20 + 11 * edge + 30);
@@ -813,8 +816,22 @@ describe('World: the bag', () => {
     w.discard('a', 5, 1000);
     expect(w.drain()).toEqual([
       { to: 'a', msg: { t: 'bag', bag: [{ item: 'moss', count: 3 }, { item: 'tea', count: 1 }] } },
+      { to: 'a', msg: { t: 'did', did: { kind: 'thrown', item: 'nail', count: 2 } } },
       { to: 'a', msg: { t: 'refused', action: 'discard', reason: 'empty_slot' } },
     ]);
+  });
+
+  it('throws away as many of a slot as asked, never more than it holds; what came out of the stash is forgotten', () => {
+    const w = itemsWorld({}, inTown('a', 0, 5, 'down', { bag: [{ item: 'moss', count: 3 }], stash: { items: {}, out: { moss: 2 } } }));
+    w.discard('a', 0, 1000, 2);
+    expect(w.drain()).toEqual([
+      { to: 'a', msg: { t: 'bag', bag: [{ item: 'moss', count: 1 }] } },
+      { to: 'a', msg: { t: 'did', did: { kind: 'thrown', item: 'moss', count: 2 } } },
+    ]);
+    expect(w.get('a')!.stash).toEqual({ items: {}, out: {} });
+    w.discard('a', 0, 1000, 5);
+    expect(w.drain().at(-1)).toEqual({ to: 'a', msg: { t: 'did', did: { kind: 'thrown', item: 'moss', count: 1 } } });
+    expect(w.get('a')!.bag).toEqual([]);
   });
 
   it('fits a saved bag to today\'s items: what no longer exists goes, and a bag that no longer fits is packed again', () => {

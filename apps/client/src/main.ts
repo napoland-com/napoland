@@ -101,19 +101,28 @@ const showStatus = () => {
     storm: game.stormNow(now), flash: game.flashed(now), weather, wilds: game.map.data.kind === 'wilds',
   }));
 };
+/**
+ * The text box asks (a question) or says something by itself: it stands above the panels it came from
+ * (the bag, the workbench), so A and B answer it before anything else.
+ */
+const boxUp = () => !!game.question || !!game.note;
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
 const controls = {
-  pad: (dir: Dir | null) => { if (dir) closePanels(); game.padChange(dir, performance.now()); },
-  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  // While it asks, the stick answers the question, and the panel it was asked from stays open.
+  pad: (dir: Dir | null) => { if (dir && !game.question) closePanels(); game.padChange(dir, performance.now()); },
+  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the About panel and the text box, then out of the status or the bag's details, before the bag itself opens or closes.
-  b: () => { if (hud.paperOpen) hud.showPaper(null); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
+  b: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressB(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
 };
 const hud = new Hud(screen, {
   ...controls,
-  dialogTap: () => game.advanceDialog(),
+  dialogTap: () => game.boxTap(),
+  answer: choice => game.answer(choice),
+  count: dir => game.holdCount(dir, performance.now()),
+  dismiss: () => game.dismiss(),
   logout: () => signOut(),
-  // Using something shows what it did over your head (and on the energy bar), so the bag closes.
-  use: slot => { game.use(slot); hud.toggleBag(false); },
+  // Said yes to, using something shows in the world and on the energy bar, so the bag closes; said no, it stays as it was.
+  use: slot => game.use(slot, () => hud.toggleBag(false)),
   discard: slot => game.discard(slot),
   status: showStatus,
   store: slot => game.store(slot),
@@ -169,10 +178,10 @@ function openMap() {
 
 const keys = new Keys({
   ...controls,
-  // M: the map of where you are, and M again puts it away.
-  openMap: () => { if (hud.paperOpen) hud.showPaper(null); else { closePanels(); openMap(); } },
+  // M: the map of where you are, and M again puts it away. Neither M nor Enter goes past a question.
+  openMap: () => { if (game.question) return; if (hud.paperOpen) hud.showPaper(null); else { closePanels(); openMap(); } },
   // Enter, as in Metin2: the chat opens with its line ready to type in (open already, the line takes the keys again).
-  openChat: () => { if (!hud.chatOpen) closePanels(); hud.toggleChat(true, true); },
+  openChat: () => { if (game.question) return; if (!hud.chatOpen) closePanels(); hud.toggleChat(true, true); },
 });
 window.addEventListener('keydown', e => {
   // Behind the sign-in cards the keys are the page's (typing a name, pressing Enter to go on).
@@ -465,6 +474,8 @@ canvas.addEventListener('pointerup', e => {
   if (!down || down.id !== e.pointerId) return;
   const tap = Math.hypot(e.clientX - down.x, e.clientY - down.y) < 12 && performance.now() - down.t < 700;
   down = null;
+  // The scrim takes taps while the box asks or says something; should one get through, it counts as outside the box.
+  if (tap && boxUp()) { game.dismiss(); return; }
   if (!tap || closePanels()) return;
   if (game.dialog) { game.advanceDialog(); return; }
   const r = canvas.getBoundingClientRect(), tile = view.toWorld(e.clientX - r.left, e.clientY - r.top);
@@ -516,6 +527,8 @@ let storyShown = -1;
 const chaptersToSay: News[] = [];
 /** The scene sound was mixed for last frame: what changed since is what makes a one-shot. */
 let heard: Scene | undefined;
+/** The question and what the box says by itself, as last drawn (Game.boxChanges). */
+let boxShown = -1;
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
   requestAnimationFrame(frame);
@@ -581,7 +594,7 @@ function frame(now: number) {
     const b = newsBanner(n, game.map.data.name);
     if (b) hud.showBanner(b.title, b.sub);
   }
-  if (chaptersToSay.length && !game.dialog && !panelOpen() && !hud.bannerUp && !arrival.dark) {
+  if (chaptersToSay.length && !game.dialog && !boxUp() && !panelOpen() && !hud.bannerUp && !arrival.dark) {
     const b = newsBanner(chaptersToSay.shift()!, game.map.data.name);
     if (b) hud.showBanner(b.title, b.sub);
   }
@@ -657,6 +670,12 @@ function frame(now: number) {
     return [{ id: b.id, text: b.text, x: s.x, y: s.y }];
   }));
   hud.setFloats(game.floats.map(f => { const s = view.project(f.x, f.y, 1.3); return { ...f, x: s.x, y: s.y }; }));
+  // A question, or what the box says by itself, is drawn again only when it changed.
+  if (game.boxChanges !== boxShown) {
+    boxShown = game.boxChanges;
+    hud.setAsk(game.askView());
+    hud.setNote(game.noteView(now));
+  }
   const d = game.dialog, line = d ? d.lines[d.i] ?? '' : '';
   hud.setDialog(d ? { who: d.who, text: line.slice(0, Math.floor(d.shown)), done: d.shown >= line.length } : null);
   hud.setEnergy(game.energy(now));

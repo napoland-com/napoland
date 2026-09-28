@@ -20,7 +20,7 @@ const data: ItemsData = {
   ...itemsData(),
   items: [
     ...itemsData().items,
-    { id: 'cloth', name: 'Cloth', kind: 'resource', stack: 10, text: 'Dry.' },
+    { id: 'cloth', name: 'Cloth', plural: 'cloth', kind: 'resource', stack: 10, text: 'Dry.' },
     { id: 'coat', name: 'Raincoat', kind: 'gear', stack: 1, text: 'Dry.', slot: 'shirt', tier: 'sturdy', color: '#e8c547', resist: { wind: 0.35, cold: 0.1 } },
     { id: 'pack', name: 'Hiking pack', kind: 'gear', stack: 1, text: 'Big.', slot: 'bag', color: '#7a4a2a', bag: 12, bonus: 5 },
   ],
@@ -57,18 +57,55 @@ describe('gear in the game', () => {
     expect(sent).toEqual([{ t: 'chest', x: 1, y: 1 }, { t: 'equip', x: 1, y: 1, item: 'coat' }, { t: 'unequip', x: 1, y: 1, slot: 'cap' }]);
   });
 
-  it('opens the workbench with A, makes recipes there, and says what it made', () => {
+  it('opens the workbench with A, asks before making a recipe there, and says what it made in the text box', () => {
     g.handle(welcome(room(), [me(3, 2)], FULL), now);
     g.pressA();
     expect(sent).toEqual([{ t: 'bench', x: 3, y: 1 }]);
     g.handle({ t: 'bench', stash: [{ item: 'cloth', count: 9 }] }, now);
     expect(g.bench).toEqual({ x: 3, y: 1, stash: [{ item: 'cloth', count: 9 }] });
     g.craft('coat');
+    expect(g.askView()).toEqual({ who: 'Workbench', text: 'Make a raincoat? It uses 8 cloth.', choice: 'yes', count: null });
+    expect(sent).toHaveLength(1);
+    g.pressA();
     expect(sent.at(-1)).toEqual({ t: 'craft', x: 3, y: 1, recipe: 'coat' });
-    g.handle({ t: 'crafted', item: 'coat', count: 1 }, now);
-    expect(g.floats.map(f => f.text)).toEqual(['Made: Raincoat']);
+    g.handle({ t: 'did', did: { kind: 'made', item: 'coat', count: 1 } }, now);
+    expect(g.note).toMatchObject({ who: 'Workbench', text: 'You make a raincoat. It waits in your stash: put it on at the chest.', waiting: false });
+    expect(g.floats).toEqual([]);
     g.closeBench();
     expect(g.bench).toBeNull();
+  });
+
+  it('says what the stash lacks instead of asking, and a no makes nothing', () => {
+    g.handle(welcome(room(), [me(3, 2)], FULL), now);
+    g.pressA();
+    g.handle({ t: 'bench', stash: [{ item: 'cloth', count: 5 }] }, now);
+    g.craft('coat');
+    expect(g.question).toBeNull();
+    expect(g.note).toMatchObject({ who: 'Workbench', text: 'Your stash is short of 3 cloth for a raincoat.' });
+    g.pressB();
+    g.handle({ t: 'bench', stash: [{ item: 'cloth', count: 8 }] }, now);
+    g.craft('coat');
+    g.pressB();
+    expect(g.question).toBeNull();
+    expect(sent.filter(m => m.t === 'craft')).toEqual([]);
+  });
+
+  it('asks before mending what you wear, with what mending it costs', () => {
+    const mending = new Items({ ...data, mend: { sturdy: [{ item: 'cloth', count: 2 }] } });
+    g = new Game(maps, m => sent.push(m), mending);
+    g.handle(welcome(room(), [me(3, 2, { shirt: 'coat' })], FULL, { body: { wet: 0, wetRate: 0, load: 0, hitched: false, worn: { shirt: { cond: 0.2 } } } }), now);
+    g.pressA();
+    g.handle({ t: 'bench', stash: [{ item: 'cloth', count: 1 }] }, now);
+    g.mend('shirt');
+    expect(g.note?.text).toBe('Your stash is short of 1 cloth to mend your raincoat.');
+    g.pressA();
+    g.handle({ t: 'bench', stash: [{ item: 'cloth', count: 4 }] }, now);
+    g.mend('shirt');
+    expect(g.question?.text).toBe('Mend your raincoat? It uses 2 cloth.');
+    g.pressA();
+    expect(sent.at(-1)).toEqual({ t: 'mend', x: 3, y: 1, slot: 'shirt' });
+    g.handle({ t: 'did', did: { kind: 'mended', item: 'coat' } }, now);
+    expect(g.note?.text).toBe('You mend your raincoat: as good as new.');
   });
 });
 

@@ -1,7 +1,7 @@
 ---
 id: ask-first
 title: Ask before using anything up, then say what it did
-status: next
+status: done
 order: 25
 area: controls
 ---

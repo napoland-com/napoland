@@ -20,6 +20,8 @@ const ICON = {
   // The waves show while the sound is on, the cross while it is off (style.css).
   speaker: svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path class="on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="off" d="M17 9.5l5 5M22 9.5l-5 5"/>'),
   chat: svg('<path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-5 4v-4H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>'),
+  minus: svg('<path d="M6 12h12"/>'),
+  plus: svg('<path d="M12 6v12M6 12h12"/>'),
   bolt: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.5 2 4 13.5h6.5L9 22l10-12h-6.6z"/></svg>`,
   drop: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5C9 7 5.5 10.6 5.5 14.6a6.5 6.5 0 0 0 13 0c0-4-3.5-7.6-6.5-12.1z"/></svg>`,
   cling: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3c-4.4 0-7 3.3-7 7.6V21l2.3-1.8L9.6 21l2.4-1.8 2.4 1.8 2.3-1.8L19 21V10.6C19 6.3 16.4 3 12 3zm-3 8.2a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8zm6 0a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8z"/></svg>`,
@@ -73,11 +75,16 @@ export interface HudHandlers {
   sound?(s: SoundSetting): void;
   a(): void;
   b(): void;
+  /** A tap on the text box itself (not on its buttons). */
   dialogTap(): void;
+  /** The question in the text box: YES or NO tapped; − or + pressed (-1 or 1) and let go (0); a tap anywhere outside the box. */
+  answer?(choice: 'yes' | 'no'): void;
+  count?(dir: -1 | 0 | 1): void;
+  dismiss?(): void;
   logout(): void;
-  /** Use what is in bag slot `slot` (only offered for consumables). */
+  /** Use what is in bag slot `slot` (only offered for what can be used); the game asks first. */
   use(slot: number): void;
-  /** Throw away everything in bag slot `slot` (asked once first). */
+  /** Throw away some of what is in bag slot `slot`; the game asks how many first. */
   discard(slot: number): void;
   /** The version the server runs, for the About panel (null: none shown). Asked once, when the panel first opens. */
   version(): Promise<string | null>;
@@ -102,11 +109,6 @@ export function soundRow(
   row.mute.addEventListener('click', () => change({ ...now, muted: !now.muted }));
   row.volume.addEventListener('input', () => change({ volume: Number(row.volume.value) / 100, muted: false }));
   return show;
-}
-
-/** What the bag asks before throwing a slot away. */
-export function tossQuestion(count: number): string {
-  return count > 1 ? `Throw all ${count} away?` : 'Throw it away?';
 }
 
 /** How long a banner stays up: long enough to read what it says. */
@@ -190,7 +192,12 @@ export type SocialAction =
 export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean }
 /** `row` stacks words said at once, 0 at the bottom. */
 export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number; row: number }
+/** Someone's lines in the text box, as far as they are typed out (`done`: the whole line is). */
 export interface DialogView { who: string; text: string; done: boolean }
+/** A question in the text box (ask.ts): its words, the choice highlighted, and how many (null: it does not ask how many). */
+export interface AskView { who: string; text: string; choice: 'yes' | 'no'; count: { n: number; min: number; max: number } | null }
+/** What the text box says by itself: it stays up `ms` more (a thin line along its bottom runs out), or it waits for the server. */
+export interface NoteView { who: string; text: string; ms: number; waiting: boolean }
 
 export class Hud {
   readonly root: HTMLElement;
@@ -205,7 +212,7 @@ export class Hud {
   private capacity = BAG_SLOTS;
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
   private slotEls: HTMLButtonElement[] = [];
-  /** The bag as shown, the slot whose details are open (and the item in it), and whether throwing it away is being asked. */
+  /** The bag as shown, and the slot whose details are open (and the item in it). */
   private bag: SlotView[] = [];
   /** When the bag was told (performance.now()), and what each live slot's countdown last showed. */
   private bagAt = 0;
@@ -216,7 +223,13 @@ export class Hud {
   private chatTab: 'world' | 'local' = 'local';
   private bubbleEls = new Map<string, HTMLElement>();
   private picked: { slot: number; item: string } | null = null;
-  private asking = false;
+  /**
+   * What the text box holds: someone's lines (told every frame), a question, or what it says by itself
+   * (told when they change). A question comes first, then what it says, then the lines. `shown` is what
+   * the page shows now, so a frame only writes what changed.
+   */
+  private box: { talk: DialogView | null; ask: AskView | null; note: NoteView | null } = { talk: null, ask: null, note: null };
+  private boxShown: { mode: string; who: string; text: string; done: boolean; ask: AskView | null } = { mode: '', who: '', text: '', done: false, ask: null };
   private versionAsked = false;
   private showSound: (s: SoundSetting) => void = () => {};
 
@@ -251,7 +264,11 @@ export class Hud {
       </div>
       <div class="stick" data-el="stick" role="group" aria-label="Movement stick"><div class="knob" data-el="knob"></div></div>
       <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back">B</button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button></div>
-      <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div data-el="text"></div><div class="more" data-el="more" aria-hidden="true">&#9660;</div></div>
+      <div class="scrim" data-el="scrim" hidden></div>
+      <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div class="line" data-el="text"></div>
+        <div class="count" data-el="count" role="group" aria-label="How many" hidden><button type="button" class="step" data-step="-1" aria-label="One fewer">${ICON.minus}</button><b class="n" data-el="countN"></b><button type="button" class="step" data-step="1" aria-label="One more">${ICON.plus}</button></div>
+        <div class="choices panel" data-el="choices" role="group" aria-label="Your answer" hidden><button type="button" data-choice="yes">YES</button><button type="button" data-choice="no">NO</button></div>
+        <div class="more" data-el="more" aria-hidden="true" style="visibility: hidden">&#9660;</div><i class="timer" data-el="timer" aria-hidden="true" hidden></i></div>
       <div class="sheet panel" data-el="sheet" data-open="false" role="dialog" aria-label="Bag">
         <div class="sheet-head"><b>Bag</b><span class="room" data-el="room"></span><span class="tools" data-el="tools"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
         <div class="grid" data-el="grid">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-slot="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
@@ -260,7 +277,6 @@ export class Hud {
           <div class="about" data-el="about" hidden><div class="big" data-el="bigIcon"></div>
             <div class="words"><div class="title"><b data-el="itemName"></b><span class="count" data-el="itemCount"></span></div><p data-el="itemText"></p><p class="facts" data-el="itemFacts"></p></div></div>
           <div class="acts" data-el="acts" hidden><button type="button" class="act go" data-el="use">Use</button><button type="button" class="act toss" data-el="toss">Throw away</button></div>
-          <div class="acts" data-el="ask" hidden><span class="ask" data-el="askText"></span><button type="button" class="act toss sure" data-el="tossYes">Throw away</button><button type="button" class="act" data-el="tossNo">Keep</button></div>
         </div>
       </div>
       <div class="paper-view" data-el="paper" hidden role="dialog" aria-label="Map"><button type="button" class="close" data-el="paperClose" aria-label="Put the map away">${ICON.x}</button></div>
@@ -358,7 +374,28 @@ export class Hud {
     stick.addEventListener('lostpointercapture', end);
     this.el.a!.addEventListener('click', () => this.h.a());
     this.el.b!.addEventListener('click', () => this.h.b());
-    this.el.dialog!.addEventListener('click', () => this.h.dialogTap());
+    this.el.dialog!.addEventListener('click', e => {
+      const t = e.target as Element, choice = t.closest<HTMLElement>('[data-choice]'), step = t.closest<HTMLElement>('[data-step]');
+      if (choice) return this.h.answer?.(choice.dataset.choice as 'yes' | 'no');
+      // − and + count on pointerdown (and repeat while held); a click that came from the keyboard is one step.
+      if (step) {
+        if (e.detail === 0) { this.h.count?.(Number(step.dataset.step) as -1 | 1); this.h.count?.(0); }
+        return;
+      }
+      this.h.dialogTap();
+    });
+    const count = this.el.count!, letGo = () => this.h.count?.(0);
+    count.addEventListener('pointerdown', e => {
+      const step = (e.target as Element).closest<HTMLElement>('[data-step]');
+      if (!step) return;
+      try { step.setPointerCapture(e.pointerId); } catch { /* not all browsers allow it */ }
+      this.h.count?.(Number(step.dataset.step) as -1 | 1);
+    });
+    count.addEventListener('pointerup', letGo);
+    count.addEventListener('pointercancel', letGo);
+    count.addEventListener('lostpointercapture', letGo);
+    // Anywhere outside the box while it asks (or says something by itself): no, or it closes.
+    this.el.scrim!.addEventListener('click', () => this.h.dismiss?.());
     this.el.close!.addEventListener('click', () => this.toggleBag(false));
     this.el.menuBtn!.addEventListener('click', () => this.toggleMenu());
     this.el.menuBag!.addEventListener('click', () => { this.toggleMenu(false); this.toggleBag(true); });
@@ -456,9 +493,10 @@ export class Hud {
       p.toggleAttribute('data-zoom');
       e.target.scrollIntoView({ block: 'center', inline: 'center' });
     });
+    // Short of something, the button still answers: the game says what the stash lacks.
     this.el.benchList!.addEventListener('click', e => {
       const it = (e.target as Element).closest<HTMLButtonElement>('[data-make]');
-      if (it && !it.disabled) this.h.craft?.(it.dataset.make!);
+      if (it) this.h.craft?.(it.dataset.make!);
     });
     this.el.menuAbout!.addEventListener('click', () => { this.toggleMenu(false); this.toggleAbout(true); });
     this.el.aboutClose!.addEventListener('click', () => this.toggleAbout(false));
@@ -471,14 +509,9 @@ export class Hud {
       // Tapping the open slot again, or an empty one, closes the details.
       this.choose(this.bag[i] && this.picked?.slot !== i ? i : null);
     });
+    // The game asks first, in the text box: the details stay open meanwhile, and after, while the slot holds the same.
     this.el.use!.addEventListener('click', () => { if (this.picked) this.h.use(this.picked.slot); });
-    this.el.toss!.addEventListener('click', () => { this.asking = true; this.showDetail(); });
-    this.el.tossNo!.addEventListener('click', () => { this.asking = false; this.showDetail(); });
-    this.el.tossYes!.addEventListener('click', () => {
-      if (!this.picked) return;
-      this.h.discard(this.picked.slot);
-      this.choose(null);
-    });
+    this.el.toss!.addEventListener('click', () => { if (this.picked) this.h.discard(this.picked.slot); });
   }
 
   get bagOpen(): boolean {
@@ -660,7 +693,7 @@ export class Hud {
   setBench(recipes: RecipeView[]) {
     const html = recipes.map(r => `<div class="recipe"${r.can ? '' : ' data-short'}><div class="big">${r.icon}</div><div class="words"><b>${esc(r.name)}</b><span class="rfacts">${esc(r.facts)}</span>
       <span class="needs">${r.needs.map(n => `<span class="need"${n.have >= n.need ? '' : ' data-short'} title="${esc(n.name)}">${n.icon}<i>${Math.min(n.have, n.need)}/${n.need}</i></span>`).join('')}</span></div>
-      <button type="button" class="act go" data-make="${esc(r.id)}"${r.can ? '' : ' disabled'}>${esc(r.act ?? 'Make')}</button></div>`).join('');
+      <button type="button" class="act go" data-make="${esc(r.id)}"${r.can ? '' : ' aria-disabled="true"'}>${esc(r.act ?? 'Make')}</button></div>`).join('');
     if (html !== this.shown.bench) { this.shown.bench = html; this.el.benchList!.innerHTML = html; }
   }
 
@@ -773,7 +806,6 @@ export class Hud {
     if (this.stashOpen) { this.toggleStash(false); return true; }
     if (this.benchOpen) { this.toggleBench(false); return true; }
     if (!this.bagOpen) return false;
-    if (this.asking) { this.asking = false; this.showDetail(); return true; }
     if (this.picked) { this.choose(null); return true; }
     return false;
   }
@@ -843,7 +875,6 @@ export class Hud {
   private choose(slot: number | null) {
     const s = slot === null ? undefined : this.bag[slot];
     this.picked = s ? { slot: slot!, item: s.item } : null;
-    this.asking = false;
     this.showDetail();
   }
 
@@ -852,7 +883,7 @@ export class Hud {
     const p = this.picked, s = p ? this.bag[p.slot] : undefined;
     this.slotEls.forEach((el, i) => el.toggleAttribute('data-picked', i === p?.slot));
     this.el.hint!.hidden = !!s;
-    this.el.about!.hidden = this.el.acts!.hidden = this.el.ask!.hidden = true;
+    this.el.about!.hidden = this.el.acts!.hidden = true;
     if (!s) {
       this.el.hint!.textContent = this.bag.length ? PICK_SLOT : EMPTY_BAG;
       return;
@@ -867,13 +898,8 @@ export class Hud {
     // Its countdown line comes with the next tickLive.
     this.liveShown.delete(p!.slot);
     this.el.use!.textContent = s.useLabel;
-    if (this.asking) {
-      this.el.ask!.hidden = false;
-      this.el.askText!.textContent = tossQuestion(s.count);
-    } else {
-      this.el.acts!.hidden = false;
-      this.el.use!.hidden = !s.usable;
-    }
+    this.el.acts!.hidden = false;
+    this.el.use!.hidden = !s.usable;
   }
 
   get menuOpen(): boolean {
@@ -986,12 +1012,67 @@ export class Hud {
     this.el.ping!.textContent = state === 'online' && pingMs !== undefined ? `${Math.round(pingMs)} ms` : '';
   }
 
+  /** Someone's lines in the text box, typed out as far as `text` goes. Called every frame. */
   setDialog(d: DialogView | null) {
-    this.root.classList.toggle('talking', !!d);
-    if (!d) return;
-    this.el.who!.textContent = d.who;
-    this.el.text!.textContent = d.text;
-    this.el.more!.style.visibility = d.done ? 'visible' : 'hidden';
+    this.box.talk = d;
+    this.showBox();
+  }
+
+  /** A question in the text box (ask.ts), or none. Called when it changes. */
+  setAsk(q: AskView | null) {
+    this.box.ask = q;
+    this.showBox();
+  }
+
+  /** What the text box says by itself, or nothing. Called when it changes: a new one starts its line running out. */
+  setNote(n: NoteView | null) {
+    this.box.note = n;
+    const timer = this.el.timer!;
+    for (const a of timer.getAnimations()) a.cancel();
+    timer.hidden = !n || n.waiting;
+    // One animation per note, run by the browser: nothing to do each frame.
+    if (n && !n.waiting && n.ms > 0) timer.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: n.ms, easing: 'linear', fill: 'forwards' });
+    this.showBox();
+  }
+
+  /**
+   * The text box: a question first, then what it says by itself, then someone's lines. A question and
+   * what the box says by itself stand above the panels, over a scrim that takes a tap anywhere else;
+   * A, B and the stick stay above it. Only what changed is written to the page.
+   */
+  private showBox() {
+    const { talk, ask, note } = this.box, s = this.boxShown;
+    const mode = ask ? 'ask' : note ? 'note' : talk ? 'talk' : '';
+    if (mode !== s.mode) {
+      s.mode = mode;
+      this.root.classList.toggle('talking', !!mode);
+      this.root.classList.toggle('asking', mode === 'ask' || mode === 'note');
+      this.el.dialog!.dataset.mode = mode;
+      this.el.scrim!.hidden = mode !== 'ask' && mode !== 'note';
+      this.el.choices!.hidden = mode !== 'ask';
+    }
+    const shown = ask ?? note ?? talk;
+    if (!shown) return;
+    if (shown.who !== s.who) this.el.who!.textContent = s.who = shown.who;
+    if (shown.text !== s.text) this.el.text!.textContent = s.text = shown.text;
+    const done = mode === 'talk' && !!talk?.done;
+    if (done !== s.done) this.el.more!.style.visibility = (s.done = done) ? 'visible' : 'hidden';
+    // A question comes anew with every change (setAsk), so the same one is never drawn twice.
+    if (ask === s.ask) return;
+    s.ask = ask;
+    for (const b of this.el.choices!.querySelectorAll<HTMLElement>('[data-choice]')) {
+      const on = b.dataset.choice === ask?.choice;
+      b.toggleAttribute('data-on', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+    const c = ask?.count;
+    this.el.count!.hidden = !c;
+    if (!c) return;
+    this.el.countN!.textContent = `×${c.n}`;
+    // Dimmed at either end, but still pressable, so a finger holding it never gets stuck.
+    const [less, more] = this.el.count!.querySelectorAll<HTMLElement>('[data-step]');
+    less!.setAttribute('aria-disabled', String(c.n <= c.min));
+    more!.setAttribute('aria-disabled', String(c.n >= c.max));
   }
 
   /** Name tags above other players and near piles, positioned in screen pixels. */
