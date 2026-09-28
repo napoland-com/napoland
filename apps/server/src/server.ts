@@ -1,6 +1,6 @@
 /**
- * One running game server: HTTP + WebSocket on one port, the World (with the piles, marks and thanks
- * saved before a restart), its tick and periodic saves, the hourly cleanup of thanks older than
+ * One running game server: HTTP + WebSocket on one port, the World (with the piles, marks, thanks and
+ * what lies in the crates, saved before a restart), its tick and periodic saves, the hourly cleanup of thanks older than
  * THANKS_KEPT_DAYS, and with sign-in, the daily cleanup of guests who stayed away. main.ts builds it
  * from the environment; tests start it directly.
  */
@@ -110,6 +110,9 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // Who thanked whom is kept THANKS_KEPT_DAYS: for the once-a-day rule and the letters home.
   const thanks = await o.storage.loadThanks(Date.now() - THANKS_KEPT_MS);
   if (thanks.length) log.info('thanks loaded', { thanks: thanks.length });
+  // What lies in the crates stays until someone takes it.
+  const cacheItems = await o.storage.loadCacheItems();
+  if (cacheItems.length) log.info('crates loaded', { things: cacheItems.length });
   const forgetThanks = async () => {
     try {
       await o.storage.forgetThanks(Date.now() - THANKS_KEPT_MS);
@@ -125,6 +128,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     cycle,
     marks,
     thanks,
+    cacheItems,
     stone,
     now: clock(),
     // Where players run out tells how hard each part of the world really is.

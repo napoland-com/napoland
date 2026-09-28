@@ -12,6 +12,8 @@
  * Plain logic with no page in it, so it is tested; game.ts runs it, hud.ts shows the text box.
  */
 import { FIRE_RADIUS, type Dir, type MapData, type MarkView, type PersonView, type Refusal, type ThanksFor, type ThanksGroup } from '@napoland/shared';
+import type { Items } from './items';
+import { nounOf } from './said';
 
 /** How long you warm by a fire someone else fed, standing still, before the text box offers to thank them. */
 export const THANK_AFTER_MS = 3000;
@@ -47,12 +49,17 @@ const withThe = (name: string) => (/^the /i.test(name) ? inSentence(name) : `the
 
 /**
  * What a thanks was for, as a sentence names it: "the fire at the ranger's hut", "the fire at the leavers'
- * camp", "the campfire in the Near Woods", "your arrow by the pond" (the nearest place the map names).
- * `find` gives a map's data by id (every map ships with the client).
+ * camp", "the campfire in the Near Woods", "your arrow by the pond" (the nearest place the map names),
+ * "the resin you left in the old cabin's crate". `find` gives a map's data by id (every map ships with
+ * the client).
  */
-export function thanksFor(what: ThanksFor, find: (id: string) => MapData | undefined): string {
+export function thanksFor(what: ThanksFor, find: (id: string) => MapData | undefined, items: Items): string {
   const map = find(what.map);
   switch (what.kind) {
+    case 'cache': {
+      const crate = map?.objects.find(o => o.kind === 'cache' && o.x === what.x && o.y === what.y);
+      return `the ${nounOf(items.get(what.item))} you left in ${crate?.kind === 'cache' ? crate.name : 'a crate'}`;
+    }
     case 'fire': {
       if (!map) return 'a fire you fed';
       const fire = map.objects.find(o => o.kind === 'fireplace' && o.x === what.x && o.y === what.y);
@@ -83,9 +90,9 @@ function timesOf(g: ThanksGroup): string {
  * The letter home, in at most three short lines, the most thanked first: "While you were away, 4 people
  * thanked you for the fire at the ranger's hut." Past three things, the last line says how many more.
  */
-export function letterLines(groups: readonly ThanksGroup[], find: (id: string) => MapData | undefined): string[] {
+export function letterLines(groups: readonly ThanksGroup[], find: (id: string) => MapData | undefined, items: Items): string[] {
   const shown = groups.length > 3 ? groups.slice(0, 2) : groups;
-  const lines = shown.map(g => `${whoOf(g)} thanked you${timesOf(g)} for ${thanksFor(g.what, find)}.`);
+  const lines = shown.map(g => `${whoOf(g)} thanked you${timesOf(g)} for ${thanksFor(g.what, find, items)}.`);
   if (groups.length > 3) {
     const rest = groups.slice(2).reduce((n, g) => n + g.count, 0);
     lines.push(`And ${rest} more thanks, for other things.`);

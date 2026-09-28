@@ -4,7 +4,8 @@
  * out what the World has to say, each message to the players it is for: one player, or everyone on
  * one map. Nothing a client sends is trusted. It also stores players (now and then, and when they
  * leave), piles and marks (whenever one changes), thanks (whenever one is given or told, with one more
- * thanks received for its helper) and the Old Stone (whenever it is fed or falls asleep).
+ * thanks received for its helper), what lies in the crates (whenever a thing is left or taken) and the
+ * Old Stone (whenever it is fed or falls asleep).
  * Friends, requests, blocks, private messages and reports go to social.ts, one player's in order;
  * what is said to chat.ts, and calls without words to calls.ts. On a server with sign-in, whoever
  * says hello without it plays as a guest (a character that lives in their browser, by its token);
@@ -32,7 +33,7 @@ import { log } from './log';
 import { Calls } from './calls';
 import { Chat } from './chat';
 import { Social, type SocialMsg } from './social';
-import type { DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
 import { colorFor, type World } from './world';
 
 const HELLO_TIMEOUT_MS = 5000;
@@ -149,6 +150,8 @@ export function attachNet(o: NetOptions): Net {
   /** The same for each thanks (by giver, helper and day), and each helper's count of thanks received. */
   const pendingThanks = new Map<string, Promise<void>>();
   const pendingCredits = new Map<string, Promise<void>>();
+  /** The same for each thing left in a crate. */
+  const pendingCaches = new Map<number, Promise<void>>();
   let pendingStone: Promise<void> = Promise.resolve();
   let saving = false;
   let closing = false;
@@ -331,6 +334,15 @@ export function attachNet(o: NetOptions): Net {
       case 'thank':
         // Guests too: a thanks carries no words.
         world.thank(s.id, msg.who, msg.what, now);
+        return flush();
+      case 'cache':
+        world.openCache(s.id, msg.x, msg.y, now);
+        return flush();
+      case 'cacheLeave':
+        world.cacheLeave(s.id, msg.x, msg.y, msg.slot, now);
+        return flush();
+      case 'cacheTake':
+        world.cacheTake(s.id, msg.x, msg.y, msg.id, now);
         return flush();
       case 'befriend':
       case 'answer':
@@ -692,6 +704,18 @@ export function attachNet(o: NetOptions): Net {
     return done;
   }
 
+  /** Stores a thing left in a crate, or forgets it (taken). One thing's writes run in order, like persist(). */
+  function persistCache(id: number, item: CacheItemRecord | undefined): Promise<void> {
+    const done = (pendingCaches.get(id) ?? Promise.resolve())
+      .then(() => (item ? storage.saveCacheItem(item) : storage.removeCacheItem(id)))
+      .catch((err: unknown) => log.error('saving a crate failed', { id, err }))
+      .finally(() => {
+        if (pendingCaches.get(id) === done) pendingCaches.delete(id);
+      });
+    pendingCaches.set(id, done);
+    return done;
+  }
+
   function persistStone(stone: StoneRecord): Promise<void> {
     pendingStone = pendingStone.then(() => storage.saveStone(stone)).catch((err: unknown) => log.error('saving the Old Stone failed', { err }));
     return pendingStone;
@@ -699,11 +723,12 @@ export function attachNet(o: NetOptions): Net {
 
   /** Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag changed with one, the Old Stone. */
   function store(): void {
-    const { drops, players, marks, stone, thanks, credits } = world.takeWrites();
+    const { drops, players, marks, stone, thanks, credits, caches } = world.takeWrites();
     // Players first: a pile or a mark belongs to a player who must exist in the database.
     for (const rec of players) void persist(rec);
     for (const { owner, drop } of drops) void persistDrop(owner, drop);
     for (const { id, mark } of marks) void persistMark(id, mark);
+    for (const { id, item } of caches) void persistCache(id, item);
     for (const t of thanks) void persistThanks(t);
     for (const helper of credits) void persistCredit(helper);
     if (stone) void persistStone(stone);
@@ -802,7 +827,9 @@ export function attachNet(o: NetOptions): Net {
       store();
       for (const rec of recs) void persist(rec);
       // Includes writes for players who left just before, so storage can be closed after this.
-      await Promise.all([...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), pendingStone]);
+      await Promise.all([
+        ...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), ...pendingCaches.values(), pendingStone,
+      ]);
       // Clients get a moment to answer the close; then their sockets are cut.
       const force = setTimeout(() => {
         for (const ws of wss.clients) ws.terminate();

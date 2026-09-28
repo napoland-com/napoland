@@ -123,6 +123,23 @@ export interface ThanksRecord {
   name: string;
 }
 
+/**
+ * A thing left in a crate for whoever comes next (caches.ts): which crate (its map and tile), what, who
+ * left it and when. One unit each; a crate holds CACHE_SIZE at most. The server hands out the ids.
+ */
+export interface CacheItemRecord {
+  id: number;
+  map: string;
+  x: number;
+  y: number;
+  item: string;
+  owner: string;
+  /** The owner's name, shown with it. Not stored with it: it comes from the player. */
+  name: string;
+  /** When it was left, ms since the epoch. */
+  at: number;
+}
+
 /** The Old Stone: shards in it, whether it is awake, and when (ms since the epoch) that charge was so. */
 export interface StoneRecord {
   charge: number;
@@ -220,6 +237,10 @@ export interface Storage {
   forgetThanks(before: number): Promise<number>;
   /** One more thanks received by `helper`, online or not: their `thanked` count grows by one, on its own. */
   creditThanks(helper: string): Promise<void>;
+  /** Every thing lying in a crate, oldest first, with its owner's name. */
+  loadCacheItems(): Promise<CacheItemRecord[]>;
+  saveCacheItem(c: CacheItemRecord): Promise<void>;
+  removeCacheItem(id: number): Promise<void>;
   /** The Old Stone as it was last saved, or null. */
   loadStone(): Promise<StoneRecord | null>;
   saveStone(stone: StoneRecord): Promise<void>;
@@ -271,6 +292,7 @@ export class MemoryStorage implements Storage {
   private readonly drops = new Map<string, Omit<DropRecord, 'name'>>();
   private readonly marks = new Map<number, Omit<MarkRecord, 'name' | 'color'>>();
   private readonly thanks = new Map<string, Omit<ThanksRecord, 'name'>>();
+  private readonly cacheItems = new Map<number, Omit<CacheItemRecord, 'name'>>();
   private stone: StoneRecord | null = null;
   private since: number | undefined;
   private readonly off = new Set<string>();
@@ -353,6 +375,7 @@ export class MemoryStorage implements Storage {
       this.drops.delete(rec.id);
       for (const [id, m] of this.marks) if (m.owner === rec.id) this.marks.delete(id);
       for (const [key, t] of this.thanks) if (t.giver === rec.id || t.helper === rec.id) this.thanks.delete(key);
+      for (const [id, c] of this.cacheItems) if (c.owner === rec.id) this.cacheItems.delete(id);
       this.off.delete(rec.id);
       this.links = this.links.filter(l => l.from !== rec.id && l.to !== rec.id);
       this.tells = this.tells.filter(t => t.from !== rec.id && t.to !== rec.id);
@@ -438,6 +461,21 @@ export class MemoryStorage implements Storage {
   /** The stored thanks, for tests. */
   storedThanks(): Array<Omit<ThanksRecord, 'name'>> {
     return [...this.thanks.values()].map(t => ({ ...t, what: { ...t.what } }));
+  }
+
+  async loadCacheItems(): Promise<CacheItemRecord[]> {
+    return [...this.cacheItems.values()].map(c => ({ ...c, name: this.byId.get(c.owner)!.name })).sort((a, b) => a.at - b.at || a.id - b.id);
+  }
+
+  async saveCacheItem(c: CacheItemRecord): Promise<void> {
+    // Like the database's foreign key: whoever left it is a player who exists.
+    if (!this.byId.has(c.owner)) throw new Error(`there is no player ${c.owner}`);
+    const { name: _name, ...stored } = c;
+    this.cacheItems.set(c.id, stored);
+  }
+
+  async removeCacheItem(id: number): Promise<void> {
+    this.cacheItems.delete(id);
   }
 
   async loadStone(): Promise<StoneRecord | null> {
@@ -565,6 +603,17 @@ interface MarkRow {
   fades_at: Date | null;
 }
 
+interface CacheItemRow {
+  id: string;
+  map: string;
+  x: number;
+  y: number;
+  item: string;
+  owner: string;
+  name: string;
+  left_at: Date;
+}
+
 interface ThanksRow {
   giver: string;
   helper: string;
@@ -623,8 +672,10 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
 /** A jsonb thanks' `what` as the server wrote it, or null for anything else (such a thanks is left out). */
 const thanksFor = (json: unknown): ThanksFor | null => {
   const w = (typeof json === 'object' && json !== null ? json : {}) as Partial<Record<string, unknown>>;
-  if ((w.kind !== 'fire' && w.kind !== 'mark') || typeof w.map !== 'string' || !Number.isInteger(w.x) || !Number.isInteger(w.y)) return null;
-  return { kind: w.kind, map: w.map, x: w.x as number, y: w.y as number };
+  if ((w.kind !== 'fire' && w.kind !== 'mark' && w.kind !== 'cache') || typeof w.map !== 'string' || !Number.isInteger(w.x) || !Number.isInteger(w.y)) return null;
+  const at = { map: w.map, x: w.x as number, y: w.y as number };
+  if (w.kind !== 'cache') return { kind: w.kind, ...at };
+  return typeof w.item === 'string' ? { kind: 'cache', ...at, item: w.item } : null;
 };
 
 /** Held while migrating, so two servers starting together do not both apply the same file. */
@@ -807,6 +858,27 @@ export class PgStorage implements Storage {
   async creditThanks(helper: string): Promise<void> {
     // One statement, on its own column: whatever else changes the player meanwhile, no thanks is lost.
     await this.pool.query('UPDATE players SET thanked = thanked + 1 WHERE id = $1', [helper]);
+  }
+
+  async loadCacheItems(): Promise<CacheItemRecord[]> {
+    const r = await this.pool.query<CacheItemRow>(
+      `SELECT c.id, c.map, c.x, c.y, c.item, c.owner, p.name, c.left_at
+       FROM cache_items c JOIN players p ON p.id = c.owner
+       ORDER BY c.left_at, c.id`,
+    );
+    return r.rows.map(c => ({ id: Number(c.id), map: c.map, x: c.x, y: c.y, item: c.item, owner: c.owner, name: c.name, at: c.left_at.getTime() }));
+  }
+
+  async saveCacheItem(c: CacheItemRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO cache_items (id, map, x, y, item, owner, left_at) VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (id) DO UPDATE SET map = EXCLUDED.map, x = EXCLUDED.x, y = EXCLUDED.y, item = EXCLUDED.item, owner = EXCLUDED.owner, left_at = EXCLUDED.left_at`,
+      [c.id, c.map, c.x, c.y, c.item, c.owner, new Date(c.at)],
+    );
+  }
+
+  async removeCacheItem(id: number): Promise<void> {
+    await this.pool.query('DELETE FROM cache_items WHERE id = $1', [id]);
   }
 
   async loadStone(): Promise<StoneRecord | null> {

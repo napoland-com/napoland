@@ -332,8 +332,9 @@ export async function playFirstThenSignIn(storage: Storage): Promise<void> {
 
 /**
  * Guests who stayed away GUEST_DAYS are forgotten, on `storage` (in memory, or a real database, with
- * nobody else in it): with their pile, marks, links, messages and thanks, and their name is free again. A
- * guest seen since, and anyone signed in however long ago, stay. Returns who went, and who reported them.
+ * nobody else in it): with their pile, marks, links, messages, thanks and what they left in crates, and
+ * their name is free again. A guest seen since, and anyone signed in however long ago, stay. Returns who
+ * went, and who reported them.
  */
 export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ away: string; reporter: string }> {
   const now = Date.now(), cutoff = now - GUEST_DAYS * 86_400_000;
@@ -350,6 +351,8 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   await storage.saveThanks({ ...thanks, giver: away.id, helper: signed.id });
   await storage.saveThanks({ ...thanks, giver: signed.id, helper: away.id });
   await storage.saveThanks({ ...thanks, giver: signed.id, helper: lately.id });
+  await storage.saveCacheItem({ id: 7_000_002, map: 'woods', x: 4, y: 4, item: 'moss', owner: away.id, name: away.name, at: now - 1000 });
+  await storage.saveCacheItem({ id: 7_000_003, map: 'woods', x: 4, y: 4, item: 'moss', owner: lately.id, name: lately.name, at: now - 1000 });
   await storage.addReport({ reporter: signed.id, reported: away.id, reason: 'spam', quote: null, at: now - 1000 });
   // Coming back counts: seen now, it stays.
   expect(await storage.seen(back.id, now)).toBe(true);
@@ -362,6 +365,7 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   expect(await storage.linksOf(signed.id)).toEqual([]);
   expect(await storage.tellsTo(signed.id)).toEqual([]);
   expect((await storage.loadThanks(now - 60_000)).map(t => [t.giver, t.helper])).toEqual([[signed.id, lately.id]]);
+  expect((await storage.loadCacheItems()).map(c => c.owner)).toEqual([lately.id]);
   expect(await storage.seen(away.id, now)).toBe(false);
   for (const stays of [lately, signed, back]) expect(await storage.findPerson({ id: stays.id }), stays.name).not.toBeNull();
   // Nobody else has stayed away that long.

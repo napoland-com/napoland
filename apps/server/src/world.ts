@@ -51,8 +51,15 @@
  * whoever warms at the one or follows the other can thank them, once a UTC day each. The helper hears it
  * at once if online (a little energy out in the wilds, a line anywhere else), or in a letter when they
  * next walk into their home room. Who thanked whom is kept THANKS_KEPT_DAYS, in memory and in storage.
+ *
+ * Crates for whoever comes next (shared/caches.ts): where people rest by a fire out there, a crate holds
+ * a few things anyone left. Each visit (in its room, or near one in the open) a player may leave one
+ * thing from their bag and take one out; taking thanks whoever left it, and counts as taken out of the
+ * taker's stash, so it earns no XP at home. What lies in each crate is kept across restarts.
  */
 import {
+  CACHE_NEAR,
+  CACHE_SIZE,
   DIR_VEC,
   MARK_LIFETIME_MS,
   QUIRKS,
@@ -80,6 +87,7 @@ import {
   amount,
   bagLoad,
   bagSlotsOf,
+  cacheTakes,
   calendarDay,
   canMake,
   conditionsAt,
@@ -152,6 +160,7 @@ import {
   type Arrival,
   type BagSlot,
   type BodyView,
+  type CacheItemView,
   type Calendar,
   type ConditionsData,
   type ConditionsView,
@@ -202,7 +211,7 @@ import {
   type Weather,
 } from '@napoland/shared';
 import { FIRE_LOW_S, Fires, type Fire } from './fires';
-import type { DropRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
 
 export { MARK_LIFETIME_MS };
 
@@ -332,6 +341,8 @@ export interface Writes {
   thanks: ThanksRecord[];
   /** The helpers of the thanks given since, one entry for each: their count of thanks received grows by one each (Storage.creditThanks). */
   credits: string[];
+  /** Things left in crates (or taken out of them: undefined), by id. */
+  caches: Array<{ id: number; item: CacheItemRecord | undefined }>;
 }
 
 export interface WorldOptions {
@@ -351,6 +362,8 @@ export interface WorldOptions {
   marks?: MarkRecord[];
   /** Thanks given in the last THANKS_KEPT_DAYS, as saved before a restart. */
   thanks?: ThanksRecord[];
+  /** What lay in the crates before a restart. */
+  cacheItems?: CacheItemRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
   /**
@@ -410,6 +423,19 @@ interface Online {
   gifts: number;
   /** The last surge that caught them out in the wilds (map and round), so each is counted once. */
   surgedIn?: string;
+  /** The crate they visit (its key: in its room, or near it in the open), and whether they left one thing and took one this visit. */
+  visit: { cache: string; left: boolean; took: boolean } | null;
+}
+
+/** A crate for whoever comes next (caches.ts) on its map and tile, and what lies in it, oldest first. */
+interface Crate {
+  key: string;
+  map: TileMap;
+  x: number;
+  y: number;
+  /** In a room, the whole room is the visit; in the open, CACHE_NEAR around it. */
+  inside: boolean;
+  items: CacheItemRecord[];
 }
 
 /** A find rule of items.json, ready to use. */
@@ -513,6 +539,8 @@ const markUntil = (m: MarkRecord): number => m.until ?? m.placedAt + MARK_LIFETI
 const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, owner: m.owner, name: m.name, until: markUntil(m) });
 /** One thanks a day from a giver to a helper: its key. */
 const thanksDay = (giver: string, helper: string, day: number) => `${giver} ${helper} ${day}`;
+/** A crate by its map and tile. */
+const crateKey = (map: string, x: number, y: number) => `${map}:${x},${y}`;
 const NOBODY: ReadonlySet<string> = new Set();
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: w.kind, x: w.x, y: w.y, dir: w.dir, ...(w.chasing !== undefined && { chasing: w.chasing }) });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] =>
@@ -685,6 +713,11 @@ export class World {
    * nothing from them, thanks included. Nobody, until it is set.
    */
   blocks: (id: string) => ReadonlySet<string> = () => NOBODY;
+  /** The crates, by key (crateKey), and the same by map id. */
+  private readonly crates = new Map<string, Crate>();
+  private readonly cratesOn = new Map<string, Crate[]>();
+  private readonly cacheWrites = new Map<number, CacheItemRecord | undefined>();
+  private nextCacheId = 1;
 
   /** `maps` must fit together (validateWorld) and `items` must fit the maps (validateItems); `homeId` is a town. */
   constructor(maps: Iterable<TileMap>, homeId: string, weather: Weather, options: WorldOptions = {}) {
@@ -747,6 +780,15 @@ export class World {
       this.thanks.set(thanksDay(t.giver, t.helper, t.day), { ...t, what: { ...t.what } });
       this.thanksForgetAt = Math.min(this.thanksForgetAt, t.at + THANKS_KEPT_MS);
     }
+    for (const m of this.maps.values()) {
+      for (const o of m.data.objects) {
+        if (o.kind !== 'cache') continue;
+        const c: Crate = { key: crateKey(m.data.id, o.x, o.y), map: m, x: o.x, y: o.y, inside: m.data.kind === 'inside', items: [] };
+        this.crates.set(c.key, c);
+        this.cratesOn.set(m.data.id, [...(this.cratesOn.get(m.data.id) ?? []), c]);
+      }
+    }
+    for (const c of options.cacheItems ?? []) this.restoreCacheItem(c);
 
     for (const m of this.maps.values()) {
       const w = m.data.watchers;
@@ -888,9 +930,10 @@ export class World {
     this.resting.delete(r.id);
     const p: Online = {
       rec: r, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false, hitchAt: now, trail: [],
-      heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0,
+      heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
     };
     this.refresh(p, now);
+    this.revisit(p);
     this.players.set(r.id, p);
     this.onMap.get(map.data.id)!.add(p);
     const player = this.viewOf(p);
@@ -1541,7 +1584,7 @@ export class World {
   }
 
   /** Who a thanks is for (one of the fire's last feeders, or the arrow's painter), what for, and the tile it is given from; undefined when that no longer holds. */
-  private thankable(p: Online, who: string, what: { kind: 'fire'; x: number; y: number } | { kind: 'mark'; id: number }): { helper: PersonView; what: ThanksFor; near: [number, number] } | undefined {
+  private thankable(p: Online, who: string, what: { kind: 'fire'; x: number; y: number } | { kind: 'mark'; id: number }): { helper: PersonView; what: Extract<ThanksFor, { kind: 'fire' | 'mark' }>; near: [number, number] } | undefined {
     const map = p.map.data.id;
     if (what.kind === 'fire') {
       const fire = this.fires.at(p.map, what.x, what.y), helper = fire?.fed.find(f => f.id === who);
@@ -1642,6 +1685,89 @@ export class World {
     this.thanksForgetAt = next;
   }
 
+  /** Opens the crate on tile x,y (next to the player): they hear what is in it, and what they did at it this visit. */
+  openCache(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    const c = this.crateNextTo(p, x, y);
+    if (c) this.sendCache(p, c, now);
+  }
+
+  /**
+   * Leaves one of what is in bag slot `slot` in the crate on tile x,y next to the player, for whoever comes
+   * next: once a visit, never gear (or a tool), and only while the crate has room. A live find put down
+   * goes dim, as in a pile. It leaves the player for good: if it came out of their stash, it no longer
+   * counts as out. Everyone visiting the crate sees it.
+   */
+  cacheLeave(id: string, x: number, y: number, slot: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'cacheLeave', 'too_far');
+    }
+    const c = this.crateNextTo(p, x, y);
+    if (!c) return this.refuse(p, 'cacheLeave', 'too_far');
+    const s = p.rec.bag[slot], def = s && this.items.get(s.item);
+    if (!s || !def) return this.refuse(p, 'cacheLeave', 'empty_slot');
+    if (!cacheTakes(def)) return this.refuse(p, 'cacheLeave', 'no_gear');
+    const visit = this.visitAt(p, c);
+    if (visit.left) return this.refuse(p, 'cacheLeave', 'left_one');
+    if (c.items.length >= CACHE_SIZE) return this.refuse(p, 'cacheLeave', 'crate_full');
+    const item = (def.live && this.items.get(def.live.into)?.id) || def.id;
+    p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
+    const left: CacheItemRecord = { id: this.nextCacheId++, map: c.map.data.id, x: c.x, y: c.y, item, owner: id, name: p.rec.name, at: Math.floor(now + this.epochOffset) };
+    c.items.push(left);
+    this.cacheWrites.set(left.id, left);
+    visit.left = true;
+    // Saved now, with the crate's write, not at the next periodic save: a restart in between would
+    // otherwise find the thing both in the crate and still in the bag.
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    this.tellVisitors(c, now);
+    this.did(p, { kind: 'left', item });
+  }
+
+  /**
+   * Takes the thing `thing` out of the crate on tile x,y next to the player: once a visit, as far as the
+   * bag has room. It counts as taken out of their stash (out), so it earns no XP at home: crates cannot
+   * be farmed. It thanks whoever left it (thanks.ts), unless that is the player or they thanked them today.
+   */
+  cacheTake(id: string, x: number, y: number, thing: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'cacheTake', 'too_far');
+    }
+    const c = this.crateNextTo(p, x, y);
+    if (!c) return this.refuse(p, 'cacheTake', 'too_far');
+    const visit = this.visitAt(p, c);
+    if (visit.took) return this.refuse(p, 'cacheTake', 'took_one');
+    const i = c.items.findIndex(e => e.id === thing), e = c.items[i], def = e && this.items.get(e.item);
+    if (!e || !def) return this.refuse(p, 'cacheTake', 'gone');
+    const r = addToBag(p.rec.bag, def, 1, p.slots);
+    if (r.left) return this.refuse(p, 'cacheTake', 'bag_full');
+    p.rec.bag = r.bag;
+    const stash = p.rec.stash ?? emptyStash();
+    p.rec.stash = { ...stash, out: { ...stash.out, [def.id]: (stash.out[def.id] ?? 0) + 1 } };
+    c.items.splice(i, 1);
+    this.cacheWrites.set(e.id, undefined);
+    visit.took = true;
+    const mine = e.owner === id;
+    const thanked = !mine && this.giveThanks(p, { id: e.owner, name: e.name }, { kind: 'cache', map: c.map.data.id, x: c.x, y: c.y, item: def.id }, now);
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    this.tellVisitors(c, now);
+    this.did(p, { kind: 'took', item: def.id, name: e.name, ...(mine ? { mine: true as const } : {}), ...(thanked ? { thanked: true as const } : {}) });
+  }
+
   /** The player's counts toward feats as they are now: the status panel asks when it opens. */
   stats(id: string): void {
     const p = this.players.get(id);
@@ -1719,6 +1845,7 @@ export class World {
       ...(this.stoneWrite ? { stone: { ...this.stoneWrite } } : {}),
       thanks: [...this.thanksWrites.values()].map(t => ({ ...t, what: { ...t.what } })),
       credits: this.credits,
+      caches: [...this.cacheWrites].map(([id, c]) => ({ id, item: c && { ...c } })),
     };
     this.pileWrites.clear();
     this.saveNow.clear();
@@ -1726,6 +1853,7 @@ export class World {
     this.stoneWrite = undefined;
     this.thanksWrites.clear();
     this.credits = [];
+    this.cacheWrites.clear();
     return out;
   }
 
@@ -1773,7 +1901,10 @@ export class World {
     }
     const exit = p.map.exitAt(x, y);
     if (exit) this.cross(p, exit, now);
-    else this.rerate(p, now);
+    else {
+      this.rerate(p, now);
+      this.revisit(p);
+    }
   }
 
   /** Refuses step `seq`, telling the mover where they really are. */
@@ -1860,6 +1991,7 @@ export class World {
     p.queue.length = 0;
     p.after = undefined;
     p.trail = [];
+    this.revisit(p);
   }
 
   /**
@@ -2983,9 +3115,64 @@ export class World {
     this.saveNow.set(p.rec.id, p.rec);
   }
 
+  // ---------- crates for whoever comes next ----------
+
+  /** A thing left in a crate before a restart, back in it if the crate still stands, it is still something a crate takes and there is room (else it is forgotten). */
+  private restoreCacheItem(e: CacheItemRecord): void {
+    const c = this.crates.get(crateKey(e.map, e.x, e.y));
+    this.nextCacheId = Math.max(this.nextCacheId, e.id + 1);
+    if (!c || !cacheTakes(this.items.get(e.item)) || c.items.length >= CACHE_SIZE) {
+      this.cacheWrites.set(e.id, undefined);
+      return;
+    }
+    c.items.push({ ...e });
+  }
+
+  /** The crate on tile x,y of the player's map, right next to them. */
+  private crateNextTo(p: Online, x: number, y: number): Crate | undefined {
+    const c = this.crates.get(crateKey(p.map.data.id, x, y));
+    return c && manhattan(x, y, p.rec.x, p.rec.y) === 1 ? c : undefined;
+  }
+
+  /** The crate the player visits where they are now: the one in their room, or the nearest in the open within CACHE_NEAR. */
+  private crateHere(p: Online): Crate | undefined {
+    let best: Crate | undefined, far = Infinity;
+    for (const c of this.cratesOn.get(p.map.data.id) ?? []) {
+      const d = Math.max(Math.abs(c.x - p.rec.x), Math.abs(c.y - p.rec.y));
+      if ((c.inside || d <= CACHE_NEAR) && d < far) [best, far] = [c, d];
+    }
+    return best;
+  }
+
+  /** A visit to a crate starts as the player comes to it (into its room, or near it in the open), and ends as they leave. */
+  private revisit(p: Online): void {
+    const c = this.crateHere(p);
+    if (!c) p.visit = null;
+    else if (p.visit?.cache !== c.key) p.visit = { cache: c.key, left: false, took: false };
+  }
+
+  /** The player's visit to this crate (they stand next to it, so they are visiting it). */
+  private visitAt(p: Online, c: Crate): NonNullable<Online['visit']> {
+    if (p.visit?.cache !== c.key) p.visit = { cache: c.key, left: false, took: false };
+    return p.visit;
+  }
+
+  /** What is in a crate, the newest first, and what the player did at it this visit, for them. */
+  private sendCache(p: Online, c: Crate, now: number): void {
+    const wall = now + this.epochOffset, v = p.visit?.cache === c.key ? p.visit : null;
+    const items: CacheItemView[] = c.items.map(e => ({ id: e.id, item: e.item, owner: e.owner, name: e.name, age: Math.max(0, Math.round((wall - e.at) / 1000)) })).reverse();
+    this.outbox.push({ to: p.rec.id, msg: { t: 'cache', x: c.x, y: c.y, items, left: !!v?.left, took: !!v?.took } });
+  }
+
+  /** A crate changed: everyone visiting it sees it as it is now (whoever has it open follows it). */
+  private tellVisitors(c: Crate, now: number): void {
+    for (const q of this.onMap.get(c.map.data.id) ?? []) if (q.visit?.cache === c.key) this.sendCache(q, c, now);
+  }
+
   private refuse(
     p: Online,
-    action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'thank',
+    action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'thank'
+      | 'cacheLeave' | 'cacheTake',
     reason: Refusal,
   ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });

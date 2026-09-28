@@ -3,6 +3,7 @@
  * Everything the client sends is validated with these schemas; the server never trusts it.
  */
 import { z } from 'zod';
+import type { CacheItemView } from './caches';
 import { CALL_KINDS, type CallKind } from './calls';
 import { MAX_SAY_CHARS, type ChatTo } from './chat';
 import type { EnergyView } from './energy';
@@ -197,6 +198,12 @@ export const ClientMsg = z.discriminatedUnion('t', [
   }),
   /** Sing a call (calls.ts): everyone on your map within CALL_REACH hears it, you too. Anyone may, guests included. */
   z.object({ t: z.literal('call'), kind: z.enum(CALL_KINDS) }),
+  /** Open the crate on tile x,y, next to you (caches.ts): the server answers with what is in it. */
+  z.object({ t: z.literal('cache'), x: z.number().int(), y: z.number().int() }),
+  /** Leave one of what is in bag slot `slot` in the crate on tile x,y: once a visit, never gear. */
+  z.object({ t: z.literal('cacheLeave'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63) }),
+  /** Take the thing `id` out of the crate on tile x,y: once a visit; it thanks whoever left it. */
+  z.object({ t: z.literal('cacheTake'), x: z.number().int(), y: z.number().int(), id: z.number().int().nonnegative() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -309,7 +316,14 @@ export type Did =
   /** You opened a sealed `item` (a NAPO lockbox) at the chest: what it held (`got`) is in your stash now. */
   | { kind: 'opened'; item: string; got: BagSlot[] }
   /** You thanked `who` (their `name`) for feeding the fire or painting the arrow. */
-  | { kind: 'thanked'; who: string; name: string; what: 'fire' | 'mark' };
+  | { kind: 'thanked'; who: string; name: string; what: 'fire' | 'mark' }
+  /** You left one `item` in a crate, for whoever comes next. */
+  | { kind: 'left'; item: string }
+  /**
+   * You took one `item` out of a crate, left there by `name`: `mine`, you had left it yourself; `thanked`,
+   * it thanked them (not when you had thanked them today already).
+   */
+  | { kind: 'took'; item: string; name: string; mine?: true; thanked?: true };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -375,7 +389,14 @@ export type Refusal =
   /** Your level has not reached that outfit yet. */
   | 'locked'
   /** You thanked them today already: each helper once a UTC day. */
-  | 'thanked';
+  | 'thanked'
+  /** The crate holds as many things as it can. */
+  | 'crate_full'
+  /** Gear (and tools) stay out of a crate. */
+  | 'no_gear'
+  /** You left one thing in this crate this visit already, or took one. */
+  | 'left_one'
+  | 'took_one';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -513,6 +534,11 @@ export type ServerMsg =
   | { t: 'thanked'; name: string; what: ThanksFor; energy?: number; line?: true }
   /** You came home: who thanked you while you were away, and for what, the most thanked first. */
   | { t: 'letter'; thanks: ThanksGroup[] }
+  /**
+   * The crate on tile x,y of your map, as you opened it, or since it changed while you visit it: what is
+   * in it, the newest first, and whether you left one and took one this visit.
+   */
+  | { t: 'cache'; x: number; y: number; items: CacheItemView[]; left: boolean; took: boolean }
   /** Something asked for that did not happen, and why. */
   | { t: 'refused'; action: RefusedAction; reason: Refusal }
   /** Someone said something you can hear: to everyone online, or near them on your map (a bubble over their head). You hear your own too. */
@@ -599,6 +625,7 @@ export type ServerMsg =
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'say' | 'call' | 'thank'
+  | 'cacheLeave' | 'cacheTake'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
 
 /**
