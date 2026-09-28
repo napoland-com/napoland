@@ -85,6 +85,13 @@ const ICONS: Record<string, string> = {
     <circle cx="16" cy="16" r="6.5" fill="#7ff3e6"/>
     <path d="M13.2 13.6c.9-1.2 2.2-1.8 3.6-1.8" stroke="#effffd" stroke-width="1.4"/>
     <path d="M5.5 11.5c-1.4 3-1.4 6 0 9M26.5 11.5c1.4 3 1.4 6 0 9M8.8 13.4c-.6 1.7-.6 3.5 0 5.2M23.2 13.4c.6 1.7.6 3.5 0 5.2" stroke="#9ff5ec" stroke-width="1.3"/>`),
+  // NAPO's grey steel lockbox: a lid, a band of NAPO yellow and a padlock that has not been opened since the evacuation.
+  lockbox: icon(`<path d="M4.5 13h23v13.5c0 .8-.7 1.5-1.5 1.5H6c-.8 0-1.5-.7-1.5-1.5z" fill="#7d8b92"/>
+    <path d="M4 9.8c0-1 .8-1.8 1.8-1.8h20.4c1 0 1.8.8 1.8 1.8V13H4z" fill="#aebbc1"/>
+    <path d="M4.5 17.2h23v3.4h-23z" fill="#d6ad2f" stroke="none"/>
+    <path d="M14.3 15.6v-1.9a1.7 1.7 0 0 1 3.4 0v1.9" stroke-width="1.4"/>
+    <rect x="12.6" y="15.6" width="6.8" height="6.6" rx="1.2" fill="#4d5963"/>
+    <circle cx="16" cy="18.4" r=".9" fill="#e8dfc8" stroke="none"/><path d="M16 19.2v1.4" stroke-width="1.1"/>`),
 };
 
 /** Anything else: a small sack tied at the top. */

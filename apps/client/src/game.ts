@@ -10,6 +10,8 @@
  * - anything that uses up what you carry or keep asks first in the text box (ask.ts), or says why it
  *   cannot happen when that is known already; YES sends it, and the box then says what it did, from
  *   the server's answer (`did`, worded by said.ts);
+ * - a parcel that comes into your chest (signed in, the first time you play each day) is news, and the
+ *   stash says what came in it the next time it opens;
  * - people and NAPO's desks are in the story (story.ts): what someone says follows the chapter you
  *   are in, and the server hears whom you talked to or what you read; it says when a chapter is reached;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
@@ -23,15 +25,15 @@ import {
   surgeFront, takeFromBag, DIR_VEC,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type RefusedAction, type StormView,
+  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, refusalText, type Items } from './items';
 import {
-  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, makeQuestion, mendQuestion, noShard, nothingToBurn, sentence, shortOf, stashShort,
-  stoneQuestion, tossQuestion, useQuestion,
+  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, makeQuestion, mendQuestion, noShard, nothingToBurn, openQuestion, sentence,
+  shortOf, stashShort, stoneQuestion, tossQuestion, useQuestion,
 } from './said';
 import type { Maps } from './maps';
 import type { Avatar } from './view/world';
@@ -136,7 +138,9 @@ export type News =
   | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView }
   /** A new day's conditions, by name. */
   | { kind: 'conditions'; names: string[] }
-  | { kind: 'chapter'; chapter: Chapter };
+  | { kind: 'chapter'; chapter: Chapter }
+  /** A parcel came into your chest. */
+  | { kind: 'parcel'; parcel: ParcelView };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -147,7 +151,7 @@ export const CHAT_LOG = 100;
 /** What a `refused` can answer among friends: the friends panel says why. */
 const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'open']);
 
 export class Game {
   meId: string | null = null;
@@ -211,6 +215,8 @@ export class Game {
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
   bench: { x: number; y: number; stash: BagSlot[] } | null = null;
+  /** Parcels that came since the chest was last opened: it says what came in them, once (takeParcels). */
+  parcels: ParcelView[] = [];
   /** Your friends, requests and blocks as the server last told them (null until it has). */
   friends: FriendsMsg | null = null;
   /** Private messages this session, by the other player's id, oldest first; replaced whole on every change. */
@@ -495,6 +501,10 @@ export class Game {
       case 'gear':
         this.gear.set(msg.id, msg.gear);
         this.quirks.set(msg.id, msg.quirks);
+        break;
+      case 'parcel':
+        this.parcels = [...this.parcels, msg.parcel];
+        this.news.push({ kind: 'parcel', parcel: msg.parcel });
         break;
       case 'bench': {
         const b = this.benching;
@@ -786,6 +796,24 @@ export class Game {
   /** Close the chest (the panel went away). */
   closeChest() {
     this.chest = null;
+  }
+
+  /** The open chest says what came in the parcels it has not told yet: they are told from now on. */
+  takeParcels(): ParcelView[] {
+    const p = this.parcels;
+    this.parcels = [];
+    return p;
+  }
+
+  /**
+   * At the open chest: open a sealed thing from the stash (a NAPO lockbox). It asks first ("Open the NAPO
+   * lockbox? It has been sealed since the evacuation."), and the box then says what was inside.
+   */
+  openSealed(item: string) {
+    const c = this.chest;
+    if (!c || !this.online) return;
+    const def = this.items.get(item), text = openQuestion(def);
+    this.ask({ who: def.name, text, yes: () => this.act(def.name, text, { t: 'open', x: c.x, y: c.y, item }) });
   }
 
   /** At the open chest: put on a piece of gear from the stash, or take off what a slot wears. */

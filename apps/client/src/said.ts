@@ -4,38 +4,13 @@
  * concrete, and every number from the data (content/items.json: nouns, fuel, uses, recipes, what
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
-import { fireFull, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type Recipe, type StoneView } from '@napoland/shared';
+import { aOf, amount, countable, fireFull, nounOf, pluralOf, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type Recipe, type StoneView } from '@napoland/shared';
 import type { Items } from './items';
 
 // ---------- naming things in a sentence ----------
 
-/** One of an item in a sentence: its `noun`, or its name as a word ("Road flare": "road flare"). */
-export function nounOf(def: ItemDef): string {
-  return def.noun ?? def.name.charAt(0).toLowerCase() + def.name.slice(1);
-}
-
-/** Several: its `plural`, or the noun with an s. A noun that ends in one already names a pair or a heap: "rubber gloves", "cloth scraps". */
-export function pluralOf(def: ItemDef): string {
-  const n = nounOf(def);
-  return def.plural ?? (n.endsWith('s') ? n : `${n}s`);
-}
-
-/** Counted one by one ("a shard", "2 shards"), unlike resin or rubber gloves, whose plural is the same word. */
-function countable(def: ItemDef): boolean {
-  return pluralOf(def) !== nounOf(def);
-}
-
-/** "a raincoat", "an anomaly shard"; and without "a" what is not counted so: "resin", "rubber gloves". */
-export function aOf(def: ItemDef): string {
-  const n = nounOf(def);
-  return countable(def) ? `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n}` : n;
-}
-
-/** How many, as people say it: "a glowcap", "1 resin", "3 resin", "2 shards". */
-export function amount(def: ItemDef, n: number): string {
-  if (n !== 1) return `${n} ${pluralOf(def)}`;
-  return countable(def) ? aOf(def) : `1 ${nounOf(def)}`;
-}
+// How items are named is shared: the notice board, which the server writes, names them the same way.
+export { aOf, amount, nounOf, pluralOf };
 
 /** Always with its number, for a list of what something takes: "1 scrap", "8 cloth", "2 shards". */
 export function counted(def: ItemDef, n: number): string {
@@ -123,6 +98,17 @@ export function mendQuestion(def: ItemDef, cost: readonly BagSlot[], items: Item
   return `Mend your ${nounOf(def)}? It uses ${listOf(cost.map(x => counted(items.get(x.item), x.count)))}.`;
 }
 
+/** At the chest, before a sealed thing is opened: "Open the NAPO lockbox? It has been sealed since the evacuation." */
+export function openQuestion(def: ItemDef): string {
+  return `Open the ${nounOf(def)}?${def.seal ? ` ${def.seal}` : ''}`;
+}
+
+/** What a sealed thing may hold, for its card: "Inside is one of these: 3 shards, a strange object, a charm or 6 cloth and 4 wire." */
+export function holdsText(def: ItemDef, items: Items): string {
+  const each = (def.holds ?? []).map(h => (h.any !== undefined ? `a ${h.any}` : listOf((h.items ?? []).map(s => amount(items.get(s.item), s.count)))));
+  return each.length > 1 ? `Inside is one of these: ${listOf(each, 'or')}.` : each.length ? `Inside: ${each[0]}.` : 'It is empty.';
+}
+
 // ---------- why it cannot happen ----------
 
 export const TENDED = 'Someone keeps this fire going. It needs nothing.';
@@ -186,7 +172,7 @@ export function didWho(did: Did, items: Items): string {
     case 'fire': return 'Fire';
     case 'stone': return 'The Old Stone';
     case 'made': case 'mended': return 'Workbench';
-    case 'used': case 'thrown': return items.get(did.item).name;
+    case 'used': case 'thrown': case 'opened': return items.get(did.item).name;
   }
 }
 
@@ -228,6 +214,12 @@ export function didText(did: Did, items: Items): string {
       return `You mend your ${nounOf(def)}: as good as new.`;
     case 'thrown':
       return `You throw away ${amount(def, did.count)}.`;
+    case 'opened': {
+      // One thing inside says what it is good for, as a strange object does.
+      const about = did.got.length === 1 ? items.get(did.got[0]!.item).about : undefined;
+      if (!did.got.length) return `The ${nounOf(def)} is empty.`;
+      return `Inside: ${listOf(did.got.map(s => amount(items.get(s.item), s.count)))}.${about ? ` ${about}` : ''}`;
+    }
   }
 }
 

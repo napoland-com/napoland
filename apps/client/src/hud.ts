@@ -66,6 +66,8 @@ export interface HudHandlers {
    */
   equip?(item: string, n?: number): void;
   unequip?(slot: Slot): void;
+  /** At the chest: open a sealed thing from the stash (a NAPO lockbox); the game asks first. */
+  open?(item: string): void;
   craft?(recipe: string): void;
   benchClosed?(): void;
   /** What a tap in the chest or at the workbench shows: its card, as the game stands now (null: it is gone). */
@@ -283,6 +285,8 @@ export class Hud {
   private showSound: (s: SoundSetting) => void = () => {};
   /** You play as a guest: the status panel says so, and chat and friends show what signing in opens. */
   private guest = false;
+  /** What the stash says came in parcels, while it is open. */
+  private parcelLines: string[] = [];
 
   constructor(parent: HTMLElement, private h: HudHandlers) {
     this.root = document.createElement('div');
@@ -335,6 +339,7 @@ export class Hud {
       <div class="sheet panel stash-sheet docked" data-el="stashSheet" data-open="false" role="dialog" aria-label="Stash">
         <div class="sheet-head"><b>Stash</b><span class="room" data-el="stashXp"></span><button type="button" class="close" data-el="stashClose" aria-label="Close the stash">${ICON.x}</button></div>
         <div class="sheet-body" data-el="stashBody">
+          <div class="parcel-note" data-el="stashParcels" role="status" hidden></div>
           <p class="hint">What you bring home earns XP. Tap something to see it, and tap it twice to put it away.</p>
           <div class="grid" data-el="stashBag">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-bag="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
           <div class="acts"><button type="button" class="act go" data-el="storeAll">Put everything in</button></div>
@@ -745,6 +750,8 @@ export class Hud {
     // It opens at the top of the list, never on a card left from last time; closing, the card slides away with it.
     if (open && !was) { this.el.stashBody!.scrollTop = 0; if (this.docked === 'stash') this.closeCard(); }
     else if (!open && this.card?.where === 'stash') this.forgetCard();
+    // What came in the parcels is said once: it goes with the panel.
+    if (!open && this.parcelLines.length) { this.parcelLines = []; this.showParcels(); }
     this.el.stashSheet!.dataset.open = String(open);
     if (was && !open) this.h.stashClosed?.();
   }
@@ -781,6 +788,18 @@ export class Hud {
       el.setAttribute('aria-label', w ? `${w.name}${w.cond === undefined ? '' : `, ${Math.round(w.cond * 100)}% left`}${w.quirk ? `, ${w.quirk}` : ''}` : `${sl}: nothing`);
     });
     this.refreshCard();
+  }
+
+  /** At the top of the open stash: what came in parcels, since it last opened or while it is open. It goes when the stash closes. */
+  addParcels(lines: readonly string[]) {
+    this.parcelLines = [...this.parcelLines, ...lines];
+    this.showParcels();
+  }
+
+  private showParcels() {
+    const el = this.el.stashParcels!;
+    el.hidden = !this.parcelLines.length;
+    el.replaceChildren(...this.parcelLines.map(t => { const p = document.createElement('p'); p.textContent = t; return p; }));
   }
 
   /** What the open stash holds, and your XP for its header. Only written to the page when it changed. */
@@ -950,6 +969,7 @@ export class Hud {
       case 'off': return this.h.unequip?.(a.slot);
       case 'make': return this.bench(a.recipe);
       case 'mend': return this.bench(`mend:${a.slot}`);
+      case 'open': return this.h.open?.(a.item);
     }
   }
 

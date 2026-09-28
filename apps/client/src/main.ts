@@ -25,6 +25,7 @@ import { Maps } from './maps';
 import { mapFor, paperMap } from './papermap';
 import { providerButton } from './providers';
 import { Connection, serverUrl } from './net';
+import { parcelNote } from './parcels';
 import { Sound, type SoundSetting } from './sound';
 import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
@@ -142,6 +143,7 @@ const hud = new Hud(screen, {
   stashClosed: () => game.closeChest(),
   equip: (item, n) => game.equip(item, n),
   unequip: slot => game.unequip(slot),
+  open: item => game.openSealed(item),
   // The workbench's rows are recipes, and mending ("mend:" and the slot).
   craft: recipe => (recipe.startsWith('mend:') ? game.mend(recipe.slice(5) as Slot) : game.craft(recipe)),
   benchClosed: () => game.closeBench(),
@@ -697,11 +699,14 @@ function frame(now: number) {
     // A dot on the menu until the journal is opened (it shows the chapter at once if it is open).
     if (n.kind === 'chapter') { toSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
     if (n.kind === 'feat') { toSay.push(n); continue; }
-    const b = newsBanner(n, game.map.data.name);
+    // A parcel that comes on arrival waits for the place's name to be read first; one that comes while
+    // the chest is open needs no banner, as the stash says what came (below).
+    if (n.kind === 'parcel') { if (!game.chest) toSay.push(n); continue; }
+    const b = newsBanner(n, game.map.data.name, items);
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (toSay.length && !game.dialog && !boxUp() && !panelOpen() && !hud.bannerUp && !arrival.dark) {
-    const b = newsBanner(toSay.shift()!, game.map.data.name);
+    const b = newsBanner(toSay.shift()!, game.map.data.name, items);
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (game.storyChanges !== storyShown) {
@@ -747,6 +752,8 @@ function frame(now: number) {
     if (game.chest) hud.setStash(slotViews(game.chest.stash, items), levelText(game.progress));
     hud.setLevel(game.progress.level);
   }
+  // Open, the stash says once what came in the parcels since it last opened, and in one that comes while it is.
+  if (game.chest && game.parcels.length) hud.addParcels(game.takeParcels().map(p => parcelNote(p, items)));
   const t = (now - start) / 1000;
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;

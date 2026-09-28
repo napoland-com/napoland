@@ -116,6 +116,30 @@ export function storeLive(s: Stash, into: string, xp: number): { stash: Stash; x
   return { stash: { ...s, items: { ...s.items, [into]: (s.items[into] ?? 0) + 1 }, out: { ...s.out } }, xp };
 }
 
+/**
+ * Puts `add` into the stash as a gift (a parcel, or what a lockbox held): it earns no XP, since it was
+ * not brought home, and pays nothing off `out`, since it never came out. Taken out and brought back
+ * later, it earns nothing either, like anything taken out of the stash. Unknown items are left out.
+ */
+export function gift(s: Stash, add: readonly BagSlot[], items: Map<string, ItemDef>): Stash {
+  const out: Stash = { ...s, items: { ...s.items }, out: { ...s.out } };
+  for (const a of add) {
+    if (!items.has(a.item) || !(a.count > 0)) continue;
+    out.items[a.item] = (out.items[a.item] ?? 0) + Math.floor(a.count);
+  }
+  return out;
+}
+
+/** One sealed `item` opened in the stash: it goes, and what it held (`got`) comes in as a gift. Undefined when the stash holds none. */
+export function openInStash(s: Stash, item: string, got: readonly BagSlot[], items: Map<string, ItemDef>): Stash | undefined {
+  const have = s.items[item] ?? 0;
+  if (have < 1) return undefined;
+  const left: Stash = { ...s, items: { ...s.items }, out: { ...s.out } };
+  if (have > 1) left.items[item] = have - 1;
+  else delete left.items[item];
+  return gift(left, got, items);
+}
+
 /** Takes up to `count` of an item out of the stash. Returns the new stash and how many came out. */
 export function takeOut(s: Stash, item: string, count: number): { stash: Stash; taken: number } {
   const have = s.items[item] ?? 0, taken = Math.max(0, Math.min(have, Math.floor(count)));
