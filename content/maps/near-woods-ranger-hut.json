@@ -1,7 +1,7 @@
 {
   "id": "near-woods-ranger-hut",
   "name": "The ranger's hut",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 7,
@@ -31,6 +31,7 @@
     {"kind":"shelf","x":1,"y":1},
     {"kind":"bed","x":5,"y":1},
     {"kind":"table","x":1,"y":3},
-    {"kind":"crate","x":5,"y":4}
+    {"kind":"crate","x":5,"y":4},
+    {"kind":"cache","x":2,"y":3,"name":"the ranger's crate"}
   ]
 }

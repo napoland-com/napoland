@@ -69,17 +69,57 @@ export type MapObject =
   | { kind: 'tree'; x: number; y: number; s: number; v: number }
   | { kind: 'rock'; x: number; y: number; s: number; v: number }
   /**
-   * A building you can enter: a wooden cabin (3 by 2, a gabled roof in `roof`), or with style 'napo'
-   * one of NAPO's concrete buildings (3 by 2 or bigger, a flat roof in `roof`). Lit: someone is home.
+   * A building you can enter: a wooden cabin (3 by 2, a gabled roof in `roof`), with style 'napo' one
+   * of NAPO's concrete buildings (3 by 2 or bigger, a flat roof in `roof`), or with style 'mill' the
+   * old sawmill, long and low, timber under a sawtooth roof (`roof` its rusted metal). Lit: someone is
+   * home. `curtains`: a cabin whose people left and drew the curtains behind them; its windows never light.
    */
-  | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' }
+  | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' | 'mill'; curtains?: boolean }
   | { kind: 'lamp'; x: number; y: number }
-  /** A wooden signpost, or with style 'napo' one of NAPO's yellow warning signs. */
-  | { kind: 'sign'; x: number; y: number; text: string[]; style?: 'napo' }
+  /**
+   * A wooden signpost; with style 'napo' one of NAPO's yellow warning signs, 'cardboard' a piece of
+   * cardboard someone wrote on, 'mailbox' the mailbox by a door with the family's name on it.
+   */
+  | { kind: 'sign'; x: number; y: number; text: string[]; style?: 'napo' | 'cardboard' | 'mailbox' }
   | { kind: 'pole'; x: number; y: number }
   | { kind: 'fence'; x: number; y: number; dir: 'h' | 'v' }
   | { kind: 'barrel'; x: number; y: number }
-  | { kind: 'car'; x: number; y: number; w: number }
+  /**
+   * A car left where it stopped: w by h tiles (2 by 1, or 1 by 2 along a road that runs north), its nose
+   * toward `dir` (east when left out), in `paint` (#rrggbb; the town's old teal when left out), with a
+   * `door` left open or the `trunk` left up.
+   */
+  | { kind: 'car'; x: number; y: number; w: number; h?: number; dir?: Dir; paint?: string; door?: boolean; trunk?: boolean }
+  /**
+   * A truck left where it stood: a logging truck, rusted, its last load still chained on, or with style
+   * 'napo' one of NAPO's box trucks. w by h tiles, one wide, its nose toward `dir`.
+   */
+  | { kind: 'truck'; x: number; y: number; w: number; h: number; dir: Dir; style?: 'napo' }
+  /** One of NAPO's field jeeps, burned out, a door hanging open: you read what is stenciled on it like a sign, from beside it. */
+  | { kind: 'jeep'; x: number; y: number; w: number; h: number; dir: Dir; text: string[] }
+  /** A deck of felled logs on its w by h tiles: lying east to west on a deck one tile deep, north to south (their cut ends to the camera) on any other. */
+  | { kind: 'logs'; x: number; y: number; w: number; h: number }
+  /** What is left of a fir the loggers cut, or, `burned`, one a fire took. */
+  | { kind: 'stump'; x: number; y: number; s: number; v: number; burned?: boolean }
+  /** A log laid across a skid road and half sunk in the mud: walked over. `dir`: which way the road runs. */
+  | { kind: 'skid'; x: number; y: number; dir: 'h' | 'v' }
+  /** One of NAPO's survey stakes, with orange flagging: only drawn, walked past. */
+  | { kind: 'stake'; x: number; y: number }
+  /** Suitcases and bags as they were left, when they would not fit in the car. */
+  | { kind: 'luggage'; x: number; y: number }
+  /** Cardboard boxes, some taped shut, some half packed. */
+  | { kind: 'boxes'; x: number; y: number }
+  | { kind: 'rocker'; x: number; y: number }
+  /** An upright piano under a tarp: two tiles wide. */
+  | { kind: 'piano'; x: number; y: number }
+  /** A child's bike, lying on its side. */
+  | { kind: 'bike'; x: number; y: number }
+  /** An empty birdcage, its door open. */
+  | { kind: 'birdcage'; x: number; y: number }
+  /** NAPO's fuel pump, in its motor pool. */
+  | { kind: 'pump'; x: number; y: number }
+  /** One of NAPO's sample cages: a rock from deep in the woods behind steel mesh; you read its tag like a sign. */
+  | { kind: 'cage'; x: number; y: number; text: string[] }
   | { kind: 'stone'; x: number; y: number }
   | { kind: 'npc'; x: number; y: number; id: string; name: string; dir: Dir; lines: string[]; look?: NpcLook }
   | { kind: 'shrooms'; x: number; y: number }
@@ -100,6 +140,11 @@ export type MapObject =
   | { kind: 'chest'; x: number; y: number }
   /** The workbench, beside the chest at home: it makes gear from what your stash holds (recipes in content/items.json). */
   | { kind: 'workbench'; x: number; y: number }
+  /**
+   * A crate for whoever comes next (caches.ts), where people rest by a fire out there: anyone opens it,
+   * leaves a thing and takes one. `name`: what people call it, as a letter says it ("the old cabin's crate").
+   */
+  | { kind: 'cache'; x: number; y: number; name: string }
   /** Furniture, inside buildings. A bed is one tile wide and two long (head at y); a rug is only drawn. */
   | { kind: 'bed'; x: number; y: number }
   | { kind: 'table'; x: number; y: number }
@@ -107,7 +152,31 @@ export type MapObject =
   | { kind: 'crate'; x: number; y: number }
   /** Split firewood stacked against the nearest wall. Nothing to do with it: it only stands in the way. */
   | { kind: 'woodpile'; x: number; y: number }
-  | { kind: 'rug'; x: number; y: number; w: number; h: number };
+  | { kind: 'rug'; x: number; y: number; w: number; h: number }
+  /** A hearth nobody lights any more, against the top wall like a fireplace: cold, it gives nothing. */
+  | { kind: 'hearth'; x: number; y: number }
+  /** Furniture under a dust sheet, as it was covered when the house was shut. */
+  | { kind: 'sheeted'; x: number; y: number }
+  | { kind: 'crib'; x: number; y: number }
+  /** A tall clock against the wall, stopped. */
+  | { kind: 'clock'; x: number; y: number }
+  /**
+   * Something left to read, like a sign, under its `name`: a note or a list lying on a table (on a
+   * floor tile), or a calendar or a child's drawing hung on the wall (on a wall tile, read from the
+   * floor below it).
+   */
+  | { kind: 'paper'; x: number; y: number; name: string; text: string[]; look: 'note' | 'list' | 'calendar' | 'drawing' }
+  /** The sawmill's head saw: its two big wheels and the band between them, and the belts up to the line shaft. */
+  | { kind: 'saw'; x: number; y: number }
+  /** The saw carriage on its rails, w tiles long east to west, a log still dogged on it. */
+  | { kind: 'carriage'; x: number; y: number; w: number }
+  /** A drift of sawdust on the mill floor: walked through. */
+  | { kind: 'sawdust'; x: number; y: number };
+
+/** The ways a paper to read can look (MapObject 'paper'); the first two lie on a table, the others hang on a wall. */
+export const PAPER_LOOKS = ['note', 'list', 'calendar', 'drawing'] as const;
+/** A paper that hangs on the wall: it stands on a wall tile and is read from the floor below it. */
+export const hangs = (look: (typeof PAPER_LOOKS)[number]) => look === 'calendar' || look === 'drawing';
 
 /** A place people call by name: the ring of stones, the sinks, the quarantine line. */
 export interface MapPlace {
@@ -143,8 +212,11 @@ export interface MapData {
   flashes?: FlashRule;
   /** The wilds only: watchers, creatures that come closer while nobody looks at them. */
   watchers?: WatcherRule;
-  /** Insides only: the inside of one of NAPO's buildings (concrete, not logs). Its door is a NAPO building's. */
-  style?: 'napo';
+  /**
+   * Insides only: the inside of one of NAPO's buildings (napo: concrete, not logs), or the sawmill's
+   * floor (mill: boards, not logs). Its door is a building of the same style.
+   */
+  style?: 'napo' | 'mill';
   /**
    * A room with a chest only: a home that is each player's own. Whoever walks in through its door is in a
    * copy of the room of their own (their cabin, the server's zones), where nobody else ever is.
@@ -189,14 +261,32 @@ export interface Arrival {
 const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
   'antenna', 'console', 'woodpile',
+  'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
+  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache',
 ]);
 /** Objects that are only drawn: you walk over or through them. */
-export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug']);
+export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust']);
+/**
+ * What you face to read or talk to, standing in front of it: the tile below it must stay open
+ * ground (a jeep, bigger, is read from any side of it).
+ */
+export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache']);
+
+/** How many tiles an object covers, across and down: houses, vehicles, log decks, beds, rugs and a few more are bigger than one. */
+export function footprint(o: MapObject): [number, number] {
+  switch (o.kind) {
+    case 'house': case 'rug': case 'truck': case 'jeep': case 'logs': return [o.w, o.h];
+    case 'car': return [o.w, o.h ?? 1];
+    case 'carriage': return [o.w, 1];
+    case 'bed': return [1, 2];
+    case 'piano': return [2, 1];
+    default: return [1, 1];
+  }
+}
 
 /** Tiles covered by an object (houses, cars, beds and rugs are bigger than one tile). */
 export function objectTiles(o: MapObject): Array<[number, number]> {
-  const w = o.kind === 'house' || o.kind === 'car' || o.kind === 'rug' ? o.w : 1;
-  const h = o.kind === 'house' || o.kind === 'rug' ? o.h : o.kind === 'bed' ? 2 : 1;
+  const [w, h] = footprint(o);
   const out: Array<[number, number]> = [];
   for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) out.push([o.x + dx, o.y + dy]);
   return out;

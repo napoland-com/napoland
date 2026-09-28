@@ -1,0 +1,40 @@
+{
+  "id": "stonebrook-okada-house",
+  "name": "The Okada house",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 9,
+  "height": 6,
+  "tiles": [
+    "xxxxxxxxx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xxxxpxxxx"
+  ],
+  "levels": [
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000"
+  ],
+  "spawn": {"x":4,"y":4,"dir":"up"},
+  "exits": [
+    {"x":4,"y":5,"w":1,"h":1,"to":"stonebrook","tx":5,"ty":16,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"paper","x":2,"y":0,"look":"calendar","name":"Calendar","text":["A calendar from the feed store, still on the month they left.","One day is circled in red pencil: \"Our turn. At the verge by six.\"","Two weeks on, in the same pencil: \"Home.\""]},
+    {"kind":"bed","x":1,"y":1},
+    {"kind":"hearth","x":4,"y":1},
+    {"kind":"shelf","x":7,"y":1},
+    {"kind":"sheeted","x":6,"y":2},
+    {"kind":"sheeted","x":3,"y":3},
+    {"kind":"boxes","x":1,"y":4},
+    {"kind":"boxes","x":2,"y":4},
+    {"kind":"table","x":6,"y":4}
+  ]
+}

@@ -1,8 +1,8 @@
 ---
 id: shelter-caches
 title: A crate for whoever comes next
-status: planned
-order: 43
+status: done
+order: 360
 area: social
 depends: [buildings-fireplaces-shelters, thanks]
 ---

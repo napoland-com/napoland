@@ -1,10 +1,11 @@
 /**
- * One running game server: HTTP + WebSocket on one port, the World (with the piles saved before a
- * restart), its tick and periodic saves, and with sign-in, the daily cleanup of guests who stayed
- * away. main.ts builds it from the environment; tests start it directly.
+ * One running game server: HTTP + WebSocket on one port, the World (with the piles, marks, thanks and
+ * what lies in the crates, saved before a restart), its tick and periodic saves, the hourly cleanup of thanks older than
+ * THANKS_KEPT_DAYS, and with sign-in, the daily cleanup of guests who stayed away. main.ts builds it
+ * from the environment; tests start it directly.
  */
 import type { AddressInfo } from 'node:net';
-import { DROP_LIFETIME_MS, GUEST_DAYS, quickCalendar, weatherAt, type ItemsData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
+import { DROP_LIFETIME_MS, GUEST_DAYS, THANKS_KEPT_MS, quickCalendar, weatherAt, type ItemsData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
 import { legacyAuth, type Auth } from './auth';
 import { createHttpServer } from './http';
 import { log } from './log';
@@ -53,11 +54,16 @@ export interface ServerOptions {
   clockShiftMs?: number;
   /** Development only (PARCEL_DAY_MS): the parcels' days last this long, the first a Monday that starts now, so a week of them passes in minutes. */
   parcelDayMs?: number;
+  /** Development only (XP_MULTIPLIER): stashing earns this many times the XP. 1 unless set. */
+  xpMultiplier?: number;
   /** With sign-in, how often guests who stayed away GUEST_DAYS are looked for (after start-up); default once a day. */
   forgetGuestsEveryMs?: number;
+  /** How often thanks older than THANKS_KEPT_DAYS are deleted (after start-up); default once an hour. */
+  forgetThanksEveryMs?: number;
 }
 
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
 
 export interface RunningServer {
   readonly port: number;
@@ -98,15 +104,31 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // Piles fade an hour after the collapse, restart or not; older ones are forgotten.
   const drops = await o.storage.loadDrops(Date.now() - DROP_LIFETIME_MS);
   if (drops.length) log.info('piles loaded', { piles: drops.length });
-  // Marks fade a day after they were painted, restart or not.
-  const marks = await o.storage.loadMarks(Date.now() - MARK_LIFETIME_MS);
+  // Marks fade a day after they were painted (longer for a good neighbor), restart or not.
+  const marks = await o.storage.loadMarks(Date.now(), MARK_LIFETIME_MS);
   if (marks.length) log.info('marks loaded', { marks: marks.length });
+  // Who thanked whom is kept THANKS_KEPT_DAYS: for the once-a-day rule and the letters home.
+  const thanks = await o.storage.loadThanks(Date.now() - THANKS_KEPT_MS);
+  if (thanks.length) log.info('thanks loaded', { thanks: thanks.length });
+  // What lies in the crates stays until someone takes it.
+  const cacheItems = await o.storage.loadCacheItems();
+  if (cacheItems.length) log.info('crates loaded', { things: cacheItems.length });
+  const forgetThanks = async () => {
+    try {
+      await o.storage.forgetThanks(Date.now() - THANKS_KEPT_MS);
+    } catch (err) {
+      // Housekeeping: it never keeps the game from running, and it runs again within the hour.
+      log.error('deleting old thanks failed', { err });
+    }
+  };
   const stone = await o.storage.loadStone();
   const cycle = o.weather === 'cycle';
   const shift = o.clockShiftMs ?? 0;
   const world = new World(o.maps, o.homeMap, cycle ? weatherAt(Date.now() + shift).weather : (o.weather as Weather), {
     cycle,
     marks,
+    thanks,
+    cacheItems,
     stone,
     now: clock(),
     // Where players run out tells how hard each part of the world really is.
@@ -119,6 +141,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     epochOffset: Date.now() + shift - clock(),
     guests,
     ...(o.parcelDayMs ? { calendar: quickCalendar(o.parcelDayMs, Date.now() + shift) } : {}),
+    xpTimes: o.xpMultiplier,
   });
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version, auth: auth.config });
   const net = attachNet({
@@ -154,6 +177,8 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   const save = setInterval(() => void net.saveAll(), o.saveEveryMs);
   // A guest who plays is seen at once (net.ts), so this never takes one who is online.
   const cleanup = guests ? setInterval(() => void forgetGuests(), o.forgetGuestsEveryMs ?? DAY_MS) : undefined;
+  // The World forgets old thanks by itself; storage is told here, so none is kept much past the promise.
+  const thanksCleanup = setInterval(() => void forgetThanks(), o.forgetThanksEveryMs ?? HOUR_MS);
   let stopping: Promise<void> | undefined;
 
   return {
@@ -164,6 +189,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
         clearInterval(tick);
         clearInterval(save);
         clearInterval(cleanup);
+        clearInterval(thanksCleanup);
         const closed = new Promise<void>(resolve => http.close(() => resolve()));
         await net.close(1012);
         http.closeAllConnections();

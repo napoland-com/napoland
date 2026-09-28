@@ -122,7 +122,37 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .ab button { position: absolute; width: var(--ab); height: var(--ab); background: #9c2b4e; border-color: #f3d6de; font-family: var(--font-ui); font-weight: 700; font-size: calc(var(--ab) * .42); color: #fff4f7; box-shadow: inset 0 -4px 0 #6e1a36, 0 0 0 2px #0c0f15; }
 .hud .ab .a { right: 0; top: 0; }
 .hud .ab .b { left: 0; bottom: 0; }
-.hud .ab button:active { transform: translateY(2px); box-shadow: inset 0 -1px 0 #6e1a36, 0 0 0 2px #0c0f15; }
+.hud .ab button:active, .hud .ab .b[data-held] { transform: translateY(2px); box-shadow: inset 0 -1px 0 #6e1a36, 0 0 0 2px #0c0f15; }
+/* B held: the fan of calls (calls.ts). It opens up and to the left of B, from B's center, clear of A up
+   and to its right and of the stick; its notes sit FAN_RADIUS of B's diameters out, at the angles FAN
+   gives (--a). Nothing in it takes a touch: the finger stays B's and slides over it. */
+.fan { position: absolute; left: calc(var(--ab) * .5); bottom: calc(var(--ab) * .5); width: 0; height: 0; pointer-events: none; visibility: hidden; transition: visibility 0s .12s;
+  --fan-d: max(calc(var(--ab) * .62), 28px); --fan-r: max(calc(var(--ab) * 1.7), 78px); }
+.fan[data-open] { visibility: visible; transition: none; }
+.fan .call { position: absolute; left: 0; top: 0; width: var(--fan-d); height: var(--fan-d); margin: calc(var(--fan-d) / -2) 0 0 calc(var(--fan-d) / -2);
+  opacity: 0; transform: rotate(var(--a)) translateX(calc(var(--fan-r) * .3)) rotate(calc(-1 * var(--a))) scale(.5); transition: transform .12s ease-in, opacity .12s ease-in; }
+.fan .dot { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; color: #f1ece0; background: rgba(14, 17, 23, .9); border: 2px solid #d9cfb8;
+  box-shadow: inset 0 0 0 2px #0c0f15, 0 0 0 2px rgba(12, 15, 21, .55); transition: transform .1s ease-out; }
+.fan .dot svg { width: 60%; height: 60%; }
+.fan[data-open] .call { opacity: 1; transform: rotate(var(--a)) translateX(var(--fan-r)) rotate(calc(-1 * var(--a))); transition: transform .16s cubic-bezier(.2, .9, .3, 1.25), opacity .1s ease-out; }
+.fan[data-open] .call:nth-child(2) { transition-delay: .03s; }
+.fan[data-open] .call:nth-child(3) { transition-delay: .06s; }
+/* The call under the finger is lit (its note grows, its words stay where they are); off the fan, where
+   letting go sings nothing, all of them dim. */
+.fan .call[data-on] .dot { color: #ffcf5a; border-color: #ffcf5a; box-shadow: inset 0 0 0 2px #0c0f15, 0 0 0 3px rgba(255, 207, 90, .35); transform: scale(1.14); }
+.fan[data-open][data-off] .call { opacity: .5; }
+/* With a mouse and a keyboard, each note carries the digit that sings it while Q is held. */
+@media (hover: hover) and (pointer: fine) {
+  .fan .dot { position: relative; }
+  .fan .dot::after { content: attr(data-key); position: absolute; left: -12%; top: -12%; min-width: 1.35em; padding: 0 .25em; border-radius: 6px; background: #0c0f15; box-shadow: inset 0 0 0 1px #d9cfb8;
+    font-size: max(10px, calc(var(--u) * .9)); font-weight: 600; line-height: 1.35; text-align: center; color: #f1ece0; }
+}
+/* Words under the notes, the first few times: then the notes alone. */
+.fan .w { position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%); padding: .08em .5em .12em; border-radius: 99px; background: rgba(12, 15, 21, .8);
+  font-size: max(10.5px, calc(var(--u) * 1.05)); font-weight: 600; line-height: 1.2; white-space: nowrap; color: #f1ece0; }
+.fan:not([data-words]) .w { display: none; }
+.fan .call[data-on] .w { color: #ffcf5a; }
+@media (prefers-reduced-motion: reduce) { .fan .call, .fan[data-open] .call, .fan .dot { transition: none; } }
 
 .labels, .floats { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .tag { position: absolute; left: 0; top: 0; padding: .1em .5em; border-radius: 99px; background: rgba(12, 15, 21, .72); font-size: calc(var(--u) * .95); font-weight: 600; white-space: nowrap; will-change: transform; }
@@ -132,6 +162,10 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat; }
 .float { position: absolute; left: 0; top: 0; font-weight: 700; font-size: calc(var(--u) * 1.4); white-space: nowrap; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; will-change: transform, opacity; }
+/* The note rising over a caller's head, in their jacket color, edged dark to read over any ground. */
+.call-note { position: absolute; left: 0; top: 0; width: calc(var(--u) * 2.3); height: calc(var(--u) * 2.3); transform-origin: 50% 100%; will-change: transform, opacity;
+  filter: drop-shadow(0 1px 0 #0c0f15) drop-shadow(0 0 1.5px #0c0f15); }
+.call-note svg { width: 100%; height: 100%; display: block; }
 
 .dialog { position: absolute; left: calc(var(--pad) + var(--safe-l)); right: calc(var(--pad) + var(--safe-r)); bottom: calc(var(--pad) * 3.2 + var(--dp) + var(--pad) + var(--safe-b)); min-height: calc(var(--u) * 7.4); padding: calc(var(--u) * 1.2) calc(var(--u) * 1.5) calc(var(--u) * 1.4); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.35); line-height: 1.4; pointer-events: auto; cursor: pointer; display: none; }
 .hud.talking .dialog { display: block; }
@@ -185,6 +219,10 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
    it on any phone held upright, five in landscape. Past that the room line ends in "...". */
 .sheet-head .tools { display: flex; gap: calc(var(--u) * .5); flex: none; }
 .sheet-head .tools .slot { width: var(--btn); height: var(--btn); }
+/* A tool its button switches on and off (the radio): a small lamp in its top left corner (the aerial
+   takes the right), lit green while it is on. */
+.sheet-head .tools .lamp { position: absolute; top: 9%; left: 9%; width: 22%; height: 22%; border-radius: 50%; background: #262e22; box-shadow: 0 0 0 1.5px #0c0f15; }
+.sheet-head .tools [data-on] .lamp { background: #7ff0a8; box-shadow: 0 0 0 1.5px #0c0f15, 0 0 6px 1px rgba(127, 240, 168, .75); }
 .bag-head .heading { flex: 1; min-width: 0; display: grid; gap: .1em; }
 /* Tall enough a line that clipping it (for the ellipsis, with many tools on a small phone) cuts no letter. */
 .bag-head .room { overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
@@ -317,8 +355,32 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
    The bag: what you carry, then what you wear. */
 .hud .slot[hidden] { display: none; }
 .stash-sheet .stash-title, .bag-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
-.stash-sheet .hint, .stash-sheet .acts, .bag-sheet .hint { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.stash-sheet .hint, .stash-sheet .acts, .stash-sheet .gate, .bag-sheet .hint { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint[hidden] { display: none; }
+/* The chest's two tabs stand where its title was: the stash (with what you wear) and the wardrobe. They
+   keep their width; the XP beside them takes what is left, and goes where too little is (a card beside
+   the list on a small screen on its side). */
+.stash-sheet .sheet-head { container: chest-head / inline-size; }
+.chest-tabs { flex: none; display: flex; gap: calc(var(--u) * .2); }
+.stash-sheet .sheet-head .room { flex: 1 1 0; text-align: right; }
+@container chest-head (max-width: 18em) { .stash-sheet .sheet-head .room { visibility: hidden; } }
+.hud .chest-tabs button { position: relative; min-height: var(--btn); padding: 0 .5em; border: 0; border-radius: 8px; background: none; box-shadow: none; font-size: inherit; font-weight: 600; color: #8a8474; white-space: nowrap; }
+.hud .chest-tabs button[aria-selected="true"] { color: #ffcf5a; }
+.hud .chest-tabs button[aria-selected="true"]::after { content: ""; position: absolute; left: .5em; right: .5em; bottom: calc(var(--u) * .35); height: 2px; border-radius: 1px; background: #ffcf5a; }
+.stash-sheet .sheet-head .room { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.chest-part { flex: none; display: flex; flex-direction: column; gap: var(--gap); }
+/* The wardrobe: three tiles a row, each a small figure in its outfit with its name under it; a locked
+   one is dim and says the level that opens it, the one worn has a tick. */
+.sheet .grid.outfits { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.hud .slot.outfit svg { width: 60%; height: 60%; margin-bottom: 22%; }
+.hud .slot.outfit .lbl { bottom: 5%; padding-inline: 5%; font-size: calc(var(--u) * .92); line-height: 1.1; text-transform: none; color: #d3ccbb; }
+.hud .slot.outfit[data-locked] { background: #131820; box-shadow: inset 0 0 0 2px #232a36; }
+.hud .slot.outfit[data-locked] svg { opacity: .35; filter: grayscale(.7); }
+.hud .slot.outfit[data-locked] .lbl { color: #8a8474; }
+.hud .slot.outfit[data-worn] { box-shadow: inset 0 0 0 2px #8fd98a; }
+.hud .slot.outfit[data-picked] { background: #262d3a; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
+.slot.outfit .on { position: absolute; right: 6%; top: 6%; width: max(14px, calc(var(--u) * 1.5)); height: max(14px, calc(var(--u) * 1.5)); border-radius: 50%; background: #8fd98a; }
+.slot.outfit .on::after { content: ""; position: absolute; left: 36%; top: 20%; width: 24%; height: 44%; border: solid #12301a; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 /* What came in the parcels since the chest last opened, said once, at the top of the stash. */
 .stash-sheet .parcel-note { flex: none; display: grid; gap: .25em; width: 100%; max-width: var(--col); margin-inline: auto; padding: calc(var(--u) * .6) calc(var(--u) * .9);
   border-radius: 10px; background: #1d2230; box-shadow: inset 0 0 0 1px #8a7440; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #ffe3a1; }
@@ -330,6 +392,11 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .sheet .goal[data-ready] { box-shadow: inset 0 0 0 1px #5c8f58; color: #cfe9c3; }
 .hud .sheet .goal[data-act] { cursor: pointer; box-shadow: inset 0 0 0 1px #8a7440; }
 .hud .sheet .goal[hidden] { display: none; }
+/* A crate for whoever comes next: a row for each thing in it (what, who left it and when), your bag below
+   to leave one; like the stash, a tap opens the card and the card docks in the panel. */
+.crate-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.crate-sheet .hint, .crate-sheet .recipes { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.crate-sheet .hint[hidden], .crate-sheet .recipes[hidden] { display: none; }
 .hud .act:disabled, .hud .act[aria-disabled="true"] { opacity: .45; cursor: default; }
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }

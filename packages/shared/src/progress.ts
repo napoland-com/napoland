@@ -6,9 +6,10 @@
  * What you take out of the stash and put back earns nothing again: the stash remembers how many of
  * each item you took out (`out`) and bringing those back pays that off first. What you use up after
  * taking it out (a thermos drunk, resin burned) is forgotten from `out`, so it never counts against
- * new finds. Gear counts the same way, piece by piece: a piece taken out, or put on at the chest, is
- * out until it comes back into the stash, from the bag or off your back. The rules are pure functions
- * shared by the server (which owns every stash) and tests.
+ * new finds; what it turns into (a strange object looked at) is counted there in its place. Gear
+ * counts the same way, piece by piece: a piece taken out, or put on at the chest, is out until it comes
+ * back into the stash, from the bag or off your back. The rules are pure functions shared by the server
+ * (which owns every stash) and tests.
  */
 import { ENERGY_MAX } from './energy';
 import { newPiece, type Piece } from './gear';
@@ -176,6 +177,22 @@ export function takePiece(s: Stash, item: string, n = 0): { stash: Stash; piece:
   if (!list.length) delete r.stash.pieces![item];
   if (!Object.keys(r.stash.pieces!).length) delete r.stash.pieces;
   return { stash: r.stash, piece, taken: true };
+}
+
+/**
+ * One `from` turned into `into` (a strange object looked at). If the stash counts it as taken out, what
+ * it turned into is counted as taken out in its place, as many as it turned into, so bringing that home
+ * (in the bag, or a piece of gear off your back) earns nothing, as bringing the strange object back would
+ * not have. One found out there owes nothing: what it turns into earns its XP.
+ */
+export function turnedInto(s: Stash, from: string, into: BagSlot): Stash {
+  const owed = s.out[from] ?? 0;
+  if (!owed || !(into.count > 0)) return usedUp(s, from, 1);
+  const out: Stash = { items: { ...s.items }, out: { ...s.out }, ...copyPieces(s) };
+  out.out[from] = owed - 1;
+  if (!out.out[from]) delete out.out[from];
+  out.out[into.item] = (out.out[into.item] ?? 0) + into.count;
+  return out;
 }
 
 /** `count` of an item were used up (drunk, burned, taken by a watcher...): they will never come back, so they no longer count as out. */

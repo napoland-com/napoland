@@ -12,7 +12,7 @@ import { setLogLevel } from '../src/log';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { houseData, itemsData, townData, woodsData } from './fixtures';
-import { Client, keepsParcels, keepsToolsAndParcels, newName, parcelsThroughRestarts, savedPlayer, serverDefaults, type Msg } from './helpers';
+import { Client, keepsParcels, keepsToolsParcelsAndOutfit, newName, parcelsThroughRestarts, savedPlayer, serverDefaults, type Msg } from './helpers';
 
 /** Monday 28 September 2026, 00:00 UTC, and the calendar day it is. */
 const MONDAY = Date.UTC(2026, 8, 28);
@@ -255,6 +255,25 @@ describe('the calendar on the notice board', () => {
     ]);
   });
 
+  it('says to someone on their very first day, or their first this week, that they came home today', async () => {
+    const w = await serverAt(MONDAY + 2 * DAY + 3_600_000);
+    const at = { map: 'town', x: 2, y: 6, dir: 'up' as const };
+    // Signing in for the first time brings the welcome parcel, today.
+    await savedPlayer(w.storage, { ...at, tokenHash: null, authSub: 'dev:new@example.test' });
+    await savedPlayer(w.storage, { ...at, tokenHash: null, authSub: 'dev:back@example.test', parcels: { welcome: true, day: MON - 3, days: 0b1 } });
+    const fresh = await w.signIn('new@example.test');
+    expect(await fresh.c.next('parcel')).toMatchObject({ parcel: { weekday: null } });
+    const home = "You came home today. A new week starts fresh on Monday: play every day and Sunday's parcel holds a NAPO lockbox.";
+    expect((await read(fresh.c)).slice(-3)).toEqual([...CALENDAR, home]);
+    const back = await w.signIn('back@example.test');
+    expect((await read(back.c)).slice(-3)).toEqual([...CALENDAR, home]);
+    // On a Monday the whole week is still ahead.
+    const monday = await serverAt(MONDAY + 3_600_000);
+    await savedPlayer(monday.storage, { ...at, tokenHash: null, authSub: 'dev:new@example.test' });
+    const first = await monday.signIn('new@example.test');
+    expect((await read(first.c)).at(-1)).toBe("You came home today. Play every day this week and Sunday's parcel holds a NAPO lockbox.");
+  });
+
   it('says so on Sunday to whoever came back every day', async () => {
     const w = await serverAt(MONDAY + 6 * DAY + 3_600_000);
     await savedPlayer(w.storage, { map: 'town', x: 2, y: 6, dir: 'up', tokenHash: null, authSub: 'dev:every@example.test', parcels: { welcome: true, day: MON + 5, days: 0b11_1111 } });
@@ -283,7 +302,7 @@ describe('keeping the parcels', () => {
     await parcelsThroughRestarts(new MemoryStorage());
   });
 
-  it('keeps them beside the tools a player owns, neither lost to a save without it (storage-pg.test.ts)', async () => {
-    await keepsToolsAndParcels(new MemoryStorage());
+  it('keeps them beside the tools a player owns and the outfit they wear, none lost to a save without it (storage-pg.test.ts)', async () => {
+    await keepsToolsParcelsAndOutfit(new MemoryStorage());
   });
 });

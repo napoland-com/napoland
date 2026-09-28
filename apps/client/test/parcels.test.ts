@@ -7,7 +7,7 @@ import { Game } from '../src/game';
 import { cardHtml } from '../src/hud';
 import { Items } from '../src/items';
 import { Maps } from '../src/maps';
-import { parcelBanner, parcelList, parcelNote } from '../src/parcels';
+import { parcelBanner, parcelList, parcelNote, untold } from '../src/parcels';
 import { newsBanner } from '../src/status';
 import { FULL, tinyTown, welcome } from './fixtures';
 
@@ -84,9 +84,22 @@ describe('the game, when a parcel comes and a lockbox is opened', () => {
   it('makes the news of a parcel, and tells the chest once what came since it last opened', () => {
     g.handle({ t: 'parcel', parcel: WELCOME }, now);
     g.handle({ t: 'parcel', parcel: day(1) }, now);
-    expect(g.news).toEqual([{ kind: 'parcel', parcel: WELCOME }, { kind: 'parcel', parcel: day(1) }]);
+    // The welcome parcel comes with the first sign-in, which gives the NAPO work suit: its banner names it (wardrobe.test.ts).
+    expect(g.news).toEqual([{ kind: 'parcel', parcel: WELCOME, outfits: ['napo-suit'] }, { kind: 'parcel', parcel: day(1) }]);
     expect(g.takeParcels()).toEqual([WELCOME, day(1)]);
     expect(g.takeParcels()).toEqual([]);
+  });
+
+  it('drops a parcel\'s banner still waiting to be shown once the stash\'s card has told it, and keeps the rest', () => {
+    // The banners wait while a panel is open (main.ts): opened first, the chest tells the parcel instead.
+    g.handle({ t: 'parcel', parcel: WELCOME }, now);
+    g.handle({ t: 'feat', id: 'rain-walker', rank: 1, stats: { rainSteps: 1500 } }, now);
+    const waiting = g.news.splice(0);
+    const told = g.takeParcels();
+    expect(untold(waiting, told)).toEqual([{ kind: 'feat', id: 'rain-walker', rank: 1 }]);
+    // One that came after the card was shown still has its banner.
+    g.handle({ t: 'parcel', parcel: day(1) }, now);
+    expect(untold(g.news, told)).toEqual([{ kind: 'parcel', parcel: day(1) }]);
   });
 
   it('asks before opening it, sends it on YES, and the box says what was inside', () => {

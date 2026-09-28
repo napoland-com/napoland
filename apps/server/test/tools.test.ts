@@ -3,6 +3,8 @@
  * made at the workbench or picked up for good (never into the bag, the stash or a pile), a second one
  * refused. World rules, then over real WebSockets with storage in memory.
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { STARTER_TOOLS, TileMap, type Dir, type ItemDef, type ItemsData, type ServerMsg, type StoryData } from '@napoland/shared';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
@@ -235,5 +237,32 @@ describe('tools over WebSockets', () => {
     const back = await login(a.token);
     expect(back.welcome.tools).toEqual(WITH_RADIO);
     expect(back.welcome.bag).toEqual([]);
+  });
+});
+
+describe('the field radio of content/items.json', () => {
+  /** The items as they ship, without their finds (they grow on maps these tests do not have). */
+  const content = { ...(JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData), finds: [] };
+  const radioTools = [...STARTER_TOOLS, 'radio'];
+
+  it('is rewired at the workbench from 2 copper wire and 1 scrap, for good: never into the stash, and never twice', () => {
+    const w = world({ items: content }, rec('a', 'house', 1, 2, { stash: { items: { wire: 3, scrap: 1, cloth: 2 }, out: {} } }));
+    w.craft('a', 1, 1, 'radio', 1000);
+    expect(to(w.drain(), 'a')).toEqual([
+      { t: 'tools', tools: radioTools },
+      { t: 'bench', stash: [{ item: 'wire', count: 1 }, { item: 'cloth', count: 2 }] },
+      { t: 'did', did: { kind: 'made', item: 'radio', count: 1 } },
+    ]);
+    expect(w.get('a')).toMatchObject({ bag: [], tools: radioTools, stash: { items: { wire: 1, cloth: 2 } } });
+    w.craft('a', 1, 1, 'radio', 2000);
+    expect(to(w.drain(), 'a')).toEqual([{ t: 'refused', action: 'craft', reason: 'have_tool' }]);
+  });
+
+  it('needs all of it: one wire short, nothing is paid', () => {
+    const w = world({ items: content }, rec('a', 'house', 1, 2, { stash: { items: { wire: 1, scrap: 5 }, out: {} } }));
+    w.craft('a', 1, 1, 'radio', 1000);
+    expect(to(w.drain(), 'a')).toEqual([{ t: 'refused', action: 'craft', reason: 'missing' }]);
+    expect(w.get('a')!.stash!.items).toEqual({ wire: 1, scrap: 5 });
+    expect(w.get('a')!.tools).toBeUndefined();
   });
 });

@@ -8,9 +8,9 @@
  * 2,3; its way out at 2,4 leads back to 7,3 in front of the door, facing down.
  */
 import { describe, expect, it } from 'vitest';
-import { ENERGY_MAX, PROTOCOL_VERSION, TileMap, type Dir, type MapData, type StoryData } from '@napoland/shared';
+import { ENERGY_MAX, PROTOCOL_VERSION, TileMap, utcDay, type Dir, type MapData, type StoryData } from '@napoland/shared';
 import { Chat } from '../src/chat';
-import type { PlayerRecord } from '../src/storage';
+import type { PlayerRecord, ThanksRecord } from '../src/storage';
 import { World, colorFor, zoneKey, type Outgoing } from '../src/world';
 import { houseData, itemsData, townData, woodsData } from './fixtures';
 import { setup, waitFor } from './helpers';
@@ -133,6 +133,33 @@ describe('your own cabin', () => {
     // Nobody gets into someone else's: a save naming another's cabin is theirs all the same.
     w.join(rec('c', 'house', 1, 2, 'up', { zone: 'b' }), 5000);
     expect(w.zoneOf('c')).toBe(own('c'));
+  });
+
+  it('is home for the letter: walking in, or waking up there after a collapse, you read who thanked you', () => {
+    // b thanked a for an arrow in the woods while a was away.
+    const thanks = (at: number): ThanksRecord => ({ giver: 'b', helper: 'a', day: utcDay(at), at, what: { kind: 'mark', map: 'woods', x: 5, y: 5 }, told: false, name: 'B' });
+    const letter = { t: 'letter', thanks: [{ what: { kind: 'mark', map: 'woods', x: 5, y: 5 }, count: 1, people: 1, names: ['B'] }] };
+    const walkingIn = new World(cabinMaps(), 'town', 'overcast', { items: itemsData(), rng: () => 0, thanks: [thanks(500)] });
+    walkingIn.join(inTown('a'), 1000);
+    walkingIn.step('a', 'up', 1, 1000);
+    expect(walkingIn.drain().filter(o => o.to === 'a').map(o => o.msg)).toContainEqual(letter);
+    const collapsing = new World(cabinMaps(), 'town', 'overcast', { items: itemsData(), rng: () => 0, thanks: [thanks(500)] });
+    collapsing.join(rec('a', 'woods', 3, 6, 'up', { energy: 1 }), 1000);
+    collapsing.drain();
+    collapsing.tick(6000);
+    const out = collapsing.drain().filter(o => o.to === 'a').map(o => o.msg);
+    expect(out.map(m => m.t)).toEqual(expect.arrayContaining(['zone', 'letter']));
+    expect(out).toContainEqual(letter);
+  });
+
+  it('keeps the outfit you put on at its chest to yourself until you walk out, where everyone sees it', () => {
+    const w = world(rec('a', 'house', 3, 2, 'up', { zone: 'a', authSub: 'dev:a' }), rec('b', 'house', 3, 2, 'up', { zone: 'b', authSub: 'dev:b' }), inTown('t', 0, 5));
+    w.outfit('a', 3, 1, 'napo-suit', 1000);
+    expect(w.drain()).toEqual([{ to: '*', map: own('a'), msg: { t: 'outfit', id: 'a', outfit: 'napo-suit' } }]);
+    // Out: from 3,2 to the way out at 2,4.
+    (['left', 'down', 'down'] as const).forEach((dir, i) => w.step('a', dir, i + 1, 1200 + i * 200));
+    const joined = w.drain().find(o => 'map' in o && o.map === 'town' && o.msg.t === 'join');
+    expect(joined?.msg).toMatchObject({ t: 'join', player: { id: 'a', outfit: 'napo-suit' } });
   });
 
   it('is where a player whose map is gone starts over', () => {
