@@ -1252,11 +1252,19 @@ export class WorldView {
   /**
    * How far out on the screen something standing on tile x,y is seen, from its feet to a head FAR_FIGURE_H
    * up: the larger of across and up, 0 in the middle to 1 at the edge (more: off it); null behind the camera.
-   * As last drawn: for what stands at the edge of the fog (unease.ts, EdgeOf).
+   * As last drawn: for what stands at the edge of the fog (unease.ts, EdgeOf). `covered` says whether a
+   * point of the canvas (CSS pixels from its top left) is hidden under the HUD: seen there it counts as not
+   * seen at all (null), feet, middle or head.
    */
-  edgeOf(x: number, y: number): number | null {
-    const feet = this.edgeAt(x, y, 0), head = this.edgeAt(x, y, FAR_FIGURE_H);
-    return feet === null || head === null ? null : Math.max(feet, head);
+  edgeOf(x: number, y: number, covered?: (px: number, py: number) => boolean): number | null {
+    let most = 0;
+    for (const lift of [0, FAR_FIGURE_H / 2, FAR_FIGURE_H]) {
+      const e = this.edgeAt(x, y, lift);
+      if (e === null) return null;
+      if (covered && covered((this.tmp.x + 1) / 2 * this.width, (1 - this.tmp.y) / 2 * this.height)) return null;
+      most = Math.max(most, e);
+    }
+    return most;
   }
 
   private edgeAt(x: number, y: number, lift: number): number | null {

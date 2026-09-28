@@ -780,7 +780,16 @@ const toSay: News[] = [];
 let heard: Scene | undefined;
 /** What may stand at the edge of the fog while you are uneasy (unease.ts), and where the view sees a tile on the screen. */
 const apparition = new Apparition();
-const edgeOf = (x: number, y: number) => view.edgeOf(x, y);
+// It never stands where the HUD hides it (the status panel, the buttons, the stick), with a margin: what
+// they cover is read at most once a second, since the panel grows and shrinks with what it says.
+const HUD_MARGIN_PX = 12;
+let hudCovers: DOMRect[] = [], hudCoversAt = -Infinity;
+const underHud = (px: number, py: number) => {
+  const now = performance.now();
+  if (now - hudCoversAt > 1000) { hudCovers = hud.covers(); hudCoversAt = now; }
+  return hudCovers.some(r => px >= r.left - HUD_MARGIN_PX && px <= r.right + HUD_MARGIN_PX && py >= r.top - HUD_MARGIN_PX && py <= r.bottom + HUD_MARGIN_PX);
+};
+const edgeOf = (x: number, y: number) => view.edgeOf(x, y, underHud);
 /** The question and what the box says by itself, as last drawn (Game.boxChanges). */
 let boxShown = -1;
 /** The fan of calls over B as last drawn: '' while closed. */

@@ -1761,6 +1761,13 @@ export class Hud {
     if (hitched !== s.hitched) this.el.cling!.hidden = !(s.hitched = hitched);
   }
 
+  /** Where the HUD always covers the world, in page pixels: the status panel, the buttons at the top, the stick, A and B (what shows of them). */
+  covers(): DOMRect[] {
+    return [this.el.status, this.el.chatBtn, this.el.menuBtn, this.el.notebookBtn, this.el.stick, this.el.a, this.el.b]
+      .filter((e): e is HTMLElement => !!e && e.offsetParent !== null)
+      .map(e => e.getBoundingClientRect());
+  }
+
   /**
    * A lodestone tugs (lodestone.ts): the quirk's name shows on the status panel for a moment, in a short
    * soft pulse, then goes. It never says which way.
