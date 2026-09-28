@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ENERGY_MAX, ENERGY_PER_LEVEL, LEVEL_MAX, RESTED_EVERY_MS, RESTED_MAX, XP_CURVE, cleanRested, emptyStash, gift, itemIndex, levelOf, maxEnergy, progressOf, restAfter, restFor, spendRest,
-  stashList, store, storeLive, takeOut, usedUp, type ItemsData,
+  ENERGY_MAX, ENERGY_PER_LEVEL, LEVEL_MAX, RESTED_EVERY_MS, RESTED_MAX, XP_CURVE, cleanRested, emptyStash, gift, itemIndex, levelOf, maxEnergy, openInStash, progressOf, restAfter, restFor,
+  spendRest, stashList, store, storeLive, takeOut, turnedInto, usedUp, type ItemsData, type Stash,
 } from '../src';
 
 const data: ItemsData = {
@@ -74,6 +74,35 @@ describe('the stash', () => {
     const s = store(emptyStash(), [{ item: 'cap', count: 3 }], items).stash;
     expect(takeOut(s, 'cap', 10).taken).toBe(3);
     expect(takeOut(s, 'shard', 1)).toEqual({ stash: s, taken: 0 });
+  });
+
+  it('counts what something taken out of it turned into as taken out in its place, so it earns nothing brought back', () => {
+    // A strange object taken out, looked at, turns into two shards: the shards are owed now, not the strange object.
+    const out = takeOut({ items: { odd: 2 }, out: {} }, 'odd', 2).stash;
+    const after = turnedInto(out, 'odd', { item: 'shard', count: 2 });
+    expect(after).toEqual({ items: {}, out: { odd: 1, shard: 2 } });
+    expect(store(after, [{ item: 'shard', count: 2 }], items).xp).toBe(0);
+    // One found out there owes nothing: what it turns into earns its XP.
+    expect(turnedInto(emptyStash(), 'odd', { item: 'shard', count: 2 })).toEqual(emptyStash());
+    expect(store(emptyStash(), [{ item: 'shard', count: 2 }], items).xp).toBe(24);
+  });
+
+  it('keeps the pieces of the gear in it, as worn and with their quirks, whatever else goes in or out', () => {
+    // A worn-down coat and an anomalous cap with its quirk, beside some shards (one of them taken out).
+    const pieces = { coat: [{ cond: 0.3 }], cap: [{ cond: 1, quirk: 'hum' as const }] };
+    const s: Stash = { items: { coat: 1, cap: 1, shard: 2 }, out: { shard: 1 }, pieces };
+    const kept = (after: Stash) => expect(after.pieces).toEqual(pieces);
+    kept(store(s, [{ item: 'shard', count: 3 }], items).stash);
+    kept(storeLive(s, 'shard', 40).stash);
+    kept(takeOut(s, 'shard', 1).stash);
+    kept(usedUp(s, 'shard', 1));
+    kept(turnedInto(s, 'shard', { item: 'cap', count: 1 }));
+    kept(gift(s, [{ item: 'cap', count: 2 }], items));
+    kept(openInStash({ ...s, items: { ...s.items, box: 1 } }, 'box', [{ item: 'shard', count: 1 }], items)!);
+    // Copies: a later change to one stash's pieces never reaches the other's.
+    const after = store(s, [{ item: 'cap', count: 1 }], items).stash;
+    after.pieces!.coat![0]!.cond = 1;
+    expect(s.pieces!.coat![0]!.cond).toBe(0.3);
   });
 });
 

@@ -34,8 +34,19 @@ export interface Holding {
  * The drawings a tool's button in the bag's header can show: content/items.json names one for each
  * tool (`icon`), and the client draws each (icons.ts). A tool that needs a new drawing adds it here.
  */
-export const TOOL_ICONS = ['map'] as const;
+export const TOOL_ICONS = ['map', 'radio'] as const;
 export type ToolIcon = (typeof TOOL_ICONS)[number];
+
+/**
+ * What a tool that listens (the radio) picks up out in the wilds: the finds of these items lying on
+ * the map (`when: 'aurora'`: only on aurora nights), loud within `loud` tiles of the nearest, faint
+ * within `faint`, nothing past that. Only ever from what the player's game already knows is there.
+ */
+export interface Senses {
+  finds: Array<{ item: string; when?: 'aurora' }>;
+  loud: number;
+  faint: number;
+}
 
 /** What using an item does. A mark costs the item; so does everything else here. */
 export interface ItemUse {
@@ -65,7 +76,7 @@ export interface ItemDef {
    */
   noun?: string;
   plural?: string;
-  /** One plain sentence on what it is good for, said when a strange object turns out to be it, or a lockbox holds it. */
+  /** One plain sentence on what it is good for, said when a strange object turns out to be it, a lockbox holds it, or you make it. */
   about?: string;
   /** What using it does. Consumables must do something; a resource may (a glowcap paints a mark). */
   use?: ItemUse;
@@ -98,6 +109,8 @@ export interface ItemDef {
   chart?: string;
   /** A tool: the drawing on its button in the bag's header. Every tool has one; nothing else does. */
   icon?: ToolIcon;
+  /** A tool that listens: what it picks up, and how far (a radio). Its button turns it on and off. */
+  senses?: Senses;
   /**
    * Live: worth `xp` if stashed within `fresh` seconds of being picked, then `fade` XP less every
    * minute until it is worth no more than `into` (a plain item), which it then becomes (liveXp, liveEnds).

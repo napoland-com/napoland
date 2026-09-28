@@ -6,7 +6,7 @@ import { Game } from '../src/game';
 import { Items } from '../src/items';
 import { Maps } from '../src/maps';
 import { goalText } from '../src/said';
-import { FULL, storyData, tinyTown, tinyWoods, welcome } from './fixtures';
+import { FULL, storyData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
 
 /** What players read comes from the real items and recipes, so it is tested with them. */
 const content = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData;
@@ -80,6 +80,13 @@ describe('the game, on the first day', () => {
     expect(g.nextGear()).toBeNull();
   });
 
+  it('counts a live find carried home as what it fades into, which is what the stash will hold', () => {
+    g.handle(welcome(home(), [me(2, 2)], FULL, { items: items.version, stash: [{ item: 'scrap', count: 8 }, { item: 'shard', count: 1 }] }), now);
+    expect(g.nextGear()).toMatchObject({ recipe: { id: 'lead-cap' }, missing: [{ item: 'shard', count: 1 }], ready: false });
+    g.handle({ t: 'bag', bag: [{ item: 'live-shard', count: 1, age: 30 }] }, now);
+    expect(g.nextGear()).toMatchObject({ recipe: { id: 'lead-cap' }, missing: [], ready: false });
+  });
+
   it('names only gear, never a tool the workbench makes (a tool is yours for good, not worn)', () => {
     const radio = new Items({
       ...content,
@@ -102,6 +109,30 @@ describe('the game, on the first day', () => {
     expect(sent).toEqual([{ t: 'bench', x: 3, y: 1 }]);
     g.handle({ t: 'bench', stash: [] }, now);
     expect(g.bench).toEqual({ x: 3, y: 1, stash: [] });
+  });
+
+  it('opens the workbench on the goal\'s card once it answers, and never on a card from an open that went unanswered', () => {
+    const card = { from: 'recipe', id: 'rubber-gloves' } as const;
+    g.handle(welcome(home(), [me(3, 2)], FULL, { items: items.version, stash: [] }), now);
+    g.openBench(card);
+    g.handle({ t: 'bench', stash: [] }, now + 100);
+    expect(g.takeBenchCard()).toEqual(card);
+    // Once.
+    expect(g.takeBenchCard()).toBeNull();
+    g.closeBench();
+    // No answer in time (too far for the server, say): a later plain open, with A, shows the workbench alone.
+    g.openBench(card);
+    g.update(0.016, now + 5000);
+    g.pressA();
+    g.handle({ t: 'bench', stash: [] }, now + 5100);
+    expect(g.bench).not.toBeNull();
+    expect(g.takeBenchCard()).toBeNull();
+    g.closeBench();
+    // Going somewhere else forgets it too, even when an answer comes after.
+    g.openBench(card);
+    g.handle(zone(tinyTown(), 3, 1, [me(3, 1)]), now + 5200);
+    g.handle({ t: 'bench', stash: [] }, now + 5300);
+    expect(g.takeBenchCard()).toBeNull();
   });
 });
 

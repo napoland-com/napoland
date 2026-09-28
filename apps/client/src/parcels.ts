@@ -5,6 +5,7 @@
  */
 import { WEEKDAYS, amount, outfitOf, type BagSlot, type ParcelView } from '@napoland/shared';
 import { listWords } from './details';
+import type { News } from './game';
 import type { Items } from './items';
 import { outfitWords } from './wardrobe';
 
@@ -29,6 +30,14 @@ export function parcelBanner(p: ParcelView, items: Items, outfits: readonly stri
   }
   const all = p.allWeek?.length ? `\nand ${parcelList(p.allWeek, items)}, for coming back every day this week` : '';
   return { title, sub: `${WEEKDAYS[p.weekday]}: ${list}${all}` };
+}
+
+/**
+ * The news still to be announced, without the parcels the stash's card has `told` already: their banner,
+ * waiting for the panel to close (main.ts), would only say it again.
+ */
+export function untold(queue: readonly News[], told: readonly ParcelView[]): News[] {
+  return queue.filter(n => n.kind !== 'parcel' || !told.includes(n.parcel));
 }
 
 /** The card at the top of the stash, once: "Tuesday's parcel: a thermos, 2 scrap". */
