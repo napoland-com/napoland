@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ClientMsg, ItemsData, MapData, PlayerView } from '@napoland/shared';
 import { Game } from '../src/game';
-import { roomText } from '../src/hud';
+import { roomText, slotHtml, slotLabel, wearSlotView } from '../src/hud';
 import { Items, factsOf, lookOf, recipeViews, resistText, slotViews, wornViews } from '../src/items';
+import { didText } from '../src/said';
 import { Maps } from '../src/maps';
 import { FULL, itemsData, tinyTown, welcome } from './fixtures';
 
@@ -23,8 +24,11 @@ const data: ItemsData = {
     { id: 'cloth', name: 'Cloth', plural: 'cloth', kind: 'resource', stack: 10, text: 'Dry.' },
     { id: 'coat', name: 'Raincoat', kind: 'gear', stack: 1, text: 'Dry.', slot: 'shirt', tier: 'sturdy', color: '#e8c547', resist: { wind: 0.35, cold: 0.1 } },
     { id: 'pack', name: 'Hiking pack', kind: 'gear', stack: 1, text: 'Big.', slot: 'bag', color: '#7a4a2a', bag: 12, bonus: 5 },
+    { id: 'halo', name: 'Halo', kind: 'gear', stack: 1, text: 'Odd.', slot: 'cap', tier: 'anomalous', about: 'It glows.' },
   ],
   recipes: [{ id: 'coat', make: 'coat', needs: [{ item: 'cloth', count: 8 }] }],
+  wear: { sturdy: 5400, anomalous: 10800 },
+  quirks: [{ id: 'hum', name: 'Humming', text: 'It hums.' }],
 };
 const items = new Items(data);
 const maps = new Maps([tinyTown(), room()]);
@@ -109,7 +113,68 @@ describe('gear in the game', () => {
   });
 });
 
+describe('gear on the road, in the game', () => {
+  it('puts on a carried piece and takes one off into the bag anywhere, asking nothing: nothing is used up', () => {
+    g.handle(welcome(tinyTown(), [me(3, 3, { shirt: 'coat', bag: 'pack' })], FULL, { bag: [{ item: 'cloth', count: 2 }, { item: 'halo', count: 1, piece: { cond: 1, quirk: 'hum' } }] }), now);
+    g.wear(1);
+    g.doff('shirt');
+    expect(sent).toEqual([{ t: 'wear', slot: 1 }, { t: 'doff', slot: 'shirt' }]);
+    expect(g.question).toBeNull();
+    // Nothing in that slot, nothing worn there: nothing to send.
+    g.wear(5);
+    g.doff('cap');
+    expect(sent).toHaveLength(2);
+  });
+
+  it('takes the piece tapped out of the open chest', () => {
+    g.handle(welcome(room(), [me(1, 2)], FULL), now);
+    g.pressA();
+    g.handle({ t: 'chest', stash: [{ item: 'coat', count: 1, piece: { cond: 1 } }, { item: 'coat', count: 1, piece: { cond: 0.2 } }] }, now);
+    g.take('coat', 1);
+    g.take('coat');
+    expect(sent.slice(1)).toEqual([{ t: 'take', x: 1, y: 1, item: 'coat', count: 1, n: 1 }, { t: 'take', x: 1, y: 1, item: 'coat', count: 1 }]);
+  });
+
+  it('asks first before throwing away a carried piece, by its name', () => {
+    g.handle(welcome(tinyTown(), [me(3, 3)], FULL, { bag: [{ item: 'coat', count: 1, piece: { cond: 0.5 } }] }), now);
+    g.discard(0);
+    expect(g.askView()).toEqual({ who: 'Raincoat', text: 'Throw away the raincoat? It is gone for good.', choice: 'yes', count: null });
+    g.pressA();
+    expect(sent).toEqual([{ t: 'discard', slot: 0, count: 1 }]);
+  });
+
+  it('says what a strange object turned into, and the quirk it came with', () => {
+    expect(didText({ kind: 'used', item: 'glowcap', into: { item: 'halo', count: 1, piece: { cond: 1, quirk: 'hum' } } }, items)).toBe('It turns out to be a halo. It glows. It has a quirk: humming.');
+  });
+});
+
 describe('what the interface says about gear', () => {
+  it('shows a carried piece in the bag with how much of it is left and its quirk, and anything else with how many', () => {
+    const [coat, halo, cloth] = slotViews([{ item: 'coat', count: 1, piece: { cond: 0.4 } }, { item: 'halo', count: 1, piece: { cond: 1, quirk: 'hum' } }, { item: 'cloth', count: 3 }], items);
+    expect(coat).toMatchObject({ slot: 'shirt', cond: 0.4, facts: ['Worn: 40% left', 'Wind 35%', 'Cold 10%', 'Sturdy', 'Shirt slot'] });
+    expect(slotHtml(coat!)).toContain('<span class="cond" data-low="false"><i style="transform:scaleX(0.400)"></i></span>');
+    expect(slotHtml(coat!)).not.toContain('class="n"');
+    expect(slotLabel(coat!)).toBe('Raincoat, 40% left');
+    expect(halo).toMatchObject({ quirk: 'Humming' });
+    expect(slotHtml(halo!)).toContain('<i class="quirk" aria-hidden="true">✦</i>');
+    expect(slotLabel(halo!)).toBe('Halo, 100% left, Humming');
+    expect(slotHtml(cloth!)).toContain('<span class="n">3</span>');
+    expect(slotLabel(cloth!)).toBe('Cloth, 3');
+  });
+
+  it('draws the Wearing row, in the bag and at the chest: each piece over its slot, how much is left, a star for a quirk, and a bare slot by name', () => {
+    const [cap, shirt, , , , bag] = wornViews({ cap: 'halo', shirt: 'coat', bag: 'pack' }, items, { cap: { cond: 1, quirk: 'hum' }, shirt: { cond: 0.1 }, bag: { cond: 1 } });
+    const coat = wearSlotView('shirt', shirt!);
+    expect(coat).toMatchObject({ label: 'Raincoat, 10% left', empty: false });
+    expect(coat.html).toContain('<span class="lbl">shirt</span><span class="cond" data-low="true"><i style="transform:scaleX(0.100)"></i></span>');
+    expect(wearSlotView('cap', cap!)).toMatchObject({ label: 'Halo, 100% left, Humming' });
+    expect(wearSlotView('cap', cap!).html).toContain('✦');
+    // A bag never wears: no bar.
+    expect(wearSlotView('bag', bag!)).toMatchObject({ label: 'Hiking pack', empty: false });
+    expect(wearSlotView('bag', bag!).html).not.toContain('class="cond"');
+    expect(wearSlotView('gloves', null)).toEqual({ html: '<span class="lbl">gloves</span>', label: 'gloves: nothing', empty: true });
+  });
+
   it('lists recipes against what the stash holds', () => {
     const [coat] = recipeViews(data.recipes!, [{ item: 'cloth', count: 5 }], items);
     expect(coat).toMatchObject({ id: 'coat', name: 'Raincoat', can: false, needs: [{ name: 'Cloth', have: 5, need: 8 }] });

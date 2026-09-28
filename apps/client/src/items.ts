@@ -99,7 +99,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'slow_down': return 'Slow down a little';
     case 'sign_in_first': return action === 'say' || action === undefined ? 'Sign in to talk' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
-    case 'gear_stays': return 'Put gear on from the chest';
+    case 'bag_at_home': return 'The bag you wear changes only at home';
     case 'whole': return 'It needs no mending';
     case 'have_tool': return action === 'pick' ? 'You have one already. It stays for someone else' : 'You have one already';
     case 'sealed_stays': return 'It stays in the chest: open it there';
@@ -121,9 +121,13 @@ export interface SlotView {
   icon: string;
   /** Gear: the slot it is worn in. */
   slot?: Slot;
-  /** A piece of gear in the stash: its condition (0 to 1; none for gear that never wears), and which of that item's pieces it is (the stash's order). */
+  /**
+   * A piece of gear, in the stash or carried: its condition (0 to 1; none for gear that never wears),
+   * which of that item's pieces it is (in the list's order), and its quirk's name.
+   */
   cond?: number;
   n?: number;
+  quirk?: string;
   /** A live find: what it is, what it fades into, and its age in seconds when the bag was told (liveState). */
   live?: { def: ItemDef; into?: ItemDef; age: number };
 }
@@ -140,7 +144,10 @@ export function slotViews(bag: readonly BagSlot[], items: Items): SlotView[] {
     const n = nth.get(s.item) ?? 0;
     nth.set(s.item, n + 1);
     const q = p.quirk && items.quirk(p.quirk), wears = wearSeconds(def, items.wear) !== undefined;
-    return { ...base, ...(wears ? { cond: p.cond } : {}), n, text: q ? `${def.text} ${q.name}: ${q.text}` : def.text, facts: [conditionText(p.cond, wears), ...base.facts] };
+    return {
+      ...base, ...(wears ? { cond: p.cond } : {}), n, text: q ? `${def.text} ${q.name}: ${q.text}` : def.text, facts: [conditionText(p.cond, wears), ...base.facts],
+      ...(q ? { quirk: q.name } : {}),
+    };
   });
 }
 

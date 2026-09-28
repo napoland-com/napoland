@@ -1,6 +1,8 @@
 /**
- * Equipment: six slots, what each piece resists, how big the bag is. Gear is put on and taken off
- * only at home (at the chest), it stays with you when you collapse, and others see what you wear.
+ * Equipment: six slots, what each piece resists, how big the bag is. Gear is put on and taken off at
+ * the chest at home, and anywhere from and into the bag: a carried piece takes a bag slot and weighs
+ * what it weighs. The bag you wear changes only at home. What you wear stays with you when you
+ * collapse (a carried piece falls into the pile like anything you carry), and others see what you wear.
  *
  * Five elements, each with its own resistance (DESIGN.md, Hazards), all applied in energy.ts:
  * - cold: the extra drain of rain, night and aurora, and of being wet (more in a storm);
@@ -13,7 +15,8 @@
  * Each piece has a condition, 1 new to 0 worn out. Worn out in the wilds it wears down (`wear` in
  * content/items.json: seconds of wilds by tier); below WEAR_FADES it protects less and less, and at 0
  * not at all, until it is mended at the workbench (`mend`: what that costs, by tier). The rarest
- * pieces (anomalous) come with a quirk (QUIRKS), rolled when one first lands in your stash or on you.
+ * pieces (anomalous) come with a quirk (QUIRKS), rolled when a piece comes to be: in your stash, on
+ * you, or in your bag.
  */
 import { BAG_SLOTS, type BagSlot, type ItemDef, type ItemsData } from './items';
 
@@ -137,7 +140,7 @@ export interface NextGear {
 
 /**
  * A first goal (the first day): the nearest piece of gear someone could make, among the recipes whose
- * result they own none of yet (`owned`: what they wear, and gear in their stash). One the stash can pay
+ * result they own none of yet (`owned`: what they wear, carry and keep in their stash). One the stash can pay
  * for now comes first; otherwise the one that lacks the fewest units, counting what the stash and the bag
  * hold (a find carried home counts before it is put away). The first of equals, in the recipes' order.
  * Null when they own everything a recipe makes.

@@ -13,7 +13,7 @@ import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 20;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -121,14 +121,27 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('equip'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), n: z.number().int().nonnegative().max(999).optional() }),
   /** Take off what you wear in `slot`, at the chest on tile x,y: it goes into the stash. The bag cannot be taken off. */
   z.object({ t: z.literal('unequip'), x: z.number().int(), y: z.number().int(), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
+  /**
+   * Put on the piece of gear in bag slot `slot`, anywhere: what you wore in its slot goes into the bag in
+   * its place. Never a bag: the bag you wear changes only at home, at the chest.
+   */
+  z.object({ t: z.literal('wear'), slot: z.number().int().nonnegative().max(63) }),
+  /** Take off what you wear in `slot`, anywhere: it goes into the bag, if there is room. Never the bag. */
+  z.object({ t: z.literal('doff'), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
   /** Open the workbench on tile x,y, next to you: the server answers with what your stash holds. */
   z.object({ t: z.literal('bench'), x: z.number().int(), y: z.number().int() }),
   /** Make recipe `recipe` at the workbench on tile x,y, from your stash, into your stash. */
   z.object({ t: z.literal('craft'), x: z.number().int(), y: z.number().int(), recipe: z.string().min(1).max(40) }),
   /** Mend the piece you wear in `slot` at the workbench on tile x,y, paying from your stash (`mend` in content/items.json). */
   z.object({ t: z.literal('mend'), x: z.number().int(), y: z.number().int(), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
-  /** Take up to `count` of an item out of the chest on tile x,y, as much as fits in your bag. */
-  z.object({ t: z.literal('take'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), count: z.number().int().positive().max(9999) }),
+  /**
+   * Take up to `count` of an item out of the chest on tile x,y, as much as fits in your bag. Gear comes
+   * out one piece at a time: the `n`th of that item in the stash (the first when left out).
+   */
+  z.object({
+    t: z.literal('take'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), count: z.number().int().positive().max(9999),
+    n: z.number().int().nonnegative().max(999).optional(),
+  }),
   /** Open a sealed item (a NAPO lockbox) in your stash, at the chest on tile x,y: what it holds goes into the stash. */
   z.object({ t: z.literal('open'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40) }),
   /** Ask someone to be your friend, by id (tapping their name tag) or by name. If they asked you already, you are friends. */
@@ -241,7 +254,7 @@ export type Did =
   /**
    * One `item` from your bag was used up: the energy it gave you (as much as your bar had room for), the
    * seconds a flare burns, the arrow painted (which way it points, and for how many seconds everyone sees
-   * it), what a strange object turned out to be.
+   * it), what a strange object turned out to be (a piece of gear with its piece: its quirk is rolled).
    */
   | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot }
   /**
@@ -305,8 +318,8 @@ export type Refusal =
   | 'sign_in_first'
   /** They play as a guest: friends need both players signed in. */
   | 'guest'
-  /** Gear stays in the chest: it is put on from there. */
-  | 'gear_stays'
+  /** The bag you wear changes only at home, at the chest: not from the bag. */
+  | 'bag_at_home'
   /** That is as good as new already, or cannot be mended. */
   | 'whole'
   /** You have that tool already: each is yours once, for good (a find of it stays for someone else). */
@@ -515,7 +528,7 @@ export type ServerMsg =
 
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
-  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'open' | 'say'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'open' | 'say'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
 
 /**

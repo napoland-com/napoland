@@ -797,11 +797,11 @@ export class Game {
     this.send(slot === undefined ? { t: 'store', x: c.x, y: c.y } : { t: 'store', x: c.x, y: c.y, slot });
   }
 
-  /** Take a stack of an item out of the open chest (as much as fits the server decides). */
-  take(item: string) {
+  /** Take a stack of an item out of the open chest (as much as fits the server decides); a piece of gear, the `n`th of its kind. */
+  take(item: string, n?: number) {
     const c = this.chest;
     if (!c || !this.online) return;
-    this.send({ t: 'take', x: c.x, y: c.y, item, count: this.items.get(item).stack });
+    this.send({ t: 'take', x: c.x, y: c.y, item, count: this.items.get(item).stack, ...(n ? { n } : {}) });
   }
 
   /** Close the chest (the panel went away). */
@@ -909,6 +909,19 @@ export class Game {
   }
 
   /**
+   * Anywhere, from the bag: put on the piece in bag slot `slot` (what it replaces goes into the bag), or
+   * take off what a slot wears into the bag. Nothing is used up, so nothing asks first; the server says
+   * no when it cannot (a full bag), and the bag and what you wear follow its answer.
+   */
+  wear(slot: number) {
+    if (this.online && this.bag[slot]) this.send({ t: 'wear', slot });
+  }
+
+  doff(slot: Slot) {
+    if (this.online && this.myGear[slot]) this.send({ t: 'doff', slot });
+  }
+
+  /**
    * At the open workbench: make a recipe. It asks first ("Make a raincoat? It uses 8 cloth and 4 resin."),
    * or says why not: the stash lacks something, or it makes a tool you have already (each is yours once).
    */
@@ -940,7 +953,9 @@ export class Game {
       for (const s of list) n[s.item] = (n[s.item] ?? 0) + s.count;
       return n;
     };
-    const owned = new Set([...Object.values(this.myGear), ...stash.filter(s => this.items.get(s.item).kind === 'gear').map(s => s.item)]);
+    // A piece carried in the bag is owned as much as one in the stash: taken off out there, it is not the next thing to make.
+    const gearIn = (list: readonly BagSlot[]) => list.filter(s => this.items.get(s.item).kind === 'gear').map(s => s.item);
+    const owned = new Set([...Object.values(this.myGear), ...gearIn(stash), ...gearIn(this.bag)]);
     // Gear only: a recipe that makes a tool (yours for good, never worn) is never the first goal.
     const gear = this.items.recipes.filter(r => this.items.get(r.make).kind === 'gear');
     return nearestRecipe(gear, owned, count(stash), count(this.bag));
