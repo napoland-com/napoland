@@ -80,6 +80,13 @@ describe('the game, on the first day', () => {
     expect(g.nextGear()).toBeNull();
   });
 
+  it('counts a live find carried home as what it fades into, which is what the stash will hold', () => {
+    g.handle(welcome(home(), [me(2, 2)], FULL, { items: items.version, stash: [{ item: 'scrap', count: 8 }, { item: 'shard', count: 1 }] }), now);
+    expect(g.nextGear()).toMatchObject({ recipe: { id: 'lead-cap' }, missing: [{ item: 'shard', count: 1 }], ready: false });
+    g.handle({ t: 'bag', bag: [{ item: 'live-shard', count: 1, age: 30 }] }, now);
+    expect(g.nextGear()).toMatchObject({ recipe: { id: 'lead-cap' }, missing: [], ready: false });
+  });
+
   it('names only gear, never a tool the workbench makes (a tool is yours for good, not worn)', () => {
     const radio = new Items({
       ...content,

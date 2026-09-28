@@ -1016,7 +1016,9 @@ export class Game {
     const owned = new Set([...Object.values(this.myGear), ...gearIn(stash), ...gearIn(this.bag)]);
     // Gear only: a recipe that makes a tool (yours for good, never worn) is never the first goal.
     const gear = this.items.recipes.filter(r => this.items.get(r.make).kind === 'gear');
-    return nearestRecipe(gear, owned, count(stash), count(this.bag));
+    // A live find carried goes into the stash as what it fades into (a live shard is a shard there).
+    const bag = this.bag.map(s => ({ item: this.items.get(s.item).live?.into ?? s.item, count: s.count }));
+    return nearestRecipe(gear, owned, count(stash), count(bag));
   }
 
   /** The workbench right next to you, where it can be opened; null when there is none. */
