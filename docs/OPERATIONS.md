@@ -142,6 +142,72 @@ Checks: `curl https://www.napoland.com/auth-config` shows the mode and the provi
 keys cannot be fetched, the log says `cannot check sign-ins` (at most once a minute) and players keep
 reconnecting until they can.
 
+## The shop
+
+The shop for looks ([DESIGN.md](DESIGN.md#look-and-feel), [ARCHITECTURE.md](ARCHITECTURE.md#the-shop)) is built
+and closed: players see nothing of it until every setting below is in place, and its webhook address
+answers 404. Payments are Stripe Checkout, Stripe's own page, so the game never sees a card. These
+steps are the owner's, in this order, in Stripe's test mode first.
+
+1. **A Stripe account** for Neuramare ([dashboard.stripe.com](https://dashboard.stripe.com)): the
+   business details, the bank account payouts go to, and what a buyer sees (the name on their card
+   statement, say `NAPOLAND`, support@neuramare.com, and the terms of sale's address from step 2). Card
+   payments are all the shop uses. Turn on email receipts for successful payments (Settings, Customer
+   emails), so every buyer gets a confirmation.
+2. **Terms of sale**, published at an https address of the owner's (on neuramare.com, next to the legal
+   notice, say): who sells, what (looks for a character in napoland, which change nothing in play), the
+   prices, VAT as it applies, payment through Stripe, delivery at once, that the buyer gives up the 14
+   days to change their mind for a look delivered at once (the game asks before paying, and Stripe's page
+   says it again over the button to pay), refunds, and how to reach support. That address is
+   `SHOP_TERMS_URL`: the Shop tab and Stripe's page link it. Prices are what the buyer pays
+   (`content/shop.json`); whether VAT is due on them, and where, is for the owner to settle before going
+   live (the game does not turn on Stripe Tax).
+3. **The webhook:** Developers, Webhooks, Add endpoint: `https://www.napoland.com/stripe-webhook` (with
+   www: the bare domain only redirects, and Stripe does not follow redirects), with the events
+   `checkout.session.completed` and `charge.refunded`, nothing else. Its signing secret (`whsec_...`) is
+   `STRIPE_WEBHOOK_SECRET`. Test mode and live mode each have an endpoint and a secret of their own.
+4. **A key for the server:** Developers, API keys. Best a restricted key (`rk_test_...`) that may only
+   write Checkout Sessions, all the game asks Stripe for; the secret key (`sk_test_...`) works too. Never
+   the publishable key (`pk_...`): the server refuses to start with one. A live key (`sk_live_...`,
+   `rk_live_...`) only starts with `NODE_ENV=production` and real sign-in, which production has.
+5. **The two secrets go in `/data/napoland/.env`** on the server (the data disk, beside the database
+   password), and nowhere else: never in the repository, a compose file, a chat or an issue. Through SSM,
+   add the lines `STRIPE_SECRET_KEY=...` and `STRIPE_WEBHOOK_SECRET=...` to it. Compose reads the file
+   (`napoland-compose`), and the game gets them only through step 6.
+6. **In [deploy/compose.yaml](../deploy/compose.yaml)**, under `game`, `environment`, add, then release:
+   ```yaml
+      # The shop for looks (docs/OPERATIONS.md, "The shop"): Stripe's two secrets are in /data/napoland/.env.
+      SHOP_ENABLED: "1"
+      SHOP_CURRENCY: eur
+      SHOP_TERMS_URL: https://www.neuramare.com/...   # the terms of sale's real address (step 2)
+      PUBLIC_URL: https://www.napoland.com
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+   ```
+   `SHOP_CURRENCY` is one every look in `content/shop.json` is priced in (`eur`, `chf`, `usd`, `gbp`):
+   what the Shop tab shows is what Stripe charges. `PUBLIC_URL` is where Stripe sends players back.
+7. **Check it in test mode:** the game's `server started` log line says `shop` with the currency and
+   `mode: test` (or `closed`; a line `the shop stays closed` names any setting missing; no key is ever
+   logged). Sign in, go home, open the chest, Wardrobe, Shop, and buy a look with Stripe's test card
+   (4242 4242 4242 4242, any date to come, any CVC). Back in the game it says the look is in your
+   wardrobe; the dashboard's webhook page shows the event answered 200 (`Kept`), and
+   `napoland-compose exec -T db psql -U napoland -c "select * from purchases"` shows it. Refund it in the
+   dashboard (Payments, the payment, Refund, the whole amount): the look leaves the wardrobe.
+8. **Live:** steps 3 and 4 again in live mode, the two lines in `/data/napoland/.env` replaced with the
+   live ones, then `napoland-compose up -d game` (compose makes the container anew when a setting
+   changes). Buy one look for real, and refund it.
+
+Running it: a whole refund in the dashboard takes the look back (it comes off if worn; the player is
+told); a partial one leaves it. A dispute takes nothing back by itself: to take the look back after
+losing one, mark the purchase refunded by its payment's id (`pi_...`, on the dashboard's payment page),
+`update purchases set status = 'refunded', refunded = now() where payment_intent = 'pi_...'`, which the
+player sees the next time they come into the game. New keys: make them in the dashboard, replace the
+lines in `/data/napoland/.env`, `napoland-compose up -d game`. Turning the shop off: `SHOP_ENABLED: "0"`
+and release (the Shop tab goes, looks bought stay worn); turn the webhook endpoint off in the dashboard
+too, or Stripe tries a closed address for days. What it sells, and at what price, is
+`content/shop.json` (bump its `version`); a look is never removed once sold, since whoever bought it
+wears it by its id.
+
 ## Privacy requests
 
 The [privacy policy](../apps/client/public/privacy.html) promises an answer within 30 days to requests
@@ -153,12 +219,14 @@ with Apple): answer to that address, which only reaches them, and go on once the
 
 - **Show or export their data:** on the server,
   `napoland-compose exec -T db psql -U napoland -At -c "select row_to_json(p) from players p where auth_sub = '<UID>'"`
-  (and the same for `drops` and `marks` with `owner = '<player id>'`); send it together with what the Supabase
-  dashboard shows for the user.
+  (and the same for `drops` and `marks` with `owner = '<player id>'`, and `purchases` with `player = '<player id>'`);
+  send it together with what the Supabase dashboard shows for the user. For a purchase, Stripe's dashboard has
+  what the buyer gave Stripe: the privacy policy sends them to Stripe for that.
 - **Delete everything:** stop the game for a moment so it cannot save the character again, delete, start it:
   `napoland-compose stop game`, then
   `napoland-compose exec -T db psql -U napoland -c "delete from players where auth_sub = '<UID>'"`
-  (its pile and marks go with it), then `napoland-compose start game`. Then delete the user in the Supabase
+  (its pile and marks go with it; its purchases stay, without it, for the accounts, as the policy says), then
+  `napoland-compose start game`. Then delete the user in the Supabase
   dashboard, and their sign-in records in its SQL editor:
   `delete from auth.audit_log_entries where payload->>'actor_id' = '<UID>';`. Backups and logs age out
   by themselves (30 days); say so in the answer.
@@ -193,4 +261,5 @@ this stack, named `napoland*`, and tagged `project=napoland`; leave everything e
   character made before sign-in (which claims it). That is why there is one address.
 - The server trusts `X-Forwarded-For` (`TRUST_PROXY=1`) because Caddy is the only way in and
   overwrites it; per-address limits (connections, new characters per hour) rely on it.
-- `/data/napoland/.env` holds the database password, created on first boot. It never leaves the server.
+- `/data/napoland/.env` holds the database password, created on first boot, and once the shop is set up,
+  Stripe's key and webhook secret. It never leaves the server.
