@@ -268,6 +268,84 @@ export async function restKeptThroughARestart(first: Storage, second: Storage): 
 }
 
 /**
+ * Merits through a restart, over the network with dev sign-in, on `first` and then `second` (the same
+ * storage, or two connections to the same database). Signed in with two merits' XP, a player spends one on
+ * the chevron and wears it, and one on the lamp badge and wears it, then takes the badge off; after the
+ * restart they come back with both bought, one merit spent each, the chevron on and no badge, and whoever
+ * joins sees it; a merit is left for nobody.
+ */
+export async function meritsKeptThroughARestart(first: Storage, second: Storage): Promise<void> {
+  setLogLevel('silent');
+  const options = (storage: Storage): ServerOptions => ({ ...serverDefaults(), storage, maps: chestMaps(), items: itemsData(), auth: devAuth() });
+  const who = randomUUID().slice(0, 8), mail = `merits-${who}@example.test`;
+  const saved = await savedPlayer(first, { map: 'house', x: 3, y: 2, dir: 'up', tokenHash: null, authSub: `dev:${mail}`, xp: xpFor(20) + 2 * 1500 + 10 });
+  const signIn = async (port: number, email: string) => {
+    const c = await Client.open(port);
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, auth: email, name: `M ${who}` });
+    return { c, welcome: await c.next('welcome') };
+  };
+
+  const one = await startServer(options(first));
+  try {
+    const { c, welcome } = await signIn(one.port, mail);
+    expect(welcome.merits).toEqual({ spent: 0, owned: [] });
+    c.send({ t: 'buy', x: 3, y: 1, look: 'chevron' });
+    c.send({ t: 'pattern', x: 3, y: 1, pattern: 'chevron' });
+    c.send({ t: 'buy', x: 3, y: 1, look: 'lamp' });
+    c.send({ t: 'badge', x: 3, y: 1, badge: 'lamp' });
+    c.send({ t: 'badge', x: 3, y: 1, badge: null });
+    expect(await c.next('badge', m => m.badge === null)).toEqual({ t: 'badge', id: saved.id, badge: null });
+    c.ws.terminate();
+    await waitFor(() => one.world.size === 0, 'the player to leave');
+  } finally {
+    await one.stop();
+  }
+  expect(await second.findByAuthSub(`dev:${mail}`)).toMatchObject({ meritsSpent: 2, looks: ['chevron', 'lamp'], pattern: 'chevron' });
+  expect((await second.findByAuthSub(`dev:${mail}`))!.badge).toBeUndefined();
+
+  const two = await startServer(options(second));
+  try {
+    const { c, welcome } = await signIn(two.port, mail);
+    expect(welcome.merits).toEqual({ spent: 2, owned: ['chevron', 'lamp'] });
+    expect(welcome.players.find(p => p.id === saved.id)).toMatchObject({ pattern: 'chevron' });
+    expect(welcome.players.find(p => p.id === saved.id)!.badge).toBeUndefined();
+    // Both merits are spent: a third look waits for the next 1,500 XP.
+    c.send({ t: 'buy', x: 3, y: 1, look: 'fir' });
+    expect(await c.next('refused')).toEqual({ t: 'refused', action: 'buy', reason: 'no_merits' });
+    c.ws.terminate();
+  } finally {
+    await two.stop();
+  }
+}
+
+/**
+ * Merits kept with a player, on `storage` (in memory, or a real database): none for a new player; what a
+ * save writes (merits spent, the looks bought in their order, a pattern and a badge worn); a save without
+ * them loses none (nothing bought is ever lost); and null takes off what is worn.
+ */
+export async function keepsMerits(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  // Whole, as a save writes it back (every storage fills in a stash, counts, XP and wetness), so what is read back compares as it is.
+  await savedPlayer(storage, { tokenHash: null, authSub: sub, wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect([rec.meritsSpent, rec.looks, rec.pattern, rec.badge]).toEqual([undefined, undefined, undefined, undefined]);
+  const bought = { ...rec, meritsSpent: 3, looks: ['moth', 'stripes', 'fir'], pattern: 'stripes', badge: 'moth', lastSeenAt: rec.lastSeenAt + 1000 };
+  await storage.save(bought);
+  expect(await load()).toEqual(bought);
+  const { meritsSpent: _spent, looks: _looks, pattern: _pattern, badge: _badge, ...without } = bought;
+  await storage.save({ ...without, lastSeenAt: bought.lastSeenAt + 1000 });
+  expect(await load()).toEqual({ ...bought, lastSeenAt: bought.lastSeenAt + 1000 });
+  await storage.save({ ...bought, pattern: null, badge: null, lastSeenAt: bought.lastSeenAt + 2000 });
+  expect(await load()).toMatchObject({ meritsSpent: 3, looks: ['moth', 'stripes', 'fir'] });
+  expect([(await load()).pattern, (await load()).badge]).toEqual([undefined, undefined]);
+  // Made with them too.
+  const other = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: other, meritsSpent: 1, looks: ['lamp'], badge: 'lamp' });
+  expect(await storage.findByAuthSub(other)).toMatchObject({ meritsSpent: 1, looks: ['lamp'], badge: 'lamp' });
+}
+
+/**
  * The cup of rest kept with a player, on `storage` (in memory, or a real database): none for a new player,
  * what a save writes, and none once it is spent; a player made with some keeps it too.
  */
