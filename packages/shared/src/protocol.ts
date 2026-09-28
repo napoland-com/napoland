@@ -433,6 +433,8 @@ export type Refusal =
   | 'crate_full'
   /** Gear (and tools) stay out of a crate. */
   | 'no_gear'
+  /** A keepsake stays with you until you bring it home. */
+  | 'keepsake'
   /** You left one thing in this crate this visit already, or took one. */
   | 'left_one'
   | 'took_one'
@@ -599,6 +601,10 @@ export type ServerMsg =
       thanked: string[];
       /** Your field notes (notebook.ts): the pages opened and the blanks filled, with the version of content/notebook.json the server runs; a client with another version reloads. */
       notebook: NotebookView;
+      /** The notes people left that you read (notes.ts), by id, in the order you read them: the journal keeps them. */
+      notes: string[];
+      /** The keepsakes you brought home (notes.ts), by item id, in the order they came: theirs for good. */
+      keepsakes: string[];
       serverTime: number;
     }
   /**
@@ -698,6 +704,10 @@ export type ServerMsg =
   | { t: 'page'; id: string }
   /** A blank on a page of your field notes filled in: you saw its answer happen. */
   | { t: 'blank'; id: string }
+  /** You read this note someone left (notes.ts) for the first time: the journal keeps it now, and its XP comes in `progress`. */
+  | { t: 'noteRead'; id: string }
+  /** This keepsake is home now, yours for good (notes.ts); with the whole set home your bar is bigger, in the next `energy`. */
+  | { t: 'keepsake'; item: string }
   /** What is in your stash, whole, after you opened the chest or anything went in or out. */
   | { t: 'chest'; stash: BagSlot[] }
   /** A parcel came into your chest (parcels.ts): when you arrived signed in, or at midnight UTC while you played. */

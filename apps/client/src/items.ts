@@ -25,6 +25,8 @@ export class Items {
   readonly upgrades: ItemsData['upgrades'];
   /** What the woods may be like on a day or in a week (sky.ts). */
   readonly conditions: ItemsData['conditions'];
+  /** Where the keepsakes lie, and what the whole set home gives (notes.ts). */
+  readonly keepsakes: ItemsData['keepsakes'];
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
 
   constructor(data: ItemsData | undefined) {
@@ -35,6 +37,7 @@ export class Items {
     this.mend = data?.mend;
     this.upgrades = data?.upgrades;
     this.conditions = data?.conditions;
+    this.keepsakes = data?.keepsakes;
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
 
@@ -115,6 +118,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'thanked': return 'Thanks go once a day to each person';
     case 'crate_full': return 'The crate is full';
     case 'no_gear': return 'Gear stays with you: a crate takes none';
+    case 'keepsake': return 'A keepsake stays with you until you bring it home';
     case 'left_one': return 'You left something here this time already';
     case 'took_one': return 'You took something here this time already';
     case 'owned': return 'It is yours already';
@@ -242,6 +246,7 @@ export function factsOf(def: ItemDef): string[] {
   if (def.charge) out.push('The Old Stone wants it');
   if (def.kind === 'charm') out.push('Works while in your bag');
   if (def.kind === 'tool') out.push('A tool, yours for good');
+  if (def.kind === 'keepsake') out.push('One of a kind: bring it home');
   return out;
 }
 

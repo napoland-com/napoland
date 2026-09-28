@@ -1,10 +1,13 @@
 /**
  * The journal, the one book the game keeps, in plain words for hud.ts: the chapters of the story you
  * reached (story.ts), the latest first, with no count of chapters and nothing to finish, since the story
- * goes on as the world grows; and the field notes (notebook.ts), area by area, each area with a count of
- * its pages ("The Near Woods: 23 of 41"), and the pages you opened in the order the notebook keeps them.
+ * goes on as the world grows; the field notes (notebook.ts), area by area, each area with a count of
+ * its pages ("The Near Woods: 23 of 41"), and the pages you opened in the order the notebook keeps them;
+ * and the notes people left (notes.ts), by who wrote them, with the keepsakes you brought home.
  */
-import { ANYWHERE, type Chapter, type NotebookData, type NotebookState } from '@napoland/shared';
+import {
+  ANYWHERE, AUTHOR_NAMES, NOTE_AUTHORS, notesOf, type Chapter, type ItemDef, type KeepsakesData, type MapData, type NoteAuthor, type NotebookData, type NotebookState,
+} from '@napoland/shared';
 
 export interface JournalView {
   /** The latest first; `n` is the chapter's place in the story, from 1. */
@@ -78,6 +81,78 @@ export function fieldNotesHtml(v: FieldNotesView): string {
     ? a.pages.map(p => `<article class="page"${p.fresh ? ' data-fresh' : ''}><h4>${esc(p.title)}</h4><p>${esc(p.text)}</p>`
       + `${p.blanks.map(b => `<p class="blank"${b.filled ? ' data-filled' : ''}>${esc(b.text)}</p>`).join('')}</article>`).join('')
     : `<p class="none">${NOTHING_YET}</p>`}</section>`).join('');
+}
+
+/** A note someone left, as the journal keeps it: what the text box called it, where it lies, and what it says. */
+export interface NoteView {
+  id: string;
+  name: string;
+  /** The name of the map it lies on: "The ranger's hut", "The Near Woods". */
+  place: string;
+  lines: string[];
+  /** Read since the notes were last looked at. */
+  fresh: boolean;
+}
+
+/** Someone who left notes: how many of theirs you read of how many there are, and those, in the order you read them. */
+export interface AuthorView {
+  by: NoteAuthor;
+  name: string;
+  have: number;
+  total: number;
+  notes: NoteView[];
+}
+
+/** The keepsakes home: each with its line, how many there are in all, and what the whole set home gives. */
+export interface KeepsakesView {
+  home: Array<{ item: string; name: string; text: string }>;
+  total: number;
+  energy: number;
+}
+
+export interface NotesView {
+  /** Only those you read something of: who else left notes is for you to find out. */
+  authors: AuthorView[];
+  /** Null until one is home. */
+  keepsakes: KeepsakesView | null;
+}
+
+/**
+ * The notes part of the journal: who left notes, in a fixed order (the ranger, Walt, the Barlows), each with
+ * the notes of theirs you read, then the keepsakes you brought home. A note or keepsake this copy does not
+ * know (a newer release's) neither shows nor counts.
+ */
+export function notesView(maps: Iterable<MapData>, read: readonly string[], keepsakes: KeepsakesData | undefined, home: readonly string[], item: (id: string) => ItemDef | undefined, fresh: ReadonlySet<string> = new Set()): NotesView {
+  const all = notesOf(maps);
+  const authors = NOTE_AUTHORS.flatMap((by): AuthorView[] => {
+    const notes = read.flatMap((id): NoteView[] => {
+      const n = all.get(id);
+      return n && n.note.by === by ? [{ id, name: n.note.name, place: n.map.name, lines: [...n.note.text], fresh: fresh.has(id) }] : [];
+    });
+    return notes.length ? [{ by, name: AUTHOR_NAMES[by], have: notes.length, total: [...all.values()].filter(n => n.note.by === by).length, notes }] : [];
+  });
+  const kept = (keepsakes?.places ?? []).filter(p => home.includes(p.item)).flatMap(p => {
+    const def = item(p.item);
+    return def ? [{ item: def.id, name: def.name, text: def.text }] : [];
+  });
+  return { authors, keepsakes: kept.length ? { home: kept, total: keepsakes!.places.length, energy: keepsakes!.energy } : null };
+}
+
+/** "The ranger: 3 of 10": who left notes, and how many of theirs you read. */
+export const authorHeading = (a: Pick<AuthorView, 'name' | 'have' | 'total'>): string => `${a.name}: ${a.have} of ${a.total}`;
+/** "Keepsakes: 2 of 5 home". */
+export const keepsakesHeading = (k: KeepsakesView): string => `Keepsakes: ${k.home.length} of ${k.total} home`;
+/** What the whole set home gives, said under the keepsakes once it is. */
+export const allHome = (k: KeepsakesView): string => `All of them are home: your energy bar is ${k.energy} bigger, for good.`;
+
+/** The notes part as the journal draws it: each writer under their heading, then the keepsakes home, or that there is nothing yet. */
+export function notesHtml(v: NotesView): string {
+  const authors = v.authors.map(a => `<section class="area"><h3>${esc(authorHeading(a))}</h3>${a.notes.map(n => `<article class="page note"${n.fresh ? ' data-fresh' : ''}><h4>${esc(n.name)}</h4>`
+    + `<p class="where">${esc(n.place)}</p>${n.lines.map(l => `<p>${esc(l)}</p>`).join('')}</article>`).join('')}</section>`).join('');
+  const k = v.keepsakes;
+  const keepsakes = k ? `<section class="area keepsakes"><h3>${esc(keepsakesHeading(k))}</h3>${k.home.map(h => `<article class="page"><h4>${esc(h.name)}</h4><p>${esc(h.text)}</p></article>`).join('')}`
+    + `${k.home.length === k.total ? `<p class="blank" data-filled>${esc(allHome(k))}</p>` : ''}</section>` : '';
+  return authors + keepsakes || `<p class="none">${NOTHING_YET}</p>`;
 }
 
 function esc(t: string): string {

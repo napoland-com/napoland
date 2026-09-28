@@ -1,7 +1,8 @@
 /**
  * Checks every map in content/maps with the shared validator, then how the maps fit together: exits
- * lead onto walkable ground in maps that exist, and every map can be reached from the home town.
- * Then content/items.json: every item well formed, and every find rule on a real map with room to grow.
+ * lead onto walkable ground in maps that exist, every map can be reached from the home town, and every
+ * note people left has an id of its own. Then content/items.json: every item well formed, every find
+ * rule on a real map with room to grow, and every keepsake lying where somebody can pick it up.
  * Then content/story.json: the chapters, and that what reaches each one is about people, desks, maps
  * and items that exist. Then content/notebook.json: the pages of the field notes, what opens them and
  * fills in their blanks, and that none says where anything is.
@@ -9,7 +10,9 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { validateItems, validateMap, validateNotebook, validateStory, validateWorld, type ItemsData, type MapData, type NotebookData, type StoryData } from '../packages/shared/src';
+import {
+  NOTE_AUTHORS, notesOf, validateItems, validateMap, validateNotebook, validateStory, validateWorld, type ItemsData, type MapData, type NotebookData, type StoryData,
+} from '../packages/shared/src';
 
 /** The town where new players start and collapsed players wake up. */
 const HOME = 'stonebrook';
@@ -39,6 +42,8 @@ else {
   for (const p of problems) console.log(`world: ${p.map}: ${p.level}: ${p.message}`);
   errors += problems.filter(p => p.level === 'error').length;
   if (!problems.length) console.log(`world: ok (${maps.length} maps joined up, home ${HOME})`);
+  const notes = [...notesOf(maps).values()];
+  console.log(`notes: ${notes.length} left behind (${NOTE_AUTHORS.map(by => `${by} ${notes.filter(n => n.note.by === by).length}`).join(', ')}), ${notes.filter(n => n.note.when).length} only at their time`);
 }
 
 const ITEMS = 'items.json';
@@ -50,7 +55,7 @@ else {
     const problems = validateItems(data, maps);
     for (const p of problems) console.log(`${ITEMS}: ${p.level}: ${p.message}`);
     errors += problems.filter(p => p.level === 'error').length;
-    if (!problems.length) console.log(`${ITEMS}: ok (${data.items.length} items, ${data.finds.length} find rules)`);
+    if (!problems.length) console.log(`${ITEMS}: ok (${data.items.length} items, ${data.finds.length} find rules, ${data.keepsakes?.places.length ?? 0} keepsakes)`);
   } catch (err) {
     console.log(`${ITEMS}: error: cannot be checked: ${err instanceof Error ? err.message : String(err)}`);
     errors++;

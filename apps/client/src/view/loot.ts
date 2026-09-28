@@ -17,7 +17,11 @@ import { GLOW_Y, Puffs } from './fire';
 import { OUTLINE, OUTLINE_INSTANCED, bake, box, flat, hash2, ownToon, part, pivot, softTexture, toon } from './toon';
 
 /** Items with a look of their own; any other item is drawn as a sack. */
-export const ITEM_LOOKS = ['glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'live-shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead', 'ember-coal', 'pale-moth'] as const;
+export const ITEM_LOOKS = [
+  'glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'live-shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead', 'ember-coal', 'pale-moth',
+  // The keepsakes people left (notes.ts): each lies for one player alone, in a soft gold light.
+  'old-photograph', 'brass-compass', 'pole-tag', 'tin-whistle', 'staff-badge',
+] as const;
 export type Look = (typeof ITEM_LOOKS)[number] | 'sack' | 'pile';
 
 export function lookOf(item: string): Look {
@@ -52,6 +56,11 @@ const STYLE: Record<Look, Style> = {
   'humming-bead': { pool: '#5ff0e0', size: 1.3, top: 0.3, glow: { color: '#8ff7ee', emissive: '#1f8f86' }, floats: true },
   'ember-coal': { pool: '#ff6a3a', size: 1.25, top: 0.16, glow: { color: '#ff6a38', emissive: '#a3280c' } },
   'pale-moth': { pool: '#f2ecd8', size: 1.3, top: 0.34, glow: { color: '#efe8d2', emissive: '#6e6650' }, floats: true },
+  'old-photograph': { pool: '#ffd98a', size: 1.35, top: 0.06 },
+  'brass-compass': { pool: '#ffd98a', size: 1.35, top: 0.08, glow: { color: '#f3d27a', emissive: '#8a6a1a' } },
+  'pole-tag': { pool: '#ffd98a', size: 1.35, top: 0.05 },
+  'tin-whistle': { pool: '#ffd98a', size: 1.35, top: 0.06 },
+  'staff-badge': { pool: '#ffd98a', size: 1.35, top: 0.05 },
   sack: { pool: '#ffeec4', size: 1.2, top: 0.34 },
   pile: { pool: '#ffcf87', size: 1.7, top: 0.3 },
 };
@@ -182,6 +191,50 @@ export function lootModel(look: Look, glow: THREE.Material): THREE.Group {
     case 'humming-bead': {
       g.add(part(new THREE.IcosahedronGeometry(0.07, 1), glow, 0, 0.26, 0, 0.012));
       g.add(part(flat(new THREE.TorusGeometry(0.1, 0.008, 4, 16)), '#c9d6d4', 0, 0.26, 0, false));
+      break;
+    }
+    case 'old-photograph': {
+      // A photograph face up in the grass: its white border, and the town before, dark and grey.
+      const p = pivot(0, 0.012, 0);
+      p.rotation.y = 0.4;
+      p.add(box(0.26, 0.008, 0.2, '#efe6cf', 0, 0, 0, 0.006), box(0.21, 0.004, 0.15, '#6f6556', 0, 0.006, 0, false));
+      p.add(box(0.21, 0.004, 0.05, '#9a8f7c', 0, 0.008, 0.035, false), box(0.03, 0.004, 0.06, '#cfc4ad', 0.05, 0.01, 0.01, false));
+      g.add(p);
+      break;
+    }
+    case 'brass-compass': {
+      // The ranger's compass, open on the ground: a brass case and its ring, the face, the needle.
+      g.add(part(flat(new THREE.CylinderGeometry(0.1, 0.105, 0.04, 12)), '#c9a24a', 0, 0.02, 0, 0.012));
+      g.add(part(flat(new THREE.CylinderGeometry(0.082, 0.082, 0.006, 12)), '#efe6cf', 0, 0.042, 0, false));
+      g.add(part(flat(new THREE.TorusGeometry(0.03, 0.008, 4, 10)), '#c9a24a', 0, 0.02, -0.12, false));
+      const needle = box(0.012, 0.006, 0.12, '#b33a2a', 0, 0.048, 0, false);
+      needle.rotation.y = 0.6;
+      g.add(needle, part(new THREE.IcosahedronGeometry(0.012, 0), glow, 0, 0.05, 0, false));
+      break;
+    }
+    case 'pole-tag': {
+      // A small tin tag lying flat, stamped, two nail holes in it.
+      const t = pivot(0, 0.006, 0);
+      t.rotation.y = -0.5;
+      t.add(box(0.2, 0.008, 0.1, '#aebbc1', 0, 0, 0, 0.006));
+      for (const x of [-0.08, 0.08]) t.add(box(0.014, 0.004, 0.014, '#2f343c', x, 0.005, 0, false));
+      for (const x of [-0.03, 0, 0.03]) t.add(box(0.016, 0.004, 0.04, '#6b7880', x, 0.005, 0, false));
+      g.add(t);
+      break;
+    }
+    case 'tin-whistle': {
+      // A child's tin whistle lying in the grass: green paint, worn to the tin at the mouth.
+      g.add(lying(new THREE.CylinderGeometry(0.018, 0.018, 0.3, 7), '#6d8a5a', 0.02, 0.02, 0, 0.008));
+      g.add(lying(new THREE.CylinderGeometry(0.02, 0.02, 0.07, 7), '#c9cfd2', -0.15, 0.02, 0, 0.008));
+      break;
+    }
+    case 'staff-badge': {
+      // A NAPO staff badge fallen on the gravel: its clip, NAPO's yellow band, the pale square of the photo.
+      const b = pivot(0, 0.006, 0);
+      b.rotation.y = 0.3;
+      b.add(box(0.14, 0.008, 0.2, '#efe6cf', 0, 0, 0, 0.006), box(0.14, 0.004, 0.035, '#d6ad2f', 0, 0.005, -0.07, false));
+      b.add(box(0.05, 0.004, 0.06, '#d8d2c2', -0.03, 0.005, 0.01, false), box(0.05, 0.012, 0.025, '#7d8b92', 0, 0.006, -0.11, false));
+      g.add(b);
       break;
     }
     case 'ember-coal': {

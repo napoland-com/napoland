@@ -130,14 +130,20 @@ export function statusView(s: StatusInput): StatusView {
 
 /**
  * The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a
- * feat, a level, a chapter of the story, a page of the field notes or a blank filled in on one, a parcel
- * (which names what came: `items`, and with the welcome parcel, the outfits signing in gave). Null:
- * nothing to say. A level says the outfits it opens, which a guest (`guest`) would wear once signed in.
+ * feat, a level, a chapter of the story, a page of the field notes or a blank filled in on one, a keepsake
+ * home, a parcel (which names what came: `items`, and with the welcome parcel, the outfits signing in
+ * gave). Null: nothing to say, as for a note just read (the text box said it all). A level says the
+ * outfits it opens, which a guest (`guest`) would wear once signed in.
  */
 export function newsBanner(n: News, place: string, items?: Items, guest = false): { title: string; sub: string } | null {
   // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where. A
   // lodestone's tug is a pulse on the status panel and a faint sound: a banner would make it loud.
-  if (n.kind === 'call' || n.kind === 'tug') return null;
+  if (n.kind === 'call' || n.kind === 'tug' || n.kind === 'note') return null;
+  if (n.kind === 'keepsake') {
+    const def = items?.get(n.item), energy = items?.keepsakes?.energy ?? 0;
+    if (n.home >= n.of) return { title: 'All the keepsakes are home', sub: `${def ? `${def.name}, the last of them.\n` : ''}Your energy bar is ${energy} bigger, for good.` };
+    return { title: `Home: ${def?.name ?? 'a keepsake'}`, sub: `${def ? `${def.text}\n` : ''}${n.home} of ${n.of} keepsakes home.` };
+  }
   if (n.kind === 'parcel') return items ? parcelBanner(n.parcel, items, n.outfits) : null;
   if (n.kind === 'conditions') return n.names.length ? { title: 'A new day', sub: n.names.join('\n') } : null;
   if (n.kind === 'level') {

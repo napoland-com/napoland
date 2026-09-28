@@ -36,12 +36,13 @@
  */
 import {
   BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, emptyNotebook, energyAfter,
-  findPath, fireTakes, flashHits, inSurge, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines,
-  surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank, type CacheItemView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData,
-  type NotebookState, type Page,
+  findPath, fireTakes, flashHits, inSurge, isKeepsake, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, objectTiles, outfitsFor,
+  stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank, type CacheItemView, type LookKind, type MeritsView, type Mods, type NextGear,
+  type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type OfferPick, type ParcelView, type RefusedAction, type StormView, type TradeEnd, type TradeView,
+  type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView, type TradeEnd, type TradeView,
+  type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -50,7 +51,7 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
   mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
@@ -85,6 +86,8 @@ export type Talker = {
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
+  /** A note someone left (notes.ts): what it shows depends on the time, so its lines are read out when you read it. */
+  note?: MapNote;
 };
 
 /** Something lying on a tile to pick up: a pile someone left when they collapsed, or a find. */
@@ -141,6 +144,7 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'console') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', story: { read: o.id } }];
     if (o.kind === 'paper') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk' }];
     if (o.kind === 'cage') return [{ x: o.x, y: o.y, who: 'NAPO tag', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'note') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', note: o }];
     // A jeep is bigger than one tile: its stencil reads from whichever end you face.
     if (o.kind === 'jeep') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO jeep', lines: o.text, kind: 'talk' }));
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
@@ -183,6 +187,8 @@ export type News =
   | { kind: 'chapter'; chapter: Chapter }
   /** A page of your field notes opened, or a blank on one filled in. */
   | { kind: 'page'; page: Page } | { kind: 'blank'; page: Page; blank: Blank }
+  /** You read a note someone left for the first time (no banner: you just read it), or a keepsake came home: `of` how many there are, `home` of them home now. */
+  | { kind: 'note'; id: string } | { kind: 'keepsake'; item: string; home: number; of: number }
   /** A parcel came into your chest; the welcome parcel also names the outfits signing in gave you (their ids). */
   | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] }
   /** Your lodestone tugs (lodestone.ts): a shard lies near. It never says where. */
@@ -271,6 +277,16 @@ export class Game {
   freshPages = new Set<string>();
   /** Counts every change to the field notes (and to which pages are fresh), so they are redrawn only then. */
   notebookChanges = 0;
+  /** The weather everywhere, as the server said (main.ts sets it as it comes): what some notes need to be read. */
+  weather: Weather = 'rain';
+  /** The notes people left that you read (notes.ts), by id, in the order you read them. Replaced whole on every change. */
+  notesRead: string[] = [];
+  /** Notes read since the journal's notes were last looked at: it marks them. */
+  freshNotes = new Set<string>();
+  /** The keepsakes you brought home, by item id, in the order they came. Replaced whole on every change. */
+  keepsakesHome: string[] = [];
+  /** Counts every change to the notes read, the keepsakes home and which notes are fresh, so the journal's notes are redrawn only then. */
+  notesChanges = 0;
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
@@ -507,6 +523,10 @@ export class Game {
         this.thankedToday = new Set(msg.thanked ?? []);
         this.fieldNotes = { pages: [...msg.notebook?.pages ?? []], blanks: [...msg.notebook?.blanks ?? []] };
         this.notebookChanges++;
+        this.weather = msg.weather;
+        this.notesRead = [...msg.notes ?? []];
+        this.keepsakesHome = [...msg.keepsakes ?? []];
+        this.notesChanges++;
         break;
       }
       case 'zone': {
@@ -629,6 +649,21 @@ export class Game {
         this.notebookChanges++;
         const on = blankOf(this.notebook, msg.id);
         if (on) this.news.push({ kind: 'blank', ...on });
+        break;
+      }
+      case 'noteRead': {
+        if (this.notesRead.includes(msg.id)) break;
+        this.notesRead = [...this.notesRead, msg.id];
+        this.freshNotes.add(msg.id);
+        this.notesChanges++;
+        this.news.push({ kind: 'note', id: msg.id });
+        break;
+      }
+      case 'keepsake': {
+        if (this.keepsakesHome.includes(msg.item)) break;
+        this.keepsakesHome = [...this.keepsakesHome, msg.item];
+        this.notesChanges++;
+        this.news.push({ kind: 'keepsake', item: msg.item, home: this.keepsakesHome.length, of: this.items.keepsakes?.places.length ?? this.keepsakesHome.length });
         break;
       }
       case 'chest': {
@@ -980,6 +1015,12 @@ export class Game {
 
   /** What A does at someone or something you face: talk, read the board, feed a fire or the Old Stone. */
   private meet(t: Talker) {
+    if (t.note) {
+      // What shows depends on the time (notes.ts): the server decides whether it counts as read, from the tile alone.
+      this.openDialog({ ...t, lines: noteLines(t.note, this.weather, this.stormNow(this.clock)?.phase === 'storm') });
+      if (this.online) this.send({ t: 'talk', x: t.x, y: t.y });
+      return;
+    }
     if (t.kind === 'talk') {
       // What people say comes in one order (storyLines, story.ts): the chapter's hint, what they say once
       // about what you did for the first time, what they have heard (Mira: what the woods are like today),
@@ -1154,6 +1195,8 @@ export class Game {
 
   /** A tap on bag slot `slot` in the trade panel: what it holds goes into your side, or comes back out of it. */
   tradeTap(slot: number) {
+    const s = this.bag[slot];
+    if (s && isKeepsake(this.items.get(s.item))) return this.inform('Trade', KEEPSAKE_STAYS);
     this.setOffer(tapSlot(this.tradeMine, this.bag, slot, this.items));
   }
 
@@ -1422,6 +1465,7 @@ export class Game {
     const c = this.cache, s = this.bag[slot];
     if (!c || !s || !this.online) return;
     const def = this.items.get(s.item);
+    if (isKeepsake(def)) return this.inform('Crate', KEEPSAKE_STAYS);
     if (!cacheTakes(def)) return this.inform('Crate', CRATE_NO_GEAR);
     if (c.left) return this.inform('Crate', LEFT_ONE);
     if (c.items.length >= CACHE_SIZE) return this.inform('Crate', CRATE_FULL);
@@ -1819,6 +1863,13 @@ export class Game {
     if (!this.freshPages.size) return;
     this.freshPages = new Set();
     this.notebookChanges++;
+  }
+
+  /** The journal's notes were looked at: none of them is new any more. */
+  seenNotes() {
+    if (!this.freshNotes.size) return;
+    this.freshNotes = new Set();
+    this.notesChanges++;
   }
 
   /** Piles close enough to show whose they are. */

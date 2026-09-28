@@ -13,15 +13,18 @@ import type { Element, Piece, Quirk, Recipe, Slot, Tier, Upgrade } from './gear'
 import type { ParcelsData } from './parcels';
 import type { ConditionsData } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
+import type { KeepsakesData } from './notes';
 
 /**
  * A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn
  * (gear.ts). A tool is yours for good, once made at the workbench or found: never used up, never in a
  * pile, the stash or a trade, weighing nothing, and it takes no bag slot (players keep their tools
  * apart from the bag, like what they wear: a button each in the bag's header). A sealed thing (a NAPO
- * lockbox) stays in the chest at home and is opened there: it holds one of its `holds`.
+ * lockbox) stays in the chest at home and is opened there: it holds one of its `holds`. A keepsake is
+ * one of a kind, left behind by someone (notes.ts): each player finds their own where it lies, once,
+ * and brought home it stays there for good, apart from the stash.
  */
-export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool' | 'sealed';
+export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool' | 'sealed' | 'keepsake';
 
 /** One thing a sealed item may hold, by weight: these items, or one item of kind `any`, every one of that kind alike (any charm). */
 export interface Holding {
@@ -165,6 +168,8 @@ export interface ItemsData {
   conditions?: ConditionsData;
   /** The welcome parcel and the week's calendar of parcels (parcels.ts). None: no parcels. */
   parcels?: ParcelsData;
+  /** Where each keepsake lies, and what the whole set home gives (notes.ts). None: no keepsakes. */
+  keepsakes?: KeepsakesData;
 }
 
 /**

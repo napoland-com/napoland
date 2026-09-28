@@ -23,7 +23,7 @@ import { Hud, type TagView } from './hud';
 import { badgeIcon } from './icons';
 import { crateView } from './crates';
 import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, upgradeOf, upgradeViews, wearText, wornViews } from './items';
-import { fieldNotesView, journalView } from './journal';
+import { fieldNotesView, journalView, notesView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
 import { mapFor, paperMap } from './papermap';
@@ -271,6 +271,7 @@ const hud = new Hud(screen, {
     game.read(def.name, [def.text]);
   },
   fieldSeen: () => game.seenFieldNotes(),
+  notesSeen: () => game.seenNotes(),
   version: () => loadVersion(),
   sound: s => { sound.set(s); store.set(SOUND_KEY, JSON.stringify(s)); },
 });
@@ -619,6 +620,8 @@ conn.onMessage = (msg: ServerMsg) => {
     case 'weather':
       if (msg.weather === 'aurora' && weather !== 'aurora') hud.showBanner('Lights in the sky', 'An aurora: the old wires hum,\nand copper turns up by the poles.');
       weather = msg.weather;
+      // Some notes people left show only at night, in the rain or on an aurora night.
+      game.weather = weather;
       view.setWeather(weather);
       return;
     case 'pong':
@@ -753,6 +756,7 @@ let radioTurn = 0;
 let progressShown: typeof game.progress | null = null;
 let storyShown = -1;
 let notebookShown = -1;
+let notesShown = -1;
 /** A map's name, for the field notes' headings. */
 const mapName = (id: string) => maps.find(id)?.name;
 /**
@@ -844,6 +848,9 @@ function frame(now: number) {
     if (n.kind === 'chapter') { toSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
     // The field notes' news waits like a chapter's, with a dot of its own until they are looked at.
     if (n.kind === 'page' || n.kind === 'blank') { toSay.push(n); if (!(hud.journalOpen && hud.journalTab === 'field')) hud.setFieldNews(true); continue; }
+    // A note read needs no banner (the text box just said it), only a dot on the journal's Notes until it is looked at.
+    // A keepsake home waits like a level, for the chest to close, and puts the same dot there.
+    if (n.kind === 'note' || n.kind === 'keepsake') { if (n.kind === 'keepsake') toSay.push(n); if (!(hud.journalOpen && hud.journalTab === 'notes')) hud.setNotesNews(true); continue; }
     if (n.kind === 'feat') { toSay.push(n); continue; }
     // A dot on the chest's Wardrobe tab too, until it is looked at, when the level opened an outfit.
     if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
@@ -869,6 +876,10 @@ function frame(now: number) {
   if (game.notebookChanges !== notebookShown) {
     notebookShown = game.notebookChanges;
     hud.setFieldNotes(fieldNotesView(notebook, game.fieldNotes, mapName, game.freshPages));
+  }
+  if (game.notesChanges !== notesShown) {
+    notesShown = game.notesChanges;
+    hud.setNotes(notesView(maps.all(), game.notesRead, items.keepsakes, game.keepsakesHome, id => items.byId.get(id), game.freshNotes));
   }
   if (hud.statusOpen && (now - statusAt > 500 || game.statsChanges !== statsShown)) { statusAt = now; statsShown = game.statsChanges; showStatus(); }
   // A friend's card says whether they are near enough to trade with, as they walk.

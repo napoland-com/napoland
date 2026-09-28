@@ -110,6 +110,12 @@ export interface PlayerRecord {
    * came. None: nothing yet. It only grows, and a save without it keeps what was saved.
    */
   notebook?: NotebookState;
+  /**
+   * What people left (notes.ts): the notes the player read and the keepsakes they brought home, by id,
+   * in the order they came. None: nothing yet. Both only grow, and a save without them keeps what was saved.
+   */
+  notes?: string[];
+  keepsakes?: string[];
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
@@ -337,6 +343,7 @@ const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
   ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
   ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}), ...(rec.notebook ? { notebook: copyNotebook(rec.notebook) } : {}),
+  ...(rec.notes ? { notes: [...rec.notes] } : {}), ...(rec.keepsakes ? { keepsakes: [...rec.keepsakes] } : {}),
 });
 /** A record as storage keeps it: the copy it names, if any (like the database, which keeps '' for the main copy and reads it back as none). */
 function withZone<T extends { zone?: string }>(r: T, zone: string | undefined): T {
@@ -433,6 +440,7 @@ export class MemoryStorage implements Storage {
         xp: rec.xp ?? 0, rested: rec.rested ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
         ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.notebook ? { notebook: copyNotebook(rec.notebook) } : {}), lastSeenAt: rec.lastSeenAt,
+        ...(rec.notes ? { notes: [...rec.notes] } : {}), ...(rec.keepsakes ? { keepsakes: [...rec.keepsakes] } : {}),
         ...(rec.meritsSpent !== undefined ? { meritsSpent: rec.meritsSpent } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}),
       });
       // Every save says where they are: back in the main copy, the copy they were in is forgotten.
@@ -687,6 +695,9 @@ interface PlayerRow {
   badge: string | null;
   /** Null for a player whose field notes never opened a page (021_notebook.sql). */
   notebook: unknown;
+  /** Null for a player who never read a note, or brought a keepsake home (022_notes.sql). */
+  notes: unknown;
+  keepsakes: unknown;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -767,6 +778,10 @@ const notebookOf = (json: unknown): { notebook?: NotebookState } => {
   return { notebook: { pages: ids(pages), blanks: ids(blanks) } };
 };
 
+/** A jsonb list of ids as the server wrote it, for the record; anything else reads as never set (the World checks it again). */
+const idsOf = <K extends 'notes' | 'keepsakes'>(key: K, json: unknown): Partial<Record<K, string[]>> =>
+  (Array.isArray(json) ? ({ [key]: json.filter((id): id is string => typeof id === 'string') } as Partial<Record<K, string[]>>) : {});
+
 const fromRow = (r: PlayerRow): PlayerRecord => ({
   id: r.id,
   name: r.name,
@@ -806,6 +821,8 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.pattern ? { pattern: r.pattern } : {}),
   ...(r.badge ? { badge: r.badge } : {}),
   ...notebookOf(r.notebook),
+  ...idsOf('notes', r.notes),
+  ...idsOf('keepsakes', r.keepsakes),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -831,14 +848,15 @@ const thanksFor = (json: unknown): ThanksFor | null => {
 // one without merits or looks leaves them, so nothing bought is ever lost. The copy is always said, as the map
 // is: a record without one is in the main copy. So is the cup of rest: none is empty. The mark of what was worn
 // counted as taken out (PlayerRecord.wornOut), once written with the counts, stays, and a save without field
-// notes (the previous release's, which never writes them) leaves those.
+// notes, notes read or keepsakes home (the previous release's, which never writes them) leaves those.
 const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9,
   stats = $10::jsonb || CASE WHEN players.stats ? 'wornOut' THEN '{"wornOut": 1}'::jsonb ELSE '{}'::jsonb END, xp = $11, stash = $12::jsonb,
   gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
   parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
   parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23, rested = $24,
   merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
-  badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, notebook = COALESCE($31::jsonb, notebook), last_seen_at = $13 WHERE id = $1`;
+  badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, notebook = COALESCE($31::jsonb, notebook), notes = COALESCE($32::jsonb, notes),
+  keepsakes = COALESCE($33::jsonb, keepsakes), last_seen_at = $13 WHERE id = $1`;
 
 // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
 function saveParams(rec: PlayerRecord): unknown[] {
@@ -849,6 +867,7 @@ function saveParams(rec: PlayerRecord): unknown[] {
     rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
     rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? null, rec.looks ? JSON.stringify(rec.looks) : null,
     rec.pattern !== undefined, rec.pattern ?? null, rec.badge !== undefined, rec.badge ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null,
+    rec.notes ? JSON.stringify(rec.notes) : null, rec.keepsakes ? JSON.stringify(rec.keepsakes) : null,
   ];
 }
 
@@ -900,16 +919,17 @@ export class PgStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
-         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, rested, merits_spent, looks, pattern, badge, notebook)
+         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, rested, merits_spent, looks, pattern, badge, notebook, notes, keepsakes)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27,
-         $28::jsonb, $29, $30, $31::jsonb)
+         $28::jsonb, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedCounts(rec)),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
         rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.outfit ?? null,
         Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? 0, rec.looks?.length ? JSON.stringify(rec.looks) : null,
-        rec.pattern ?? null, rec.badge ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null,
+        rec.pattern ?? null, rec.badge ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null, rec.notes ? JSON.stringify(rec.notes) : null,
+        rec.keepsakes ? JSON.stringify(rec.keepsakes) : null,
       ],
     );
     return r.rowCount === 1;

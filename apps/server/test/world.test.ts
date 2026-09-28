@@ -267,7 +267,7 @@ describe('World: turning, joining and leaving', () => {
       story: { version: 0, chapter: '' },
       // Nobody thanked today.
       thanked: [],
-      notebook: { version: 0, pages: [], blanks: [] },
+      notebook: { version: 0, pages: [], blanks: [] }, notes: [], keepsakes: [],
     });
     expect(w.drain()).toEqual([
       { to: '*', map: 'test', except: 'a', msg: { t: 'join', player: joined.player } },

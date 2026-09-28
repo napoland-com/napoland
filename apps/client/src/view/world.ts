@@ -21,7 +21,7 @@ import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthMo
 import { CROUCH_DROP, CROUCH_LEAN, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial } from './grass';
 import { Creatures, Echoes, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
-  doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
+  doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
 } from './interior';
 import { cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
@@ -792,7 +792,7 @@ export class WorldView {
     // Furniture (interior.ts), what the town and the leavers left (left.ts) and NAPO's things (napo.ts):
     // wherever they stand, in a room or out of doors.
     for (const o of map.data.objects) {
-      const m = o.kind === 'hearth' ? coldHearthModel(o.x, o.y) : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
+      const m = o.kind === 'hearth' ? coldHearthModel(o.x, o.y) : o.kind === 'note' ? noteModel(o, map) : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
       if (m) still.push(m);
     }
     const fireplaces = this.objects('fireplace');

@@ -15,7 +15,7 @@ import { DOUBLE_TAP_MS, DoubleTap, cardPress, morePress, refKey, statText, type 
 import type { FriendsView } from './friends';
 import { CALL_GLYPHS, NOTEBOOK_ICON } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
-import { fieldNotesHtml, type FieldNotesView, type JournalView } from './journal';
+import { fieldNotesHtml, notesHtml, type FieldNotesView, type JournalView, type NotesView } from './journal';
 import type { SoundSetting } from './sound';
 import type { OfferRow, TradePanel } from './trade';
 import { BADGES_HINT, PATTERNS_HINT, WARDROBE_GATE, WARDROBE_HINT, type OutfitTile, type WardrobePart, type WardrobeView } from './wardrobe';
@@ -107,6 +107,8 @@ export interface HudHandlers {
   map?(): void;
   /** The field notes were looked at, and the journal left them (closed, or on its story): what was new there is not any more. */
   fieldSeen?(): void;
+  /** The same for the notes people left. */
+  notesSeen?(): void;
   /** The sound was muted or unmuted, or its volume moved. */
   sound?(s: SoundSetting): void;
   /** A guest's Sign in button (in the status panel, the Status tab, the chat or the friends panel). */
@@ -226,12 +228,13 @@ export interface StatusView { guest?: string; rows: StatusRow[]; feats: FeatView
  */
 export interface CrateView { count: string; hint: string; rows: Array<{ id: number; name: string; icon: string; line: string }>; empty: string | null }
 
-/** The parts of the journal, the one book the game keeps: the story's chapters, and the field notes. */
-export type JournalTab = 'story' | 'field';
+/** The parts of the journal, the one book the game keeps: the story's chapters, the field notes, and the notes people left. */
+export type JournalTab = 'story' | 'field' | 'notes';
 /** What each part of the journal says under its tabs. */
 export const JOURNAL_HINTS: Readonly<Record<JournalTab, string>> = {
   story: 'The story so far, the latest first. It goes on: new chapters come as the world grows.',
   field: 'What you noticed out there, place by place. A question on a page fills in once you see the answer for yourself.',
+  notes: 'What people left out there, in their own words, and what you brought home of theirs.',
 };
 
 /** What the chat and the friends panel say to a guest, over a Sign in button, instead of what they cannot use yet. */
@@ -333,21 +336,22 @@ export class Hud {
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
   private shown = {
     fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
-    friends: '', personActs: '', talk: '', journal: '', field: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', badge: '', tradeMine: '', tradeTheirs: '', tradeBag: '',
+    friends: '', personActs: '', talk: '', journal: '', field: '', notes: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', badge: '', tradeMine: '', tradeTheirs: '',
+    tradeBag: '',
   };
   /** The chest's tab: the stash (with what came in parcels, the first goal and what you wear), or the wardrobe. */
   private chestTab: 'stash' | 'wardrobe' = 'stash';
   /** The wardrobe's part shown (outfits, patterns or badges), and the wardrobe as last told. */
   private wardrobePart: WardrobePart = 'outfits';
   private wardrobe: WardrobeView | null = null;
-  /** The journal's part: the story's chapters, or the field notes. */
+  /** The journal's part: the story's chapters, the field notes, or the notes people left. */
   private journalPart: JournalTab = 'story';
   /**
    * What the dots say is new: among friends (a request, an unread message) and in the journal (a chapter,
-   * a page of the field notes or a blank filled in), on the menu; in the chat (something said), on its
-   * own button; in the field notes, on the notebook's button in the bag too.
+   * a page of the field notes or a blank filled in, a note read), on the menu; in the chat (something
+   * said), on its own button; in the field notes, on the notebook's button in the bag too.
    */
-  private news = { social: false, journal: false, field: false, chat: false };
+  private news = { social: false, journal: false, field: false, notes: false, chat: false };
   private load = 0;
   private capacity = BAG_SLOTS;
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
@@ -538,10 +542,11 @@ export class Hud {
         </div>
       </div>
       <div class="sheet panel journal-sheet" data-el="journalSheet" data-open="false" role="dialog" aria-label="Journal">
-        <div class="sheet-head"><span class="chest-tabs" role="tablist" aria-label="Journal"><button type="button" role="tab" data-journal="story" aria-selected="true">Story</button><button type="button" role="tab" data-journal="field" aria-selected="false">Field notes</button></span><button type="button" class="close" data-el="journalClose" aria-label="Close the journal">${ICON.x}</button></div>
+        <div class="sheet-head"><span class="chest-tabs" role="tablist" aria-label="Journal"><button type="button" role="tab" data-journal="story" aria-selected="true">Story</button><button type="button" role="tab" data-journal="field" aria-selected="false">Field notes</button><button type="button" role="tab" data-journal="notes" aria-selected="false">Notes</button></span><button type="button" class="close" data-el="journalClose" aria-label="Close the journal">${ICON.x}</button></div>
         <p class="hint" data-el="journalHint">${JOURNAL_HINTS.story}</p>
         <div class="journal-body" data-el="journalBody" role="tabpanel" aria-label="Story"></div>
         <div class="journal-body field-notes" data-el="fieldBody" role="tabpanel" aria-label="Field notes" hidden></div>
+        <div class="journal-body field-notes" data-el="notesBody" role="tabpanel" aria-label="Notes" hidden></div>
       </div>
       <div class="sheet panel about-sheet" data-el="aboutSheet" data-open="false" role="dialog" aria-label="About napoland">
         <div class="sheet-head"><b>About</b><button type="button" class="close" data-el="aboutClose" aria-label="Close About">${ICON.x}</button></div>
@@ -658,7 +663,7 @@ export class Hud {
     this.el.journalClose!.addEventListener('click', () => this.toggleJournal(false));
     this.el.journalSheet!.addEventListener('click', e => {
       const tab = (e.target as Element).closest<HTMLElement>('[data-journal]')?.dataset.journal;
-      if (tab === 'story' || tab === 'field') this.showJournalTab(tab);
+      if (tab === 'story' || tab === 'field' || tab === 'notes') this.showJournalTab(tab);
     });
     // The notebook in the bag's header opens the journal at its field notes.
     this.el.notebookBtn!.addEventListener('click', () => this.toggleJournal(true, 'field'));
@@ -930,14 +935,20 @@ export class Hud {
     this.news.field = on;
     this.showNews();
   }
+  /** The same for the notes people left (one read for the first time), on the Notes tab. */
+  setNotesNews(on: boolean) {
+    this.news.notes = on;
+    this.showNews();
+  }
   private showNews() {
-    const { social, journal, field, chat } = this.news;
-    this.el.menuBtn!.toggleAttribute('data-news', social || journal || field);
+    const { social, journal, field, notes, chat } = this.news;
+    this.el.menuBtn!.toggleAttribute('data-news', social || journal || field || notes);
     this.el.menuFriends!.toggleAttribute('data-news', social);
-    this.el.menuJournal!.toggleAttribute('data-news', journal || field);
+    this.el.menuJournal!.toggleAttribute('data-news', journal || field || notes);
     this.el.chatBtn!.toggleAttribute('data-news', chat);
     this.el.notebookBtn!.toggleAttribute('data-news', field);
-    for (const b of this.el.journalSheet!.querySelectorAll<HTMLElement>('[data-journal]')) b.toggleAttribute('data-news', b.dataset.journal === 'story' ? journal : field);
+    const on: Record<JournalTab, boolean> = { story: journal, field, notes };
+    for (const b of this.el.journalSheet!.querySelectorAll<HTMLElement>('[data-journal]')) b.toggleAttribute('data-news', on[b.dataset.journal as JournalTab] ?? false);
   }
 
   get journalOpen(): boolean {
@@ -948,8 +959,8 @@ export class Hud {
     return this.journalPart;
   }
   /**
-   * Opens or closes the journal. It opens on `tab`, or, from the menu, where the news is: the field notes
-   * when only they have something new, the story otherwise.
+   * Opens or closes the journal. It opens on `tab`, or, from the menu, where the news is: the story when it
+   * has something new, else the first part that has, else the story.
    */
   toggleJournal(open = !this.journalOpen, tab?: JournalTab) {
     const was = this.journalOpen;
@@ -957,23 +968,39 @@ export class Hud {
     if (open) {
       this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false';
       this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false);
-      this.showJournalTab(tab ?? (this.news.field && !this.news.journal ? 'field' : 'story'));
+      this.showJournalTab(tab ?? (this.news.journal ? 'story' : this.news.field ? 'field' : this.news.notes ? 'notes' : 'story'));
     }
     this.el.journalSheet!.dataset.open = String(open);
-    if (was && !open && this.journalPart === 'field') this.h.fieldSeen?.();
+    if (was && !open) this.leftPart(this.journalPart);
+  }
+
+  /** The journal left a part that was looked at: what was new in the field notes or the notes is not any more. */
+  private leftPart(tab: JournalTab) {
+    if (tab === 'field') this.h.fieldSeen?.();
+    else if (tab === 'notes') this.h.notesSeen?.();
   }
 
   /** Shows one part of the journal, at the top; looking at it takes its dot away. */
   showJournalTab(tab: JournalTab) {
-    if (this.journalPart === 'field' && tab !== 'field' && this.journalOpen) this.h.fieldSeen?.();
+    if (this.journalPart !== tab && this.journalOpen) this.leftPart(this.journalPart);
     this.journalPart = tab;
     for (const b of this.el.journalSheet!.querySelectorAll<HTMLElement>('[data-journal]')) b.setAttribute('aria-selected', String(b.dataset.journal === tab));
     this.el.journalBody!.hidden = tab !== 'story';
     this.el.fieldBody!.hidden = tab !== 'field';
+    this.el.notesBody!.hidden = tab !== 'notes';
     if (this.el.journalHint!.textContent !== JOURNAL_HINTS[tab]) this.el.journalHint!.textContent = JOURNAL_HINTS[tab];
     this.el.journalSheet!.scrollTop = 0;
     if (tab === 'story') this.setJournalNews(false);
-    else this.setFieldNews(false);
+    else if (tab === 'field') this.setFieldNews(false);
+    else this.setNotesNews(false);
+  }
+
+  /** The notes people left that you read, by who wrote them, and the keepsakes home. Only written to the page when they changed. */
+  setNotes(v: NotesView) {
+    const html = notesHtml(v);
+    if (html === this.shown.notes) return;
+    this.shown.notes = html;
+    this.el.notesBody!.innerHTML = html;
   }
 
   /** The field notes, area by area. Only written to the page when they changed. */
