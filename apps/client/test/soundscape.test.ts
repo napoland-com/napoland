@@ -117,7 +117,7 @@ describe('soundscape', () => {
 
 describe('stepSurface', () => {
   it('has a sound for every kind of tile', () => {
-    const want = { grass: 'soft', ferns: 'soft', tallgrass: 'swish', lot: 'soft', forest: 'soft', road: 'road', mud: 'mud', water: 'water', floor: 'floor', wall: 'floor' };
+    const want = { grass: 'soft', ferns: 'soft', tallgrass: 'swish', lot: 'soft', forest: 'soft', road: 'road', mud: 'mud', water: 'water', culvert: 'water', floor: 'floor', wall: 'floor' };
     for (const kind of Object.values(TILE_CHARS)) expect(stepSurface(kind), kind).toBe(want[kind]);
     expect(stepSurface(undefined)).toBe('soft');
   });

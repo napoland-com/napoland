@@ -213,6 +213,16 @@ export const MARKED = 'There is an arrow here already. Step onto another tile fi
 export const NO_ROOM = 'Your bag is full. Make room first.';
 /** Asked and answered, but the bag no longer holds it (a watcher took it, say). */
 export const GONE = 'It is not in your bag any more.';
+/**
+ * A padlocked door (the shed behind the ranger's hut), without the tool that opens it, in the words of
+ * NAPO's gate that will not move for one (GATE_PULLED): "You pull at the door. It gives a little, and no
+ * more: a padlock, rusted shut. Bolt cutters would do it." Said as you walk into it, face it and press A,
+ * or tap it.
+ */
+export function padlocked(tool: ItemDef | undefined): string {
+  const why = tool ? `a padlock, rusted shut. ${tool.name} would do it.` : 'a padlock, rusted shut.';
+  return `You pull at the door. It gives a little, and no more: ${why}`;
+}
 
 /**
  * The stash lacks what making, mending or upgrading takes: "Your stash is short of 3 cloth and 1 resin for

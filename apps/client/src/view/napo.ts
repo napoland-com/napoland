@@ -10,7 +10,7 @@
  */
 import * as THREE from 'three';
 import type { MapObject } from '@napoland/shared';
-import { vehiclePlace } from './left';
+import { pullHandle, vehiclePlace } from './left';
 import { box, flat, hash2, part, pivot, toon } from './toon';
 
 type House = Extract<MapObject, { kind: 'house' }>;
@@ -439,7 +439,7 @@ export function gateModel(o: { x: number; y: number; w: number }): THREE.Group {
   brace.rotation.z = Math.atan2(H - 0.18, span);
   g.add(brace);
   for (let k = 0; k < W * 4; k++) g.add(box(span / (W * 4), 0.09, 0.09, k % 2 ? INK : NAPO_YELLOW, -span / 2 + (span * (k + 0.5)) / (W * 4), H - 0.02, 0.01, false));
-  for (let t = 0; t < W; t++) g.add(box(0.05, 0.3, 0.05, INK, -W / 2 + t + 0.5, 0.62, 0.1, false), box(0.05, 0.05, 0.1, INK, -W / 2 + t + 0.5, 0.78, 0.06, false), box(0.05, 0.05, 0.1, INK, -W / 2 + t + 0.5, 0.46, 0.06, false));
+  for (let t = 0; t < W; t++) g.add(...pullHandle(-W / 2 + t + 0.5, 0.62, 0.1));
   g.add(box(0.36, 0.2, 0.02, NAPO_YELLOW, 0, 0.86, 0.06, 0.01), box(0.26, 0.03, 0.01, INK, 0, 0.9, 0.075, false), box(0.2, 0.03, 0.01, INK, 0, 0.83, 0.075, false));
   return g;
 }

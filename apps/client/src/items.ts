@@ -136,6 +136,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'placed': return 'It stands in its place already';
     case 'street_full': return 'Their street has no lot free';
     case 'neighbors': return 'You live on the same street already';
+    case 'padlocked': return 'A padlock, rusted shut';
   }
 }
 

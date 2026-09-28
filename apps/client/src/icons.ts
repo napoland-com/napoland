@@ -356,8 +356,23 @@ export const NO_BADGE_ICON = icon(`<rect x="4.5" y="11" width="23" height="10" r
 export const NO_OUTFIT_ICON = icon(`<path d="M16 12.6v-1.7c0-1 .6-1.5 1.5-2 .9-.5 1.5-1.1 1.5-2.1 0-1.3-1.2-2.3-2.9-2.3-1.6 0-2.7 1-2.7 2.3" stroke-width="1.8"/>
   <path d="M16 12.6L4.6 21.4c-.8.6-.4 1.9.6 1.9h21.6c1 0 1.4-1.3.6-1.9z" stroke-width="1.8"/>`);
 
+/** Bolt cutters: two long steel handles with red grips, crossing at the bolt, and short jaws edged with a sliver of shard. */
+export const CUTTERS_ICON = icon(`<path d="M13 14.6l12.6 12.8M14.6 13l12.8 12.6" stroke-width="4.4"/>
+  <path d="M13 14.6l12.6 12.8M14.6 13l12.8 12.6" stroke="#6d7780" stroke-width="2.3"/>
+  <path d="M20.6 22.4l5 5M22.4 20.6l5 5" stroke="#c0452f" stroke-width="2.6"/>
+  <path d="M14.8 13.2L4.6 4.4c3.2.3 6.9 2.2 9.8 5.2 1.5 1.6 1.7 2.8.4 3.6z" fill="#aebbc1"/>
+  <path d="M13.2 14.8L4.4 4.6c.3 3.2 2.2 6.9 5.2 9.8 1.6 1.5 2.8 1.7 3.6.4z" fill="#aebbc1"/>
+  <path d="M5.4 5.4l5.2 4.6" stroke="#b89cff" stroke-width="1.2"/>
+  <circle cx="14" cy="14" r="1.8" fill="#57636a"/>`);
+
+/** Chest waders: a rubber bib on its braces, the legs down into boots, a copper seam at the waist. */
+export const WADERS_ICON = icon(`<path d="M10.6 9L9.2 3.6M21.4 9l1.4-5.4" stroke-width="1.6"/>
+  <path d="M9.5 8.6h13v7.8l1.5 9.6h-5.3l-2.7-8.4-2.7 8.4H7.9l1.6-9.6z" fill="#5f6d43"/>
+  <path d="M9.5 13.2h13" stroke="#d9773a" stroke-width="1.1" stroke-dasharray="1.4 1"/>
+  <path d="M7.7 26h5.5v2.7H6.3c0-1.5.6-2.7 1.4-2.7zM18.8 26h5.5c.8 0 1.4 1.2 1.4 2.7h-6.9z" fill="#3a2f24"/>`);
+
 /** The drawing on each tool's button in the bag's header, by the icon its item names (TOOL_ICONS: every one is drawn). */
-export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON, radio: RADIO_ICON };
+export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON, radio: RADIO_ICON, cutters: CUTTERS_ICON, waders: WADERS_ICON };
 
 /**
  * The drawing for an item: its own, or its slot's in its color for gear, a tool's by its icon (a paper map

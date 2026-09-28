@@ -224,7 +224,8 @@ function place(o: MapObject) {
   }
   objects.push(o);
 }
-const walkable = (x: number, y: number) => inner(x, y) && !blocked[y * W + x] && level[y]![x] === 0 && at(x, y) !== 't' && at(x, y) !== 'w';
+/** What anyone can walk: a flooded culvert (c) is water to all but whoever wades it, and so it is here. */
+const walkable = (x: number, y: number) => inner(x, y) && !blocked[y * W + x] && level[y]![x] === 0 && at(x, y) !== 't' && at(x, y) !== 'w' && at(x, y) !== 'c';
 
 /** Walking steps from the home exit to every tile (-1: no way there). */
 function stepsHome(): Int32Array {
@@ -599,6 +600,58 @@ onForest({
   }
 }
 
+// ---- Places you can see but not reach yet (roadmap/locked-places.md) ----
+
+// Added after everything else but the notes (laid last, on what stands here), so nothing that was here
+// moves: every tile anyone could walk on stays
+// walkable and just as far from home (the checks below stop the script otherwise). Two places a first
+// trip walks past and cannot use yet, each opened by a tool made at the workbench at home: the ranger's
+// shed behind the hut, padlocked (bolt cutters open its door), and the culvert the loggers dug to drain
+// the bog, flooded long since (waders wade it), which runs south under the creek and comes out in the
+// headlight clearing, where a first trip finds the tall grass. Only forest changes, and the one tile of
+// the creek the culvert passes under.
+const beforeLocked = tile.map(r => r.join('')), stepsBeforeLocked = stepsHome();
+
+// The shed: two by two in the forest behind the hut's east end, its door onto the hut's yard (the room
+// is in gen-interiors.ts). The lock on its door is what the server and every player's game go by.
+const SHED = { kind: 'house', x: 31, y: 2, w: 2, h: 2, roof: '#4c5646', lit: 0, style: 'shed' } as const;
+onForest(SHED);
+const shedDoor: MapExit = { ...doorInto('near-woods-shed', 'near-woods', SHED), lock: 'bolt-cutters' };
+{
+  const d = doorOf(SHED);
+  if (!walkable(d.x, d.y + 1)) throw new Error(`the shed's door opens onto ${d.x},${d.y + 1}, which nobody can stand on`);
+}
+
+// The culvert: from just south of the bog (its north mouth, off the bog's south-east corner) straight
+// down through the firs east of the bog trail, a turn south-west clear of the old cabin's clearing, under
+// the creek where it runs one tile wide, and out along the creek's south bank into the headlight clearing
+// (its south mouth). Every tile of it but its mouths lies deep in the firs, so it is entered only there.
+const CULVERT: P[] = [[58, 32], [58, 33], [59, 33], [59, 46], ...stairs([59, 46], [53, 52], 2, 180), [53, 57], [49, 57]];
+const culvert: P[] = polyline(CULVERT).filter(([x, y], k, all) => all.findIndex(([ax, ay]) => ax === x && ay === y) === k);
+const MOUTHS: readonly P[] = [culvert[0]!, culvert.at(-1)!];
+const onCulvert = new Set(culvert.map(([x, y]) => y * W + x));
+for (const [x, y] of culvert) {
+  if (at(x, y) !== 't' && at(x, y) !== 'w') throw new Error(`the culvert at ${x},${y} runs onto ground that is neither forest nor the creek`);
+  set(x, y, 'c');
+}
+for (const [x, y] of culvert) {
+  const mouth = MOUTHS.some(([mx, my]) => mx === x && my === y);
+  const ways = SIDES.filter(([dx, dy]) => walkable(x + dx, y + dy) && !onCulvert.has((y + dy) * W + x + dx));
+  if (!mouth && ways.length) throw new Error(`the culvert at ${x},${y} can be stepped into from ${x + ways[0]![0]},${y + ways[0]![1]}: only its mouths open onto ground`);
+  if (mouth && !ways.length) throw new Error(`the culvert's mouth at ${x},${y} opens onto no ground`);
+}
+
+// The checks: only forest changed (and the creek where the culvert passes under it), every tile anyone
+// could walk on is still walkable and as far from home as it was.
+{
+  const d = stepsHome();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, was = beforeLocked[y]![x]!;
+    if (was !== tile[y]![x] && was !== 't' && !(was === 'w' && onCulvert.has(i))) throw new Error(`the tile at ${x},${y} was ${was} and is now ${tile[y]![x]}: only forest may change`);
+    if (stepsBeforeLocked[i]! >= 0 && d[i] !== stepsBeforeLocked[i]) throw new Error(`the tile at ${x},${y} was ${stepsBeforeLocked[i]} steps from home and is now ${d[i]}`);
+  }
+}
+
 // ---- Notes people left (notes-left.ts) ----
 
 // Laid last, on what already stands here, so nothing moves: a note blocks nothing and changes no ground.
@@ -619,11 +672,12 @@ onForest({
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 13, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 14, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
-  exits: [EXIT, ...doors, FAR_WAY],
+  // The shed's door after the old ones: a new exit never moves one that was there.
+  exits: [EXIT, ...doors, FAR_WAY, shedDoor],
   objects,
   // Rain from 12 minutes after dawn, for 12: the wettest part of the day, while the South Road is dry.
   rain: [{ from: 12 * 60, length: 12 * 60 }],
@@ -675,7 +729,7 @@ writeFileSync(out, json);
 
 // A glance at the result, two map rows per line because a terminal character is about twice as tall
 // as it is wide. Of the two tiles in a character, the one listed first in ORDER wins.
-const ORDER = '*!HCJ@SFvibBnLc#-T^ox~=";,_. ';
+const ORDER = '*!HCJ@SFvibBnLc#-T^ox%~=";,_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', sign: '!', board: '!', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
@@ -697,7 +751,7 @@ const GLYPH: Record<MapObject['kind'], string> = {
   // NAPO's teleport stands in every cabin and by the notice board in town (gen-interiors.ts, gen-map.ts).
   teleport: 'N',
 };
-const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
+const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', c: '%', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();
 for (const o of objects) for (const [x, y] of objectTiles(o)) objGlyph.set(y * W + x, pick(GLYPH[o.kind], objGlyph.get(y * W + x) ?? ' '));
 function glyph(x: number, y: number): string {
@@ -709,7 +763,7 @@ const frame = '+' + '-'.repeat(W) + '+';
 const rows = [frame];
 for (let y = 0; y < H; y += 2) rows.push('|' + Array.from({ length: W }, (_, x) => pick(glyph(x, y), glyph(x, y + 1))).join('') + '|');
 console.log([...rows, frame].join('\n'));
-console.log(' . ground  " ferns  ; tall grass  = old road  ~ water  ^ rocks  * street light  ! sign or stake  H cabin  C car  J jeep  i pole  o rock  x stump  # log deck  T fir  , shrooms  v way home');
+console.log(' . ground  " ferns  ; tall grass  = old road  ~ water  % flooded culvert  ^ rocks  * street light  ! sign or stake  H cabin or shed  C car  J jeep  i pole  o rock  x stump  # log deck  T fir  , shrooms  v way home');
 
 // How deep it goes, measured like the game does (TileMap.homeSteps drives the energy drain).
 const tm = new TileMap(map);
@@ -730,6 +784,27 @@ console.log(`tall grass, ${patches.length} patches: ${patches.map((p, k) => {
   return `${TALL[k]!.name ?? `at ${TALL[k]!.at.join(',')}`} ${p.length} tiles ${Math.min(...s)}-${Math.max(...s)} steps`;
 }).join(', ')}`);
 console.log(`shelter doors: ${shelters.map((s, i) => { const d = doorOf(s); return `${cabins[i]!.inside} ${tm.homeSteps(d.x, d.y)} steps`; }).join(', ')}`);
+// What the culvert is worth to whoever wades it: walking steps, as the game counts them, with and without waders.
+{
+  const walk = (from: P, pass?: ReadonlySet<string>) => {
+    const d = new Int32Array(W * H).fill(-1), queue = [from[1] * W + from[0]];
+    d[queue[0]!] = 0;
+    for (let h = 0; h < queue.length; h++) {
+      const i = queue[h]!, x = i % W, y = (i / W) | 0;
+      for (const [dx, dy] of SIDES) {
+        const j = (y + dy) * W + x + dx;
+        if (d[j]! < 0 && tm.walkable(x + dx, y + dy, pass) && !tm.exitAt(x + dx, y + dy)) { d[j] = d[i]! + 1; queue.push(j); }
+      }
+    }
+    return (to: P) => d[to[1] * W + to[0]]!;
+  };
+  // Where the culvert comes out: the ground just west of its south mouth, in the headlight clearing.
+  const BOG: P = [57, 26], OUT: P = [MOUTHS[1]![0] - 1, MOUTHS[1]![1]], waders = new Set(['waders']);
+  const plain = walk(BOG), wading = walk(BOG, waders), homeTile: P = [EXIT.x, EXIT.y - 1];
+  const shed = doorOf(SHED);
+  console.log(`the ranger's shed: its door ${tm.homeSteps(shed.x, shed.y)} steps from home, padlocked (${shedDoor.lock})`);
+  console.log(`the culvert: ${culvert.length} tiles from ${MOUTHS[0]!.join(',')} to ${MOUTHS[1]!.join(',')}; from the bog to where it comes out south of the creek ${plain(OUT)} steps round by the ford, ${wading(OUT)} through it; from the bog to the way home ${plain(homeTile) + 1} steps, ${wading(homeTile) + 1} through it`);
+}
 // The tuning targets in energy.ts: how long a full bar lasts standing still in the rain.
 const lasts = (x: number, y: number) => (ENERGY_MAX / -energyRate(tm, x, y, 'rain') / 60).toFixed(1);
 const deep = steps.indexOf(deepest);

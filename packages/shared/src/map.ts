@@ -28,9 +28,28 @@ export const TILE_CHARS = {
   p: 'floor',
   /** A building's wall, inside: nobody walks through. */
   x: 'wall',
+  /**
+   * A flooded culvert: water to everyone but whoever wades it in waders (TILE_NEEDS). Drawn as water,
+   * heard as water, and nothing else ever walks it: creatures, finds and how far home a tile is go by
+   * the map as nobody's pass opens it.
+   */
+  c: 'culvert',
 } as const;
 export type TileChar = keyof typeof TILE_CHARS;
 export type TileKind = (typeof TILE_CHARS)[TileChar];
+
+/**
+ * What a walker brings to the tiles that open only for some (TileMap.walkable): the ids of the tools
+ * they own (waders through the culvert, bolt cutters through a padlocked door). The server checks every
+ * step with the mover's; the client paths and predicts with its own player's.
+ */
+export type Pass = ReadonlySet<string>;
+
+/** The tile kinds that open only for whoever holds a tool, and which: the flooded culvert, to waders. */
+export const TILE_NEEDS: Readonly<Partial<Record<TileKind, string>>> = { culvert: 'waders' };
+
+/** Water in all but name: a flooded culvert is water to whoever is not wading it. */
+export const watery = (kind: TileKind | undefined): boolean => kind === 'water' || kind === 'culvert';
 
 /** The wilds drain energy; towns and the insides of buildings do not. */
 export type MapKind = 'town' | 'wilds' | 'inside';
@@ -51,6 +70,11 @@ export interface MapExit {
   dir: Dir;
   /** This exit leads back toward town: in the wilds, danger is measured as the distance from it. */
   home?: boolean;
+  /**
+   * The tool it takes to go through (a padlocked door: bolt cutters, an item id). Without it the door
+   * stays shut: the server refuses the step, and a player's own game neither paths nor steps through it.
+   */
+  lock?: string;
 }
 
 /** How far a street light reaches, from the lamp's tile center to a tile's center. Light is for seeing, not energy. */
@@ -73,13 +97,15 @@ export type MapObject =
   | { kind: 'rock'; x: number; y: number; s: number; v: number; hum?: boolean }
   /**
    * A building you can enter: a wooden cabin (3 by 2, a gabled roof in `roof`), with style 'napo' one
-   * of NAPO's concrete buildings (3 by 2 or bigger, a flat roof in `roof`), or with style 'mill' the
-   * old sawmill, long and low, timber under a sawtooth roof (`roof` its rusted metal). Lit: someone is
-   * home. `curtains`: a cabin whose people left and drew the curtains behind them; its windows never light.
-   * `plate`: a cabin on a street, a lot (MapData.street), with a name plate by its door where its owner's
-   * name shows; its window lights while its owner is at home, whatever `lit` says.
+   * of NAPO's concrete buildings (3 by 2 or bigger, a flat roof in `roof`), with style 'mill' the old
+   * sawmill, long and low, timber under a sawtooth roof (`roof` its rusted metal), or with style 'shed'
+   * a board shed, 2 by 2, under a lean-to roof (`roof`), whose door is padlocked when its exit has a
+   * `lock`. Lit: someone is home. `curtains`: a cabin whose people left and drew the curtains behind
+   * them; its windows never light. `plate`: a cabin on a street, a lot (MapData.street), with a name
+   * plate by its door where its owner's name shows; its window lights while its owner is at home,
+   * whatever `lit` says.
    */
-  | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' | 'mill'; curtains?: boolean; plate?: true }
+  | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' | 'mill' | 'shed'; curtains?: boolean; plate?: true }
   | { kind: 'lamp'; x: number; y: number }
   /**
    * A wooden signpost; with style 'napo' one of NAPO's yellow warning signs, 'cardboard' a piece of
@@ -274,10 +300,11 @@ export interface MapData {
   /** The wilds only: watchers, creatures that come closer while nobody looks at them. */
   watchers?: WatcherRule;
   /**
-   * Insides only: the inside of one of NAPO's buildings (napo: concrete, not logs), or the sawmill's
-   * floor (mill: boards, not logs). Its door is a building of the same style.
+   * Insides only: the inside of one of NAPO's buildings (napo: concrete, not logs), the sawmill's floor
+   * (mill: boards, not logs) or a board shed's (shed: rough boards, small). Its door is a building of
+   * the same style.
    */
-  style?: 'napo' | 'mill';
+  style?: 'napo' | 'mill' | 'shed';
   /**
    * A room with a chest only: a home that is each player's own. Whoever walks in through their own door is
    * in a copy of the room of their own (their cabin, the server's zones), where only the neighbors they let
@@ -490,6 +517,12 @@ export class TileMap {
   private frozen = false;
   /** The most steps any tile is from home: where a surge starts. 0 in towns and insides. */
   readonly deepest: number;
+  /** On each tile that opens only for some, the index in `keys` of what it takes (TILE_NEEDS, MapExit.lock); -1 elsewhere. */
+  private readonly locks: Int16Array;
+  /** What this map's locked tiles take, each once: every tool (or later, anything else) a pass may hold here. */
+  readonly keys: readonly string[];
+  /** Every key there is here: validators and generators ask what is walkable for someone who holds all of them. */
+  private readonly all: Pass;
 
   constructor(readonly data: MapData) {
     const W = data.width, H = data.height;
@@ -522,6 +555,26 @@ export class TileMap {
       for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) if (this.inside(x, y)) this.exitIndex[y * W + x] = i;
     });
 
+    // Tiles that open only for whoever holds something: a kind of ground (the culvert, to waders) or a
+    // locked exit (a padlocked door, to bolt cutters).
+    this.locks = new Int16Array(W * H).fill(-1);
+    const keys: string[] = [];
+    const lock = (i: number, key: string) => {
+      let k = keys.indexOf(key);
+      if (k < 0) k = keys.push(key) - 1;
+      this.locks[i] = k;
+    };
+    for (let i = 0; i < W * H; i++) {
+      const need = TILE_NEEDS[this.kinds[i]!];
+      if (need) lock(i, need);
+    }
+    for (const e of data.exits ?? []) {
+      if (!e.lock) continue;
+      for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) if (this.inside(x, y)) lock(y * W + x, e.lock);
+    }
+    this.keys = keys;
+    this.all = new Set(keys);
+
     this.litTiles = this.around('lamp', LAMP_RADIUS);
     this.warmTiles = this.around('fireplace', FIRE_RADIUS);
 
@@ -529,7 +582,8 @@ export class TileMap {
     for (const water of data.ice ?? []) for (const [x, y] of water.tiles ?? []) if (this.inside(x, y) && this.kinds[y * W + x] === 'water') this.iceTiles[y * W + x] = 1;
     this.hasIce = this.iceTiles.includes(1);
 
-    // Distance home, walking, the year round; and in winter, with the ice walked on too.
+    // Distance home, walking, the year round; and in winter, with the ice walked on too. Measured before
+    // the locked tiles (relaxLocked, below): where a surge starts never depends on who wades or cuts through.
     this.stepsHome = this.stepsFromHome();
     this.frozen = this.hasIce;
     this.stepsHomeFrozen = this.hasIce ? this.stepsFromHome() : null;
@@ -537,6 +591,44 @@ export class TileMap {
     let deepest = 0;
     for (const v of this.stepsHome) if (v > deepest) deepest = v;
     this.deepest = deepest;
+    // A tile that opens only for some is as far from home as the way to it through the tiles that open
+    // for everyone, then along the locked ones, in winter as the rest of the year.
+    this.relaxLocked(this.stepsHome);
+    if (this.stepsHomeFrozen) {
+      this.frozen = true;
+      this.relaxLocked(this.stepsHomeFrozen);
+      this.frozen = false;
+    }
+  }
+
+  /**
+   * Gives each tile that opens only for some the distance of the way to it through the tiles that open for
+   * everyone, then along the locked ones: the drain, a surge's front and the hitchhikers treat it like the
+   * ground it joins, and no other tile's distance changes by it (a shortcut through the culvert makes the
+   * bog no shallower). Few tiles, so they are relaxed until they settle.
+   */
+  private relaxLocked(steps: Int32Array): void {
+    const W = this.width;
+    if (this.data.kind !== 'wilds' || !this.keys.length) return;
+    const locked: number[] = [];
+    for (let i = 0; i < W * this.height; i++) if (this.locks[i]! >= 0 && this.blocked[i] === 0 && this.levels[i] === 0) locked.push(i);
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const i of locked) {
+        const x = i % W, y = (i / W) | 0;
+        let best = steps[i]! < 0 ? Infinity : steps[i]!;
+        for (const [nx, ny] of [[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]] as const) {
+          if (!this.inside(nx, ny)) continue;
+          const j = ny * W + nx, d = steps[j]!;
+          // Its neighbors that anyone walks, and the locked ones measured so far.
+          if (d >= 0 && (this.locks[j]! >= 0 || this.walkable(nx, ny)) && d + 1 < best) best = d + 1;
+        }
+        if (best < Infinity && best !== steps[i]) {
+          steps[i] = best;
+          changed = true;
+        }
+      }
+    }
   }
 
   /**
@@ -651,11 +743,29 @@ export class TileMap {
     return this.walkable(x, y) && !this.exitAt(x, y) && !this.lit(x, y) && !this.warm(x, y) && !hidden(this, x, y);
   }
 
-  /** Can a character stand on this tile? Water, only where it is frozen now (winter's ice). */
-  walkable(x: number, y: number): boolean {
+  /**
+   * Can a character stand on this tile? Water, only where it is frozen now (winter's ice). A tile that
+   * opens only for some (the culvert, a padlocked door) is walkable for whoever's `pass` holds what it
+   * takes, and for nobody else: without a pass, never.
+   */
+  walkable(x: number, y: number, pass?: Pass): boolean {
     if (!Number.isInteger(x) || !Number.isInteger(y) || !this.inside(x, y)) return false;
     const i = y * this.width + x;
+    if (this.blocked[i] !== 0 || this.levels[i] !== 0) return false;
+    const g = this.locks[i]!;
+    if (g >= 0) return pass?.has(this.keys[g]!) === true;
     const kind = this.kinds[i];
-    return this.blocked[i] === 0 && (kind !== 'water' || (this.frozen && this.iceTiles[i] === 1)) && kind !== 'forest' && kind !== 'wall' && this.levels[i] === 0;
+    return (kind !== 'water' || (this.frozen && this.iceTiles[i] === 1)) && kind !== 'forest' && kind !== 'wall';
+  }
+
+  /** What it takes to walk this tile, when only some may (a tool's id): undefined for a tile that is open, or shut, to everyone alike. */
+  needs(x: number, y: number): string | undefined {
+    const g = this.inside(x, y) ? this.locks[y * this.width + x]! : -1;
+    return g >= 0 ? this.keys[g] : undefined;
+  }
+
+  /** Walkable for someone who holds everything this map's locked tiles take: what content checks ask (every door leads in, for someone). */
+  passable(x: number, y: number): boolean {
+    return this.walkable(x, y, this.all);
   }
 }
