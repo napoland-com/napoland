@@ -991,6 +991,14 @@ export class WorldView {
     this.lotLights.forEach((l, i) => { l.visible = lit.has(i); });
   }
 
+  /** How many lots this view draws (a street's cabins; none anywhere else), and whose windows are lit now, by number: for tests and the console. */
+  get lots(): number {
+    return this.lotLights.length;
+  }
+  lotsLit(): number[] {
+    return this.lotLights.flatMap((l, i) => (l.visible ? [i] : []));
+  }
+
   /** How big each fire burns (fire.ts, fireLevel), by its fireplace's tile: asked every frame. */
   setFires(level: (x: number, y: number) => number) {
     this.fireLevel = level;
