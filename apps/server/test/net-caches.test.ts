@@ -175,6 +175,19 @@ describe('a crate for whoever comes next', () => {
     expect(world().get(a.id)!.stash).toEqual({ items: { resin: 2 }, out: {} });
   });
 
+  it('doubles, while rested, only what was found: what came out of a crate earns nothing, so the cup pays nothing for it', async () => {
+    const b = await enter({ ...atCamp, bag: [{ item: 'resin', count: 1 }] });
+    b.c.send({ t: 'cacheLeave', ...CAMP, slot: 0 });
+    await b.c.next('did');
+    const a = await enter({ ...atCamp, rested: 50, bag: [{ item: 'resin', count: 1 }] });
+    const { items: inside } = await open(a.c, CAMP);
+    a.c.send({ t: 'cacheTake', ...CAMP, id: inside.find(e => e.owner === b.id)!.id });
+    await a.c.next('did');
+    await walk(a.c, ['down', 'down', 'down', 'down', 'right', 'right', 'up', 'up', 'left']);
+    a.c.send({ t: 'store', x: 1, y: 1 });
+    expect(await a.c.next('progress')).toMatchObject({ gained: 4, fromRest: 2, progress: { rested: 48 } });
+  });
+
   it('thanks someone who is away in their letter, for what they left where', async () => {
     const b = await enter({ ...atCamp, bag: [{ item: 'resin', count: 1 }] });
     b.c.send({ t: 'cacheLeave', ...CAMP, slot: 0 });

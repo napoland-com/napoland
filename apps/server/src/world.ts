@@ -36,10 +36,12 @@
  * in the bag, one to a slot, and keeps its piece wherever it goes (the bag, a pile, someone else's
  * half of it); it goes on and comes off at the chest, and anywhere from and into the bag. The bag
  * you wear changes only at the chest. Over it all, a player signed in may wear an outfit (outfits.ts),
- * which changes how they look and nothing else.
+ * which changes how they look and nothing else; past level 20, merits buy a pattern for their jacket and
+ * a badge for their name tag (merits.ts), looks too.
  *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
- * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). On a server
+ * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). Time away fills
+ * a cup of rest, counted as they arrive; while it holds any, stashing earns double out of it. On a server
  * with sign-in, whoever plays signed in finds a parcel in it the first time they play on each calendar
  * day, a welcome parcel the very first time (parcels.ts): gifts, which earn no XP. A NAPO lockbox, which
  * Sunday's parcel holds for whoever came back all week, is opened at the chest.
@@ -95,6 +97,7 @@ import {
   cacheTakes,
   calendarDay,
   canMake,
+  cleanRested,
   conditionsAt,
   dayIndex,
   daysThisWeek,
@@ -131,6 +134,9 @@ import {
   maxEnergy,
   merge,
   mayWear,
+  mayWearLook,
+  meritLookOf,
+  meritsLeft,
   modsOf,
   nextParcel,
   openInStash,
@@ -140,6 +146,9 @@ import {
   rankOf,
   reachedBy,
   resistOf,
+  restAfter,
+  restFor,
+  spendRest,
   stashList,
   store,
   storeLive,
@@ -162,6 +171,7 @@ import {
   weatherAt,
   weekdayOf,
   wetRate,
+  whyNotBuy,
   type Arrival,
   type BagSlot,
   type BodyView,
@@ -183,6 +193,8 @@ import {
   type Gear,
   type ItemDef,
   type ItemsData,
+  type LookKind,
+  type MeritsView,
   type Piece,
   type Quirk,
   type Worn,
@@ -340,6 +352,10 @@ export interface Joined extends Scene {
   conditions: ConditionsView;
   stats: Stats;
   progress: ProgressView;
+  /** The rest their time away was worth, since they were last seen (restFor): whether the cup had room for it or not. */
+  restedAway: number;
+  /** What they spent of their merits, and the looks they bought (those this release has). */
+  merits: MeritsView;
   /** Every tool the player owns, in the order they got them (toolsOf): the starter tools until they got one of their own. */
   tools: string[];
   story: StoryView;
@@ -403,6 +419,8 @@ export interface WorldOptions {
   calendar?: Calendar;
   /** Development only (XP_MULTIPLIER): stashing earns this many times the XP, to play-test the levels without the trips. 1 unless set. */
   xpTimes?: number;
+  /** Development only (RESTED_EVERY_MS): the time away that fills one XP of rest, to play-test it without the days away. RESTED_EVERY_MS unless set. */
+  restedEveryMs?: number;
 }
 
 interface Online {
@@ -572,7 +590,7 @@ interface Flare {
 const quirksOf = (w: Worn | undefined): Quirk[] => SLOTS.flatMap(s => (w?.[s]?.quirk ? [w[s]!.quirk!] : []));
 const view = (r: PlayerRecord, live = false, guest = false): PlayerView => ({
   id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn), ...(live ? { live: true as const } : {}),
-  ...(guest ? { guest: true as const } : {}), ...(r.outfit ? { outfit: r.outfit } : {}),
+  ...(guest ? { guest: true as const } : {}), ...(r.outfit ? { outfit: r.outfit } : {}), ...(r.pattern ? { pattern: r.pattern } : {}), ...(r.badge ? { badge: r.badge } : {}),
 });
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
@@ -622,6 +640,7 @@ const copyStash = (s: Stash): Stash => ({
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
+  ...(r.looks ? { looks: [...r.looks] } : {}),
 });
 /** A saved piece as the server writes them: a condition from 0 to 1, a quirk the game knows (or none), a level up to UPGRADE_MAX (or none). */
 const isPiece = (p: unknown): p is Piece => {
@@ -704,6 +723,8 @@ export class World {
   private readonly guests: boolean;
   /** Stashing earns this many times an item's XP: 1, but for play-tests (WorldOptions.xpTimes). */
   private readonly xpTimes: number;
+  /** The time away that fills one XP of rest (WorldOptions.restedEveryMs). */
+  private readonly restedEvery: number | undefined;
   private readonly onCollapse: WorldOptions['onCollapse'];
   private readonly items: Map<string, ItemDef>;
   /** The items in the order of content/items.json: a stash lists them so. */
@@ -822,6 +843,7 @@ export class World {
     this.cycle = options.cycle ?? false;
     this.guests = options.guests ?? false;
     this.xpTimes = options.xpTimes ?? 1;
+    this.restedEvery = options.restedEveryMs;
     this.stepMs = options.stepMs ?? STEP_MS;
     this.onCollapse = options.onCollapse;
     this.rng = options.rng ?? Math.random;
@@ -982,13 +1004,19 @@ export class World {
   join(rec: PlayerRecord, now: number): Joined {
     if (this.players.has(rec.id)) throw new Error(`player ${rec.id} is already online`);
     const gear = this.cleanGear(rec.gear);
+    // Time away since they were last seen fills the cup of rest (progress.ts), a guest's too.
+    const away = now + this.epochOffset - rec.lastSeenAt;
     const r: PlayerRecord = {
       ...rec, gear, worn: this.cleanWorn(rec.worn, gear), bag: this.fitBag(rec.bag, bagSlotsOf(gear, this.items)), stats: cleanStats(rec.stats),
       // Gear counted in the stash gets its pieces (all of it, for a stash saved before pieces existed).
       stash: fitPieces(cleanStash(rec.stash, this.items), this.items, this.rng),
       xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
+      rested: restAfter(cleanRested(rec.rested), away, this.restedEvery),
       // Kept as saved, ids this release does not know included (toolsOf).
       tools: cleanTools(rec.tools),
+      // Merits spent stay spent, and every look bought stays theirs, a newer release's too (a list of ids, as the tools are).
+      meritsSpent: Number.isInteger(rec.meritsSpent) && rec.meritsSpent! > 0 ? rec.meritsSpent : 0,
+      looks: cleanTools(rec.looks) ?? [],
       ...(rec.parcels !== undefined ? { parcels: cleanParcels(rec.parcels) } : {}),
     };
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
@@ -1009,6 +1037,8 @@ export class World {
     // An outfit shows only while they may wear it (signed in, the level reached). One they may not (it
     // is from a newer release, or they play as a guest now) shows as none, and stays saved for when they may.
     if (r.outfit && !mayWear(r.outfit, levelOf(r.xp ?? 0), !this.guest(r))) delete r.outfit;
+    // A pattern and a badge likewise: only one of theirs, only signed in.
+    for (const kind of ['pattern', 'badge'] as const) if (r[kind] && !mayWearLook(r[kind], kind, r.looks!, !this.guest(r))) delete r[kind];
     r.energy = Number.isFinite(r.energy) ? Math.min(this.maxOf(r), Math.max(0, r.energy)) : this.maxOf(r);
     r.wet = Number.isFinite(r.wet) ? clamp01(r.wet!) : 0;
     const readyAt = this.resting.get(r.id) ?? -Infinity;
@@ -1030,8 +1060,8 @@ export class World {
     const here = zone.key, today = utcDay(now + this.epochOffset);
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
-      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
-      tools: toolsOf(r.tools, this.items),
+      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats },
+      progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
       thanked: [...this.thanks.values()].filter(t => t.giver === r.id && t.day === today).map(t => t.helper),
@@ -1055,6 +1085,8 @@ export class World {
     const from = p.zone;
     // Energy that runs out on the way out still counts: the bag drops, and the player wakes up at home next time.
     if (this.advance(p, now) <= 0) this.fall(p, now);
+    // Seen until now: coming straight back (another tab, the same record) is no time away to rest in.
+    p.rec.lastSeenAt = Math.floor(now + this.epochOffset);
     this.players.delete(id);
     this.quit(p);
     if (p.readyAt > -Infinity) this.resting.set(id, p.readyAt);
@@ -1278,18 +1310,16 @@ export class World {
       r.stash = lr.stash;
       r.xp += lr.xp;
     }
-    r.xp *= this.xpTimes;
     // Carried gear goes in as it is, piece by piece; fitPieces keeps the stash's pieces and its counts one.
     p.rec.stash = fitPieces(r.stash, this.items, this.rng);
     p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
     const before = levelOf(p.rec.xp ?? 0);
-    p.rec.xp = (p.rec.xp ?? 0) + r.xp;
     this.saveNow.set(id, p.rec);
     this.sendBag(p, now);
     this.sendStash(p);
-    this.outbox.push({ to: id, msg: { t: 'progress', progress: progressOf(p.rec.xp), gained: r.xp } });
+    this.earn(p, r.xp, true);
     // A bigger bar: the player hears it (and at home, by the fire, it fills up).
-    if (levelOf(p.rec.xp) !== before) this.refresh(p, now);
+    if (levelOf(p.rec.xp ?? 0) !== before) this.refresh(p, now);
     this.tell(p, now);
     this.moveStory(p, { store: true });
   }
@@ -1412,6 +1442,67 @@ export class World {
     p.rec.outfit = def ? def.id : null;
     this.saveNow.set(id, p.rec);
     this.toZone(p.zone.key, { t: 'outfit', id, outfit: def?.id ?? null });
+  }
+
+  /**
+   * Spends merits on a look (merits.ts), a jacket pattern or a name tag badge, at the chest on tile x,y
+   * next to the player: it is theirs for good. Only signed in (a guest earns merits, and spends them once
+   * signed in), only a look the game has, once, and with merits enough to spend; the client asks first,
+   * and says what it did from `did`. Saved at once.
+   */
+  buy(id: string, x: number, y: number, lookId: string, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.guest(p.rec)) return this.refuse(p, 'buy', 'sign_in_first');
+    if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'buy', 'too_far');
+    const look = meritLookOf(lookId);
+    if (!look) return this.refuse(p, 'buy', 'gone');
+    const xp = p.rec.xp ?? 0, why = whyNotBuy(look, xp, { spent: p.rec.meritsSpent ?? 0, owned: p.rec.looks ?? [] }, true);
+    if (why) return this.refuse(p, 'buy', why);
+    p.rec.meritsSpent = (p.rec.meritsSpent ?? 0) + look.cost;
+    p.rec.looks = [...(p.rec.looks ?? []), look.id];
+    this.saveNow.set(id, p.rec);
+    this.outbox.push({ to: id, msg: { t: 'merits', merits: this.meritsOf(p.rec) } });
+    this.did(p, { kind: 'bought', look: look.id, left: meritsLeft(xp, p.rec.meritsSpent) });
+  }
+
+  /** Wears a jacket pattern of the player's, or none (null), at the chest on tile x,y next to them (adorn). */
+  pattern(id: string, x: number, y: number, pattern: string | null, now: number): void {
+    this.adorn(id, x, y, 'pattern', pattern, now);
+  }
+
+  /** Wears a name tag badge of the player's, or none (null), at the chest on tile x,y next to them (adorn). */
+  badge(id: string, x: number, y: number, badge: string | null, now: number): void {
+    this.adorn(id, x, y, 'badge', badge, now);
+  }
+
+  /**
+   * Puts on a look the player bought (a pattern or a badge: one of each at a time), or takes it off (null),
+   * at the chest: like an outfit, how they look and nothing else, so nothing asks first. Only signed in,
+   * and only one of theirs. It is saved, and everyone in their zone sees it: in their own cabin nobody
+   * else is, so the others see it as they walk out (their view has it).
+   */
+  private adorn(id: string, x: number, y: number, kind: LookKind, lookId: string | null, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.guest(p.rec)) return this.refuse(p, kind, 'sign_in_first');
+    if (!this.chestNextTo(p, x, y)) return this.refuse(p, kind, 'too_far');
+    const look = lookId === null ? undefined : meritLookOf(lookId, kind);
+    if (lookId !== null && !look) return this.refuse(p, kind, 'gone');
+    if (look && !(p.rec.looks ?? []).includes(look.id)) return this.refuse(p, kind, 'not_owned');
+    const wears = look?.id ?? null;
+    if ((p.rec[kind] ?? null) === wears) return;
+    // Taken off is null, not left out: a save without one keeps the one saved.
+    p.rec[kind] = wears;
+    this.saveNow.set(id, p.rec);
+    this.toZone(p.zone.key, kind === 'pattern' ? { t: 'pattern', id, pattern: wears } : { t: 'badge', id, badge: wears });
+  }
+
+  /** What the player hears of their merits: what they spent, and the looks they bought that this release has. */
+  private meritsOf(r: PlayerRecord): MeritsView {
+    return { spent: r.meritsSpent ?? 0, owned: (r.looks ?? []).filter(l => meritLookOf(l)) };
   }
 
   /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. */
@@ -3173,12 +3264,18 @@ export class World {
     this.tell(p, now);
   }
 
-  /** XP earned by a piece coming home off the player's back (the first time it ever does): they hear it. The bar follows on the next refresh. */
-  private earn(p: Online, xp: number): void {
-    if (xp <= 0) return;
-    const gained = xp * this.xpTimes;
-    p.rec.xp = (p.rec.xp ?? 0) + gained;
-    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp), gained } });
+  /**
+   * XP earned by bringing something home: stashing it, or a piece that never was home coming off the
+   * player's back at the chest (the first time it ever does). A play-test's multiple of it, and while the
+   * cup of rest holds any, as much again out of it (spendRest); what earns nothing touches neither. They
+   * hear it, after a store even when it earned nothing (`always`). The bar follows on the next refresh.
+   */
+  private earn(p: Online, xp: number, always = false): void {
+    const r = spendRest(xp * this.xpTimes, p.rec.rested ?? 0);
+    if (r.gained <= 0 && !always) return;
+    p.rec.xp = (p.rec.xp ?? 0) + r.gained;
+    p.rec.rested = r.cup;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, r.cup), gained: r.gained, ...(r.fromRest ? { fromRest: r.fromRest } : {}) } });
   }
 
   /** A full bar: the level's, plus what the gear worn gives. */
@@ -3344,8 +3441,8 @@ export class World {
 
   private refuse(
     p: Online,
-    action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'thank'
-      | 'cacheLeave' | 'cacheTake',
+    action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
+      | 'thank' | 'cacheLeave' | 'cacheTake',
     reason: Refusal,
   ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });

@@ -11,13 +11,13 @@
  * (detailView), hud.ts draws it and sends what its buttons do.
  */
 import {
-  CACHE_SIZE, RESIST_MAX, WEAR_FADES, bagSlotsOf, cacheTakes, mayWear, mendCost, nextUpgrade, outfitOf, pieceFactor, upgradable, upgradeFactor, wearSeconds, type BagSlot, type CacheItemView,
-  type Element, type Gear, type ItemDef, type Piece, type PieceAt, type Slot, type Tier, type Worn,
+  CACHE_SIZE, RESIST_MAX, WEAR_FADES, bagSlotsOf, cacheTakes, mayWear, meritLookOf, meritsLeft, mendCost, nextUpgrade, outfitOf, pieceFactor, upgradable, upgradeFactor, wearSeconds,
+  whyNotBuy, xpFor, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type LookKind, type Piece, type PieceAt, type Slot, type Tier, type Worn,
 } from '@napoland/shared';
-import { NO_OUTFIT_ICON, iconFor, outfitIcon } from './icons';
+import { NO_BADGE_ICON, NO_OUTFIT_ICON, NO_PATTERN_ICON, iconFor, outfitIcon } from './icons';
 import { ELEMENT_WORDS, conditionText, countOf, factsOf, oddsText, pieceName, slotName, useLabel, type Items } from './items';
-import { CRATE_FULL, CRATE_NO_GEAR, LEFT_ONE, TOOK_ONE, holdsText, leftBy } from './said';
-import { NO_OUTFIT, outfitWords, type WardrobeState } from './wardrobe';
+import { CRATE_FULL, CRATE_NO_GEAR, LEFT_ONE, TOOK_ONE, holdsText, leftBy, merits, noMerit, price } from './said';
+import { NO_BADGE, NO_OUTFIT, NO_PATTERN, lookIcon, outfitWords, type WardrobeState } from './wardrobe';
 
 export { pieceName };
 
@@ -73,7 +73,9 @@ export type DetailRef =
   /** An outfit in the wardrobe (outfits.ts), by id, or NO_OUTFIT's. */
   | { from: 'outfit'; id: string }
   /** A thing lying in the crate you opened (caches.ts), by its id. */
-  | { from: 'crate'; id: number };
+  | { from: 'crate'; id: number }
+  /** A jacket pattern or a name tag badge in the wardrobe (merits.ts), by id, or NO_PATTERN's or NO_BADGE's. */
+  | { from: 'look'; id: string };
 
 /** Names what a card is about, for the double tap and to keep it open while the game changes around it. */
 export function refKey(r: DetailRef): string {
@@ -86,6 +88,7 @@ export function refKey(r: DetailRef): string {
     case 'upgrade': return r.of.from === 'worn' ? `upgrade:worn:${r.of.slot}` : `upgrade:stash:${r.of.item}:${r.of.n}`;
     case 'outfit': return `outfit:${r.id}`;
     case 'crate': return `crate:${r.id}`;
+    case 'look': return `look:${r.id}`;
   }
 }
 
@@ -107,8 +110,12 @@ export type DetailAct =
   | { kind: 'mend'; slot: Slot }
   | { kind: 'upgrade'; of: PieceAt }
   | { kind: 'open'; item: string }
-  /** Wear an outfit, or none (null). */
+  /** Wear an outfit, or none (null); a pattern or a badge of yours, or none. */
   | { kind: 'outfit'; id: string | null }
+  | { kind: 'pattern'; id: string | null }
+  | { kind: 'badge'; id: string | null }
+  /** Spend merits on a look: it asks first, with the card still open. */
+  | { kind: 'buy'; look: string }
   /** At a crate: take the thing `id` out (it asks nothing: someone left it for you), or leave one of what bag slot `slot` holds (it asks first). */
   | { kind: 'crateTake'; id: number }
   | { kind: 'crateLeave'; slot: number };
@@ -257,7 +264,8 @@ export function actText(act: NonNullable<DetailView['act']>): string {
 export function cardPress(v: DetailView): { does?: DetailAct; close: boolean; shake: boolean } {
   const act = v.act;
   if (!act) return { close: false, shake: false };
-  if (act.enabled) return { does: act.does, close: act.does.kind !== 'use', shake: false };
+  // Using and buying ask first, with the card still open behind the question; bought, it offers to wear it.
+  if (act.enabled) return { does: act.does, close: act.does.kind !== 'use' && act.does.kind !== 'buy', shake: false };
   const asks = act.does.kind === 'make' || act.does.kind === 'mend' || act.does.kind === 'upgrade' || act.does.kind === 'crateLeave';
   return { ...(asks ? { does: act.does } : {}), close: false, shake: true };
 }
@@ -395,6 +403,8 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       if (c.took) card.notes.push({ text: TOOK_ONE, tone: 'bad' });
       return { ...card, act: { label: 'Take it', enabled: !c.took, does: { kind: 'crateTake', id: e.id } } };
     }
+    case 'look':
+      return s.wardrobe ? lookCard(ref.id, s.wardrobe) : null;
   }
 }
 
@@ -410,6 +420,35 @@ function leaveCard(card: DetailView, def: ItemDef, slot: number, c: NonNullable<
   else if (c.items.length >= CACHE_SIZE) card.notes.push({ text: CRATE_FULL, tone: 'bad' });
   else act.enabled = true;
   return { ...card, act };
+}
+
+/**
+ * A pattern's or a badge's card: its drawing, name and line, where it goes, and its one button. Yours, it
+ * wears it (or takes it off, when you wear it); not yours yet, Buy, which asks first and spends a merit,
+ * greyed out while there is none to spend, with why. The card for none takes off the one you wear.
+ */
+function lookCard(id: string, w: WardrobeState): DetailView | null {
+  const base = { stats: [], facts: [] as string[], notes: [] as DetailView['notes'] };
+  if (id === NO_PATTERN.id || id === NO_BADGE.id) {
+    const kind: LookKind = id === NO_PATTERN.id ? 'pattern' : 'badge', none = kind === 'pattern' ? NO_PATTERN : NO_BADGE;
+    const card = { ...base, icon: kind === 'pattern' ? NO_PATTERN_ICON : NO_BADGE_ICON, name: none.name, text: none.text };
+    const wearing = meritLookOf(kind === 'pattern' ? w.pattern : w.badge, kind);
+    if (!wearing) return { ...card, notes: [{ text: `You wear no ${kind} now.`, tone: 'plain' }] };
+    return { ...card, act: { label: `Take off ${wearing.noun}`, enabled: true, does: { kind, id: null } } };
+  }
+  const look = meritLookOf(id);
+  if (!look) return null;
+  const where = look.kind === 'pattern' ? 'On your jacket, over an outfit too' : 'On your name tag, beside your name';
+  const card: DetailView = { ...base, icon: lookIcon(look), name: look.name, text: look.text, facts: [where] };
+  const merit = w.merits ?? { spent: 0, owned: [] }, xp = w.xp ?? xpFor(w.level);
+  if ((look.kind === 'pattern' ? w.pattern : w.badge) === look.id) {
+    return { ...card, notes: [{ text: 'You wear it now.', tone: 'plain' }], act: { label: 'Take off', then: look.kind === 'pattern' ? 'your jacket as it is' : 'your name alone', enabled: true, does: { kind: look.kind, id: null } } };
+  }
+  if (merit.owned.includes(look.id)) return { ...card, facts: [where, 'Yours for good'], act: { label: 'Wear', enabled: true, does: { kind: look.kind, id: look.id } } };
+  // Not yours yet: merits buy it, signed in.
+  const why = whyNotBuy(look, xp, merit, !w.guest), left = meritsLeft(xp, merit.spent);
+  const say = w.guest ? 'Sign in to spend merits.' : why === 'no_merits' ? noMerit(xp) : `You have ${merits(left)} to spend.`;
+  return { ...card, notes: [{ text: say, tone: 'plain' }], act: { label: 'Buy', then: price(look.cost), enabled: !why, does: { kind: 'buy', look: look.id } } };
 }
 
 /** The piece a workbench's upgrade is about: one you wear, or the `n`th of an item in the stash, with what it is. */

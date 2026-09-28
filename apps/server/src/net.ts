@@ -316,6 +316,15 @@ export function attachNet(o: NetOptions): Net {
       case 'outfit':
         world.outfit(s.id, msg.x, msg.y, msg.outfit, now);
         return flush();
+      case 'buy':
+        world.buy(s.id, msg.x, msg.y, msg.look, now);
+        return flush();
+      case 'pattern':
+        world.pattern(s.id, msg.x, msg.y, msg.pattern, now);
+        return flush();
+      case 'badge':
+        world.badge(s.id, msg.x, msg.y, msg.badge, now);
+        return flush();
       case 'bench':
         world.bench(s.id, msg.x, msg.y);
         return flush();
@@ -589,6 +598,8 @@ export function attachNet(o: NetOptions): Net {
       conditions: joined.conditions,
       stats: joined.stats,
       progress: joined.progress,
+      ...(joined.restedAway > 0 && { restedAway: joined.restedAway }),
+      merits: joined.merits,
       tools: joined.tools,
       items: world.itemsVersion,
       story: joined.story,

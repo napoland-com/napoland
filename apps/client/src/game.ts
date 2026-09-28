@@ -31,9 +31,9 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal,
-  markLifetime, mendCost, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, DIR_VEC, type CacheItemView,
-  type NextGear,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits,
+  inSurge, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter,
+  upgradable, utcDay, whyNotBuy, DIR_VEC, type CacheItemView, type LookKind, type MeritsView, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
@@ -45,8 +45,8 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion, mendQuestion,
-  noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
+  mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
@@ -155,11 +155,20 @@ export function minutes(seconds: number): string {
   return `${m} minute${m === 1 ? '' : 's'}`;
 }
 
+/** What floats over your head as stashing earns: "+24 XP", and the part the cup of rest paid, "+24 XP (12 rested)". */
+export function xpFloat(gained: number, fromRest = 0): string {
+  return fromRest > 0 ? `+${gained} XP (${fromRest} rested)` : `+${gained} XP`;
+}
+
 /** News from the world for the interface to announce (status.ts, newsBanner). A feat's is the rank just reached. */
 export type News =
   | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView }
   /** A new level: where it stands now, and the level before (one stash can climb several). */
   | { kind: 'level'; progress: ProgressView; from: number }
+  /** You arrive rested: time away filled the cup, which holds `xp` of doubled stashing now. */
+  | { kind: 'rested'; xp: number }
+  /** Past level 20, stashing earned `earned` merits (merits.ts), and `left` are to spend now. */
+  | { kind: 'merit'; earned: number; left: number }
   /** A new day's conditions, by name. */
   | { kind: 'conditions'; names: string[] }
   /** Someone (`id`, you too) sang a call from tile x,y, heard `at` (our clock): the ears announce it (soundscape.ts), nothing is shown but the note over their head. */
@@ -177,7 +186,9 @@ export const CHAT_LOG = 100;
 /** What a `refused` can answer among friends: the friends panel says why. */
 const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy']);
+/** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
+const WARDROBE = new Set<RefusedAction>(['outfit', 'pattern', 'badge']);
 
 export class Game {
   meId: string | null = null;
@@ -281,6 +292,11 @@ export class Game {
   gear = new Map<string, Gear>();
   /** The outfit each player on this map wears over their gear, by player id (you too); none: their gear shows. */
   outfits = new Map<string, string>();
+  /** The pattern on each jacket and the badge on each name tag on this map, by player id (you too); none: none worn (merits.ts). */
+  patterns = new Map<string, string>();
+  badges = new Map<string, string>();
+  /** What you spent of your merits, and the looks you bought, as the server last told it; what you earned follows from your XP. */
+  merits: MeritsView = { spent: 0, owned: [] };
   /** Feats just earned, for the interface to announce (it empties the list). */
   news: News[] = [];
   /** A question in the text box (ask.ts): until it is answered, nobody walks and A, B and the stick answer it. */
@@ -435,6 +451,9 @@ export class Game {
         this.stats = msg.stats;
         this.statsChanges++;
         this.progress = msg.progress;
+        this.merits = msg.merits ?? { spent: 0, owned: [] };
+        // Time away worth a word: stashing counts double for a while, and the arrival says so.
+        if ((msg.restedAway ?? 0) >= RESTED_NOTICE && (msg.progress.rested ?? 0) > 0) this.news.push({ kind: 'rested', xp: msg.progress.rested! });
         this.tools = msg.tools;
         this.chapter = msg.story.chapter;
         this.storyChanges++;
@@ -564,6 +583,17 @@ export class Game {
         if (msg.outfit) this.outfits.set(msg.id, msg.outfit);
         else this.outfits.delete(msg.id);
         break;
+      case 'pattern':
+        if (msg.pattern) this.patterns.set(msg.id, msg.pattern);
+        else this.patterns.delete(msg.id);
+        break;
+      case 'badge':
+        if (msg.badge) this.badges.set(msg.id, msg.badge);
+        else this.badges.delete(msg.id);
+        break;
+      case 'merits':
+        this.merits = msg.merits;
+        break;
       case 'parcel': {
         this.parcels = [...this.parcels, msg.parcel];
         // The welcome parcel comes with the first sign-in, which opens the wardrobe too: its banner names what is new in it.
@@ -602,8 +632,12 @@ export class Game {
         break;
       }
       case 'progress':
-        if (msg.gained > 0) this.floatOverMe(`+${msg.gained} XP`, GAIN);
+        if (msg.gained > 0) this.floatOverMe(xpFloat(msg.gained, msg.fromRest), GAIN);
         if (msg.progress.level > this.progress.level) this.news.push({ kind: 'level', progress: msg.progress, from: this.progress.level });
+        // Past level 20, what stashing earns counts toward merits: a new one is news.
+        if (meritsOf(msg.progress.xp) > meritsOf(this.progress.xp)) {
+          this.news.push({ kind: 'merit', earned: meritsOf(msg.progress.xp) - meritsOf(this.progress.xp), left: meritsLeft(msg.progress.xp, this.merits.spent) });
+        }
         this.progress = msg.progress;
         break;
       case 'join':
@@ -612,6 +646,10 @@ export class Game {
         this.quirks.set(msg.player.id, msg.player.quirks ?? []);
         if (msg.player.outfit) this.outfits.set(msg.player.id, msg.player.outfit);
         else this.outfits.delete(msg.player.id);
+        if (msg.player.pattern) this.patterns.set(msg.player.id, msg.player.pattern);
+        else this.patterns.delete(msg.player.id);
+        if (msg.player.badge) this.badges.set(msg.player.id, msg.player.badge);
+        else this.badges.delete(msg.player.id);
         if (msg.player.live) this.live.add(msg.player.id);
         else this.live.delete(msg.player.id);
         // A guest who signed in comes back in as someone who is not one.
@@ -734,7 +772,7 @@ export class Game {
           break;
         }
         // The wardrobe's panel would hide anything said over your head: the box stands above it.
-        if (msg.action === 'outfit') { this.inform('Wardrobe', sentence(refusalText(msg.reason, msg.action))); break; }
+        if (WARDROBE.has(msg.action)) { this.inform('Wardrobe', sentence(refusalText(msg.reason, msg.action))); break; }
         if (msg.action === 'pick') this.picking = null;
         this.floatOverMe(refusalText(msg.reason, msg.action), NO);
         break;
@@ -776,6 +814,8 @@ export class Game {
     this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
     this.quirks = new Map(players.map(p => [p.id, p.quirks ?? []]));
     this.outfits = new Map(players.flatMap(p => (p.outfit ? [[p.id, p.outfit] as const] : [])));
+    this.patterns = new Map(players.flatMap(p => (p.pattern ? [[p.id, p.pattern] as const] : [])));
+    this.badges = new Map(players.flatMap(p => (p.badge ? [[p.id, p.badge] as const] : [])));
     this.live = new Set(players.filter(p => p.live).map(p => p.id));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
@@ -1062,6 +1102,27 @@ export class Game {
     if (c && this.online) this.send({ t: 'outfit', x: c.x, y: c.y, outfit });
   }
 
+  /** At the open chest: wear a pattern or a badge of yours from the wardrobe, or none (null). Like an outfit, it asks nothing. */
+  wearLook(kind: LookKind, id: string | null) {
+    const c = this.chest;
+    if (!c || !this.online) return;
+    this.send(kind === 'pattern' ? { t: 'pattern', x: c.x, y: c.y, pattern: id } : { t: 'badge', x: c.x, y: c.y, badge: id });
+  }
+
+  /**
+   * At the open chest: spend merits on a look, a jacket pattern or a name tag badge (merits.ts). It uses
+   * them up, so it asks first ("Spend a merit on the chevron pattern? You have 3."), or says why it cannot;
+   * the box then says what it did.
+   */
+  buyLook(id: string) {
+    const c = this.chest, look = meritLookOf(id);
+    if (!c || !this.online || !look) return;
+    const why = whyNotBuy(look, this.progress.xp, this.merits, !this.guest);
+    if (why) return this.inform('Wardrobe', why === 'no_merits' ? noMerit(this.progress.xp) : sentence(refusalText(why, 'buy')));
+    const text = buyQuestion(look, meritsLeft(this.progress.xp, this.merits.spent));
+    this.ask({ who: 'Wardrobe', text, yes: () => this.act('Wardrobe', text, { t: 'buy', x: c.x, y: c.y, look: id }) });
+  }
+
   /**
    * The outfits signing in just gave you, which the welcome parcel's banner names: all your level opens
    * (the NAPO work suit first), as none were yours before. None for a guest, and none once you wear one:
@@ -1200,6 +1261,15 @@ export class Game {
   /** The outfit you wear, or null: your gear shows. */
   get myOutfit(): string | null {
     return (this.meId && this.outfits.get(this.meId)) || null;
+  }
+
+  /** The pattern on your jacket and the badge on your name tag, or null: none. */
+  get myPattern(): string | null {
+    return (this.meId && this.patterns.get(this.meId)) || null;
+  }
+
+  get myBadge(): string | null {
+    return (this.meId && this.badges.get(this.meId)) || null;
   }
 
   /** What you wear, piece by piece (condition and quirk), as the server last told it. */
@@ -1711,7 +1781,7 @@ export class Game {
     const hitched = this.body.view.hitched;
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
-      look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id)),
+      look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id)),
     }));
   }
 
