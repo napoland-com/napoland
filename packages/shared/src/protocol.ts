@@ -21,8 +21,9 @@ import type { ThanksFor, ThanksGroup } from './thanks';
  * Bump when a change breaks older clients; they reload to get the new version. 26: the weather is each
  * region's (a `zone` says the new map's), and effects run for a while (BodyView.effects). 27: seasons,
  * whose winter freezes water that is then walked on (a client that did not know would never step on it).
+ * 28: the Long Night (`longNight`, in the welcome too), whose lodge fire is fed like a shelter's.
  */
-export const PROTOCOL_VERSION = 27;
+export const PROTOCOL_VERSION = 28;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -286,6 +287,17 @@ export interface FlareView {
   left: number;
 }
 
+/**
+ * The Long Night (sky.ts, longNightAt), as the server keeps it: whether it is on; whether it has its
+ * bonus, the faster regrowth (the one on, or else the next one: the lodge's fire lasted through the one
+ * before it); and while it is on, whether the lodge's fire went out, which loses the next one its bonus.
+ */
+export interface LongNightView {
+  on: boolean;
+  bonus: boolean;
+  out: boolean;
+}
+
 /** The Old Stone in town: fed shards wake it; awake, it calms every surge until its charge runs out. */
 export interface StoneView {
   /** Shards in it now. */
@@ -520,6 +532,8 @@ export type ServerMsg =
       conditions: ConditionsView;
       /** The season, and the seconds left of it (sky.ts): what freezes, how it rains, how the world looks. */
       season: SeasonView;
+      /** The Long Night, on or coming. */
+      longNight: LongNightView;
       /** What you did so far that counts toward feats: each feat's rank follows from its count (feats.ts, rankOf). */
       stats: Stats;
       /** Your XP and level, and the rest saved up while you were away (progress.ts). */
@@ -621,6 +635,8 @@ export type ServerMsg =
   | { t: 'conditions'; conditions: ConditionsView }
   /** The season turned (everyone hears it, as the week turns): the new one, and the seconds left of it. */
   | { t: 'season'; season: SeasonView }
+  /** The Long Night began, the lodge's fire went out in it, or it ended at dawn (everyone hears it): how it stands now. */
+  | { t: 'longNight'; night: LongNightView }
   /** The notice board, read: one line per thing worth knowing. */
   | { t: 'board'; lines: string[] }
   /** You reached rank `rank` (1 to RANKS) of a feat (feats.ts), told once; `stats` is where your counts stand now. */

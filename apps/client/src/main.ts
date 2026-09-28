@@ -814,8 +814,8 @@ function frame(now: number) {
     // the chest is open needs no banner, as the stash says what came (below). Arriving rested waits the same way.
     if (n.kind === 'parcel') { if (!game.chest) toSay.push(n); continue; }
     if (n.kind === 'rested') { toSay.push(n); continue; }
-    // The season turns at a dawn, with the new day's banner: it waits its turn.
-    if (n.kind === 'season') { toSay.push(n); continue; }
+    // The season turns at a dawn, with the new day's banner, and so does the Long Night, begun or over: they wait their turn.
+    if (n.kind === 'season' || n.kind === 'longNight') { toSay.push(n); continue; }
     const b = newsBanner(n, game.map.data.name, items, game.guest);
     if (b) hud.showBanner(b.title, b.sub);
   }

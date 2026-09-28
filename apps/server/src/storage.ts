@@ -177,6 +177,26 @@ export interface StoneRecord {
 }
 
 /**
+ * The Long Night (world.ts), kept across restarts: the week (weekIndex) of the one on or the last one the
+ * server saw, whether it had its bonus, when the lodge's fire runs out (ms since the epoch), whether it
+ * went out, and whether that night is over (dawn came while the server ran).
+ */
+export interface LongNightRecord {
+  week: number;
+  bonus: boolean;
+  outAt: number;
+  out: boolean;
+  over: boolean;
+}
+
+/** A saved Long Night as the server writes it, or null: anything else is as if none was saved. */
+export function cleanLongNight(v: unknown): LongNightRecord | null {
+  const r = (typeof v === 'object' && v !== null ? v : {}) as Partial<Record<keyof LongNightRecord, unknown>>;
+  const ok = Number.isSafeInteger(r.week) && typeof r.bonus === 'boolean' && Number.isFinite(r.outAt) && typeof r.out === 'boolean' && typeof r.over === 'boolean';
+  return ok ? { week: r.week as number, bonus: r.bonus as boolean, outAt: r.outAt as number, out: r.out as boolean, over: r.over as boolean } : null;
+}
+
+/**
  * A link between two players: `friend` (stored both ways), a friend `request` from who asked to
  * who was asked, or a `block` from who blocks to who is blocked. With both players' names.
  */
@@ -273,6 +293,9 @@ export interface Storage {
   /** The Old Stone as it was last saved, or null. */
   loadStone(): Promise<StoneRecord | null>;
   saveStone(stone: StoneRecord): Promise<void>;
+  /** The Long Night as it was last saved, or null. */
+  loadLongNight(): Promise<LongNightRecord | null>;
+  saveLongNight(night: LongNightRecord): Promise<void>;
   /** A player by id, or by name regardless of case. */
   findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null>;
   setRequestsOff(id: string, off: boolean): Promise<void>;
@@ -332,6 +355,7 @@ export class MemoryStorage implements Storage {
   private readonly thanks = new Map<string, Omit<ThanksRecord, 'name'>>();
   private readonly cacheItems = new Map<number, Omit<CacheItemRecord, 'name'>>();
   private stone: StoneRecord | null = null;
+  private longNight: LongNightRecord | null = null;
   private since: number | undefined;
   private readonly off = new Set<string>();
   private links: Array<{ from: string; to: string; kind: LinkKind }> = [];
@@ -529,6 +553,14 @@ export class MemoryStorage implements Storage {
 
   async saveStone(stone: StoneRecord): Promise<void> {
     this.stone = { ...stone };
+  }
+
+  async loadLongNight(): Promise<LongNightRecord | null> {
+    return this.longNight && { ...this.longNight };
+  }
+
+  async saveLongNight(night: LongNightRecord): Promise<void> {
+    this.longNight = { ...night };
   }
 
   async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {
@@ -968,6 +1000,18 @@ export class PgStorage implements Storage {
     await this.pool.query(
       `INSERT INTO world_state (key, value) VALUES ('stone', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
       [JSON.stringify(stone)],
+    );
+  }
+
+  async loadLongNight(): Promise<LongNightRecord | null> {
+    const r = await this.pool.query<{ value: unknown }>("SELECT value FROM world_state WHERE key = 'long_night'");
+    return cleanLongNight(r.rows[0]?.value);
+  }
+
+  async saveLongNight(night: LongNightRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO world_state (key, value) VALUES ('long_night', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [JSON.stringify(night)],
     );
   }
 

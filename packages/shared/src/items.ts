@@ -174,6 +174,16 @@ export interface ItemsData {
   conditions?: ConditionsData;
   /** The welcome parcel and the week's calendar of parcels (parcels.ts). None: no parcels. */
   parcels?: ParcelsData;
+  /** What grows back faster on a Long Night that has its bonus (sky.ts, world.ts). None: nothing does. */
+  longNight?: LongNightData;
+}
+
+/** The Long Night's bonus (ItemsData.longNight). */
+export interface LongNightData {
+  /** The items whose finds, picked that night, grow back faster, wherever they grow: copper wire and strange objects. */
+  items: string[];
+  /** How many times as fast: 2, twice. */
+  regrow: number;
 }
 
 /**
@@ -293,6 +303,19 @@ export function aOf(def: ItemDef): string {
 export function amount(def: ItemDef, n: number): string {
   if (n !== 1) return `${n} ${pluralOf(def)}`;
   return countable(def) ? aOf(def) : `1 ${nounOf(def)}`;
+}
+
+/**
+ * What the Long Night's bonus does, in words the notice board and the banners share: "wire and strange
+ * objects grow back twice as fast". Empty without one, or with none of its items here.
+ */
+export function longNightWords(data: LongNightData | undefined, items: Map<string, ItemDef>): string {
+  const defs = (data?.items ?? []).flatMap(id => items.get(id) ?? []);
+  if (!data || !defs.length) return '';
+  const names = defs.map(pluralOf), list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
+  // "Wire grows back", "strange objects grow back", "wire and strange objects grow back".
+  const grow = defs.length > 1 || countable(defs[0]!) ? 'grow' : 'grows';
+  return `${list} ${grow} back ${data.regrow === 2 ? 'twice' : `${data.regrow} times`} as fast`;
 }
 
 /** What a live item is worth `ageS` seconds after it was picked: its full XP while fresh, then less each minute, never below `into`'s. */

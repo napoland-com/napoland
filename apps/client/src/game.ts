@@ -29,7 +29,8 @@
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
  * - energy, wetness, fires, the surge clock and the effects working on you (a hand warmer) are counted
  *   forward between the server's reports, so everything moves smoothly;
- * - the weather is your region's: the server says it as you arrive (welcome, zone) and when it turns.
+ * - the weather is your region's: the server says it as you arrive (welcome, zone) and when it turns;
+ * - the Long Night is the server's too (`longNight`): its banners, and what Walt says while it is on.
  */
 import {
   BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, RESTED_NOTICE, SEASONS, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter, energyAfter, findPath, fireTakes, flashHits,
@@ -37,7 +38,8 @@ import {
   upgradable, utcDay, whyNotBuy, DIR_VEC, type CacheItemView, type LookKind, type MeritsView, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type CallKind, type ChatTo, type ConditionsView, type EffectView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type Season, type SeasonView, type StormView, type Weather,
+  type CallKind, type ChatTo, type ConditionsView, type EffectView, type FlashKind, type FlashView, type LongNightView, type ParcelView, type RefusedAction, type Season, type SeasonView, type StormView,
+  type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -47,7 +49,7 @@ import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
-  mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
+  mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion, waltOnTheLongNight,
 } from './said';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
@@ -168,6 +170,11 @@ export type News =
   | { kind: 'aurora' }
   /** The season turned (as the week did); `frozen`: where water freezes, named, for the winter's word. */
   | { kind: 'season'; season: Season; frozen: string[] }
+  /**
+   * The Long Night began (`on`; `bonus`: with its faster regrowth), or dawn ended it (`bonus`: the lodge's
+   * fire held, so the next one keeps it).
+   */
+  | { kind: 'longNight'; on: boolean; bonus: boolean }
   /** A new level: where it stands now, and the level before (one stash can climb several). */
   | { kind: 'level'; progress: ProgressView; from: number }
   /** You arrive rested: time away filled the cup, which holds `xp` of doubled stashing now. */
@@ -240,6 +247,8 @@ export class Game {
   weather: Weather = 'rain';
   /** The season as the server last said it, and when (our clock): it counts down from there. */
   season: { view: SeasonView; at: number } = { view: { season: 'spring', left: 0 }, at: 0 };
+  /** The Long Night as the server last said it. */
+  longNight: LongNightView = { on: false, bonus: true, out: false };
   /** Flashes on this map, until when they are over (our clock). */
   flashes: Array<{ x: number; y: number; kind: FlashKind; until: number }> = [];
   /** How wet you are, your load and whether something clings to you, as told and when. */
@@ -471,6 +480,7 @@ export class Game {
         this.scene(msg, now);
         this.weather = msg.weather;
         this.setSeason(msg.season, now, false);
+        this.longNight = msg.longNight;
         this.bag = msg.bag;
         this.bagAt = now;
         this.stash = msg.stash ?? null;
@@ -521,6 +531,11 @@ export class Game {
         break;
       case 'season':
         this.setSeason(msg.season, now, true);
+        break;
+      case 'longNight':
+        // It began, or dawn came: said once, in a banner. The fire going out in the night is the notice board's and Walt's to say.
+        if (msg.night.on !== this.longNight.on) this.news.push({ kind: 'longNight', on: msg.night.on, bonus: msg.night.bonus });
+        this.longNight = msg.night;
         break;
       case 'fire':
         this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now, fed: msg.fire.fed ?? [] });
@@ -940,9 +955,9 @@ export class Game {
       // What people say comes in one order (storyLines, story.ts): the chapter's hint, what they say once
       // about what you did for the first time, what they have heard (Mira: what the woods are like today),
       // then what they always say. The server hears who you talked to, or what you read.
-      const word = t.id === 'mira' ? this.miraWord() : null, own = word ? [word, ...t.lines] : t.lines;
+      const word = t.id === 'mira' ? this.miraWord() : t.id === 'walt' ? this.waltWord() : null, today = word ? [word] : [];
       const person = t.story && 'talk' in t.story ? t.story.talk : undefined;
-      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, own, this.stats) : own });
+      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, t.lines, this.stats, today) : [...today, ...t.lines] });
       // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
       const told = person ? toldAfter(this.story, person, this.stats) : undefined;
       if (told !== undefined && told !== (this.stats.told ?? 0)) { this.stats = { ...this.stats, told }; this.statsChanges++; }
@@ -1677,6 +1692,17 @@ export class Game {
       ...(week ? [`This week: ${week}.`] : []),
     ];
     return parts.length ? parts.join(' ') : null;
+  }
+
+  /**
+   * What Walt has to say on the Long Night: the lodge's fire is the town's to keep going until dawn, and
+   * how long it has (when he sits by it, as he does); or that it went out. Nothing any other night.
+   */
+  waltWord(now = this.clock): string | null {
+    const n = this.longNight;
+    if (!n.on) return null;
+    const f = this.current.data.objects.find(o => o.kind === 'fireplace' && o.longNight);
+    return waltOnTheLongNight(n.out, f ? this.fireLeft(f.x, f.y, now) ?? null : null);
   }
 
   /** You see this many tiles past yourself on this map, when a condition brings fog here (outdoors only). */

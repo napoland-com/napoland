@@ -131,9 +131,11 @@ export type MapObject =
    * Stand on a tile next to it to recover energy while it burns. In town it is always tended; out in
    * the wilds (and in their shelters) it burns down unless someone feeds it, or `tended` says someone
    * out there keeps it going. `name`: what people call a fire in the open (the notice board says it),
-   * for example "the leavers' camp"; a fire in a room goes by the room's name.
+   * for example "the leavers' camp"; a fire in a room goes by the room's name. `longNight`: the lodge's
+   * fire, which nobody tends on the Long Night (sky.ts): it burns down like a shelter's until dawn, and
+   * the town keeps it going.
    */
-  | { kind: 'fireplace'; x: number; y: number; tended?: boolean; name?: string }
+  | { kind: 'fireplace'; x: number; y: number; tended?: boolean; name?: string; longNight?: boolean }
   /** A notice board: reading it tells how things stand out there (the server writes it). */
   | { kind: 'board'; x: number; y: number }
   /** Your stash: a chest at home. Everyone who opens it sees only their own things in it. */

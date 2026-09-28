@@ -114,6 +114,9 @@ export function validateMap(data: MapData): Problem[] {
     if (o.kind === 'console' && (!o.name?.trim() || !o.text?.length || o.text.some(t => !t.trim()))) err(`console at ${o.x},${o.y} needs a name and something to read`);
     if (o.kind === 'console' && !ID.test(o.id ?? '')) err(`console at ${o.x},${o.y}: its id is lowercase words joined by hyphens (the story names it by it)`);
     if (o.kind === 'fireplace' && o.name !== undefined && !o.name.trim()) err(`fireplace at ${o.x},${o.y}: a name says something, or is left out`);
+    if (o.kind === 'fireplace' && o.longNight !== undefined && (o.longNight !== true || o.tended === true || data.kind !== 'inside')) {
+      err(`fireplace at ${o.x},${o.y}: longNight is true or left out, on a fire in a room in town that nobody marked tended`);
+    }
     if (o.kind === 'cache' && !o.name?.trim()) err(`cache at ${o.x},${o.y} needs a name: what a letter calls it ("the old cabin's crate")`);
     if (o.kind === 'npc' && !o.lines.length) err(`npc ${o.id} has nothing to say`);
     if (o.kind === 'npc') for (const [k, c] of Object.entries(o.look ?? {})) {
@@ -398,6 +401,19 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   }
   if (wakes.length > 1) out.push({ level: 'error', map: wakes[1]!.data.id, message: `wake: ${wakes.map(m => m.data.id).join(' and ')} both have one, but everyone wakes up in the same home` });
 
+  // The Long Night's fire (the lodge's) is one, in a room off the home town, and never the home's: the
+  // home fire stays tended, so a new player always has a safe fire.
+  const nights = [...byId.values()].filter(m => m.data.objects.some(o => o.kind === 'fireplace' && o.longNight));
+  for (const m of nights) {
+    const off = m.data.exits.some(e => e.to === homeId);
+    if (!off || m.data.wake || m.data.private || m.data.objects.some(o => o.kind === 'chest')) {
+      out.push({ level: 'error', map: m.data.id, message: `longNight: the fire nobody tends on the Long Night is in a room off ${homeId} that is not the home` });
+    }
+  }
+  if (nights.length > 1 || nights.some(m => m.data.objects.filter(o => o.kind === 'fireplace' && o.longNight).length > 1)) {
+    out.push({ level: 'error', map: nights.at(-1)!.data.id, message: 'longNight: one fire in the world goes untended on the Long Night, the lodge\'s' });
+  }
+
   const reached = new Set([homeId]);
   const queue = [homeId];
   for (let h = 0; h < queue.length; h++) {
@@ -615,6 +631,17 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!Array.isArray(p.week) || p.week.length !== WEEKDAYS.length) err(`parcels: week is a parcel for each of the ${WEEKDAYS.length} days, Monday first`);
     else p.week.forEach((day, n) => slotsOf(day, `parcels: ${WEEKDAYS[n]}'s parcel`));
     if (p.allWeek !== undefined) slotsOf(p.allWeek, 'parcels: allWeek');
+  }
+  const night = data.longNight;
+  if (night) {
+    if (!Array.isArray(night.items) || !night.items.length) err('longNight: items lists what grows back faster that night');
+    for (const id of Array.isArray(night.items) ? night.items : []) {
+      if (!ids.has(id)) err(`longNight: there is no item ${id}`);
+      else if (!data.finds.some(f => f.item === id)) warn(`longNight: ${id} grows back faster, but no find grows it`);
+    }
+    if (Array.isArray(night.items) && new Set(night.items).size !== night.items.length) err('longNight: an item is listed twice');
+    // Faster, and not so fast that a find is back before anyone has walked on.
+    if (!(typeof night.regrow === 'number' && night.regrow > 1 && night.regrow <= 4)) err('longNight: regrow is how many times as fast, above 1 and at most 4');
   }
   const byId = new Map(maps.map(m => [m.id, m]));
   const conditionIds = validateConditions(data, byId, err);
