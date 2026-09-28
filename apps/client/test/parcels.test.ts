@@ -118,4 +118,21 @@ describe('the game, when a parcel comes and a lockbox is opened', () => {
     expect(g.question).toBeNull();
     expect(sent.filter(m => m.t === 'open')).toEqual([]);
   });
+
+  it('reads the calendar on the notice board page by page, as the server wrote it (net-parcels.test.ts)', () => {
+    const lines = [
+      "Parcels this week, from the town's stores. Mon: 3 resin, 2 cloth. Tue (today): a thermos, 2 scrap. Wed: 2 road flares, 2 cloth. Thu: 3 resin, 2 wire.",
+      'Fri: a thermos, 3 cloth. Sat: 2 scrap, 2 wire, a road flare. Sun: 4 resin, a thermos, and a NAPO lockbox for whoever came back on all seven days.',
+      'Sign in to get the parcels.',
+    ];
+    g.handle({ t: 'board', lines }, now);
+    expect(g.dialog).toMatchObject({ who: 'Notice board', lines });
+    const pages: string[] = [];
+    while (g.dialog) {
+      g.dialog.shown = Infinity;
+      pages.push(g.dialog.lines[g.dialog.i]!);
+      g.advanceDialog();
+    }
+    expect(pages).toEqual(lines);
+  });
 });

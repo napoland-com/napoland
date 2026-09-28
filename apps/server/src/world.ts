@@ -86,6 +86,7 @@ import {
   gearEnergy,
   hidden,
   halfOf,
+  inSurge,
   emptyStash,
   itemIndex,
   levelOf,
@@ -114,6 +115,7 @@ import {
   surgeFront,
   takeFromBag,
   takeItem,
+  toldAfter,
   toolsOf,
   untilSurge,
   weatherAt,
@@ -273,6 +275,8 @@ export interface Joined extends Scene {
   energy: EnergyView;
   body: BodyView;
   bag: BagSlot[];
+  /** What the stash holds, as the chest lists it: after the parcel the player may have found in it now. */
+  stash: BagSlot[];
   stone: StoneView;
   conditions: ConditionsView;
   stats: Stats;
@@ -359,6 +363,8 @@ interface Online {
   heardAt: number;
   /** Live finds in the bag (sendBag keeps it up to date), so only their carriers are looked at for fading. */
   live: number;
+  /** The last surge that caught them out in the wilds (map and round), so each is counted once. */
+  surgedIn?: string;
 }
 
 /** A find rule of items.json, ready to use. */
@@ -806,7 +812,7 @@ export class World {
     const here = map.data.id;
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
-      stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
+      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
       tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
@@ -1123,6 +1129,8 @@ export class World {
     p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
     this.saveNow.set(id, p.rec);
     if (tool) this.giveTool(id, recipe.make);
+    // Walt has a word for the first thing someone makes (story.ts, remarks): gear, each piece; a tool is no piece of gear.
+    if (this.items.get(recipe.make)?.kind === 'gear') for (let i = 0; i < count; i++) this.count(p, 'made', now);
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
     // The text box says where it went: a tool (its kind tells the client) is the player's for good.
     this.did(p, { kind: 'made', item: recipe.make, count });
@@ -1242,8 +1250,22 @@ export class World {
   private heard(p: Online, x: number, y: number): void {
     if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
     const o = p.map.data.objects.find(o => o.x === x && o.y === y && (o.kind === 'npc' || o.kind === 'console'));
-    if (o?.kind === 'npc') this.moveStory(p, { talk: o.id });
-    else if (o?.kind === 'console') this.moveStory(p, { read: o.id });
+    if (o?.kind === 'npc') {
+      this.remarked(p, o.id);
+      this.moveStory(p, { talk: o.id });
+    } else if (o?.kind === 'console') this.moveStory(p, { read: o.id });
+  }
+
+  /**
+   * Talking to someone, the player heard what they had to say about something done for the first time
+   * (story.ts, remarksDue): said once, so it is kept at once. The client, which says it, keeps it too.
+   */
+  private remarked(p: Online, npc: string): void {
+    const stats = (p.rec.stats ??= {});
+    const told = toldAfter(this.story, npc, stats);
+    if (told === (stats.told ?? 0)) return;
+    stats.told = told;
+    this.saveNow.set(p.rec.id, p.rec);
   }
 
   /**
@@ -1295,6 +1317,7 @@ export class World {
       }
       if (p.queue.length) this.runQueue(p, now);
       if (p.live) this.fadeLive(p, now);
+      this.surged(p, now);
       this.hitch(p, now);
       this.rerate(p, now);
       // The client counts on with the rates it heard; repeating the values keeps it from drifting.
@@ -1428,6 +1451,8 @@ export class World {
     p.hitched = false;
     this.collapses = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
     this.collapses.push({ map, at: now });
+    // Mira has a word for the first one (story.ts, remarks); the zone that follows carries the count.
+    this.count(p, 'collapsed', now);
     this.onCollapse?.(id, { map, x, y });
   }
 
@@ -1574,16 +1599,19 @@ export class World {
   }
 
   /**
-   * One more of what counts toward a feat. A new rank is the player's for good: they hear it (once:
-   * counts only go up), and it is saved at once.
+   * One more of what counts toward a feat, or toward what people say once (a collapse, a surge, gear
+   * made). A new rank is the player's for good: they hear it (once: counts only go up), and it is saved
+   * at once.
    */
-  private count(p: Online, stat: (typeof STATS)[number], now: number): void {
+  private count(p: Online, stat: Exclude<(typeof STATS)[number], 'told'>, now: number): void {
     const stats = (p.rec.stats ??= {});
     const n = (stats[stat] ?? 0) + 1;
     stats[stat] = n;
     const feat = featOf(stat);
-    const rank = feat ? rankOf(feat, n) : 0;
-    if (!feat || rank === rankOf(feat, n - 1)) return;
+    // A count no feat has (a collapse, a surge, gear made) comes seldom, and what people say waits on it: saved at once.
+    if (!feat) return void this.saveNow.set(p.rec.id, p.rec);
+    const rank = rankOf(feat, n);
+    if (rank === rankOf(feat, n - 1)) return;
     this.outbox.push({ to: p.rec.id, msg: { t: 'feat', id: feat.id, rank, stats: { ...stats } } });
     this.saveNow.set(p.rec.id, p.rec);
     // The rank changes the rates right away, however little: the player hears them.
@@ -1605,6 +1633,19 @@ export class World {
   private frontOf(map: TileMap, now: number): number | undefined {
     const rule = map.data.kind === 'wilds' ? map.data.surge : undefined;
     return rule && surgeFront(rule, map.deepest, surgeAt(rule, now + this.epochOffset));
+  }
+
+  /**
+   * Caught by a surge out in the wilds (its front has passed their tile, and no street light shelters
+   * them): counted once for each surge, for what Mira says after the first (story.ts, remarks).
+   */
+  private surged(p: Online, now: number): void {
+    const rule = p.map.data.kind === 'wilds' ? p.map.data.surge : undefined;
+    if (!rule || !inSurge(p.map, p.rec.x, p.rec.y, this.frontOf(p.map, now))) return;
+    const round = `${p.map.data.id}:${Math.floor(((now + this.epochOffset) / 1000 + (rule.offset ?? 0)) / rule.every)}`;
+    if (p.surgedIn === round) return;
+    p.surgedIn = round;
+    this.count(p, 'surged', now);
   }
 
   /** Tells each surging map when its phase changes, and grows (or clears away) the finds of restless times. */

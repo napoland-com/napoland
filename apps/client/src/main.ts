@@ -14,7 +14,7 @@ import {
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
-import { detailView } from './details';
+import { detailView, type DetailRef } from './details';
 import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
@@ -26,6 +26,7 @@ import { mapFor, paperMap } from './papermap';
 import { providerButton } from './providers';
 import { Connection, serverUrl } from './net';
 import { parcelNote } from './parcels';
+import { goalText } from './said';
 import { Sound, type SoundSetting } from './sound';
 import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
@@ -144,6 +145,13 @@ const hud = new Hud(screen, {
   equip: (item, n) => game.equip(item, n),
   unequip: slot => game.unequip(slot),
   open: item => game.openSealed(item),
+  // At the workbench, the first goal opens the card of what to make (once the workbench has answered).
+  goal: () => {
+    const next = game.nextGear();
+    if (!next || !game.benchBeside()) return;
+    goalCard = { from: 'recipe', id: next.recipe.id };
+    game.openBench();
+  },
   // The workbench's rows are recipes, and mending ("mend:" and the slot).
   craft: recipe => (recipe.startsWith('mend:') ? game.mend(recipe.slice(5) as Slot) : game.craft(recipe)),
   benchClosed: () => game.closeBench(),
@@ -615,6 +623,8 @@ let chestShown: typeof game.chest = null;
 let capacityShown = 0;
 /** The workbench and the gear worn, as their sheets show them. */
 let benchShown: typeof game.bench = null;
+/** The card the first goal asked the workbench to open with, once it has. */
+let goalCard: DetailRef | null = null;
 /** Glowing footprints (a quirk): the tile each player was last seen on, and the prints left on this map, oldest first. */
 const printTiles = new Map<string, string>();
 let prints: Array<{ map: string; x: number; y: number; dir: Dir; at: number }> = [];
@@ -730,7 +740,11 @@ function frame(now: number) {
   if (hud.friendsOpen && !game.guest && now - friendsAskedAt > FRIENDS_REFRESH_MS) { friendsAskedAt = now; game.social({ t: 'friends' }); }
   const benchChanged = game.bench !== benchShown;
   if (benchChanged) {
-    if (game.bench && !benchShown) hud.toggleBench(true);
+    if (game.bench && !benchShown) {
+      hud.toggleBench(true);
+      if (goalCard) hud.cardOf('bench', goalCard);
+    }
+    goalCard = null;
     if (!game.bench && benchShown) hud.toggleBench(false);
     benchShown = game.bench;
   }
@@ -754,6 +768,9 @@ function frame(now: number) {
   }
   // Open, the stash says once what came in the parcels since it last opened, and in one that comes while it is.
   if (game.chest && game.parcels.length) hud.addParcels(game.takeParcels().map(p => parcelNote(p, items)));
+  // The first goal, in the bag and the chest; at the workbench, a tap on it opens its card (the Hud writes it only when it changed).
+  const next = game.nextGear();
+  hud.setGoal(next && { text: goalText(next, items), ready: next.ready, act: !!game.benchBeside() });
   const t = (now - start) / 1000;
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;

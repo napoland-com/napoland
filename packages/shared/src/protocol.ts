@@ -386,6 +386,11 @@ export type ServerMsg =
       weather: Weather;
       energy: EnergyView;
       bag: BagSlot[];
+      /**
+       * What your stash at home holds, as the chest lists it (after any parcel that came as you arrived):
+       * the bag says from it what gear you could make next. Every `chest` and `bench` after says it again.
+       */
+      stash: BagSlot[];
       /** Your map's fires, marks, creatures, flares, flashes, and surge and storm clocks (null: a map that never surges, or never storms). */
       fires: FireView[];
       marks: MarkView[];

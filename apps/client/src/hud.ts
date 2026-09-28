@@ -68,6 +68,8 @@ export interface HudHandlers {
   unequip?(slot: Slot): void;
   /** At the chest: open a sealed thing from the stash (a NAPO lockbox); the game asks first. */
   open?(item: string): void;
+  /** The first goal was tapped where it does something: at the workbench, its card of what to make. */
+  goal?(): void;
   craft?(recipe: string): void;
   benchClosed?(): void;
   /** What a tap in the chest or at the workbench shows: its card, as the game stands now (null: it is gone). */
@@ -152,6 +154,8 @@ export const MAX_BAG = 16;
 
 /** A slot of what you wear, as the stash sheet shows it: the piece's name and drawing, or bare. */
 export interface WornView { slot: Slot; name: string; icon: string; /** How worn down (1 new, 0 worn out), for gear that wears. */ cond?: number; /** Its quirk's name. */ quirk?: string }
+/** The nearest gear you could make, in the bag and the chest: what they say, whether the stash can pay for it, and whether a tap opens its card (at the workbench). */
+export interface GoalView { text: string; ready: boolean; act: boolean }
 /** A row of the workbench: what a recipe makes (or a mend), what it needs against what your stash holds, and whether it can be done. */
 export interface RecipeView { id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean }
 /** A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or another tool of yours. */
@@ -248,7 +252,9 @@ export class Hud {
   private tagEls = new Map<string, HTMLElement>();
   private floatEls = new Map<number, HTMLElement>();
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
-  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', card: '', friends: '', personActs: '', talk: '', journal: '', chat: '' };
+  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', card: '', friends: '', personActs: '', talk: '', journal: '', chat: '', goal: '' };
+  /** A first goal is shown (setGoal): the bag shows it while nothing in it is picked. */
+  private goal = false;
   /** What the dots say is new: among friends (a request, an unread message) and in the journal (a chapter), on the menu; in the chat (something said), on its own button. */
   private news = { social: false, journal: false, chat: false };
   private load = 0;
@@ -330,6 +336,7 @@ export class Hud {
         <div class="grid" data-el="grid">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-slot="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
         <div class="detail" data-el="detail" aria-live="polite">
           <p class="hint" data-el="hint">${EMPTY_BAG}</p>
+          <button type="button" class="goal" data-el="bagGoal" aria-disabled="true" tabindex="-1" hidden></button>
           <div class="about" data-el="about" hidden><div class="big" data-el="bigIcon"></div>
             <div class="words"><div class="title"><b data-el="itemName"></b><span class="count" data-el="itemCount"></span></div><p data-el="itemText"></p><p class="facts" data-el="itemFacts"></p></div></div>
           <div class="acts" data-el="acts" hidden><button type="button" class="act go" data-el="use">Use</button><button type="button" class="act toss" data-el="toss">Throw away</button></div>
@@ -340,6 +347,7 @@ export class Hud {
         <div class="sheet-head"><b>Stash</b><span class="room" data-el="stashXp"></span><button type="button" class="close" data-el="stashClose" aria-label="Close the stash">${ICON.x}</button></div>
         <div class="sheet-body" data-el="stashBody">
           <div class="parcel-note" data-el="stashParcels" role="status" hidden></div>
+          <button type="button" class="goal" data-el="stashGoal" aria-disabled="true" tabindex="-1" hidden></button>
           <p class="hint">What you bring home earns XP. Tap something to see it, and tap it twice to put it away.</p>
           <div class="grid" data-el="stashBag">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-bag="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
           <div class="acts"><button type="button" class="act go" data-el="storeAll">Put everything in</button></div>
@@ -550,6 +558,8 @@ export class Hud {
       });
     }
     this.el.benchClose!.addEventListener('click', () => this.toggleBench(false));
+    // The first goal is words, and at the workbench a way to its card.
+    for (const el of [this.el.bagGoal!, this.el.stashGoal!]) el.addEventListener('click', () => { if (el.hasAttribute('data-act')) this.h.goal?.(); });
     this.el.tools!.addEventListener('click', e => {
       const it = (e.target as Element).closest<HTMLElement>('[data-tool], [data-map]');
       if (it?.dataset.tool) this.h.tool?.(it.dataset.tool);
@@ -800,6 +810,31 @@ export class Hud {
     const el = this.el.stashParcels!;
     el.hidden = !this.parcelLines.length;
     el.replaceChildren(...this.parcelLines.map(t => { const p = document.createElement('p'); p.textContent = t; return p; }));
+  }
+
+  /**
+   * The nearest gear you could make (null: nothing, you own everything), in the bag while nothing in it is
+   * picked, and at the top of the stash. Only written to the page when it changed.
+   */
+  setGoal(g: GoalView | null) {
+    const key = g ? `${g.text}|${g.ready}|${g.act}` : '';
+    if (key === this.shown.goal) return;
+    this.shown.goal = key;
+    this.goal = !!g;
+    for (const el of [this.el.bagGoal!, this.el.stashGoal!]) {
+      el.textContent = g?.text ?? '';
+      el.toggleAttribute('data-ready', !!g?.ready);
+      el.toggleAttribute('data-act', !!g?.act);
+      // Only words away from the workbench: nothing to press there.
+      if (g?.act) { el.removeAttribute('aria-disabled'); el.removeAttribute('tabindex'); } else { el.setAttribute('aria-disabled', 'true'); el.tabIndex = -1; }
+    }
+    this.el.stashGoal!.hidden = !g;
+    this.showDetail();
+  }
+
+  /** Opens the card of `ref` in the stash or at the workbench, as a tap on it does (the first goal opens its recipe's). */
+  cardOf(where: 'stash' | 'bench', ref: DetailRef) {
+    this.openCard(where, ref);
   }
 
   /** What the open stash holds, and your XP for its header. Only written to the page when it changed. */
@@ -1144,6 +1179,7 @@ export class Hud {
     const p = this.picked, s = p ? this.bag[p.slot] : undefined;
     this.slotEls.forEach((el, i) => el.toggleAttribute('data-picked', i === p?.slot));
     this.el.hint!.hidden = !!s;
+    this.el.bagGoal!.hidden = !!s || !this.goal;
     this.el.about!.hidden = this.el.acts!.hidden = true;
     if (!s) {
       this.el.hint!.textContent = this.bag.length ? PICK_SLOT : EMPTY_BAG;

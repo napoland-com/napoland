@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "chapters": [
     {"id":"home","title":"Home","text":"You woke up at home in Stonebrook, Pop. 23. The fire at home never goes out, and the chest beside it keeps what you bring back.","hints":{"mira":"New here? Glowcaps grow in the damp along the Near Woods' road, up north, and resin on the grass past the ford."}},
     {"id":"what-glows","title":"What glows","when":{"store":true},"text":"You brought something home and put it in your chest. What you bring home earns XP, and every level makes your energy last longer out there. The workbench beside the chest makes gear from what it holds.","hints":{"mira":"Go and sit by the old cabin's fire, past the crossroads in the Near Woods."}},
@@ -12,5 +12,10 @@
     {"id":"the-answer","title":"The answer","when":{"read":"station-log"},"text":"NAPO answered the hum. One night the Tower sent it back into the woods, and what came back is Napoland: the lights, the surges, the watchers, and a crack in the Old Stone.","hints":{"vera":"The Old Stone sheds shards, and the stones that hum back pull them in: deep in the woods, and at our field site."}},
     {"id":"what-the-answer-broke","title":"What the answer broke","when":{"feed":"stone"},"text":"You gave a shard back to the Old Stone. When the town has given it enough, it wakes, and the surges out there grow gentler for a while.","hints":{"vera":"The panel that works the Tower is in the shed beside it.","walt":"The Tower's shed is east of the road, across from the station."}},
     {"id":"do-not-switch-off","title":"Do not switch off","when":{"read":"tower-panel"},"text":"The Tower still pulses every forty minutes, and the woods surge on the same clock. Someone taped a note over its switch: do not switch it off. Nobody will say why.","hints":{"vera":"When I hear something new, you'll be the first I tell.","ruth":"You've seen the Tower, then. Vera says it's listening back. I say keep your fire going."}}
+  ],
+  "remarks": [
+    {"id":"first-collapse","who":"mira","after":"collapsed","line":"You went down out there, didn't you? It happens to everyone once. What you carried lies where you fell for an hour, then it's gone: go back for it, and turn for home sooner next time."},
+    {"id":"first-surge","who":"mira","after":"surged","line":"So a surge caught you out there. When the woods grow restless, get under a street light or a roof before it rolls in from the deep end. The board by me says when the next one comes."},
+    {"id":"first-made","who":"walt","after":"made","line":"Made that yourself? Good. Mend it at your bench before it wears through. On the line we fixed what we had, and nobody's bringing anything new out here now."}
   ]
 }

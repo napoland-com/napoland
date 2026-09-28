@@ -313,6 +313,12 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   border-radius: 10px; background: #1d2230; box-shadow: inset 0 0 0 1px #8a7440; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #ffe3a1; }
 .stash-sheet .parcel-note p { margin: 0; }
 .stash-sheet .parcel-note[hidden] { display: none; }
+/* The first goal: the nearest gear you could make, in the bag and the chest; green when the stash can pay for it. At the workbench it opens its card. */
+.hud .sheet .goal { display: block; flex: none; width: 100%; max-width: var(--col); margin: 0 auto; padding: .4em .7em; border: 0; border-radius: 9px; background: #151a22; box-shadow: inset 0 0 0 1px #3a4356;
+  text-align: left; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.1); line-height: 1.35; color: #e6dfcf; cursor: default; }
+.hud .sheet .goal[data-ready] { box-shadow: inset 0 0 0 1px #5c8f58; color: #cfe9c3; }
+.hud .sheet .goal[data-act] { cursor: pointer; box-shadow: inset 0 0 0 1px #8a7440; }
+.hud .sheet .goal[hidden] { display: none; }
 .hud .act:disabled, .hud .act[aria-disabled="true"] { opacity: .45; cursor: default; }
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }

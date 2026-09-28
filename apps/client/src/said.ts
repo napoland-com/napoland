@@ -4,7 +4,7 @@
  * concrete, and every number from the data (content/items.json: nouns, fuel, uses, recipes, what
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
-import { aOf, amount, countable, fireFull, nounOf, pluralOf, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type Recipe, type StoneView } from '@napoland/shared';
+import { aOf, amount, countable, fireFull, nounOf, pluralOf, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type NextGear, type Recipe, type StoneView } from '@napoland/shared';
 import type { Items } from './items';
 
 // ---------- naming things in a sentence ----------
@@ -108,6 +108,23 @@ export function holdsText(def: ItemDef, items: Items): string {
   const each = (def.holds ?? []).map(h => (h.any !== undefined ? `a ${h.any}` : listOf((h.items ?? []).map(s => amount(items.get(s.item), s.count)))));
   return each.length > 1 ? `Inside is one of these: ${listOf(each, 'or')}.` : each.length ? `Inside: ${each[0]}.` : 'It is empty.';
 }
+
+// ---------- a first goal ----------
+
+/**
+ * The nearest gear you could make, as the bag and the chest say it (gear.ts, nearestRecipe): "Next: rubber
+ * gloves. 1 more resin."; when the stash can pay for it, "You can make rubber gloves at the workbench
+ * beside the chest."; and when only what you carry is missing from the stash, to put it away.
+ */
+export function goalText(g: NextGear, items: Items): string {
+  const def = items.get(g.recipe.make), n = g.recipe.count ?? 1, what = n === 1 ? aOf(def) : amount(def, n);
+  if (g.ready) return `You can make ${what} at the workbench beside the chest.`;
+  if (!g.missing.length) return `Put away what you carry, and you can make ${what} at the workbench beside the chest.`;
+  const more = g.missing.map(m => { const d = items.get(m.item); return `${m.count} more ${m.count === 1 ? nounOf(d) : pluralOf(d)}`; });
+  return `Next: ${what}. ${capital(listOf(more))}.`;
+}
+
+const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 // ---------- why it cannot happen ----------
 
