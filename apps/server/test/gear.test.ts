@@ -341,6 +341,15 @@ describe('gear on the road', () => {
     expect(w.get('a')!.xp).toBe(40);
   });
 
+  it('count double while rested, like anything else brought home for the first time', () => {
+    const w = road(rec('a', 'house', 3, 2, { rested: 100, bag: [{ item: 'odd', count: 1 }] }));
+    w.use('a', 0, 1000);
+    w.wear('a', 0, 1000);
+    w.drain();
+    w.unequip('a', 3, 1, 'cap', 1000);
+    expect(of(to(w.drain(), 'a'), 'progress')).toEqual([{ t: 'progress', progress: expect.objectContaining({ xp: 80, rested: 60 }), gained: 80, fromRest: 40 }]);
+  });
+
   it('fall into the pile as they are when you collapse; the owner gets them back so, and anyone else their half so', () => {
     const halo = { cond: 0.7, quirk: 'flicker' as const };
     const bag = [{ item: 'cloth', count: 2 }, { item: 'halo', count: 1, piece: halo }, { item: 'coat', count: 1, piece: { cond: 0.2 } }];

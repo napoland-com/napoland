@@ -402,6 +402,7 @@ export class Hud {
             <div class="parcel-note" data-el="stashParcels" role="status" hidden></div>
             <button type="button" class="goal" data-el="stashGoal" aria-disabled="true" tabindex="-1" hidden></button>
             <p class="hint">What you bring home earns XP. Tap something to see it, and tap it twice to put it away.</p>
+            <p class="rest-note" data-el="stashRest" role="status" hidden></p>
             <div class="grid" data-el="stashBag">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-bag="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
             <div class="acts"><button type="button" class="act go" data-el="storeAll">Put everything in</button></div>
             <h3 class="stash-title">Wearing</h3>
@@ -971,6 +972,13 @@ export class Hud {
     this.el.stashEmpty!.hidden = stash.length > 0;
     if (this.el.stashXp!.textContent !== xp) this.el.stashXp!.textContent = xp;
     this.refreshCard();
+  }
+
+  /** At the chest, under its hint while the cup of rest holds any: how much more XP from it counts double (null: none). */
+  setRested(line: string | null) {
+    const el = this.el.stashRest!;
+    el.hidden = !line;
+    if (line && el.textContent !== line) el.textContent = line;
   }
 
   /** A dot on the chest's Wardrobe tab: a new level opened an outfit. Looking at the wardrobe takes it away. */

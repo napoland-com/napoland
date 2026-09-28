@@ -49,6 +49,11 @@ export interface PlayerRecord {
   stats?: Stats;
   /** XP in all (progress.ts): the level follows from it. None: 0. */
   xp?: number;
+  /**
+   * Rested XP (progress.ts): the cup of rest, which time away fills and stashing spends, as much again as
+   * it earns. None: empty. Filled when the player arrives, from lastSeenAt.
+   */
+  rested?: number;
   /** What lies in the player's stash at home, and what they took out of it. None: empty. */
   stash?: Stash;
   /** What the player wears, by slot. None: they never chose, and wear the starter gear. */
@@ -287,10 +292,11 @@ function withZone<T extends { zone?: string }>(r: T, zone: string | undefined): 
   const { zone: _zone, ...rest } = r;
   return (zone ? { ...rest, zone } : rest) as T;
 }
-/** As the database keeps a player: no outfit at all when they wear none, and no copy in the main copy, so both storages read back the same. */
+/** As the database keeps a player: no outfit at all when they wear none, no rest when the cup is empty, and no copy in the main copy, so both storages read back the same. */
 const stored = (rec: PlayerRecord): PlayerRecord => {
   const out = withZone(copyRecord(rec), rec.zone);
   if (!out.outfit) delete out.outfit;
+  if (!out.rested) delete out.rested;
   return out;
 };
 /** The counts a save writes: all but the thanks received, which only creditThanks adds to. */
@@ -362,7 +368,7 @@ export class MemoryStorage implements Storage {
       Object.assign(cur, {
         map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(rec.bag), wet: rec.wet ?? 0,
         stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) },
-        xp: rec.xp ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
+        xp: rec.xp ?? 0, rested: rec.rested ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
         ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), lastSeenAt: rec.lastSeenAt,
       });
@@ -372,6 +378,7 @@ export class MemoryStorage implements Storage {
       // Taken off (null) is none; a record without an outfit keeps what was saved, like the tools and parcels.
       if (rec.outfit) cur.outfit = rec.outfit;
       else if (rec.outfit === null) delete cur.outfit;
+      if (!cur.rested) delete cur.rested;
     }
   }
 
@@ -578,6 +585,8 @@ interface PlayerRow {
   wet: number;
   stats: unknown;
   xp: number;
+  /** The cup of rest, in XP (018_rested.sql); 0 when it is empty. */
+  rested: number;
   stash: unknown;
   /** Null for a player who never chose their gear. */
   gear: unknown;
@@ -680,6 +689,8 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   // The thanks received live in a column of their own; one among the other counts (it never is) is left out.
   stats: { ...savedStats(stats(r.stats)), ...(Number.isInteger(r.thanked) && r.thanked > 0 ? { thanked: r.thanked } : {}) },
   xp: r.xp,
+  // An empty cup reads as none, as a new player's record has it.
+  ...(r.rested > 0 ? { rested: r.rested } : {}),
   stash: stash(r.stash),
   ...(r.gear && typeof r.gear === 'object' && !Array.isArray(r.gear) ? { gear: r.gear as Gear } : {}),
   // What the World checks again when the player joins.
@@ -752,14 +763,14 @@ export class PgStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
-         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25)
+         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, rested)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
         rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.outfit ?? null,
-        Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '',
+        Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '', rec.rested ?? 0,
       ],
     );
     return r.rowCount === 1;
@@ -768,18 +779,18 @@ export class PgStorage implements Storage {
   async save(rec: PlayerRecord): Promise<void> {
     // A record without parcels (never had one) leaves the parcel columns as they are, as a save without a
     // chapter leaves the story; so does one without an outfit, while null (taken off) saves none. The copy
-    // is always said, as the map is: a record without one is in the main copy.
+    // is always said, as the map is: a record without one is in the main copy. So is the cup of rest: none is empty.
     const p = rec.parcels;
     await this.pool.query(
       `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
        gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
        parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
-       parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23, last_seen_at = $13 WHERE id = $1`,
+       parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23, rested = $24, last_seen_at = $13 WHERE id = $1`,
       [
         rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
         rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
-        rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '',
+        rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '', rec.rested ?? 0,
       ],
     );
   }

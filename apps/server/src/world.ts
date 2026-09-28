@@ -39,7 +39,8 @@
  * which changes how they look and nothing else.
  *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
- * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). On a server
+ * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). Time away fills
+ * a cup of rest, counted as they arrive; while it holds any, stashing earns double out of it. On a server
  * with sign-in, whoever plays signed in finds a parcel in it the first time they play on each calendar
  * day, a welcome parcel the very first time (parcels.ts): gifts, which earn no XP. A NAPO lockbox, which
  * Sunday's parcel holds for whoever came back all week, is opened at the chest.
@@ -95,6 +96,7 @@ import {
   cacheTakes,
   calendarDay,
   canMake,
+  cleanRested,
   conditionsAt,
   dayIndex,
   daysThisWeek,
@@ -140,6 +142,9 @@ import {
   rankOf,
   reachedBy,
   resistOf,
+  restAfter,
+  restFor,
+  spendRest,
   stashList,
   store,
   storeLive,
@@ -340,6 +345,8 @@ export interface Joined extends Scene {
   conditions: ConditionsView;
   stats: Stats;
   progress: ProgressView;
+  /** The rest their time away was worth, since they were last seen (restFor): whether the cup had room for it or not. */
+  restedAway: number;
   /** Every tool the player owns, in the order they got them (toolsOf): the starter tools until they got one of their own. */
   tools: string[];
   story: StoryView;
@@ -403,6 +410,8 @@ export interface WorldOptions {
   calendar?: Calendar;
   /** Development only (XP_MULTIPLIER): stashing earns this many times the XP, to play-test the levels without the trips. 1 unless set. */
   xpTimes?: number;
+  /** Development only (RESTED_EVERY_MS): the time away that fills one XP of rest, to play-test it without the days away. RESTED_EVERY_MS unless set. */
+  restedEveryMs?: number;
 }
 
 interface Online {
@@ -704,6 +713,8 @@ export class World {
   private readonly guests: boolean;
   /** Stashing earns this many times an item's XP: 1, but for play-tests (WorldOptions.xpTimes). */
   private readonly xpTimes: number;
+  /** The time away that fills one XP of rest (WorldOptions.restedEveryMs). */
+  private readonly restedEvery: number | undefined;
   private readonly onCollapse: WorldOptions['onCollapse'];
   private readonly items: Map<string, ItemDef>;
   /** The items in the order of content/items.json: a stash lists them so. */
@@ -822,6 +833,7 @@ export class World {
     this.cycle = options.cycle ?? false;
     this.guests = options.guests ?? false;
     this.xpTimes = options.xpTimes ?? 1;
+    this.restedEvery = options.restedEveryMs;
     this.stepMs = options.stepMs ?? STEP_MS;
     this.onCollapse = options.onCollapse;
     this.rng = options.rng ?? Math.random;
@@ -982,11 +994,14 @@ export class World {
   join(rec: PlayerRecord, now: number): Joined {
     if (this.players.has(rec.id)) throw new Error(`player ${rec.id} is already online`);
     const gear = this.cleanGear(rec.gear);
+    // Time away since they were last seen fills the cup of rest (progress.ts), a guest's too.
+    const away = now + this.epochOffset - rec.lastSeenAt;
     const r: PlayerRecord = {
       ...rec, gear, worn: this.cleanWorn(rec.worn, gear), bag: this.fitBag(rec.bag, bagSlotsOf(gear, this.items)), stats: cleanStats(rec.stats),
       // Gear counted in the stash gets its pieces (all of it, for a stash saved before pieces existed).
       stash: fitPieces(cleanStash(rec.stash, this.items), this.items, this.rng),
       xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
+      rested: restAfter(cleanRested(rec.rested), away, this.restedEvery),
       // Kept as saved, ids this release does not know included (toolsOf).
       tools: cleanTools(rec.tools),
       ...(rec.parcels !== undefined ? { parcels: cleanParcels(rec.parcels) } : {}),
@@ -1030,8 +1045,8 @@ export class World {
     const here = zone.key, today = utcDay(now + this.epochOffset);
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
-      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
-      tools: toolsOf(r.tools, this.items),
+      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats },
+      progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
       thanked: [...this.thanks.values()].filter(t => t.giver === r.id && t.day === today).map(t => t.helper),
@@ -1055,6 +1070,8 @@ export class World {
     const from = p.zone;
     // Energy that runs out on the way out still counts: the bag drops, and the player wakes up at home next time.
     if (this.advance(p, now) <= 0) this.fall(p, now);
+    // Seen until now: coming straight back (another tab, the same record) is no time away to rest in.
+    p.rec.lastSeenAt = Math.floor(now + this.epochOffset);
     this.players.delete(id);
     this.quit(p);
     if (p.readyAt > -Infinity) this.resting.set(id, p.readyAt);
@@ -1278,18 +1295,16 @@ export class World {
       r.stash = lr.stash;
       r.xp += lr.xp;
     }
-    r.xp *= this.xpTimes;
     // Carried gear goes in as it is, piece by piece; fitPieces keeps the stash's pieces and its counts one.
     p.rec.stash = fitPieces(r.stash, this.items, this.rng);
     p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
     const before = levelOf(p.rec.xp ?? 0);
-    p.rec.xp = (p.rec.xp ?? 0) + r.xp;
     this.saveNow.set(id, p.rec);
     this.sendBag(p, now);
     this.sendStash(p);
-    this.outbox.push({ to: id, msg: { t: 'progress', progress: progressOf(p.rec.xp), gained: r.xp } });
+    this.earn(p, r.xp, true);
     // A bigger bar: the player hears it (and at home, by the fire, it fills up).
-    if (levelOf(p.rec.xp) !== before) this.refresh(p, now);
+    if (levelOf(p.rec.xp ?? 0) !== before) this.refresh(p, now);
     this.tell(p, now);
     this.moveStory(p, { store: true });
   }
@@ -3173,12 +3188,18 @@ export class World {
     this.tell(p, now);
   }
 
-  /** XP earned by a piece coming home off the player's back (the first time it ever does): they hear it. The bar follows on the next refresh. */
-  private earn(p: Online, xp: number): void {
-    if (xp <= 0) return;
-    const gained = xp * this.xpTimes;
-    p.rec.xp = (p.rec.xp ?? 0) + gained;
-    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp), gained } });
+  /**
+   * XP earned by bringing something home: stashing it, or a piece that never was home coming off the
+   * player's back at the chest (the first time it ever does). A play-test's multiple of it, and while the
+   * cup of rest holds any, as much again out of it (spendRest); what earns nothing touches neither. They
+   * hear it, after a store even when it earned nothing (`always`). The bar follows on the next refresh.
+   */
+  private earn(p: Online, xp: number, always = false): void {
+    const r = spendRest(xp * this.xpTimes, p.rec.rested ?? 0);
+    if (r.gained <= 0 && !always) return;
+    p.rec.xp = (p.rec.xp ?? 0) + r.gained;
+    p.rec.rested = r.cup;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, r.cup), gained: r.gained, ...(r.fromRest ? { fromRest: r.fromRest } : {}) } });
   }
 
   /** A full bar: the level's, plus what the gear worn gives. */

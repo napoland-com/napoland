@@ -3,8 +3,8 @@
  * can be tested; hud.ts shows it and main.ts asks for it.
  */
 import {
-  ELEMENTS, FEATS, GUEST_DAYS, outfitsOpening, rankOf, rankText, type BagSlot, type BodyView, type Element, type EnergyView, type Feat, type FlashKind, type ProgressView, type Stats, type StoneView,
-  type StormView, type SurgeView, type Weather,
+  ELEMENTS, FEATS, GUEST_DAYS, RESTED_MAX, outfitsOpening, rankOf, rankText, type BagSlot, type BodyView, type Element, type EnergyView, type Feat, type FlashKind, type ProgressView, type Stats,
+  type StoneView, type StormView, type SurgeView, type Weather,
 } from '@napoland/shared';
 import { listWords } from './details';
 import { minutes, type News } from './game';
@@ -64,6 +64,16 @@ export function featView(f: Feat, count: number): FeatView {
   };
 }
 
+/** The cup of rest in the status panel, under Rested: "140 XP of doubled stashing left", or what fills it while it is empty. */
+export function restedText(xp: number): string {
+  return xp > 0 ? `${thousands(xp)} XP of doubled stashing left` : 'Empty. It fills while you are not playing, and then what you stash counts double.';
+}
+
+/** "Rested: your next 140 XP from the chest count double.": at the chest while the cup holds any. */
+export function restedLine(xp: number): string {
+  return `Rested: your next ${thousands(xp)} XP from the chest count double.`;
+}
+
 /** "Level 3 · 150 XP, 120 to go": where you stand, for the status panel and the stash's header. */
 export function levelText(p: ProgressView): string {
   return p.to === null ? `Level ${p.level} · ${p.xp} XP, the top` : `Level ${p.level} · ${p.xp} XP, ${p.to - p.xp} to go`;
@@ -85,6 +95,8 @@ export function statusView(s: StatusInput): StatusView {
   const rows: StatusView['rows'] = [];
   const p = s.progress;
   rows.push({ label: 'Level', text: levelText(p), bar: p.to === null ? 1 : (p.xp - p.from) / (p.to - p.from), tone: 'good' });
+  const rested = p.rested ?? 0;
+  rows.push({ label: 'Rested', text: restedText(rested), bar: rested / RESTED_MAX, tone: rested > 0 ? 'good' : 'plain' });
   if (s.energy) {
     const e = s.energy, how = e.rate < 0 ? 'draining' : e.rate > 0 && e.value < e.max ? 'coming back' : 'holding';
     rows.push({ label: 'Energy', text: `${Math.round(e.value)} of ${e.max}, ${how}`, bar: e.value / e.max, tone: e.rate < 0 ? 'bad' : e.rate > 0 ? 'good' : 'plain' });
@@ -128,6 +140,7 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
     return { title: `Level ${n.progress.level}`, sub: `Your energy bar grows to ${n.progress.maxEnergy}.\nYou can go a little farther now.${outfits}` };
   }
   if (n.kind === 'chapter') return { title: `Journal: ${n.chapter.title}`, sub: 'A new chapter of the story.\nRead it in your journal, in the menu.' };
+  if (n.kind === 'rested') return { title: 'Rested', sub: `Your next ${thousands(n.xp)} XP from the chest count double.` };
   if (n.kind === 'live') return { title: 'It is still live', sub: `Stash it within ${minutes(n.fresh)} for the most XP.` };
   if (n.kind === 'feat') {
     const f = FEATS.find(x => x.id === n.id);

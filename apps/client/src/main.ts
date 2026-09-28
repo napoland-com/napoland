@@ -35,7 +35,7 @@ import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { Resolution } from './quality';
 import { heardFinds, nearest, radioOf, type RadioScene } from './radio';
-import { levelText, newsBanner, statusView } from './status';
+import { levelText, newsBanner, restedLine, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
 import { WorldView, createRenderer, lightningAt } from './view/world';
@@ -796,8 +796,9 @@ function frame(now: number) {
     // A dot on the chest's Wardrobe tab too, until it is looked at, when the level opened an outfit.
     if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
     // A parcel that comes on arrival waits for the place's name to be read first; one that comes while
-    // the chest is open needs no banner, as the stash says what came (below).
+    // the chest is open needs no banner, as the stash says what came (below). Arriving rested waits the same way.
     if (n.kind === 'parcel') { if (!game.chest) toSay.push(n); continue; }
+    if (n.kind === 'rested') { toSay.push(n); continue; }
     const b = newsBanner(n, game.map.data.name, items, game.guest);
     if (b) hud.showBanner(b.title, b.sub);
   }
@@ -873,6 +874,8 @@ function frame(now: number) {
     progressShown = game.progress;
     if (game.chest) hud.setStash(slotViews(game.chest.stash, items), levelText(game.progress));
     hud.setLevel(game.progress.level);
+    // At the chest, as it is spent: how much more of what comes home counts double.
+    hud.setRested(game.progress.rested ? restedLine(game.progress.rested) : null);
   }
   // Open, the stash says once what came in the parcels since it last opened, and in one that comes while it is.
   if (game.chest && game.parcels.length) {

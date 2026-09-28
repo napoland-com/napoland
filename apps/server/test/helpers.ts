@@ -106,14 +106,17 @@ export async function eventually<T>(attempt: () => Promise<T>, what: string, tim
 let names = 0;
 export const newName = (): string => `Player ${++names}`;
 
-/** A player saved in `storage` where the test wants them (in the town at the spawn, full, with an empty bag, unless `where` says otherwise). */
+/**
+ * A player saved in `storage` where the test wants them (in the town at the spawn, full, with an empty bag,
+ * last seen a moment ago, unless `where` says otherwise: time away would fill their cup of rest).
+ */
 export async function savedPlayer(storage: Storage, where: Partial<PlayerRecord> = {}): Promise<{ id: string; name: string; token: string }> {
   const token = randomBytes(32).toString('base64url');
   const id = randomUUID();
   const name = newName();
   await storage.create({
     id, name, tokenHash: hashToken(token), authSub: null, map: 'town', x: 1, y: 2, dir: 'down', color: colorFor(id), energy: ENERGY_MAX, bag: [],
-    createdAt: 1, lastSeenAt: 1, ...where,
+    createdAt: 1, lastSeenAt: Date.now(), ...where,
   });
   return { id, name, token };
 }
@@ -227,6 +230,61 @@ export async function outfitsKeptThroughARestart(first: Storage, second: Storage
   } finally {
     await two.stop();
   }
+}
+
+/**
+ * The cup of rest through a restart, on `first` and then `second` (the same storage, or two connections to
+ * the same database). Ten hours away fill it with 30 XP as the player arrives, and three nails stashed (9
+ * XP) take 9 more out of it; after the restart the player comes back, straight away, with the 21 left.
+ */
+export async function restKeptThroughARestart(first: Storage, second: Storage): Promise<void> {
+  setLogLevel('silent');
+  const items: ItemsData = { ...itemsData(), items: itemsData().items.map(i => (i.id === 'nail' ? { ...i, xp: 3 } : i)) };
+  const options = (storage: Storage): ServerOptions => ({ ...serverDefaults(), storage, maps: chestMaps(), items });
+  const saved = await savedPlayer(first, { map: 'house', x: 3, y: 2, dir: 'up', lastSeenAt: Date.now() - 10 * 3_600_000 - 60_000, bag: [{ item: 'nail', count: 3 }] });
+
+  const one = await startServer(options(first));
+  try {
+    const { c, welcome } = await loginTo(one.port, saved.token);
+    expect(welcome.progress.rested).toBe(30);
+    c.send({ t: 'store', x: 3, y: 1 });
+    expect(await c.next('progress')).toEqual({ t: 'progress', progress: expect.objectContaining({ xp: 18, rested: 21 }), gained: 18, fromRest: 9 });
+    c.ws.terminate();
+    await waitFor(() => one.world.size === 0, 'the player to leave');
+  } finally {
+    await one.stop();
+  }
+  expect(await second.findByTokenHash(hashToken(saved.token))).toMatchObject({ xp: 18, rested: 21 });
+
+  const two = await startServer(options(second));
+  try {
+    const { c, welcome } = await loginTo(two.port, saved.token);
+    expect(welcome.progress).toMatchObject({ xp: 18, rested: 21 });
+    expect(welcome.restedAway).toBeUndefined();
+    c.ws.terminate();
+  } finally {
+    await two.stop();
+  }
+}
+
+/**
+ * The cup of rest kept with a player, on `storage` (in memory, or a real database): none for a new player,
+ * what a save writes, and none once it is spent; a player made with some keeps it too.
+ */
+export async function keepsRested(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  // Whole, as a save writes it back (every storage fills in a stash, counts, XP and wetness), so what is read back compares as it is.
+  await savedPlayer(storage, { tokenHash: null, authSub: sub, wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect(rec.rested).toBeUndefined();
+  await storage.save({ ...rec, rested: 140, lastSeenAt: rec.lastSeenAt + 1000 });
+  expect(await load()).toEqual({ ...rec, rested: 140, lastSeenAt: rec.lastSeenAt + 1000 });
+  await storage.save({ ...rec, rested: 0, lastSeenAt: rec.lastSeenAt + 2000 });
+  expect((await load()).rested).toBeUndefined();
+  const other = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: other, rested: 12 });
+  expect((await storage.findByAuthSub(other))!.rested).toBe(12);
 }
 
 /**
