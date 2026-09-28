@@ -74,6 +74,21 @@ describe('rain, region by region', () => {
     for (const map of ['near-woods', 'south-road', 'stonebrook', 'stonebrook-lodge', 'south-road-bunker']) expect(of(onMap(night, map), 'weather'), map).toEqual([{ t: 'weather', weather: 'night' }]);
   });
 
+  it('shows a note written for the rain by its own region\'s rain', () => {
+    // Thirteen minutes after dawn it rains in the Near Woods and not on the South Road; at 25, the other way round.
+    const read = (m: number) => {
+      const w = realWorld(at(m));
+      w.join(rec('n', 'near-woods', 32, 61, 'up'), 0);
+      w.join(rec('s', 'south-road', 32, 29, 'down'), 0);
+      w.drain();
+      w.talk('n', 32, 60, 1000);
+      w.talk('s', 32, 30, 1000);
+      return w.drain().flatMap(o => (o.msg.t === 'noteRead' ? [o.msg.id] : []));
+    };
+    expect(read(13)).toEqual(['barlow-wiper']);
+    expect(read(25)).toEqual(['barlow-cars']);
+  });
+
   it('counts steps in the rain only where it rains', () => {
     const w = realWorld(at(14));
     w.join(rec('n', 'near-woods', 31, 76, 'up'), 0);

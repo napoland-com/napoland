@@ -4,9 +4,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import { ENERGY_MAX, ENERGY_PER_LEVEL, TileMap, XP_CURVE, type Dir, type ItemsData, type ServerMsg } from '@napoland/shared';
-import type { PlayerRecord } from '../src/storage';
+import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { World, colorFor, zoneKey, type Outgoing, type WorldOptions } from '../src/world';
 import { fixtureMaps, houseData } from './fixtures';
+import { keepsTheWornOutMark } from './helpers';
 
 /** The fixture house with a chest at 3,1, next to the fireplace: stand at 3,2 facing up to reach it. */
 const withChest = () => {
@@ -53,13 +54,25 @@ const to = (out: Outgoing[], id: string) => out.flatMap(o => (o.to === id ? [o.m
 const of = <T extends ServerMsg['t']>(msgs: ServerMsg[], t: T) => msgs.filter((m): m is Extract<ServerMsg, { t: T }> => m.t === t);
 
 describe('the chest at home', () => {
+  it('opens once the steps sent before the look are walked, from where they take you', () => {
+    // A slow network bunched up the two steps that bring A in front of the chest (3,2): the second still
+    // waits in the queue when the look comes in, and from where A stands then it would open nothing.
+    const w = world(rec('a', 2, 3, { stash: { items: { moss: 4 }, out: {} } }, 'right'));
+    w.step('a', 'right', 1, 350);
+    w.step('a', 'up', 2, 351);
+    w.chest('a', 3, 1, 450);
+    expect(of(to(w.drain(), 'a'), 'chest')).toEqual([]);
+    w.tick(1000);
+    expect(of(to(w.drain(), 'a'), 'chest')).toEqual([{ t: 'chest', stash: [{ item: 'moss', count: 4 }] }]);
+  });
+
   it('shows each player their own stash, and only from next to it', () => {
     const w = world(rec('a', 3, 2, { stash: { items: { moss: 4 }, out: {} } }), rec('b', 2, 2));
-    w.chest('a', 3, 1);
+    w.chest('a', 3, 1, 1000);
     expect(to(w.drain(), 'a')).toEqual([{ t: 'chest', stash: [{ item: 'moss', count: 4 }] }]);
     // b stands two tiles away; and a cannot open a chest where none stands.
-    w.chest('b', 3, 1);
-    w.chest('a', 3, 3);
+    w.chest('b', 3, 1, 1000);
+    w.chest('a', 3, 3, 1000);
     expect(w.drain()).toEqual([]);
   });
 
@@ -117,7 +130,48 @@ describe('levels', () => {
   it('come from saved XP, and bad saves count as none', () => {
     const w = world(rec('a', 3, 2, { xp: -5, stash: { items: { moss: 2, gone: 4, shard: 1.5 }, out: { moss: -1 } } as never }));
     expect(w.get('a')!.xp).toBe(0);
-    expect(w.get('a')!.stash).toEqual({ items: { moss: 2 }, out: {} });
+    // An item this release does not know (`gone`: a newer release's, say) is kept as saved, for that release.
+    expect(w.get('a')!.stash).toEqual({ items: { moss: 2, gone: 4 }, out: {} });
+  });
+});
+
+describe('a piece worn since before gear went on the road', () => {
+  // A cap that earns XP brought home, as the shard-lined cap does; the old releases put pieces on at the
+  // chest without counting them as taken out of the stash.
+  const withCap: ItemsData = {
+    ...ITEMS,
+    items: [...ITEMS.items, { id: 'cap', name: 'Odd cap', kind: 'gear', stack: 1, text: 'It hums.', slot: 'cap', tier: 'sturdy', xp: 40 }],
+  };
+  const w = () => worldWith({ items: withCap });
+
+  it('earns its XP only once: counted as taken out the first time this release has the player', () => {
+    const world = w();
+    // Stashed then (40 XP), and put on at the chest; nothing counted it out.
+    world.join(rec('a', 3, 2, { xp: 40, gear: { cap: 'cap' }, worn: { cap: { cond: 1 } }, stash: { items: {}, out: {} } }), 0);
+    expect(world.get('a')!.stash!.out).toEqual({ cap: 1 });
+    world.unequip('a', 3, 1, 'cap', 1000);
+    expect(world.get('a')!.xp).toBe(40);
+    expect(world.get('a')!.stash).toMatchObject({ items: { cap: 1 }, out: {} });
+    // Counted once for good: back with the record it left with, nothing is counted again.
+    world.equip('a', 3, 1, 'cap', 2000);
+    const left = world.leave('a', 3000)!;
+    expect(left.wornOut).toBe(true);
+    world.join(left, 4000);
+    expect(world.get('a')!.stash!.out).toEqual({ cap: 1 });
+  });
+
+  it('still earns the XP of a piece that never was home, put on from the bag since', () => {
+    const world = w();
+    world.join(rec('a', 3, 2, { bag: [{ item: 'cap', count: 1, piece: { cond: 1 } }] }), 0);
+    world.wear('a', 0, 1000);
+    const left = world.leave('a', 2000)!;
+    world.join(left, 3000);
+    world.unequip('a', 3, 1, 'cap', 4000);
+    expect(world.get('a')!.xp).toBe(40);
+  });
+
+  it('keeps the mark with the counts in storage, and never forgets it to a save without it', async () => {
+    await keepsTheWornOutMark(new MemoryStorage());
   });
 });
 

@@ -1,9 +1,10 @@
 /**
  * The interface over the world: status and energy (and how wet you are, and what clings to you), the
- * surge clock, the menu with the journal, status and About panels, the joystick and A/B (and the fan
- * of calls B opens when held), name tags, notes over the heads of callers, the text box, the bag, the
- * chest (the stash, and the wardrobe beside it) and the workbench, and the fade and name banner when
- * you arrive somewhere.
+ * surge clock, the menu with the journal (the story, and the field notes, which the notebook in the
+ * bag's header opens too), status and About panels, the joystick and A/B (and the fan of calls B
+ * opens when held), name tags, notes over the heads of callers, the text box, the bag, the chest (the
+ * stash, and the wardrobe beside it) and the workbench, and the fade and name banner when you arrive
+ * somewhere.
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
@@ -12,10 +13,11 @@ import { aboutBody, versionView } from './about';
 import { CALL_NOTE_S, CALL_WORDS, FAN, fanChoice } from './calls';
 import { DOUBLE_TAP_MS, DoubleTap, cardPress, morePress, refKey, statText, type DetailAct, type DetailRef, type DetailView } from './details';
 import type { FriendsView } from './friends';
-import { CALL_GLYPHS } from './icons';
+import { CALL_GLYPHS, NOTEBOOK_ICON } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
-import type { JournalView } from './journal';
+import { fieldNotesHtml, notesHtml, type FieldNotesView, type JournalView, type NotesView } from './journal';
 import type { SoundSetting } from './sound';
+import type { OfferRow, TradePanel } from './trade';
 import { BADGES_HINT, PATTERNS_HINT, WARDROBE_GATE, WARDROBE_HINT, type OutfitTile, type WardrobePart, type WardrobeView } from './wardrobe';
 
 const svg = (inner: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
@@ -44,6 +46,8 @@ const VIGNETTE_FROM = 0.2;
 /** How long the name of a place stays up after you arrive; longer news stays longer, to be read. */
 const BANNER_MS = 2500;
 const BANNER_MS_PER_CHAR = 45;
+/** A lodestone's tug shows on the status panel this long. */
+const TUG_MS = 1600;
 
 /**
  * What a key does in the chat's line, as in Metin2: Enter with words in it sends them (the form does,
@@ -93,12 +97,18 @@ export interface HudHandlers {
   details?(ref: DetailRef, where: CardSheet): DetailView | null;
   /** Something done in the friends panel, or a player's name tag tapped. */
   social?(a: SocialAction): void;
+  /** Something done in the trade panel: it calls the trade off when it closes (`cancel`). */
+  trade?(a: TradeAction): void;
   /** The chat panel: opened, another tab picked, or something said. */
   chat?(a: { a: 'opened' } | { a: 'tab'; to: 'world' | 'local' } | { a: 'say'; to: 'world' | 'local'; text: string }): void;
   /** A tool in the bag's header was tapped (one that is not a map). */
   tool?(item: string): void;
   /** The map button in the bag's header: the paper map of the area you are in. */
   map?(): void;
+  /** The field notes were looked at, and the journal left them (closed, or on its story): what was new there is not any more. */
+  fieldSeen?(): void;
+  /** The same for the notes people left. */
+  notesSeen?(): void;
   /** The sound was muted or unmuted, or its volume moved. */
   sound?(s: SoundSetting): void;
   /** A guest's Sign in button (in the status panel, the Status tab, the chat or the friends panel). */
@@ -218,6 +228,15 @@ export interface StatusView { guest?: string; rows: StatusRow[]; feats: FeatView
  */
 export interface CrateView { count: string; hint: string; rows: Array<{ id: number; name: string; icon: string; line: string }>; empty: string | null }
 
+/** The parts of the journal, the one book the game keeps: the story's chapters, the field notes, and the notes people left. */
+export type JournalTab = 'story' | 'field' | 'notes';
+/** What each part of the journal says under its tabs. */
+export const JOURNAL_HINTS: Readonly<Record<JournalTab, string>> = {
+  story: 'The story so far, the latest first. It goes on: new chapters come as the world grows.',
+  field: 'What you noticed out there, place by place. A question on a page fills in once you see the answer for yourself.',
+  notes: 'What people left out there, in their own words, and what you brought home of theirs.',
+};
+
 /** What the chat and the friends panel say to a guest, over a Sign in button, instead of what they cannot use yet. */
 export const CHAT_GATE = 'Sign in to chat with other players. Signing in keeps your character.';
 export const FRIENDS_GATE = 'Sign in to make friends and write to them. Signing in keeps your character.';
@@ -245,6 +264,11 @@ export function featHtml(f: FeatView): string {
 
 const EMPTY_BAG = 'Your bag is empty. Things you find out there go here, and you keep them only if you bring them home.';
 const PICK_SLOT = 'Tap something to see what it is.';
+/** The trade panel's words that never change: how to give, and what closing it does. */
+export const TRADE_HINT = 'Tap something to give it, and tap it again to take it back.';
+export const TRADE_FINE = 'Closing this calls the trade off.';
+/** A side that gives nothing yet. */
+export const GIVES_NOTHING = { mine: 'Nothing yet: tap something in your bag.', theirs: 'Nothing yet.' } as const;
 
 /** What the energy bar and the screen's edges show for a player's energy. */
 export interface EnergyLook {
@@ -280,7 +304,13 @@ export type SocialAction =
   | { a: 'block'; id: string; on: boolean }
   | { a: 'report'; id: string; reason: 'rude' | 'spam' | 'cheating' | 'other' }
   | { a: 'tell'; id: string; text: string }
-  | { a: 'requests'; off: boolean };
+  | { a: 'requests'; off: boolean }
+  | { a: 'tradeRequests'; off: boolean }
+  /** Their card's Trade: ask them to trade (greyed out when they are not near: the game says why). */
+  | { a: 'trade'; id: string; name: string };
+
+/** What the trade panel asks the game to do: give (or take back) a bag slot, one fewer or one more on a row of your side, Ready, Trade, or call it off. */
+export type TradeAction = { a: 'give'; slot: number } | { a: 'step'; i: number; by: -1 | 1 } | { a: 'ready' } | { a: 'confirm' } | { a: 'cancel' };
 
 /** A name over someone's head (with the drawing of their badge, merits.ts, when they wear one), or over a pile while you are near it. */
 export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; badge?: string }
@@ -306,26 +336,37 @@ export class Hud {
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
   private shown = {
     fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
-    friends: '', personActs: '', talk: '', journal: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', badge: '',
+    friends: '', personActs: '', talk: '', journal: '', field: '', notes: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', badge: '', tradeMine: '', tradeTheirs: '',
+    tradeBag: '',
   };
   /** The chest's tab: the stash (with what came in parcels, the first goal and what you wear), or the wardrobe. */
   private chestTab: 'stash' | 'wardrobe' = 'stash';
   /** The wardrobe's part shown (outfits, patterns or badges), and the wardrobe as last told. */
   private wardrobePart: WardrobePart = 'outfits';
   private wardrobe: WardrobeView | null = null;
-  /** What the dots say is new: among friends (a request, an unread message) and in the journal (a chapter), on the menu; in the chat (something said), on its own button. */
-  private news = { social: false, journal: false, chat: false };
+  /** The journal's part: the story's chapters, the field notes, or the notes people left. */
+  private journalPart: JournalTab = 'story';
+  /**
+   * What the dots say is new: among friends (a request, an unread message) and in the journal (a chapter,
+   * a page of the field notes or a blank filled in, a note read), on the menu; in the chat (something
+   * said), on its own button; in the field notes, on the notebook's button in the bag too.
+   */
+  private news = { social: false, journal: false, field: false, notes: false, chat: false };
   private load = 0;
   private capacity = BAG_SLOTS;
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
+  private tugTimer: ReturnType<typeof setTimeout> | undefined;
   private slotEls: HTMLButtonElement[] = [];
   /** The bag as shown, and the slot whose details are open (and the item in it). */
   private bag: SlotView[] = [];
   /** When the bag was told (performance.now()), and what each live slot's countdown last showed. */
   private bagAt = 0;
   private readonly liveShown = new Map<number, string>();
-  /** Whose card the friends panel shows, if anyone's. */
+  /** Whose card the friends panel shows, if anyone's, and their name (its Trade asks them). */
   private person: string | null = null;
+  private personName = '';
+  /** The rows of the trade panel whose words a tap opened (by side and place: "mine:0"). */
+  private readonly lookedAt = new Set<string>();
   /** The chat tab shown, and the speech bubbles over heads by who said it. */
   private chatTab: 'world' | 'local' = 'local';
   private bubbleEls = new Map<string, HTMLElement>();
@@ -367,6 +408,7 @@ export class Hud {
         <div class="energy" data-el="energy" hidden>${ICON.bolt}<div class="bar" data-el="energyBar" role="meter" aria-label="Energy" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="energyFill"></div></div></div>
         <div class="wet" data-el="wet" hidden>${ICON.drop}<div class="bar" data-el="wetBar" role="meter" aria-label="Wet" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="wetFill"></div></div></div>
         <div class="cling" data-el="cling" hidden role="status">${ICON.cling}<span>Something clings to you</span></div>
+        <div class="tug" data-el="tug" hidden role="status"><i aria-hidden="true">✦</i><span data-el="tugName"></span></div>
         <div class="surge-pill" data-el="surge" hidden role="status" aria-live="polite"></div>
         <div class="sub"><span class="conn" data-el="conn" data-state="connecting"><i></i><span data-el="connText">Connecting</span></span><span data-el="ping"></span></div></div>
       <div class="surge-glow" data-el="surgeGlow"></div>
@@ -390,7 +432,9 @@ export class Hud {
         <div class="choices panel" data-el="choices" role="group" aria-label="Your answer" hidden><button type="button" data-choice="yes">YES</button><button type="button" data-choice="no">NO</button></div>
         <div class="more" data-el="more" aria-hidden="true" style="visibility: hidden">&#9660;</div><i class="timer" data-el="timer" aria-hidden="true" hidden></i></div>
       <div class="sheet panel bag-sheet docked" data-el="bagSheet" data-open="false" role="dialog" aria-label="Bag">
-        <div class="sheet-head bag-head"><span class="heading"><b>Bag</b><span class="room" data-el="room"></span></span><span class="tools" data-el="tools"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
+        <div class="sheet-head bag-head"><span class="heading"><b>Bag</b><span class="room" data-el="room"></span></span>
+          <span class="tools"><button type="button" class="slot" data-el="notebookBtn" aria-label="Your field notes">${NOTEBOOK_ICON}</button></span>
+          <span class="tools" data-el="tools"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
         <div class="sheet-body" data-el="bagBody">
           <div class="grid" data-el="grid">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-slot="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
           <p class="hint" data-el="hint">${EMPTY_BAG}</p>
@@ -450,6 +494,23 @@ export class Hud {
         </div>
         <div class="dock" data-el="crateDock" hidden><div class="detail" data-el="crateCard" aria-live="polite"></div></div>
       </div>
+      <div class="sheet panel trade-sheet" data-el="tradeSheet" data-open="false" role="dialog" aria-label="Trade">
+        <div class="sheet-head"><b data-el="tradeTitle">Trade</b><button type="button" class="close" data-el="tradeClose" aria-label="Call off the trade">${ICON.x}</button></div>
+        <p class="trade-line" data-el="tradeLine" role="status" aria-live="polite"></p>
+        <div class="sheet-body" data-el="tradeBody">
+          <h3 class="stash-title">You give</h3>
+          <div class="offer" data-el="tradeMine"></div>
+          <h3 class="stash-title" data-el="tradeTheirsTitle"></h3>
+          <div class="offer" data-el="tradeTheirs"></div>
+          <h3 class="stash-title">Your bag</h3>
+          <p class="hint">${TRADE_HINT}</p>
+          <div class="grid" data-el="tradeBag">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-give="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
+        </div>
+        <div class="trade-foot">
+          <div class="acts"><button type="button" class="act ready" data-el="tradeReady" aria-pressed="false">Ready</button><button type="button" class="act go" data-el="tradeGo">Trade</button></div>
+          <p class="fine">${TRADE_FINE}</p>
+        </div>
+      </div>
       <div class="sheet panel status-sheet" data-el="statusSheet" data-open="false" role="dialog" aria-label="Status">
         <div class="sheet-head"><b>Status</b><button type="button" class="close" data-el="statusClose" aria-label="Close the status">${ICON.x}</button></div>
         <div class="status-body" data-el="statusBody"></div>
@@ -470,6 +531,7 @@ export class Hud {
           <form class="say" data-el="askForm"><input data-el="askName" maxlength="16" placeholder="A player's name" autocomplete="off" enterkeyhint="send" aria-label="Ask a player to be your friend, by name"><button type="submit" class="act go">Ask</button></form>
           <div data-el="friendsRows"></div>
           <label class="setting"><input type="checkbox" data-el="requestsOn"> Let people ask me to be friends</label>
+          <label class="setting"><input type="checkbox" data-el="tradesOn"> Let friends ask me to trade</label>
         </div>
         <div class="person" data-el="personView" hidden>
           <p class="where" data-el="personWhere"></p>
@@ -480,9 +542,11 @@ export class Hud {
         </div>
       </div>
       <div class="sheet panel journal-sheet" data-el="journalSheet" data-open="false" role="dialog" aria-label="Journal">
-        <div class="sheet-head"><b>Journal</b><button type="button" class="close" data-el="journalClose" aria-label="Close the journal">${ICON.x}</button></div>
-        <p class="hint">The story so far, the latest first. It goes on: new chapters come as the world grows.</p>
-        <div class="journal-body" data-el="journalBody"></div>
+        <div class="sheet-head"><span class="chest-tabs" role="tablist" aria-label="Journal"><button type="button" role="tab" data-journal="story" aria-selected="true">Story</button><button type="button" role="tab" data-journal="field" aria-selected="false">Field notes</button><button type="button" role="tab" data-journal="notes" aria-selected="false">Notes</button></span><button type="button" class="close" data-el="journalClose" aria-label="Close the journal">${ICON.x}</button></div>
+        <p class="hint" data-el="journalHint">${JOURNAL_HINTS.story}</p>
+        <div class="journal-body" data-el="journalBody" role="tabpanel" aria-label="Story"></div>
+        <div class="journal-body field-notes" data-el="fieldBody" role="tabpanel" aria-label="Field notes" hidden></div>
+        <div class="journal-body field-notes" data-el="notesBody" role="tabpanel" aria-label="Notes" hidden></div>
       </div>
       <div class="sheet panel about-sheet" data-el="aboutSheet" data-open="false" role="dialog" aria-label="About napoland">
         <div class="sheet-head"><b>About</b><button type="button" class="close" data-el="aboutClose" aria-label="Close About">${ICON.x}</button></div>
@@ -597,6 +661,12 @@ export class Hud {
     this.el.menuStatus!.addEventListener('click', () => { this.toggleMenu(false); this.toggleStatus(true); });
     this.el.menuJournal!.addEventListener('click', () => { this.toggleMenu(false); this.toggleJournal(true); });
     this.el.journalClose!.addEventListener('click', () => this.toggleJournal(false));
+    this.el.journalSheet!.addEventListener('click', e => {
+      const tab = (e.target as Element).closest<HTMLElement>('[data-journal]')?.dataset.journal;
+      if (tab === 'story' || tab === 'field' || tab === 'notes') this.showJournalTab(tab);
+    });
+    // The notebook in the bag's header opens the journal at its field notes.
+    this.el.notebookBtn!.addEventListener('click', () => this.toggleJournal(true, 'field'));
     this.el.menuFriends!.addEventListener('click', () => { this.toggleMenu(false); this.toggleFriends(true); });
     this.el.chatBtn!.addEventListener('click', () => { this.toggleMenu(false); this.toggleChat(); });
     this.el.chatClose!.addEventListener('click', () => this.toggleChat(false));
@@ -631,6 +701,24 @@ export class Hud {
       if (text && this.person) { this.h.social?.({ a: 'tell', id: this.person, text }); input.value = ''; }
     });
     this.el.requestsOn!.addEventListener('change', e => this.h.social?.({ a: 'requests', off: !(e.target as HTMLInputElement).checked }));
+    this.el.tradesOn!.addEventListener('change', e => this.h.social?.({ a: 'tradeRequests', off: !(e.target as HTMLInputElement).checked }));
+    // The trade panel: its X calls the trade off, as any way of closing it does.
+    this.el.tradeClose!.addEventListener('click', () => this.toggleTrade(false));
+    this.el.tradeReady!.addEventListener('click', () => this.h.trade?.({ a: 'ready' }));
+    this.el.tradeGo!.addEventListener('click', () => this.h.trade?.({ a: 'confirm' }));
+    this.el.tradeSheet!.addEventListener('click', e => {
+      const t = e.target as Element, give = t.closest<HTMLElement>('[data-give]'), step = t.closest<HTMLElement>('[data-step]'), look = t.closest<HTMLElement>('[data-look]');
+      if (give) {
+        if (give.dataset.empty !== 'true') this.h.trade?.({ a: 'give', slot: Number(give.dataset.give) });
+      } else if (step) {
+        if (step.getAttribute('aria-disabled') !== 'true') this.h.trade?.({ a: 'step', i: Number(step.closest<HTMLElement>('[data-row]')!.dataset.row), by: Number(step.dataset.step) as -1 | 1 });
+      } else if (look) {
+        // What it is, in its own words: a tap shows it under its row, another hides it.
+        const key = look.dataset.look!;
+        if (!this.lookedAt.delete(key)) this.lookedAt.add(key);
+        this.showLooks();
+      }
+    });
     // Buttons in the rows and on a card say what they do (data-act) and to whom (data-id, data-name).
     this.el.friendsSheet!.addEventListener('click', e => {
       const b = (e.target as Element).closest<HTMLElement>('[data-act], [data-reason]');
@@ -643,6 +731,7 @@ export class Hud {
       const id = b.dataset.id ?? this.person ?? '', name = b.dataset.name ?? '';
       switch (b.dataset.act) {
         case 'open': return this.h.social?.({ a: 'person', id, name });
+        case 'trade': return this.h.social?.({ a: 'trade', id, name: this.personName });
         case 'accept': return this.h.social?.({ a: 'answer', id, yes: true });
         case 'decline': return this.h.social?.({ a: 'answer', id, yes: false });
         case 'befriend': return this.h.social?.({ a: 'befriend', id });
@@ -715,7 +804,7 @@ export class Hud {
   toggleStatus(open = !this.statusOpen) {
     this.el.statusSheet!.dataset.open = String(open);
     // The bag, the stash, the status and the About panel open in the same place: one at a time.
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.h.status?.(); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.h.status?.(); }
   }
 
   get chatOpen(): boolean {
@@ -723,7 +812,7 @@ export class Hud {
   }
   /** Opens or closes the chat; with `type`, its line takes the keys (Enter on a keyboard). */
   toggleChat(open = !this.chatOpen, type = false) {
-    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleFriends(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.toggleFriends(false); this.el.statusSheet!.dataset.open = 'false'; }
     const was = this.chatOpen, line = this.el.chatText as HTMLInputElement;
     this.el.chatSheet!.dataset.open = String(open);
     this.el.chatBtn!.setAttribute('aria-expanded', String(open));
@@ -767,7 +856,7 @@ export class Hud {
     return this.el.friendsSheet!.dataset.open === 'true';
   }
   toggleFriends(open = !this.friendsOpen) {
-    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleChat(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.toggleChat(false); this.el.statusSheet!.dataset.open = 'false'; }
     const was = this.friendsOpen;
     this.el.friendsSheet!.dataset.open = String(open);
     if (open && !was) this.h.social?.({ a: 'opened' });
@@ -779,6 +868,7 @@ export class Hud {
   setFriends(v: FriendsView, note: string | null) {
     const p = v.person;
     this.person = p?.id ?? null;
+    this.personName = p?.name ?? '';
     const row = (x: { id: string; name: string }, inner: string) => `<div class="frow"><span class="fname">${esc(x.name)}</span>${inner}</div>`;
     const btn = (act: string, x: { id: string; name: string } | null, label: string, cls = '') =>
       `<button type="button" class="act ${cls}" data-act="${act}"${x ? ` data-id="${esc(x.id)}" data-name="${esc(x.name)}"` : ''}>${label}</button>`;
@@ -792,6 +882,7 @@ export class Hud {
     ].join('');
     if (rows !== this.shown.friends) { this.shown.friends = rows; this.el.friendsRows!.innerHTML = rows; }
     (this.el.requestsOn as HTMLInputElement).checked = !v.requestsOff;
+    (this.el.tradesOn as HTMLInputElement).checked = !v.tradesOff;
     this.el.friendsTitle!.textContent = p ? p.name : 'Friends';
     // A guest has no friends yet: one card says what signing in opens, whoever's name tag brought them here.
     this.el.friendsGate!.hidden = !this.guest;
@@ -809,8 +900,10 @@ export class Hud {
     // Someone who plays as a guest cannot be asked yet, but can be blocked and reported like anyone.
     const guestCard = p.guest && p.standing === 'none';
     this.el.personWhere!.textContent = guestCard ? GUEST_CARD : { friend: `Friends · ${p.where}`, asked: 'You asked them to be friends', asking: 'They asked to be your friend', blocked: 'Blocked: they cannot ask you or write to you', none: '' }[p.standing];
+    // A friend face to face can be asked to trade; farther away, the button says why not when pressed.
+    const trade = `<button type="button" class="act go" data-act="trade"${p.trade === 'near' ? '' : ' aria-disabled="true"'}>Trade</button>`;
     const acts = (guestCard ? '' : {
-      friend: btn('unfriend', null, 'Unfriend'),
+      friend: trade + btn('unfriend', null, 'Unfriend'),
       asked: btn('unfriend', null, 'Take back'),
       asking: btn('accept', null, 'Accept', 'go') + btn('decline', null, 'No'),
       blocked: btn('unblock', null, 'Unblock'),
@@ -832,30 +925,90 @@ export class Hud {
     this.news.chat = chat;
     this.showNews();
   }
-  /** A dot on the menu button and on Journal: a chapter you have not read yet. Opening the journal takes it away. */
+  /** A dot on the menu button, on Journal and on its Story tab: a chapter you have not read yet. Looking at the story takes it away. */
   setJournalNews(on: boolean) {
     this.news.journal = on;
     this.showNews();
   }
+  /** The same for the field notes (a page opened, a blank filled in), and on the notebook's button in the bag too. */
+  setFieldNews(on: boolean) {
+    this.news.field = on;
+    this.showNews();
+  }
+  /** The same for the notes people left (one read for the first time), on the Notes tab. */
+  setNotesNews(on: boolean) {
+    this.news.notes = on;
+    this.showNews();
+  }
   private showNews() {
-    this.el.menuBtn!.toggleAttribute('data-news', this.news.social || this.news.journal);
-    this.el.menuFriends!.toggleAttribute('data-news', this.news.social);
-    this.el.menuJournal!.toggleAttribute('data-news', this.news.journal);
-    this.el.chatBtn!.toggleAttribute('data-news', this.news.chat);
+    const { social, journal, field, notes, chat } = this.news;
+    this.el.menuBtn!.toggleAttribute('data-news', social || journal || field || notes);
+    this.el.menuFriends!.toggleAttribute('data-news', social);
+    this.el.menuJournal!.toggleAttribute('data-news', journal || field || notes);
+    this.el.chatBtn!.toggleAttribute('data-news', chat);
+    this.el.notebookBtn!.toggleAttribute('data-news', field);
+    const on: Record<JournalTab, boolean> = { story: journal, field, notes };
+    for (const b of this.el.journalSheet!.querySelectorAll<HTMLElement>('[data-journal]')) b.toggleAttribute('data-news', on[b.dataset.journal as JournalTab] ?? false);
   }
 
   get journalOpen(): boolean {
     return this.el.journalSheet!.dataset.open === 'true';
   }
-  toggleJournal(open = !this.journalOpen) {
+  /** The part of the journal shown (or shown last). */
+  get journalTab(): JournalTab {
+    return this.journalPart;
+  }
+  /**
+   * Opens or closes the journal. It opens on `tab`, or, from the menu, where the news is: the story when it
+   * has something new, else the first part that has, else the story.
+   */
+  toggleJournal(open = !this.journalOpen, tab?: JournalTab) {
+    const was = this.journalOpen;
     // It opens where the bag and the other panels do: one at a time.
     if (open) {
       this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false';
-      this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false);
-      this.el.journalSheet!.scrollTop = 0;
-      this.setJournalNews(false);
+      this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false);
+      this.showJournalTab(tab ?? (this.news.journal ? 'story' : this.news.field ? 'field' : this.news.notes ? 'notes' : 'story'));
     }
     this.el.journalSheet!.dataset.open = String(open);
+    if (was && !open) this.leftPart(this.journalPart);
+  }
+
+  /** The journal left a part that was looked at: what was new in the field notes or the notes is not any more. */
+  private leftPart(tab: JournalTab) {
+    if (tab === 'field') this.h.fieldSeen?.();
+    else if (tab === 'notes') this.h.notesSeen?.();
+  }
+
+  /** Shows one part of the journal, at the top; looking at it takes its dot away. */
+  showJournalTab(tab: JournalTab) {
+    if (this.journalPart !== tab && this.journalOpen) this.leftPart(this.journalPart);
+    this.journalPart = tab;
+    for (const b of this.el.journalSheet!.querySelectorAll<HTMLElement>('[data-journal]')) b.setAttribute('aria-selected', String(b.dataset.journal === tab));
+    this.el.journalBody!.hidden = tab !== 'story';
+    this.el.fieldBody!.hidden = tab !== 'field';
+    this.el.notesBody!.hidden = tab !== 'notes';
+    if (this.el.journalHint!.textContent !== JOURNAL_HINTS[tab]) this.el.journalHint!.textContent = JOURNAL_HINTS[tab];
+    this.el.journalSheet!.scrollTop = 0;
+    if (tab === 'story') this.setJournalNews(false);
+    else if (tab === 'field') this.setFieldNews(false);
+    else this.setNotesNews(false);
+  }
+
+  /** The notes people left that you read, by who wrote them, and the keepsakes home. Only written to the page when they changed. */
+  setNotes(v: NotesView) {
+    const html = notesHtml(v);
+    if (html === this.shown.notes) return;
+    this.shown.notes = html;
+    this.el.notesBody!.innerHTML = html;
+  }
+
+  /** The field notes, area by area. Only written to the page when they changed. */
+  setFieldNotes(v: FieldNotesView) {
+    const html = fieldNotesHtml(v);
+    if (html === this.shown.field) return;
+    this.shown.field = html;
+    this.el.fieldBody!.innerHTML = html;
   }
   /** The chapters of the story you reached. Only written to the page when they changed; the menu offers the journal once there is one. */
   setJournal(v: JournalView) {
@@ -872,7 +1025,7 @@ export class Hud {
   /** Opens or closes the stash sheet (the chest at home), always without a card. Closing it tells the game. */
   toggleStash(open = !this.stashOpen) {
     const was = this.stashOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.toggleCrate(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); this.el.statusSheet!.dataset.open = 'false'; }
     // It opens on the stash, at the top of the list, never on a card left from last time; closing, the card slides away with it.
     if (open && !was) { this.showChestTab('stash'); this.showWardrobePart('outfits'); this.el.stashBody!.scrollTop = 0; if (this.docked === 'stash') this.closeCard(); }
     else if (!open && this.card?.where === 'stash') this.forgetCard();
@@ -888,7 +1041,7 @@ export class Hud {
   /** Opens or closes the workbench sheet, always without a card. Closing it tells the game. */
   toggleBench(open = !this.benchOpen) {
     const was = this.benchOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleCrate(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleCrate(false); this.toggleTrade(false); this.el.statusSheet!.dataset.open = 'false'; }
     if (open && !was) { this.el.benchBody!.scrollTop = 0; if (this.docked === 'bench') this.closeCard(); }
     else if (!open && this.card?.where === 'bench') this.forgetCard();
     this.el.benchSheet!.dataset.open = String(open);
@@ -901,7 +1054,7 @@ export class Hud {
   /** Opens or closes a crate's sheet, always without a card. Closing it tells the game. */
   toggleCrate(open = !this.crateOpen) {
     const was = this.crateOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleTrade(false); this.el.statusSheet!.dataset.open = 'false'; }
     if (open && !was) { this.el.crateBody!.scrollTop = 0; if (this.docked === 'crate') this.closeCard(); }
     else if (!open && this.card?.where === 'crate') this.forgetCard();
     this.el.crateSheet!.dataset.open = String(open);
@@ -919,6 +1072,70 @@ export class Hud {
     if (this.el.crateHint!.textContent !== v.hint) this.el.crateHint!.textContent = v.hint;
     if (this.el.crateCount!.textContent !== v.count) this.el.crateCount!.textContent = v.count;
     this.refreshCard();
+  }
+
+  get tradeOpen(): boolean {
+    return this.el.tradeSheet!.dataset.open === 'true';
+  }
+  /**
+   * Opens or closes the trade panel. It opens where the other panels do, one at a time; closed by a hand
+   * (its X, B, the stick, another panel), it calls the trade off. `tell` false: the trade is over already.
+   */
+  toggleTrade(open = !this.tradeOpen, tell = true) {
+    const was = this.tradeOpen;
+    if (open && !was) {
+      this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false';
+      this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false);
+      this.el.tradeBody!.scrollTop = 0;
+      this.lookedAt.clear();
+    }
+    this.el.tradeSheet!.dataset.open = String(open);
+    if (was && !open && tell) this.h.trade?.({ a: 'cancel' });
+  }
+
+  /**
+   * The trade panel (trade.ts): whom with and where it stands, what each side gives (a row each, yours with
+   * − and +), your bag to give from, and the Ready and Trade buttons. Only what changed is written.
+   */
+  setTrade(v: TradePanel) {
+    this.el.tradeTitle!.textContent = v.title;
+    if (this.el.tradeLine!.textContent !== v.line) this.el.tradeLine!.textContent = v.line;
+    this.el.tradeTheirsTitle!.textContent = v.theirsTitle;
+    const mine = offerHtml(v.mine, 'mine'), theirs = offerHtml(v.theirs, 'theirs');
+    if (mine !== this.shown.tradeMine) { this.shown.tradeMine = mine; this.el.tradeMine!.innerHTML = mine; }
+    if (theirs !== this.shown.tradeTheirs) { this.shown.tradeTheirs = theirs; this.el.tradeTheirs!.innerHTML = theirs; }
+    const slots = [...this.el.tradeBag!.querySelectorAll<HTMLButtonElement>('[data-give]')];
+    const bag = v.bag.map(s => `${s.item}|${s.count}|${s.given}|${s.cond ?? ''}|${s.level ?? ''}`).join(',') + `/${this.capacity}`;
+    if (bag !== this.shown.tradeBag) {
+      this.shown.tradeBag = bag;
+      // A live find's ring is drawn anew: its countdown is tickLive's to write again.
+      this.liveShown.clear();
+      slots.forEach((el, i) => {
+        const s = v.bag[i];
+        el.hidden = i >= this.capacity;
+        el.dataset.empty = String(!s);
+        el.toggleAttribute('data-given', !!s?.given);
+        el.innerHTML = s ? `${slotHtml(s)}${s.given ? '<i class="given" aria-hidden="true"></i>' : ''}` : '';
+        el.setAttribute('aria-label', s ? `${slotLabel(s)}${s.given ? ', given' : ''}` : 'Empty slot');
+      });
+    }
+    const ready = this.el.tradeReady!, go = this.el.tradeGo as HTMLButtonElement;
+    ready.setAttribute('aria-pressed', String(v.ready.on));
+    ready.toggleAttribute('data-on', v.ready.on);
+    ready.setAttribute('aria-disabled', String(!v.ready.enabled));
+    if (go.textContent !== v.trade.label) go.textContent = v.trade.label;
+    go.setAttribute('aria-disabled', String(!v.trade.enabled));
+    go.toggleAttribute('data-pressed', v.trade.pressed);
+    this.showLooks();
+  }
+
+  /** Each row's words, shown under it while a tap keeps them open. */
+  private showLooks() {
+    for (const el of this.el.tradeSheet!.querySelectorAll<HTMLElement>('[data-look]')) {
+      const open = this.lookedAt.has(el.dataset.look!);
+      el.setAttribute('aria-expanded', String(open));
+      el.closest('.orow')?.querySelector<HTMLElement>('.otext')?.toggleAttribute('hidden', !open);
+    }
   }
 
   /** The workbench's rows: mending, then what it makes. Each opens its card. Only written to the page when they changed. */
@@ -1287,7 +1504,7 @@ export class Hud {
   toggleBag(open = !this.bagOpen) {
     const was = this.bagOpen;
     // The bag, the status and the About panel open in the same place: one at a time.
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); }
     // It opens on the whole bag, never on a card left from last time; closing, the card slides away with it.
     if (open && !was) { this.el.bagBody!.scrollTop = 0; if (this.docked === 'bag') this.closeCard(); }
     else if (!open && this.card?.where === 'bag') this.forgetCard();
@@ -1300,7 +1517,7 @@ export class Hud {
   }
   toggleAbout(open = !this.aboutOpen) {
     if (open && this.bagOpen) this.toggleBag(false);
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleTrade(false); }
     this.el.aboutSheet!.dataset.open = String(open);
     if (open && !this.versionAsked) {
       this.versionAsked = true;
@@ -1346,6 +1563,8 @@ export class Hud {
 
   /** B: out of a panel, or out of a card before its panel (the bag's too). False when there is nothing to back out of (B opens or closes the bag). */
   back(): boolean {
+    // Out of a trade is calling it off, as closing it any other way is.
+    if (this.tradeOpen) { this.toggleTrade(false); return true; }
     if (this.chatOpen) { this.toggleChat(false); return true; }
     if (this.friendsOpen) {
       // A guest sees the same card whoever it was opened for: B closes it at once.
@@ -1395,7 +1614,7 @@ export class Hud {
    * frame; it touches the page only when a shown value changes.
    */
   tickLive(now: number) {
-    const rows = [this.slotEls, [...this.root.querySelectorAll<HTMLElement>('[data-bag]')], [...this.root.querySelectorAll<HTMLElement>('[data-cbag]')]];
+    const rows = [this.slotEls, [...this.root.querySelectorAll<HTMLElement>('[data-bag]')], [...this.root.querySelectorAll<HTMLElement>('[data-cbag]')], [...this.el.tradeBag!.querySelectorAll<HTMLElement>('[data-give]')]];
     const c = this.card, open = c?.where === 'bag' && c.ref.from === 'bag' ? c.ref.slot : -1;
     this.bag.forEach((s, i) => {
       if (!s.live) return;
@@ -1506,6 +1725,22 @@ export class Hud {
     }
     const hitched = !!b?.hitched;
     if (hitched !== s.hitched) this.el.cling!.hidden = !(s.hitched = hitched);
+  }
+
+  /**
+   * A lodestone tugs (lodestone.ts): the quirk's name shows on the status panel for a moment, in a short
+   * soft pulse, then goes. It never says which way.
+   */
+  tug(name: string) {
+    const el = this.el.tug!;
+    this.el.tugName!.textContent = `${name} tugs`;
+    el.hidden = false;
+    for (const a of el.getAnimations()) a.cancel();
+    clearTimeout(this.tugTimer);
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      el.animate([{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'scale(1.04)', offset: 0.25 }, { opacity: 1, transform: 'scale(1)', offset: 0.7 }, { opacity: 0, transform: 'scale(1)' }], { duration: TUG_MS, easing: 'ease-out' });
+    }
+    this.tugTimer = setTimeout(() => { el.hidden = true; }, TUG_MS);
   }
 
   /** The surge clock (hidden while calm) and the violet edges while the front is over you. */
@@ -1707,6 +1942,25 @@ export function toolsHtml(tools: readonly ToolView[]): string {
 
 /** The sheets a tap opens a card in: each docks it under (or, in landscape, beside) its list. */
 export type CardSheet = 'stash' | 'bench' | 'bag' | 'crate';
+
+/**
+ * A side of a trade: a row for each thing it gives, with its drawing, its name and what it is (a tap shows
+ * its words under it), and how many. Your side's rows have − and + (a piece or a live find: a button that
+ * takes it back); theirs only say how many.
+ */
+export function offerHtml(rows: readonly OfferRow[], side: 'mine' | 'theirs'): string {
+  if (!rows.length) return `<p class="hint">${GIVES_NOTHING[side]}</p>`;
+  return rows.map(r => {
+    const n = `<b class="n">×${r.count}</b>`;
+    const count = side === 'theirs'
+      ? (r.stack ? `<span class="ocount">${n}</span>` : '')
+      : r.stack
+        ? `<span class="ocount"><button type="button" class="step" data-step="-1" aria-label="One fewer">${ICON.minus}</button>${n}<button type="button" class="step" data-step="1" aria-label="One more"${r.more ? '' : ' aria-disabled="true"'}>${ICON.plus}</button></span>`
+        : `<span class="ocount"><button type="button" class="step" data-step="-1" aria-label="Take it back">${ICON.x}</button></span>`;
+    return `<div class="orow" data-row="${r.i}"><span class="big">${r.icon}</span><button type="button" class="words" data-look="${side}:${r.i}" aria-expanded="false"><b>${esc(r.name)}</b>`
+      + `<span class="ofacts">${esc(r.facts)}</span></button>${count}<p class="otext" hidden>${esc(r.text)}</p></div>`;
+  }).join('');
+}
 
 /** The headings of the workbench's list, over the rows of each kind. */
 const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> = { mend: 'Mend', upgrade: 'Upgrade', make: 'Make' };

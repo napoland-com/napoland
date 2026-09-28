@@ -16,7 +16,7 @@ import {
 } from '@napoland/shared';
 import { NO_BADGE_ICON, NO_OUTFIT_ICON, NO_PATTERN_ICON, iconFor, outfitIcon } from './icons';
 import { ELEMENT_WORDS, conditionText, countOf, factsOf, oddsText, pieceName, slotName, useLabel, type Items } from './items';
-import { CRATE_FULL, CRATE_NO_GEAR, LEFT_ONE, TOOK_ONE, holdsText, leftBy, merits, noMerit, price } from './said';
+import { CRATE_FULL, CRATE_NO_GEAR, KEEPSAKE_STAYS, LEFT_ONE, TOOK_ONE, holdsText, leftBy, merits, noMerit, price } from './said';
 import { NO_BADGE, NO_OUTFIT, NO_PATTERN, lookIcon, outfitWords, type WardrobeState } from './wardrobe';
 
 export { pieceName };
@@ -415,7 +415,8 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
  */
 function leaveCard(card: DetailView, def: ItemDef, slot: number, c: NonNullable<DetailState['crate']>): DetailView {
   const act: NonNullable<DetailView['act']> = { label: 'Leave one', enabled: false, does: { kind: 'crateLeave', slot } };
-  if (!cacheTakes(def)) card.notes.push({ text: CRATE_NO_GEAR, tone: 'bad' });
+  if (def.kind === 'keepsake') card.notes.push({ text: KEEPSAKE_STAYS, tone: 'bad' });
+  else if (!cacheTakes(def)) card.notes.push({ text: CRATE_NO_GEAR, tone: 'bad' });
   else if (c.left) card.notes.push({ text: LEFT_ONE, tone: 'bad' });
   else if (c.items.length >= CACHE_SIZE) card.notes.push({ text: CRATE_FULL, tone: 'bad' });
   else act.enabled = true;

@@ -48,7 +48,7 @@ describe('a guest as others see them, and the game of a guest', () => {
     g.handle(welcome(tinyTown(), [player(S), player(G, true)]), 0);
     expect(g.guest).toBe(false);
     expect([...g.guests]).toEqual([G]);
-    const none: FriendsMsg = { t: 'friends', friends: [], incoming: [], outgoing: [], blocked: [], requestsOff: false };
+    const none: FriendsMsg = { t: 'friends', friends: [], incoming: [], outgoing: [], blocked: [], requestsOff: false, tradesOff: false };
     g.openPerson({ id: G, name: 'Wren' });
     expect(friendsView(none, g, () => undefined).person).toMatchObject({ id: G, standing: 'none', guest: true });
     g.openPerson({ id: S, name: 'Sam' });

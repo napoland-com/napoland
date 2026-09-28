@@ -1,7 +1,7 @@
 {
   "id": "south-road-tower-shed",
   "name": "The tower shed",
-  "version": 2,
+  "version": 3,
   "kind": "inside",
   "depth": 0,
   "width": 7,
@@ -31,7 +31,8 @@
     {"kind":"console","x":3,"y":1,"id":"tower-panel","name":"Tower panel","text":["NAPO Tower · relay control.","Relay armed. Pulse every 40:00.","A note is taped over the switch, in capitals: \"DO NOT SWITCH OFF.\""]},
     {"kind":"crate","x":5,"y":1},
     {"kind":"shelf","x":1,"y":3},
-    {"kind":"crate","x":5,"y":4}
+    {"kind":"crate","x":5,"y":4},
+    {"kind":"note","x":1,"y":3,"id":"walt-tower","by":"walt","name":"A note on the shelf","text":["Strung the line from the station to the Tower in eleven days. NAPO paid double and never said what for.","At the pulse it draws more than the whole town did in a winter. Every forty minutes. W.P."]}
   ],
   "style": "napo"
 }

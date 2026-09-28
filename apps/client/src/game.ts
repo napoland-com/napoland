@@ -14,7 +14,8 @@
  *   stash says what came in it the next time it opens;
  * - people and NAPO's desks are in the story (story.ts): what someone says follows the chapter you
  *   are in (and, once, what you did for the first time), and the server hears whom you talked to or
- *   what you read; it says when a chapter is reached;
+ *   what you read (a desk, a sign, a paper, a tag: where, never what it says); it says when a chapter
+ *   is reached, and when a page of your field notes opens or a blank on one fills in (notebook.ts);
  * - the bag and the chest say what gear you could make next (nextGear), from your stash as the server
  *   last told it;
  * - a crate for whoever comes next (A, facing it) opens a panel like the chest's: take one thing out
@@ -26,18 +27,23 @@
  *   it tells us, we show them; so is what everyone wears, gear and outfits (you choose yours at the chest);
  * - a call (calls.ts) goes to the server, which says who heard it: each one heard, yours too, is sung
  *   from where it came, and a note rises over the caller's head;
+ * - a trade with a friend face to face (trade.ts) is the server's: a friend's ask comes as a question
+ *   in the text box, your side runs ahead of the server's answer while you change it, and how it ended
+ *   is said in the box;
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
  * - energy, wetness, fires, the surge clock and the effects working on you (a hand warmer) are counted
  *   forward between the server's reports, so everything moves smoothly;
  * - the weather is your region's: the server says it as you arrive (welcome, zone) and when it turns.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter, energyAfter, findPath, fireTakes, flashHits,
-  inSurge, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter,
-  upgradable, utcDay, whyNotBuy, DIR_VEC, type CacheItemView, type LookKind, type MeritsView, type NextGear,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook,
+  energyAfter, findPath, fireTakes, firstBanner, flashHits, inSurge, isKeepsake, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines,
+  notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank, type CacheItemView, type FirstView,
+  type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type CallKind, type ChatTo, type ConditionsView, type EffectView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView, type Weather,
+  type CallKind, type ChatTo, type ConditionsView, type EffectView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView, type TradeEnd,
+  type TradeView, type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -46,11 +52,13 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
   mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
+import { Lodestone, shardNear } from './lodestone';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
+import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
 import type { Avatar } from './view/world';
 
 interface Mover {
@@ -79,6 +87,8 @@ export type Talker = {
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
+  /** A note someone left (notes.ts): what it shows depends on the time, so its lines are read out when you read it. */
+  note?: MapNote;
 };
 
 /** Something lying on a tile to pick up: a pile someone left when they collapsed, or a find. */
@@ -135,6 +145,7 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'console') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', story: { read: o.id } }];
     if (o.kind === 'paper') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk' }];
     if (o.kind === 'cage') return [{ x: o.x, y: o.y, who: 'NAPO tag', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'note') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', note: o }];
     // A jeep is bigger than one tile: its stencil reads from whichever end you face.
     if (o.kind === 'jeep') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO jeep', lines: o.text, kind: 'talk' }));
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
@@ -177,17 +188,29 @@ export type News =
   /** Someone (`id`, you too) sang a call from tile x,y, heard `at` (our clock): the ears announce it (soundscape.ts), nothing is shown but the note over their head. */
   | { kind: 'call'; id: string; call: CallKind; x: number; y: number; at: number }
   | { kind: 'chapter'; chapter: Chapter }
+  /** A page of your field notes opened, or a blank on one filled in. */
+  | { kind: 'page'; page: Page } | { kind: 'blank'; page: Page; blank: Blank }
+  /** You read a note someone left for the first time (no banner: you just read it), or a keepsake came home: `of` how many there are, `home` of them home now. */
+  | { kind: 'note'; id: string } | { kind: 'keepsake'; item: string; home: number; of: number }
+  /** Someone (or you) is the first on the server to find a secret (firsts.ts): the banner's one line, for everyone online. */
+  | { kind: 'first'; text: string }
   /** A parcel came into your chest; the welcome parcel also names the outfits signing in gave you (their ids). */
-  | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] };
+  | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] }
+  /** Your lodestone tugs (lodestone.ts): a shard lies near. It never says where. */
+  | { kind: 'tug' };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
+/** No field notes, the same way. */
+const NO_NOTEBOOK: NotebookData = { version: 0, pages: [] };
 
 /** Lines of chat a session keeps to scroll back through. */
 export const CHAT_LOG = 100;
 
 /** What a `refused` can answer among friends: the friends panel says why. */
-const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
+const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'tradeRequests', 'friends']);
+/** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
+const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
 const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy']);
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
@@ -234,7 +257,7 @@ export class Game {
   surge: { view: SurgeView; at: number } | null = null;
   /** This map's storm clock as told, and when (null: it never storms). */
   storm: { view: StormView; at: number } | null = null;
-  /** The weather over your map, as the server last said it: your region's (a room, the map outside its door). */
+  /** The weather over your map, as the server last said it: your region's (a room, the map outside its door). Some notes need it to be read. */
   weather: Weather = 'rain';
   /** Flashes on this map, until when they are over (our clock). */
   flashes: Array<{ x: number; y: number; kind: FlashKind; until: number }> = [];
@@ -255,6 +278,24 @@ export class Game {
   chapter = '';
   /** Counts every chapter reached, so the journal is redrawn only when it changed. */
   storyChanges = 0;
+  /** Your field notes, as the server said: the pages opened and the blanks filled. Replaced whole on every change. */
+  fieldNotes: NotebookState = emptyNotebook();
+  /** Pages opened since the field notes were last looked at: the journal marks them. */
+  freshPages = new Set<string>();
+  /** Counts every change to the field notes (and to which pages are fresh), so they are redrawn only then. */
+  notebookChanges = 0;
+  /** The notes people left that you read (notes.ts), by id, in the order you read them. Replaced whole on every change. */
+  notesRead: string[] = [];
+  /** Notes read since the journal's notes were last looked at: it marks them. */
+  freshNotes = new Set<string>();
+  /** The keepsakes you brought home, by item id, in the order they came. Replaced whole on every change. */
+  keepsakesHome: string[] = [];
+  /** Counts every change to the notes read, the keepsakes home, which notes are fresh and who found them first, so the journal's notes are redrawn only then. */
+  notesChanges = 0;
+  /** Who found each secret found so far first (firsts.ts), by its key, as the server said. */
+  firsts = new Map<string, FirstView>();
+  /** Every note on the maps by id, for what a secret is called (firsts.ts): worked out the first time it is needed. */
+  private notesById: ReturnType<typeof notesOf> | null = null;
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
@@ -280,6 +321,12 @@ export class Game {
   socialNote: string | null = null;
   /** Counts every change to all of the above, so the panel is rebuilt only when something changed. */
   socialChanges = 0;
+  /** Your trade as the server last told it (trade.ts); null while you are in none. */
+  trade: TradeView | null = null;
+  /** Your side of it as you last set it: it runs ahead of the server's answer, and every answer sets it again. */
+  tradeMine: BagSlot[] = [];
+  /** Counts every change to the trade, so its panel is drawn again only when something changed. */
+  tradeChanges = 0;
   /** What you heard said this session, oldest first, at most CHAT_LOG lines; replaced whole on every change. Nothing said is kept anywhere. */
   chat: Array<{ to: ChatTo; id: string; name: string; text: string; mine: boolean }> = [];
   /** Something was said since the chat panel was last looked at (the interface clears it). */
@@ -293,6 +340,8 @@ export class Game {
   quirks = new Map<string, Quirk[]>();
   /** Who on this map carries a live find: a column of light stands over them. */
   live = new Set<string>();
+  /** Who on this map glows after a flash (the afterglow quirk), until when (our clock). */
+  afterglows = new Map<string, number>();
   /** What everyone on this map wears, by player id (you too). */
   gear = new Map<string, Gear>();
   /** The outfit each player on this map wears over their gear, by player id (you too); none: their gear shows. */
@@ -357,8 +406,18 @@ export class Game {
   private wall = { now: 0, ms: 0 };
   /** A letter from home (thanks while you were away), until the text box is free to show it. */
   private letter: string[] | null = null;
+  /** Whom you last asked to trade: a refusal names them (the trade is the server's to make). */
+  private tradeWith: PersonView | null = null;
+  /** You called off the trade with this player: what the server says of it until it has heard you is old news. */
+  private callingOff: string | null = null;
+  /** A friend's ask to trade, waiting for the text box to be free of a question or someone's lines. */
+  private tradeAsk: PersonView | null = null;
+  /** A lodestone you wear (a quirk): when it tugs. */
+  private readonly lodestone = new Lodestone();
 
-  constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY) {
+  constructor(
+    private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY, readonly notebook: NotebookData = NO_NOTEBOOK,
+  ) {
     this.current = maps.home();
     this.talkers = talkersOf(this.current);
   }
@@ -442,14 +501,20 @@ export class Game {
     switch (msg.t) {
       case 'welcome': {
         const map = this.maps.get(msg.map);
-        // A map we do not have, or other items or another story than the server's: this client is
-        // out of date and about to reload, so it must not play.
-        if (!map || msg.items !== this.items.version || msg.story.version !== this.story.version) { this.disconnected(now); break; }
+        // A map we do not have, or other items, another story or other field notes than the server's:
+        // this client is out of date and about to reload, so it must not play. (A server from before the
+        // field notes sends none: then there are none to keep.)
+        if (!map || msg.items !== this.items.version || msg.story.version !== this.story.version || (msg.notebook && msg.notebook.version !== this.notebook.version)) {
+          this.disconnected(now);
+          break;
+        }
+        // Someone else now (the account's own character after its guest, say): nothing of theirs stays open.
+        const someoneElse = msg.you !== this.meId;
         this.meId = msg.you;
         this.online = true;
         this.guest = msg.guest === true;
         this.stepMs = msg.stepMs;
-        this.enter(map, msg.players, msg.finds, msg.drops);
+        this.enter(map, msg.players, msg.finds, msg.drops, someoneElse);
         this.scene(msg, now);
         this.weather = msg.weather;
         this.bag = msg.bag;
@@ -471,6 +536,12 @@ export class Game {
         this.wall = { now, ms: msg.serverTime };
         this.thankedDay = utcDay(msg.serverTime);
         this.thankedToday = new Set(msg.thanked ?? []);
+        this.fieldNotes = { pages: [...msg.notebook?.pages ?? []], blanks: [...msg.notebook?.blanks ?? []] };
+        this.notebookChanges++;
+        this.notesRead = [...msg.notes ?? []];
+        this.keepsakesHome = [...msg.keepsakes ?? []];
+        this.firsts = new Map((msg.firsts ?? []).map(f => [f.secret, f]));
+        this.notesChanges++;
         break;
       }
       case 'zone': {
@@ -584,6 +655,46 @@ export class Game {
         if (chapter) this.news.push({ kind: 'chapter', chapter });
         break;
       }
+      case 'page': {
+        if (this.fieldNotes.pages.includes(msg.id)) break;
+        this.fieldNotes = { ...this.fieldNotes, pages: [...this.fieldNotes.pages, msg.id] };
+        this.freshPages.add(msg.id);
+        this.notebookChanges++;
+        const page = this.notebook.pages.find(p => p.id === msg.id);
+        if (page) this.news.push({ kind: 'page', page });
+        break;
+      }
+      case 'blank': {
+        if (this.fieldNotes.blanks.includes(msg.id)) break;
+        this.fieldNotes = { ...this.fieldNotes, blanks: [...this.fieldNotes.blanks, msg.id] };
+        this.notebookChanges++;
+        const on = blankOf(this.notebook, msg.id);
+        if (on) this.news.push({ kind: 'blank', ...on });
+        break;
+      }
+      case 'noteRead': {
+        if (this.notesRead.includes(msg.id)) break;
+        this.notesRead = [...this.notesRead, msg.id];
+        this.freshNotes.add(msg.id);
+        this.notesChanges++;
+        this.news.push({ kind: 'note', id: msg.id });
+        break;
+      }
+      case 'first': {
+        this.firsts.set(msg.first.secret, msg.first);
+        this.notesChanges++;
+        // What it is called comes from the maps and items this copy has; one it does not know goes unsaid.
+        const title = secretTitle(msg.first.secret, (this.notesById ??= notesOf(this.maps.all())), this.items.byId);
+        if (title) this.news.push({ kind: 'first', text: firstBanner(msg.first, title, msg.first.name === this.myName()) });
+        break;
+      }
+      case 'keepsake': {
+        if (this.keepsakesHome.includes(msg.item)) break;
+        this.keepsakesHome = [...this.keepsakesHome, msg.item];
+        this.notesChanges++;
+        this.news.push({ kind: 'keepsake', item: msg.item, home: this.keepsakesHome.length, of: this.items.keepsakes?.places.length ?? this.keepsakesHome.length });
+        break;
+      }
       case 'chest': {
         this.stash = msg.stash;
         // The answer to opening one, or news of the one already open.
@@ -669,6 +780,8 @@ export class Game {
         else this.badges.delete(msg.player.id);
         if (msg.player.live) this.live.add(msg.player.id);
         else this.live.delete(msg.player.id);
+        if (msg.player.afterglow) this.afterglows.set(msg.player.id, now + msg.player.afterglow * 1000);
+        else this.afterglows.delete(msg.player.id);
         // A guest who signed in comes back in as someone who is not one.
         if (msg.player.guest) this.guests.add(msg.player.id);
         else this.guests.delete(msg.player.id);
@@ -678,9 +791,14 @@ export class Game {
         if (msg.on) this.live.add(msg.id);
         else this.live.delete(msg.id);
         break;
+      case 'afterglow':
+        if (msg.left > 0) this.afterglows.set(msg.id, now + msg.left * 1000);
+        else this.afterglows.delete(msg.id);
+        break;
       case 'leave':
         this.players.delete(msg.id);
         this.live.delete(msg.id);
+        this.afterglows.delete(msg.id);
         break;
       case 'step': {
         const p = this.players.get(msg.id);
@@ -747,6 +865,12 @@ export class Game {
         this.friends = msg;
         this.socialChanges++;
         break;
+      case 'trade':
+        this.traded(msg.trade);
+        break;
+      case 'tradeOver':
+        this.tradeOver(msg.with, msg.end);
+        break;
       case 'called':
         // A hidden tab runs no frames to take them: what it heard long ago goes, so the lists stay short.
         this.calls = this.calls.filter(c => now - c.at < CALL_NOTE_S * 1000);
@@ -773,6 +897,7 @@ export class Game {
         break;
       case 'refused':
         if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
+        if (TRADE_ACTIONS.has(msg.action)) { this.inform('Trade', tradeRefusal(msg.reason, this.trade?.with.name ?? this.tradeWith?.name ?? 'them')); break; }
         if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
         if (msg.action === 'call') { this.murmur(refusalText(msg.reason, msg.action)); break; }
         // A thanks is answered with the helper's name: the one asked about.
@@ -804,6 +929,9 @@ export class Game {
     this.pending = []; this.path = []; this.goal = null;
     // Answers to what we asked went with the connection, and what was being asked may no longer hold.
     this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.benchCard = null; this.caching = null; this.cache = null;
+    // A trade lasts only while both are online: the server calls it off.
+    if (this.trade) this.tradeChanges++;
+    this.trade = null; this.tradeMine = []; this.tradeAsk = null; this.callingOff = null;
     this.clearBox();
     this.offers.reset();
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
@@ -813,10 +941,11 @@ export class Game {
 
   /**
    * Arrive on a map: its players, finds and piles replace the old ones, and plans made for the old
-   * map are dropped.
+   * map are dropped; so is whatever was open (the chest, the workbench, the text box) on another map,
+   * or for another player (`someoneElse`: a welcome for another character, on the same map).
    */
-  private enter(map: TileMap, players: PlayerView[], finds: FindView[], drops: DropView[]) {
-    if (map !== this.current) {
+  private enter(map: TileMap, players: PlayerView[], finds: FindView[], drops: DropView[], someoneElse = false) {
+    if (map !== this.current || someoneElse) {
       this.current = map;
       this.talkers = talkersOf(map);
       this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.benchCard = null; this.cache = null; this.caching = null;
@@ -834,6 +963,7 @@ export class Game {
     this.patterns = new Map(players.flatMap(p => (p.pattern ? [[p.id, p.pattern] as const] : [])));
     this.badges = new Map(players.flatMap(p => (p.badge ? [[p.id, p.badge] as const] : [])));
     this.live = new Set(players.filter(p => p.live).map(p => p.id));
+    this.afterglows = new Map(players.flatMap(p => (p.afterglow ? [[p.id, this.clock + p.afterglow * 1000] as const] : [])));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
     this.lootChanges++;
@@ -914,6 +1044,12 @@ export class Game {
 
   /** What A does at someone or something you face: talk, read the board, feed a fire or the Old Stone. */
   private meet(t: Talker) {
+    if (t.note) {
+      // What shows depends on the time (notes.ts): the server decides whether it counts as read, from the tile alone.
+      this.openDialog({ ...t, lines: noteLines(t.note, this.weather, this.stormNow(this.clock)?.phase === 'storm') });
+      if (this.online) this.send({ t: 'talk', x: t.x, y: t.y });
+      return;
+    }
     if (t.kind === 'talk') {
       // What people say comes in one order (storyLines, story.ts): the chapter's hint, what they say once
       // about what you did for the first time, what they have heard (Mira: what the woods are like today),
@@ -924,7 +1060,8 @@ export class Game {
       // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
       const told = person ? toldAfter(this.story, person, this.stats) : undefined;
       if (told !== undefined && told !== (this.stats.told ?? 0)) { this.stats = { ...this.stats, told }; this.statsChanges++; }
-      if (t.story && this.online) this.send({ t: 'talk', x: t.x, y: t.y });
+      // Whom you talked to, or what you read and where (never what it says): the story, and the field notes, may follow.
+      if (this.online) this.send({ t: 'talk', x: t.x, y: t.y });
       return;
     }
     if (t.kind === 'board') {
@@ -1059,14 +1196,122 @@ export class Game {
     this.send({ t: 'tell', to, text: t });
   }
 
-  /** Any other friends action: answer, unfriend, block, report, the requests setting, or asking for the list again. */
-  social(msg: Extract<ClientMsg, { t: 'answer' | 'unfriend' | 'block' | 'report' | 'requests' | 'friends' }>) {
+  /** Any other friends action: answer, unfriend, block, report, the settings, or asking for the list again. */
+  social(msg: Extract<ClientMsg, { t: 'answer' | 'unfriend' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends' }>) {
     if (this.online) this.send(msg);
   }
 
   /** Something new for the menu's dot: a friend request, or a message not opened yet. */
   get socialNews(): boolean {
     return this.unread.size > 0 || (this.friends?.incoming.length ?? 0) > 0;
+  }
+
+  // ---------- trades ----------
+
+  /** Asks a friend to trade (their card's Trade): the server asks them, and the trade panel opens once it says so. */
+  askTrade(p: PersonView) {
+    if (!this.online || this.trade) return;
+    this.tradeWith = p;
+    this.callingOff = null;
+    this.send({ t: 'tradeOpen', id: p.id });
+  }
+
+  /** Where a friend is for a trade, as their card says it: near enough, on your map but too far, or not here. */
+  tradeReach(id: string): TradeReach {
+    const me = this.me, them = this.players.get(id);
+    return tradeReach(me && { x: me.tx, y: me.ty }, them && { x: them.tx, y: them.ty });
+  }
+
+  /** A tap on bag slot `slot` in the trade panel: what it holds goes into your side, or comes back out of it. */
+  tradeTap(slot: number) {
+    const s = this.bag[slot];
+    if (s && isKeepsake(this.items.get(s.item))) return this.inform('Trade', KEEPSAKE_STAYS);
+    this.setOffer(tapSlot(this.tradeMine, this.bag, slot, this.items));
+  }
+
+  /** − (-1) or + (1) on row `i` of your side. */
+  tradeStep(i: number, by: -1 | 1) {
+    this.setOffer(stepRow(this.tradeMine, this.bag, i, by, this.items));
+  }
+
+  /** Ready, or not any more (it can be pressed once both are in). */
+  tradeReady() {
+    const t = this.trade;
+    if (t?.state === 'open' && this.online) this.send({ t: 'tradeReady', on: !t.ready });
+  }
+
+  /** Trade: once both are ready, both press it and the server swaps both sides. */
+  tradeConfirm() {
+    const t = this.trade;
+    if (t?.state === 'open' && t.ready && t.theyReady && !t.confirmed && this.online) this.send({ t: 'tradeConfirm' });
+  }
+
+  /** A on the trade panel: Ready, and once both are ready, Trade. */
+  tradePressA() {
+    const t = this.trade;
+    if (t?.state !== 'open') return;
+    if (!t.ready) this.tradeReady();
+    else this.tradeConfirm();
+  }
+
+  /** The trade panel closed: the trade is off, for both. What the server says of it until it hears this is old news. */
+  tradeCancel() {
+    const t = this.trade;
+    if (!t) return;
+    this.callingOff = t.with.id;
+    this.trade = null;
+    this.tradeMine = [];
+    this.tradeChanges++;
+    if (this.online) this.send({ t: 'tradeCancel' });
+  }
+
+  /** Your side changed: both Readys go (as the server will say), and it goes to the server as picks of your bag. */
+  private setOffer(picks: OfferPick[]) {
+    const t = this.trade;
+    if (!t || t.state === 'asked' || !this.online) return;
+    this.tradeMine = offerOf(picks, this.bag, this.items);
+    this.trade = { ...t, ready: false, theyReady: false, confirmed: false, theyConfirmed: false };
+    this.tradeChanges++;
+    this.send({ t: 'tradeOffer', items: picks });
+  }
+
+  /** The trade as the server tells it: a friend's ask is a question in the text box; anything else, the panel shows. */
+  private traded(t: TradeView) {
+    if (this.callingOff === t.with.id) return;
+    const was = this.trade;
+    this.trade = t;
+    this.tradeMine = t.mine;
+    this.tradeChanges++;
+    if (t.state === 'asked' && !(was?.state === 'asked' && was.with.id === t.with.id)) this.askToTrade(t.with);
+  }
+
+  /** "Ana wants to trade. Open the trade?", once the text box is free: a question or someone's lines keep it until they are done. */
+  private askToTrade(p: PersonView) {
+    if (this.question || this.dialog) {
+      this.tradeAsk = p;
+      return;
+    }
+    this.tradeAsk = null;
+    const answer = (yes: boolean) => { if (this.online && this.trade?.with.id === p.id) this.send({ t: 'tradeAnswer', id: p.id, yes }); };
+    this.ask({ who: 'Trade', text: tradeQuestion(p.name), tag: 'trade', yes: () => answer(true), no: () => answer(false) });
+  }
+
+  /** The trade is over: the panel closes, a question that still asks goes, and the box says how it ended. */
+  private tradeOver(p: PersonView, end: TradeEnd) {
+    if (this.callingOff === p.id) this.callingOff = null;
+    // (One called off by closing its panel is over already here; a trade with someone else since stays.)
+    if (!this.trade || this.trade.with.id === p.id) {
+      this.trade = null;
+      this.tradeMine = [];
+      this.tradeChanges++;
+      if (this.question?.ask.tag === 'trade') {
+        this.question = null;
+        this.boxChanges++;
+      }
+    }
+    if (this.tradeAsk?.id === p.id) this.tradeAsk = null;
+    const text = tradeOverText(end, p.name, this.items);
+    if (text) this.inform('Trade', text);
   }
 
   /** Puts on the `n`th piece of `item` in the stash (their order in the chest). */
@@ -1249,6 +1494,7 @@ export class Game {
     const c = this.cache, s = this.bag[slot];
     if (!c || !s || !this.online) return;
     const def = this.items.get(s.item);
+    if (isKeepsake(def)) return this.inform('Crate', KEEPSAKE_STAYS);
     if (!cacheTakes(def)) return this.inform('Crate', CRATE_NO_GEAR);
     if (c.left) return this.inform('Crate', LEFT_ONE);
     if (c.items.length >= CACHE_SIZE) return this.inform('Crate', CRATE_FULL);
@@ -1420,10 +1666,11 @@ export class Game {
     if (!s || !this.online) return;
     const def = this.items.get(s.item), why = this.whyNotUse(slot, def);
     if (why) return this.inform(def.name, why);
-    // An arrow shows as long as your feats and charms say (Good neighbor), the server's rule; an effect
-    // still working says so, since a second one only starts its time again.
+    // An arrow shows as long as your feats and charms say (Good neighbor), and a pale moth gives energy back: the server's rules.
+    // An effect still working says so, since a second one only starts its time again.
+    const mods = modsOf(this.stats, charmsIn(this.bag, this.items.byId));
     const running = def.use?.lasts ? this.effectsNow(this.clock).find(f => f.item === def.id)?.left : undefined;
-    const text = useQuestion(def, this.energy(this.clock), markLifetime(modsOf(this.stats, charmsIn(this.bag, this.items.byId))) / 1000, running);
+    const text = useQuestion(def, this.energy(this.clock), markLifetime(mods) / 1000, def.use?.mark ? this.markLift(mods) : undefined, running);
     this.ask({ who: def.name, text, yes: () => { done?.(); this.actOn(slot, def.id, def.name, text, i => ({ t: 'use', slot: i })); } });
   }
 
@@ -1450,6 +1697,17 @@ export class Game {
     if (u.mark && this.current.data.kind === 'inside') return INDOORS;
     if (u.mark && me && [...this.marks.values()].some(m => m.x === me.tx && m.y === me.ty)) return MARKED;
     return null;
+  }
+
+  /**
+   * What a charm in your bag gives back as a glowcap is crushed (a pale moth), and which one: the server's
+   * rule (Mods.markEnergy, in the `mods` your feats and charms make), when the bar has room for it;
+   * undefined when nothing would.
+   */
+  private markLift(mods: Mods): { charm: ItemDef; energy: number } | undefined {
+    const charm = this.bag.map(s => this.items.get(s.item)).find(d => d.kind === 'charm' && (d.charm?.markEnergy ?? 0) > 0);
+    const e = this.energy(this.clock), energy = mods.markEnergy;
+    return charm && energy > 0 && (!e || e.max - e.value >= 0.5) ? { charm, energy } : undefined;
   }
 
   /** In town, or in one of its houses: light enough to look at something closely (the server's rule). */
@@ -1593,8 +1851,13 @@ export class Game {
     });
   }
 
-  /** Says what waited for the box, once the box is free. */
+  /** Says what waited for the box, once the box is free: a friend's ask to trade first, as it does not wait long. */
   private sayLater() {
+    const p = this.tradeAsk;
+    if (p && !this.question && !this.dialog) {
+      if (this.trade?.state === 'asked' && this.trade.with.id === p.id) return this.askToTrade(p);
+      this.tradeAsk = null;
+    }
     const l = this.later;
     if (!l || this.question || this.dialog || this.note) return;
     this.later = null;
@@ -1624,6 +1887,25 @@ export class Game {
   /** The chapters of the story you reached, first to latest: what the journal keeps. */
   reached(): Chapter[] {
     return journal(this.story, this.chapter);
+  }
+
+  /** The field notes were looked at: the pages opened since are no longer new. */
+  seenFieldNotes() {
+    if (!this.freshPages.size) return;
+    this.freshPages = new Set();
+    this.notebookChanges++;
+  }
+
+  /** Your character's name, as your map shows it ('' before the welcome). */
+  myName(): string {
+    return (this.meId && this.players.get(this.meId)?.name) || '';
+  }
+
+  /** The journal's notes were looked at: none of them is new any more. */
+  seenNotes() {
+    if (!this.freshNotes.size) return;
+    this.freshNotes = new Set();
+    this.notesChanges++;
   }
 
   /** Piles close enough to show whose they are. */
@@ -1732,6 +2014,10 @@ export class Game {
       p.phase += dt * (1000 / this.stepMs) * 3;
     }
     this.driveMe(now);
+    // A lodestone you wear tugs while a shard lies near: the interface feels it (a pulse, a faint sound).
+    const me = this.me;
+    const near = !!me && Object.values(this.myWorn).some(p => p?.quirk === 'lodestone') && shardNear(this.finds.values(), this.items, me.tx, me.ty);
+    if (this.lodestone.update(near, now)) this.news.push({ kind: 'tug' });
   }
 
   /** Decide the local player's next step once they stand on a tile. */
@@ -1800,6 +2086,7 @@ export class Game {
     const hitched = this.body.view.hitched;
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
+      afterglow: (this.afterglows.get(p.id) ?? 0) > this.clock,
       look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id)),
     }));
   }
