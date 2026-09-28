@@ -5,11 +5,12 @@
  * - dev: the hello's `auth` is an email, and it is believed. For development and tests only.
  * - supabase: the hello's `auth` is the access token Supabase Auth gave the client (a JWT). It is
  *   checked here against the project's public keys; Supabase only proves who someone is, the game
- *   keeps its own players in its own database.
+ *   keeps its own players in its own database. A token is a token however it was had: an email code,
+ *   Google or Apple (AUTH_PROVIDERS only tells clients which buttons to show).
  * Proofs (tokens, emails) are never logged.
  */
 import { createRemoteJWKSet, decodeProtectedHeader, errors, jwtVerify, type JWTPayload, type JWTVerifyOptions } from 'jose';
-import type { AuthConfig, AuthMode } from '@napoland/shared';
+import type { AuthConfig, AuthMode, OAuthProvider } from '@napoland/shared';
 import type { AuthSettings } from './config';
 
 export interface Auth {
@@ -26,8 +27,8 @@ export interface Auth {
 }
 
 export function createAuth(s: AuthSettings): Auth {
-  if (s.mode === 'dev') return devAuth();
-  if (s.mode === 'supabase') return supabaseAuth({ url: s.url, publishableKey: s.publishableKey, jwtSecret: s.jwtSecret });
+  if (s.mode === 'dev') return devAuth(s.providers);
+  if (s.mode === 'supabase') return supabaseAuth({ url: s.url, publishableKey: s.publishableKey, jwtSecret: s.jwtSecret, providers: s.providers });
   return legacyAuth();
 }
 
@@ -38,10 +39,11 @@ export function legacyAuth(): Auth {
 /** Something@something, at most 254 characters: dev mode only needs a stable name for each tester. */
 const EMAIL_RE = /^[^\s@]+@[^\s@]+$/;
 
-export function devAuth(): Auth {
+/** `providers`: their buttons show, so the card can be seen without a Supabase project; a tap says they need one. */
+export function devAuth(providers: OAuthProvider[] = []): Auth {
   return {
     mode: 'dev',
-    config: { mode: 'dev' },
+    config: { mode: 'dev', providers },
     async identify(proof) {
       const email = proof.trim().toLowerCase();
       return email.length <= 254 && EMAIL_RE.test(email) ? `dev:${email}` : undefined;
@@ -58,6 +60,8 @@ export interface SupabaseAuthOptions {
   jwtSecret?: string;
   /** How long to wait for the project's keys; default 5 s. */
   timeoutMs?: number;
+  /** Google and Apple, when the project has them set up: the sign-in card offers them, in this order. Default none. */
+  providers?: OAuthProvider[];
 }
 
 /** The algorithms Supabase's signing keys use (ECC P-256 by default, RSA, Ed25519); never "none" or a shared secret. */
@@ -102,7 +106,7 @@ export function supabaseAuth(o: SupabaseAuthOptions): Auth {
 
   return {
     mode: 'supabase',
-    config: { mode: 'supabase', url, publishableKey: o.publishableKey },
+    config: { mode: 'supabase', url, publishableKey: o.publishableKey, providers: o.providers ?? [] },
     async identify(proof) {
       let payload: JWTPayload | undefined;
       try {

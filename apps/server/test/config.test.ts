@@ -107,11 +107,11 @@ describe('loadConfig: signing in', () => {
   });
 
   it('takes dev sign-in, but refuses it in production unless ALLOW_DEV_AUTH=1', () => {
-    expect(loadConfig({ AUTH_MODE: 'dev' }, REPO).auth).toEqual({ mode: 'dev' });
-    expect(loadConfig({ AUTH_MODE: 'dev', NODE_ENV: 'development' }, REPO).auth).toEqual({ mode: 'dev' });
+    expect(loadConfig({ AUTH_MODE: 'dev' }, REPO).auth).toEqual({ mode: 'dev', providers: [] });
+    expect(loadConfig({ AUTH_MODE: 'dev', NODE_ENV: 'development' }, REPO).auth).toEqual({ mode: 'dev', providers: [] });
     expect(problem({ AUTH_MODE: 'dev', NODE_ENV: 'production' })).toMatch(/AUTH_MODE=dev lets anyone sign in as anyone.*ALLOW_DEV_AUTH=1/);
     expect(problem({ AUTH_MODE: 'dev', NODE_ENV: 'production', ALLOW_DEV_AUTH: '0' })).toMatch(/AUTH_MODE=dev/);
-    expect(loadConfig({ AUTH_MODE: 'dev', NODE_ENV: 'production', ALLOW_DEV_AUTH: '1' }, REPO).auth).toEqual({ mode: 'dev' });
+    expect(loadConfig({ AUTH_MODE: 'dev', NODE_ENV: 'production', ALLOW_DEV_AUTH: '1' }, REPO).auth).toEqual({ mode: 'dev', providers: [] });
     // A misspelt "on" must not quietly mean off (or on).
     expect(problem({ AUTH_MODE: 'dev', ALLOW_DEV_AUTH: 'yes' })).toMatch(/ALLOW_DEV_AUTH must be 1, true, 0 or false/);
     // Production without dev sign-in is fine.
@@ -127,7 +127,7 @@ describe('loadConfig: signing in', () => {
   });
 
   it('takes a Supabase project: its address (as an origin) and its publishable key', () => {
-    expect(loadConfig(supabase, REPO).auth).toEqual({ mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: PUBLISHABLE, jwtSecret: undefined });
+    expect(loadConfig(supabase, REPO).auth).toEqual({ mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: PUBLISHABLE, jwtSecret: undefined, providers: [] });
     expect(loadConfig({ ...supabase, SUPABASE_URL: 'https://abcd.supabase.co/' }, REPO).auth).toMatchObject({ url: 'https://abcd.supabase.co' });
     // A Supabase running on this machine may use plain http.
     expect(loadConfig({ ...supabase, SUPABASE_URL: 'http://127.0.0.1:54321' }, REPO).auth).toMatchObject({ url: 'http://127.0.0.1:54321' });
@@ -167,5 +167,45 @@ describe('loadConfig: signing in', () => {
   it('refuses a JWT secret too short to be the project\'s, without repeating it', () => {
     expect(problem({ ...supabase, SUPABASE_JWT_SECRET: 'hunter2' })).toMatch(/SUPABASE_JWT_SECRET must be the project's JWT secret/);
     expect(problem({ ...supabase, SUPABASE_JWT_SECRET: 'hunter2' })).not.toContain('hunter2');
+  });
+});
+
+describe('loadConfig: Google and Apple', () => {
+  const supabase = { AUTH_MODE: 'supabase', SUPABASE_URL: 'https://abcd.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_MjuYAHlcbXjup4pBciyVGw_QRMps_UU' };
+  const problem = (env: Record<string, string>) => {
+    try {
+      loadConfig(env, REPO);
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return '';
+  };
+
+  it('offers the providers AUTH_PROVIDERS lists, in its order, once each', () => {
+    expect(loadConfig({ ...supabase, AUTH_PROVIDERS: 'google,apple' }, REPO).auth).toMatchObject({ mode: 'supabase', providers: ['google', 'apple'] });
+    expect(loadConfig({ ...supabase, AUTH_PROVIDERS: ' apple , google ' }, REPO).auth).toMatchObject({ providers: ['apple', 'google'] });
+    expect(loadConfig({ ...supabase, AUTH_PROVIDERS: 'google' }, REPO).auth).toMatchObject({ providers: ['google'] });
+    expect(loadConfig({ ...supabase, AUTH_PROVIDERS: 'apple,apple,' }, REPO).auth).toMatchObject({ providers: ['apple'] });
+  });
+
+  it('offers none when AUTH_PROVIDERS is empty or unset: the email code alone', () => {
+    expect(loadConfig(supabase, REPO).auth).toMatchObject({ providers: [] });
+    for (const empty of ['', '  ', ',', ' , ']) {
+      expect([empty, loadConfig({ ...supabase, AUTH_PROVIDERS: empty }, REPO).auth]).toEqual([empty, expect.objectContaining({ providers: [] })]);
+    }
+  });
+
+  it('refuses to start with a provider the game does not offer, and says which', () => {
+    expect(problem({ ...supabase, AUTH_PROVIDERS: 'google,facebook' })).toMatch(/AUTH_PROVIDERS takes google, apple \(comma-separated\), not "facebook"/);
+    expect(problem({ ...supabase, AUTH_PROVIDERS: 'gogle, github' })).toContain('not "gogle", "github"');
+    // Names are written as the list above has them.
+    expect(problem({ ...supabase, AUTH_PROVIDERS: 'Google' })).toContain('not "Google"');
+    // Also without sign-in, where the list is not used: the typo is found the day it is written.
+    expect(problem({ AUTH_PROVIDERS: 'facebook' })).toMatch(/AUTH_PROVIDERS/);
+    expect(loadConfig({ AUTH_PROVIDERS: 'google,apple' }, REPO).auth).toEqual({ mode: 'legacy' });
+  });
+
+  it('shows their buttons in dev mode too, where a tap says they need a Supabase project', () => {
+    expect(loadConfig({ AUTH_MODE: 'dev', AUTH_PROVIDERS: 'google,apple' }, REPO).auth).toEqual({ mode: 'dev', providers: ['google', 'apple'] });
   });
 });

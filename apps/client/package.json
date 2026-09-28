@@ -19,6 +19,7 @@
   "dependencies": {
     "@fontsource-variable/fredoka": "^5.3.0",
     "@fontsource-variable/nunito": "^5.3.0",
+    "@fontsource/roboto": "^5.3.0",
     "@napoland/shared": "*",
     "@supabase/supabase-js": "^2.117.2",
     "three": "^0.186.1"

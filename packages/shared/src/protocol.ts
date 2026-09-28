@@ -28,17 +28,32 @@ export type Weather = z.infer<typeof Weather>;
 export const NAME_RE = /^[A-Za-z0-9 _-]{2,16}$/;
 export const PlayerName = z.string().trim().regex(NAME_RE);
 
+/** The accounts a player can sign in with besides an email code, through the same Supabase sign-in. */
+export const OAUTH_PROVIDERS = ['google', 'apple'] as const;
+export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
+export const isOAuthProvider = (name: string): name is OAuthProvider => (OAUTH_PROVIDERS as readonly string[]).includes(name);
+
+/**
+ * The providers the sign-in card offers, in this order: only those the Supabase project has set up
+ * (AUTH_PROVIDERS). A name this client does not know is left out rather than refused, so a server
+ * that offers one more never stops an older page from starting.
+ */
+const Providers = z.array(z.string()).optional().transform(names => [...new Set(names ?? [])].filter(isOAuthProvider));
+
 /**
  * How the server wants players to sign in, as GET /auth-config tells the client:
  * - legacy: no sign-in. A name makes a character, and a token saved in the browser logs back in.
  * - dev: an email, believed without any code. Only for development and tests: anyone can be anyone.
- * - supabase: Supabase Auth proves who you are (an email and a 6-digit code, later Google and Apple).
- *   `url` and `publishableKey` are the project's public values the client needs to talk to it.
+ *   Its `providers` only show their buttons, which say they need a Supabase project.
+ * - supabase: Supabase Auth proves who you are: an email and a 6-digit code, or the `providers`
+ *   (Google, Apple). `url` and `publishableKey` are the project's public values the client needs to talk to it.
+ * It comes over HTTP, not the game's socket, and zod leaves out fields it does not know, so a page
+ * from before `providers` reads the answer as it always did: no new PROTOCOL_VERSION for them.
  */
 export const AuthConfig = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('legacy') }),
-  z.object({ mode: z.literal('dev') }),
-  z.object({ mode: z.literal('supabase'), url: z.url({ protocol: /^https?$/ }), publishableKey: z.string().min(1) }),
+  z.object({ mode: z.literal('dev'), providers: Providers }),
+  z.object({ mode: z.literal('supabase'), url: z.url({ protocol: /^https?$/ }), publishableKey: z.string().min(1), providers: Providers }),
 ]);
 export type AuthConfig = z.infer<typeof AuthConfig>;
 export type AuthMode = AuthConfig['mode'];

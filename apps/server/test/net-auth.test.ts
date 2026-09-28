@@ -25,19 +25,19 @@ describe('signing in with Supabase', () => {
   });
   afterAll(() => project?.close());
   const { ctx, open, refused, welcomed } = setup(() => ({
-    auth: supabaseAuth({ url: project.url, publishableKey: PUBLISHABLE_KEY, jwtSecret: JWT_SECRET }),
+    auth: supabaseAuth({ url: project.url, publishableKey: PUBLISHABLE_KEY, jwtSecret: JWT_SECRET, providers: ['google', 'apple'] }),
     items: itemsData(),
   }));
   let users = 0;
   /** A token for a user of its own (or for `sub`). */
   const tokenFor = (o: TokenOptions = {}) => project.token({ sub: `user-${++users}`, ...o });
 
-  it('tells the client on /auth-config to sign in with the project, and never lets it be cached', async () => {
+  it('tells the client on /auth-config to sign in with the project and its providers, and never lets it be cached', async () => {
     const res = await fetch(`http://127.0.0.1:${ctx.server.port}/auth-config`);
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
     expect(res.headers.get('content-type')).toBe('application/json; charset=utf-8');
-    expect(await res.json()).toEqual({ mode: 'supabase', url: project.url, publishableKey: PUBLISHABLE_KEY });
+    expect(await res.json()).toEqual({ mode: 'supabase', url: project.url, publishableKey: PUBLISHABLE_KEY, providers: ['google', 'apple'] });
   });
 
   it('plays a guest without an auth (a saved token, or a name), and asks to sign in a hello with nothing to go on', async () => {
@@ -181,7 +181,7 @@ describe('dev sign-in', () => {
 
   it('tells the client on /auth-config that an email is enough', async () => {
     const res = await fetch(`http://127.0.0.1:${ctx.server.port}/auth-config`);
-    expect(await res.json()).toEqual({ mode: 'dev' });
+    expect(await res.json()).toEqual({ mode: 'dev', providers: [] });
     expect(res.headers.get('cache-control')).toBe('no-store');
   });
 
