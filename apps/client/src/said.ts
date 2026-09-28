@@ -6,7 +6,7 @@
  */
 import {
   CACHE_SIZE, COZY_AFTER_S, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, comfortMax, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit,
-  type BagSlot, type Comfort, type Did, type Dir, type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
+  type BagSlot, type Comfort, type Did, type Dir, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
 } from '@napoland/shared';
 import { oddsText, pieceName, type Items } from './items';
 
@@ -428,9 +428,13 @@ export function didText(did: Did, items: Items): string {
 /** The name over the box at your own door. */
 export const YOUR_CABIN = 'Your cabin';
 
-/** The name over the box at a neighbor's door: whose cabin it is, or an empty one. */
-export function cabinWho(name: string | null): string {
-  return name ? `${name}'s cabin` : 'Empty cabin';
+/** On the plate of someone who keeps their name off their door (the setting in the menu). */
+export const RESIDENT = 'A resident';
+
+/** The name over the box at a neighbor's door: whose cabin it is, a resident's who keeps their name to themselves, or an empty one. */
+export function cabinWho(lot: LotView | null): string {
+  if (!lot) return 'Empty cabin';
+  return lot.name ? `${lot.name}'s cabin` : `${RESIDENT}'s cabin`;
 }
 
 /** While a knock waits for its answer. */
@@ -439,10 +443,26 @@ export const KNOCKING = 'You knock.';
 /** At a door nobody lives behind yet. */
 export const NOBODY_LIVES = 'Nobody lives here yet.';
 
-/** What a knock hears back: whether they are home. By name, never a pronoun. Visiting is for later. */
-export function doorText(name: string | null, home: boolean): string {
-  if (!name) return NOBODY_LIVES;
-  return home ? `${name} is home.` : 'Nobody answers.';
+/**
+ * What a knock hears back: whether they are home. By name, never a pronoun. Someone who keeps their door to
+ * themselves answers only friends: to anyone else, nobody answers. Visiting is for later.
+ */
+export function doorText(lot: LotView | null): string {
+  if (!lot) return NOBODY_LIVES;
+  return lot.name && lot.home ? `${lot.name} is home.` : 'Nobody answers.';
+}
+
+/** The setting beside friend and trade requests: whether your street sees your name on your door, and your window lit while you are home. */
+export const DOOR_SETTING = 'Show my name on my door and when I am home';
+
+/**
+ * The letter the first time you come home since streets came: what your street sees of you, and where to
+ * change it (`doorOff`: you keep both to yourself already).
+ */
+export function streetLetterLines(doorOff: boolean): string[] {
+  return doorOff
+    ? ['Your cabin stands on Residents\' Lane now. Your neighbors see a resident\'s cabin: your name stays off your door, and your window dark, as you chose.', 'You can show both in the menu, under Friends.']
+    : ['Your cabin stands on Residents\' Lane now. Your neighbors see your name on your door, and your window lit while you are home.', 'You can hide both in the menu, under Friends.'];
 }
 
 /** At home, when a neighbor knocks at your door. */

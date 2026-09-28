@@ -12,7 +12,8 @@ import { Game } from '../src/game';
 import { refusalText } from '../src/items';
 import { Maps } from '../src/maps';
 import { areaOf, mapFor } from '../src/papermap';
-import { NO_MOVES, didText, doorText, knockedText, moveQuestion } from '../src/said';
+import { DOOR_SETTING, NO_MOVES, cabinWho, didText, doorText, knockedText, moveQuestion, streetLetterLines } from '../src/said';
+import { friendsView } from '../src/friends';
 import { ITEMS, tinyTown, welcome, zone } from './fixtures';
 
 const read = (id: string) => JSON.parse(readFileSync(resolve(import.meta.dirname, `../../../content/maps/${id}.json`), 'utf8')) as MapData;
@@ -81,12 +82,12 @@ describe('a neighbor\'s door', () => {
     g.pressA();
     expect(sent).toEqual([{ t: 'knock', ...doors[1]! }]);
     expect(g.note).toMatchObject({ who: 'Bo\'s cabin', text: 'You knock.', waiting: true });
-    g.handle({ t: 'door', ...doors[1]!, name: 'Bo', home: true }, now);
+    g.handle({ t: 'door', ...doors[1]!, lot: { name: 'Bo', home: true } }, now);
     expect(g.note).toMatchObject({ who: 'Bo\'s cabin', text: 'Bo is home.', waiting: false });
     g.note = null;
     standAt(doorstep(3));
     g.pressA();
-    g.handle({ t: 'door', ...doors[3]!, name: 'Cy', home: false }, now);
+    g.handle({ t: 'door', ...doors[3]!, lot: { name: 'Cy' } }, now);
     expect(g.note).toMatchObject({ who: 'Cy\'s cabin', text: 'Nobody answers.' });
     // Too soon after the last knock: said in the same box.
     g.note = null;
@@ -122,7 +123,7 @@ describe('a neighbor\'s door', () => {
     g.handle({ t: 'step', id: 'me', x: doors[1]!.x, y: doors[1]!.y + 1, dir: 'right', seq: (step as { seq: number }).seq }, now);
     run(400);
     expect(sent).toContainEqual({ t: 'knock', ...doors[1]! });
-    g.handle({ t: 'door', ...doors[1]!, name: 'Bo', home: true }, now);
+    g.handle({ t: 'door', ...doors[1]!, lot: { name: 'Bo', home: true } }, now);
     g.note = null;
     standAt({ x: doors[0]!.x, y: doors[0]!.y + 2 }, 'down');
     g.tapTile(doors[0]!.x, doors[0]!.y);
@@ -168,11 +169,78 @@ describe('your own door', () => {
   });
 });
 
+describe('a door kept to oneself', () => {
+  it('shows a resident on the plate, never a lit window, and is knocked at under that name', () => {
+    g.handle({ ...welcome(lane, [me(doorstep(1).x, doorstep(1).y)]), street: { ...STREET, lots: [STREET.lots[0]!, {}, ...STREET.lots.slice(2)] } }, now);
+    sent.length = 0;
+    expect(g.litLots().has(1)).toBe(false);
+    expect(g.platesNear().map(p => [p.lot, p.name])).toEqual([[1, 'A resident']]);
+    g.pressA();
+    expect(sent).toEqual([{ t: 'knock', ...doors[1]! }]);
+    expect(g.note).toMatchObject({ who: 'A resident\'s cabin', text: 'You knock.' });
+    g.handle({ t: 'door', ...doors[1]!, lot: {} }, now);
+    expect(g.note).toMatchObject({ who: 'A resident\'s cabin', text: 'Nobody answers.' });
+  });
+
+  it('is yours to set, beside friend and trade requests: the welcome says how it stands, and the server says it back', () => {
+    const view = () => friendsView(null, g, () => undefined);
+    standAt(doorstep(0));
+    expect(g.doorOff).toBe(false);
+    expect(view().doorOff).toBe(false);
+    const before = g.socialChanges;
+    g.setDoorOff(true);
+    expect(sent).toEqual([{ t: 'doorOff', off: true }]);
+    // Nothing changes until the server says so.
+    expect(g.doorOff).toBe(false);
+    g.handle({ t: 'doorOff', off: true }, now);
+    expect([g.doorOff, view().doorOff]).toEqual([true, true]);
+    expect(g.socialChanges).toBeGreaterThan(before);
+    // Back in the game, the welcome says it.
+    g.handle({ ...welcome(lane, [me(doorstep(0).x, doorstep(0).y)]), street: STREET, doorOff: true }, now);
+    expect(g.doorOff).toBe(true);
+    g.handle({ ...welcome(lane, [me(doorstep(0).x, doorstep(0).y)]), street: STREET }, now);
+    expect(g.doorOff).toBe(false);
+    expect(DOOR_SETTING).toBe('Show my name on my door and when I am home');
+  });
+});
+
+describe('the letter about your street', () => {
+  it('comes once the box is free, as a letter, and waits behind another', () => {
+    g.handle(welcome(home, [me(4, 2, 'down')]), now);
+    g.handle({ t: 'streetLetter', doorOff: false }, now);
+    g.handle({ t: 'letter', thanks: [{ what: { kind: 'mark', map: 'residents-lane', x: 2, y: 23 }, count: 1, people: 1, names: ['Bo'] }] }, now);
+    g.idle(now, false);
+    expect(g.dialog).toMatchObject({ who: 'Letter', lines: streetLetterLines(false) });
+    g.dialog = null;
+    // The thanks were not lost: they come next.
+    g.idle(now, false);
+    expect(g.dialog).toMatchObject({ who: 'Letter' });
+    expect(g.dialog!.lines[0]).toMatch(/^While you were away, Bo thanked you/);
+    g.dialog = null;
+    g.idle(now, false);
+    expect(g.dialog).toBeNull();
+  });
+
+  it('says what the street sees of you, and where to change it', () => {
+    expect(streetLetterLines(false)).toEqual([
+      'Your cabin stands on Residents\' Lane now. Your neighbors see your name on your door, and your window lit while you are home.',
+      'You can hide both in the menu, under Friends.',
+    ]);
+    expect(streetLetterLines(true)).toEqual([
+      'Your cabin stands on Residents\' Lane now. Your neighbors see a resident\'s cabin: your name stays off your door, and your window dark, as you chose.',
+      'You can show both in the menu, under Friends.',
+    ]);
+  });
+});
+
 describe('the words', () => {
   it('say what the door says, by name', () => {
-    expect(doorText('Bo', true)).toBe('Bo is home.');
-    expect(doorText('Bo', false)).toBe('Nobody answers.');
-    expect(doorText(null, false)).toBe('Nobody lives here yet.');
+    expect(doorText({ name: 'Bo', home: true })).toBe('Bo is home.');
+    expect(doorText({ name: 'Bo' })).toBe('Nobody answers.');
+    expect(doorText(null)).toBe('Nobody lives here yet.');
+    // A resident who keeps their door to themselves answers only friends: to anyone else, nobody answers.
+    expect(doorText({})).toBe('Nobody answers.');
+    expect([cabinWho({ name: 'Bo' }), cabinWho({}), cabinWho(null)]).toEqual(['Bo\'s cabin', 'A resident\'s cabin', 'Empty cabin']);
     expect(knockedText('Bo')).toBe('Bo knocked.');
     expect(moveQuestion('Ana')).toBe('Move next to Ana? Your cabin comes with you.');
     expect(didText({ kind: 'moved', name: 'Ana' }, ITEMS)).toBe('Your cabin stands next to Ana\'s now.');
