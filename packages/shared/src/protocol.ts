@@ -330,9 +330,11 @@ export type Did =
   /**
    * One `item` from your bag was used up: the energy it gave you (as much as your bar had room for), the
    * seconds a flare burns, the arrow painted (which way it points, and for how many seconds everyone sees
-   * it), what a strange object turned out to be (a piece of gear with its piece: its quirk is rolled).
+   * it), what a strange object turned out to be (a piece of gear with its piece: its quirk is rolled), and
+   * the energy a charm in your bag gave on top (`lift`: which charm, and how much; a pale moth, as a
+   * glowcap is crushed).
    */
-  | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot }
+  | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number } }
   /**
    * The workbench made `count` of `item`, into your stash. A tool (its kind says so) went to your tools
    * instead, yours for good: your tools came before this in a `tools` message.
@@ -513,6 +515,8 @@ export interface PlayerView {
   badge?: string;
   /** They carry a live find (items.ts): a column of light over them that everyone on the map sees. */
   live?: true;
+  /** Seconds left of their afterglow (a quirk, gear.ts): they glow faintly, and watchers keep off them. */
+  afterglow?: number;
   /** They play as a guest (only on a server with sign-in): no friends until they sign in. */
   guest?: true;
 }
@@ -665,6 +669,8 @@ export type ServerMsg =
   | { t: 'storm'; storm: StormView }
   /** On your map: someone started (on) or stopped carrying a live find. */
   | { t: 'glow'; id: string; on: boolean }
+  /** On your map: someone glows faintly for `left` more seconds (an afterglow, gear.ts), or no longer (0). */
+  | { t: 'afterglow'; id: string; left: number }
   /** On your map: a patch of ground started to glow. */
   | { t: 'flash'; flash: FlashView }
   /** The Old Stone changed (everyone hears it). */

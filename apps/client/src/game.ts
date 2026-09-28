@@ -36,7 +36,7 @@
 import {
   BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits,
   inSurge, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter,
-  upgradable, utcDay, whyNotBuy, DIR_VEC, type CacheItemView, type LookKind, type MeritsView, type NextGear,
+  upgradable, utcDay, whyNotBuy, DIR_VEC, type CacheItemView, type LookKind, type MeritsView, type Mods, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type OfferPick, type ParcelView, type RefusedAction, type StormView, type TradeEnd, type TradeView,
@@ -51,6 +51,7 @@ import {
   CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
   mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
+import { Lodestone, shardNear } from './lodestone';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
 import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
@@ -179,7 +180,9 @@ export type News =
   | { kind: 'call'; id: string; call: CallKind; x: number; y: number; at: number }
   | { kind: 'chapter'; chapter: Chapter }
   /** A parcel came into your chest; the welcome parcel also names the outfits signing in gave you (their ids). */
-  | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] };
+  | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] }
+  /** Your lodestone tugs (lodestone.ts): a shard lies near. It never says where. */
+  | { kind: 'tug' };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -300,6 +303,8 @@ export class Game {
   quirks = new Map<string, Quirk[]>();
   /** Who on this map carries a live find: a column of light stands over them. */
   live = new Set<string>();
+  /** Who on this map glows after a flash (the afterglow quirk), until when (our clock). */
+  afterglows = new Map<string, number>();
   /** What everyone on this map wears, by player id (you too). */
   gear = new Map<string, Gear>();
   /** The outfit each player on this map wears over their gear, by player id (you too); none: their gear shows. */
@@ -370,6 +375,8 @@ export class Game {
   private callingOff: string | null = null;
   /** A friend's ask to trade, waiting for the text box to be free of a question or someone's lines. */
   private tradeAsk: PersonView | null = null;
+  /** A lodestone you wear (a quirk): when it tugs. */
+  private readonly lodestone = new Lodestone();
 
   constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY) {
     this.current = maps.home();
@@ -670,6 +677,8 @@ export class Game {
         else this.badges.delete(msg.player.id);
         if (msg.player.live) this.live.add(msg.player.id);
         else this.live.delete(msg.player.id);
+        if (msg.player.afterglow) this.afterglows.set(msg.player.id, now + msg.player.afterglow * 1000);
+        else this.afterglows.delete(msg.player.id);
         // A guest who signed in comes back in as someone who is not one.
         if (msg.player.guest) this.guests.add(msg.player.id);
         else this.guests.delete(msg.player.id);
@@ -679,9 +688,14 @@ export class Game {
         if (msg.on) this.live.add(msg.id);
         else this.live.delete(msg.id);
         break;
+      case 'afterglow':
+        if (msg.left > 0) this.afterglows.set(msg.id, now + msg.left * 1000);
+        else this.afterglows.delete(msg.id);
+        break;
       case 'leave':
         this.players.delete(msg.id);
         this.live.delete(msg.id);
+        this.afterglows.delete(msg.id);
         break;
       case 'step': {
         const p = this.players.get(msg.id);
@@ -845,6 +859,7 @@ export class Game {
     this.patterns = new Map(players.flatMap(p => (p.pattern ? [[p.id, p.pattern] as const] : [])));
     this.badges = new Map(players.flatMap(p => (p.badge ? [[p.id, p.badge] as const] : [])));
     this.live = new Set(players.filter(p => p.live).map(p => p.id));
+    this.afterglows = new Map(players.flatMap(p => (p.afterglow ? [[p.id, this.clock + p.afterglow * 1000] as const] : [])));
     this.finds = new Map(finds.map(f => [f.id, f]));
     this.drops = new Map(drops.map(d => [d.id, d]));
     this.lootChanges++;
@@ -1537,8 +1552,9 @@ export class Game {
     if (!s || !this.online) return;
     const def = this.items.get(s.item), why = this.whyNotUse(slot, def);
     if (why) return this.inform(def.name, why);
-    // An arrow shows as long as your feats and charms say (Good neighbor), the server's rule.
-    const text = useQuestion(def, this.energy(this.clock), markLifetime(modsOf(this.stats, charmsIn(this.bag, this.items.byId))) / 1000);
+    // An arrow shows as long as your feats and charms say (Good neighbor), and a pale moth gives energy back: the server's rules.
+    const mods = modsOf(this.stats, charmsIn(this.bag, this.items.byId));
+    const text = useQuestion(def, this.energy(this.clock), markLifetime(mods) / 1000, def.use?.mark ? this.markLift(mods) : undefined);
     this.ask({ who: def.name, text, yes: () => { done?.(); this.actOn(slot, def.id, def.name, text, i => ({ t: 'use', slot: i })); } });
   }
 
@@ -1565,6 +1581,17 @@ export class Game {
     if (u.mark && this.current.data.kind === 'inside') return INDOORS;
     if (u.mark && me && [...this.marks.values()].some(m => m.x === me.tx && m.y === me.ty)) return MARKED;
     return null;
+  }
+
+  /**
+   * What a charm in your bag gives back as a glowcap is crushed (a pale moth), and which one: the server's
+   * rule (Mods.markEnergy, in the `mods` your feats and charms make), when the bar has room for it;
+   * undefined when nothing would.
+   */
+  private markLift(mods: Mods): { charm: ItemDef; energy: number } | undefined {
+    const charm = this.bag.map(s => this.items.get(s.item)).find(d => d.kind === 'charm' && (d.charm?.markEnergy ?? 0) > 0);
+    const e = this.energy(this.clock), energy = mods.markEnergy;
+    return charm && energy > 0 && (!e || e.max - e.value >= 0.5) ? { charm, energy } : undefined;
   }
 
   /** In town, or in one of its houses: light enough to look at something closely (the server's rule). */
@@ -1852,6 +1879,10 @@ export class Game {
       p.phase += dt * (1000 / this.stepMs) * 3;
     }
     this.driveMe(now);
+    // A lodestone you wear tugs while a shard lies near: the interface feels it (a pulse, a faint sound).
+    const me = this.me;
+    const near = !!me && Object.values(this.myWorn).some(p => p?.quirk === 'lodestone') && shardNear(this.finds.values(), this.items, me.tx, me.ty);
+    if (this.lodestone.update(near, now)) this.news.push({ kind: 'tug' });
   }
 
   /** Decide the local player's next step once they stand on a tile. */
@@ -1920,6 +1951,7 @@ export class Game {
     const hitched = this.body.view.hitched;
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
+      afterglow: (this.afterglows.get(p.id) ?? 0) > this.clock,
       look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id)),
     }));
   }
