@@ -42,8 +42,11 @@ const MAX_W = 11, MAX_H = 8;
 const ROOMS: readonly Room[] = [
   {
     // Where you wake up: the spawn is at its door. A small warm room, and the fire never goes out.
-    // The chest by the fire is your stash: what you put in it earns XP.
-    id: 'stonebrook-home', name: 'Home', version: 2, outside: 'stonebrook', door: [8, 20],
+    // Side by side along the back wall, where this camera sees them whole: the fire, the chest (your
+    // stash: what you put in it earns XP) and the workbench, which makes gear from what the chest
+    // holds. The chest's front is warm, so you thaw out while you put things away, and the workbench
+    // is one step on. The middle stays open from the door to the fire.
+    id: 'stonebrook-home', name: 'Home', version: 3, outside: 'stonebrook', door: [8, 20],
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -60,7 +63,8 @@ const ROOMS: readonly Room[] = [
       { kind: 'shelf', x: 2, y: 1 },
       { kind: 'bed', x: 7, y: 1 },
       { kind: 'table', x: 2, y: 4 },
-      { kind: 'chest', x: 6, y: 1 },
+      { kind: 'chest', x: 5, y: 1 },
+      { kind: 'workbench', x: 6, y: 1 },
     ],
   },
   {
@@ -88,10 +92,10 @@ const ROOMS: readonly Room[] = [
   },
   {
     // Where the town gathers: the biggest room, long tables, and the fire in the middle of the back wall.
-    // The workbench against the east wall makes gear from what you keep in your stash. Walt Pruitt sits
-    // by the fire: he kept the north line for the power company and then NAPO's, and remembers how it
-    // all went wrong.
-    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 3, outside: 'stonebrook', door: [8, 31],
+    // Its firewood is stacked against the east wall, split the way the town split it when it still
+    // logged the woods. Walt Pruitt sits by the fire: he kept the north line for the power company and
+    // then NAPO's, and remembers how it all went wrong.
+    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 4, outside: 'stonebrook', door: [8, 31],
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -115,7 +119,7 @@ const ROOMS: readonly Room[] = [
       { kind: 'table', x: 8, y: 4 },
       { kind: 'barrel', x: 1, y: 6 },
       { kind: 'barrel', x: 9, y: 6 },
-      { kind: 'workbench', x: 9, y: 3 },
+      { kind: 'woodpile', x: 9, y: 3 },
       {
         kind: 'npc', id: 'walt', name: 'Walt', x: 3, y: 2, dir: 'down',
         look: { coat: '#5a4a3a', scarf: '#c98a2b', hair: '#9a958d', skin: '#c68b62', hat: '#d9a82b' },
@@ -474,7 +478,7 @@ function json(map: MapData): string {
 }
 
 /** A glance at a room: # wall, . floor, + warm floor (next to the fire), v the way out, letters for furniture. */
-const GLYPH: Partial<Record<MapObject['kind'], string>> = { fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@' };
+const GLYPH: Partial<Record<MapObject['kind'], string>> = { fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@' };
 function glance(map: MapData): string[] {
   const tm = new TileMap(map);
   const things = new Map<string, string>();

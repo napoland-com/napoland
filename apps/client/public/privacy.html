@@ -28,7 +28,7 @@
 <body>
 <main>
 <h1>Privacy</h1>
-<p class="date">Last updated: 27 September 2026</p>
+<p class="date">Last updated: 28 September 2026</p>
 
 <p>This page explains what happens to your data when you play napoland at <a href="https://www.napoland.com">www.napoland.com</a>. napoland is open source and made by its community, so you can also read exactly what the game does in its <a href="https://github.com/napoland-com/napoland">source code</a>. Copies of napoland that other people run on their own servers are theirs, with their own rules.</p>
 
@@ -37,6 +37,7 @@
 <ul>
 <li>We collect only what the game needs to run.</li>
 <li>No ads, no analytics, no tracking and no cookies. We never sell your data or share it for marketing.</li>
+<li>You can play without signing in, as a guest. Nothing then says who you are, and a guest who does not play for 30 days is deleted.</li>
 <li>Your email address is used only to sign you in. Other players never see it.</li>
 <li>Other players see your character's name.</li>
 <li>Private messages to a friend are kept only until they read them. Chat is not kept at all.</li>
@@ -55,6 +56,9 @@
 <h3>To sign you in</h3>
 <p>You sign in with your email address and a 6-digit code sent to it. Signing in is handled by Supabase, which keeps your email address and a record of your sign-ins (when, and from which IP address and browser) to send the codes and keep accounts safe. Your browser talks to Supabase directly for this. Our game server then checks your sign-in and keeps only the random id Supabase gave your account, never your email address. We never store your codes or sign-in tokens.</p>
 
+<h3>Playing as a guest</h3>
+<p>You can play without signing in, as a guest. Your character is then kept on our server like anyone's (everything under "Your character" below), and your browser keeps a login token for it in its local storage; our server keeps only a scrambled copy of that token. Nothing about a guest says who you are: no email address and no account. A guest cannot chat or have friends, and other players can still block or report a guest. If your browser's data is cleared, the token goes with it, and so does the way back to your character. A guest who does not play for 30 days is deleted, with its pile and arrows. Signing in keeps your character: from then on it belongs to your account.</p>
+
 <h3>Your character</h3>
 <p>Its name and color, where it is in the world, its energy, how wet it is, what it wears (and how worn each piece is), what is in its bag and in its stash at home (and what it took out of the stash), its XP, what counts toward its feats, how far it is in the story (the latest chapter it reached), the arrows it paints on the ground, the pile of things it leaves when it collapses (with the last steps it walked before, which others see as a pale figure walking back to the pile), and when it was created and last played. The game cannot run without these. Other players on the same map see your character's name and color, where it walks, and whose pile or arrow is whose.</p>
 
@@ -70,7 +74,7 @@
 <p>The game server writes down technical events, such as a character being created, joining, leaving or collapsing, with the character's id and name, and errors, so that we can keep the game running and fix problems. These logs never contain email addresses, IP addresses, codes or tokens, and they are deleted after 30 days.</p>
 
 <h3>In your browser</h3>
-<p>The game keeps your sign-in session in your browser's local storage so you stay signed in (it includes your email address), and, while you wait for a code, which address it was sent to. Characters made before sign-in existed keep a login token there; our server keeps only a scrambled copy of it. It also keeps your sound volume there, and whether you turned the sound off. None of this leaves your device, except to sign you in. We use no cookies and no trackers. Apart from signing in, everything the game loads, fonts included, comes from our own server.</p>
+<p>The game keeps your sign-in session in your browser's local storage so you stay signed in (it includes your email address), and, while you wait for a code, which address it was sent to. If you play as a guest, or made your character before sign-in existed, your browser keeps its login token there; our server keeps only a scrambled copy of it. It also keeps your sound volume there, and whether you turned the sound off. None of this leaves your device, except to sign you in. We use no cookies and no trackers. Apart from signing in, everything the game loads, fonts included, comes from our own server.</p>
 
 <h2>Why we are allowed to</h2>
 <ul>
@@ -93,6 +97,7 @@
 <h2>How long we keep it</h2>
 <ul>
 <li>Your character, and your sign-in account at Supabase with its record of your sign-ins: until you ask us to delete them.</li>
+<li>A guest's character: until it has not been played for 30 days, when it is deleted with its pile and arrows. Signing in keeps it, as above.</li>
 <li>A pile, with the last steps before the collapse: an hour. An arrow you paint: a day.</li>
 <li>A private message: until your friend reads it. Friends, requests and blocks: until you remove them.</li>
 <li>A report: until we have dealt with it.</li>
@@ -102,7 +107,7 @@
 <p>When you ask us to delete your data, we delete your character, its pile and arrows, its friends, requests, blocks and unread messages (to and from you), your sign-in account and its record of sign-ins. The copies inside backups disappear by themselves within 30 days after that.</p>
 
 <h2>Your rights</h2>
-<p>You can ask us to show you your data, correct it, delete it, limit what we do with it, or give it to you in a form you can take elsewhere, and you can object to how we use it. Write to <a href="mailto:support@neuramare.com">support@neuramare.com</a> from the email address you sign in with, so that we know it is you. We answer within 30 days.</p>
+<p>You can ask us to show you your data, correct it, delete it, limit what we do with it, or give it to you in a form you can take elsewhere, and you can object to how we use it. Write to <a href="mailto:support@neuramare.com">support@neuramare.com</a> from the email address you sign in with, so that we know it is you (as a guest, sign in first: nothing else tells us a character is yours). We answer within 30 days.</p>
 <p>You can also complain to a data protection authority: in Switzerland, the <a href="https://www.edoeb.admin.ch">Federal Data Protection and Information Commissioner (FDPIC)</a>; in the EU or the EEA, the authority of the country where you live.</p>
 
 <h2>Children</h2>

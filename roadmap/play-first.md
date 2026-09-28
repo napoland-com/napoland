@@ -1,8 +1,8 @@
 ---
 id: play-first
 title: Play first, sign in to keep it
-status: next
-order: 40
+status: done
+order: 240
 area: tech
 depends: [sign-in]
 ---

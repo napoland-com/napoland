@@ -23,7 +23,7 @@ import {
   surgeFront, takeFromBag, DIR_VEC,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type StormView,
+  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type RefusedAction, type StormView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import type { FriendsMsg, TalkLine } from './friends';
@@ -131,9 +131,9 @@ export function minutes(seconds: number): string {
   return `${m} minute${m === 1 ? '' : 's'}`;
 }
 
-/** News from the world for the interface to announce (status.ts, newsBanner). */
+/** News from the world for the interface to announce (status.ts, newsBanner). A feat's is the rank just reached. */
 export type News =
-  | { kind: 'feat'; id: string } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView }
+  | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView } | { kind: 'level'; progress: ProgressView }
   /** A new day's conditions, by name. */
   | { kind: 'conditions'; names: string[] }
   | { kind: 'chapter'; chapter: Chapter };
@@ -144,10 +144,19 @@ const NO_STORY: StoryData = { version: 0, chapters: [] };
 /** Lines of chat a session keeps to scroll back through. */
 export const CHAT_LOG = 100;
 
+/** What a `refused` can answer among friends: the friends panel says why. */
+const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
+/** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend']);
+
 export class Game {
   meId: string | null = null;
   /** True between the server's welcome and the connection dropping; no steps are taken otherwise. */
   online = false;
+  /** You play as a guest (the welcome said): chat and friends wait for sign-in. */
+  guest = false;
+  /** Who on this map plays as a guest: nobody can ask them to be friends yet. */
+  guests = new Set<string>();
   /** Set while the screen fades out on the way to another map: nobody walks on a map that is going away. */
   held = false;
   players = new Map<string, Mover>();
@@ -183,9 +192,11 @@ export class Game {
   flashes: Array<{ x: number; y: number; kind: FlashKind; until: number }> = [];
   /** How wet you are, your load and whether something clings to you, as told and when. */
   body: { view: BodyView; at: number } = { view: { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} }, at: 0 };
-  /** The Old Stone in town, and your counts toward feats. */
+  /** The Old Stone in town, and your counts toward feats (each feat's rank follows from its count). */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
+  /** Counts every time the counts are told, so the open status panel shows them at once. */
+  statsChanges = 0;
   /** What the woods are like today and this week (sky.ts), as the server said. */
   conditions: ConditionsView = { today: [], week: null, next: null };
   /** Your tools (item ids), as the welcome said: a paper map, for now. */
@@ -351,6 +362,7 @@ export class Game {
         if (!map || msg.items !== this.items.version || msg.story.version !== this.story.version) { this.disconnected(now); break; }
         this.meId = msg.you;
         this.online = true;
+        this.guest = msg.guest === true;
         this.stepMs = msg.stepMs;
         this.enter(map, msg.players, msg.finds, msg.drops);
         this.scene(msg, now);
@@ -361,6 +373,7 @@ export class Game {
         this.stone = msg.stone;
         this.conditions = msg.conditions;
         this.stats = msg.stats;
+        this.statsChanges++;
         this.progress = msg.progress;
         this.tools = msg.tools;
         this.chapter = msg.story.chapter;
@@ -374,6 +387,7 @@ export class Game {
         this.enter(map, msg.players, msg.finds, msg.drops);
         this.scene(msg, now);
         this.stats = msg.stats;
+        this.statsChanges++;
         this.dialog = null; this.marker = null; this.floats = [];
         // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
         const me = this.me ?? (old ? { ...old } : undefined);
@@ -457,7 +471,12 @@ export class Game {
         break;
       case 'feat':
         this.stats = msg.stats;
-        this.news.push({ kind: 'feat', id: msg.id });
+        this.statsChanges++;
+        this.news.push({ kind: 'feat', id: msg.id, rank: msg.rank });
+        break;
+      case 'stats':
+        this.stats = msg.stats;
+        this.statsChanges++;
         break;
       case 'chapter': {
         const chapter = this.story.chapters.find(c => c.id === msg.id);
@@ -498,6 +517,10 @@ export class Game {
         this.quirks.set(msg.player.id, msg.player.quirks ?? []);
         if (msg.player.live) this.live.add(msg.player.id);
         else this.live.delete(msg.player.id);
+        // A guest who signed in comes back in as someone who is not one.
+        if (msg.player.guest) this.guests.add(msg.player.id);
+        else this.guests.delete(msg.player.id);
+        this.socialChanges++;
         break;
       case 'glow':
         if (msg.on) this.live.add(msg.id);
@@ -556,6 +579,8 @@ export class Game {
         this.picking = null;
         // A column over your head, in the order the server listed them, first on top.
         msg.items.forEach((s, i) => this.floatOverMe(`+${s.count} ${this.items.get(s.item).name}`, GAIN, msg.items.length - 1 - i));
+        // Named, so the player knows which feat to thank.
+        if (msg.double) this.floatOverMe('Forager: it came up double', GAIN, msg.items.length);
         // Someone else's pile can leave you nothing (your half did not fit, or the coin went the
         // other way); it is gone all the same, so say so rather than let it vanish silently.
         if (!msg.items.length) this.floatOverMe('Nothing in it for you', NO);
@@ -585,11 +610,11 @@ export class Game {
         this.socialChanges++;
         break;
       case 'refused':
-        if (msg.action === 'befriend' || msg.action === 'tell') { this.socialNote = refusalText(msg.reason); this.socialChanges++; break; }
-        if (msg.action === 'say') { this.chatNote = refusalText(msg.reason); this.chatChanges++; break; }
+        if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
+        if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
         // What was asked first is answered in the same box; the rest (picking up, the chest) over your head.
-        if (msg.action === 'feed' || msg.action === 'use' || msg.action === 'discard' || msg.action === 'craft' || msg.action === 'mend') {
-          this.inform(this.note?.waiting ? this.note.who : '', sentence(refusalText(msg.reason)));
+        if (ASKED_FIRST.has(msg.action)) {
+          this.inform(this.note?.waiting ? this.note.who : '', sentence(refusalText(msg.reason, msg.action)));
           break;
         }
         if (msg.action === 'pick') this.picking = null;
@@ -626,6 +651,8 @@ export class Game {
     }
     this.players.clear();
     for (const p of players) this.players.set(p.id, this.mover(p));
+    this.guests = new Set(players.filter(p => p.guest).map(p => p.id));
+    this.socialChanges++;
     this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
     this.quirks = new Map(players.map(p => [p.id, p.quirks ?? []]));
     this.live = new Set(players.filter(p => p.live).map(p => p.id));
@@ -1141,6 +1168,11 @@ export class Game {
    */
   carrying(now: number): boolean {
     return this.bag.length > 0 || now - this.emptiedAt < JUST_NOW_MS;
+  }
+
+  /** Asks the server for your counts toward feats as they are now: only a new rank, a zone or a welcome tells them otherwise. */
+  askStats() {
+    if (this.online) this.send({ t: 'stats' });
   }
 
   /** The chapters of the story you reached, first to latest: what the journal keeps. */

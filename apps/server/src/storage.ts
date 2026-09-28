@@ -14,13 +14,14 @@ export interface PlayerRecord {
   id: string;
   name: string;
   /**
-   * SHA-256 of the login token of a character made without sign-in, hex. The token itself is never
-   * stored. Null for characters made after sign-in: they have no token.
+   * SHA-256 of the login token of a character made without sign-in (a guest, or one from before
+   * sign-in), hex. The token itself is never stored. Null for characters made signed in: they have no token.
    */
   tokenHash: string | null;
   /**
    * Who signed in with this character (auth.ts): Supabase's user id, or "dev:" and an email. Null
-   * for a character made before sign-in that nobody has claimed yet. One character per identity.
+   * for a character nobody has signed in with yet: a guest, or one made before sign-in, until
+   * someone claims it. One character per identity.
    */
   authSub: string | null;
   /** The id of the map the player is on. */
@@ -47,7 +48,7 @@ export interface PlayerRecord {
   worn?: Worn;
   /** The id of the latest chapter of the story the player reached (story.ts). None: they never started. */
   story?: string;
-  /** Milliseconds since the epoch. */
+  /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
 }
@@ -103,11 +104,12 @@ export interface LinkRecord {
   toName: string;
 }
 
-/** Someone as a friend request finds them: who, and whether they take requests. */
+/** Someone as a friend request finds them: who, whether they take requests, and whether anyone signed in with them (a guest has not). */
 export interface PersonRecord {
   id: string;
   name: string;
   requestsOff: boolean;
+  signedIn: boolean;
 }
 
 /** A private message nobody has read yet (ms since the epoch), with the sender's name. */
@@ -143,6 +145,20 @@ export interface Storage {
   create(rec: PlayerRecord): Promise<boolean>;
   /** Stores what changes while playing: map, position, direction, energy, bag, color and lastSeenAt. */
   save(rec: PlayerRecord): Promise<void>;
+  /** The player is back (lastSeenAt is `at`, ms since the epoch). False if they no longer exist. */
+  seen(id: string, at: number): Promise<boolean>;
+  /**
+   * Deletes every character nobody signed in with (authSub null: a guest, on a server with sign-in)
+   * last seen before `seenBefore` (ms since the epoch), with their pile, marks, links and unread
+   * messages. Never one someone signed in with. Returns how many went.
+   */
+  forgetGuests(seenBefore: number): Promise<number>;
+  /**
+   * When this server began to delete guests who stay away (ms since the epoch): the first call stores
+   * `now`, every later one returns it. No guest goes before GUEST_DAYS after it, so every player can
+   * read the rule in the game (a guest's status panel) before it takes anything.
+   */
+  guestsSince(now: number): Promise<number>;
   /** How many players exist. */
   count(): Promise<number>;
   /** Every pile dropped after `after` (ms since the epoch), oldest first. Older ones have faded: they are forgotten. */
@@ -191,6 +207,7 @@ export class MemoryStorage implements Storage {
   private readonly drops = new Map<string, Omit<DropRecord, 'name'>>();
   private readonly marks = new Map<number, Omit<MarkRecord, 'name' | 'color'>>();
   private stone: StoneRecord | null = null;
+  private since: number | undefined;
   private readonly off = new Set<string>();
   private links: Array<{ from: string; to: string; kind: LinkKind }> = [];
   private tells: Array<Omit<TellRecord, 'fromName'>> = [];
@@ -242,6 +259,35 @@ export class MemoryStorage implements Storage {
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), lastSeenAt: rec.lastSeenAt,
       });
     }
+  }
+
+  async seen(id: string, at: number): Promise<boolean> {
+    const rec = this.byId.get(id);
+    if (!rec) return false;
+    rec.lastSeenAt = at;
+    return true;
+  }
+
+  async forgetGuests(seenBefore: number): Promise<number> {
+    let gone = 0;
+    for (const rec of [...this.byId.values()]) {
+      if (rec.authSub !== null || rec.lastSeenAt >= seenBefore) continue;
+      gone++;
+      // Like the database's foreign keys: what belongs to them goes with them. (Reports stay, as there.)
+      this.byId.delete(rec.id);
+      if (rec.tokenHash !== null) this.idByToken.delete(rec.tokenHash);
+      this.idByName.delete(rec.name.toLowerCase());
+      this.drops.delete(rec.id);
+      for (const [id, m] of this.marks) if (m.owner === rec.id) this.marks.delete(id);
+      this.off.delete(rec.id);
+      this.links = this.links.filter(l => l.from !== rec.id && l.to !== rec.id);
+      this.tells = this.tells.filter(t => t.from !== rec.id && t.to !== rec.id);
+    }
+    return gone;
+  }
+
+  async guestsSince(now: number): Promise<number> {
+    return (this.since ??= now);
   }
 
   async count(): Promise<number> {
@@ -299,7 +345,7 @@ export class MemoryStorage implements Storage {
   async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {
     const id = 'id' in by ? by.id : this.idByName.get(by.name.toLowerCase());
     const rec = id === undefined ? undefined : this.byId.get(id);
-    return rec ? { id: rec.id, name: rec.name, requestsOff: this.off.has(rec.id) } : null;
+    return rec ? { id: rec.id, name: rec.name, requestsOff: this.off.has(rec.id), signedIn: rec.authSub !== null } : null;
   }
 
   async setRequestsOff(id: string, off: boolean): Promise<void> {
@@ -509,6 +555,25 @@ export class PgStorage implements Storage {
     );
   }
 
+  async seen(id: string, at: number): Promise<boolean> {
+    const r = await this.pool.query('UPDATE players SET last_seen_at = $2 WHERE id = $1', [id, new Date(at)]);
+    return r.rowCount === 1;
+  }
+
+  async forgetGuests(seenBefore: number): Promise<number> {
+    // Their pile, marks, links and unread messages go with the row (ON DELETE CASCADE); a report
+    // about them stays, without them (ON DELETE SET NULL). An index covers exactly these rows (011).
+    const r = await this.pool.query('DELETE FROM players WHERE auth_sub IS NULL AND last_seen_at < $1', [new Date(seenBefore)]);
+    return r.rowCount ?? 0;
+  }
+
+  async guestsSince(now: number): Promise<number> {
+    await this.pool.query(`INSERT INTO world_state (key, value) VALUES ('guests_since', $1::jsonb) ON CONFLICT (key) DO NOTHING`, [JSON.stringify(now)]);
+    const r = await this.pool.query<{ value: unknown }>("SELECT value FROM world_state WHERE key = 'guests_since'");
+    const v = r.rows[0]?.value;
+    return typeof v === 'number' && Number.isFinite(v) ? v : now;
+  }
+
   async count(): Promise<number> {
     const r = await this.pool.query<{ n: number }>('SELECT count(*)::int AS n FROM players');
     return r.rows[0]!.n;
@@ -572,11 +637,13 @@ export class PgStorage implements Storage {
   }
 
   async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {
+    type Row = { id: string; name: string; requests_off: boolean; signed_in: boolean };
+    const columns = 'id, name, requests_off, auth_sub IS NOT NULL AS signed_in';
     const r = 'id' in by
-      ? await this.pool.query<{ id: string; name: string; requests_off: boolean }>('SELECT id, name, requests_off FROM players WHERE id = $1', [by.id])
-      : await this.pool.query<{ id: string; name: string; requests_off: boolean }>('SELECT id, name, requests_off FROM players WHERE lower(name) = lower($1)', [by.name]);
+      ? await this.pool.query<Row>(`SELECT ${columns} FROM players WHERE id = $1`, [by.id])
+      : await this.pool.query<Row>(`SELECT ${columns} FROM players WHERE lower(name) = lower($1)`, [by.name]);
     const p = r.rows[0];
-    return p ? { id: p.id, name: p.name, requestsOff: p.requests_off } : null;
+    return p ? { id: p.id, name: p.name, requestsOff: p.requests_off, signedIn: p.signed_in } : null;
   }
 
   async setRequestsOff(id: string, off: boolean): Promise<void> {

@@ -135,7 +135,7 @@ export const START: ProgressView = { xp: 0, level: 1, from: 0, to: 30, maxEnergy
 
 export function welcome(map: MapData, players: PlayerView[], energy: EnergyView = FULL, extras: Extras = {}): Extract<ServerMsg, { t: 'welcome' }> {
   return {
-    t: 'welcome', v: PROTOCOL_VERSION, you: 'me', name: 'Aldo', token: 'x'.repeat(20), map: ref(map), players, stepMs: STEP_MS, weather: 'rain', energy, serverTime: 0,
+    t: 'welcome', v: PROTOCOL_VERSION, you: 'me', name: 'Aldo', token: 'x'.repeat(20), guest: false, map: ref(map), players, stepMs: STEP_MS, weather: 'rain', energy, serverTime: 0,
     finds: extras.finds ?? [], drops: extras.drops ?? [], bag: extras.bag ?? [], items: extras.items ?? ITEMS.version,
     fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], flashes: extras.flashes ?? [], surge: extras.surge ?? null, storm: extras.storm ?? null,
     body: extras.body ?? DRY, stone: extras.stone ?? ASLEEP, stats: {}, progress: extras.progress ?? START, tools: extras.tools ?? [],

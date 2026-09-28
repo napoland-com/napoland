@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DROP_LIFETIME_MS } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord } from '../src/storage';
-import { keepsFriendsAndMessages, restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
+import { forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, playFirstThenSignIn, restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -55,7 +55,10 @@ describe.skipIf(!url)('PgStorage', () => {
   });
 
   it('applies each migration once', async () => {
-    const all = ['001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql'];
+    const all = [
+      '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
+      '011_guests.sql',
+    ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
     await storage.init();
@@ -314,6 +317,34 @@ describe.skipIf(!url)('PgStorage', () => {
     try {
       await pgStorage.init();
       await signInAndClaim(pgStorage);
+    } finally {
+      await pgStorage.close();
+    }
+  });
+
+  it('plays first as a guest and keeps it on sign-in, over the network', async () => {
+    const fresh = await freshSchema();
+    const pgStorage = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await pgStorage.init();
+      await playFirstThenSignIn(pgStorage);
+    } finally {
+      await pgStorage.close();
+    }
+  });
+
+  it('deletes guests who stayed away, with their pile, marks, links and messages, never anyone signed in', async () => {
+    // A schema of its own: every other player in these tests is a guest who has not played since 2023.
+    const fresh = await freshSchema();
+    const pgStorage = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await pgStorage.init();
+      const index = await admin.query<{ indexdef: string }>('SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND indexname = $2', [fresh.schema, 'players_guests_last_seen']);
+      expect(index.rows[0]?.indexdef).toMatch(/WHERE \(auth_sub IS NULL\)/);
+      const { reporter } = await forgetsGuestsWhoStayedAway(pgStorage);
+      // A report about a guest who went stays for the maintainers, without them.
+      const reports = await admin.query<{ reporter: string | null; reported: string | null; reason: string }>(`SELECT reporter, reported, reason FROM ${fresh.schema}.reports`);
+      expect(reports.rows).toEqual([{ reporter, reported: null, reason: 'spam' }]);
     } finally {
       await pgStorage.close();
     }

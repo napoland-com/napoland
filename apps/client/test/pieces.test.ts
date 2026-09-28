@@ -21,10 +21,10 @@ const worn = { shirt: { cond: 0.4 }, shoes: { cond: 0 }, cap: { cond: 1, quirk: 
 
 describe('pieces in the interface', () => {
   it('say how much is left, and what needs mending', () => {
-    expect(conditionText(1)).toBe('As good as new');
-    expect(conditionText(0.4)).toBe('40% left');
-    expect(conditionText(0)).toBe('Worn out: mend it at the workbench');
-    expect(conditionText(0.1, false)).toBe('As good as new');
+    expect(conditionText(1)).toBe('Like new');
+    expect(conditionText(0.4)).toBe('Worn: 40% left');
+    expect(conditionText(0)).toBe('Worn out: it protects nothing until it is mended');
+    expect(conditionText(0.1, false)).toBe('Never wears out');
     expect(wearText(gear, worn, items)).toBe('Raincoat 40%, Rubber boots worn out');
     expect(wearText(gear, { cap: { cond: 1 } }, items)).toBeNull();
     expect(quirkNames(worn, items)).toEqual(['Humming']);
@@ -33,13 +33,16 @@ describe('pieces in the interface', () => {
   it('show each piece in the stash on its own, with its condition and which of its kind it is', () => {
     const v = slotViews([{ item: 'coat', count: 1, piece: { cond: 1 } }, { item: 'coat', count: 1, piece: { cond: 0.4 } }, { item: 'halo', count: 1, piece: { cond: 1, quirk: 'hum' } }, { item: 'cloth', count: 3 }], items);
     expect(v.map(s => [s.item, s.n, s.cond])).toEqual([['coat', 0, 1], ['coat', 1, 0.4], ['halo', 0, 1], ['cloth', undefined, undefined]]);
-    expect(v[1]!.facts[0]).toBe('40% left');
+    expect(v[1]!.facts[0]).toBe('Worn: 40% left');
     expect(v[2]!.text).toBe('Odd. Humming: It hums before a surge.');
   });
 
   it('offer mending for what has worn down and can be mended, against what the stash holds', () => {
     const rows = mendViews(gear, worn, [{ item: 'cloth', count: 3 }], items);
-    expect(rows.map(r => [r.id, r.can, r.act])).toEqual([['mend:shirt', true, 'Mend'], ['mend:shoes', true, 'Mend']]);
+    expect(rows.map(r => [r.id, r.name, r.can, r.facts])).toEqual([
+      ['mend:shirt', 'Mend your raincoat', true, 'Worn: 40% left. Like new again when mended.'],
+      ['mend:shoes', 'Mend your rubber boots', true, 'Worn out. Like new again when mended.'],
+    ]);
     expect(mendViews(gear, worn, [{ item: 'cloth', count: 1 }], items).every(r => !r.can)).toBe(true);
     expect(wornViews(gear, items, worn).filter(w => w).map(w => [w!.slot, w!.cond, w!.quirk])).toEqual([['cap', 1, 'Humming'], ['shirt', 0.4, undefined], ['shoes', 0, undefined], ['bag', undefined, undefined]]);
   });

@@ -9,11 +9,14 @@
  * - Messages go between friends only, and are kept until read: reading them deletes them.
  * - Blocking someone ends a friendship and any request either way, and keeps them from asking again.
  * - A report is kept for the maintainers, with what was written as the reporter quoted it.
+ * - On a server with sign-in, all of it needs a real person behind it: a guest is refused every
+ *   action (sign_in_first; a report needs a reporter who answers for it), and nobody can ask a guest
+ *   to be friends. A guest can still be blocked and reported.
  *
  * Whoever a change touches hears their friends list again (if online); the list says which friends
  * are online, and on which map.
  */
-import type { PersonView, ReportReason, ServerMsg } from '@napoland/shared';
+import type { PersonView, Refusal, RefusedAction, ReportReason, ServerMsg } from '@napoland/shared';
 import { RollingLimit } from './limits';
 import { log } from './log';
 import type { LinkRecord, Storage } from './storage';
@@ -45,6 +48,10 @@ export interface SocialOptions {
   send: (id: string, msg: ServerMsg) => void;
   /** ms, never going backwards: for the limits. */
   clock: () => number;
+  /** Players sign in on this server: one nobody signed in with is a guest, who cannot have friends. */
+  guests?: boolean;
+  /** Whether a player online plays as a guest: nothing among friends is sent to them. */
+  isGuest?: (id: string) => boolean;
 }
 
 const has = (links: LinkRecord[], from: string, to: string, kind: LinkRecord['kind']) => links.some(l => l.from === from && l.to === to && l.kind === kind);
@@ -70,14 +77,24 @@ export class Social {
     this.blocking.delete(id);
   }
 
-  /** A player came online: their list, and what is waiting for them. */
-  async joined(id: string): Promise<void> {
+  /**
+   * A player came online: their list, and what is waiting for them. A guest gets neither (it all waits
+   * for sign-in), but whoever they block stays unheard in chat.
+   */
+  async joined(id: string, guest = false): Promise<void> {
+    if (guest) {
+      const links = await this.o.storage.linksOf(id);
+      this.blocking.set(id, new Set(links.filter(l => l.from === id && l.kind === 'block').map(l => l.to)));
+      return;
+    }
     await this.list(id);
     const tells = await this.o.storage.tellsTo(id);
     this.o.send(id, { t: 'tells', tells: tells.map(t => ({ from: t.from, name: t.fromName, text: t.text, at: t.at })) });
   }
 
-  async handle(me: string, msg: SocialMsg): Promise<void> {
+  /** `guest`: `me` plays as a guest, as it was when the message came in. */
+  async handle(me: string, msg: SocialMsg, guest = false): Promise<void> {
+    if (guest) return this.refuse(me, msg.t, 'sign_in_first');
     const s = this.o.storage;
     switch (msg.t) {
       case 'friends':
@@ -128,6 +145,8 @@ export class Social {
     const s = this.o.storage;
     const them = msg.id ? await s.findPerson({ id: msg.id }) : msg.name ? await s.findPerson({ name: msg.name }) : null;
     if (!them || them.id === me) return this.refuse(me, 'befriend', 'unknown_player');
+    // They could never answer: friends wait until they sign in.
+    if (this.o.guests && !them.signedIn) return this.refuse(me, 'befriend', 'guest');
     const links = await s.linksOf(me);
     if (has(links, me, them.id, 'friend')) return this.list(me);
     if (has(links, me, them.id, 'block')) return this.refuse(me, 'befriend', 'you_blocked');
@@ -156,7 +175,8 @@ export class Social {
       await s.addTell({ from: me, to, text, at });
       sent = true;
       const sender = await s.findPerson({ id: me });
-      this.o.send(to, { t: 'tells', tells: [{ from: me, name: sender?.name ?? '', text, at }] });
+      // (A friend who plays as a guest again reads it once signed in.)
+      if (!this.o.isGuest?.(to)) this.o.send(to, { t: 'tells', tells: [{ from: me, name: sender?.name ?? '', text, at }] });
     } finally {
       this.tellLimit.finish(me, sent);
     }
@@ -175,13 +195,14 @@ export class Social {
     }
   }
 
-  private refuse(me: string, action: 'befriend' | 'tell', reason: 'unknown_player' | 'requests_off' | 'not_friends' | 'you_blocked' | 'too_many' | 'slow_down'): void {
+  private refuse(me: string, action: RefusedAction, reason: Refusal): void {
     this.o.send(me, { t: 'refused', action, reason });
   }
 
   private async lists(a: string, b: string): Promise<void> {
     await this.list(a);
-    if (this.o.where(b) !== undefined) await this.list(b);
+    // (Someone blocking a guest changes nothing a guest could see.)
+    if (this.o.where(b) !== undefined && !this.o.isGuest?.(b)) await this.list(b);
   }
 
   /** A player's friends list, whole, if they are online. */

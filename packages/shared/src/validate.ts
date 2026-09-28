@@ -2,6 +2,7 @@
  * Content checks for maps. Run on every change (npm run validate) so a broken map never ships.
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
+import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
 import { STARTER_TOOLS, findTiles, type ItemsData } from './items';
 import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type NpcLook, type TileKind } from './map';
@@ -286,9 +287,9 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     const effects = Object.values(i.use ?? {}).filter(v => (typeof v === 'number' && v !== 0) || v === true).length;
     if (i.kind === 'consumable' && !effects) err(`${name} is a consumable that does nothing when used`);
     if (i.use && !effects) err(`${name}: use does nothing`);
-    if (i.kind === 'charm' && !Object.values(i.charm ?? {}).some(v => typeof v === 'number' && v > 0 && v !== 1)) err(`${name} is a charm that does nothing`);
+    if (i.kind === 'charm' && !MODS.some(k => modChanges(k, i.charm?.[k]))) err(`${name} is a charm that does nothing`);
     if (i.kind !== 'charm' && i.charm) err(`${name}: only charms have a charm`);
-    for (const k of Object.keys(i.charm ?? {})) if (!['wetting', 'load', 'hitch', 'warmth'].includes(k)) err(`${name}: a charm changes wetting, load, hitch or warmth, not ${k}`);
+    for (const k of Object.keys(i.charm ?? {})) if (!MODS.includes(k as keyof Mods)) err(`${name}: a charm changes ${MODS.slice(0, -1).join(', ')} or ${MODS.at(-1)}, not ${k}`);
     for (const [field, v] of [['weight', i.weight], ['fuel', i.fuel], ['charge', i.charge], ['xp', i.xp]] as const) {
       if (v !== undefined && !(typeof v === 'number' && v > 0)) err(`${name}: ${field} must be a number above 0`);
     }
