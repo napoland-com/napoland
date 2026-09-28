@@ -565,6 +565,29 @@ export async function keepsNotebook(storage: Storage): Promise<void> {
 }
 
 /**
+ * First finders on `storage` (in memory, or a real database): kept with the finder's name (it comes from
+ * the player), the oldest first; never written over by a later finder of the same secret; and gone with
+ * a guest who stayed away, as the database's foreign key takes them.
+ */
+export async function keepsFirsts(storage: Storage): Promise<void> {
+  const ana = await savedPlayer(storage, { lastSeenAt: 1_000 });
+  const bo = await savedPlayer(storage, { authSub: `dev:${randomUUID()}@example.test`, tokenHash: null });
+  const secret = `note:${randomUUID()}`, other = `keepsake:${randomUUID()}`;
+  await storage.saveFirst({ secret, player: ana.id, name: ana.name, day: 3052, at: 5_000 });
+  await storage.saveFirst({ secret, player: bo.id, name: bo.name, day: 3053, at: 6_000 });
+  await storage.saveFirst({ secret: other, player: bo.id, name: bo.name, day: 3050, at: 4_000 });
+  const mine = (await storage.loadFirsts()).filter(f => f.secret === secret || f.secret === other);
+  expect(mine).toEqual([
+    { secret: other, player: bo.id, name: bo.name, day: 3050, at: 4_000 },
+    { secret, player: ana.id, name: ana.name, day: 3052, at: 5_000 },
+  ]);
+  // A guest last seen long ago goes, and their first finds with them: the secret waits for a new first finder.
+  await storage.forgetGuests(2_000);
+  const left = (await storage.loadFirsts()).filter(f => f.secret === secret || f.secret === other);
+  expect(left.map(f => f.secret)).toEqual([other]);
+}
+
+/**
  * The notes a player read and the keepsakes they brought home, on `storage` (in memory, or a real
  * database): none for a new player, what a save writes, and a save of a record without them (the release
  * before, which never writes them) leaves them as they are.

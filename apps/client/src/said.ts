@@ -5,7 +5,8 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, toNextMerit, type BagSlot, type Did, type Dir,
+  CACHE_SIZE, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Did,
+  type Dir,
   type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
 } from '@napoland/shared';
 import { oddsText, pieceName, type Items } from './items';
@@ -251,10 +252,8 @@ export function leftBy(name: string, mine: boolean, ageS: number): string {
 
 // ---------- merits ----------
 
-/** "12,345": a count with its thousands apart, the same in every language the browser speaks. */
-export function thousands(n: number): string {
-  return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-}
+/** "12,345": a count with its thousands apart, the same in every language the browser speaks (firsts.ts). */
+export { thousands };
 
 /**
  * Past level 20, what merits there are: "3 to spend, 1,240 XP to the next" (a guest spends them once

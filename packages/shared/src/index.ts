@@ -3,6 +3,7 @@ export * from './calls';
 export * from './chat';
 export * from './energy';
 export * from './feats';
+export * from './firsts';
 export * from './gear';
 export * from './items';
 export * from './map';

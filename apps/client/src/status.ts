@@ -139,6 +139,8 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
   // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where. A
   // lodestone's tug is a pulse on the status panel and a faint sound: a banner would make it loud.
   if (n.kind === 'call' || n.kind === 'tug' || n.kind === 'note') return null;
+  // One line, for everyone online.
+  if (n.kind === 'first') return { title: n.text, sub: '' };
   if (n.kind === 'keepsake') {
     const def = items?.get(n.item), energy = items?.keepsakes?.energy ?? 0;
     if (n.home >= n.of) return { title: 'All the keepsakes are home', sub: `${def ? `${def.name}, the last of them.\n` : ''}Your energy bar is ${energy} bigger, for good.` };

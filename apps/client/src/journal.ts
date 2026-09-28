@@ -6,7 +6,8 @@
  * and the notes people left (notes.ts), by who wrote them, with the keepsakes you brought home.
  */
 import {
-  ANYWHERE, AUTHOR_NAMES, NOTE_AUTHORS, notesOf, type Chapter, type ItemDef, type KeepsakesData, type MapData, type NoteAuthor, type NotebookData, type NotebookState,
+  ANYWHERE, AUTHOR_NAMES, NOTE_AUTHORS, firstInJournal, notesOf, secretKey, type Chapter, type FirstView, type ItemDef, type KeepsakesData, type MapData, type NoteAuthor, type NotebookData,
+  type NotebookState,
 } from '@napoland/shared';
 
 export interface JournalView {
@@ -92,6 +93,8 @@ export interface NoteView {
   lines: string[];
   /** Read since the notes were last looked at. */
   fresh: boolean;
+  /** Who read it first on the server, and when: "First read by Ana, day 3,052." (firsts.ts). */
+  first?: string;
 }
 
 /** Someone who left notes: how many of theirs you read of how many there are, and those, in the order you read them. */
@@ -105,7 +108,7 @@ export interface AuthorView {
 
 /** The keepsakes home: each with its line, how many there are in all, and what the whole set home gives. */
 export interface KeepsakesView {
-  home: Array<{ item: string; name: string; text: string }>;
+  home: Array<{ item: string; name: string; text: string; first?: string }>;
   total: number;
   energy: number;
 }
@@ -122,18 +125,26 @@ export interface NotesView {
  * the notes of theirs you read, then the keepsakes you brought home. A note or keepsake this copy does not
  * know (a newer release's) neither shows nor counts.
  */
-export function notesView(maps: Iterable<MapData>, read: readonly string[], keepsakes: KeepsakesData | undefined, home: readonly string[], item: (id: string) => ItemDef | undefined, fresh: ReadonlySet<string> = new Set()): NotesView {
+export function notesView(
+  maps: Iterable<MapData>, read: readonly string[], keepsakes: KeepsakesData | undefined, home: readonly string[], item: (id: string) => ItemDef | undefined, fresh: ReadonlySet<string> = new Set(),
+  firsts: ReadonlyMap<string, FirstView> = new Map(), me = '',
+): NotesView {
   const all = notesOf(maps);
+  // Who found it first, under it: "by you" when that was you.
+  const first = (key: string) => {
+    const f = firsts.get(key);
+    return f ? { first: firstInJournal(f, f.name === me) } : {};
+  };
   const authors = NOTE_AUTHORS.flatMap((by): AuthorView[] => {
     const notes = read.flatMap((id): NoteView[] => {
       const n = all.get(id);
-      return n && n.note.by === by ? [{ id, name: n.note.name, place: n.map.name, lines: [...n.note.text], fresh: fresh.has(id) }] : [];
+      return n && n.note.by === by ? [{ id, name: n.note.name, place: n.map.name, lines: [...n.note.text], fresh: fresh.has(id), ...first(secretKey({ kind: 'note', id })) }] : [];
     });
     return notes.length ? [{ by, name: AUTHOR_NAMES[by], have: notes.length, total: [...all.values()].filter(n => n.note.by === by).length, notes }] : [];
   });
   const kept = (keepsakes?.places ?? []).filter(p => home.includes(p.item)).flatMap(p => {
     const def = item(p.item);
-    return def ? [{ item: def.id, name: def.name, text: def.text }] : [];
+    return def ? [{ item: def.id, name: def.name, text: def.text, ...first(secretKey({ kind: 'keepsake', item: def.id })) }] : [];
   });
   return { authors, keepsakes: kept.length ? { home: kept, total: keepsakes!.places.length, energy: keepsakes!.energy } : null };
 }
@@ -148,12 +159,15 @@ export const allHome = (k: KeepsakesView): string => `All of them are home: your
 /** The notes part as the journal draws it: each writer under their heading, then the keepsakes home, or that there is nothing yet. */
 export function notesHtml(v: NotesView): string {
   const authors = v.authors.map(a => `<section class="area"><h3>${esc(authorHeading(a))}</h3>${a.notes.map(n => `<article class="page note"${n.fresh ? ' data-fresh' : ''}><h4>${esc(n.name)}</h4>`
-    + `<p class="where">${esc(n.place)}</p>${n.lines.map(l => `<p>${esc(l)}</p>`).join('')}</article>`).join('')}</section>`).join('');
+    + `<p class="where">${esc(n.place)}</p>${n.lines.map(l => `<p>${esc(l)}</p>`).join('')}${firstLine(n.first)}</article>`).join('')}</section>`).join('');
   const k = v.keepsakes;
-  const keepsakes = k ? `<section class="area keepsakes"><h3>${esc(keepsakesHeading(k))}</h3>${k.home.map(h => `<article class="page"><h4>${esc(h.name)}</h4><p>${esc(h.text)}</p></article>`).join('')}`
+  const keepsakes = k ? `<section class="area keepsakes"><h3>${esc(keepsakesHeading(k))}</h3>${k.home.map(h => `<article class="page"><h4>${esc(h.name)}</h4><p>${esc(h.text)}</p>${firstLine(h.first)}</article>`).join('')}`
     + `${k.home.length === k.total ? `<p class="blank" data-filled>${esc(allHome(k))}</p>` : ''}</section>` : '';
   return authors + keepsakes || `<p class="none">${NOTHING_YET}</p>`;
 }
+
+/** Who found it first, dim under a note or a keepsake. */
+const firstLine = (first: string | undefined) => (first ? `<p class="first">${esc(first)}</p>` : '');
 
 function esc(t: string): string {
   return t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);

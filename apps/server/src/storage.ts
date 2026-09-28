@@ -181,6 +181,21 @@ export interface ThanksRecord {
 }
 
 /**
+ * The first player on the server to find a secret (firsts.ts): which secret, who (id and name), on which
+ * of the Zone's days, and when. Only the first is ever kept; the player's row takes theirs with it.
+ */
+export interface FirstRecord {
+  secret: string;
+  player: string;
+  /** The finder's name, shown with it. Not stored with it: it comes from the player. */
+  name: string;
+  /** The Zone's day it was found (zoneDay). */
+  day: number;
+  /** When it was found, ms since the epoch. */
+  at: number;
+}
+
+/**
  * A thing left in a crate for whoever comes next (caches.ts): which crate (its map and tile), what, who
  * left it and when. One unit each; a crate holds CACHE_SIZE at most. The server hands out the ids.
  */
@@ -305,6 +320,10 @@ export interface Storage {
   forgetThanks(before: number): Promise<number>;
   /** One more thanks received by `helper`, online or not: their `thanked` count grows by one, on its own. */
   creditThanks(helper: string): Promise<void>;
+  /** Every first finder, the oldest first, with their name. */
+  loadFirsts(): Promise<FirstRecord[]>;
+  /** Keeps the first finder of a secret: never over one kept already, whoever saves it. */
+  saveFirst(f: FirstRecord): Promise<void>;
   /** Every thing lying in a crate, oldest first, with its owner's name. */
   loadCacheItems(): Promise<CacheItemRecord[]>;
   saveCacheItem(c: CacheItemRecord): Promise<void>;
@@ -383,6 +402,7 @@ export class MemoryStorage implements Storage {
   private readonly marks = new Map<number, Omit<MarkRecord, 'name' | 'color'>>();
   private readonly thanks = new Map<string, Omit<ThanksRecord, 'name'>>();
   private readonly cacheItems = new Map<number, Omit<CacheItemRecord, 'name'>>();
+  private readonly firsts = new Map<string, Omit<FirstRecord, 'name'>>();
   private stone: StoneRecord | null = null;
   private since: number | undefined;
   private readonly off = new Set<string>();
@@ -480,6 +500,7 @@ export class MemoryStorage implements Storage {
       for (const [id, m] of this.marks) if (m.owner === rec.id) this.marks.delete(id);
       for (const [key, t] of this.thanks) if (t.giver === rec.id || t.helper === rec.id) this.thanks.delete(key);
       for (const [id, c] of this.cacheItems) if (c.owner === rec.id) this.cacheItems.delete(id);
+      for (const [secret, f] of this.firsts) if (f.player === rec.id) this.firsts.delete(secret);
       this.off.delete(rec.id);
       this.tradesOff.delete(rec.id);
       this.links = this.links.filter(l => l.from !== rec.id && l.to !== rec.id);
@@ -581,6 +602,18 @@ export class MemoryStorage implements Storage {
 
   async removeCacheItem(id: number): Promise<void> {
     this.cacheItems.delete(id);
+  }
+
+  async loadFirsts(): Promise<FirstRecord[]> {
+    return [...this.firsts.values()].map(f => ({ ...f, name: this.byId.get(f.player)!.name })).sort((a, b) => a.at - b.at);
+  }
+
+  async saveFirst(f: FirstRecord): Promise<void> {
+    // Like the database's foreign key: the finder is a player who exists. And its key: one per secret.
+    if (!this.byId.has(f.player)) throw new Error(`there is no player ${f.player}`);
+    if (this.firsts.has(f.secret)) return;
+    const { name: _name, ...stored } = f;
+    this.firsts.set(f.secret, stored);
   }
 
   async loadStone(): Promise<StoneRecord | null> {
@@ -727,6 +760,14 @@ interface MarkRow {
   placed_at: Date;
   /** Null for a mark painted by a release before 015: it fades a day after it was placed. */
   fades_at: Date | null;
+}
+
+interface FirstRow {
+  secret: string;
+  player: string;
+  name: string;
+  day: number;
+  found_at: Date;
 }
 
 interface CacheItemRow {
@@ -1079,6 +1120,18 @@ export class PgStorage implements Storage {
 
   async removeCacheItem(id: number): Promise<void> {
     await this.pool.query('DELETE FROM cache_items WHERE id = $1', [id]);
+  }
+
+  async loadFirsts(): Promise<FirstRecord[]> {
+    const r = await this.pool.query<FirstRow>(
+      `SELECT f.secret, f.player, p.name, f.day, f.found_at FROM firsts f JOIN players p ON p.id = f.player ORDER BY f.found_at, f.secret`,
+    );
+    return r.rows.map(f => ({ secret: f.secret, player: f.player, name: f.name, day: f.day, at: f.found_at.getTime() }));
+  }
+
+  async saveFirst(f: FirstRecord): Promise<void> {
+    // Two servers, or a write racing another: whichever came first stays.
+    await this.pool.query('INSERT INTO firsts (secret, player, day, found_at) VALUES ($1, $2, $3, $4) ON CONFLICT (secret) DO NOTHING', [f.secret, f.player, f.day, new Date(f.at)]);
   }
 
   async loadStone(): Promise<StoneRecord | null> {

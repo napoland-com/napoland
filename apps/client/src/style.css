@@ -555,6 +555,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 /* The notes people left (the third part, by who wrote them): where each lies, dim under its name, then its lines. */
 .field-notes .page .where { margin: -.1em 0 .3em; font-size: .85em; color: #8a8474; }
 .field-notes .note .where + p ~ p { margin-top: .35em; }
+/* Who found it first on the server (firsts.ts), dim under it. */
+.field-notes .page .first { margin-top: .35em; font-size: .85em; color: #b9a36a; }
 /* About (about.ts): who makes the game, and where its code and rules are. It opens where the bag does.
    Its words never go below 11 to 12px, so a small phone can still read the small print. */
 .about-sheet .sheet-head { font-size: max(14px, calc(var(--u) * 1.35)); }

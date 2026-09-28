@@ -14,7 +14,7 @@ import { DROP_LIFETIME_MS, utcDay } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type CacheItemRecord, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
 import {
-  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsMerits, keepsNotebook, keepsNotes, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsTheWornOutMark,
+  forgetsGuestsWhoStayedAway, keepsFirsts, keepsFriendsAndMessages, keepsMerits, keepsNotebook, keepsNotes, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsTheWornOutMark,
   keepsWhatANewerReleaseSaved, keepsWholeRow, meritsKeptThroughARestart, outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn, restKeptThroughARestart,
   restartKeepsBagsAndPiles, savesATradeTogether, signInAndClaim,
 } from './helpers';
@@ -64,7 +64,7 @@ describe.skipIf(!url)('PgStorage', () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
       '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql', '016_caches.sql', '017_zones.sql', '018_rested.sql', '019_merits.sql',
-      '020_trades_off.sql', '021_notebook.sql', '022_notes.sql',
+      '020_trades_off.sql', '021_notebook.sql', '022_notes.sql', '023_firsts.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -446,6 +446,17 @@ describe.skipIf(!url)('PgStorage', () => {
       [old.id, old.name, old.tokenHash, old.x, old.y, old.dir, old.color, new Date(old.createdAt), new Date(old.lastSeenAt)],
     );
     expect((await storage.findByTokenHash(old.tokenHash))!.notebook).toBeUndefined();
+  });
+
+  it('keeps the first finders, never written over, and lets a guest who stayed away take theirs', async () => {
+    await keepsFirsts(storage);
+    // What the table holds: the finder by id, and a name only through them.
+    const p = player('Pg First');
+    expect(await storage.create(p)).toBe(true);
+    await storage.saveFirst({ secret: 'note:pg-first', player: p.id, name: 'ignored', day: 3052, at: 7_000 });
+    const row = await admin.query(`SELECT secret, player, day FROM ${schema}.firsts WHERE secret = 'note:pg-first'`);
+    expect(row.rows).toEqual([{ secret: 'note:pg-first', player: p.id, day: 3052 }]);
+    expect((await storage.loadFirsts()).find(f => f.secret === 'note:pg-first')?.name).toBe(p.name);
   });
 
   it('keeps the notes read and the keepsakes home, never lost to a save without them', async () => {

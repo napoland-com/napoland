@@ -36,9 +36,9 @@
  */
 import {
   BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, emptyNotebook, energyAfter,
-  findPath, fireTakes, flashHits, inSurge, isKeepsake, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, objectTiles, outfitsFor,
-  stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank, type CacheItemView, type LookKind, type MeritsView, type Mods, type NextGear,
-  type NotebookData, type NotebookState, type Page,
+  findPath, fireTakes, firstBanner, flashHits, inSurge, isKeepsake, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf,
+  objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank, type CacheItemView, type FirstView,
+  type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView, type TradeEnd, type TradeView,
@@ -189,6 +189,8 @@ export type News =
   | { kind: 'page'; page: Page } | { kind: 'blank'; page: Page; blank: Blank }
   /** You read a note someone left for the first time (no banner: you just read it), or a keepsake came home: `of` how many there are, `home` of them home now. */
   | { kind: 'note'; id: string } | { kind: 'keepsake'; item: string; home: number; of: number }
+  /** Someone (or you) is the first on the server to find a secret (firsts.ts): the banner's one line, for everyone online. */
+  | { kind: 'first'; text: string }
   /** A parcel came into your chest; the welcome parcel also names the outfits signing in gave you (their ids). */
   | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] }
   /** Your lodestone tugs (lodestone.ts): a shard lies near. It never says where. */
@@ -285,8 +287,12 @@ export class Game {
   freshNotes = new Set<string>();
   /** The keepsakes you brought home, by item id, in the order they came. Replaced whole on every change. */
   keepsakesHome: string[] = [];
-  /** Counts every change to the notes read, the keepsakes home and which notes are fresh, so the journal's notes are redrawn only then. */
+  /** Counts every change to the notes read, the keepsakes home, which notes are fresh and who found them first, so the journal's notes are redrawn only then. */
   notesChanges = 0;
+  /** Who found each secret found so far first (firsts.ts), by its key, as the server said. */
+  firsts = new Map<string, FirstView>();
+  /** Every note on the maps by id, for what a secret is called (firsts.ts): worked out the first time it is needed. */
+  private notesById: ReturnType<typeof notesOf> | null = null;
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
@@ -526,6 +532,7 @@ export class Game {
         this.weather = msg.weather;
         this.notesRead = [...msg.notes ?? []];
         this.keepsakesHome = [...msg.keepsakes ?? []];
+        this.firsts = new Map((msg.firsts ?? []).map(f => [f.secret, f]));
         this.notesChanges++;
         break;
       }
@@ -657,6 +664,14 @@ export class Game {
         this.freshNotes.add(msg.id);
         this.notesChanges++;
         this.news.push({ kind: 'note', id: msg.id });
+        break;
+      }
+      case 'first': {
+        this.firsts.set(msg.first.secret, msg.first);
+        this.notesChanges++;
+        // What it is called comes from the maps and items this copy has; one it does not know goes unsaid.
+        const title = secretTitle(msg.first.secret, (this.notesById ??= notesOf(this.maps.all())), this.items.byId);
+        if (title) this.news.push({ kind: 'first', text: firstBanner(msg.first, title, msg.first.name === this.myName()) });
         break;
       }
       case 'keepsake': {
@@ -1863,6 +1878,11 @@ export class Game {
     if (!this.freshPages.size) return;
     this.freshPages = new Set();
     this.notebookChanges++;
+  }
+
+  /** Your character's name, as your map shows it ('' before the welcome). */
+  myName(): string {
+    return (this.meId && this.players.get(this.meId)?.name) || '';
   }
 
   /** The journal's notes were looked at: none of them is new any more. */
