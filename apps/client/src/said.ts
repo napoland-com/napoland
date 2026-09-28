@@ -483,6 +483,9 @@ export function doorText(lot: LotView | null): string {
   return lot.name && lot.home ? `${lot.name} is home.` : 'Nobody answers.';
 }
 
+/** After the story's first chapter, on a new player's first wake (Game.firstWake): who to ask about the woods. */
+export const FIRST_WAKE = 'Mira, by the notice board in town, knows where things glow out in the woods.';
+
 /** The setting beside friend and trade requests: whether your street sees your name on your door, and your window lit while you are home. */
 export const DOOR_SETTING = 'Show my name on my door and when I am home';
 
