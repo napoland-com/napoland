@@ -88,7 +88,7 @@ describe('ranks', () => {
     expect(rankText(feat('fire-keeper'), 5)).toBe('Fires warm you 30% faster');
     expect(rankText(feat('mender'), 1)).toBe('Gear wears 5% slower out there');
     expect(rankText(feat('forager'), 2)).toBe('Finds come up double 8% of the time');
-    expect(rankText(feat('pathfinder'), 3)).toBe('The drain 85 steps or more from home is 9% gentler');
+    expect(rankText(feat('pathfinder'), 3)).toBe('85 steps or more from home, you tire 9% slower');
   });
 });
 

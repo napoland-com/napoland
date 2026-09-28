@@ -114,7 +114,7 @@ export const FEATS: readonly Feat[] = [
   },
   {
     id: 'pathfinder', name: 'Pathfinder', stat: 'farSteps', counts: `steps ${FAR_STEPS} or more from home`, mod: 'farDrain', way: 'less',
-    does: `The drain ${FAR_STEPS} steps or more from home is {n} gentler`,
+    does: `${FAR_STEPS} steps or more from home, you tire {n} slower`,
     ranks: ranks([500, 1_500, 5_000, 12_000, 30_000], [0.03, 0.06, 0.09, 0.12, 0.15]),
   },
 ];

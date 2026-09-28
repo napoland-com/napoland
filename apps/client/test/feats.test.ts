@@ -23,13 +23,13 @@ describe('feats in the status panel', () => {
       { name: 'Fire keeper', rank: 1, does: 'Fires warm you 15% faster.', next: '20 of 60 fires fed to rank 2', progress: 20 / 60 },
       { name: 'Mender', rank: 2, does: 'Gear wears 10% slower out there.', next: '17 of 40 pieces mended to rank 3', progress: 17 / 40 },
       { name: 'Forager', rank: 5, does: 'Finds come up double 15% of the time.', next: 'Top rank' },
-      { name: 'Pathfinder', rank: 4, does: 'The drain 85 steps or more from home is 12% gentler.', next: '29,999 of 30,000 steps 85 or more from home to rank 5', progress: 29_999 / 30_000 },
+      { name: 'Pathfinder', rank: 4, does: '85 steps or more from home, you tire 12% slower.', next: '29,999 of 30,000 steps 85 or more from home to rank 5', progress: 29_999 / 30_000 },
     ]);
   });
 
   it('shows a feat never started at rank 0, with what rank 1 needs and does', () => {
     expect(featView(feat('mender'), 0)).toEqual({ name: 'Mender', rank: 0, does: 'Rank 1: gear wears 5% slower out there.', next: '0 of 5 pieces mended to rank 1', progress: 0 });
-    expect(featView(feat('pathfinder'), 0).does).toBe('Rank 1: the drain 85 steps or more from home is 3% gentler.');
+    expect(featView(feat('pathfinder'), 0).does).toBe('Rank 1: 85 steps or more from home, you tire 3% slower.');
     expect(featView(feat('rain-walker'), 100_000)).toEqual({ name: 'Rain walker', rank: 5, does: 'Rain soaks you 50% slower.', next: 'Top rank' });
   });
 
@@ -67,7 +67,7 @@ describe('a new rank', () => {
   it('is announced with the feat, the rank and what it does', () => {
     expect(newsBanner({ kind: 'feat', id: 'rain-walker', rank: 2 }, '')).toEqual({ title: 'Rain walker, rank 2', sub: 'Rain soaks you 30% slower.' });
     expect(newsBanner({ kind: 'feat', id: 'forager', rank: 1 }, '')).toEqual({ title: 'Forager, rank 1', sub: 'Finds come up double 5% of the time.' });
-    expect(newsBanner({ kind: 'feat', id: 'pathfinder', rank: 5 }, '')).toEqual({ title: 'Pathfinder, rank 5', sub: 'The drain 85 steps or more from home is 15% gentler.' });
+    expect(newsBanner({ kind: 'feat', id: 'pathfinder', rank: 5 }, '')).toEqual({ title: 'Pathfinder, rank 5', sub: '85 steps or more from home, you tire 15% slower.' });
     // A rank the table does not have says nothing.
     expect(newsBanner({ kind: 'feat', id: 'rain-walker', rank: 6 }, '')).toBeNull();
     expect(newsBanner({ kind: 'feat', id: 'rain-walker', rank: 0 }, '')).toBeNull();
