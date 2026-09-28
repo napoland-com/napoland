@@ -1252,7 +1252,7 @@ export class World {
     this.saveNow.set(id, p.rec);
     if (tool) this.giveTool(id, recipe.make);
     // Walt has a word for the first thing someone makes (story.ts, remarks): gear, each piece; a tool is no piece of gear.
-    if (this.items.get(recipe.make)?.kind === 'gear') for (let i = 0; i < count; i++) this.count(p, 'made', now);
+    if (this.items.get(recipe.make)?.kind === 'gear') this.count(p, 'made', now, count);
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
     // The text box says where it went: a tool (its kind tells the client) is the player's for good.
     this.did(p, { kind: 'made', item: recipe.make, count });
@@ -1617,7 +1617,7 @@ export class World {
     p.hitched = false;
     this.collapses = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
     this.collapses.push({ map, at: now });
-    // Mira has a word for the first one (story.ts, remarks); the zone that follows carries the count.
+    // Mira has a word for the first one (story.ts, remarks); the zone that follows carries the count too.
     this.count(p, 'collapsed', now);
     this.onCollapse?.(id, { map, x, y });
   }
@@ -1768,19 +1768,24 @@ export class World {
   }
 
   /**
-   * One more of what counts toward a feat, or toward what people say once (a collapse, a surge, gear
-   * made). A new rank is the player's for good: they hear it (once: counts only go up), and it is saved
-   * at once.
+   * `by` more (one, unless said) of what counts toward a feat, or toward what people say once (a
+   * collapse, a surge, gear made). A new rank is the player's for good: they hear it (once: counts only
+   * go up), and it is saved at once.
    */
-  private count(p: Online, stat: Exclude<(typeof STATS)[number], 'told'>, now: number): void {
+  private count(p: Online, stat: Exclude<(typeof STATS)[number], 'told'>, now: number, by = 1): void {
     const stats = (p.rec.stats ??= {});
-    const n = (stats[stat] ?? 0) + 1;
+    const n = (stats[stat] ?? 0) + by;
     stats[stat] = n;
     const feat = featOf(stat);
-    // A count no feat has (a collapse, a surge, gear made) comes seldom, and what people say waits on it: saved at once.
-    if (!feat) return void this.saveNow.set(p.rec.id, p.rec);
+    // A count no feat has (a collapse, a surge, gear made) comes seldom, and what people say waits on it: saved
+    // at once, and the player hears it at once. The text box shows a remark by what the client knows, and the
+    // server keeps it said by what it knows: a count still on its way would lose a remark heard on the same map.
+    if (!feat) {
+      this.outbox.push({ to: p.rec.id, msg: { t: 'stats', stats: { ...stats } } });
+      return void this.saveNow.set(p.rec.id, p.rec);
+    }
     const rank = rankOf(feat, n);
-    if (rank === rankOf(feat, n - 1)) return;
+    if (rank === rankOf(feat, n - by)) return;
     this.outbox.push({ to: p.rec.id, msg: { t: 'feat', id: feat.id, rank, stats: { ...stats } } });
     this.saveNow.set(p.rec.id, p.rec);
     // The rank changes the rates right away, however little: the player hears them.
