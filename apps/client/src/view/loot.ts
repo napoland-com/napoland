@@ -17,7 +17,7 @@ import { GLOW_Y, Puffs } from './fire';
 import { OUTLINE, OUTLINE_INSTANCED, bake, box, flat, hash2, ownToon, part, pivot, softTexture, toon } from './toon';
 
 /** Items with a look of their own; any other item is drawn as a sack. */
-export const ITEM_LOOKS = ['glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'live-shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead'] as const;
+export const ITEM_LOOKS = ['glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'live-shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead', 'ember-coal', 'pale-moth'] as const;
 export type Look = (typeof ITEM_LOOKS)[number] | 'sack' | 'pile';
 
 export function lookOf(item: string): Look {
@@ -50,6 +50,8 @@ const STYLE: Record<Look, Style> = {
   'warm-pebble': { pool: '#ff9a4a', size: 1.2, top: 0.16, glow: { color: '#ff9447', emissive: '#8a3a0c' } },
   'hollow-feather': { pool: '#e8e2d6', size: 1.2, top: 0.12 },
   'humming-bead': { pool: '#5ff0e0', size: 1.3, top: 0.3, glow: { color: '#8ff7ee', emissive: '#1f8f86' }, floats: true },
+  'ember-coal': { pool: '#ff6a3a', size: 1.25, top: 0.16, glow: { color: '#ff6a38', emissive: '#a3280c' } },
+  'pale-moth': { pool: '#f2ecd8', size: 1.3, top: 0.34, glow: { color: '#efe8d2', emissive: '#6e6650' }, floats: true },
   sack: { pool: '#ffeec4', size: 1.2, top: 0.34 },
   pile: { pool: '#ffcf87', size: 1.7, top: 0.3 },
 };
@@ -180,6 +182,25 @@ export function lootModel(look: Look, glow: THREE.Material): THREE.Group {
     case 'humming-bead': {
       g.add(part(new THREE.IcosahedronGeometry(0.07, 1), glow, 0, 0.26, 0, 0.012));
       g.add(part(flat(new THREE.TorusGeometry(0.1, 0.008, 4, 16)), '#c9d6d4', 0, 0.26, 0, false));
+      break;
+    }
+    case 'ember-coal': {
+      // A lump of coal that never went out: black, and red where it has cracked open.
+      const coal = part(new THREE.DodecahedronGeometry(0.11, 0), '#231d1c', 0, 0.08, 0, 0.012);
+      coal.scale.set(1.25, 0.75, 1.05);
+      g.add(coal, part(new THREE.IcosahedronGeometry(0.045, 0), glow, 0.05, 0.12, 0.03, false), part(new THREE.IcosahedronGeometry(0.03, 0), glow, -0.06, 0.1, -0.02, false));
+      break;
+    }
+    case 'pale-moth': {
+      // A pale moth hovering over the ground (it turns as floating things do), its wings spread and faintly lit.
+      const body = part(flat(new THREE.CylinderGeometry(0.018, 0.012, 0.12, 5)), '#cfc5a8', 0, 0.3, 0, 0.008);
+      body.rotation.x = Math.PI / 2;
+      g.add(body);
+      for (const side of [-1, 1]) {
+        const wing = part(new THREE.BoxGeometry(0.13, 0.008, 0.1), glow, side * 0.075, 0.3, 0.01, 0.008);
+        wing.rotation.set(0, side * 0.25, side * 0.3);
+        g.add(wing);
+      }
       break;
     }
     case 'sack': {

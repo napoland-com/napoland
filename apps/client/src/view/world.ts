@@ -16,7 +16,7 @@
  */
 import * as THREE from 'three';
 import { DIR_VEC, hidden, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
-import { LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
+import { Afterglows, LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
 import { CROUCH_DROP, CROUCH_LEAN, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial } from './grass';
 import { Creatures, Echoes, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
@@ -46,6 +46,8 @@ export interface Avatar {
   hitched?: boolean;
   /** They carry a live find: a column of light over them. */
   live?: boolean;
+  /** A flash left them glowing faintly (the afterglow quirk). */
+  afterglow?: boolean;
   /** What they wear (characters.ts). */
   look?: Look;
 }
@@ -250,6 +252,7 @@ export class WorldView {
   private creatures: Creatures;
   private flares = new Flares();
   private liveGlows = new LiveGlows();
+  private afterglows = new Afterglows();
   private prints = new Prints();
   /** Where someone walks whose gear makes street lights flicker (tiles). */
   private flickerAt: Array<{ x: number; y: number }> = [];
@@ -306,7 +309,7 @@ export class WorldView {
     this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
-    this.scene.add(this.liveGlows.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
+    this.scene.add(this.liveGlows.root, this.afterglows.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
     this.puffs.push(this.flares.sparks);
     this.animate.push(t => this.loot.update(t));
     this.animate.push(t => { this.marks.update(t); this.flares.update(t); this.flashes.update(t); });
@@ -331,6 +334,7 @@ export class WorldView {
     this.creatures.dispose();
     this.flares.dispose();
     this.liveGlows.dispose();
+    this.afterglows.dispose();
     this.prints.dispose();
     this.flashes.dispose();
     this.echoes.dispose();
@@ -1076,6 +1080,8 @@ export class WorldView {
     this.syncAvatars(avatars, meId, fx, fz, dt);
     const carriers = avatars.filter(a => a.live).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
     this.liveGlows.set(carriers.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
+    const glowing = avatars.filter(a => a.afterglow).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
+    this.afterglows.set(glowing.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
     this.creatures.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
     for (const c of this.creatureList) if (c.moving) this.rustleAt(c.x + 0.5, c.y + 0.5);
     this.echoes.update(t, (x, z) => this.groundAt(x, z));

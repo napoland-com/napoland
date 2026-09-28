@@ -65,6 +65,8 @@
  * taker's stash, so it earns no XP at home. What lies in each crate is kept across restarts.
  */
 import {
+  AFTERGLOW_NEAR,
+  AFTERGLOW_S,
   CACHE_NEAR,
   CACHE_SIZE,
   DIR_VEC,
@@ -172,6 +174,11 @@ import {
   weekdayOf,
   wetRate,
   whyNotBuy,
+  keptOffer,
+  offerFrom,
+  swapOffers,
+  traded,
+  type OfferPick,
   type Arrival,
   type BagSlot,
   type BodyView,
@@ -265,6 +272,8 @@ export const SKULKER_STEP_MS = 250;
 /** A skulker notices a player out in the open this close (as the crow walks): farther if they are walking (it hears them). */
 export const SKULKER_HEAR = 6;
 export const SKULKER_SEE = 3;
+/** A skulker hears someone whose gear has the hush quirk (gear.ts) walking only this close. */
+export const SKULKER_HEAR_HUSHED = 4;
 /** A player whose last step ended less than this long ago is walking, as far as a skulker can hear. */
 export const SKULKER_HEAR_MS = 300;
 /** A skulker gives up a chase after this long, then notices nobody for SKULKER_CALM_MS while it goes back to its lair. */
@@ -362,6 +371,9 @@ export interface Joined extends Scene {
   /** Whom the player thanked today (UTC), by id. */
   thanked: string[];
 }
+
+/** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
+export type Swap = { ok: true; aGave: BagSlot[]; bGave: BagSlot[] } | { ok: false; why: 'gone' | 'room'; who: string };
 
 /** What storage must hear: piles and marks to write (or remove: undefined), players to save now, and the Old Stone if it changed. */
 export interface Writes {
@@ -465,6 +477,8 @@ interface Online {
   surgedIn?: string;
   /** The crate they visit (its key: in its room, or near it in the open), and whether they left one thing and took one this visit. */
   visit: { cache: string; left: boolean; took: boolean } | null;
+  /** Their afterglow (a quirk, gear.ts) lasts until then (game time): they glow faintly, and watchers keep off them. */
+  afterglowUntil?: number;
 }
 
 /** A crate for whoever comes next (caches.ts) on its map and tile, and what lies in it, oldest first. */
@@ -580,6 +594,8 @@ interface Flash {
   kind: FlashKind;
   /** Game time when it is over; it discharges in its last FLASH_BURST_S. */
   until: number;
+  /** Who its discharge left glowing (an afterglow): each once. */
+  glowed?: Set<string>;
 }
 
 /** A flare burning in a zone (Zone.flares). */
@@ -591,9 +607,10 @@ interface Flare {
 }
 
 const quirksOf = (w: Worn | undefined): Quirk[] => SLOTS.flatMap(s => (w?.[s]?.quirk ? [w[s]!.quirk!] : []));
-const view = (r: PlayerRecord, live = false, guest = false): PlayerView => ({
+const view = (r: PlayerRecord, live = false, guest = false, afterglow = 0): PlayerView => ({
   id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn), ...(live ? { live: true as const } : {}),
   ...(guest ? { guest: true as const } : {}), ...(r.outfit ? { outfit: r.outfit } : {}), ...(r.pattern ? { pattern: r.pattern } : {}), ...(r.badge ? { badge: r.badge } : {}),
+  ...(afterglow > 0 ? { afterglow } : {}),
 });
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
@@ -833,6 +850,8 @@ export class World {
   private readonly cratesOn = new Map<string, Crate[]>();
   private readonly cacheWrites = new Map<number, CacheItemRecord | undefined>();
   private nextCacheId = 1;
+  /** The game time of the last tick: what everyone sees of an afterglow is counted from it. */
+  private tickAt = 0;
 
   /** `maps` must fit together (validateWorld) and `items` must fit the maps (validateItems); `homeId` is a town. */
   constructor(maps: Iterable<TileMap>, homeId: string, weather: Weather, options: WorldOptions = {}) {
@@ -974,9 +993,10 @@ export class World {
     return [...(this.zones.get(zone)?.players ?? [])].map(p => this.viewOf(p));
   }
 
-  /** A player as everyone sees them. */
+  /** A player as everyone sees them (an afterglow's seconds left as of the last tick). */
   private viewOf(p: Online): PlayerView {
-    return view(p.rec, p.live > 0, this.guest(p.rec));
+    const glow = p.afterglowUntil === undefined ? 0 : round(Math.max(0, p.afterglowUntil - this.tickAt) / 1000, 1);
+    return view(p.rec, p.live > 0, this.guest(p.rec), glow);
   }
 
   /** Nobody signed in with this character, on a server with sign-in: no friends and no outfits until someone does. */
@@ -1218,6 +1238,11 @@ export class World {
       p.rec.energy = Math.min(p.max, Math.max(0, p.rec.energy + use.energy));
     }
     if (use.mark) this.paint(p, now);
+    // A charm may give energy back as a mark is painted (a pale moth): as much as the bar has room for.
+    const was = p.rec.energy;
+    if (use.mark && p.mods.markEnergy > 0) p.rec.energy = Math.min(p.max, p.rec.energy + p.mods.markEnergy);
+    const gave = Math.round(p.rec.energy - was), charm = gave > 0 ? p.rec.bag.map(b => this.items.get(b.item)).find(d => d?.kind === 'charm' && (d.charm?.markEnergy ?? 0) > 0) : undefined;
+    const lift = charm ? { item: charm.id, energy: gave } : undefined;
     if (use.flare) this.light(p, use.flare, now);
     // The bar may have jumped, the bag got lighter: the client counts on from the new values.
     this.refresh(p, now);
@@ -1230,6 +1255,7 @@ export class World {
       ...(use.flare ? { flare: use.flare } : {}),
       ...(use.mark ? { mark: { dir: p.rec.dir, left: markLifetime(p.mods) / 1000 } } : {}),
       ...(into ? { into } : {}),
+      ...(lift ? { lift } : {}),
     });
     // Something that takes energy could empty the bar.
     if (p.rec.energy <= 0) this.collapse(p, now);
@@ -2003,6 +2029,52 @@ export class World {
     if (p) this.outbox.push({ to: id, msg: { t: 'stats', stats: { ...p.rec.stats } } });
   }
 
+  // ---------- trades (trade.ts keeps them; this is only what they do to the bags) ----------
+
+  /**
+   * Where an online player is: their zone (a copy of a map: two players in two copies of one map, two
+   * cabins say, never meet, so they never trade) and their tile.
+   */
+  where(id: string): { zone: string; x: number; y: number } | undefined {
+    const p = this.players.get(id);
+    return p && { zone: p.zone.key, x: p.rec.x, y: p.rec.y };
+  }
+
+  /** What these picks of an online player's bag offer in a trade (offerFrom): only ever what the bag holds. */
+  offerOf(id: string, picks: readonly OfferPick[]): BagSlot[] {
+    const p = this.players.get(id);
+    return p ? offerFrom(p.rec.bag, picks, this.items) : [];
+  }
+
+  /** What of an offer an online player's bag still holds (keptOffer), after it changed. */
+  keptOf(id: string, offer: readonly BagSlot[]): BagSlot[] {
+    const p = this.players.get(id);
+    return p ? keptOffer(p.rec.bag, offer) : [];
+  }
+
+  /**
+   * Two players trade: what each offers leaves their bag and goes into the other's, in one step, or nothing
+   * moves (a bag no longer holds all it offered, or has no room for what it gets after what it gives:
+   * swapOffers). What either had taken out of their stash is out for whoever gets it now (traded), so no
+   * trade earns XP twice. Both hear their bags and rates; saving them, together, is the caller's.
+   */
+  swap(aId: string, bId: string, aGives: readonly BagSlot[], bGives: readonly BagSlot[], now: number): Swap {
+    const a = this.players.get(aId), b = this.players.get(bId);
+    if (!a || !b) return { ok: false, why: 'gone', who: a ? bId : aId };
+    // A bar that ran out collapses on this tick: with its bag, so nothing is handed over by someone who is falling.
+    for (const p of [a, b]) if (this.advance(p, now) <= 0) return { ok: false, why: 'gone', who: p.rec.id };
+    const r = swapOffers(a.rec.bag, b.rec.bag, aGives, bGives, a.slots, b.slots, this.items);
+    if (!r.ok) return { ok: false, why: r.why, who: r.side === 'a' ? aId : bId };
+    a.rec.bag = r.a;
+    b.rec.bag = r.b;
+    [a.rec.stash, b.rec.stash] = traded(a.rec.stash ?? emptyStash(), b.rec.stash ?? emptyStash(), r.aGave, r.bGave);
+    for (const p of [a, b]) {
+      this.sendBag(p, now);
+      this.rerate(p, now);
+    }
+    return { ok: true, aGave: r.aGave, bGave: r.bGave };
+  }
+
   /**
    * Brings everyone's energy up to `now` (whoever ran out collapses), starts queued steps whose time
    * has come and repeats the energy of players whose bar is moving; the sky, the surges and the Old
@@ -2011,6 +2083,7 @@ export class World {
    */
   tick(now: number): void {
     const wall = now + this.epochOffset;
+    this.tickAt = now;
     // A copy nobody is in costs nothing from here on (its piles and marks stay, and so does storage's copy of them).
     this.closeEmptied();
     if (this.cycle) this.setWeather(weatherAt(wall).weather, now);
@@ -2019,6 +2092,7 @@ export class World {
     this.moveConditions(now);
     this.moveCalendar(now);
     this.startFlashes(now);
+    this.afterglows(now);
     const wasAwake = this.stoneAwake;
     this.burnStone(now);
     if (wasAwake && !this.stoneAwake) this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
@@ -2205,6 +2279,7 @@ export class World {
     p.rec.energy = this.maxOf(p.rec);
     p.rec.wet = 0;
     p.hitched = false;
+    p.afterglowUntil = undefined;
     // They wake up at home: the next time out is a new trip.
     p.gifts = 0;
     this.collapses = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
@@ -2742,8 +2817,9 @@ export class World {
         }
         // Anyone who faces it holds it still, prey or not: a friend can keep watch.
         if (here.some(p => manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_SEE && faces(p.rec.x, p.rec.y, p.rec.dir, w.x, w.y))) continue;
+        // An afterglow keeps them off: whoever glows with it is nobody's prey.
         const prey = here
-          .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
+          .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && !this.glowing(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
           .sort((a, b) => manhattan(a.rec.x, a.rec.y, w.x, w.y) - manhattan(b.rec.x, b.rec.y, w.x, w.y))[0];
         if (!prey) continue;
         const next = pathStep(map, w.x, w.y, prey.rec.x, prey.rec.y, (x, y) => this.watcherMayStand(map, x, y) && !this.nearFlare(zone, x, y, now) && !this.creatureAt(zone, x, y));
@@ -2755,6 +2831,40 @@ export class World {
         }
         if (manhattan(prey.rec.x, prey.rec.y, w.x, w.y) <= 1) this.touch(w, prey, now);
       }
+    }
+  }
+
+  /** How far a skulker hears someone walking: less far when their gear hushes their steps. */
+  private heardFrom(p: Online): number {
+    return quirksOf(p.rec.worn).includes('hush') ? SKULKER_HEAR_HUSHED : SKULKER_HEAR;
+  }
+
+  /** Their afterglow is on: they glow faintly, and watchers keep off them. */
+  private glowing(p: Online, now: number): boolean {
+    return p.afterglowUntil !== undefined && now < p.afterglowUntil;
+  }
+
+  /**
+   * Afterglows (a quirk, gear.ts): a flash discharging within AFTERGLOW_NEAR tiles of someone whose gear has
+   * it leaves them glowing for AFTERGLOW_S, once for each flash (a second flash starts it again). Everyone in
+   * their zone hears it start and end.
+   */
+  private afterglows(now: number): void {
+    for (const zone of this.zones.values()) {
+      for (const f of zone.flashes) {
+        if (f.until <= now || (f.until - now) / 1000 > FLASH_BURST_S) continue;
+        for (const p of zone.players) {
+          if (f.glowed?.has(p.rec.id) || Math.hypot(f.x - p.rec.x, f.y - p.rec.y) > AFTERGLOW_NEAR || !quirksOf(p.rec.worn).includes('afterglow')) continue;
+          (f.glowed ??= new Set()).add(p.rec.id);
+          p.afterglowUntil = now + AFTERGLOW_S * 1000;
+          this.toZone(zone.key, { t: 'afterglow', id: p.rec.id, left: AFTERGLOW_S });
+        }
+      }
+    }
+    for (const p of this.players.values()) {
+      if (p.afterglowUntil === undefined || now < p.afterglowUntil) continue;
+      p.afterglowUntil = undefined;
+      this.toZone(p.zone.key, { t: 'afterglow', id: p.rec.id, left: 0 });
     }
   }
 
@@ -2864,7 +2974,7 @@ export class World {
         }
         if (s.chasing === undefined && now >= s.calmUntil) {
           prey = here
-            .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && manhattan(p.rec.x, p.rec.y, s.x, s.y) <= (now - p.readyAt < SKULKER_HEAR_MS ? SKULKER_HEAR : SKULKER_SEE))
+            .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && manhattan(p.rec.x, p.rec.y, s.x, s.y) <= (now - p.readyAt < SKULKER_HEAR_MS ? this.heardFrom(p) : SKULKER_SEE))
             .sort((a, b) => manhattan(a.rec.x, a.rec.y, s.x, s.y) - manhattan(b.rec.x, b.rec.y, s.x, s.y))[0];
         }
         if (prey) {

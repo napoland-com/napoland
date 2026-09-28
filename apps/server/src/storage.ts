@@ -208,11 +208,15 @@ export interface LinkRecord {
   toName: string;
 }
 
-/** Someone as a friend request finds them: who, whether they take requests, and whether anyone signed in with them (a guest has not). */
+/**
+ * Someone as a friend request (or a friend's ask to trade) finds them: who, whether they take friend
+ * requests and trade requests, and whether anyone signed in with them (a guest has not).
+ */
 export interface PersonRecord {
   id: string;
   name: string;
   requestsOff: boolean;
+  tradesOff: boolean;
   signedIn: boolean;
 }
 
@@ -249,6 +253,8 @@ export interface Storage {
   create(rec: PlayerRecord): Promise<boolean>;
   /** Stores what changes while playing: map and the copy of it, position, direction, energy, bag, color and lastSeenAt. */
   save(rec: PlayerRecord): Promise<void>;
+  /** Saves several players in one step, or none of them: two players who traded, so a swap never lands in one bag only. */
+  saveTogether(recs: readonly PlayerRecord[]): Promise<void>;
   /**
    * A guest is back (lastSeenAt is `at`, ms since the epoch). False, and nothing written, if they no
    * longer exist or someone signed in with them since (they are no guest any more).
@@ -298,6 +304,7 @@ export interface Storage {
   /** A player by id, or by name regardless of case. */
   findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null>;
   setRequestsOff(id: string, off: boolean): Promise<void>;
+  setTradesOff(id: string, off: boolean): Promise<void>;
   /** Every link from or to a player. */
   linksOf(id: string): Promise<LinkRecord[]>;
   /** Adds (on) or removes a link; adding one that exists, or removing one that does not, changes nothing. */
@@ -366,6 +373,7 @@ export class MemoryStorage implements Storage {
   private stone: StoneRecord | null = null;
   private since: number | undefined;
   private readonly off = new Set<string>();
+  private readonly tradesOff = new Set<string>();
   private links: Array<{ from: string; to: string; kind: LinkKind }> = [];
   private tells: Array<Omit<TellRecord, 'fromName'>> = [];
   /** Reports made, for tests. */
@@ -433,6 +441,11 @@ export class MemoryStorage implements Storage {
     }
   }
 
+  async saveTogether(recs: readonly PlayerRecord[]): Promise<void> {
+    // Nothing can come between two writes in memory: one after the other is one step.
+    for (const rec of recs) await this.save(rec);
+  }
+
   async seen(id: string, at: number): Promise<boolean> {
     const rec = this.byId.get(id);
     if (!rec || rec.authSub !== null) return false;
@@ -454,6 +467,7 @@ export class MemoryStorage implements Storage {
       for (const [key, t] of this.thanks) if (t.giver === rec.id || t.helper === rec.id) this.thanks.delete(key);
       for (const [id, c] of this.cacheItems) if (c.owner === rec.id) this.cacheItems.delete(id);
       this.off.delete(rec.id);
+      this.tradesOff.delete(rec.id);
       this.links = this.links.filter(l => l.from !== rec.id && l.to !== rec.id);
       this.tells = this.tells.filter(t => t.from !== rec.id && t.to !== rec.id);
     }
@@ -566,12 +580,17 @@ export class MemoryStorage implements Storage {
   async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {
     const id = 'id' in by ? by.id : this.idByName.get(by.name.toLowerCase());
     const rec = id === undefined ? undefined : this.byId.get(id);
-    return rec ? { id: rec.id, name: rec.name, requestsOff: this.off.has(rec.id), signedIn: rec.authSub !== null } : null;
+    return rec ? { id: rec.id, name: rec.name, requestsOff: this.off.has(rec.id), tradesOff: this.tradesOff.has(rec.id), signedIn: rec.authSub !== null } : null;
   }
 
   async setRequestsOff(id: string, off: boolean): Promise<void> {
     if (off) this.off.add(id);
     else this.off.delete(id);
+  }
+
+  async setTradesOff(id: string, off: boolean): Promise<void> {
+    if (off) this.tradesOff.add(id);
+    else this.tradesOff.delete(id);
   }
 
   async linksOf(id: string): Promise<LinkRecord[]> {
@@ -783,6 +802,38 @@ const thanksFor = (json: unknown): ThanksFor | null => {
   return typeof w.item === 'string' ? { kind: 'cache', ...at, item: w.item } : null;
 };
 
+/**
+ * What a save writes of a player. A record without parcels (never had one) leaves the parcel columns as
+ * they are, as a save without a chapter leaves the story; so does one without an outfit, a pattern or a
+ * badge, while null (taken off) saves none; and one without merits or looks leaves them, so nothing bought
+ * is ever lost. The copy is always said, as the map is: a record without one is in the main copy. So is the
+ * cup of rest: none is empty.
+ */
+// A record without parcels (never had one) leaves the parcel columns as they are, as a save without a chapter
+// leaves the story; so does one without an outfit, a pattern or a badge, while null (taken off) saves none; and
+// one without merits or looks leaves them, so nothing bought is ever lost. The copy is always said, as the map
+// is: a record without one is in the main copy. So is the cup of rest: none is empty. The mark of what was worn
+// counted as taken out (PlayerRecord.wornOut), once written with the counts, stays.
+const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9,
+  stats = $10::jsonb || CASE WHEN players.stats ? 'wornOut' THEN '{"wornOut": 1}'::jsonb ELSE '{}'::jsonb END, xp = $11, stash = $12::jsonb,
+  gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
+  parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
+  parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23, rested = $24,
+  merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
+  badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, last_seen_at = $13 WHERE id = $1`;
+
+// jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
+function saveParams(rec: PlayerRecord): unknown[] {
+  const p = rec.parcels;
+  return [
+    rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedCounts(rec)), rec.xp ?? 0,
+    JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
+    rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
+    rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? null, rec.looks ? JSON.stringify(rec.looks) : null,
+    rec.pattern !== undefined, rec.pattern ?? null, rec.badge !== undefined, rec.badge ?? null,
+  ];
+}
+
 /** Held while migrating, so two servers starting together do not both apply the same file. */
 const MIGRATION_LOCK = 4_815_162_342;
 /** Postgres' error code for a broken unique constraint. */
@@ -847,27 +898,21 @@ export class PgStorage implements Storage {
   }
 
   async save(rec: PlayerRecord): Promise<void> {
-    // A record without parcels (never had one) leaves the parcel columns as they are, as a save without a
-    // chapter leaves the story; so does one without an outfit, a pattern or a badge, while null (taken off)
-    // saves none; and one without merits or looks leaves them, so nothing bought is ever lost. The copy is
-    // always said, as the map is: a record without one is in the main copy. So is the cup of rest: none is empty.
-    const p = rec.parcels;
-    await this.pool.query(
-      `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9,
-       stats = $10::jsonb || CASE WHEN players.stats ? 'wornOut' THEN '{"wornOut": 1}'::jsonb ELSE '{}'::jsonb END, xp = $11, stash = $12::jsonb,
-       gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
-       parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
-       parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23, rested = $24,
-       merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
-       badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, last_seen_at = $13 WHERE id = $1`,
-      [
-        rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedCounts(rec)), rec.xp ?? 0,
-        JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
-        rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
-        rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? null, rec.looks ? JSON.stringify(rec.looks) : null,
-        rec.pattern !== undefined, rec.pattern ?? null, rec.badge !== undefined, rec.badge ?? null,
-      ],
-    );
+    await this.pool.query(SAVE_PLAYER, saveParams(rec));
+  }
+
+  async saveTogether(recs: readonly PlayerRecord[]): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const rec of recs) await client.query(SAVE_PLAYER, saveParams(rec));
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async seen(id: string, at: number): Promise<boolean> {
@@ -1012,17 +1057,21 @@ export class PgStorage implements Storage {
   }
 
   async findPerson(by: { id: string } | { name: string }): Promise<PersonRecord | null> {
-    type Row = { id: string; name: string; requests_off: boolean; signed_in: boolean };
-    const columns = 'id, name, requests_off, auth_sub IS NOT NULL AS signed_in';
+    type Row = { id: string; name: string; requests_off: boolean; trades_off: boolean; signed_in: boolean };
+    const columns = 'id, name, requests_off, trades_off, auth_sub IS NOT NULL AS signed_in';
     const r = 'id' in by
       ? await this.pool.query<Row>(`SELECT ${columns} FROM players WHERE id = $1`, [by.id])
       : await this.pool.query<Row>(`SELECT ${columns} FROM players WHERE lower(name) = lower($1)`, [by.name]);
     const p = r.rows[0];
-    return p ? { id: p.id, name: p.name, requestsOff: p.requests_off, signedIn: p.signed_in } : null;
+    return p ? { id: p.id, name: p.name, requestsOff: p.requests_off, tradesOff: p.trades_off, signedIn: p.signed_in } : null;
   }
 
   async setRequestsOff(id: string, off: boolean): Promise<void> {
     await this.pool.query('UPDATE players SET requests_off = $2 WHERE id = $1', [id, off]);
+  }
+
+  async setTradesOff(id: string, off: boolean): Promise<void> {
+    await this.pool.query('UPDATE players SET trades_off = $2 WHERE id = $1', [id, off]);
   }
 
   async linksOf(id: string): Promise<LinkRecord[]> {

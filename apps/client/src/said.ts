@@ -76,9 +76,10 @@ export function stoneQuestion(def: ItemDef, n: number): string {
 
 /**
  * Use, in the bag: what it does, and a word when the bar has little room for what a drink gives. An
- * arrow shows `markS` seconds (a day, longer for a good neighbor: markLifetime).
+ * arrow shows `markS` seconds (a day, longer for a good neighbor: markLifetime). `lift`: a charm in the bag
+ * that gives energy back as a glowcap is crushed (a pale moth), and how much.
  */
-export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000): string {
+export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000, lift?: { charm: ItemDef; energy: number }): string {
   const u = def.use ?? {}, n = nounOf(def);
   if (u.identify) return `Look closely at the ${n}? It will be used up.`;
   if (u.energy) {
@@ -88,7 +89,10 @@ export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MAR
     return `Drink the ${n}? ${signed(u.energy)} energy.`;
   }
   if (u.flare) return `Light ${aOf(def)}? It burns ${howLong(u.flare)}.`;
-  if (u.mark) return `Crush ${aOf(def)} to paint an arrow where you face? Everyone sees it for ${howLong(markS)}.`;
+  if (u.mark) {
+    const ask = `Crush ${aOf(def)} to paint an arrow where you face? Everyone sees it for ${howLong(markS)}.`;
+    return lift ? `${ask} Your ${nounOf(lift.charm)} gives you ${lift.energy} energy.` : ask;
+  }
   return `Use the ${n}? It will be used up.`;
 }
 
@@ -322,7 +326,8 @@ export function didText(did: Did, items: Items): string {
       const n = nounOf(def), said: string[] = [];
       if (did.into) {
         const into = items.get(did.into.item), quirk = did.into.piece?.quirk;
-        said.push(`It turns out to be ${amount(into, did.into.count)}.`);
+        // A piece is one of its kind, a pair of boots too: "a crew hood", "crew boots".
+        said.push(`It turns out to be ${into.kind === 'gear' && did.into.count === 1 ? aOf(into) : amount(into, did.into.count)}.`);
         if (into.about) said.push(into.about);
         // Its quirk is rolled as it lands in the bag: the card in the bag says what it does.
         if (quirk) said.push(`It has a quirk: ${items.quirk(quirk).name.toLowerCase()}.`);
@@ -332,6 +337,8 @@ export function didText(did: Did, items: Items): string {
       }
       if (did.flare !== undefined) said.push(`The ${n} hisses red. For ${howLong(did.flare)}, nothing comes near you.`);
       if (did.mark) said.push(`You crush the ${n}. An arrow glows where you stand, pointing ${COMPASS[did.mark.dir]}. Everyone sees it for ${howLong(did.mark.left)}.`);
+      // A charm in your bag gave energy back as it happened (a pale moth).
+      if (did.lift) said.push(`The ${nounOf(items.get(did.lift.item))} in your bag stirs: ${signed(did.lift.energy)} energy.`);
       return said.length ? said.join(' ') : `You use the ${n}.`;
     }
     case 'made': {
