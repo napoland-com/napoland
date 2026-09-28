@@ -51,6 +51,14 @@ describe('ranks', () => {
     expect(w.drain().filter(o => o.msg.t === 'feat')).toEqual([]);
   });
 
+  it('count the pack mule by what the bag really weighs, however light its ranks make it feel', () => {
+    // 8 kg is heavy (a load of 0.8); at the top rank it feels 30% lighter (0.56), under HEAVY_LOAD.
+    const w = world('overcast', () => 0.5, rec('a', 'long', 1, 60, 'up', { bag: [{ item: 'anvil', count: 1 }], stats: { heavySteps: 50_000 } }));
+    w.step('a', 'up', 1, 1000);
+    w.drain();
+    expect(w.get('a')!.stats).toEqual({ heavySteps: 50_001 });
+  });
+
   it('are what the status panel asks for: the counts as they are now', () => {
     const w = world('rain', () => 0.5, rec('a', 'long', 1, 60, 'up', { stats: { rainSteps: 7, mended: 2 } }));
     w.step('a', 'up', 1, 1000);

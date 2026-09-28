@@ -7,8 +7,8 @@
  *
  *   house: the fixture house with a workbench at 1,1 (stand at 1,2, facing up, to mend).
  *
- * Items: moss, nails (one at a time at 0,5 in the town), cloth, shards and live shards, a backpack and
- * a sturdy coat, which 100 s out in the wilds wear out and 2 cloth mend.
+ * Items: moss, nails (one at a time at 0,5 in the town), cloth, an anvil (8 kg, heavy on its own),
+ * shards and live shards, a backpack and a sturdy coat, which 100 s out in the wilds wear out and 2 cloth mend.
  */
 import { TileMap, type ItemsData, type MapData } from '@napoland/shared';
 import { houseData, townData, woodsData } from './fixtures';
@@ -42,6 +42,7 @@ export function featItems(): ItemsData {
       { id: 'moss', name: 'Moss', kind: 'resource', stack: 3, text: 'Soft.' },
       { id: 'nail', name: 'Nail', kind: 'resource', stack: 5, text: 'Bent.' },
       { id: 'cloth', name: 'Cloth', kind: 'resource', stack: 10, text: 'Dry.' },
+      { id: 'anvil', name: 'Anvil', kind: 'resource', stack: 1, text: 'Heavy.', weight: 8 },
       { id: 'shard', name: 'Shard', kind: 'resource', stack: 5, text: 'Warm.', xp: 12 },
       { id: 'live-shard', name: 'Live shard', kind: 'resource', stack: 1, xp: 12, text: 'Burning.', live: { xp: 40, fresh: 240, fade: 5, into: 'shard' } },
       gear('coat', 'shirt', { tier: 'sturdy', resist: { cold: 0.2 } }),

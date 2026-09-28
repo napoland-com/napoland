@@ -1245,7 +1245,10 @@ export class World {
     if (p.map.data.kind === 'wilds') {
       p.trail.push([x, y]);
       if (p.trail.length > TRAIL_STEPS) p.trail.shift();
-      for (const stat of STEP_STATS) if (stepCounts(stat, p.map, x, y, this.sky, p.load)) this.count(p, stat, now);
+      // The pack mule counts what the bag really weighs: a feel made lighter by its own ranks or a charm
+      // must not slow the count toward its next rank.
+      const real = bagLoad(p.rec.bag, this.items);
+      for (const stat of STEP_STATS) if (stepCounts(stat, p.map, x, y, this.sky, real)) this.count(p, stat, now);
     }
     const exit = p.map.exitAt(x, y);
     if (exit) this.cross(p, exit, now);

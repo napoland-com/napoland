@@ -169,7 +169,8 @@ export function modsOf(stats: Stats, charms: ReadonlyArray<Partial<Mods>> = []):
 
 /**
  * Does a step onto tile x,y count toward `stat`? Only out in the wilds: in the rain, in the dark, with
- * a bag at least HEAVY_LOAD heavy (as heavy as it feels, `load`), or FAR_STEPS or more from home.
+ * a bag at least HEAVY_LOAD heavy (what it really weighs, before charms and feats make it feel lighter), or
+ * FAR_STEPS or more from home.
  */
 export function stepCounts(stat: (typeof STEP_STATS)[number], map: TileMap, x: number, y: number, weather: Weather, load: number): boolean {
   if (map.data.kind !== 'wilds') return false;
