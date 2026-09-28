@@ -45,7 +45,8 @@ export function utcDay(wallMs: number): number {
  */
 export type ThanksFor =
   | { kind: 'fire'; map: string; x: number; y: number }
-  | { kind: 'mark'; map: string; x: number; y: number };
+  | { kind: 'mark'; map: string; x: number; y: number }
+  | { kind: 'cache'; map: string; x: number; y: number; item: string };
 
 /** One thing thanked for, as a letter lists it: how many thanks, from how many people, and the names of the latest (two at most). */
 export interface ThanksGroup {
@@ -55,7 +56,7 @@ export interface ThanksGroup {
   names: string[];
 }
 
-/** One key for the same thing thanked for, so the letter groups the thanks for it. */
+/** One key for the same thing thanked for, so the letter groups the thanks for it: the same fire, the same arrow, or the same item left in the same crate. */
 export function thanksKey(w: ThanksFor): string {
-  return `${w.kind}:${w.map}:${w.x},${w.y}`;
+  return `${w.kind}:${w.map}:${w.x},${w.y}${w.kind === 'cache' ? `:${w.item}` : ''}`;
 }

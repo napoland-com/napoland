@@ -280,6 +280,10 @@ const RUGS: Array<[string, string, string]> = [['#6b2f2a', '#b08a58', '#3d4e5c']
 const BOOKS = ['#7b2f2a', '#35505c', '#5d6b3a', '#a0763a', '#4b3a5c', '#8a8070'];
 /** A NAPO screen, still on: it glows the same in any light, so it keeps a material of its own when baked. */
 const SCREEN = toon('#16301f', { emissive: 0x2f9a5a });
+/** A NAPO crate's stencil (its yellow and ink, as on NAPO's signs), and the chalk on a plain one. */
+const NAPO_PLATE = '#d6ad2f';
+const NAPO_INK = '#1a1b1c';
+const CHALK = '#e8e3d3';
 
 /** Which way a shelf's back goes: against a wall north, west or east of it (north if none). */
 function againstWall(map: TileMap, x: number, y: number): number {
@@ -302,8 +306,8 @@ function log(g: THREE.Object3D, r: number, len: number, bark: string, x: number,
 /**
  * Low-poly furniture with toon outlines, placed on its tiles: a bed (head north), a table with a mug
  * and a book, a shelf of books and jars (its back to the nearest wall), a crate (sometimes two), a
- * rug, one of NAPO's desks (its back to the wall too) and a woodpile (along its wall). Colors vary by
- * position, the same on every visit. Null for anything else.
+ * crate for whoever comes next (indoors and out), a rug, one of NAPO's desks (its back to the wall too)
+ * and a woodpile (along its wall). Colors vary by position, the same on every visit. Null for anything else.
  */
 export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | null {
   const v = hash2(o.x * 3 + 1, o.y * 5 + 2);
@@ -385,6 +389,38 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
       if (v > 0.55) crate(0.42, 0.558, (v - 0.75) * 1.4);
       return g;
     }
+    case 'cache': {
+      // A crate for whoever comes next (caches.ts): a weathered supply crate, bigger and sturdier than
+      // the room's other crates, its lid propped open a finger's width, rope handles at the ends. In
+      // NAPO's rooms (and so under its roof) it is one of NAPO's, olive with a yellow stencil of its eye;
+      // anywhere else plain boards with a chalk mark, the way people out here tell each other it is open.
+      const napo = map.data.style === 'napo';
+      const wood = napo ? '#5b6547' : '#7d6243', edge = napo ? '#3e4631' : '#54402b', rope = '#b39a6b';
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = (v - 0.5) * 0.18;
+      g.add(box(0.8, 0.5, 0.58, wood, 0, 0.25, 0));
+      // Boards across the front and corner posts, darker with age.
+      for (const by of [0.17, 0.34]) g.add(box(0.8, 0.025, 0.012, edge, 0, by, 0.296, false));
+      for (const sx of [-0.385, 0.385]) g.add(box(0.06, 0.52, 0.6, edge, sx, 0.26, 0, false));
+      // The lid, hinged at the back and propped up at the front.
+      const lid = pivot(0, 0.5, -0.29);
+      lid.rotation.x = -0.14;
+      lid.add(box(0.84, 0.06, 0.62, wood, 0, 0.03, 0.31));
+      lid.add(box(0.86, 0.03, 0.08, edge, 0, 0.065, 0.58, false));
+      g.add(lid);
+      for (const sx of [-0.43, 0.43]) g.add(box(0.03, 0.05, 0.22, rope, sx, 0.34, 0, false));
+      if (napo) {
+        // NAPO's yellow plate with its eye, as on its warning signs.
+        g.add(box(0.36, 0.2, 0.012, NAPO_PLATE, 0, 0.26, 0.302, false));
+        g.add(box(0.1, 0.1, 0.01, NAPO_INK, 0, 0.26, 0.31, false).rotateZ(Math.PI / 4));
+        g.add(box(0.035, 0.035, 0.01, NAPO_PLATE, 0, 0.26, 0.316, false).rotateZ(Math.PI / 4));
+      } else {
+        // A chalk arrow pointing in: somebody left something here for you.
+        g.add(box(0.2, 0.03, 0.01, CHALK, 0, 0.26, 0.302, false));
+        for (const t of [-1, 1]) g.add(box(0.1, 0.03, 0.01, CHALK, -0.07, 0.26 + t * 0.03, 0.303, false).rotateZ(t * 0.7));
+      }
+      return g;
+    }
     case 'console': {
       // One of NAPO's desks, its back to the wall: steel, a screen that still glows green, a radio
       // with its dials, and papers nobody filed.
@@ -441,6 +477,7 @@ export function furnitureShadows(map: TileMap): Array<[number, number, number, n
     if (o.kind === 'bed') out.push([o.x + 0.5, o.y + 1, 0.5, 1.0]);
     else if (o.kind === 'table') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.44]);
     else if (o.kind === 'crate') out.push([o.x + 0.5, o.y + 0.5, 0.42, 0.42]);
+    else if (o.kind === 'cache') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.4]);
     else if (o.kind === 'chest') out.push([o.x + 0.5, o.y + 0.46, 0.46, 0.32]);
     else if (o.kind === 'workbench') out.push([o.x + 0.5, o.y + 0.42, 0.52, 0.36]);
     else if (o.kind === 'console' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.36, 0.52, 0.32]);

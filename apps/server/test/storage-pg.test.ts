@@ -58,7 +58,7 @@ describe.skipIf(!url)('PgStorage', () => {
   it('applies each migration once', async () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
-      '011_guests.sql', '012_tools.sql', '015_thanks.sql',
+      '011_guests.sql', '012_tools.sql', '015_thanks.sql', '016_caches.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -332,6 +332,28 @@ describe.skipIf(!url)('PgStorage', () => {
     expect(await storage.forgetThanks(now + 1)).toBeGreaterThanOrEqual(1);
     expect(await left()).toBe(0);
     await expect(storage.saveThanks({ ...t, helper: randomUUID() })).rejects.toThrow(/foreign key/);
+  });
+
+  it('keeps what lies in the crates, with who left it and when, until someone takes it', async () => {
+    const a = player('Pg Leaver'), b = player('Pg Other Leaver');
+    await storage.create(a);
+    await storage.create(b);
+    const at = 1_800_000_000_000;
+    const resin = { id: 51, map: 'near-woods-old-cabin', x: 2, y: 1, item: 'resin', owner: a.id, name: 'ignored', at };
+    await storage.saveCacheItem(resin);
+    await storage.saveCacheItem({ ...resin, id: 52, item: 'thermos', owner: b.id, at: at + 1000 });
+    await storage.saveCacheItem({ ...resin, id: 53, map: 'south-road', x: 23, y: 21, at: at - 1000 });
+    const mine = async () => (await storage.loadCacheItems()).filter(c => c.owner === a.id || c.owner === b.id);
+    expect(await mine()).toEqual([
+      { ...resin, id: 53, map: 'south-road', x: 23, y: 21, at: at - 1000, name: a.name },
+      { ...resin, name: a.name },
+      { ...resin, id: 52, item: 'thermos', owner: b.id, at: at + 1000, name: b.name },
+    ]);
+    await storage.removeCacheItem(51);
+    await storage.removeCacheItem(51);
+    expect((await mine()).map(c => c.id)).toEqual([53, 52]);
+    await expect(storage.saveCacheItem({ ...resin, id: 54, owner: randomUUID() })).rejects.toThrow(/foreign key/);
+    for (const id of [52, 53]) await storage.removeCacheItem(id);
   });
 
   it('counts the thanks a player received on their own: a save of the player never undoes one', async () => {

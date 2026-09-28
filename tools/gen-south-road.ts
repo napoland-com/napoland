@@ -16,7 +16,8 @@
  *
  * Energy only comes back by a fire: the bunker's (tended), the camp's, the laboratory's, the
  * dormitory's and the checkpoint's (these burn down unless someone feeds them). The rooms are in
- * gen-interiors.ts.
+ * gen-interiors.ts, each with a crate for whoever comes next; the camp keeps one by its fire in the
+ * open, placed after everything else so that nothing on the road moves for it.
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -366,6 +367,10 @@ for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
   else if (edge && hash(x, y, 143) < 0.035) tryPlace({ kind: 'rock', x, y, s: round(0.55 + hash(x, y, 144) * 0.45), v: round(hash(x, y, 145)) });
 }
 
+// A crate for whoever comes next (caches.ts), by the camp's fire, where the trail comes in. Placed last:
+// every choice above hashes the tile or checks its neighbors, so anything placed earlier could move them.
+must({ kind: 'cache', x: CAMP[0] + 1, y: CAMP[1] - 1, name: 'the crate at the leavers\' camp' });
+
 // The places worth walking to. Each must be reachable, or the clean-up below would quietly turn it
 // back into forest.
 const PLACES: Array<[string, P]> = [
@@ -391,7 +396,7 @@ const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES
 // ---- Output ----
 
 const map: MapData = {
-  id: 'south-road', name: 'The South Road', version: 1, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'south-road', name: 'The South Road', version: 2, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 35, y: 2, dir: 'down' },
@@ -428,7 +433,7 @@ const ORDER = '*A!HFC@kvibBnLc-T^o~=",_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', antenna: 'A', sign: '!', board: '!', console: 'k', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b',
-  fence: '-', tree: 'T', rock: 'o', shrooms: ',', fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_', woodpile: 'b',
+  fence: '-', tree: 'T', rock: 'o', shrooms: ',', fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_', woodpile: 'b', cache: 'c',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '_' };
 const objGlyph = new Map<number, string>();

@@ -308,6 +308,11 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .stash-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint, .stash-sheet .acts { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint[hidden] { display: none; }
+/* A crate for whoever comes next: a row for each thing in it (what, who left it and when), your bag below
+   to leave one; like the stash, a tap opens the card and the card docks in the panel. */
+.crate-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.crate-sheet .hint, .crate-sheet .recipes { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.crate-sheet .hint[hidden], .crate-sheet .recipes[hidden] { display: none; }
 .hud .act:disabled, .hud .act[aria-disabled="true"] { opacity: .45; cursor: default; }
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }

@@ -12,6 +12,8 @@
  *   the server's answer (`did`, worded by said.ts);
  * - people and NAPO's desks are in the story (story.ts): what someone says follows the chapter you
  *   are in, and the server hears whom you talked to or what you read; it says when a chapter is reached;
+ * - a crate for whoever comes next (A, facing it) opens a panel like the chest's: take one thing out
+ *   (it asks nothing, and thanks whoever left it) and leave one (it asks first), once each a visit;
  * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
  *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
  *   said in the text box anywhere else, and come in a letter when you walk in at home;
@@ -22,8 +24,8 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, markLifetime, mendCost, modsOf,
-  stepTarget, storyLines, surgeFront, takeFromBag, utcDay, DIR_VEC,
+  BUBBLE_S, CACHE_SIZE, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, markLifetime,
+  mendCost, modsOf, stepTarget, storyLines, surgeFront, takeFromBag, utcDay, DIR_VEC, type CacheItemView,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type ChatTo, type ConditionsView, type FlashKind, type FlashView, type RefusedAction, type StormView,
@@ -33,8 +35,8 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, refusalText, type Items } from './items';
 import {
-  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, makeQuestion, mendQuestion, noShard, nothingToBurn, sentence, shortOf, stashShort,
-  stoneQuestion, tossQuestion, useQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion, mendQuestion,
+  noShard, nothingToBurn, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, useQuestion,
 } from './said';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
@@ -62,7 +64,7 @@ interface Mover {
  * the story (`story`): talking to one, or reading one, may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
@@ -122,6 +124,7 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
+    if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
     return [];
   });
 }
@@ -151,7 +154,7 @@ export const CHAT_LOG = 100;
 /** What a `refused` can answer among friends: the friends panel says why. */
 const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'thank']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'thank', 'cacheLeave']);
 
 export class Game {
   meId: string | null = null;
@@ -215,6 +218,11 @@ export class Game {
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
   bench: { x: number; y: number; stash: BagSlot[] } | null = null;
+  /**
+   * The crate you opened (its tile): what lies in it, the newest first, with each one's age as told at
+   * `at`, and whether you left one thing and took one this visit; null while none is open.
+   */
+  cache: { x: number; y: number; items: CacheItemView[]; left: boolean; took: boolean; at: number } | null = null;
   /** Your friends, requests and blocks as the server last told them (null until it has). */
   friends: FriendsMsg | null = null;
   /** Private messages this session, by the other player's id, oldest first; replaced whole on every change. */
@@ -279,6 +287,8 @@ export class Game {
   private opening: { x: number; y: number; at: number } | null = null;
   /** A workbench asked to open and not answered yet. */
   private benching: { x: number; y: number; at: number } | null = null;
+  /** A crate asked to open and not answered yet. */
+  private caching: { x: number; y: number; at: number } | null = null;
   /** When the server last emptied a bag that held something. */
   private emptiedAt = -Infinity;
   /** When to offer thanks (thanks.ts), whom you thanked today (UTC day `thankedDay`), and the thanks asked for, for the words of the answer. */
@@ -512,6 +522,13 @@ export class Game {
         this.gear.set(msg.id, msg.gear);
         this.quirks.set(msg.id, msg.quirks);
         break;
+      case 'cache': {
+        // The answer to opening it, or news of the one open (someone left or took something).
+        const o = this.caching, c = this.cache, fresh = { x: msg.x, y: msg.y, items: msg.items, left: msg.left, took: msg.took, at: now };
+        if (o && o.x === msg.x && o.y === msg.y && this.clock - o.at < ANSWER_WAIT_MS) { this.cache = fresh; this.caching = null; }
+        else if (c && c.x === msg.x && c.y === msg.y) this.cache = fresh;
+        break;
+      }
       case 'bench': {
         const b = this.benching;
         if (b && this.clock - b.at < ANSWER_WAIT_MS) { this.bench = { x: b.x, y: b.y, stash: msg.stash }; this.benching = null; }
@@ -525,12 +542,12 @@ export class Game {
         break;
       case 'thanked': {
         // Out in the wilds, over your head; anywhere else the text box says what it was for.
-        if (msg.line) this.inform('Thanks', thankedLine(msg.name, thanksFor(msg.what, id => this.maps.find(id))));
+        if (msg.line) this.inform('Thanks', thankedLine(msg.name, thanksFor(msg.what, id => this.maps.find(id), this.items)));
         else this.floatOverMe(thankedFloat(msg.name, msg.energy), GAIN);
         break;
       }
       case 'letter': {
-        const lines = letterLines(msg.thanks, id => this.maps.find(id));
+        const lines = letterLines(msg.thanks, id => this.maps.find(id), this.items);
         if (lines.length) this.letter = lines;
         break;
       }
@@ -649,6 +666,8 @@ export class Game {
           this.inform(this.note?.waiting ? this.note.who : '', thankRefusal(msg.reason, this.thanking.name));
           break;
         }
+        // Taking out of a crate asks nothing, but is answered in the box like what does.
+        if (msg.action === 'cacheTake') { this.inform('Crate', sentence(refusalText(msg.reason, msg.action))); break; }
         // What was asked first is answered in the same box; the rest (picking up, the chest) over your head.
         if (ASKED_FIRST.has(msg.action)) {
           this.inform(this.note?.waiting ? this.note.who : '', sentence(refusalText(msg.reason, msg.action)));
@@ -667,7 +686,7 @@ export class Game {
     this.online = false;
     this.pending = []; this.path = []; this.goal = null;
     // Answers to what we asked went with the connection, and what was being asked may no longer hold.
-    this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null;
+    this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.caching = null; this.cache = null;
     this.clearBox();
     this.offers.reset();
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
@@ -683,7 +702,7 @@ export class Game {
     if (map !== this.current) {
       this.current = map;
       this.talkers = talkersOf(map);
-      this.chest = null; this.opening = null; this.bench = null; this.benching = null;
+      this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.cache = null; this.caching = null;
       this.dialog = null; this.marker = null; this.floats = [];
       this.clearBox();
       this.offers.reset();
@@ -800,6 +819,12 @@ export class Game {
       if (!this.online) return;
       this.benching = { x: t.x, y: t.y, at: this.clock };
       this.send({ t: 'bench', x: t.x, y: t.y });
+      return;
+    }
+    if (t.kind === 'cache') {
+      if (!this.online) return;
+      this.caching = { x: t.x, y: t.y, at: this.clock };
+      this.send({ t: 'cache', x: t.x, y: t.y });
       return;
     }
     return this.offer(t.x, t.y);
@@ -922,6 +947,46 @@ export class Game {
 
   closeBench() {
     this.bench = null;
+  }
+
+  // ---------- a crate for whoever comes next ----------
+
+  /** What lies in the open crate, each one's age counted on to `now`. */
+  cacheItemsNow(now: number): CacheItemView[] {
+    const c = this.cache;
+    if (!c) return [];
+    const by = Math.max(0, now - c.at) / 1000;
+    return c.items.map(e => ({ ...e, age: e.age + by }));
+  }
+
+  /**
+   * At the open crate: leave one of what is in bag slot `slot` for whoever comes next. It asks first
+   * ("Leave 1 resin in the crate for whoever comes next?"), or says why not: gear stays out, you left
+   * one this visit already, or the crate is full.
+   */
+  leaveInCache(slot: number) {
+    const c = this.cache, s = this.bag[slot];
+    if (!c || !s || !this.online) return;
+    const def = this.items.get(s.item);
+    if (!cacheTakes(def)) return this.inform('Crate', CRATE_NO_GEAR);
+    if (c.left) return this.inform('Crate', LEFT_ONE);
+    if (c.items.length >= CACHE_SIZE) return this.inform('Crate', CRATE_FULL);
+    const text = leaveQuestion(def);
+    this.ask({ who: 'Crate', text, yes: () => this.actOn(slot, def.id, 'Crate', text, i => ({ t: 'cacheLeave', x: c.x, y: c.y, slot: i })) });
+  }
+
+  /** At the open crate: take the thing `id` out. Someone left it for you: it asks nothing, and the box then says what it did (and whom it thanked). */
+  takeFromCache(id: number) {
+    const c = this.cache, e = c?.items.find(x => x.id === id);
+    if (!c || !e || !this.online) return;
+    if (c.took) return this.inform('Crate', TOOK_ONE);
+    if (addToBag(this.bag, this.items.get(e.item), 1, bagSlotsOf(this.myGear, this.items.byId)).left) return this.inform('Crate', NO_ROOM);
+    this.send({ t: 'cacheTake', x: c.x, y: c.y, id });
+  }
+
+  /** Close the crate (its panel went away). */
+  closeCache() {
+    this.cache = null;
   }
 
   /** What you wear. */

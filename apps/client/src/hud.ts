@@ -68,6 +68,10 @@ export interface HudHandlers {
   unequip?(slot: Slot): void;
   craft?(recipe: string): void;
   benchClosed?(): void;
+  /** At a crate (caches.ts): take the thing `id` out, leave one of what is in bag slot `slot` (the game asks first), or close it. */
+  crateTake?(id: number): void;
+  crateLeave?(slot: number): void;
+  crateClosed?(): void;
   /** What a tap in the chest or at the workbench shows: its card, as the game stands now (null: it is gone). */
   details?(ref: DetailRef): DetailView | null;
   /** Something done in the friends panel, or a player's name tag tapped. */
@@ -164,6 +168,11 @@ export interface StatusRow { label: string; text: string; bar?: number; tone?: '
 export interface FeatView { name: string; rank: number; does: string; next: string; progress?: number }
 /** The status panel: what a guest should know first (with a Sign in button), rows about you, then a card per feat. */
 export interface StatusView { guest?: string; rows: StatusRow[]; feats: FeatView[] }
+/**
+ * A crate you opened (caches.ts): how full it is, a line on what you may do this visit, what lies in it
+ * (the newest first: what, and who left it when), or what an empty one says.
+ */
+export interface CrateView { count: string; hint: string; rows: Array<{ id: number; name: string; icon: string; line: string }>; empty: string | null }
 
 /** What the chat and the friends panel say to a guest, over a Sign in button, instead of what they cannot use yet. */
 export const CHAT_GATE = 'Sign in to chat with other players. Signing in keeps your character.';
@@ -246,7 +255,7 @@ export class Hud {
   private tagEls = new Map<string, HTMLElement>();
   private floatEls = new Map<number, HTMLElement>();
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
-  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', card: '', friends: '', personActs: '', talk: '', journal: '', chat: '' };
+  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '', friends: '', personActs: '', talk: '', journal: '', chat: '' };
   /** What the dots say is new: among friends (a request, an unread message) and in the journal (a chapter), on the menu; in the chat (something said), on its own button. */
   private news = { social: false, journal: false, chat: false };
   private load = 0;
@@ -271,13 +280,13 @@ export class Hud {
    */
   private box: { talk: DialogView | null; ask: AskView | null; note: NoteView | null } = { talk: null, ask: null, note: null };
   private boxShown: { mode: string; who: string; text: string; done: boolean; ask: AskView | null } = { mode: '', who: '', text: '', done: false, ask: null };
-  /** The card open in the stash or at the workbench (details.ts): what it is about, and what it shows. */
-  private card: { where: 'stash' | 'bench'; ref: DetailRef; view: DetailView } | null = null;
+  /** The card open in the stash, at the workbench or at a crate (details.ts): what it is about, and what it shows. */
+  private card: { where: Docked; ref: DetailRef; view: DetailView } | null = null;
   /** The last tap in the stash or at the workbench, and what it was on: a second one may make it a double tap. */
   private readonly taps = new DoubleTap();
   private tapped: DetailRef | null = null;
   /** The sheet whose dock shows a card on the page: it stays drawn while its panel slides away. */
-  private docked: 'stash' | 'bench' | null = null;
+  private docked: Docked | null = null;
   private revealTimer: ReturnType<typeof setTimeout> | undefined;
   private versionAsked = false;
   private showSound: (s: SoundSetting) => void = () => {};
@@ -354,6 +363,18 @@ export class Hud {
           <div class="recipes" data-el="benchList"></div>
         </div>
         <div class="dock" data-el="benchDock" hidden><div class="detail" data-el="benchCard" aria-live="polite"></div></div>
+      </div>
+      <div class="sheet panel crate-sheet docked" data-el="crateSheet" data-open="false" role="dialog" aria-label="Crate">
+        <div class="sheet-head"><b>Crate</b><span class="room" data-el="crateCount"></span><button type="button" class="close" data-el="crateClose" aria-label="Close the crate">${ICON.x}</button></div>
+        <div class="sheet-body" data-el="crateBody">
+          <p class="hint" data-el="crateHint"></p>
+          <h3 class="stash-title">In the crate</h3>
+          <div class="recipes" data-el="crateList"></div>
+          <p class="hint" data-el="crateEmpty" hidden></p>
+          <h3 class="stash-title">Your bag</h3>
+          <div class="grid" data-el="crateBag">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-cbag="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
+        </div>
+        <div class="dock" data-el="crateDock" hidden><div class="detail" data-el="crateCard" aria-live="polite"></div></div>
       </div>
       <div class="sheet panel status-sheet" data-el="statusSheet" data-open="false" role="dialog" aria-label="Status">
         <div class="sheet-head"><b>Status</b><button type="button" class="close" data-el="statusClose" aria-label="Close the status">${ICON.x}</button></div>
@@ -538,13 +559,15 @@ export class Hud {
     // that lands on the card (it may have opened under the finger) still counts as the double tap.
     this.el.stashSheet!.addEventListener('click', e => this.sheetTap('stash', e), true);
     this.el.benchSheet!.addEventListener('click', e => this.sheetTap('bench', e), true);
-    for (const dock of [this.el.stashDock!, this.el.benchDock!]) {
+    this.el.crateSheet!.addEventListener('click', e => this.sheetTap('crate', e), true);
+    for (const dock of [this.el.stashDock!, this.el.benchDock!, this.el.crateDock!]) {
       dock.addEventListener('click', e => {
         // A double tap that landed on the button already did it. Greyed out, it still answers, with a shake.
         if (!e.defaultPrevented && (e.target as Element).closest('[data-card-act]')) this.pressCard();
       });
     }
     this.el.benchClose!.addEventListener('click', () => this.toggleBench(false));
+    this.el.crateClose!.addEventListener('click', () => this.toggleCrate(false));
     this.el.tools!.addEventListener('click', e => {
       const it = (e.target as Element).closest<HTMLElement>('[data-tool], [data-map]');
       if (it?.dataset.tool) this.h.tool?.(it.dataset.tool);
@@ -584,7 +607,7 @@ export class Hud {
   toggleStatus(open = !this.statusOpen) {
     this.el.statusSheet!.dataset.open = String(open);
     // The bag, the stash, the status and the About panel open in the same place: one at a time.
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.h.status?.(); }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.h.status?.(); }
   }
 
   get chatOpen(): boolean {
@@ -592,7 +615,7 @@ export class Hud {
   }
   /** Opens or closes the chat; with `type`, its line takes the keys (Enter on a keyboard). */
   toggleChat(open = !this.chatOpen, type = false) {
-    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleFriends(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleFriends(false); this.el.statusSheet!.dataset.open = 'false'; }
     const was = this.chatOpen, line = this.el.chatText as HTMLInputElement;
     this.el.chatSheet!.dataset.open = String(open);
     this.el.chatBtn!.setAttribute('aria-expanded', String(open));
@@ -636,7 +659,7 @@ export class Hud {
     return this.el.friendsSheet!.dataset.open === 'true';
   }
   toggleFriends(open = !this.friendsOpen) {
-    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleChat(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.toggleJournal(false); this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false); this.toggleChat(false); this.el.statusSheet!.dataset.open = 'false'; }
     const was = this.friendsOpen;
     this.el.friendsSheet!.dataset.open = String(open);
     if (open && !was) this.h.social?.({ a: 'opened' });
@@ -720,7 +743,7 @@ export class Hud {
     // It opens where the bag and the other panels do: one at a time.
     if (open) {
       this.el.friendsSheet!.dataset.open = 'false'; this.el.statusSheet!.dataset.open = 'false'; this.el.chatSheet!.dataset.open = 'false';
-      this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false);
+      this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.toggleCrate(false);
       this.el.journalSheet!.scrollTop = 0;
       this.setJournalNews(false);
     }
@@ -741,7 +764,7 @@ export class Hud {
   /** Opens or closes the stash sheet (the chest at home), always without a card. Closing it tells the game. */
   toggleStash(open = !this.stashOpen) {
     const was = this.stashOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.toggleCrate(false); this.el.statusSheet!.dataset.open = 'false'; }
     // It opens at the top of the list, never on a card left from last time; closing, the card slides away with it.
     if (open && !was) { this.el.stashBody!.scrollTop = 0; if (this.docked === 'stash') this.closeCard(); }
     else if (!open && this.card?.where === 'stash') this.forgetCard();
@@ -755,11 +778,37 @@ export class Hud {
   /** Opens or closes the workbench sheet, always without a card. Closing it tells the game. */
   toggleBench(open = !this.benchOpen) {
     const was = this.benchOpen;
-    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleCrate(false); this.el.statusSheet!.dataset.open = 'false'; }
     if (open && !was) { this.el.benchBody!.scrollTop = 0; if (this.docked === 'bench') this.closeCard(); }
     else if (!open && this.card?.where === 'bench') this.forgetCard();
     this.el.benchSheet!.dataset.open = String(open);
     if (was && !open) this.h.benchClosed?.();
+  }
+
+  get crateOpen(): boolean {
+    return this.el.crateSheet!.dataset.open === 'true';
+  }
+  /** Opens or closes a crate's sheet, always without a card. Closing it tells the game. */
+  toggleCrate(open = !this.crateOpen) {
+    const was = this.crateOpen;
+    if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open && !was) { this.el.crateBody!.scrollTop = 0; if (this.docked === 'crate') this.closeCard(); }
+    else if (!open && this.card?.where === 'crate') this.forgetCard();
+    this.el.crateSheet!.dataset.open = String(open);
+    if (was && !open) this.h.crateClosed?.();
+  }
+
+  /** What the open crate holds, the newest first, each a row that opens its card; and what you may do this visit. Only written to the page when it changed. */
+  setCrate(v: CrateView) {
+    const html = v.rows.map(r => `<button type="button" class="recipe" data-centry="${r.id}" aria-label="${esc(`${r.name}, ${r.line}`)}"><span class="big">${r.icon}</span><span class="words"><b>${esc(r.name)}</b><span class="rfacts">${esc(r.line)}</span></span><span class="more">${ICON.more}</span></button>`).join('');
+    if (html !== this.shown.crate) { this.shown.crate = html; this.el.crateList!.innerHTML = html; }
+    this.el.crateList!.hidden = !v.rows.length;
+    const empty = this.el.crateEmpty!;
+    empty.hidden = !v.empty;
+    if (v.empty && empty.textContent !== v.empty) empty.textContent = v.empty;
+    if (this.el.crateHint!.textContent !== v.hint) this.el.crateHint!.textContent = v.hint;
+    if (this.el.crateCount!.textContent !== v.count) this.el.crateCount!.textContent = v.count;
+    this.refreshCard();
   }
 
   /** The workbench's rows: mending, then what it makes. Each opens its card. Only written to the page when they changed. */
@@ -804,7 +853,7 @@ export class Hud {
    * the first one was, within DOUBLE_TAP_MS, does what the card's button does. Keys that press a
    * focused button (detail 0) only ever open cards.
    */
-  private sheetTap(where: 'stash' | 'bench', e: MouseEvent) {
+  private sheetTap(where: Docked, e: MouseEvent) {
     const target = e.target as Element, ref = this.refAt(where, target);
     const onCard = !!target.closest('.dock');
     if (e.detail === 0) {
@@ -833,8 +882,16 @@ export class Hud {
   }
 
   /** What a tap on `target` is on: something with a card, an empty slot, or nothing to show. */
-  private refAt(where: 'stash' | 'bench', target: Element): DetailRef | 'empty' | null {
+  private refAt(where: Docked, target: Element): DetailRef | 'empty' | null {
     if (target.closest('.dock')) return null;
+    if (where === 'crate') {
+      const entry = target.closest<HTMLElement>('[data-centry]');
+      if (entry) return { from: 'crate', id: Number(entry.dataset.centry) };
+      const bag = target.closest<HTMLElement>('[data-cbag]');
+      if (!bag) return null;
+      const slot = Number(bag.dataset.cbag), s = this.bag[slot];
+      return s ? { from: 'crateBag', slot, item: s.item } : 'empty';
+    }
     if (where === 'bench') {
       const id = target.closest<HTMLElement>('[data-recipe]')?.dataset.recipe;
       if (!id) return null;
@@ -852,7 +909,7 @@ export class Hud {
     return null;
   }
 
-  private openCard(where: 'stash' | 'bench', ref: DetailRef) {
+  private openCard(where: Docked, ref: DetailRef) {
     const view = this.h.details?.(ref);
     if (!view) return this.closeCard();
     this.card = { where, ref, view };
@@ -864,7 +921,7 @@ export class Hud {
    * Once a double tap can no longer come, scrolls what the card is about into sight if the card now
    * hides it. Not sooner: the list moving under the finger would turn a double tap into two taps.
    */
-  private reveal(where: 'stash' | 'bench', ref: DetailRef) {
+  private reveal(where: Docked, ref: DetailRef) {
     clearTimeout(this.revealTimer);
     this.revealTimer = setTimeout(() => {
       if (!this.card || this.card.where !== where || refKey(this.card.ref) !== refKey(ref)) return;
@@ -916,7 +973,7 @@ export class Hud {
     }
     if (c && html !== this.shown.card) this.el[`${c.where}Card`]!.innerHTML = html;
     this.shown.card = html;
-    for (const sheet of [this.el.stashSheet!, this.el.benchSheet!]) for (const el of sheet.querySelectorAll('[data-picked]')) el.removeAttribute('data-picked');
+    for (const sheet of [this.el.stashSheet!, this.el.benchSheet!, this.el.crateSheet!]) for (const el of sheet.querySelectorAll('[data-picked]')) el.removeAttribute('data-picked');
     if (c) this.el[`${c.where}Body`]!.querySelector(pickedSelector(c.ref))?.setAttribute('data-picked', '');
   }
 
@@ -928,7 +985,7 @@ export class Hud {
   }
 
   /** Does what the card of `ref` says, as the game stands now, and closes it; a card that can do nothing now stays open to say why. */
-  private doCard(where: 'stash' | 'bench', ref: DetailRef) {
+  private doCard(where: Docked, ref: DetailRef) {
     const view = this.h.details?.(ref);
     if (!view) return this.closeCard();
     const press = cardPress(view);
@@ -950,6 +1007,8 @@ export class Hud {
       case 'off': return this.h.unequip?.(a.slot);
       case 'make': return this.bench(a.recipe);
       case 'mend': return this.bench(`mend:${a.slot}`);
+      case 'crateTake': return this.h.crateTake?.(a.id);
+      case 'crateLeave': return this.h.crateLeave?.(a.slot);
     }
   }
 
@@ -1045,6 +1104,7 @@ export class Hud {
     if (this.card) { this.closeCard(); return true; }
     if (this.stashOpen) { this.toggleStash(false); return true; }
     if (this.benchOpen) { this.toggleBench(false); return true; }
+    if (this.crateOpen) { this.toggleCrate(false); return true; }
     if (!this.bagOpen) return false;
     if (this.picked) { this.choose(null); return true; }
     return false;
@@ -1059,7 +1119,7 @@ export class Hud {
       this.capacity = capacity;
       // As many slots as the bag worn has, in the bag and in the stash sheet's bag row.
       this.slotEls.forEach((el, i) => { el.hidden = i >= capacity; });
-      this.root.querySelectorAll<HTMLButtonElement>('[data-bag]').forEach((el, i) => { el.hidden = i >= capacity; });
+      for (const sel of ['[data-bag]', '[data-cbag]']) this.root.querySelectorAll<HTMLButtonElement>(sel).forEach((el, i) => { el.hidden = i >= capacity; });
     }
     // Details stay open while their slot still holds the same item (a thermos used: one fewer).
     if (this.picked && slots[this.picked.slot]?.item !== this.picked.item) this.picked = null;
@@ -1071,9 +1131,9 @@ export class Hud {
     });
     this.showRoom();
     this.showDetail();
-    // The stash sheet's bag row shows the same slots.
-    this.root.querySelectorAll<HTMLButtonElement>('[data-bag]').forEach((el, i) => {
-      const s = slots[i];
+    // The stash sheet's and the crate's bag rows show the same slots.
+    this.root.querySelectorAll<HTMLButtonElement>('[data-bag], [data-cbag]').forEach(el => {
+      const s = slots[Number(el.dataset.bag ?? el.dataset.cbag)];
       el.dataset.empty = String(!s);
       el.innerHTML = s ? slotHtml(s) : '';
       el.setAttribute('aria-label', s ? `${s.name}, ${s.count}` : 'Empty slot');
@@ -1087,7 +1147,7 @@ export class Hud {
    * touches the page only when a shown value changes.
    */
   tickLive(now: number) {
-    const rows = [this.slotEls, [...this.root.querySelectorAll<HTMLElement>('[data-bag]')]];
+    const rows = [this.slotEls, [...this.root.querySelectorAll<HTMLElement>('[data-bag]')], [...this.root.querySelectorAll<HTMLElement>('[data-cbag]')]];
     this.bag.forEach((s, i) => {
       if (!s.live) return;
       const st = liveState(s.live, s.live.age + Math.max(0, now - this.bagAt) / 1000), key = `${st.text}|${st.left.toFixed(2)}`;
@@ -1407,8 +1467,13 @@ function pickedSelector(r: DetailRef): string {
     case 'stash': return r.n === undefined ? `[data-item="${r.item}"]:not([data-n])` : `[data-item="${r.item}"][data-n="${r.n}"]`;
     case 'recipe': return `[data-recipe="${r.id}"]`;
     case 'mend': return `[data-recipe="mend:${r.slot}"]`;
+    case 'crate': return `[data-centry="${r.id}"]`;
+    case 'crateBag': return `[data-cbag="${r.slot}"]`;
   }
 }
+
+/** The sheets that dock a card under (or beside) their list. */
+type Docked = 'stash' | 'bench' | 'crate';
 
 function esc(t: string): string {
   return t.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);

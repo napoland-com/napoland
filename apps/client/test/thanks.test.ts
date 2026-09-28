@@ -1,8 +1,9 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { STEP_MS, type ClientMsg, type FireView, type MapData, type MarkView, type PlayerView, type ThanksGroup } from '@napoland/shared';
+import { STEP_MS, type ClientMsg, type FireView, type ItemsData, type MapData, type MarkView, type PlayerView, type ThanksGroup } from '@napoland/shared';
 import { Game } from '../src/game';
+import { Items } from '../src/items';
 import { Maps } from '../src/maps';
 import { THANK_AFTER_MS, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor } from '../src/thanks';
 import { ITEMS, tinyTown, tinyWoods, welcome, zone } from './fixtures';
@@ -14,6 +15,7 @@ const real = new Map(readdirSync(content).filter(f => f.endsWith('.json')).map(f
   return [d.id, d] as const;
 }));
 const find = (id: string) => real.get(id);
+const items = new Items(JSON.parse(readFileSync(resolve(content, '../items.json'), 'utf8')) as ItemsData);
 
 describe('what thanks say', () => {
   it('asks by name, never with a pronoun', () => {
@@ -25,17 +27,24 @@ describe('what thanks say', () => {
   });
 
   it('names the fire by its room or its own name, and an arrow by the nearest place the map names', () => {
-    expect(thanksFor({ kind: 'fire', map: 'near-woods-ranger-hut', x: 3, y: 1 }, find)).toBe('the fire at the ranger\'s hut');
-    expect(thanksFor({ kind: 'fire', map: 'south-road-laboratory', x: 5, y: 1 }, find)).toBe('the fire at the NAPO Laboratory');
-    expect(thanksFor({ kind: 'fire', map: 'south-road', x: 22, y: 22 }, find)).toBe('the fire at the leavers\' camp');
+    expect(thanksFor({ kind: 'fire', map: 'near-woods-ranger-hut', x: 3, y: 1 }, find, items)).toBe('the fire at the ranger\'s hut');
+    expect(thanksFor({ kind: 'fire', map: 'south-road-laboratory', x: 5, y: 1 }, find, items)).toBe('the fire at the NAPO Laboratory');
+    expect(thanksFor({ kind: 'fire', map: 'south-road', x: 22, y: 22 }, find, items)).toBe('the fire at the leavers\' camp');
     // The Near Woods' places: the pond (20,41) and the ring of stones (6,5) have no "the" of their own.
-    expect(thanksFor({ kind: 'mark', map: 'near-woods', x: 21, y: 40 }, find)).toBe('your arrow by the pond');
-    expect(thanksFor({ kind: 'mark', map: 'near-woods', x: 7, y: 7 }, find)).toBe('your arrow by the ring of stones');
-    expect(thanksFor({ kind: 'mark', map: 'south-road', x: 50, y: 50 }, find)).toBe('your arrow by the Tower');
+    expect(thanksFor({ kind: 'mark', map: 'near-woods', x: 21, y: 40 }, find, items)).toBe('your arrow by the pond');
+    expect(thanksFor({ kind: 'mark', map: 'near-woods', x: 7, y: 7 }, find, items)).toBe('your arrow by the ring of stones');
+    expect(thanksFor({ kind: 'mark', map: 'south-road', x: 50, y: 50 }, find, items)).toBe('your arrow by the Tower');
     // A fire in the open with no name of its own, and a map that names no places.
     const woods = tinyWoods(), open = { ...woods, objects: [...woods.objects, { kind: 'fireplace' as const, x: 3, y: 1 }] };
-    expect(thanksFor({ kind: 'fire', map: 'woods', x: 3, y: 1 }, id => (id === 'woods' ? open : undefined))).toBe('the campfire in the Test Woods');
-    expect(thanksFor({ kind: 'mark', map: 'woods', x: 2, y: 2 }, id => (id === 'woods' ? open : undefined))).toBe('your arrow in the Test Woods');
+    expect(thanksFor({ kind: 'fire', map: 'woods', x: 3, y: 1 }, id => (id === 'woods' ? open : undefined), items)).toBe('the campfire in the Test Woods');
+    expect(thanksFor({ kind: 'mark', map: 'woods', x: 2, y: 2 }, id => (id === 'woods' ? open : undefined), items)).toBe('your arrow in the Test Woods');
+  });
+
+  it('names what you left in a crate, and the crate by what people call it', () => {
+    expect(thanksFor({ kind: 'cache', map: 'near-woods-old-cabin', x: 2, y: 1, item: 'resin' }, find, items)).toBe('the resin you left in the old cabin\'s crate');
+    expect(thanksFor({ kind: 'cache', map: 'south-road', x: 23, y: 21, item: 'glowcap' }, find, items)).toBe('the glowcap you left in the crate at the leavers\' camp');
+    expect(letterLines([{ what: { kind: 'cache', map: 'south-road-bunker', x: 1, y: 3, item: 'thermos' }, count: 1, people: 1, names: ['Ana'] }], find, items))
+      .toEqual(['While you were away, Ana thanked you for the thermos you left in the bunker\'s crate.']);
   });
 
   it('floats over your head out in the wilds, and is a line anywhere else', () => {
@@ -48,17 +57,17 @@ describe('what thanks say', () => {
     const hut = { kind: 'fire' as const, map: 'near-woods-ranger-hut', x: 3, y: 1 }, pond = { kind: 'mark' as const, map: 'near-woods', x: 21, y: 40 };
     const camp = { kind: 'fire' as const, map: 'south-road', x: 22, y: 22 }, lab = { kind: 'fire' as const, map: 'south-road-laboratory', x: 5, y: 1 };
     const g = (what: ThanksGroup['what'], count: number, people: number, names: string[]): ThanksGroup => ({ what, count, people, names });
-    expect(letterLines([g(hut, 4, 4, ['Tess', 'Ana'])], find)).toEqual(['While you were away, 4 people thanked you for the fire at the ranger\'s hut.']);
-    expect(letterLines([g(hut, 2, 2, ['Tess', 'Ana']), g(pond, 2, 1, ['Bo'])], find)).toEqual([
+    expect(letterLines([g(hut, 4, 4, ['Tess', 'Ana'])], find, items)).toEqual(['While you were away, 4 people thanked you for the fire at the ranger\'s hut.']);
+    expect(letterLines([g(hut, 2, 2, ['Tess', 'Ana']), g(pond, 2, 1, ['Bo'])], find, items)).toEqual([
       'While you were away, Tess and Ana thanked you for the fire at the ranger\'s hut.',
       'Bo thanked you twice for your arrow by the pond.',
     ]);
-    expect(letterLines([g(hut, 5, 5, ['Tess', 'Ana']), g(pond, 3, 3, ['Bo', 'Cy']), g(camp, 2, 2, ['Di', 'Ed']), g(lab, 1, 1, ['Fay'])], find)).toEqual([
+    expect(letterLines([g(hut, 5, 5, ['Tess', 'Ana']), g(pond, 3, 3, ['Bo', 'Cy']), g(camp, 2, 2, ['Di', 'Ed']), g(lab, 1, 1, ['Fay'])], find, items)).toEqual([
       'While you were away, 5 people thanked you for the fire at the ranger\'s hut.',
       '3 people thanked you for your arrow by the pond.',
       'And 3 more thanks, for other things.',
     ]);
-    expect(letterLines([], find)).toEqual([]);
+    expect(letterLines([], find, items)).toEqual([]);
   });
 });
 

@@ -5,12 +5,13 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, resistOf, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type Quirk,
-  type Recipe, type Refusal, type RefusedAction, type Slot, type Worn,
+  BAG_SLOTS, CACHE_SIZE, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, resistOf, wearSeconds, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type ItemsData,
+  type Piece, type Quirk, type Recipe, type Refusal, type RefusedAction, type Slot, type Worn,
 } from '@napoland/shared';
-import type { RecipeView, ToolView, WornView } from './hud';
+import type { CrateView, RecipeView, ToolView, WornView } from './hud';
 import type { Look } from './view/characters';
 import { iconFor } from './icons';
+import { CRATE_EMPTY, leftBy } from './said';
 
 export class Items {
   /** The version of content/items.json this client carries; 0 when it has none. */
@@ -103,6 +104,10 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'whole': return 'It needs no mending';
     case 'have_tool': return action === 'pick' ? 'You have one already. It stays for someone else' : 'You have one already';
     case 'thanked': return 'Thanks go once a day to each person';
+    case 'crate_full': return 'The crate is full';
+    case 'no_gear': return 'Gear stays with you: a crate takes none';
+    case 'left_one': return 'You left something here this time already';
+    case 'took_one': return 'You took something here this time already';
   }
 }
 
@@ -266,6 +271,28 @@ export function mendViews(gear: Gear, worn: Worn, stash: readonly BagSlot[], ite
     const needs = cost.map(n => ({ name: items.get(n.item).name, icon: iconFor(items.get(n.item)), have: countOf(stash, n.item), need: n.count }));
     return [{ id: `mend:${slot}`, name: `Mend your ${def.name.toLowerCase()}`, icon: iconFor(def), facts: `${p.cond <= 0 ? 'Worn out' : wornLeft(p.cond)}. Like new again when mended.`, needs, can: needs.every(n => n.have >= n.need) }];
   });
+}
+
+/**
+ * A crate you opened, as its panel shows it: "3 of 6", what you may still do this visit, and what lies
+ * in it, the newest first ("Fir resin", "left by Ana, 2 h ago"); an empty one says so. `items` have
+ * their ages as of now (Game.cacheItemsNow); `me`: your id, to call your own things yours.
+ */
+export function crateView(c: { items: readonly CacheItemView[]; left: boolean; took: boolean }, items: Items, me: string): CrateView {
+  const hint = c.left && c.took
+    ? 'You took one thing and left one this time. Come by again for more.'
+    : c.took ? 'You took one thing this time. Leave one for whoever comes next?'
+      : c.left ? 'You left one thing this time. Take one if you need it.'
+        : 'For whoever comes next: take one thing and leave one, each time you come by.';
+  return {
+    count: `${c.items.length} of ${CACHE_SIZE}`,
+    hint,
+    rows: c.items.map(e => {
+      const def = items.get(e.item);
+      return { id: e.id, name: def.name, icon: iconFor(def), line: leftBy(e.name, e.owner === me, e.age) };
+    }),
+    empty: c.items.length ? null : CRATE_EMPTY,
+  };
 }
 
 /** What is worn in each slot, in SLOTS order (null: bare), with how worn down it is. */

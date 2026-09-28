@@ -1,7 +1,7 @@
 {
   "id": "south-road-checkpoint",
   "name": "The checkpoint",
-  "version": 2,
+  "version": 3,
   "kind": "inside",
   "depth": 0,
   "width": 7,
@@ -31,7 +31,8 @@
     {"kind":"fireplace","x":3,"y":1},
     {"kind":"bed","x":5,"y":1},
     {"kind":"table","x":1,"y":3},
-    {"kind":"crate","x":5,"y":4}
+    {"kind":"crate","x":5,"y":4},
+    {"kind":"cache","x":2,"y":3,"name":"the checkpoint's crate"}
   ],
   "style": "napo"
 }

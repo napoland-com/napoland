@@ -1,7 +1,7 @@
 {
   "id": "south-road",
   "name": "The South Road",
-  "version": 1,
+  "version": 2,
   "kind": "wilds",
   "depth": 1,
   "width": 72,
@@ -394,7 +394,8 @@
     {"kind":"rock","x":34,"y":55,"s":0.92,"v":0.821},
     {"kind":"rock","x":37,"y":63,"s":0.855,"v":0.354},
     {"kind":"rock","x":34,"y":78,"s":0.995,"v":0.507},
-    {"kind":"rock","x":34,"y":80,"s":0.663,"v":0.708}
+    {"kind":"rock","x":34,"y":80,"s":0.663,"v":0.708},
+    {"kind":"cache","x":23,"y":21,"name":"the crate at the leavers' camp"}
   ],
   "places": [
     {"name":"the leavers' camp","x":22,"y":22},

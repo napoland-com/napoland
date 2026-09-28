@@ -18,7 +18,7 @@ import { detailView } from './details';
 import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
-import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, wearText, wornViews } from './items';
+import { Items, crateView, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, wearText, wornViews } from './items';
 import { journalView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
@@ -91,12 +91,12 @@ let welcomed = false;
 let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story);
 /** A panel is open over the world (the bag, the journal, the stash...), where it covers the banners. */
-const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen;
+const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.crateOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen;
 /** Close the bag, the journal, the chat, the status and About panels and the menu; true when one was open. */
 const closePanels = () => {
   const open = panelOpen() || hud.menuOpen;
   hud.showPaper(null);
-  hud.toggleBag(false); hud.toggleJournal(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false); hud.toggleChat(false);
+  hud.toggleBag(false); hud.toggleJournal(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleCrate(false); hud.toggleMenu(false); hud.toggleFriends(false); hud.toggleChat(false);
   return open;
 };
 /** The status panel, as the game stands now. */
@@ -119,7 +119,7 @@ const controls = {
   // While it asks, the stick answers the question, and the panel it was asked from stays open.
   pad: (dir: Dir | null) => { if (dir && !game.question) closePanels(); game.padChange(dir, performance.now()); },
   // The text box first (it stands above everything but the paper map); then, with a card open in the stash or at the workbench, A presses its button.
-  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.pressCard()) return; else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.pressCard()) return; else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.crateOpen) hud.toggleCrate(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the text box first, then the About panel, then out of the status, a card or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressB(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
 };
@@ -145,8 +145,15 @@ const hud = new Hud(screen, {
   // The workbench's rows are recipes, and mending ("mend:" and the slot).
   craft: recipe => (recipe.startsWith('mend:') ? game.mend(recipe.slice(5) as Slot) : game.craft(recipe)),
   benchClosed: () => game.closeBench(),
-  // What a tap in the chest or at the workbench shows, from what the open one says your stash holds.
-  details: ref => detailView(ref, { items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools }),
+  // Taking out of a crate asks nothing; leaving one asks first (the game does).
+  crateTake: id => game.takeFromCache(id),
+  crateLeave: slot => game.leaveInCache(slot),
+  crateClosed: () => game.closeCache(),
+  // What a tap in the chest, at the workbench or at a crate shows, from what the open one says it holds.
+  details: ref => detailView(ref, {
+    items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools,
+    ...(game.cache ? { crate: { items: game.cacheItemsNow(performance.now()), left: game.cache.left, took: game.cache.took, me: game.meId ?? '' } } : {}),
+  }),
   chat: a => {
     if (a.a === 'tab') chatTab = a.to;
     else if (a.a === 'say') game.say(a.to, a.text);
@@ -607,12 +614,17 @@ let chatShown: { changes: number; tab: ChatTo } = { changes: -1, tab: chatTab };
 let newsShown = '';
 /** The friends panel asks for the list again this often while it is open: who is online, and where. */
 const FRIENDS_REFRESH_MS = 10_000;
+/** An open crate is drawn again this often: "2 min ago" moves on. */
+const CRATE_REDRAW_MS = 15_000;
 let friendsAskedAt = 0;
 /** The chest as the stash sheet shows it: it opens when the game opens one, and follows what is in it. */
 let chestShown: typeof game.chest = null;
 let capacityShown = 0;
 /** The workbench and the gear worn, as their sheets show them. */
 let benchShown: typeof game.bench = null;
+/** The crate as its sheet shows it, and when that was drawn: how long ago each thing was left moves on. */
+let crateShown: typeof game.cache = null;
+let crateAt = 0;
 /** Glowing footprints (a quirk): the tile each player was last seen on, and the prints left on this map, oldest first. */
 const printTiles = new Map<string, string>();
 let prints: Array<{ map: string; x: number; y: number; dir: Dir; at: number }> = [];
@@ -738,6 +750,13 @@ function frame(now: number) {
   if (game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn) {
     gearShown = { gear: game.myGear, worn: game.myWorn };
     hud.setWearing(wornViews(game.myGear, items, game.myWorn));
+  }
+  if (game.cache !== crateShown || (game.cache && now - crateAt > CRATE_REDRAW_MS)) {
+    if (game.cache && !crateShown) hud.toggleCrate(true);
+    if (!game.cache && crateShown) hud.toggleCrate(false);
+    crateShown = game.cache;
+    crateAt = now;
+    if (game.cache) hud.setCrate(crateView({ ...game.cache, items: game.cacheItemsNow(now) }, items, game.meId ?? ''));
   }
   // Your maps are one button, which opens the one for where you are; any other tool has its own, in the order you got them.
   if (game.tools !== toolsShown) hud.setTools(toolViews((toolsShown = game.tools), items));

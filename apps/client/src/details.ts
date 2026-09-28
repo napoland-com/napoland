@@ -1,16 +1,19 @@
 /**
- * A tap looks, an action is a second step. In the chest and at the workbench a tap on anything opens
- * its card: what a piece of gear is (tier, what it resists and the energy it adds as worn down as it
- * is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a mend takes, or
- * what something in your bag or stash is. The card's one button does the one thing that can be done
- * with it; so do A and a second tap on the same thing (DoubleTap).
+ * A tap looks, an action is a second step. In the chest, at the workbench and at a crate a tap on
+ * anything opens its card: what a piece of gear is (tier, what it resists and the energy it adds as worn
+ * down as it is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a mend
+ * takes, what something in your bag or stash is, or what lies in a crate and who left it. The card's one
+ * button does the one thing that can be done with it; so do A and a second tap on the same thing (DoubleTap).
  *
  * Plain logic with no page in it, so it can be tested: main.ts builds a card from the game
  * (detailView), hud.ts draws it and sends what its button does.
  */
-import { WEAR_FADES, mendCost, pieceFactor, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type Piece, type Slot, type Tier, type Worn } from '@napoland/shared';
+import {
+  CACHE_SIZE, WEAR_FADES, cacheTakes, mendCost, pieceFactor, wearSeconds, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type Piece, type Slot, type Tier, type Worn,
+} from '@napoland/shared';
 import { iconFor } from './icons';
 import { ELEMENT_WORDS, conditionText, countOf, factsOf, slotName, type Items } from './items';
+import { CRATE_FULL, CRATE_NO_GEAR, LEFT_ONE, TOOK_ONE, leftBy } from './said';
 
 /** A second tap on the same thing within this many milliseconds does what its card's button does. */
 export const DOUBLE_TAP_MS = 350;
@@ -59,7 +62,10 @@ export type DetailRef =
   | { from: 'worn'; slot: Slot }
   /** A recipe at the workbench, and the mending of what you wear in a slot. */
   | { from: 'recipe'; id: string }
-  | { from: 'mend'; slot: Slot };
+  | { from: 'mend'; slot: Slot }
+  /** At a crate: a thing lying in it (by its id), and a slot of your bag (and what it held when tapped), to leave one of. */
+  | { from: 'crate'; id: number }
+  | { from: 'crateBag'; slot: number; item: string };
 
 /** Names what a card is about, for the double tap and to keep it open while the game changes around it. */
 export function refKey(r: DetailRef): string {
@@ -69,6 +75,8 @@ export function refKey(r: DetailRef): string {
     case 'worn': return `worn:${r.slot}`;
     case 'recipe': return `recipe:${r.id}`;
     case 'mend': return `mend:${r.slot}`;
+    case 'crate': return `crate:${r.id}`;
+    case 'crateBag': return `crateBag:${r.slot}:${r.item}`;
   }
 }
 
@@ -79,7 +87,9 @@ export type DetailAct =
   | { kind: 'wear'; item: string; n: number }
   | { kind: 'off'; slot: Slot }
   | { kind: 'make'; recipe: string }
-  | { kind: 'mend'; slot: Slot };
+  | { kind: 'mend'; slot: Slot }
+  | { kind: 'crateTake'; id: number }
+  | { kind: 'crateLeave'; slot: number };
 
 /** Something a piece gives: "Wind 14%" (the element's color), "+5 energy", "Holds 12 things". */
 export interface StatView {
@@ -129,6 +139,8 @@ export interface DetailState {
   worn: Worn;
   /** The tools you own: a recipe for one of them cannot be made again. None known: none. */
   tools?: readonly string[];
+  /** The crate you opened: what lies in it (ages in seconds as of now), what you did at it this visit, and you (to tell your own things). */
+  crate?: { items: readonly CacheItemView[]; left: boolean; took: boolean; me: string };
 }
 
 /**
@@ -187,7 +199,7 @@ export function cardPress(v: DetailView): { does?: DetailAct; close: boolean; sh
   const act = v.act;
   if (!act) return { close: false, shake: false };
   if (act.enabled) return { does: act.does, close: true, shake: false };
-  const asks = act.does.kind === 'make' || act.does.kind === 'mend';
+  const asks = act.does.kind === 'make' || act.does.kind === 'mend' || act.does.kind === 'crateLeave';
   return { ...(asks ? { does: act.does } : {}), close: false, shake: true };
 }
 
@@ -254,6 +266,26 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       }
       short(card, needs);
       return { ...card, act: { label: count > 1 ? `Make ${count}` : 'Make', enabled: needs.every(n => n.have >= n.need), does: { kind: 'make', recipe: recipe.id } } };
+    }
+    case 'crate': {
+      const c = s.crate, e = c?.items.find(x => x.id === ref.id);
+      if (!c || !e) return null;
+      const card = itemCard(items.get(e.item), 1);
+      card.notes.push({ text: `${capital(leftBy(e.name, e.owner === c.me, e.age))}.`, tone: 'plain' });
+      // Taking asks nothing: it is someone's gift. One a visit.
+      if (c.took) card.notes.push({ text: TOOK_ONE, tone: 'bad' });
+      return { ...card, act: { label: 'Take it', enabled: !c.took, does: { kind: 'crateTake', id: e.id } } };
+    }
+    case 'crateBag': {
+      const c = s.crate, slot = s.bag[ref.slot];
+      if (!c || !slot || slot.item !== ref.item) return null;
+      const def = items.get(slot.item), card = def.kind === 'gear' ? gearCard(def, undefined, s) : itemCard(def, slot.count);
+      const act = { label: 'Leave one', enabled: false, does: { kind: 'crateLeave', slot: ref.slot } } as NonNullable<DetailView['act']>;
+      if (!cacheTakes(def)) card.notes.push({ text: CRATE_NO_GEAR, tone: 'bad' });
+      else if (c.left) card.notes.push({ text: LEFT_ONE, tone: 'bad' });
+      else if (c.items.length >= CACHE_SIZE) card.notes.push({ text: CRATE_FULL, tone: 'bad' });
+      else act.enabled = true;
+      return { ...card, act };
     }
     case 'mend': {
       const id = s.gear[ref.slot], piece = s.worn[ref.slot];
