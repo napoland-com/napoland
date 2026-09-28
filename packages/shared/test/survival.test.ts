@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AURORA_EVERY, CARRY_KG, DAY_S, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, DRY_AIR_SECONDS, DRY_FIRE_SECONDS, DRY_ROOF_SECONDS, FEATS, HITCH_DRAIN, LOAD_DRAIN,
-  REFILL_PER_SECOND, SURGE_DRAIN, TileMap, WET_DRAIN, WET_SECONDS, bagLoad, charmsIn, energyRate, featsOf, inSurge, itemIndex, modsOf, reveal, surgeAt,
+  AURORA_EVERY, CARRY_KG, DAY_S, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, DRY_AIR_SECONDS, DRY_FIRE_SECONDS, DRY_ROOF_SECONDS, FEATS, HITCH_DRAIN, LOAD_DRAIN, NO_MODS,
+  REFILL_PER_SECOND, SURGE_DRAIN, TileMap, WET_DRAIN, WET_SECONDS, bagLoad, charmsIn, energyRate, inSurge, itemIndex, modsOf, rankOf, reveal, surgeAt,
   surgeFront, untilSurge, validateItems, validateMap, weatherAt, wetRate, type ItemsData, type MapData,
 } from '../src';
 
@@ -117,11 +117,11 @@ describe('bags, charms, strange objects and feats', () => {
   });
 
   it('earns feats at their mark, and multiplies feats and charms into one set of factors', () => {
-    const rain = FEATS.find(f => f.stat === 'rainSteps')!;
-    expect(featsOf({ rainSteps: rain.need - 1 })).toEqual([]);
-    expect(featsOf({ rainSteps: rain.need })).toEqual([rain.id]);
-    expect(modsOf({ rainSteps: rain.need }, [{ wetting: 0.5 }])).toEqual({ wetting: 0.8 * 0.5, load: 1, hitch: 1, warmth: 1 });
-    expect(modsOf({})).toEqual({ wetting: 1, load: 1, hitch: 1, warmth: 1 });
+    const rain = FEATS.find(f => f.stat === 'rainSteps')!, need = rain.ranks[0]!.need;
+    expect(rankOf(rain, need - 1)).toBe(0);
+    expect(rankOf(rain, need)).toBe(1);
+    expect(modsOf({ rainSteps: need }, [{ wetting: 0.5 }])).toEqual({ ...NO_MODS, wetting: 0.8 * 0.5 });
+    expect(modsOf({})).toEqual({ wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0 });
   });
 });
 

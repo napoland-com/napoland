@@ -12,11 +12,13 @@
  * - something clinging to your back at night (a hitchhiker), until you reach light or a roof,
  * - a storm (sky.ts): wind and lightning, and being wet in its wind chills you more,
  * - a flash discharging where you stand: a spark (electricity) or a fire flash (heat).
+ * Far out (FAR_STEPS or more from home), a pathfinder's whole drain is gentler (feats.ts).
  *
  * The server owns the numbers; the client only shows them (and counts between updates using `rate`).
  * Tuning targets: standing at the woods' edge in the rain, dry and light, empties a full bar in about
  * 5.5 minutes, the deep end of the Near Woods in under 2, so the shelters' fires matter.
  */
+import { FAR_STEPS } from './feats';
 import type { Resist } from './gear';
 import type { MapKind, TileMap } from './map';
 import type { Weather } from './protocol';
@@ -96,6 +98,8 @@ export interface Conditions {
   flash?: FlashKind;
   /** What your gear resists (gear.ts): cold softens the weather's and wetness's extra drain, electricity and radiation a surge's, wind and electricity a storm's, heat and electricity a flash's. */
   resist?: Partial<Resist>;
+  /** How hard the whole drain is FAR_STEPS or more from home (the pathfinder's ranks, feats.ts); nearer home it is as ever. Default 1. */
+  farDrain?: number;
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -121,6 +125,7 @@ export function energyRate(map: TileMap, x: number, y: number, weather: Weather,
     const shield = (r('electricity') + r('radiation')) / 2;
     k *= 1 + ((c.surgeDrain ?? SURGE_DRAIN) - 1) * (1 - shield);
   }
+  if (far >= FAR_STEPS) k *= c.farDrain ?? 1;
   return -DRAIN_PER_SECOND * Math.max(1, map.data.depth) * (1 + far / DRAIN_GROWTH_STEPS) * k;
 }
 
