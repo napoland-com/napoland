@@ -8,7 +8,7 @@ import {
   BAG_SLOTS, SLOTS, itemIndex, liveEnds, liveXp, mendCost, resistOf, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type Quirk,
   type Recipe, type Refusal, type RefusedAction, type Slot, type Worn,
 } from '@napoland/shared';
-import type { RecipeView, WornView } from './hud';
+import type { RecipeView, ToolView, WornView } from './hud';
 import type { Look } from './view/characters';
 import { iconFor } from './icons';
 
@@ -108,6 +108,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'gear_stays': return 'Put gear on from the chest';
     case 'whole': return 'It needs no mending';
+    case 'have_tool': return action === 'pick' ? 'You have one already. It stays for someone else' : 'You have one already';
   }
 }
 
@@ -201,6 +202,7 @@ export function factsOf(def: ItemDef): string[] {
   if (def.fuel) out.push(`Burns ${Math.round(def.fuel / 60)} min`);
   if (def.charge) out.push('The Old Stone wants it');
   if (def.kind === 'charm') out.push('Works while in your bag');
+  if (def.kind === 'tool') out.push('A tool, yours for good');
   return out;
 }
 
@@ -218,12 +220,33 @@ export function lookOf(gear: Gear, items: Items): Look {
   return out;
 }
 
-/** The workbench's recipes against what a stash holds: what each makes, what it needs, whether it can. */
-export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[], items: Items): RecipeView[] {
+/**
+ * The workbench's recipes against what a stash holds: what each makes, what it needs, whether it can.
+ * A tool is yours once: the row of one among your `tools` says you have it, and cannot be made again.
+ */
+export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[], items: Items, tools: readonly string[] = []): RecipeView[] {
   return recipes.map(r => {
-    const def = items.get(r.make);
+    const def = items.get(r.make), have = def.kind === 'tool' && tools.includes(r.make);
     const needs = r.needs.map(n => ({ name: items.get(n.item).name, icon: iconFor(items.get(n.item)), have: countOf(stash, n.item), need: n.count }));
-    return { id: r.id, name: def.name, icon: iconFor(def), facts: factsOf(def).join(' · '), needs, can: needs.every(n => n.have >= n.need) };
+    return { id: r.id, name: def.name, icon: iconFor(def), facts: factsOf(def).join(' · '), needs, can: !have && needs.every(n => n.have >= n.need), ...(have ? { act: 'You have it' } : {}) };
+  });
+}
+
+/**
+ * The buttons in the bag's header for the tools you own, in the order you got them: every map is the
+ * one map button, where the first of them came (it opens the map of the area you are in, as M does),
+ * and every other tool has a button of its own, beside it.
+ */
+export function toolViews(tools: readonly string[], items: Items): ToolView[] {
+  let map = false;
+  return tools.flatMap((t): ToolView[] => {
+    const def = items.get(t);
+    // The server sends only tools; one this copy does not know as a tool gets no button of its own.
+    if (def.kind !== 'tool') return [];
+    if (!def.chart) return [{ item: t, label: def.name, icon: iconFor(def) }];
+    if (map) return [];
+    map = true;
+    return [{ item: null, label: 'Open the map', icon: iconFor(def) }];
   });
 }
 

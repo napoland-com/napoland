@@ -3,7 +3,7 @@
  * outlines on the dark panel), one per item. Inline SVG, so they need no download and stay sharp at
  * any size. An item without its own drawing gets a sack.
  */
-import type { ItemDef, Slot } from '@napoland/shared';
+import type { ItemDef, Slot, ToolIcon } from '@napoland/shared';
 
 const CREAM = '#e8dfc8';
 
@@ -120,10 +120,13 @@ export const MAP_ICON = icon(`<path d="M4 8l8-2.5 8 2.5 8-2.5v19L20 27l-8-2.5L4 
   <path d="M6.5 22c3-1 3.5-5 7-6s5 2 8.5-3" stroke="#6b4a31" stroke-dasharray="2 1.6"/>
   <ellipse cx="22.5" cy="20.5" rx="2.6" ry="1.6" fill="#6f98b0" stroke="#3f5f72"/>`);
 
-/** The drawing for an item: its own, or its slot's in its color for gear, a paper map for a tool that charts one, or a sack. */
+/** The drawing on each tool's button in the bag's header, by the icon its item names (TOOL_ICONS: every one is drawn). */
+export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON };
+
+/** The drawing for an item: its own, or its slot's in its color for gear, a tool's by its icon (a paper map for one that charts), or a sack. */
 export function iconFor(def: ItemDef): string {
   if (ICONS[def.id]) return ICONS[def.id]!;
-  if (def.kind === 'tool' && def.chart) return MAP_ICON;
+  if (def.kind === 'tool') return (def.icon && TOOL_DRAWINGS[def.icon]) || (def.chart ? MAP_ICON : SACK);
   if (def.kind === 'gear' && def.slot) return GEAR[def.slot](def.color ?? '#a58a5f');
   return SACK;
 }

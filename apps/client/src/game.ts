@@ -189,7 +189,7 @@ export class Game {
   statsChanges = 0;
   /** What the woods are like today and this week (sky.ts), as the server said. */
   conditions: ConditionsView = { today: [], week: null, next: null };
-  /** Your tools (item ids), as the welcome said: a paper map, for now. */
+  /** Your tools (item ids), in the order you got them: as the welcome said, then whole again whenever you get one. Replaced, never changed in place. */
   tools: string[] = [];
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
@@ -492,7 +492,8 @@ export class Game {
         break;
       }
       case 'crafted':
-        this.floatOverMe(`Made: ${this.items.get(msg.item).name}`, GAIN);
+        // A tool made is floated as it comes (got), once.
+        if (this.items.get(msg.item).kind !== 'tool') this.floatOverMe(`Made: ${this.items.get(msg.item).name}`, GAIN);
         break;
       case 'progress':
         if (msg.gained > 0) this.floatOverMe(`+${msg.gained} XP`, GAIN);
@@ -571,10 +572,13 @@ export class Game {
         this.bagAt = now;
         break;
       }
+      case 'tools':
+        this.tools = msg.tools;
+        break;
       case 'got': {
         this.picking = null;
-        // A column over your head, in the order the server listed them, first on top.
-        msg.items.forEach((s, i) => this.floatOverMe(`+${s.count} ${this.items.get(s.item).name}`, GAIN, msg.items.length - 1 - i));
+        // A column over your head, in the order the server listed them, first on top. A tool is yours once: no count.
+        msg.items.forEach((s, i) => this.floatOverMe(`+${msg.from === 'tool' ? '' : s.count} ${this.items.get(s.item).name}`, GAIN, msg.items.length - 1 - i));
         // Named, so the player knows which feat to thank.
         if (msg.double) this.floatOverMe('Forager: it came up double', GAIN, msg.items.length);
         // Someone else's pile can leave you nothing (your half did not fit, or the coin went the
@@ -611,7 +615,7 @@ export class Game {
         if (msg.action === 'pick') this.picking = null;
         if (msg.action === 'use') this.using = null;
         if (msg.action === 'feed') this.feeding = null;
-        this.floatOverMe(refusalText(msg.reason), NO);
+        this.floatOverMe(refusalText(msg.reason, msg.action), NO);
         break;
       default:
         break;
@@ -999,6 +1003,11 @@ export class Game {
 
   private openDialog(t: Talker) {
     this.dialog = { who: t.who, lines: t.lines, i: 0, shown: 0 };
+  }
+
+  /** The text box with these lines under `who`, as a sign's: what one of your tools is, tapped in the bag's header. */
+  read(who: string, lines: string[]) {
+    if (lines.length) this.openDialog({ x: 0, y: 0, who, lines, kind: 'talk' });
   }
 
   /** "Word from the woods today: thick fog, and a NAPO cache. This week: copper week." Null when nothing is going on. */

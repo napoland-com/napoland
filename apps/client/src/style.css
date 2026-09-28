@@ -149,9 +149,14 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .sheet-head b { font-weight: inherit; flex: 1; color: #ffcf5a; }
 .sheet-head .room { font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.1); color: #b9b2a2; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hud .close { width: var(--btn); height: var(--btn); flex: none; }
-/* Tools ride in the bag's header, as big as its close button. */
-.sheet-head .tools { display: flex; gap: calc(var(--u) * .5); }
+/* Tools ride in the bag's header, as big as its close button, one for each you own. The room line sits
+   under the title, so the buttons never squeeze it and the header stays one button high: four fit beside
+   it on any phone held upright, five in landscape. Past that the room line ends in "...". */
+.sheet-head .tools { display: flex; gap: calc(var(--u) * .5); flex: none; }
 .sheet-head .tools .slot { width: var(--btn); height: var(--btn); }
+.bag-head .heading { flex: 1; min-width: 0; display: grid; gap: .1em; }
+/* Tall enough a line that clipping it (for the ellipsis, with many tools on a small phone) cuts no letter. */
+.bag-head .room { overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
 /* A paper map over everything, as big as the screen allows in either orientation; B or the X puts it away. */
 .paper-view { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; pointer-events: auto; background: rgba(6, 8, 11, .9);
   padding: calc(var(--pad) + var(--safe-t)) calc(var(--pad) + var(--safe-r)) calc(var(--pad) + var(--safe-b)) calc(var(--pad) + var(--safe-l)); }

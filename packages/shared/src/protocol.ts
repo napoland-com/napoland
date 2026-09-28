@@ -256,7 +256,9 @@ export type Refusal =
   /** Gear stays in the chest: it is put on from there. */
   | 'gear_stays'
   /** That is as good as new already, or cannot be mended. */
-  | 'whole';
+  | 'whole'
+  /** You have that tool already: each is yours once, for good (a find of it stays for someone else). */
+  | 'have_tool';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -346,7 +348,7 @@ export type ServerMsg =
       stats: Stats;
       /** Your XP and level (progress.ts). */
       progress: ProgressView;
-      /** Your tools (item ids, items.ts): kept for good, apart from the bag. */
+      /** Your tools (item ids, items.ts, toolsOf), in the order you got them: kept for good, apart from the bag. */
       tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
       items: number;
@@ -366,11 +368,14 @@ export type ServerMsg =
   | { t: 'energy'; energy: EnergyView; body: BodyView }
   /** Your bag, whole, after any change. A live item's slot has its `age` as of now. */
   | { t: 'bag'; bag: BagSlot[] }
+  /** Your tools, whole (item ids, in the order you got them), after you got one. */
+  | { t: 'tools'; tools: string[] }
   /**
-   * You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
-   * `double`: the find came up double (the forager's ranks, feats.ts).
+   * You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message. From a
+   * `tool`: one tool, yours for good (made at the workbench, found, or given), and your tools follow
+   * in a `tools` message instead. `double`: the find came up double (the forager's ranks, feats.ts).
    */
-  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify'; double?: true }
+  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify' | 'tool'; double?: true }
   /** Something asked for that did not happen, and why. */
   | { t: 'refused'; action: RefusedAction; reason: Refusal }
   /** Someone said something you can hear: to everyone online, or near them on your map (a bubble over their head). You hear your own too. */
@@ -426,7 +431,7 @@ export type ServerMsg =
   | { t: 'mended'; item: string }
   /** The workbench you opened: what your stash holds, whole, after opening it or making something. */
   | { t: 'bench'; stash: BagSlot[] }
-  /** You made this at the workbench; it lies in your stash. */
+  /** You made this at the workbench; it lies in your stash (a tool is yours for good instead: its `got` and `tools` came first). */
   | { t: 'crafted'; item: string; count: number }
   /** On your map: a find grew here, or someone took one / it went. */
   | { t: 'find'; find: FindView }
