@@ -9,6 +9,12 @@ import pg from 'pg';
 import type { BagSlot, Dir, Gear, NotebookState, ParcelState, Piece, ReportReason, Stash, Stats, ThanksFor, Worn } from '@napoland/shared';
 import { log } from './log';
 
+export interface PlayerBests {
+  deepest?: { map: string; depth: number; steps: number };
+  longestS?: number;
+  xp?: number;
+}
+
 export interface PlayerRecord {
   /** A random UUID. */
   id: string;
@@ -137,6 +143,12 @@ export interface PlayerRecord {
   doorOff?: true;
   /** They read the letter about their street, the first time they came home since streets came: never again. A save without it keeps it. */
   streetTold?: true;
+  /**
+   * Their best trips (world.ts, endTrip): the farthest (the deepest region, then the most steps from home
+   * in it), the longest in seconds, the most XP brought home. None: no trip yet. They only grow, and a save
+   * without them keeps what was saved.
+   */
+  bests?: PlayerBests;
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
@@ -413,12 +425,14 @@ const copyPieces = (p: Record<string, Piece[]>): Record<string, Piece[]> => Obje
 const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: copyPieces(s.pieces) } : {}) });
 const copyWorn = (w: Worn): Worn => Object.fromEntries(Object.entries(w).map(([slot, p]) => [slot, { ...p }]));
 const copyNotebook = (n: NotebookState): NotebookState => ({ pages: [...n.pages], blanks: [...n.blanks] });
+const copyBests = (b: PlayerBests): PlayerBests => ({ ...b, ...(b.deepest ? { deepest: { ...b.deepest } } : {}) });
 const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...rec, bag: copyBag(rec.bag), ...(rec.kept ? { kept: { bag: structuredClone(rec.kept.bag) } } : {}), ...(rec.stats ? { stats: { ...rec.stats } } : {}),
   ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
   ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
   ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}), ...(rec.notebook ? { notebook: copyNotebook(rec.notebook) } : {}),
   ...(rec.notes ? { notes: [...rec.notes] } : {}), ...(rec.keepsakes ? { keepsakes: [...rec.keepsakes] } : {}), ...(rec.furniture ? { furniture: [...rec.furniture] } : {}),
+  ...(rec.bests ? { bests: copyBests(rec.bests) } : {}),
 });
 /** A record as storage keeps it: the copy it names, if any (like the database, which keeps '' for the main copy and reads it back as none). */
 function withZone<T extends { zone?: string }>(r: T, zone: string | undefined): T {
@@ -520,6 +534,7 @@ export class MemoryStorage implements Storage {
         ...(rec.notes ? { notes: [...rec.notes] } : {}), ...(rec.keepsakes ? { keepsakes: [...rec.keepsakes] } : {}),
         ...(rec.meritsSpent !== undefined ? { meritsSpent: rec.meritsSpent } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}),
         ...(rec.furniture ? { furniture: [...rec.furniture] } : {}),
+        ...(rec.bests ? { bests: copyBests(rec.bests) } : cur.bests ? { bests: cur.bests } : {}),
       });
       // Every save says whether they are cozy, and where their cabin stands, as it says where they are.
       if (rec.cozy !== undefined) cur.cozy = rec.cozy;
@@ -812,6 +827,8 @@ interface PlayerRow {
   keepsakes: unknown;
   /** Null for a player who made no furniture yet (024_furniture.sql). */
   furniture: unknown;
+  /** Null for a player who has not come home from a trip yet (027_bests.sql). */
+  bests: unknown;
   /** Null for a player who is not cozy. */
   cozy_until: Date | null;
   /** Where their cabin stands (025_streets.sql): both null for a player who has not come home since streets came. */
@@ -912,6 +929,21 @@ const notebookOf = (json: unknown): { notebook?: NotebookState } => {
 const idsOf = <K extends 'notes' | 'keepsakes'>(key: K, json: unknown): Partial<Record<K, string[]>> =>
   (Array.isArray(json) ? ({ [key]: json.filter((id): id is string => typeof id === 'string') } as Partial<Record<K, string[]>>) : {});
 
+/** The bests as the server wrote them; a part that is not what it should be reads as never set. */
+const bestsOf = (json: unknown): { bests?: PlayerBests } => {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return {};
+  const { deepest, longestS, xp } = json as Record<string, unknown>;
+  const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
+  const d = deepest as Record<string, unknown> | null | undefined;
+  return {
+    bests: {
+      ...(d && typeof d.map === 'string' && num(d.depth) && num(d.steps) ? { deepest: { map: d.map, depth: d.depth as number, steps: d.steps as number } } : {}),
+      ...(num(longestS) ? { longestS: longestS as number } : {}),
+      ...(num(xp) ? { xp: xp as number } : {}),
+    },
+  };
+};
+
 const fromRow = (r: PlayerRow): PlayerRecord => ({
   id: r.id,
   name: r.name,
@@ -955,6 +987,7 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...idsOf('keepsakes', r.keepsakes),
   // A list of ids as the server wrote it; anything else reads as none (the World checks it again).
   ...(Array.isArray(r.furniture) ? { furniture: r.furniture.filter((t): t is string => typeof t === 'string') } : {}),
+  ...bestsOf(r.bests),
   ...(r.cozy_until ? { cozy: r.cozy_until.getTime() } : {}),
   ...(r.street !== null && r.lot !== null ? { street: r.street, lot: r.lot } : {}),
   ...(r.door_off ? { doorOff: true as const } : {}),
@@ -996,7 +1029,7 @@ const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, colo
   merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
   badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, notebook = COALESCE($31::jsonb, notebook), notes = COALESCE($32::jsonb, notes),
   keepsakes = COALESCE($33::jsonb, keepsakes), furniture = COALESCE($34::jsonb, furniture), cozy_until = $35, street = $36, lot = $37, door_off = $38,
-  street_told = street_told OR $39, last_seen_at = $13 WHERE id = $1`;
+  street_told = street_told OR $39, bests = COALESCE($40::jsonb, bests), last_seen_at = $13 WHERE id = $1`;
 
 // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
 function saveParams(rec: PlayerRecord): unknown[] {
@@ -1010,6 +1043,7 @@ function saveParams(rec: PlayerRecord): unknown[] {
     rec.notes ? JSON.stringify(rec.notes) : null, rec.keepsakes ? JSON.stringify(rec.keepsakes) : null,
     rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
     rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null, rec.doorOff === true, rec.streetTold === true,
+    rec.bests ? JSON.stringify(rec.bests) : null,
   ];
 }
 

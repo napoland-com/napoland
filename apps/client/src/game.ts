@@ -71,6 +71,7 @@ import { trophiesIn } from './view/cabin';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
 import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
+import { tripCard } from './trip';
 import { Stalker } from './unease';
 import type { Avatar } from './view/world';
 
@@ -725,6 +726,15 @@ export class Game {
       case 'streetLetter':
         this.letters.push({ who: 'Letter', lines: streetLetterLines(msg.doorOff) });
         break;
+      case 'trip': {
+        // How the trip went comes first, before any letter home: one page, once the box is free (idle).
+        const card = tripCard(msg.trip, id => {
+          const d = this.maps.find(id);
+          return d && this.maps.get({ id, version: d.version });
+        });
+        this.letters.unshift({ who: card.title, lines: [card.lines.join('\n')] });
+        break;
+      }
       case 'doorstep':
         this.offerMoves(msg.moves);
         break;

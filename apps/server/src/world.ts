@@ -326,6 +326,8 @@ import {
   type StreetView,
   type StormPhase,
   type StormView,
+  type TripBest,
+  type TripView,
   type SurgePhase,
   type SurgeView,
   type Slot,
@@ -390,6 +392,9 @@ export const STONE_SHARD_S = 30 * 60;
 export const FIRSTS_ON_BOARD = 3;
 /** The notice board counts collapses this far back. */
 const COLLAPSES_MS = 60 * 60 * 1000;
+/** A trip shorter than this, or with fewer steps, was stepping out of the door and back: it is not reported (a collapse always is). */
+export const TRIP_MIN_MS = 30_000;
+export const TRIP_MIN_STEPS = 10;
 /**
  * The fuel in the lodge's fire as the Long Night begins: half of what a fire holds (FIRE_MAX_S), so it
  * cannot last the night on one feeding, and the town has to come back to it at least twice.
@@ -612,8 +617,31 @@ interface Walk {
   at: number;
 }
 
+/**
+ * A trip in progress (Online.trip): from the first step out into the wilds to home, walked into or woken up
+ * in. Walking back into town and out again is the same trip. Kept in memory only: logging out forgets it.
+ */
+interface Trip {
+  /** Game time of the first step out. */
+  startedAt: number;
+  /** Steps taken out there. */
+  steps: number;
+  /** The farthest reached: the deepest region, then the most steps from home in it. */
+  deepest?: { map: string; depth: number; steps: number };
+  /** The lowest energy seen. */
+  lowest: number;
+  storms: number;
+  flashes: number;
+  surges: number;
+  /** The storms (by region and when each ends) and the flashes counted already: each once. */
+  stormsSeen: Set<string>;
+  flashesSeen: WeakSet<Flash>;
+}
+
 interface Online {
   rec: PlayerRecord;
+  /** The trip they are on, if they are out (or on their way back). */
+  trip?: Trip;
   /** The zone the player is in, and its map (zone.map, at hand). */
   zone: Zone;
   map: TileMap;
@@ -1789,23 +1817,19 @@ export class World {
    * tile x,y next to them. What goes in earns XP, except what they took out before and bring back;
    * a new level raises their energy bar at once.
    */
-  store(id: string, x: number, y: number, slot: number | undefined, now: number): void {
-    const p = this.players.get(id);
-    if (!p) return;
-    this.runQueue(p, now);
-    this.advance(p, now);
-    if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'store', 'too_far');
-    const all = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
-    if (!all.length) return this.refuse(p, 'store', 'empty_slot');
+  /**
+   * What putting `slots` of the bag in the stash would do, without doing it: the stash after, the XP, and
+   * the keepsakes that come home for the first time.
+   */
+  private stashing(p: Online, slots: readonly BagSlot[], now: number): { stash: Stash; xp: number; came: string[] } {
     // A keepsake comes home apart from the stash, and stays: theirs for good, with its XP, once.
-    const home = all.filter(s => isKeepsake(this.items.get(s.item))), going = all.filter(s => !home.includes(s));
+    const home = slots.filter(s => isKeepsake(this.items.get(s.item))), going = slots.filter(s => !home.includes(s));
     // Live finds apart: gathering them would forget when each was picked, and each is worth what its age says.
     const wall = now + this.epochOffset;
     const r = store(p.rec.stash ?? emptyStash(), gather(going.filter(s => !this.items.get(s.item)?.live)), this.items);
-    const setBefore = keepsakeEnergy(this.keepsakes, p.rec.keepsakes), came: string[] = [];
+    const came: string[] = [];
     for (const s of home) {
-      if (p.rec.keepsakes?.includes(s.item)) continue;
-      p.rec.keepsakes = [...(p.rec.keepsakes ?? []), s.item];
+      if (p.rec.keepsakes?.includes(s.item) || came.includes(s.item)) continue;
       came.push(s.item);
       r.xp += this.items.get(s.item)?.xp ?? 0;
     }
@@ -1816,6 +1840,25 @@ export class World {
       r.stash = lr.stash;
       r.xp += lr.xp;
     }
+    return { ...r, came };
+  }
+
+  /** What the whole bag would earn put in the stash now (for how the trip went: the card comes before the chest). */
+  private bagWorth(p: Online, now: number): number {
+    return p.rec.bag.length ? this.stashing(p, p.rec.bag, now).xp : 0;
+  }
+
+  store(id: string, x: number, y: number, slot: number | undefined, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    this.advance(p, now);
+    if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'store', 'too_far');
+    const all = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
+    if (!all.length) return this.refuse(p, 'store', 'empty_slot');
+    const setBefore = keepsakeEnergy(this.keepsakes, p.rec.keepsakes);
+    const { came, ...r } = this.stashing(p, all, now);
+    if (came.length) p.rec.keepsakes = [...(p.rec.keepsakes ?? []), ...came];
     // Carried gear goes in as it is, piece by piece; fitPieces keeps the stash's pieces and its counts one.
     p.rec.stash = fitPieces(r.stash, this.items, this.rng);
     p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
@@ -2810,6 +2853,8 @@ export class World {
       const real = bagLoad(p.rec.bag, this.items);
       for (const stat of STEP_STATS) if (stepCounts(stat, p.map, x, y, this.weatherOf(p.map), real)) this.count(p, stat, now);
     }
+    // A step out there counts for the trip, the one that leaves too (onto the way home), and so does the one that brings them out.
+    const out = this.wild(p.map);
     const exit = p.map.exitAt(x, y);
     // Onto the way home (a home exit: no steps from home) out in the wilds: a walk others may glimpse ends here.
     if (exit && p.map.data.kind === 'wilds' && p.map.homeSteps(x, y) === 0) this.walkEnded(p, now);
@@ -2818,6 +2863,57 @@ export class World {
       this.rerate(p, now);
       this.revisit(p);
     }
+    if (out || this.wild(p.map)) this.walkedOut(p, now);
+  }
+
+  /** A step out there: it starts a trip, or counts on the one they are on, and how far out it went. */
+  private walkedOut(p: Online, now: number): void {
+    // Only out there does one start: the step that leaves the wilds for home has just ended the last one.
+    if (!p.trip && !this.wild(p.map)) return;
+    const t = (p.trip ??= { startedAt: now, steps: 0, lowest: p.rec.energy, storms: 0, flashes: 0, surges: 0, stormsSeen: new Set(), flashesSeen: new WeakSet() });
+    t.steps++;
+    const map = p.map, steps = map.data.kind === 'wilds' ? map.homeSteps(p.rec.x, p.rec.y) : -1;
+    if (steps <= 0) return;
+    const d = t.deepest, depth = map.data.depth;
+    if (!d || depth > d.depth || (depth === d.depth && steps > d.steps)) t.deepest = { map: map.data.id, depth, steps };
+  }
+
+  /**
+   * Home, walked into or woken up in (`fell`: where they collapsed): the trip is over, and its owner hears
+   * how it went, after the zone that brought them home. Bests it beat are kept, and said.
+   */
+  private endTrip(p: Online, now: number, fell: { map: string; x: number; y: number } | null): void {
+    const t = p.trip;
+    if (!t) return;
+    p.trip = undefined;
+    const ms = now - t.startedAt;
+    // Stepping out of the door and back is no trip; a collapse always is.
+    if (!fell && (ms < TRIP_MIN_MS || t.steps < TRIP_MIN_STEPS)) return;
+    const xp = fell ? 0 : this.bagWorth(p, now), longestS = Math.round(ms / 1000);
+    const was = p.rec.bests ?? {}, bests = { ...was }, best: TripBest[] = [];
+    const d = t.deepest, far = was.deepest;
+    // A best is only said when there was one to beat: the first trip sets them all quietly.
+    if (d && (!far || d.depth > far.depth || (d.depth === far.depth && d.steps > far.steps))) {
+      bests.deepest = { ...d };
+      if (far) best.push('deepest');
+    }
+    if (longestS > (was.longestS ?? 0)) {
+      bests.longestS = longestS;
+      if (was.longestS) best.push('longest');
+    }
+    if (xp > (was.xp ?? 0)) {
+      bests.xp = xp;
+      if (was.xp) best.push('xp');
+    }
+    if (bests.deepest !== was.deepest || bests.longestS !== was.longestS || bests.xp !== was.xp) {
+      p.rec.bests = bests;
+      this.saveNow.set(p.rec.id, p.rec);
+    }
+    const trip: TripView = {
+      minutes: Math.max(1, Math.round(ms / 60_000)), steps: t.steps, deepest: d ? { map: d.map, steps: d.steps } : null, xp,
+      lowest: Math.floor(Math.min(t.lowest, p.rec.energy, ...(fell ? [0] : []))), caught: { storms: t.storms, flashes: t.flashes, surges: t.surges }, fell, best,
+    };
+    this.outbox.push({ to: p.rec.id, msg: { t: 'trip', trip } });
   }
 
   /** Refuses step `seq`, telling the mover where they really are. */
@@ -2842,6 +2938,7 @@ export class World {
     // Into a room off the wilds: the walk that led here ends at a find or a fire, if they pick one up or feed it in there.
     if (from.map.data.kind === 'wilds' && map.data.kind === 'inside') p.approach = { map: from.map.data.id, steps: walked };
     this.arrive(p, from, 'exit', now);
+    if (this.homes.has(map.data.id)) this.endTrip(p, now, null);
     this.moveStory(p, { reach: map.data.id });
     // Home, whichever copy of it (their own cabin): the letter waits there.
     if (this.homes.has(map.data.id)) this.homecoming(p, now);
@@ -2930,9 +3027,10 @@ export class World {
 
   /** Out of energy while online: the player wakes up at home, and both zones see it. */
   private collapse(p: Online, now: number): void {
-    const from = p.zone;
+    const from = p.zone, { map, x, y } = p.rec;
     this.fall(p, now);
     this.arrive(p, from, 'collapse', now);
+    this.endTrip(p, now, { map, x, y });
     // Woken up in the home (their cabin), they are home as if they had walked in: the letter is there.
     if (this.homes.has(p.map.data.id)) this.homecoming(p, now);
   }
@@ -3114,6 +3212,7 @@ export class World {
       p.rec.wet = clamp01((p.rec.wet ?? 0) + p.wetRate * dt);
       if (p.map.data.kind === 'wilds') this.wearDown(p, dt);
       p.energyAt = now;
+      if (p.trip && p.rec.energy < p.trip.lowest) p.trip.lowest = p.rec.energy;
     }
     return p.rec.energy;
   }
@@ -3244,7 +3343,18 @@ export class World {
         this.saw(p, 'surge');
         if (!inside && p.surgedIn === this.surgeRound(map, now)) this.saw(p, 'lit');
       }
-      if (this.stormOf(map, now)?.phase === 'storm') this.saw(p, inside ? 'roof' : 'storm');
+      if (this.stormOf(map, now)?.phase === 'storm') {
+        this.saw(p, inside ? 'roof' : 'storm');
+        // Out in it (not under a roof), each storm once: it is known by its region and when it ends.
+        const rule = region.data.storm, t = p.trip;
+        if (t && rule && !inside) {
+          const wall = now + this.epochOffset, key = `${region.data.id}:${Math.round(wall / 1000 + stormAt(rule, wall).left)}`;
+          if (!t.stormsSeen.has(key)) {
+            t.stormsSeen.add(key);
+            t.storms++;
+          }
+        }
+      }
     }
     if (inside) return;
     if (this.weatherOf(map) === 'aurora') {
@@ -3253,6 +3363,12 @@ export class World {
     }
     if (map.data.kind !== 'wilds') return;
     if (p.zone.flashes.some(f => flashHits(flashView(f, now), x, y))) this.saw(p, 'burst');
+    const t = p.trip;
+    if (t) for (const f of p.zone.flashes) {
+      if (t.flashesSeen.has(f) || !flashHits(flashView(f, now), x, y)) continue;
+      t.flashesSeen.add(f);
+      t.flashes++;
+    }
     for (const w of p.zone.watchers) {
       if (!w.awake || Math.hypot(w.x - x, w.y - y) > SEEN_TILES) continue;
       this.saw(p, 'watcher');
@@ -3418,6 +3534,7 @@ export class World {
     if (!round || !inSurge(p.map, p.rec.x, p.rec.y, this.frontOf(p.map, now))) return;
     if (p.surgedIn === round) return;
     p.surgedIn = round;
+    if (p.trip) p.trip.surges++;
     this.count(p, 'surged', now);
   }
 

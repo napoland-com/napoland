@@ -26,8 +26,9 @@ import { OFFER_MAX } from './trade';
  * region's (a `zone` says the new map's), and effects run for a while (BodyView.effects). 31: seasons,
  * whose winter freezes water that is then walked on (a client that did not know would never step on it).
  * 32: the Long Night (`longNight`, in the welcome too), whose lodge fire is fed like a shelter's.
+ * 33: how the trip went (`trip`), when you come home or wake up there.
  */
-export const PROTOCOL_VERSION = 32;
+export const PROTOCOL_VERSION = 33;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -609,6 +610,31 @@ export interface StoryView {
   chapter: string;
 }
 
+/** A best a trip can beat: the farthest out, the longest out, the most XP brought back. */
+export type TripBest = 'deepest' | 'longest' | 'xp';
+
+/**
+ * How a trip went, for its owner alone: numbers and ids only, the client words them (trip.ts). A trip
+ * starts at the first step out into the wilds and ends at home, walked into or woken up in.
+ */
+export interface TripView {
+  /** Rounded, at least 1. */
+  minutes: number;
+  /** Steps taken out there. */
+  steps: number;
+  /** The farthest place reached: the deepest region, then the most steps from home in it. Null: never past the edge. */
+  deepest: { map: string; steps: number } | null;
+  /** What the bag would earn stored now (0 after a collapse: the bag is on the ground). */
+  xp: number;
+  /** The lowest the energy got, in whole points. */
+  lowest: number;
+  caught: { storms: number; flashes: number; surges: number };
+  /** Where they fell, after a collapse only (they know it already: their pile lies there). */
+  fell: { map: string; x: number; y: number } | null;
+  /** The bests this trip beat. */
+  best: TripBest[];
+}
+
 export type ServerMsg =
   | {
       t: 'welcome';
@@ -730,6 +756,8 @@ export type ServerMsg =
    * on your door, your window lit while you are home; `doorOff`: you keep both to yourself already). Once.
    */
   | { t: 'streetLetter'; doorOff: boolean }
+  /** How the trip that just ended went: after the `zone` that brings you home, walking in or waking up there. */
+  | { t: 'trip'; trip: TripView }
   /**
    * You picked these up (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
    * A find that is a `tool` is yours for good instead, and your tools follow in a `tools` message.
