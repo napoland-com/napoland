@@ -3,14 +3,18 @@
  * no page and no network.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
-import { PROTOCOL_VERSION, type AuthConfig, type ServerMsg } from '@napoland/shared';
+import { PROTOCOL_VERSION, type AuthConfig, type OAuthProvider, type ServerMsg } from '@napoland/shared';
 import {
-  AuthProblem, CODE_SENT_KEY, DEV_EMAIL_KEY, RESEND_AFTER_MS, SET_ASIDE_KEY, SignIn, TOKEN_KEY, digits, loadAuthConfig,
+  AuthProblem, CODE_SENT_KEY, DEV_EMAIL_KEY, PROVIDER_KEY, RESEND_AFTER_MS, SET_ASIDE_KEY, SignIn, TOKEN_KEY, digits, loadAuthConfig,
   type AuthBackend, type Screen, type Session, type Store,
 } from '../src/signin';
 import { ASLEEP, DRY, START } from './fixtures';
 
-/** Supabase as the flow sees it: one right code, a session kept after it, refreshes that can go three ways. */
+/**
+ * Supabase as the flow sees it: one right code, a session kept after it, refreshes that can go three
+ * ways, and Google and Apple, whose pages this stand-in only notes the page leaving for (a test then
+ * plays the page that comes back: a new SignIn, with or without the session the provider gave).
+ */
 class FakeSupabase implements AuthBackend {
   session_: Session | null = null;
   code = '482913';
@@ -20,6 +24,9 @@ class FakeSupabase implements AuthBackend {
   refreshes = 0;
   onRefresh: 'new token' | 'session gone' | 'offline' = 'new token';
   signOuts = 0;
+  /** Each time the page left for a provider: which, and the address it asked to come back to. */
+  left: Array<[OAuthProvider, string | undefined]> = [];
+  leaveProblem: AuthProblem | undefined;
 
   async session() {
     if (this.offline) throw new AuthProblem('offline');
@@ -32,6 +39,10 @@ class FakeSupabase implements AuthBackend {
   async verifyCode(email: string, code: string) {
     if (code !== this.code) throw new AuthProblem('bad_code');
     this.session_ = { token: 'access-1', email };
+  }
+  async signInWith(provider: OAuthProvider, returnTo?: string) {
+    if (this.leaveProblem) throw this.leaveProblem;
+    this.left.push([provider, returnTo]);
   }
   async refresh() {
     this.refreshes++;
@@ -70,8 +81,13 @@ const welcome = (more: Partial<Welcome> = {}): Welcome => ({
   story: { version: 0, chapter: '' }, ...more,
 });
 
-const SUPABASE: AuthConfig = { mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_x' };
+/** Supabase with the email code alone, as before any provider is set up. */
+const SUPABASE: AuthConfig = { mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: 'sb_publishable_x', providers: [] };
+/** Supabase with Google and Apple set up (AUTH_PROVIDERS=google,apple). */
+const PROVIDERS: AuthConfig = { ...SUPABASE, providers: ['google', 'apple'] };
 const LEGACY_TOKEN = 'l'.repeat(43);
+/** The game's address, where Google and Apple send the player back. */
+const GAME = 'https://www.napoland.com';
 
 let now: number;
 /** This browser's storage, and this tab's. */
@@ -83,7 +99,7 @@ let did: string[];
 
 function flow(config: AuthConfig) {
   return new SignIn({
-    config, store, tab, backend: config.mode === 'supabase' ? supabase : undefined, now: () => now,
+    config, store, tab, backend: config.mode === 'supabase' ? supabase : undefined, now: () => now, returnTo: GAME,
     connect: () => did.push('connect'),
     disconnect: () => did.push('disconnect'),
     show: () => {},
@@ -111,7 +127,7 @@ describe('signing in with Supabase', () => {
     expect(screen(s, 'play')).toEqual({ kind: 'play', error: '', note: '' });
     expect(did).toEqual([]);
     s.beginSignIn();
-    expect(screen(s, 'email')).toEqual({ kind: 'email', dev: false, email: '', error: '', busy: false, back: 'Back' });
+    expect(screen(s, 'email')).toEqual({ kind: 'email', dev: false, email: '', error: '', busy: false, back: 'Back', providers: [], providerError: '' });
 
     await s.submitEmail(' ann@example.test ');
     expect(supabase.sentTo).toEqual(['ann@example.test']);
@@ -329,7 +345,7 @@ describe('signing in with Supabase', () => {
 });
 
 describe('dev sign-in', () => {
-  const DEV: AuthConfig = { mode: 'dev' };
+  const DEV: AuthConfig = { mode: 'dev', providers: [] };
 
   it('asks for an email and nothing else, and remembers it in this tab (another tab can be someone else)', async () => {
     const s = flow(DEV);
@@ -381,7 +397,7 @@ describe('dev sign-in', () => {
 
 describe('play first, sign in to keep it', () => {
   const GUEST_TOKEN = 'g'.repeat(43);
-  const DEV: AuthConfig = { mode: 'dev' };
+  const DEV: AuthConfig = { mode: 'dev', providers: [] };
   /** A guest playing in this browser, as the welcome left them. */
   async function asGuest(config: AuthConfig = SUPABASE) {
     (config.mode === 'dev' ? tab : store).set(TOKEN_KEY, GUEST_TOKEN);
@@ -589,12 +605,235 @@ describe('play first, sign in to keep it', () => {
   });
 });
 
+describe('signing in with Google or Apple', () => {
+  const GUEST_TOKEN = 'g'.repeat(43);
+  /** A guest playing in this browser, as the welcome left them. */
+  async function asGuest(config: AuthConfig = PROVIDERS) {
+    store.set(TOKEN_KEY, GUEST_TOKEN);
+    const s = flow(config);
+    await s.start();
+    s.welcomed(welcome({ guest: true, token: GUEST_TOKEN, name: 'Wren' }));
+    did = [];
+    return s;
+  }
+  /** The guest's Sign in, then a provider's button: the page leaves for the provider's own sign-in. */
+  async function leaveFor(s: SignIn, provider: OAuthProvider) {
+    s.beginSignIn();
+    await s.signInWith(provider);
+    expect(supabase.left.at(-1)).toEqual([provider, GAME]);
+  }
+  /** The page the provider sends the player back to: a new one, which starts afresh. */
+  async function comeBack() {
+    const back = flow(PROVIDERS);
+    await back.start();
+    return back;
+  }
+
+  it('shows the providers the server lists above the email, in its order, and nothing more', async () => {
+    const cases: Array<[AuthConfig, OAuthProvider[]]> = [
+      [PROVIDERS, ['google', 'apple']],
+      [{ ...SUPABASE, providers: ['apple', 'google'] }, ['apple', 'google']],
+      [{ ...SUPABASE, providers: ['apple'] }, ['apple']],
+      [SUPABASE, []],
+    ];
+    for (const [config, shown] of cases) {
+      const s = flow(config);
+      await s.start();
+      s.beginSignIn();
+      expect(screen(s, 'email')).toMatchObject({ providers: shown, providerError: '', back: 'Back' });
+    }
+    // A provider the server does not list does nothing, whatever asks for it.
+    const s = flow({ ...SUPABASE, providers: ['apple'] });
+    await s.start();
+    s.beginSignIn();
+    await s.signInWith('google');
+    expect([supabase.left, kind(s), store.get(PROVIDER_KEY)]).toEqual([[], 'email', null]);
+  });
+
+  it('leaves for the provider, with the way back to this game, once it has noted what the page that comes back needs', async () => {
+    const s = await asGuest();
+    s.beginSignIn();
+    // (Say another tab of this browser sent a code meanwhile.)
+    store.set(CODE_SENT_KEY, JSON.stringify({ email: 'wren@example.test', at: now, project: SUPABASE.url }));
+    await s.signInWith('google');
+    expect(supabase.left).toEqual([['google', GAME]]);
+    expect(screen(s, 'message').text).toBe('Taking you to Google...');
+    // A second tap while the page goes starts nothing more.
+    await s.signInWith('apple');
+    expect(supabase.left).toEqual([['google', GAME]]);
+    // The guest's token is already here; the page that comes back learns which provider it went to, and when.
+    expect(store.get(TOKEN_KEY)).toBe(GUEST_TOKEN);
+    expect(JSON.parse(store.get(PROVIDER_KEY)!)).toEqual({ provider: 'google', at: now, project: SUPABASE.url });
+    // Not with a code after all: the page that comes back must not ask for one.
+    expect(store.get(CODE_SENT_KEY)).toBeNull();
+    // The guest left the world for the sign-in cards, and nothing connects until the page is back.
+    expect(did).toEqual(['disconnect']);
+  });
+
+  it('does not leave while a code is being sent', async () => {
+    const s = flow(PROVIDERS);
+    await s.start();
+    s.beginSignIn();
+    const sending = s.submitEmail('ann@example.test');
+    expect(screen(s, 'email').busy).toBe(true);
+    await s.signInWith('apple');
+    await sending;
+    expect([supabase.left, kind(s)]).toEqual([[], 'code']);
+  });
+
+  it('a guest who comes back signed in keeps the character: the hello brings the guest\'s token, and the welcome says it was claimed', async () => {
+    const s = await asGuest();
+    await leaveFor(s, 'google');
+    // Google said yes, and supabase-js turned the code the page came back with into a session.
+    supabase.session_ = { token: 'google-access', email: 'wren@gmail.test' };
+    const back = await comeBack();
+    expect(did).toEqual(['disconnect', 'connect']);
+    expect(screen(back, 'message').text).toBe('Connecting...');
+    expect(await back.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'google-access', token: GUEST_TOKEN });
+    back.welcomed(welcome({ claimed: true, name: 'Wren' }));
+    expect([back.guest, back.claimed]).toEqual([false, true]);
+    expect(back.news).toEqual({ title: 'Signed in', sub: expect.stringMatching(/^Your character is yours to keep\./) });
+    expect(store.get(PROVIDER_KEY)).toBeNull();
+    // The next page plays the account's character at once, like after a code.
+    const later = flow(PROVIDERS);
+    await later.start();
+    expect(await later.hello()).toMatchObject({ auth: 'google-access' });
+  });
+
+  it('comes back to the same question as after a code when the account already has a character', async () => {
+    const s = await asGuest();
+    await leaveFor(s, 'apple');
+    supabase.session_ = { token: 'apple-access', email: 'x7@privaterelay.appleid.com' };
+    const back = await comeBack();
+    await back.hello();
+    await back.refused('has_character', 'This account already has a character', 'Aldo');
+    expect(screen(back, 'account')).toEqual({ kind: 'account', name: 'Aldo' });
+    back.playAccount();
+    expect(await back.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'apple-access' });
+    back.welcomed(welcome({ name: 'Aldo' }));
+    expect(back.news).toEqual({ title: 'Signed in', sub: expect.stringMatching(/^Welcome back, Aldo\./) });
+    expect(store.get(SET_ASIDE_KEY)).toBe(GUEST_TOKEN);
+  });
+
+  it('asks for a name after signing in with a provider when neither the account nor this browser has a character', async () => {
+    const s = flow(PROVIDERS);
+    await s.start();
+    await leaveFor(s, 'google');
+    supabase.session_ = { token: 'google-access', email: 'ann@gmail.test' };
+    const back = await comeBack();
+    expect(await back.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'google-access' });
+    await back.refused('need_name', 'Choose a name for your character');
+    expect(screen(back, 'name')).toEqual({ kind: 'name', signedIn: true, who: 'ann@gmail.test', error: '' });
+  });
+
+  it('comes back from a sign-in that did not finish to the card, with a plain line, and the guest plays on', async () => {
+    const s = await asGuest();
+    await leaveFor(s, 'apple');
+    // Cancelled on Apple's page, or refused: the page comes back without a session.
+    const back = await comeBack();
+    expect(screen(back, 'email')).toEqual({
+      kind: 'email', dev: false, email: '', error: '', busy: false, back: 'Keep playing as a guest', providers: ['google', 'apple'],
+      providerError: 'Signing in with Apple did not finish. Try again, or use your email.',
+    });
+    expect(did).toEqual(['disconnect']); // nothing connected: the card is up
+    // The guest is as it was: its way back plays it at once.
+    back.back();
+    expect(did).toEqual(['disconnect', 'connect']);
+    expect(await back.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, token: GUEST_TOKEN });
+    // Said once: a reload plays the guest.
+    const reloaded = flow(PROVIDERS);
+    await reloaded.start();
+    expect(did).toEqual(['disconnect', 'connect', 'connect']);
+    // Trying again from the card works as the first time.
+    await back.signInWith('google');
+    expect(supabase.left.at(-1)).toEqual(['google', GAME]);
+  });
+
+  it('comes back from a first visit\'s sign-in that did not finish to the card, whose way back is the play card', async () => {
+    const s = flow(PROVIDERS);
+    await s.start();
+    await leaveFor(s, 'google');
+    const back = await comeBack();
+    expect(screen(back, 'email')).toMatchObject({ back: 'Back', providerError: 'Signing in with Google did not finish. Try again, or use your email.' });
+    back.back();
+    expect(kind(back)).toBe('play');
+    // The email still works from that card.
+    back.beginSignIn();
+    await back.submitEmail('ann@example.test');
+    expect(kind(back)).toBe('code');
+  });
+
+  it('says so on the card when the page cannot leave for the provider', async () => {
+    const s = await asGuest();
+    supabase.leaveProblem = new AuthProblem('other');
+    s.beginSignIn();
+    await s.signInWith('google');
+    expect(screen(s, 'email')).toMatchObject({ providerError: 'Signing in with Google did not finish. Try again, or use your email.', back: 'Keep playing as a guest' });
+    expect(store.get(PROVIDER_KEY)).toBeNull();
+  });
+
+  it('forgets a sign-in that left long ago, or from another Supabase project: the page plays as usual', async () => {
+    store.set(TOKEN_KEY, GUEST_TOKEN);
+    store.set(PROVIDER_KEY, JSON.stringify({ provider: 'google', at: now - 11 * 60_000, project: SUPABASE.url }));
+    expect(kind(await comeBack())).toBe('message'); // connecting, as the guest
+    store.set(PROVIDER_KEY, JSON.stringify({ provider: 'google', at: now, project: 'https://other.supabase.co' }));
+    expect(kind(await comeBack())).toBe('message');
+    store.set(PROVIDER_KEY, 'not json');
+    expect(kind(await comeBack())).toBe('message');
+    expect(store.get(PROVIDER_KEY)).toBeNull();
+    // A provider the server no longer offers: nothing to try again.
+    store.set(PROVIDER_KEY, JSON.stringify({ provider: 'apple', at: now, project: SUPABASE.url }));
+    const noApple = flow({ ...SUPABASE, providers: ['google'] });
+    await noApple.start();
+    expect(kind(noApple)).toBe('message');
+    expect(did).toEqual(['connect', 'connect', 'connect', 'connect']);
+  });
+
+  it('says it did not finish when the browser brings back the page that left (the back button), unless a later page signed in', async () => {
+    const s = await asGuest();
+    await leaveFor(s, 'google');
+    await s.resumed();
+    expect(screen(s, 'email').providerError).toBe('Signing in with Google did not finish. Try again, or use your email.');
+    expect(store.get(PROVIDER_KEY)).toBeNull();
+    // Only a page that left says so: brought back again, it stays as it is.
+    await s.resumed();
+    expect(kind(s)).toBe('email');
+
+    // It left again; the page that came back signed in (and read what was noted), then the back button.
+    await s.signInWith('apple');
+    supabase.session_ = { token: 'apple-access', email: 'x7@privaterelay.appleid.com' };
+    await comeBack();
+    did = [];
+    await s.resumed();
+    expect(did).toEqual(['connect']);
+    expect(await s.hello()).toMatchObject({ auth: 'apple-access', token: GUEST_TOKEN });
+  });
+
+  it('shows the buttons in dev mode when the server lists them, and says there that they need a Supabase project', async () => {
+    const s = flow({ mode: 'dev', providers: ['google', 'apple'] });
+    await s.start();
+    s.beginSignIn();
+    expect(screen(s, 'email')).toMatchObject({ dev: true, providers: ['google', 'apple'], providerError: '' });
+    await s.signInWith('apple');
+    expect(screen(s, 'email')).toMatchObject({ dev: true, providerError: 'Google and Apple sign-in only work with a Supabase project.' });
+    expect([store.get(PROVIDER_KEY), tab.get(PROVIDER_KEY)]).toEqual([null, null]);
+    // The email is still how dev mode signs in.
+    await s.submitEmail('cid@example.test');
+    expect(await s.hello()).toEqual({ t: 'hello', v: PROTOCOL_VERSION, auth: 'cid@example.test' });
+    // Without them listed, dev mode is the email alone, as before.
+    const plain = flow({ mode: 'dev', providers: [] });
+    await plain.start();
+    plain.beginSignIn();
+    expect(screen(plain, 'email').providers).toEqual([]);
+  });
+});
+
 describe('a server whose sign-in changed since the page loaded', () => {
   it('loads the page again when the server now wants another kind, and signs in again otherwise', async () => {
     tab.set(DEV_EMAIL_KEY, 'cid@example.test');
     let serverMode: AuthConfig['mode'] = 'supabase';
     const s = new SignIn({
-      config: { mode: 'dev' }, store, tab, now: () => now, serverMode: async () => serverMode,
+      config: { mode: 'dev', providers: [] }, store, tab, now: () => now, serverMode: async () => serverMode,
       connect: () => did.push('connect'), disconnect: () => did.push('disconnect'), show: () => {}, reload: () => did.push('reload'),
     });
     await s.start();
@@ -678,7 +917,14 @@ describe('asking the server how to sign in', () => {
 
   it('takes what /auth-config says', async () => {
     expect(await loadAuthConfig(answer(200, SUPABASE))).toEqual(SUPABASE);
-    expect(await loadAuthConfig(answer(200, { mode: 'dev' }))).toEqual({ mode: 'dev' });
+    expect(await loadAuthConfig(answer(200, { mode: 'dev' }))).toEqual({ mode: 'dev', providers: [] });
+  });
+
+  it('takes the providers it lists, and none from a server from before them; one this page does not know is left out', async () => {
+    expect(await loadAuthConfig(answer(200, PROVIDERS))).toEqual(PROVIDERS);
+    const { providers: _, ...before } = PROVIDERS;
+    expect(await loadAuthConfig(answer(200, before))).toEqual(SUPABASE);
+    expect(await loadAuthConfig(answer(200, { ...PROVIDERS, providers: ['facebook', 'apple'] }))).toEqual({ ...SUPABASE, providers: ['apple'] });
   });
 
   it('plays without sign-in with a server from before /auth-config', async () => {

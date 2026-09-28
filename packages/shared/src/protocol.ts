@@ -29,17 +29,32 @@ export type Weather = z.infer<typeof Weather>;
 export const NAME_RE = /^[A-Za-z0-9 _-]{2,16}$/;
 export const PlayerName = z.string().trim().regex(NAME_RE);
 
+/** The accounts a player can sign in with besides an email code, through the same Supabase sign-in. */
+export const OAUTH_PROVIDERS = ['google', 'apple'] as const;
+export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
+export const isOAuthProvider = (name: string): name is OAuthProvider => (OAUTH_PROVIDERS as readonly string[]).includes(name);
+
+/**
+ * The providers the sign-in card offers, in this order: only those the Supabase project has set up
+ * (AUTH_PROVIDERS). A name this client does not know is left out rather than refused, so a server
+ * that offers one more never stops an older page from starting.
+ */
+const Providers = z.array(z.string()).optional().transform(names => [...new Set(names ?? [])].filter(isOAuthProvider));
+
 /**
  * How the server wants players to sign in, as GET /auth-config tells the client:
  * - legacy: no sign-in. A name makes a character, and a token saved in the browser logs back in.
  * - dev: an email, believed without any code. Only for development and tests: anyone can be anyone.
- * - supabase: Supabase Auth proves who you are (an email and a 6-digit code, later Google and Apple).
- *   `url` and `publishableKey` are the project's public values the client needs to talk to it.
+ *   Its `providers` only show their buttons, which say they need a Supabase project.
+ * - supabase: Supabase Auth proves who you are: an email and a 6-digit code, or the `providers`
+ *   (Google, Apple). `url` and `publishableKey` are the project's public values the client needs to talk to it.
+ * It comes over HTTP, not the game's socket, and zod leaves out fields it does not know, so a page
+ * from before `providers` reads the answer as it always did: no new PROTOCOL_VERSION for them.
  */
 export const AuthConfig = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('legacy') }),
-  z.object({ mode: z.literal('dev') }),
-  z.object({ mode: z.literal('supabase'), url: z.url({ protocol: /^https?$/ }), publishableKey: z.string().min(1) }),
+  z.object({ mode: z.literal('dev'), providers: Providers }),
+  z.object({ mode: z.literal('supabase'), url: z.url({ protocol: /^https?$/ }), publishableKey: z.string().min(1), providers: Providers }),
 ]);
 export type AuthConfig = z.infer<typeof AuthConfig>;
 export type AuthMode = AuthConfig['mode'];
@@ -229,7 +244,10 @@ export type Did =
    * it), what a strange object turned out to be.
    */
   | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot }
-  /** The workbench made `count` of `item`, into your stash. */
+  /**
+   * The workbench made `count` of `item`, into your stash. A tool (its kind says so) went to your tools
+   * instead, yours for good: your tools came before this in a `tools` message.
+   */
   | { kind: 'made'; item: string; count: number }
   /** The `item` you wear is mended: whole again. */
   | { kind: 'mended'; item: string }
@@ -291,6 +309,8 @@ export type Refusal =
   | 'gear_stays'
   /** That is as good as new already, or cannot be mended. */
   | 'whole'
+  /** You have that tool already: each is yours once, for good (a find of it stays for someone else). */
+  | 'have_tool'
   /** A sealed thing stays in the chest: it is opened there. */
   | 'sealed_stays';
 
@@ -387,7 +407,7 @@ export type ServerMsg =
       stats: Stats;
       /** Your XP and level (progress.ts). */
       progress: ProgressView;
-      /** Your tools (item ids, items.ts): kept for good, apart from the bag. */
+      /** Your tools (item ids, items.ts, toolsOf), in the order you got them: kept for good, apart from the bag. */
       tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
       items: number;
@@ -407,12 +427,15 @@ export type ServerMsg =
   | { t: 'energy'; energy: EnergyView; body: BodyView }
   /** Your bag, whole, after any change. A live item's slot has its `age` as of now. */
   | { t: 'bag'; bag: BagSlot[] }
+  /** Your tools, whole (item ids, in the order you got them), after you got one. */
+  | { t: 'tools'; tools: string[] }
   /**
    * You picked these up (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
+   * A find that is a `tool` is yours for good instead, and your tools follow in a `tools` message.
    * `double`: the find came up double (the forager's ranks, feats.ts). What a strange object turns
    * out to be comes in `did` instead.
    */
-  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop'; double?: true }
+  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool'; double?: true }
   /** What a feed, use, discard, craft, mend or open you asked for did (for the text box). */
   | { t: 'did'; did: Did }
   /** Something asked for that did not happen, and why. */

@@ -17,8 +17,17 @@ describe('Supabase access tokens', () => {
   });
   afterAll(() => project?.close());
 
-  it('tells clients where the project is and its publishable key', () => {
-    expect(auth.config).toEqual({ mode: 'supabase', url: project.url, publishableKey: PUBLISHABLE_KEY });
+  it('tells clients where the project is, its publishable key and which providers it has set up', () => {
+    expect(auth.config).toEqual({ mode: 'supabase', url: project.url, publishableKey: PUBLISHABLE_KEY, providers: [] });
+    const withProviders = supabaseAuth({ url: project.url, publishableKey: PUBLISHABLE_KEY, providers: ['apple', 'google'] });
+    expect(withProviders.config).toEqual({ mode: 'supabase', url: project.url, publishableKey: PUBLISHABLE_KEY, providers: ['apple', 'google'] });
+  });
+
+  it('proves the user of a token however it was had: an email code, Google or Apple', async () => {
+    // Supabase puts the provider in app_metadata and the profile in user_metadata; only `sub` counts.
+    const google = await project.token({ sub: 'google-user', claims: { app_metadata: { provider: 'google', providers: ['google'] }, user_metadata: { full_name: 'Ann Example' } } });
+    const apple = await project.token({ sub: 'apple-user', claims: { email: 'x7@privaterelay.appleid.com', app_metadata: { provider: 'apple', providers: ['apple', 'email'] } } });
+    expect([await auth.identify(google), await auth.identify(apple)]).toEqual(['google-user', 'apple-user']);
   });
 
   it('proves the user a good token names, signed with ES256 (as real projects do) or RS256', async () => {
@@ -109,7 +118,9 @@ describe('dev sign-in', () => {
   const auth = devAuth();
 
   it('believes any email, whatever its case', async () => {
-    expect(auth.config).toEqual({ mode: 'dev' });
+    expect(auth.config).toEqual({ mode: 'dev', providers: [] });
+    // Google and Apple only show their buttons in dev mode: a hello still proves only an email.
+    expect(devAuth(['google', 'apple']).config).toEqual({ mode: 'dev', providers: ['google', 'apple'] });
     expect(await auth.identify('Ann@Example.test')).toBe('dev:ann@example.test');
     expect(await auth.identify(' bot-1@example.test ')).toBe('dev:bot-1@example.test');
   });

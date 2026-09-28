@@ -72,7 +72,8 @@ What the game keeps about its players, and why, is in the [privacy policy](apps/
 
 - **Code:** [GNU Affero General Public License v3.0 or later](LICENSE) (AGPL-3.0-or-later). You may use, study, change and share it; if you run a changed version as an online service, you must offer its source to its players too.
 - **Content** (everything in [`content/`](content): maps, rooms, items and their texts): [Creative Commons Attribution-ShareAlike 4.0](content/LICENSE) (CC BY-SA 4.0).
-- **Fonts:** Fredoka and Nunito, which come bundled with the game, are under the [SIL Open Font License 1.1](https://openfontlicense.org) (OFL-1.1).
+- **Fonts:** Fredoka and Nunito, and Roboto for the words of the Google sign-in button, which come bundled with the game, are under the [SIL Open Font License 1.1](https://openfontlicense.org) (OFL-1.1).
+- **The Google and Apple logos** on the sign-in buttons are their owners' trademarks, used as their sign-in button guidelines allow; the licenses above do not cover them.
 - By contributing you agree that your contribution is shared under the same terms.
 
 Copyright © 2026 Angelo Lamonaca (Neuramare) and the napoland contributors. Published by Angelo Lamonaca (Neuramare); legal notice: https://www.neuramare.com.

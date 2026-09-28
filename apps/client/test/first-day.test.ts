@@ -74,6 +74,17 @@ describe('the game, on the first day', () => {
     expect(g.nextGear()).toBeNull();
   });
 
+  it('names only gear, never a tool the workbench makes (a tool is yours for good, not worn)', () => {
+    const radio = new Items({
+      ...content,
+      items: [...content.items, { id: 'radio', name: 'Radio', kind: 'tool', stack: 1, icon: 'map', text: 'It crackles.' }],
+      recipes: [{ id: 'radio', make: 'radio', needs: [{ item: 'resin', count: 1 }] }, ...content.recipes!],
+    });
+    const t = new Game(new Maps([tinyTown(), home()]), () => {}, radio);
+    t.handle(welcome(home(), [me(2, 2)], FULL, { items: radio.version, stash: WELCOME_PARCEL }), now);
+    expect(t.nextGear()).toMatchObject({ recipe: { id: 'rubber-gloves' } });
+  });
+
   it('opens the workbench right next to you, and only then', () => {
     g.handle(welcome(home(), [me(2, 2)], FULL, { items: items.version, stash: [] }), now);
     expect(g.benchBeside()).toBeNull();

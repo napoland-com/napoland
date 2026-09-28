@@ -66,9 +66,10 @@ On the server, `napoland-compose` is `docker compose` with the right files: `nap
 
 ## Sign-in (Supabase)
 
-Players sign in with their email and a 6-digit code, through Supabase Auth. The game server only
-checks the access tokens Supabase gives them, against the project's public keys, and keeps its own
-players in its own database. [deploy/compose.yaml](../deploy/compose.yaml) sets:
+Players sign in with their email and a 6-digit code, or with Google or Apple once they are set up
+(below), through Supabase Auth. The game server only checks the access tokens Supabase gives them,
+against the project's public keys, and keeps its own players in its own database.
+[deploy/compose.yaml](../deploy/compose.yaml) sets:
 
 | Setting | Value |
 |---|---|
@@ -76,6 +77,7 @@ players in its own database. [deploy/compose.yaml](../deploy/compose.yaml) sets:
 | `SUPABASE_URL` | `https://azczuzefhfyopmsnuosv.supabase.co` |
 | `SUPABASE_PUBLISHABLE_KEY` | The project's publishable key, `sb_publishable_...`. Public: every browser gets it from `/auth-config`. The server refuses to start with a secret key (`sb_secret_...` or a `service_role` JWT). `SUPABASE_ANON_KEY` is accepted as the older name. |
 | `SUPABASE_JWT_SECRET` | Not set: the project signs tokens with an ES256 key whose public half is at `/auth/v1/.well-known/jwks.json`. Only a project that still signs with a shared HS256 secret needs it. |
+| `AUTH_PROVIDERS` | Not set yet: the sign-in card offers the email code alone. `google,apple` (or just one) once each is set up (Google and Apple, below); the card shows their buttons in that order. A name other than `google` or `apple` stops the server. |
 
 What the Supabase project needs (dashboard, Authentication), before players depend on it:
 
@@ -93,22 +95,60 @@ What the Supabase project needs (dashboard, Authentication), before players depe
    and offers a new code after 60 s, Supabase's minimum between two). Site URL
    `https://www.napoland.com`.
 
+**Google and Apple.** The card offers only the providers `AUTH_PROVIDERS` lists, so set each one up
+first, then list it. Both send players to Supabase's callback,
+`https://azczuzefhfyopmsnuosv.supabase.co/auth/v1/callback`, which sends them back to the game.
+
+1. **Google** ([Google Cloud console](https://console.cloud.google.com), a project for napoland), under
+   Google Auth Platform: in Branding, the app name napoland, a support email, the home page
+   `https://www.napoland.com`, the privacy policy `https://www.napoland.com/privacy.html` and the
+   authorized domains `napoland.com` and `supabase.co`; in Audience, External, published to production;
+   in Data access, only `openid`, `userinfo.email` and `userinfo.profile`. Then Clients, Create client,
+   Web application: authorized JavaScript origin `https://www.napoland.com`, authorized redirect URI
+   Supabase's callback. Keep its client ID and client secret for step 3.
+2. **Apple** ([Apple Developer](https://developer.apple.com/account), Certificates, Identifiers &
+   Profiles): an App ID with Sign in with Apple on (Apple wants one even without an app); a Services ID
+   (say `com.napoland.web`) with Sign in with Apple on, configured with that App ID as primary, the
+   domain `azczuzefhfyopmsnuosv.supabase.co` and Supabase's callback as return URL; and a key with Sign
+   in with Apple on, for that App ID. Download its `.p8` file (Apple gives it once) and note its Key ID
+   and the Team ID; from these, the tool in Supabase's Apple guide makes the secret key for step 3.
+   **That secret lasts six months at most:** make a new one before then (set a reminder), or Sign in
+   with Apple stops working. Under Services, Sign in with Apple for Email Communication, register the
+   addresses our mail comes from (the codes' sender in SES, support@neuramare.com): Apple forwards mail
+   to players who hid their email only from registered senders.
+3. **Supabase** dashboard, Authentication: under Sign In / Providers, turn on Google (client ID and
+   client secret from step 1) and Apple (Client IDs: the Services ID; Secret Key (for OAuth): the secret
+   from step 2). Under URL Configuration, keep the Site URL `https://www.napoland.com` and add
+   `https://www.napoland.com` to Redirect URLs: that is where the game asks to come back to.
+4. **The game:** in [deploy/compose.yaml](../deploy/compose.yaml), under `game`, `environment`, add
+   `AUTH_PROVIDERS: google,apple` (or only the one that is set up), then release. The buttons show from
+   the next page load; `curl https://www.napoland.com/auth-config` lists them. Try each on a phone:
+   a guest who signs in keeps their character. Try an email code too: with a provider listed, the
+   client switches Supabase to the PKCE flow those need, which also carries the email sign-in. Before
+   the switch, try it on a test project with the same settings if you can.
+
+Supabase links an account's sign-ins by their email address: someone who played with an email code
+and signs in with Google or Apple under the same address plays the same character. Apple's hidden
+addresses are new ones, so a new account.
+
 Switching production to sign-in, or back: change `AUTH_MODE` in deploy/compose.yaml and release. After
 the switch, a player who comes back signs in on the browser they played in, and their character
 becomes theirs (claimed) the first time; a new player chooses a name after signing in. Going back to
 `legacy`, characters made before sign-in play again with the tokens their browsers kept; characters
 made after sign-in have no token and wait for sign-in to come back.
 
-Checks: `curl https://www.napoland.com/auth-config` shows the mode. When Supabase's keys cannot be
-fetched, the log says `cannot check sign-ins` (at most once a minute) and players keep reconnecting
-until they can.
+Checks: `curl https://www.napoland.com/auth-config` shows the mode and the providers. When Supabase's
+keys cannot be fetched, the log says `cannot check sign-ins` (at most once a minute) and players keep
+reconnecting until they can.
 
 ## Privacy requests
 
 The [privacy policy](../apps/client/public/privacy.html) promises an answer within 30 days to requests
 sent to support@neuramare.com from the email address the player signs in with. Find the player first:
 Supabase dashboard, Authentication, Users, search the email, copy the user's id (UID). In our database
-their character is the row with `auth_sub = '<UID>'`.
+their character is the row with `auth_sub = '<UID>'`. Someone who signed in with Apple and hid their
+email is under an `@privaterelay.appleid.com` address (their Apple account shows it, under Sign in
+with Apple): answer to that address, which only reaches them, and go on once they reply.
 
 - **Show or export their data:** on the server,
   `napoland-compose exec -T db psql -U napoland -At -c "select row_to_json(p) from players p where auth_sub = '<UID>'"`

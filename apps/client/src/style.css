@@ -180,9 +180,14 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .sheet-head b { font-weight: inherit; flex: 1; color: #ffcf5a; }
 .sheet-head .room { font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.1); color: #b9b2a2; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hud .close { width: var(--btn); height: var(--btn); flex: none; }
-/* Tools ride in the bag's header, as big as its close button. */
-.sheet-head .tools { display: flex; gap: calc(var(--u) * .5); }
+/* Tools ride in the bag's header, as big as its close button, one for each you own. The room line sits
+   under the title, so the buttons never squeeze it and the header stays one button high: four fit beside
+   it on any phone held upright, five in landscape. Past that the room line ends in "...". */
+.sheet-head .tools { display: flex; gap: calc(var(--u) * .5); flex: none; }
 .sheet-head .tools .slot { width: var(--btn); height: var(--btn); }
+.bag-head .heading { flex: 1; min-width: 0; display: grid; gap: .1em; }
+/* Tall enough a line that clipping it (for the ellipsis, with many tools on a small phone) cuts no letter. */
+.bag-head .room { overflow: hidden; text-overflow: ellipsis; line-height: 1.4; }
 /* A paper map over everything, as big as the screen allows in either orientation; B or the X puts it away. */
 .paper-view { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; pointer-events: auto; background: rgba(6, 8, 11, .9);
   padding: calc(var(--pad) + var(--safe-t)) calc(var(--pad) + var(--safe-r)) calc(var(--pad) + var(--safe-b)) calc(var(--pad) + var(--safe-l)); }
@@ -476,6 +481,24 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .card .links { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; font-size: 14px; color: #9d978a; }
 .card .links .who { min-width: 0; overflow-wrap: anywhere; }
 .card .links.center { justify-content: center; }
+/* Google and Apple on the email card, each as its maker's guidelines draw it (providers.ts): white,
+   since the card is dark, the same height and pill shape for both, logo and words centred together.
+   Google's words are Roboto Medium on white with its grey edge; Apple's are the system font, black
+   on white. Under a pointer or a finger both darken a touch, as Google's own button does. Their words
+   never wrap or shorten: the card keeps room for them whole. */
+.card .providers { display: grid; gap: 10px; }
+.card button.provider { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 0; height: 44px; padding: 0 16px; border-radius: 22px;
+  background: #fff; font-size: 16px; font-weight: 500; line-height: 1.2; white-space: nowrap; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+.card button.provider svg { flex: none; }
+.card button.google { border: 1px solid #747775; color: #1f1f1f; font-family: Roboto, Arial, sans-serif; letter-spacing: .25px; }
+.card button.google svg { width: 20px; height: 20px; }
+.card button.apple { border: 1px solid #fff; color: #000; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, "Segoe UI", Roboto, sans-serif; }
+.card button.apple svg { width: 17px; height: 17px; margin-top: -2px; }
+@media (hover: hover) { .card button.provider:not(:disabled):hover { background: #f1f1f1; } }
+.card button.provider:not(:disabled):active { background: #e3e3e3; }
+/* With them, the email field's label is the quiet line between the two ways in: "or with your email". */
+.card label.or { display: flex; align-items: center; gap: 10px; margin-top: 2px; font-family: var(--font-text); font-weight: 700; font-size: 13px; color: #9d978a; text-align: center; }
+.card label.or::before, .card label.or::after { content: ""; flex: 1 1 16px; height: 1px; background: #3a4150; }
 /* The first card with sign-in: the pitch, a name and a big Play now; signing in is the quiet link under it. */
 .card .pitch { color: #d3ccbb; }
 .card button.big { font-size: 22px; padding: 13px 14px; }
@@ -503,6 +526,14 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   .card button { padding: 8px 14px; }
   .card button.big { font-size: 20px; padding: 9px 14px; }
   .card .legal { padding-top: 4px; }
+  .card button.provider { height: 40px; padding: 0 14px; border-radius: 20px; font-size: 15px; }
+  .card label.or { margin-top: 0; }
+}
+/* A phone on its side: Google and Apple side by side on a wider card, a little closer together, so the
+   email and the line that says a sign-in did not finish still fit under them. */
+@media (max-height: 520px) and (min-width: 560px) {
+  .card.with-providers { width: min(100%, 560px); gap: 6px; }
+  .card .providers { grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
 }
 /* Narrow phones: less margin around the card, so its lines (the small print too) do not wrap.
    After the short screens' rules, so this side padding holds on a small screen that is both. */

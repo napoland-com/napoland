@@ -12,7 +12,7 @@ import { setLogLevel } from '../src/log';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { houseData, itemsData, townData, woodsData } from './fixtures';
-import { Client, keepsParcels, newName, parcelsThroughRestarts, savedPlayer, serverDefaults, type Msg } from './helpers';
+import { Client, keepsParcels, keepsToolsAndParcels, newName, parcelsThroughRestarts, savedPlayer, serverDefaults, type Msg } from './helpers';
 
 /** Monday 28 September 2026, 00:00 UTC, and the calendar day it is. */
 const MONDAY = Date.UTC(2026, 8, 28);
@@ -281,5 +281,9 @@ describe('keeping the parcels', () => {
 
   it('gives them through restarts: once a day, whatever the server did in between', async () => {
     await parcelsThroughRestarts(new MemoryStorage());
+  });
+
+  it('keeps them beside the tools a player owns, neither lost to a save without it (storage-pg.test.ts)', async () => {
+    await keepsToolsAndParcels(new MemoryStorage());
   });
 });
