@@ -88,8 +88,10 @@ describe('feats over the wire', () => {
 
     const a = await enter({ map: 'house', x: 1, y: 2, dir: 'up', gear: COAT, worn: { shirt: { cond: 0.3 } }, stash: { items: { cloth: 2 }, out: {} }, stats: { mended: 4 } });
     a.c.send({ t: 'mend', x: 1, y: 1, slot: 'shirt' });
-    expect(await a.c.next('mended')).toEqual({ t: 'mended', item: 'coat' });
+    // What it did comes in the text box's message (ask-first), and the mend counts once.
+    expect(await a.c.next('did')).toEqual({ t: 'did', did: { kind: 'mended', item: 'coat' } });
     expect(await a.c.next('feat')).toEqual({ t: 'feat', id: 'mender', rank: 1, stats: { mended: 5 } });
+    expect(world().get(a.id)!.stats).toEqual({ mended: 5 });
   });
 
   it('drains a pathfinder more gently 85 steps or more from home, and nowhere nearer', async () => {

@@ -17,7 +17,9 @@
  * nobody on the map looks their way, and one that reaches you takes energy and something you carry.
  * Skulkers lie in the deep ferns at night and in storms: one that hears or sees you chases you, a
  * little slower than you walk, and one that catches you costs energy and a bag slot, dropped where
- * you stand. A flare keeps them all off and shakes off a hitchhiker. Anyone can paint arrows on the ground with a
+ * you stand. Tall grass hides you from them all (shared hidden()): no creature steps into it or notices
+ * anyone in it, and a chase ends there; nothing else out there cares. A flare keeps them all off and
+ * shakes off a hitchhiker. Anyone can paint arrows on the ground with a
  * glowcap; they last a day. The Old Stone in town wakes when enough shards are fed to it, and while
  * awake it calms every surge. Strange objects found deep in turn into something when looked at in
  * town. Feats, earned rank by rank by what you do out there, make it a little easier for good (feats.ts).
@@ -71,6 +73,7 @@ import {
   flashHits,
   findTiles,
   gearEnergy,
+  hidden,
   halfOf,
   emptyStash,
   itemIndex,
@@ -96,6 +99,7 @@ import {
   surgeAt,
   surgeFront,
   takeFromBag,
+  takeItem,
   toolsOf,
   untilSurge,
   weatherAt,
@@ -106,6 +110,7 @@ import {
   type ConditionsData,
   type ConditionsView,
   type CreatureView,
+  type Did,
   type Dir,
   type DropView,
   type EnergyView,
@@ -851,20 +856,21 @@ export class World {
     if (use.mark && this.markTiles.get(mapId)!.has(y * p.map.width + x)) return this.refuse(p, 'use', 'marked');
     if (use.identify && !this.inTown(p.map)) return this.refuse(p, 'use', 'not_here');
     let bag = takeFromBag(p.rec.bag, slot, 1);
-    let got: BagSlot | undefined;
+    let into: BagSlot | undefined;
     if (use.identify) {
       const r = reveal(def.reveals ?? [], this.rng);
-      const into = r && this.items.get(r.item);
-      if (into) {
-        const put = addToBag(bag, into, r.count, p.slots);
+      const it = r && this.items.get(r.item);
+      if (it) {
+        const put = addToBag(bag, it, r.count, p.slots);
         if (put.left) return this.refuse(p, 'use', 'bag_full');
         bag = put.bag;
-        got = { item: into.id, count: r.count };
+        into = { item: it.id, count: r.count };
       }
     }
     p.rec.bag = bag;
     // Used up: if it came out of the stash, it will never go back.
     p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
+    const before = p.rec.energy;
     if (use.energy) {
       p.rec.energy = Math.min(p.max, Math.max(0, p.rec.energy + use.energy));
     }
@@ -873,14 +879,21 @@ export class World {
     // The bar may have jumped, the bag got lighter: the client counts on from the new values.
     this.refresh(p, now);
     this.tell(p, now);
-    if (got) this.outbox.push({ to: id, msg: { t: 'got', items: [got], from: 'identify' } });
     this.sendBag(p, now);
+    // What it did, as far as the bar had room for it.
+    this.did(p, {
+      kind: 'used', item: def.id,
+      ...(use.energy ? { energy: Math.round(p.rec.energy - before) } : {}),
+      ...(use.flare ? { flare: use.flare } : {}),
+      ...(use.mark ? { mark: { dir: p.rec.dir, left: MARK_LIFETIME_MS / 1000 } } : {}),
+      ...(into ? { into } : {}),
+    });
     // Something that takes energy could empty the bar.
     if (p.rec.energy <= 0) this.collapse(p, now);
   }
 
-  /** Throws away everything in bag slot `slot`. */
-  discard(id: string, slot: number, now: number): void {
+  /** Throws away `count` of what is in bag slot `slot`, or all of it. */
+  discard(id: string, slot: number, now: number, count = Infinity): void {
     const p = this.players.get(id);
     if (!p) return;
     if (this.advance(p, now) <= 0) {
@@ -890,18 +903,21 @@ export class World {
     }
     const thrown = p.rec.bag[slot];
     if (!thrown) return this.refuse(p, 'discard', 'empty_slot');
-    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), thrown.item, thrown.count);
-    p.rec.bag = takeFromBag(p.rec.bag, slot);
+    const n = Math.min(thrown.count, Math.max(1, Math.floor(count)));
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), thrown.item, n);
+    p.rec.bag = takeFromBag(p.rec.bag, slot, n);
     this.sendBag(p, now);
     this.rerate(p, now);
+    this.did(p, { kind: 'thrown', item: thrown.item, count: n });
   }
 
   /**
-   * Feeds one of what is in bag slot `slot` to the fire on tile x,y (next to the player, diagonals
-   * too: a fire warms the tiles around it) or to the Old Stone. Everyone on the map sees the fire
-   * burn higher; everyone online hears about the Stone.
+   * Feeds `count` of what is in bag slot `slot` (then of the same item in other slots) to the fire on
+   * tile x,y (next to the player, diagonals too: a fire warms the tiles around it) or to the Old Stone.
+   * A fire takes them one by one while it is not full, so it takes as many as fit; the Old Stone takes
+   * them all. Everyone on the map sees the fire burn higher; everyone online hears about the Stone.
    */
-  feed(id: string, x: number, y: number, slot: number, now: number): void {
+  feed(id: string, x: number, y: number, slot: number, now: number, count = 1): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
@@ -916,28 +932,37 @@ export class World {
     const stone = this.stone;
     if (stone && stone.map === p.map && stone.x === x && stone.y === y) {
       if (!def?.charge) return this.refuse(p, 'feed', 'not_fuel');
-      p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
-      p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
-      this.chargeStone(def.charge, now);
+      const r = takeItem(p.rec.bag, slot, count);
+      p.rec.bag = r.bag;
+      p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, r.taken);
+      const woke = this.chargeStone(def.charge * r.taken, now);
       this.sendBag(p, now);
       this.saveNow.set(id, p.rec);
       this.moveStory(p, { feed: 'stone' });
-      return this.rerate(p, now);
+      this.rerate(p, now);
+      return this.did(p, { kind: 'stone', item: def.id, count: r.taken, stone: this.stoneView(now), ...(woke ? { woke: true as const } : {}) });
     }
     const fire = this.fires.at(p.map, x, y);
     if (!fire) return this.refuse(p, 'feed', 'gone');
     if (fire.tended) return this.refuse(p, 'feed', 'tended');
     if (!def?.fuel) return this.refuse(p, 'feed', 'not_fuel');
-    if (!this.fires.feed(fire, def.fuel, now)) return this.refuse(p, 'feed', 'fire_full');
-    p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
-    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
+    const lit = this.fires.left(fire, now) <= 0;
+    const have = p.rec.bag.reduce((n, b) => n + (b.item === def.id ? b.count : 0), 0);
+    let fed = 0;
+    while (fed < Math.min(count, have) && this.fires.feed(fire, def.fuel, now)) fed++;
+    if (!fed) return this.refuse(p, 'feed', 'fire_full');
+    p.rec.bag = takeItem(p.rec.bag, slot, fed).bag;
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, fed);
     this.sendBag(p, now);
-    this.toMap(p.map.data.id, { t: 'fire', fire: this.fires.view(fire, now) });
-    this.count(p, 'fed', now);
+    const burning = this.fires.view(fire, now);
+    this.toMap(p.map.data.id, { t: 'fire', fire: burning });
+    // Each one counts for the fire keeper, as when they went in one press at a time.
+    for (let i = 0; i < fed; i++) this.count(p, 'fed', now);
     // The story waits for a fire out in the wilds ("Whoever comes next"), never one in town.
     if (this.wild(p.map)) this.moveStory(p, { feed: 'fire' });
     // A dead fire lit again warms whoever stands by it.
     for (const q of this.onMap.get(p.map.data.id)!) this.rerate(q, now);
+    this.did(p, { kind: 'fire', item: def.id, count: fed, left: burning.left ?? 0, ...(lit ? { lit: true as const } : {}) });
   }
 
   /** Opens the chest on tile x,y (next to the player): they hear what is in their stash. */
@@ -1057,8 +1082,9 @@ export class World {
     p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
     this.saveNow.set(id, p.rec);
     if (tool) this.giveTool(id, recipe.make);
-    this.outbox.push({ to: id, msg: { t: 'crafted', item: recipe.make, count } });
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
+    // The text box says where it went: a tool (its kind tells the client) is the player's for good.
+    this.did(p, { kind: 'made', item: recipe.make, count });
   }
 
   /** Mends the piece the player wears in `slot`, at the workbench on tile x,y next to them, paying from their stash: it is whole again. */
@@ -1080,12 +1106,13 @@ export class World {
     p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
     p.rec.worn = { ...p.rec.worn, [slot]: { ...piece, cond: 1 } };
     this.saveNow.set(id, p.rec);
-    this.outbox.push({ to: id, msg: { t: 'mended', item } });
+    // Once for every piece mended, toward the mender's ranks.
     this.count(p, 'mended', now);
     // Its condition (in the body) before the bench, so the bench's mend row is gone when it redraws.
     this.refresh(p, now);
     this.tell(p, now);
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
+    this.did(p, { kind: 'mended', item });
   }
 
   /** Takes up to `count` of an item out of the player's stash, in the chest on tile x,y, as much as fits in the bag. */
@@ -1114,7 +1141,8 @@ export class World {
    * Gives a player who is online a tool for good: the one way a tool comes (made at the workbench,
    * found, and later a parcel or a chapter). It joins their tools, never the bag: no slot, no weight,
    * never in a pile, the stash or a trade, and nothing takes it away, so it is saved at once. They hear
-   * what they got and their tools. False, and nothing happens, when it is no tool or theirs already.
+   * their tools; how it came is for the caller to say (a find floats with `got`, the workbench says it
+   * in the text box with `did`). False, and nothing happens, when it is no tool or theirs already.
    */
   giveTool(id: string, item: string): boolean {
     const p = this.players.get(id);
@@ -1122,7 +1150,6 @@ export class World {
     // The first of their own writes down the starter tools they carried until now.
     p.rec.tools = [...(p.rec.tools ?? STARTER_TOOLS), item];
     this.saveNow.set(id, p.rec);
-    this.outbox.push({ to: id, msg: { t: 'got', items: [{ item, count: 1 }], from: 'tool' } });
     this.outbox.push({ to: id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items) } });
     return true;
   }
@@ -1658,7 +1685,8 @@ export class World {
     }
   }
 
-  private chargeStone(charge: number, now: number): void {
+  /** Adds `charge` shards to the Old Stone; true when that woke it. */
+  private chargeStone(charge: number, now: number): boolean {
     this.burnStone(now);
     this.stoneCharge += charge;
     const woke = !this.stoneAwake && this.stoneCharge >= STONE_NEED;
@@ -1666,6 +1694,7 @@ export class World {
     this.stoneWrite = { charge: this.stoneCharge, awake: this.stoneAwake, at: now + this.epochOffset };
     this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
     if (woke) for (const p of this.players.values()) this.rerate(p, now);
+    return woke;
   }
 
   // ---------- hitchhikers, flares, marks ----------
@@ -1746,9 +1775,9 @@ export class World {
 
   // ---------- watchers ----------
 
-  /** Where a watcher may stand: open ground out of the light, away from fires and exits. */
+  /** Where a watcher may stand: what the map allows any creature (open ground out of the light, away from fires and exits, never in tall grass). */
   private watcherMayStand(map: TileMap, x: number, y: number): boolean {
-    return map.walkable(x, y) && !map.exitAt(x, y) && !map.lit(x, y) && !map.warm(x, y);
+    return map.creatureMayStand(x, y);
   }
 
   /**
@@ -1777,7 +1806,7 @@ export class World {
         // Anyone who faces it holds it still, prey or not: a friend can keep watch.
         if (here.some(p => manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_SEE && faces(p.rec.x, p.rec.y, p.rec.dir, w.x, w.y))) continue;
         const prey = here
-          .filter(p => p.rec.energy > 0 && this.exposed(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
+          .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
           .sort((a, b) => manhattan(a.rec.x, a.rec.y, w.x, w.y) - manhattan(b.rec.x, b.rec.y, w.x, w.y))[0];
         if (!prey) continue;
         const next = pathStep(map, w.x, w.y, prey.rec.x, prey.rec.y, (x, y) => this.watcherMayStand(map, x, y) && !this.nearFlare(mapId, x, y, now) && !this.creatureAt(mapId, x, y));
@@ -1792,11 +1821,16 @@ export class World {
     }
   }
 
-  /** Out in the open: not by a burning fire, not in a street light, not near a flare. */
+  /** Out in the open: not by a burning fire, not in a street light, not near a flare. A flash still finds you in tall grass. */
   private exposed(p: Online, now: number): boolean {
     const { x, y } = p.rec;
     if (p.map.lit(x, y) || this.nearFlare(p.map.data.id, x, y, now)) return false;
     return !(p.map.warm(x, y) && this.fires.warmth(p.map, x, y, now) > 0);
+  }
+
+  /** Whom creatures notice and go after: someone out in the open, and not hidden in tall grass. */
+  private noticeable(p: Online, now: number): boolean {
+    return this.exposed(p, now) && !hidden(p.map, p.rec.x, p.rec.y);
   }
 
   private wake(w: Watcher, here: Online[], now: number): void {
@@ -1860,8 +1894,8 @@ export class World {
   /**
    * Each skulker that may step: out of its time it sinks into the ferns; awake, it lies still in its
    * lair until it hears someone walking or sees someone standing near, out in the open; then it chases
-   * them until it catches them or gives up (the time is over, they reached light or a fire, or its
-   * range ends), and goes back to its lair.
+   * them until it catches them or gives up (the time is over, they reached light, a fire or tall grass,
+   * or its range ends), and goes back to its lair.
    */
   private walkSkulkers(now: number): void {
     for (const [mapId, list] of this.skulkers) {
@@ -1886,13 +1920,13 @@ export class World {
         }
         const may = (x: number, y: number) => this.skulkerMayStand(map, s.rule, x, y) && !this.nearFlare(mapId, x, y, now) && !this.creatureAt(mapId, x, y);
         let prey = s.chasing === undefined ? undefined : here.find(p => p.rec.id === s.chasing);
-        if (s.chasing !== undefined && (!prey || prey.rec.energy <= 0 || now >= s.chaseUntil || !this.exposed(prey, now))) {
+        if (s.chasing !== undefined && (!prey || prey.rec.energy <= 0 || now >= s.chaseUntil || !this.noticeable(prey, now))) {
           this.giveUp(s, now);
           prey = undefined;
         }
         if (s.chasing === undefined && now >= s.calmUntil) {
           prey = here
-            .filter(p => p.rec.energy > 0 && this.exposed(p, now) && manhattan(p.rec.x, p.rec.y, s.x, s.y) <= (now - p.readyAt < SKULKER_HEAR_MS ? SKULKER_HEAR : SKULKER_SEE))
+            .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && manhattan(p.rec.x, p.rec.y, s.x, s.y) <= (now - p.readyAt < SKULKER_HEAR_MS ? SKULKER_HEAR : SKULKER_SEE))
             .sort((a, b) => manhattan(a.rec.x, a.rec.y, s.x, s.y) - manhattan(b.rec.x, b.rec.y, s.x, s.y))[0];
         }
         if (prey) {
@@ -2093,7 +2127,8 @@ export class World {
   /**
    * A find that is a tool: the player's for good (giveTool), never the bag's, and never double. It is
    * gone for everyone like any find and grows back by its rule; one they own already stays where it
-   * lies, for someone else. It counts like any find, for the forager and the story.
+   * lies, for someone else. Picked up, it floats like any find (`got`), and it counts like any find,
+   * for the forager and the story.
    */
   private pickTool(p: Online, find: Find, now: number): void {
     const { rule } = find;
@@ -2101,6 +2136,7 @@ export class World {
     this.finds.get(rule.map.data.id)!.delete(find.tile);
     const [soonest, latest] = rule.respawn;
     this.later(rule, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'got', items: [{ item: rule.item.id, count: 1 }], from: 'tool' } });
     this.giveTool(p.rec.id, rule.item.id);
     this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
     if (this.wild(p.map)) this.count(p, 'found', now);
@@ -2361,6 +2397,11 @@ export class World {
 
   private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
+  }
+
+  /** What an action the player asked for did, for their text box: queued after everything the action changed. */
+  private did(p: Online, did: Did): void {
+    this.outbox.push({ to: p.rec.id, msg: { t: 'did', did } });
   }
 
   /** A message for everyone on a map, but `except`. */

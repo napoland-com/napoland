@@ -19,6 +19,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   --u: clamp(8px, 2.5cqmin, 15px); --pad: calc(var(--u) * 1.1);
   --dp: clamp(112px, calc(var(--u) * 12), 170px); --ab: clamp(54px, calc(var(--u) * 5.8), 78px);
   --btn: clamp(40px, calc(var(--u) * 3.4), 50px);
+  /* The text box's buttons (YES, NO, − and +): never smaller than a fingertip. */
+  --hit: max(44px, calc(var(--u) * 3.6));
   --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px); --safe-l: env(safe-area-inset-left, 0px); --safe-r: env(safe-area-inset-right, 0px);
   font-size: calc(var(--u) * 1.05); line-height: 1.2; }
 .panel { background: rgba(14, 17, 23, .9); border: 2px solid #d9cfb8; border-radius: 10px; box-shadow: inset 0 0 0 2px #0c0f15, inset 0 0 0 3px #3e4658; }
@@ -137,6 +139,35 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .dialog .more { position: absolute; right: calc(var(--u) * 1.1); bottom: calc(var(--u) * .45); color: #e0873a; font-size: calc(var(--u) * 1); }
 @media (prefers-reduced-motion: no-preference) { .dialog .more { animation: bob .9s steps(2, jump-none) infinite; } }
 @keyframes bob { 50% { transform: translateY(3px); } }
+.dialog .who:empty, .dialog[data-mode="ask"] .more, .dialog[data-mode="note"] .more { display: none; }
+
+/* Asking first (ask.ts), and saying what it did. The box then stands above the panels it was asked
+   from (the bag, the workbench), over a scrim that takes a tap anywhere else; A, B and the stick stay
+   above the scrim. It keeps the height of a question, so answering never makes it jump. */
+.scrim { position: absolute; inset: 0; z-index: 3; pointer-events: auto; }
+.hud.asking .dialog, .hud.asking .ab, .hud.asking .stick { z-index: 4; }
+.hud.asking .dialog { background: #0e1117; cursor: default; min-height: calc(var(--hit) * 2 + var(--u) * 3.5 + 4px); }
+.hud.asking .dialog .who { background: #0e1117; }
+.hud.talking .dialog[data-mode="ask"] { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto 1fr; column-gap: calc(var(--u) * 1.2); row-gap: calc(var(--u) * .6); }
+.dialog[data-mode="ask"] .line { grid-column: 1; grid-row: 1; }
+/* How many: − ×3 +, under the question. */
+.dialog .count { grid-column: 1; grid-row: 2; align-self: end; display: flex; align-items: center; gap: calc(var(--u) * .5); }
+.hud .dialog .step { width: var(--hit); height: var(--hit); flex: none; }
+.hud .dialog .step svg { width: 44%; height: 44%; stroke-width: 2.6; }
+.hud .dialog .step[aria-disabled="true"] { opacity: .35; }
+.hud .dialog .step:active:not([aria-disabled="true"]) { background: #262d3a; }
+.dialog .count .n { min-width: 2.7em; text-align: center; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.6); line-height: 1; color: #ffcf5a; font-variant-numeric: tabular-nums; }
+/* YES over NO, in a frame of their own at the right, the chosen one gold with a caret before it. */
+.dialog .choices { grid-column: 2; grid-row: 1 / span 2; align-self: center; display: grid; gap: calc(var(--u) * .2); padding: calc(var(--u) * .35); border-radius: 8px; }
+.hud .dialog .choices button { display: flex; align-items: center; justify-content: flex-start; gap: .5em; width: 100%; min-width: 5.4em; height: var(--hit); padding: 0 1em 0 .6em;
+  border: 0; border-radius: 6px; background: none; box-shadow: none; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.35); letter-spacing: .08em; color: #d3ccbb; }
+.hud .dialog .choices button::before { content: ""; flex: none; width: .5em; height: .62em; background: currentColor; clip-path: polygon(0 0, 100% 50%, 0 100%); visibility: hidden; }
+.hud .dialog .choices button[data-on] { color: #ffcf5a; background: rgba(255, 207, 90, .12); }
+.hud .dialog .choices button[data-on]::before { visibility: visible; }
+@media (hover: hover) { .hud .dialog .choices button:hover:not([data-on]) { background: rgba(217, 207, 184, .08); } }
+/* What the box says by itself closes on its own: a thin line along its bottom runs out meanwhile. */
+.dialog .timer { position: absolute; left: calc(var(--u) * 1.5); right: calc(var(--u) * 1.5); bottom: calc(var(--u) * .5); height: 2px; border-radius: 1px; background: rgba(217, 207, 184, .4); transform-origin: left; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .dialog .timer { display: none; } }
 
 /* The bag. --sheet-h is the most height it can have (the whole screen in landscape; above the
    controls in portrait); --detail-h what the details under the slots need. */
@@ -195,25 +226,24 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .detail .count { font-size: .8em; color: #d3ccbb; font-variant-numeric: tabular-nums; }
 .detail .words p { margin: .2em 0 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.25); line-height: 1.35; color: #e6dfcf; }
 .detail .acts { display: flex; flex-wrap: wrap; align-items: center; gap: calc(var(--u) * .6); }
-.detail .ask { margin-right: auto; font-size: calc(var(--u) * 1.25); font-weight: 600; }
 .hud .act { display: inline-block; width: auto; border-radius: 9px; padding: .45em 1em; font-size: calc(var(--u) * 1.25); font-weight: 600; background: #1c222c; border: 1px solid #4a5468; box-shadow: none; }
 .hud .act.go { background: #e0873a; border-color: #f3b27a; color: #1a0f04; }
 .hud .act.toss { color: #ffb4a0; }
-.hud .act.toss.sure { background: #9c2b3a; border-color: #f3a6b0; color: #fff4f4; }
 
 /* What you wear, in the stash sheet: six slots, each with its name under the piece. */
 .sheet .grid.wear { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .hud .slot .lbl { position: absolute; left: 0; right: 0; bottom: 4%; text-align: center; font-size: calc(var(--u) * .78); font-weight: 600; color: #b9b2a2; text-transform: capitalize; }
 .hud .slot[data-wear][data-empty="true"] { background: #131820; box-shadow: inset 0 0 0 2px #232a36; }
 .hud .grid.wear .slot svg { width: 64%; height: 64%; margin-bottom: 18%; }
-/* The workbench: a recipe per row, what it makes, what it needs, and Make. */
+/* The workbench: a row for each mend and recipe, what it makes, what it needs; a tap opens its card. */
 .bench-sheet .hint, .bench-sheet .recipes { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .recipes { display: grid; gap: calc(var(--u) * .6); }
-.recipe { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: calc(var(--u) * .7); padding: .5em .6em; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.hud .recipe { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; place-items: center stretch; gap: calc(var(--u) * .7); width: 100%; padding: .5em .6em; border: 0; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; text-align: left; }
+.hud .recipe[data-picked] { background: #1d2430; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
 .recipe .big { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); display: grid; place-items: center; border-radius: 8px; background: #1c222c; }
 .recipe .big svg { width: 80%; height: 80%; }
-.recipe .words { display: grid; gap: .15em; min-width: 0; font-family: "Nunito", system-ui, sans-serif; font-weight: 700; }
-.recipe .words b { font-family: "Fredoka", system-ui, sans-serif; font-weight: 600; color: #ffcf5a; font-size: calc(var(--u) * 1.15); }
+.recipe .words { display: grid; gap: .15em; min-width: 0; font-family: var(--font-text); font-weight: 700; }
+.recipe .words b { font-family: var(--font-ui); font-weight: 600; color: #ffcf5a; font-size: calc(var(--u) * 1.15); }
 .recipe .rfacts { color: #b9b2a2; font-size: calc(var(--u) * .95); }
 .recipe .needs { display: flex; flex-wrap: wrap; gap: .3em .6em; }
 .recipe .need { display: inline-flex; align-items: center; gap: .15em; font-size: calc(var(--u) * .95); color: #cfe9c3; }
@@ -221,12 +251,64 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .recipe .need svg { width: calc(var(--u) * 1.5); height: calc(var(--u) * 1.5); }
 .recipe .need i { font-style: normal; font-variant-numeric: tabular-nums; }
 .recipe[data-short] .words b { color: #d3ccbb; }
+.recipe .more { display: flex; align-items: center; gap: .35em; color: #8a8474; }
+.recipe .more svg { width: calc(var(--u) * 1.3); height: calc(var(--u) * 1.3); }
+.recipe .ready { font-style: normal; padding: .12em .45em .1em; border-radius: 6px; font-size: calc(var(--u) * .78); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #b8f0a8; background: #22362a; box-shadow: inset 0 0 0 1px rgba(184, 240, 168, .35); }
+
+/* The stash and the workbench: the head stays, the list scrolls, and the card a tap opens (details.ts)
+   docks under the list, inside the panel: it never leaves the panel, so it never covers A and B. */
+.sheet.docked { overflow: hidden; }
+.sheet-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: var(--gap); overflow: hidden auto; overscroll-behavior: contain; }
+.dock { flex: none; display: flex; flex-direction: column; min-height: 0; max-height: calc(var(--sheet-h) * .58); padding-top: var(--gap); border-top: 2px solid #2a3240; }
+.sheet .dock .detail { flex: 1 1 auto; min-height: 0; width: 100%; max-width: var(--col); margin-inline: auto; gap: calc(var(--u) * .6); }
+.dock .about { min-height: 0; overflow: hidden auto; overscroll-behavior: contain; }
+.dock .acts { flex: none; }
+.hud .dock .act { width: 100%; text-align: center; }
+.hud .act .then { font-weight: 500; }
+@media (prefers-reduced-motion: no-preference) { .dock:not([hidden]) { animation: dock-in .18s ease-out; } }
+@keyframes dock-in { from { opacity: 0; transform: translateY(calc(var(--u) * 1.2)); } }
+/* A card's words, after the bag's: the tier, the slot, a chip for what it gives, how worn, its quirk, what it takes. */
+.detail .title { flex-wrap: wrap; row-gap: .15em; }
+.detail .tier { align-self: center; padding: .12em .5em .1em; border-radius: 6px; font-size: calc(var(--u) * .78); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; line-height: 1.2;
+  color: #d3ccbb; background: #262d3a; box-shadow: inset 0 0 0 1px rgba(211, 204, 187, .3); }
+.detail .tier[data-tier="sturdy"] { color: #b8f0a8; background: #22362a; box-shadow: inset 0 0 0 1px rgba(184, 240, 168, .35); }
+.detail .tier[data-tier="rugged"] { color: #a9d6ff; background: #1f3148; box-shadow: inset 0 0 0 1px rgba(169, 214, 255, .35); }
+.detail .tier[data-tier="expedition"] { color: #ffc98a; background: #3f2c19; box-shadow: inset 0 0 0 1px rgba(255, 201, 138, .35); }
+.detail .tier[data-tier="anomalous"] { color: #dcc6ff; background: #33244d; box-shadow: inset 0 0 0 1px rgba(220, 198, 255, .4); }
+.detail .words p.slotname { margin-top: .05em; font-family: var(--font-ui); font-weight: 500; font-size: calc(var(--u) * 1); color: #b9b2a2; }
+.detail .stats { display: flex; flex-wrap: wrap; gap: .35em; margin: .45em 0 0; padding: 0; list-style: none; font-family: var(--font-ui); font-weight: 500; font-size: calc(var(--u) * 1.05); }
+.detail .stats li { --dot: #d9cfb8; display: inline-flex; align-items: center; gap: .35em; padding: .18em .6em .18em .45em; border-radius: 99px; background: #1c222c; box-shadow: inset 0 0 0 1px #3a4356; color: #f1ece0; }
+.detail .stats li::before { content: ""; width: .6em; height: .6em; border-radius: 50%; background: var(--dot); box-shadow: 0 0 5px var(--dot); }
+.detail .stats li[data-kind="heat"] { --dot: #ff8a5c; }
+.detail .stats li[data-kind="cold"] { --dot: #8cc8ff; }
+.detail .stats li[data-kind="wind"] { --dot: #9fe0cf; }
+.detail .stats li[data-kind="electricity"] { --dot: #ffe066; }
+.detail .stats li[data-kind="radiation"] { --dot: #b5e86b; }
+.detail .stats li[data-kind="energy"] { --dot: #ffcf5a; color: #ffe3a1; }
+.detail .stats li[data-kind="none"] { --dot: #4a5468; color: #b9b2a2; }
+.detail .stats s { color: #8a8474; }
+.detail .condition { display: flex; align-items: center; gap: .55em; margin-top: .5em; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.05); line-height: 1.3; color: #cfe9c3; }
+.detail .condition[data-low="true"] { color: #ffae98; }
+.detail .cbar { position: relative; flex: none; width: calc(var(--u) * 6.5); height: max(5px, calc(var(--u) * .5)); border-radius: 99px; overflow: hidden; background: #1c222c; box-shadow: inset 0 0 0 1px #0c0f15, 0 0 0 1px #3e4658; }
+.detail .cbar i { position: absolute; inset: 0; border-radius: inherit; background: #8fd98a; transform-origin: left; }
+.detail .condition[data-low="true"] .cbar i { background: #ff6b4a; }
+.detail .words p.quirk { font-size: calc(var(--u) * 1.1); color: #dcd0f5; }
+.detail .quirk b { font-family: var(--font-ui); font-weight: 600; color: #c79bff; text-shadow: 0 0 6px rgba(199, 155, 255, .5); }
+.detail .costs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .3em .8em; margin-top: .5em; font-family: var(--font-ui); font-weight: 500; font-size: calc(var(--u) * 1.02); }
+.detail .ctitle { grid-column: 1 / -1; color: #b9b2a2; }
+.detail .cost { display: flex; align-items: center; gap: .35em; min-width: 0; color: #cfe9c3; }
+.detail .cost[data-short] { color: #ffae98; }
+.detail .cost svg { flex: none; width: calc(var(--u) * 1.6); height: calc(var(--u) * 1.6); }
+.detail .cname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e6dfcf; }
+.detail .cost i { font-style: normal; font-variant-numeric: tabular-nums; }
+.detail .words p.note { font-size: calc(var(--u) * 1.1); color: #d3ccbb; }
+.detail .words p.note[data-tone="bad"] { color: #ffae98; }
 /* The stash (the chest at home): your bag above, to put things away; the stash below, to take them out. */
 .hud .slot[hidden] { display: none; }
 .stash-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint, .stash-sheet .acts { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint[hidden] { display: none; }
-.hud .act:disabled { opacity: .45; cursor: default; }
+.hud .act:disabled, .hud .act[aria-disabled="true"] { opacity: .45; cursor: default; }
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }
 /* The status panel: rows about you, then the feats. It sits where the bag does. */
@@ -349,6 +431,14 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   .hud.talking .stick { visibility: hidden; }
   .sheet { left: 0; top: 0; bottom: 0; width: min(calc(100% - var(--pad) * 2.6 - var(--ab) * 2.25 - var(--safe-r)), 440px); border-radius: 0 18px 18px 0; padding-left: calc(var(--u) * 1.2 + var(--safe-l)); }
   .sheet[data-open="false"] { transform: translateX(-105%); }
+  /* A card opens beside the list here, not under it, where it would leave the list no height: the
+     panel grows toward A and B, never over them, and the list stays where it was under the finger. */
+  .sheet.docked[data-card] { --card-w: calc(var(--u) * 30); width: min(calc(100% - var(--pad) * 2.6 - var(--ab) * 2.25 - var(--safe-r)), calc(440px + var(--card-w) + var(--gap)));
+    display: grid; grid-template-columns: minmax(0, 1fr) min(var(--card-w), 46%); grid-template-rows: auto minmax(0, 1fr); }
+  .sheet.docked[data-card] > .sheet-head { grid-area: 1 / 1; }
+  .sheet.docked[data-card] > .sheet-body { grid-area: 2 / 1; }
+  .sheet.docked[data-card] > .dock { grid-area: 1 / 2 / 3 / 3; max-height: none; padding: 0 0 0 var(--gap); border-top: 0; border-left: 2px solid #2a3240; }
+  .sheet.docked[data-card] .dock .detail { max-width: none; }
   /* The menu stays short enough to clear A and B: two buttons a row, the slider beside the mute button. */
   .menu-panel { grid-template-columns: 1fr 1fr; }
   .menu-panel .sound-row, .hud .menu-panel [data-el="menuLogout"] { grid-column: 1 / -1; }

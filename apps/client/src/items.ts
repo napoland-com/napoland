@@ -5,7 +5,7 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, itemIndex, liveEnds, liveXp, mendCost, resistOf, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type Quirk,
+  BAG_SLOTS, SLOTS, WEAR_FADES, itemIndex, liveEnds, liveXp, mendCost, resistOf, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type Quirk,
   type Recipe, type Refusal, type RefusedAction, type Slot, type Worn,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
@@ -60,16 +60,6 @@ export function plainName(id: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : 'Something';
 }
 
-/** What using an item did, for a float over your head: "+30 energy". */
-export function useText(item: ItemDef): string {
-  const u = item.use ?? {};
-  if (u.energy) return `${u.energy > 0 ? '+' : ''}${u.energy} energy`;
-  if (u.mark) return 'You marked the way';
-  if (u.flare) return 'The flare hisses red';
-  if (u.identify) return 'You turn it over in the light';
-  return `Used the ${item.name.toLowerCase()}`;
-}
-
 /** The word on the bag's button for using an item. */
 export function useLabel(item: ItemDef): string {
   const u = item.use ?? {};
@@ -80,7 +70,10 @@ export function useLabel(item: ItemDef): string {
   return 'Use';
 }
 
-/** Why the server said no, in plain words, for a float over your head (or the chat's or friends' note: `action` says which). */
+/**
+ * Why the server said no, in plain words: over your head, in the text box for what was asked first, or
+ * in the chat's or friends' note (`action` says which).
+ */
 export function refusalText(reason: Refusal, action?: RefusedAction): string {
   switch (reason) {
     case 'bag_full': return 'Your bag is full';
@@ -127,7 +120,7 @@ export interface SlotView {
   icon: string;
   /** Gear: the slot it is worn in. */
   slot?: Slot;
-  /** A piece of gear in the stash: its condition (0 to 1), and which of that item's pieces it is (the stash's order). */
+  /** A piece of gear in the stash: its condition (0 to 1; none for gear that never wears), and which of that item's pieces it is (the stash's order). */
   cond?: number;
   n?: number;
   /** A live find: what it is, what it fades into, and its age in seconds when the bag was told (liveState). */
@@ -145,8 +138,8 @@ export function slotViews(bag: readonly BagSlot[], items: Items): SlotView[] {
     if (!p) return base;
     const n = nth.get(s.item) ?? 0;
     nth.set(s.item, n + 1);
-    const q = p.quirk && items.quirk(p.quirk);
-    return { ...base, cond: p.cond, n, text: q ? `${def.text} ${q.name}: ${q.text}` : def.text, facts: [conditionText(p.cond, wearSeconds(def, items.wear) !== undefined), ...base.facts] };
+    const q = p.quirk && items.quirk(p.quirk), wears = wearSeconds(def, items.wear) !== undefined;
+    return { ...base, ...(wears ? { cond: p.cond } : {}), n, text: q ? `${def.text} ${q.name}: ${q.text}` : def.text, facts: [conditionText(p.cond, wears), ...base.facts] };
   });
 }
 
@@ -164,11 +157,20 @@ export function liveState(live: NonNullable<SlotView['live']>, ageS: number): { 
   return { text: `Fading: ${xp} XP now`, left: Math.max(0, (ends - ageS) / (ends - fresh)), fading: true };
 }
 
-/** "As good as new", "40% left", "Worn out: mend it at the workbench". Gear that never wears is always fine. */
+/**
+ * How worn a piece is, in words: "Like new", "Worn: 40% left" (below a quarter left it protects less,
+ * and says so), "Worn out: it protects nothing until it is mended". Worn clothes and bags never wear.
+ */
 export function conditionText(cond: number, wears = true): string {
-  if (!wears || cond >= 0.995) return 'As good as new';
-  if (cond <= 0) return 'Worn out: mend it at the workbench';
-  return `${Math.max(1, Math.round(cond * 100))}% left`;
+  if (!wears) return 'Never wears out';
+  if (cond >= 0.995) return 'Like new';
+  if (cond <= 0) return 'Worn out: it protects nothing until it is mended';
+  return cond < WEAR_FADES ? `${wornLeft(cond)}, and it protects less until it is mended` : wornLeft(cond);
+}
+
+/** "Worn: 40% left" (never 0% while anything is left). */
+function wornLeft(cond: number): string {
+  return `Worn: ${Math.max(1, Math.round(cond * 100))}% left`;
 }
 
 /** "Raincoat 40%, rubber boots worn out": what you wear that is wearing down, or null when all of it is fine. */
@@ -194,7 +196,7 @@ export function factsOf(def: ItemDef): string[] {
     if (def.bag) out.push(`${def.bag} slots`);
     if (def.bonus) out.push(`+${def.bonus} energy`);
     if (def.tier && def.tier !== 'worn') out.push(capital(def.tier));
-    out.push(`Worn: ${def.slot}`);
+    if (def.slot) out.push(slotName(def.slot));
   }
   // A live find's worth changes as it fades: its countdown says it (liveState).
   if (def.xp && !def.live) out.push(`${def.xp} XP at home`);
@@ -222,13 +224,14 @@ export function lookOf(gear: Gear, items: Items): Look {
 
 /**
  * The workbench's recipes against what a stash holds: what each makes, what it needs, whether it can.
- * A tool is yours once: the row of one among your `tools` says you have it, and cannot be made again.
+ * A tool is yours once: the row of one among your `tools` says you have it, and is never ready (its
+ * card says so too, details.ts).
  */
 export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[], items: Items, tools: readonly string[] = []): RecipeView[] {
   return recipes.map(r => {
     const def = items.get(r.make), have = def.kind === 'tool' && tools.includes(r.make);
     const needs = r.needs.map(n => ({ name: items.get(n.item).name, icon: iconFor(items.get(n.item)), have: countOf(stash, n.item), need: n.count }));
-    return { id: r.id, name: def.name, icon: iconFor(def), facts: factsOf(def).join(' · '), needs, can: !have && needs.every(n => n.have >= n.need), ...(have ? { act: 'You have it' } : {}) };
+    return { id: r.id, name: def.name, icon: iconFor(def), facts: have ? 'You have it' : factsOf(def).join(' · '), needs, can: !have && needs.every(n => n.have >= n.need) };
   });
 }
 
@@ -260,7 +263,7 @@ export function mendViews(gear: Gear, worn: Worn, stash: readonly BagSlot[], ite
     const cost = mendCost(def, items.mend);
     if (!def || !p || !cost || p.cond >= 0.995) return [];
     const needs = cost.map(n => ({ name: items.get(n.item).name, icon: iconFor(items.get(n.item)), have: countOf(stash, n.item), need: n.count }));
-    return [{ id: `mend:${slot}`, name: `Mend your ${def.name.toLowerCase()}`, icon: iconFor(def), facts: `${p.cond <= 0 ? 'Worn out' : conditionText(p.cond)}. Whole again when mended.`, needs, can: needs.every(n => n.have >= n.need), act: 'Mend' }];
+    return [{ id: `mend:${slot}`, name: `Mend your ${def.name.toLowerCase()}`, icon: iconFor(def), facts: `${p.cond <= 0 ? 'Worn out' : wornLeft(p.cond)}. Like new again when mended.`, needs, can: needs.every(n => n.have >= n.need) }];
   });
 }
 
@@ -289,4 +292,10 @@ export function countOf(bag: readonly BagSlot[], item: string): number {
 
 /** The elements in plain words. */
 export const ELEMENT_WORDS: Readonly<Record<Element, string>> = { heat: 'Heat', cold: 'Cold', wind: 'Wind', electricity: 'Electricity', radiation: 'Radiation' };
+
+/** "Cap slot": where a piece goes, as the Wearing row names it. */
+export function slotName(slot: Slot): string {
+  return `${capital(slot)} slot`;
+}
+
 const capital = (t: string) => t[0]!.toUpperCase() + t.slice(1);

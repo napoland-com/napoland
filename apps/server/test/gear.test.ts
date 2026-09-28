@@ -110,8 +110,8 @@ describe('the workbench', () => {
     expect(to(w.drain(), 'a')).toEqual([{ t: 'bench', stash: [{ item: 'cloth', count: 5 }] }]);
     w.craft('a', 1, 1, 'coat', 1000);
     expect(to(w.drain(), 'a')).toEqual([
-      { t: 'crafted', item: 'coat', count: 1 },
       { t: 'bench', stash: [{ item: 'coat', count: 1, piece: { cond: 1 } }, { item: 'cloth', count: 1 }] },
+      { t: 'did', did: { kind: 'made', item: 'coat', count: 1 } },
     ]);
     expect(w.takeWrites().players[0]!.stash).toEqual({ items: { cloth: 1, coat: 1 }, out: {}, pieces: { coat: [{ cond: 1 }] } });
   });
@@ -165,7 +165,8 @@ describe('pieces: wear, mending and quirks', () => {
     const w = pieces(rec('a', 'house', 1, 2, { gear: COAT, worn: { shirt: { cond: 0.3 } }, stash: { items: { cloth: 3 }, out: {} } }));
     w.mend('a', 1, 1, 'shirt', 1000);
     const out = to(w.drain(), 'a');
-    expect(out).toContainEqual({ t: 'mended', item: 'coat' });
+    // What it did comes last, after the piece's condition and the bench.
+    expect(out.at(-1)).toEqual({ t: 'did', did: { kind: 'mended', item: 'coat' } });
     expect(of(out, 'energy').at(-1)!.body.worn.shirt).toEqual({ cond: 1 });
     expect(w.get('a')!.stash!.items).toEqual({ cloth: 1 });
     w.mend('a', 1, 1, 'shirt', 1000);

@@ -18,6 +18,8 @@ export const TILE_CHARS = {
   m: 'mud',
   l: 'lot',
   f: 'ferns',
+  /** Knee-high grass: walked through like grass, and whoever stands in it is hidden from creatures (hidden). */
+  h: 'tallgrass',
   /** Dense trees: nobody walks through. Drawn as one tree per tile, varied by position. */
   t: 'forest',
   /** Wooden floor, inside buildings. */
@@ -96,13 +98,15 @@ export type MapObject =
   | { kind: 'board'; x: number; y: number }
   /** Your stash: a chest at home. Everyone who opens it sees only their own things in it. */
   | { kind: 'chest'; x: number; y: number }
-  /** The workbench: it makes gear from what your stash holds (recipes in content/items.json). */
+  /** The workbench, beside the chest at home: it makes gear from what your stash holds (recipes in content/items.json). */
   | { kind: 'workbench'; x: number; y: number }
   /** Furniture, inside buildings. A bed is one tile wide and two long (head at y); a rug is only drawn. */
   | { kind: 'bed'; x: number; y: number }
   | { kind: 'table'; x: number; y: number }
   | { kind: 'shelf'; x: number; y: number }
   | { kind: 'crate'; x: number; y: number }
+  /** Split firewood stacked against the nearest wall. Nothing to do with it: it only stands in the way. */
+  | { kind: 'woodpile'; x: number; y: number }
   | { kind: 'rug'; x: number; y: number; w: number; h: number };
 
 /** A place people call by name: the ring of stones, the sinks, the quarantine line. */
@@ -174,7 +178,7 @@ export interface Arrival {
 /** Objects that stand on a tile and stop anyone from walking onto it (a house's door tile excepted). */
 const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
-  'antenna', 'console',
+  'antenna', 'console', 'woodpile',
 ]);
 /** Objects that are only drawn: you walk over or through them. */
 export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug']);
@@ -186,6 +190,17 @@ export function objectTiles(o: MapObject): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) out.push([o.x + dx, o.y + dy]);
   return out;
+}
+
+/**
+ * Tall grass hides whoever stands in it from creatures, and only from them (DESIGN.md, Creatures):
+ * creatures never step into it, a chase ends when the prey reaches it, and nothing notices anyone in
+ * it. The drain, the rain, hitchhikers, surges, storms and flashes find you there as anywhere else.
+ * The one place the rule lives: the server's creatures and creatureMayStand ask it, and the client
+ * asks it too, to crouch whoever stands in tall grass.
+ */
+export function hidden(map: TileMap, x: number, y: number): boolean {
+  return map.kind(x, y) === 'tallgrass';
 }
 
 /**
@@ -319,14 +334,19 @@ export class TileMap {
     return this.inside(x, y) ? this.levels[y * this.width + x]! : 0;
   }
 
-  /** Where a watcher may wake, as y * width + x: open ground out of the light, away from fires and exits, `steps` from home. */
+  /** Where a watcher may wake, as y * width + x: where a creature may stand (creatureMayStand), `steps` from home. */
   lairs(steps: readonly [number, number]): number[] {
     const out: number[] = [];
     for (let y = 0; y < this.height; y++) for (let x = 0; x < this.width; x++) {
       const s = this.homeSteps(x, y);
-      if (this.walkable(x, y) && !this.exitAt(x, y) && !this.lit(x, y) && !this.warm(x, y) && s >= steps[0] && s <= steps[1]) out.push(y * this.width + x);
+      if (this.creatureMayStand(x, y) && s >= steps[0] && s <= steps[1]) out.push(y * this.width + x);
     }
     return out;
+  }
+
+  /** Where a creature may stand, step or wake: open ground out of the light, away from fires and exits, and never in tall grass (hidden). */
+  creatureMayStand(x: number, y: number): boolean {
+    return this.walkable(x, y) && !this.exitAt(x, y) && !this.lit(x, y) && !this.warm(x, y) && !hidden(this, x, y);
   }
 
   /** Can a character stand on this tile? */

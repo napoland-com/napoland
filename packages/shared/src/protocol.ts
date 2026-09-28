@@ -12,7 +12,10 @@ import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 18;
+
+/** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
+export const FEED_MAX = 30;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -85,10 +88,13 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('pick'), x: z.number().int(), y: z.number().int() }),
   /** Use what is in bag slot `slot` (a consumable, like a thermos). */
   z.object({ t: z.literal('use'), slot: z.number().int().nonnegative().max(63) }),
-  /** Throw away everything in bag slot `slot`. */
-  z.object({ t: z.literal('discard'), slot: z.number().int().nonnegative().max(63) }),
-  /** Put what is in bag slot `slot` into the fire (or the Old Stone) on tile x,y, next to you. */
-  z.object({ t: z.literal('feed'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63) }),
+  /** Throw away `count` of what is in bag slot `slot`, or all of it when left out. */
+  z.object({ t: z.literal('discard'), slot: z.number().int().nonnegative().max(63), count: z.number().int().positive().max(999).optional() }),
+  /**
+   * Put `count` (1 when left out) of what is in bag slot `slot` into the fire (or the Old Stone) on tile
+   * x,y, next to you: from that slot first, then from others holding the same. A fire takes as many as fit.
+   */
+  z.object({ t: z.literal('feed'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63), count: z.number().int().positive().max(FEED_MAX).optional() }),
   /** Read the notice board on tile x,y, next to you: how things stand out there. */
   z.object({ t: z.literal('board'), x: z.number().int(), y: z.number().int() }),
   /** Open the chest (your stash) on tile x,y, next to you: the server answers with what is in it. */
@@ -203,6 +209,32 @@ export interface StoneView {
   /** Awake: seconds until it sleeps again, when nobody feeds it. */
   left: number;
 }
+
+/**
+ * What something you asked for did, once the server carried it out: the client says it in the text box,
+ * in its own words, from these facts (never guessed). One of these follows every feed, use, discard,
+ * craft and mend that went through, after everything else the action changed; a refusal is `refused`.
+ */
+export type Did =
+  /** A fire took `count` of `item`, and has `left` seconds of fuel now; `lit`: it was out. */
+  | { kind: 'fire'; item: string; count: number; left: number; lit?: true }
+  /** The Old Stone took `count` of `item`, and stands so now; `woke`: this woke it. */
+  | { kind: 'stone'; item: string; count: number; stone: StoneView; woke?: true }
+  /**
+   * One `item` from your bag was used up: the energy it gave you (as much as your bar had room for), the
+   * seconds a flare burns, the arrow painted (which way it points, and for how many seconds everyone sees
+   * it), what a strange object turned out to be.
+   */
+  | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot }
+  /**
+   * The workbench made `count` of `item`, into your stash. A tool (its kind says so) went to your tools
+   * instead, yours for good: your tools came before this in a `tools` message.
+   */
+  | { kind: 'made'; item: string; count: number }
+  /** The `item` you wear is mended: whole again. */
+  | { kind: 'mended'; item: string }
+  /** You threw away `count` of `item`. */
+  | { kind: 'thrown'; item: string; count: number };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -371,11 +403,14 @@ export type ServerMsg =
   /** Your tools, whole (item ids, in the order you got them), after you got one. */
   | { t: 'tools'; tools: string[] }
   /**
-   * You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message. From a
-   * `tool`: one tool, yours for good (made at the workbench, found, or given), and your tools follow
-   * in a `tools` message instead. `double`: the find came up double (the forager's ranks, feats.ts).
+   * You picked these up (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
+   * A find that is a `tool` is yours for good instead, and your tools follow in a `tools` message.
+   * `double`: the find came up double (the forager's ranks, feats.ts). What a strange object turns
+   * out to be comes in `did` instead.
    */
-  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify' | 'tool'; double?: true }
+  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool'; double?: true }
+  /** What a feed, use, discard, craft or mend you asked for did (for the text box). */
+  | { t: 'did'; did: Did }
   /** Something asked for that did not happen, and why. */
   | { t: 'refused'; action: RefusedAction; reason: Refusal }
   /** Someone said something you can hear: to everyone online, or near them on your map (a bubble over their head). You hear your own too. */
@@ -427,12 +462,8 @@ export type ServerMsg =
   | { t: 'progress'; progress: ProgressView; gained: number }
   /** On your map: what someone wears now (you too, after you changed it). */
   | { t: 'gear'; id: string; gear: Gear; quirks: Quirk[] }
-  /** You mended the piece you wear in `slot` at the workbench: it is whole again. */
-  | { t: 'mended'; item: string }
-  /** The workbench you opened: what your stash holds, whole, after opening it or making something. */
+  /** The workbench you opened: what your stash holds, whole, after opening it, making or mending something. */
   | { t: 'bench'; stash: BagSlot[] }
-  /** You made this at the workbench; it lies in your stash (a tool is yours for good instead: its `got` and `tools` came first). */
-  | { t: 'crafted'; item: string; count: number }
   /** On your map: a find grew here, or someone took one / it went. */
   | { t: 'find'; find: FindView }
   | { t: 'findGone'; id: number }

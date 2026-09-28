@@ -49,6 +49,15 @@ export interface ItemDef {
   stack: number;
   /** One or two plain sentences, shown in the bag. */
   text: string;
+  /**
+   * How a sentence names one of it, and several ("shard", "shards"; "resin", "resin"; "rubber gloves"
+   * for both). Left out: the name as a word in a sentence, and that with an s (unless it ends in one).
+   * A noun that is its own plural is never counted with "a": "Feed the fire resin?", "Make rubber gloves?"
+   */
+  noun?: string;
+  plural?: string;
+  /** One plain sentence on what it is good for, said when a strange object turns out to be it. */
+  about?: string;
   /** What using it does. Consumables must do something; a resource may (a glowcap paints a mark). */
   use?: ItemUse;
   /** XP for each one put into your stash at home (progress.ts). None: it earns nothing. */
@@ -116,7 +125,7 @@ export interface ItemsData {
   version: number;
   items: ItemDef[];
   finds: FindRule[];
-  /** What the workbench in town makes (gear.ts). None: it makes nothing. */
+  /** What the workbench at home makes (gear.ts). None: it makes nothing. */
   recipes?: Recipe[];
   /** Seconds out in the wilds that wear gear of each tier out (gear.ts); a tier left out never wears. */
   wear?: Partial<Record<Tier, number>>;
@@ -260,6 +269,28 @@ export function takeFromBag(bag: readonly BagSlot[], slot: number, count = Infin
   s.count -= Math.min(s.count, count);
   if (s.count <= 0) out.splice(slot, 1);
   return out;
+}
+
+/**
+ * Takes up to `count` of the item in slot `slot`: from that slot first, then from the other slots
+ * holding the same item, in bag order, so what one feeding may use is everything of it you carry.
+ * Emptied slots are removed. Returns the new bag (the old one is left alone) and how many came out.
+ */
+export function takeItem(bag: readonly BagSlot[], slot: number, count: number): { bag: BagSlot[]; taken: number } {
+  const first = bag[slot];
+  let want = Math.max(0, Math.floor(count));
+  if (!first || !want) return { bag: bag.map(s => ({ ...s })), taken: 0 };
+  const order = [slot, ...bag.flatMap((s, i) => (i !== slot && s.item === first.item ? [i] : []))];
+  const left = bag.map(s => s.count);
+  let taken = 0;
+  for (const i of order) {
+    const n = Math.min(want, left[i]!);
+    left[i] = left[i]! - n;
+    taken += n;
+    want -= n;
+    if (!want) break;
+  }
+  return { bag: bag.flatMap((s, i) => (left[i]! > 0 ? [{ ...s, count: left[i]! }] : [])), taken };
 }
 
 /** The same items with equal kinds joined (for piles and messages; ignores stack sizes). */

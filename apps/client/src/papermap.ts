@@ -45,6 +45,8 @@ export interface Sketch {
   trees: Pt[];
   /** A dot here and there on open ground, so clearings and trails show against the forest. */
   ground: Pt[];
+  /** Tall grass, where you hide from creatures: a hatch of short strokes on each of its tiles, so a route can run from patch to patch. */
+  grass: Pt[];
   water: Pt[];
   /** Road tiles, drawn as one band. */
   roads: Pt[];
@@ -88,7 +90,7 @@ const drift = (x: number, y: number, k = 0): Pt => [x + 0.5 + (hash(x, y, k) - 0
 export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefined): Sketch {
   const { width: W, height: H } = map;
   const s: Sketch = {
-    title: map.data.name, width: W, height: H, forest: [], trees: [], ground: [], water: [], roads: [], houses: [], poles: [], wires: [], masts: [], fences: [], cars: [], signs: [], labels: [],
+    title: map.data.name, width: W, height: H, forest: [], trees: [], ground: [], grass: [], water: [], roads: [], houses: [], poles: [], wires: [], masts: [], fences: [], cars: [], signs: [], labels: [],
   };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const kind = map.kind(x, y), r = hash(x, y, 1);
@@ -97,6 +99,8 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
       if (r < 0.2) s.trees.push(drift(x, y, 2));
     } else if (kind === 'water') s.water.push([x, y]);
     else if (kind === 'road') s.roads.push(drift(x, y, 3));
+    // Every tile of it, a little off: a patch keeps its shape, which is what a route is planned by.
+    else if (kind === 'tallgrass') s.grass.push(drift(x, y, 15));
     else if (map.walkable(x, y) && r < 0.12) s.ground.push(drift(x, y, 4));
   }
   for (const o of map.data.objects) {
@@ -231,6 +235,18 @@ function draw(s: Sketch): HTMLCanvasElement {
   }
   g.fillStyle = 'rgba(59,46,34,.35)';
   for (const [x, y] of s.ground) g.fillRect(X(x), Y(y), 1.5, 1.5);
+  // Tall grass: three short strokes a tile, splayed like a tuft, in a green-grey pencil.
+  const tuft = (px: number, py: number) => {
+    for (const [dx, lean, len] of [[-0.24, -0.28, 0.42], [0, 0, 0.55], [0.24, 0.28, 0.42]] as const) {
+      g.moveTo(px + dx * PX, py);
+      g.lineTo(px + (dx + lean * len) * PX, py - len * PX);
+    }
+  };
+  g.strokeStyle = 'rgba(66,84,44,.85)';
+  g.lineWidth = 1.1;
+  g.beginPath();
+  for (const [x, y] of s.grass) tuft(X(x), Y(y) + PX * 0.25);
+  g.stroke();
   // Trees: a trunk and a little pointed crown.
   g.strokeStyle = 'rgba(59,46,34,.75)';
   g.lineWidth = 1.2;
@@ -299,6 +315,19 @@ function draw(s: Sketch): HTMLCanvasElement {
     g.fillText(l.text, 0, 0);
     g.restore();
   });
+  // A key in the margin for the one mark that is not a picture of its thing.
+  if (s.grass.length) {
+    const kx = X(0.5), ky = Y(s.height + 2.2);
+    g.strokeStyle = 'rgba(66,84,44,.85)';
+    g.lineWidth = 1.1;
+    g.beginPath();
+    tuft(kx, ky);
+    g.stroke();
+    g.textAlign = 'left';
+    g.font = `italic ${PX * 1.4}px ${HAND}`;
+    g.fillText('tall grass: nothing follows you in', kx + PX * 1.1, ky - PX * 0.3);
+    g.textAlign = 'center';
+  }
   // North is up, as it is on screen.
   const nx = c.width - PX * 3, ny = PX * 3;
   g.lineWidth = 1.5;

@@ -59,13 +59,13 @@ export function hasFire(data: MapData | undefined): boolean {
 
 /**
  * Where windows go: in standing back walls with room in front, between two other wall tiles, and not
- * over a fireplace (its chimney is there) or a shelf. One in a narrow room; two in a wide one, a
- * quarter of the way in from each side.
+ * over a fireplace (its chimney is there), a shelf or a workbench (the board its tools hang on). One
+ * in a narrow room; two in a wide one, a quarter of the way in from each side.
  */
 export function windowSpots(map: TileMap, shapes: readonly WallShape[]): Array<{ x: number; y: number }> {
   const W = map.width, busy = new Set<string>();
   for (const f of objectsOf(map.data, 'fireplace')) for (const dx of [-1, 0, 1]) busy.add(`${f.x + dx},${f.y}`);
-  for (const s of objectsOf(map.data, 'shelf')) busy.add(`${s.x},${s.y}`);
+  for (const s of [...objectsOf(map.data, 'shelf'), ...objectsOf(map.data, 'workbench')]) busy.add(`${s.x},${s.y}`);
   const tall = (x: number, y: number) => map.inside(x, y) && shapes[y * W + x] === 'tall';
   const spots: Array<{ x: number; y: number }> = [];
   for (let y = 0; y < map.height; y++) for (let x = 0; x < W; x++) {
@@ -272,6 +272,10 @@ export function doorwayModel(x: number, y: number, dir: Dir): THREE.Group {
 }
 
 const BLANKETS = ['#7a3b35', '#3f5f6e', '#5d6b3a', '#6b4a6e'];
+const BARK = ['#5b4130', '#4e3726', '#664a33'];
+/** Split wood's face (the end grain a camera looking north sees), and the heart of it. */
+const GRAIN = '#c99d64';
+const HEART = '#8f6238';
 const RUGS: Array<[string, string, string]> = [['#6b2f2a', '#b08a58', '#3d4e5c'], ['#35505c', '#c2a36a', '#7a3b35'], ['#4e5a34', '#a8894f', '#6b2f2a']];
 const BOOKS = ['#7b2f2a', '#35505c', '#5d6b3a', '#a0763a', '#4b3a5c', '#8a8070'];
 /** A NAPO screen, still on: it glows the same in any light, so it keeps a material of its own when baked. */
@@ -285,11 +289,21 @@ function againstWall(map: TileMap, x: number, y: number): number {
   return 0;
 }
 
+/** A log lying along x, `len` long: bark round it and split wood at both ends. */
+function log(g: THREE.Object3D, r: number, len: number, bark: string, x: number, y: number, z: number) {
+  const side = flat(new THREE.CylinderGeometry(r, r, len, 7).rotateZ(Math.PI / 2));
+  g.add(part(side, bark, x, y, z, 0.014));
+  for (const s of [-1, 1]) {
+    g.add(part(new THREE.CylinderGeometry(r * 0.84, r * 0.84, 0.012, 7).rotateZ(Math.PI / 2), GRAIN, x + s * (len / 2 + 0.004), y, z, false));
+    g.add(part(new THREE.CylinderGeometry(r * 0.3, r * 0.3, 0.014, 6).rotateZ(Math.PI / 2), HEART, x + s * (len / 2 + 0.007), y, z, false));
+  }
+}
+
 /**
  * Low-poly furniture with toon outlines, placed on its tiles: a bed (head north), a table with a mug
  * and a book, a shelf of books and jars (its back to the nearest wall), a crate (sometimes two), a
- * rug and one of NAPO's desks (its back to the wall too). Colors vary by position, the same on every
- * visit. Null for anything else.
+ * rug, one of NAPO's desks (its back to the wall too) and a woodpile (along its wall). Colors vary by
+ * position, the same on every visit. Null for anything else.
  */
 export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | null {
   const v = hash2(o.x * 3 + 1, o.y * 5 + 2);
@@ -386,6 +400,25 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
       g.add(box(0.2, 0.01, 0.26, '#e6dfcc', 0.12, 0.655, -0.02, false).rotateY(0.25 - v * 0.5));
       return g;
     }
+    case 'woodpile': {
+      // Split firewood stacked along the wall on two sleepers, one log short on top (it went on the
+      // fire), and a chopping block in front with the hatchet left in it.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = againstWall(map, o.x, o.y);
+      for (const sx of [-0.28, 0.28]) g.add(box(0.07, 0.05, 0.56, '#3f2a1d', sx, 0.025, -0.17, false));
+      const rows = [[-0.36, -0.18, 0], [-0.36, -0.18, 0], [-0.36, -0.18, 0], [-0.36, -0.18]];
+      rows.forEach((zs, row) => zs.forEach((z, i) => {
+        const k = hash2(o.x * 13 + row * 3 + i, o.y * 7 + row), r = 0.082 + k * 0.012;
+        log(g, r, 0.8, BARK[Math.floor(k * BARK.length) % BARK.length]!, (hash2(i + row, o.x + o.y) - 0.5) * 0.06, 0.138 + row * 0.172, z);
+      }));
+      g.add(part(flat(new THREE.CylinderGeometry(0.14, 0.16, 0.24, 8)), BARK[0]!, 0.16, 0.12, 0.3, 0.016));
+      g.add(part(new THREE.CylinderGeometry(0.125, 0.125, 0.012, 8), GRAIN, 0.16, 0.246, 0.3, false));
+      g.add(box(0.1, 0.06, 0.025, '#8f969c', 0.18, 0.275, 0.3, 0.01));
+      const handle = box(0.28, 0.028, 0.028, '#8a6a44', 0.064, 0.385, 0.3, 0.01);
+      handle.rotation.z = (130 * Math.PI) / 180;
+      g.add(handle);
+      return g;
+    }
     case 'rug': {
       const [field, border, motif] = RUGS[Math.floor(v * RUGS.length)]!;
       const g = pivot(o.x + o.w / 2, 0, o.y + o.h / 2);
@@ -412,6 +445,11 @@ export function furnitureShadows(map: TileMap): Array<[number, number, number, n
     else if (o.kind === 'workbench') out.push([o.x + 0.5, o.y + 0.42, 0.52, 0.36]);
     else if (o.kind === 'console' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.36, 0.52, 0.32]);
     else if (o.kind === 'shelf' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.28, 0.52, 0.26]);
+    else if (o.kind === 'woodpile') {
+      // Long along its wall, and drawn a little toward it, where the stack is.
+      const turn = againstWall(map, o.x, o.y), along = turn === 0;
+      out.push([o.x + 0.5 - Math.sin(turn) * 0.12, o.y + 0.5 - Math.cos(turn) * 0.12, along ? 0.5 : 0.42, along ? 0.42 : 0.5]);
+    }
   }
   return out;
 }

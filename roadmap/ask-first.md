@@ -1,8 +1,8 @@
 ---
 id: ask-first
 title: Ask before using anything up, then say what it did
-status: next
-order: 25
+status: done
+order: 290
 area: controls
 ---
 

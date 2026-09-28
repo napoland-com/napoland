@@ -261,10 +261,10 @@ export function attachNet(o: NetOptions): Net {
         world.use(s.id, msg.slot, now);
         return flush();
       case 'discard':
-        world.discard(s.id, msg.slot, now);
+        world.discard(s.id, msg.slot, now, msg.count);
         return flush();
       case 'feed':
-        world.feed(s.id, msg.x, msg.y, msg.slot, now);
+        world.feed(s.id, msg.x, msg.y, msg.slot, now, msg.count);
         return flush();
       case 'board':
         world.board(s.id, msg.x, msg.y, now);

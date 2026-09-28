@@ -7,6 +7,7 @@
  */
 import { BAG_SLOTS, RANKS, SLOTS, type BodyView, type Dir, type EnergyView, type Slot, type SurgeView } from '@napoland/shared';
 import { aboutBody, versionView } from './about';
+import { DOUBLE_TAP_MS, DoubleTap, cardPress, refKey, statText, type DetailAct, type DetailRef, type DetailView } from './details';
 import type { FriendsView } from './friends';
 import { liveState, type SlotView } from './items';
 import type { JournalView } from './journal';
@@ -17,9 +18,12 @@ const ICON = {
   menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
   x: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
   back: svg('<path d="M15 5l-7 7 7 7"/>'),
+  more: svg('<path d="M9 5l7 7-7 7"/>'),
   // The waves show while the sound is on, the cross while it is off (style.css).
   speaker: svg('<path d="M4 9v6h4l5 4V5L8 9z"/><path class="on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="off" d="M17 9.5l5 5M22 9.5l-5 5"/>'),
   chat: svg('<path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-5 4v-4H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>'),
+  minus: svg('<path d="M6 12h12"/>'),
+  plus: svg('<path d="M12 6v12M6 12h12"/>'),
   bolt: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.5 2 4 13.5h6.5L9 22l10-12h-6.6z"/></svg>`,
   drop: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.5C9 7 5.5 10.6 5.5 14.6a6.5 6.5 0 0 0 13 0c0-4-3.5-7.6-6.5-12.1z"/></svg>`,
   cling: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 3c-4.4 0-7 3.3-7 7.6V21l2.3-1.8L9.6 21l2.4-1.8 2.4 1.8 2.3-1.8L19 21V10.6C19 6.3 16.4 3 12 3zm-3 8.2a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8zm6 0a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8z"/></svg>`,
@@ -56,11 +60,16 @@ export interface HudHandlers {
   store?(slot?: number): void;
   take?(item: string): void;
   stashClosed?(): void;
-  /** At the chest: put on gear from the stash, take off what a slot wears. At the workbench: make a recipe, or close it. */
+  /**
+   * At the chest: put on gear from the stash, take off what a slot wears. At the workbench: make a
+   * recipe or mend what a slot wears ("mend:" and the slot), or close it.
+   */
   equip?(item: string, n?: number): void;
   unequip?(slot: Slot): void;
   craft?(recipe: string): void;
   benchClosed?(): void;
+  /** What a tap in the chest or at the workbench shows: its card, as the game stands now (null: it is gone). */
+  details?(ref: DetailRef): DetailView | null;
   /** Something done in the friends panel, or a player's name tag tapped. */
   social?(a: SocialAction): void;
   /** The chat panel: opened, another tab picked, or something said. */
@@ -75,11 +84,16 @@ export interface HudHandlers {
   signIn?(): void;
   a(): void;
   b(): void;
+  /** A tap on the text box itself (not on its buttons). */
   dialogTap(): void;
+  /** The question in the text box: YES or NO tapped; − or + pressed (-1 or 1) and let go (0); a tap anywhere outside the box. */
+  answer?(choice: 'yes' | 'no'): void;
+  count?(dir: -1 | 0 | 1): void;
+  dismiss?(): void;
   logout(): void;
-  /** Use what is in bag slot `slot` (only offered for consumables). */
+  /** Use what is in bag slot `slot` (only offered for what can be used); the game asks first. */
   use(slot: number): void;
-  /** Throw away everything in bag slot `slot` (asked once first). */
+  /** Throw away some of what is in bag slot `slot`; the game asks how many first. */
   discard(slot: number): void;
   /** The version the server runs, for the About panel (null: none shown). Asked once, when the panel first opens. */
   version(): Promise<string | null>;
@@ -104,11 +118,6 @@ export function soundRow(
   row.mute.addEventListener('click', () => change({ ...now, muted: !now.muted }));
   row.volume.addEventListener('input', () => change({ volume: Number(row.volume.value) / 100, muted: false }));
   return show;
-}
-
-/** What the bag asks before throwing a slot away. */
-export function tossQuestion(count: number): string {
-  return count > 1 ? `Throw all ${count} away?` : 'Throw it away?';
 }
 
 /** How long a banner stays up: long enough to read what it says. */
@@ -141,8 +150,8 @@ export const MAX_BAG = 16;
 
 /** A slot of what you wear, as the stash sheet shows it: the piece's name and drawing, or bare. */
 export interface WornView { slot: Slot; name: string; icon: string; /** How worn down (1 new, 0 worn out), for gear that wears. */ cond?: number; /** Its quirk's name. */ quirk?: string }
-/** A recipe as the workbench shows it: what it makes, what it needs against what your stash holds. `act`: its button ("Make" when left out). */
-export interface RecipeView { id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean; act?: string }
+/** A row of the workbench: what a recipe makes (or a mend), what it needs against what your stash holds, and whether it can be done. */
+export interface RecipeView { id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean }
 /** A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or another tool of yours. */
 export interface ToolView { item: string | null; label: string; icon: string }
 
@@ -224,7 +233,12 @@ export type SocialAction =
 export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean }
 /** `row` stacks words said at once, 0 at the bottom. */
 export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number; row: number }
+/** Someone's lines in the text box, as far as they are typed out (`done`: the whole line is). */
 export interface DialogView { who: string; text: string; done: boolean }
+/** A question in the text box (ask.ts): its words, the choice highlighted, and how many (null: it does not ask how many). */
+export interface AskView { who: string; text: string; choice: 'yes' | 'no'; count: { n: number; min: number; max: number } | null }
+/** What the text box says by itself: it stays up `ms` more (a thin line along its bottom runs out), or it waits for the server. */
+export interface NoteView { who: string; text: string; ms: number; waiting: boolean }
 
 export class Hud {
   readonly root: HTMLElement;
@@ -232,14 +246,14 @@ export class Hud {
   private tagEls = new Map<string, HTMLElement>();
   private floatEls = new Map<number, HTMLElement>();
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
-  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', friends: '', personActs: '', talk: '', journal: '', chat: '' };
+  private shown = { fill: -1, level: '', refill: false, pct: -1, vignette: -1, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', card: '', friends: '', personActs: '', talk: '', journal: '', chat: '' };
   /** What the dots say is new: among friends (a request, an unread message) and in the journal (a chapter), on the menu; in the chat (something said), on its own button. */
   private news = { social: false, journal: false, chat: false };
   private load = 0;
   private capacity = BAG_SLOTS;
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
   private slotEls: HTMLButtonElement[] = [];
-  /** The bag as shown, the slot whose details are open (and the item in it), and whether throwing it away is being asked. */
+  /** The bag as shown, and the slot whose details are open (and the item in it). */
   private bag: SlotView[] = [];
   /** When the bag was told (performance.now()), and what each live slot's countdown last showed. */
   private bagAt = 0;
@@ -250,7 +264,21 @@ export class Hud {
   private chatTab: 'world' | 'local' = 'local';
   private bubbleEls = new Map<string, HTMLElement>();
   private picked: { slot: number; item: string } | null = null;
-  private asking = false;
+  /**
+   * What the text box holds: someone's lines (told every frame), a question, or what it says by itself
+   * (told when they change). A question comes first, then what it says, then the lines. `shown` is what
+   * the page shows now, so a frame only writes what changed.
+   */
+  private box: { talk: DialogView | null; ask: AskView | null; note: NoteView | null } = { talk: null, ask: null, note: null };
+  private boxShown: { mode: string; who: string; text: string; done: boolean; ask: AskView | null } = { mode: '', who: '', text: '', done: false, ask: null };
+  /** The card open in the stash or at the workbench (details.ts): what it is about, and what it shows. */
+  private card: { where: 'stash' | 'bench'; ref: DetailRef; view: DetailView } | null = null;
+  /** The last tap in the stash or at the workbench, and what it was on: a second one may make it a double tap. */
+  private readonly taps = new DoubleTap();
+  private tapped: DetailRef | null = null;
+  /** The sheet whose dock shows a card on the page: it stays drawn while its panel slides away. */
+  private docked: 'stash' | 'bench' | null = null;
+  private revealTimer: ReturnType<typeof setTimeout> | undefined;
   private versionAsked = false;
   private showSound: (s: SoundSetting) => void = () => {};
   /** You play as a guest: the status panel says so, and chat and friends show what signing in opens. */
@@ -288,7 +316,11 @@ export class Hud {
       </div>
       <div class="stick" data-el="stick" role="group" aria-label="Movement stick"><div class="knob" data-el="knob"></div></div>
       <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back">B</button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button></div>
-      <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div data-el="text"></div><div class="more" data-el="more" aria-hidden="true">&#9660;</div></div>
+      <div class="scrim" data-el="scrim" hidden></div>
+      <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div class="line" data-el="text"></div>
+        <div class="count" data-el="count" role="group" aria-label="How many" hidden><button type="button" class="step" data-step="-1" aria-label="One fewer">${ICON.minus}</button><b class="n" data-el="countN"></b><button type="button" class="step" data-step="1" aria-label="One more">${ICON.plus}</button></div>
+        <div class="choices panel" data-el="choices" role="group" aria-label="Your answer" hidden><button type="button" data-choice="yes">YES</button><button type="button" data-choice="no">NO</button></div>
+        <div class="more" data-el="more" aria-hidden="true" style="visibility: hidden">&#9660;</div><i class="timer" data-el="timer" aria-hidden="true" hidden></i></div>
       <div class="sheet panel" data-el="sheet" data-open="false" role="dialog" aria-label="Bag">
         <div class="sheet-head bag-head"><span class="heading"><b>Bag</b><span class="room" data-el="room"></span></span><span class="tools" data-el="tools"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
         <div class="grid" data-el="grid">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-slot="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
@@ -297,26 +329,31 @@ export class Hud {
           <div class="about" data-el="about" hidden><div class="big" data-el="bigIcon"></div>
             <div class="words"><div class="title"><b data-el="itemName"></b><span class="count" data-el="itemCount"></span></div><p data-el="itemText"></p><p class="facts" data-el="itemFacts"></p></div></div>
           <div class="acts" data-el="acts" hidden><button type="button" class="act go" data-el="use">Use</button><button type="button" class="act toss" data-el="toss">Throw away</button></div>
-          <div class="acts" data-el="ask" hidden><span class="ask" data-el="askText"></span><button type="button" class="act toss sure" data-el="tossYes">Throw away</button><button type="button" class="act" data-el="tossNo">Keep</button></div>
         </div>
       </div>
       <div class="paper-view" data-el="paper" hidden role="dialog" aria-label="Map"><button type="button" class="close" data-el="paperClose" aria-label="Put the map away">${ICON.x}</button></div>
-      <div class="sheet panel stash-sheet" data-el="stashSheet" data-open="false" role="dialog" aria-label="Stash">
+      <div class="sheet panel stash-sheet docked" data-el="stashSheet" data-open="false" role="dialog" aria-label="Stash">
         <div class="sheet-head"><b>Stash</b><span class="room" data-el="stashXp"></span><button type="button" class="close" data-el="stashClose" aria-label="Close the stash">${ICON.x}</button></div>
-        <p class="hint">Tap something in your bag to put it away. What you bring home earns XP.</p>
-        <div class="grid" data-el="stashBag">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-bag="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
-        <div class="acts"><button type="button" class="act go" data-el="storeAll">Put everything in</button></div>
-        <h3 class="stash-title">Wearing</h3>
-        <p class="hint">Tap a piece to take it off. Tap gear in the stash to put it on.</p>
-        <div class="grid wear" data-el="wearGrid">${SLOTS.map(sl => `<button type="button" class="slot" data-wear="${sl}" aria-label="${sl}"><span class="lbl">${sl}</span></button>`).join('')}</div>
-        <h3 class="stash-title">In the stash</h3>
-        <div class="grid" data-el="stashGrid"></div>
-        <p class="hint" data-el="stashEmpty">Nothing here yet.</p>
+        <div class="sheet-body" data-el="stashBody">
+          <p class="hint">What you bring home earns XP. Tap something to see it, and tap it twice to put it away.</p>
+          <div class="grid" data-el="stashBag">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-bag="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
+          <div class="acts"><button type="button" class="act go" data-el="storeAll">Put everything in</button></div>
+          <h3 class="stash-title">Wearing</h3>
+          <p class="hint">Tap a piece to see what it does. Tap it twice to take it off, or to wear it from the stash.</p>
+          <div class="grid wear" data-el="wearGrid">${SLOTS.map(sl => `<button type="button" class="slot" data-wear="${sl}" aria-label="${sl}"><span class="lbl">${sl}</span></button>`).join('')}</div>
+          <h3 class="stash-title">In the stash</h3>
+          <div class="grid" data-el="stashGrid"></div>
+          <p class="hint" data-el="stashEmpty">Nothing here yet.</p>
+        </div>
+        <div class="dock" data-el="stashDock" hidden><div class="detail" data-el="stashCard" aria-live="polite"></div></div>
       </div>
-      <div class="sheet panel bench-sheet" data-el="benchSheet" data-open="false" role="dialog" aria-label="Workbench">
+      <div class="sheet panel bench-sheet docked" data-el="benchSheet" data-open="false" role="dialog" aria-label="Workbench">
         <div class="sheet-head"><b>Workbench</b><button type="button" class="close" data-el="benchClose" aria-label="Close the workbench">${ICON.x}</button></div>
-        <p class="hint">It makes gear from what is in your stash at home, and puts it there. Put it on at the chest.</p>
-        <div class="recipes" data-el="benchList"></div>
+        <div class="sheet-body" data-el="benchBody">
+          <p class="hint">It makes and mends gear from your stash; wear what it makes from the chest beside it. Tap one to see what it takes, and tap it twice to do it.</p>
+          <div class="recipes" data-el="benchList"></div>
+        </div>
+        <div class="dock" data-el="benchDock" hidden><div class="detail" data-el="benchCard" aria-live="polite"></div></div>
       </div>
       <div class="sheet panel status-sheet" data-el="statusSheet" data-open="false" role="dialog" aria-label="Status">
         <div class="sheet-head"><b>Status</b><button type="button" class="close" data-el="statusClose" aria-label="Close the status">${ICON.x}</button></div>
@@ -405,7 +442,28 @@ export class Hud {
     this.el.status!.addEventListener('click', e => {
       if (!(e.target as Element).closest('[data-signin]')) this.toggleStatus(true);
     });
-    this.el.dialog!.addEventListener('click', () => this.h.dialogTap());
+    this.el.dialog!.addEventListener('click', e => {
+      const t = e.target as Element, choice = t.closest<HTMLElement>('[data-choice]'), step = t.closest<HTMLElement>('[data-step]');
+      if (choice) return this.h.answer?.(choice.dataset.choice as 'yes' | 'no');
+      // − and + count on pointerdown (and repeat while held); a click that came from the keyboard is one step.
+      if (step) {
+        if (e.detail === 0) { this.h.count?.(Number(step.dataset.step) as -1 | 1); this.h.count?.(0); }
+        return;
+      }
+      this.h.dialogTap();
+    });
+    const count = this.el.count!, letGo = () => this.h.count?.(0);
+    count.addEventListener('pointerdown', e => {
+      const step = (e.target as Element).closest<HTMLElement>('[data-step]');
+      if (!step) return;
+      try { step.setPointerCapture(e.pointerId); } catch { /* not all browsers allow it */ }
+      this.h.count?.(Number(step.dataset.step) as -1 | 1);
+    });
+    count.addEventListener('pointerup', letGo);
+    count.addEventListener('pointercancel', letGo);
+    count.addEventListener('lostpointercapture', letGo);
+    // Anywhere outside the box while it asks (or says something by itself): no, or it closes.
+    this.el.scrim!.addEventListener('click', () => this.h.dismiss?.());
     this.el.close!.addEventListener('click', () => this.toggleBag(false));
     this.el.menuBtn!.addEventListener('click', () => this.toggleMenu());
     this.el.menuBag!.addEventListener('click', () => { this.toggleMenu(false); this.toggleBag(true); });
@@ -475,20 +533,17 @@ export class Hud {
     this.el.statusClose!.addEventListener('click', () => this.toggleStatus(false));
     this.el.stashClose!.addEventListener('click', () => this.toggleStash(false));
     this.el.storeAll!.addEventListener('click', () => this.h.store?.());
-    this.el.stashBag!.addEventListener('click', e => {
-      const slot = (e.target as Element).closest<HTMLElement>('[data-bag]');
-      if (slot && this.bag[Number(slot.dataset.bag)]) this.h.store?.(Number(slot.dataset.bag));
-    });
-    this.el.stashGrid!.addEventListener('click', e => {
-      const it = (e.target as Element).closest<HTMLElement>('[data-item]');
-      // Gear goes on; anything else comes out into the bag.
-      if (it?.dataset.gear) this.h.equip?.(it.dataset.item!, Number(it.dataset.n ?? 0));
-      else if (it) this.h.take?.(it.dataset.item!);
-    });
-    this.el.wearGrid!.addEventListener('click', e => {
-      const it = (e.target as Element).closest<HTMLElement>('[data-wear]');
-      if (it && it.dataset.empty !== 'true') this.h.unequip?.(it.dataset.wear as Slot);
-    });
+    // A tap looks, an action is a second step: in the chest and at the workbench a tap opens a card, and
+    // its button, A or a second tap does what it says. Taken in the capture phase, so a second tap
+    // that lands on the card (it may have opened under the finger) still counts as the double tap.
+    this.el.stashSheet!.addEventListener('click', e => this.sheetTap('stash', e), true);
+    this.el.benchSheet!.addEventListener('click', e => this.sheetTap('bench', e), true);
+    for (const dock of [this.el.stashDock!, this.el.benchDock!]) {
+      dock.addEventListener('click', e => {
+        // A double tap that landed on the button already did it. Greyed out, it still answers, with a shake.
+        if (!e.defaultPrevented && (e.target as Element).closest('[data-card-act]')) this.pressCard();
+      });
+    }
     this.el.benchClose!.addEventListener('click', () => this.toggleBench(false));
     this.el.tools!.addEventListener('click', e => {
       const it = (e.target as Element).closest<HTMLElement>('[data-tool], [data-map]');
@@ -503,10 +558,6 @@ export class Hud {
       p.toggleAttribute('data-zoom');
       e.target.scrollIntoView({ block: 'center', inline: 'center' });
     });
-    this.el.benchList!.addEventListener('click', e => {
-      const it = (e.target as Element).closest<HTMLButtonElement>('[data-make]');
-      if (it && !it.disabled) this.h.craft?.(it.dataset.make!);
-    });
     this.el.menuAbout!.addEventListener('click', () => { this.toggleMenu(false); this.toggleAbout(true); });
     this.el.aboutClose!.addEventListener('click', () => this.toggleAbout(false));
     this.el.menuLogout!.addEventListener('click', () => { this.toggleMenu(false); this.h.logout(); });
@@ -518,14 +569,9 @@ export class Hud {
       // Tapping the open slot again, or an empty one, closes the details.
       this.choose(this.bag[i] && this.picked?.slot !== i ? i : null);
     });
+    // The game asks first, in the text box: the details stay open meanwhile, and after, while the slot holds the same.
     this.el.use!.addEventListener('click', () => { if (this.picked) this.h.use(this.picked.slot); });
-    this.el.toss!.addEventListener('click', () => { this.asking = true; this.showDetail(); });
-    this.el.tossNo!.addEventListener('click', () => { this.asking = false; this.showDetail(); });
-    this.el.tossYes!.addEventListener('click', () => {
-      if (!this.picked) return;
-      this.h.discard(this.picked.slot);
-      this.choose(null);
-    });
+    this.el.toss!.addEventListener('click', () => { if (this.picked) this.h.discard(this.picked.slot); });
   }
 
   get bagOpen(): boolean {
@@ -692,10 +738,13 @@ export class Hud {
   get stashOpen(): boolean {
     return this.el.stashSheet!.dataset.open === 'true';
   }
-  /** Opens or closes the stash sheet (the chest at home). Closing it tells the game. */
+  /** Opens or closes the stash sheet (the chest at home), always without a card. Closing it tells the game. */
   toggleStash(open = !this.stashOpen) {
     const was = this.stashOpen;
     if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleBench(false); this.el.statusSheet!.dataset.open = 'false'; }
+    // It opens at the top of the list, never on a card left from last time; closing, the card slides away with it.
+    if (open && !was) { this.el.stashBody!.scrollTop = 0; if (this.docked === 'stash') this.closeCard(); }
+    else if (!open && this.card?.where === 'stash') this.forgetCard();
     this.el.stashSheet!.dataset.open = String(open);
     if (was && !open) this.h.stashClosed?.();
   }
@@ -703,20 +752,23 @@ export class Hud {
   get benchOpen(): boolean {
     return this.el.benchSheet!.dataset.open === 'true';
   }
-  /** Opens or closes the workbench sheet. Closing it tells the game. */
+  /** Opens or closes the workbench sheet, always without a card. Closing it tells the game. */
   toggleBench(open = !this.benchOpen) {
     const was = this.benchOpen;
     if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.el.statusSheet!.dataset.open = 'false'; }
+    if (open && !was) { this.el.benchBody!.scrollTop = 0; if (this.docked === 'bench') this.closeCard(); }
+    else if (!open && this.card?.where === 'bench') this.forgetCard();
     this.el.benchSheet!.dataset.open = String(open);
     if (was && !open) this.h.benchClosed?.();
   }
 
-  /** The workbench's recipes. Only written to the page when they changed. */
+  /** The workbench's rows: mending, then what it makes. Each opens its card. Only written to the page when they changed. */
   setBench(recipes: RecipeView[]) {
-    const html = recipes.map(r => `<div class="recipe"${r.can ? '' : ' data-short'}><div class="big">${r.icon}</div><div class="words"><b>${esc(r.name)}</b><span class="rfacts">${esc(r.facts)}</span>
-      <span class="needs">${r.needs.map(n => `<span class="need"${n.have >= n.need ? '' : ' data-short'} title="${esc(n.name)}">${n.icon}<i>${Math.min(n.have, n.need)}/${n.need}</i></span>`).join('')}</span></div>
-      <button type="button" class="act go" data-make="${esc(r.id)}"${r.can ? '' : ' disabled'}>${esc(r.act ?? 'Make')}</button></div>`).join('');
+    const html = recipes.map(r => `<button type="button" class="recipe" data-recipe="${esc(r.id)}"${r.can ? '' : ' data-short'} aria-label="${esc(`${r.name}${r.can ? ', ready' : ''}`)}"><span class="big">${r.icon}</span><span class="words"><b>${esc(r.name)}</b><span class="rfacts">${esc(r.facts)}</span>
+      <span class="needs">${r.needs.map(n => `<span class="need"${n.have >= n.need ? '' : ' data-short'} title="${esc(n.name)}">${n.icon}<i>${Math.min(n.have, n.need)}/${n.need}</i></span>`).join('')}</span></span>
+      <span class="more">${r.can ? '<i class="ready">Ready</i>' : ''}${ICON.more}</span></button>`).join('');
     if (html !== this.shown.bench) { this.shown.bench = html; this.el.benchList!.innerHTML = html; }
+    this.refreshCard();
   }
 
   /** What you wear, slot by slot, in the stash sheet. */
@@ -726,16 +778,184 @@ export class Hud {
       const html = w ? `${w.icon}<span class="lbl">${sl}</span>${condBar(w.cond)}${w.quirk ? '<i class="quirk" aria-hidden="true">✦</i>' : ''}` : `<span class="lbl">${sl}</span>`;
       if (el.innerHTML !== html) el.innerHTML = html;
       el.dataset.empty = String(!w);
-      el.setAttribute('aria-label', w ? `Take off ${w.name}${w.cond === undefined ? '' : `, ${Math.round(w.cond * 100)}% left`}${w.quirk ? `, ${w.quirk}` : ''}` : `${sl}: nothing`);
+      el.setAttribute('aria-label', w ? `${w.name}${w.cond === undefined ? '' : `, ${Math.round(w.cond * 100)}% left`}${w.quirk ? `, ${w.quirk}` : ''}` : `${sl}: nothing`);
     });
+    this.refreshCard();
   }
 
   /** What the open stash holds, and your XP for its header. Only written to the page when it changed. */
   setStash(stash: SlotView[], xp: string) {
-    const html = stash.map(s => `<button type="button" class="slot" data-item="${esc(s.item)}"${s.slot ? ` data-gear="1" data-n="${s.n ?? 0}"` : ''} aria-label="${esc(`${s.slot ? 'Put on' : 'Take out'} ${s.name}${s.cond === undefined ? `, ${s.count}` : `, ${Math.round(s.cond * 100)}% left`}`)}">${s.icon}${s.cond === undefined ? `<span class="n">${s.count}</span>` : condBar(s.cond)}</button>`).join('');
+    // A piece shows how worn it is (nothing, for gear that never wears); anything else, how many.
+    const html = stash.map(s => `<button type="button" class="slot" data-item="${esc(s.item)}"${s.slot ? ` data-gear="1" data-n="${s.n ?? 0}"` : ''} aria-label="${esc(`${s.name}${s.slot ? (s.cond === undefined ? '' : `, ${Math.round(s.cond * 100)}% left`) : `, ${s.count}`}`)}">${s.icon}${s.slot ? condBar(s.cond) : `<span class="n">${s.count}</span>`}</button>`).join('');
     if (html !== this.shown.stash) { this.shown.stash = html; this.el.stashGrid!.innerHTML = html; }
     this.el.stashEmpty!.hidden = stash.length > 0;
     if (this.el.stashXp!.textContent !== xp) this.el.stashXp!.textContent = xp;
+    this.refreshCard();
+  }
+
+  /** A card is open in the stash or at the workbench. */
+  get cardOpen(): boolean {
+    return !!this.card;
+  }
+
+  /**
+   * A tap in the stash or at the workbench. On something, it opens its card (on the thing whose card
+   * is open, it closes it, as in the bag); a second tap on the same thing, or on the card just where
+   * the first one was, within DOUBLE_TAP_MS, does what the card's button does. Keys that press a
+   * focused button (detail 0) only ever open cards.
+   */
+  private sheetTap(where: 'stash' | 'bench', e: MouseEvent) {
+    const target = e.target as Element, ref = this.refAt(where, target);
+    const onCard = !!target.closest('.dock');
+    if (e.detail === 0) {
+      if (ref && ref !== 'empty') this.openCard(where, ref);
+      return;
+    }
+    if (ref && ref !== 'empty') {
+      const second = this.taps.tap(refKey(ref), e.timeStamp, e.clientX, e.clientY) === 'second';
+      this.tapped = ref;
+      if (second) this.doCard(where, ref);
+      else if (this.card && refKey(this.card.ref) === refKey(ref)) this.closeCard(false);
+      else this.openCard(where, ref);
+      return;
+    }
+    if (onCard) {
+      if (this.taps.tap(null, e.timeStamp, e.clientX, e.clientY) === 'second' && this.tapped) {
+        // Not the button's own click as well.
+        e.preventDefault();
+        this.doCard(where, this.tapped);
+      }
+      return;
+    }
+    this.taps.clear();
+    // An empty slot closes the card, as it does in the bag.
+    if (ref === 'empty') this.closeCard();
+  }
+
+  /** What a tap on `target` is on: something with a card, an empty slot, or nothing to show. */
+  private refAt(where: 'stash' | 'bench', target: Element): DetailRef | 'empty' | null {
+    if (target.closest('.dock')) return null;
+    if (where === 'bench') {
+      const id = target.closest<HTMLElement>('[data-recipe]')?.dataset.recipe;
+      if (!id) return null;
+      return id.startsWith('mend:') ? { from: 'mend', slot: id.slice(5) as Slot } : { from: 'recipe', id };
+    }
+    const bag = target.closest<HTMLElement>('[data-bag]');
+    if (bag) {
+      const slot = Number(bag.dataset.bag), s = this.bag[slot];
+      return s ? { from: 'bag', slot, item: s.item } : 'empty';
+    }
+    const wear = target.closest<HTMLElement>('[data-wear]');
+    if (wear) return wear.dataset.empty === 'true' ? 'empty' : { from: 'worn', slot: wear.dataset.wear as Slot };
+    const it = target.closest<HTMLElement>('[data-item]');
+    if (it) return it.dataset.n === undefined ? { from: 'stash', item: it.dataset.item! } : { from: 'stash', item: it.dataset.item!, n: Number(it.dataset.n) };
+    return null;
+  }
+
+  private openCard(where: 'stash' | 'bench', ref: DetailRef) {
+    const view = this.h.details?.(ref);
+    if (!view) return this.closeCard();
+    this.card = { where, ref, view };
+    this.showCard();
+    this.reveal(where, ref);
+  }
+
+  /**
+   * Once a double tap can no longer come, scrolls what the card is about into sight if the card now
+   * hides it. Not sooner: the list moving under the finger would turn a double tap into two taps.
+   */
+  private reveal(where: 'stash' | 'bench', ref: DetailRef) {
+    clearTimeout(this.revealTimer);
+    this.revealTimer = setTimeout(() => {
+      if (!this.card || this.card.where !== where || refKey(this.card.ref) !== refKey(ref)) return;
+      const body = this.el[`${where}Body`]!, el = body.querySelector(pickedSelector(ref));
+      if (!el) return;
+      const view = body.getBoundingClientRect(), r = el.getBoundingClientRect(), margin = 8;
+      const by = r.bottom > view.bottom - margin ? r.bottom - view.bottom + margin : r.top < view.top + margin ? r.top - view.top - margin : 0;
+      if (by) body.scrollBy({ top: by, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }, DOUBLE_TAP_MS + 20);
+  }
+
+  /** Closes the card; `forget` false keeps the last tap, so the next one can still make it a double tap. */
+  private closeCard(forget = true) {
+    if (forget) { this.taps.clear(); this.tapped = null; }
+    clearTimeout(this.revealTimer);
+    if (!this.card && !this.docked) return;
+    this.card = null;
+    this.showCard();
+  }
+
+  /** No card any more, while its panel slides away with it still drawn: the next open clears it. */
+  private forgetCard() {
+    this.card = null;
+    this.taps.clear();
+    this.tapped = null;
+    clearTimeout(this.revealTimer);
+  }
+
+  /** The open card as the game stands now: it follows what changes, and closes when what it is about is gone. */
+  private refreshCard() {
+    if (!this.card) return;
+    const view = this.h.details?.(this.card.ref);
+    if (!view) return this.closeCard();
+    this.card.view = view;
+    this.showCard();
+  }
+
+  /** Draws the open card in its sheet's dock (only when it changed), and marks what it is about. */
+  private showCard() {
+    const c = this.card, html = c ? cardHtml(c.view) : '', want = c?.where ?? null;
+    if (this.docked !== want) {
+      for (const [where, open] of [[this.docked, false], [want, true]] as const) {
+        if (!where) continue;
+        this.el[`${where}Dock`]!.hidden = !open;
+        // In landscape the sheet makes room for the card beside the list (style.css).
+        this.el[`${where}Sheet`]!.toggleAttribute('data-card', open);
+      }
+      this.docked = want;
+    }
+    if (c && html !== this.shown.card) this.el[`${c.where}Card`]!.innerHTML = html;
+    this.shown.card = html;
+    for (const sheet of [this.el.stashSheet!, this.el.benchSheet!]) for (const el of sheet.querySelectorAll('[data-picked]')) el.removeAttribute('data-picked');
+    if (c) this.el[`${c.where}Body`]!.querySelector(pickedSelector(c.ref))?.setAttribute('data-picked', '');
+  }
+
+  /** A: presses the open card's button. False when no card is open. */
+  pressCard(): boolean {
+    if (!this.card) return false;
+    this.doCard(this.card.where, this.card.ref);
+    return true;
+  }
+
+  /** Does what the card of `ref` says, as the game stands now, and closes it; a card that can do nothing now stays open to say why. */
+  private doCard(where: 'stash' | 'bench', ref: DetailRef) {
+    const view = this.h.details?.(ref);
+    if (!view) return this.closeCard();
+    const press = cardPress(view);
+    if (press.close) this.closeCard();
+    else this.openCard(where, ref);
+    // Its button, greyed out, gives a shake: the card says why (and the text box too, for making and mending).
+    const button = press.shake ? this.el[`${where}Card`]!.querySelector('[data-card-act]') : null;
+    if (button && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      button.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-5px)' }, { transform: 'translateX(5px)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(0)' }], { duration: 260, easing: 'ease-out' });
+    }
+    if (press.does) this.run(press.does);
+  }
+
+  private run(a: DetailAct) {
+    switch (a.kind) {
+      case 'store': return this.h.store?.(a.slot);
+      case 'take': return this.h.take?.(a.item);
+      case 'wear': return this.h.equip?.(a.item, a.n);
+      case 'off': return this.h.unequip?.(a.slot);
+      case 'make': return this.bench(a.recipe);
+      case 'mend': return this.bench(`mend:${a.slot}`);
+    }
+  }
+
+  /** The one way making and mending leave the workbench's panel: whatever asks first before using things up wraps `craft`. */
+  private bench(id: string) {
+    this.h.craft?.(id);
   }
 
   /** Your level next to your name. */
@@ -821,10 +1041,11 @@ export class Hud {
     }
     if (this.statusOpen) { this.toggleStatus(false); return true; }
     if (this.journalOpen) { this.toggleJournal(false); return true; }
+    // Out of a card first, then out of its panel: B backs out one step at a time.
+    if (this.card) { this.closeCard(); return true; }
     if (this.stashOpen) { this.toggleStash(false); return true; }
     if (this.benchOpen) { this.toggleBench(false); return true; }
     if (!this.bagOpen) return false;
-    if (this.asking) { this.asking = false; this.showDetail(); return true; }
     if (this.picked) { this.choose(null); return true; }
     return false;
   }
@@ -855,9 +1076,10 @@ export class Hud {
       const s = slots[i];
       el.dataset.empty = String(!s);
       el.innerHTML = s ? slotHtml(s) : '';
-      el.setAttribute('aria-label', s ? `Put away ${s.name}, ${s.count}` : 'Empty slot');
+      el.setAttribute('aria-label', s ? `${s.name}, ${s.count}` : 'Empty slot');
     });
     (this.el.storeAll as HTMLButtonElement).disabled = !slots.length;
+    this.refreshCard();
   }
 
   /**
@@ -894,7 +1116,6 @@ export class Hud {
   private choose(slot: number | null) {
     const s = slot === null ? undefined : this.bag[slot];
     this.picked = s ? { slot: slot!, item: s.item } : null;
-    this.asking = false;
     this.showDetail();
   }
 
@@ -903,7 +1124,7 @@ export class Hud {
     const p = this.picked, s = p ? this.bag[p.slot] : undefined;
     this.slotEls.forEach((el, i) => el.toggleAttribute('data-picked', i === p?.slot));
     this.el.hint!.hidden = !!s;
-    this.el.about!.hidden = this.el.acts!.hidden = this.el.ask!.hidden = true;
+    this.el.about!.hidden = this.el.acts!.hidden = true;
     if (!s) {
       this.el.hint!.textContent = this.bag.length ? PICK_SLOT : EMPTY_BAG;
       return;
@@ -918,13 +1139,8 @@ export class Hud {
     // Its countdown line comes with the next tickLive.
     this.liveShown.delete(p!.slot);
     this.el.use!.textContent = s.useLabel;
-    if (this.asking) {
-      this.el.ask!.hidden = false;
-      this.el.askText!.textContent = tossQuestion(s.count);
-    } else {
-      this.el.acts!.hidden = false;
-      this.el.use!.hidden = !s.usable;
-    }
+    this.el.acts!.hidden = false;
+    this.el.use!.hidden = !s.usable;
   }
 
   get menuOpen(): boolean {
@@ -1051,12 +1267,67 @@ export class Hud {
     this.el.ping!.textContent = state === 'online' && pingMs !== undefined ? `${Math.round(pingMs)} ms` : '';
   }
 
+  /** Someone's lines in the text box, typed out as far as `text` goes. Called every frame. */
   setDialog(d: DialogView | null) {
-    this.root.classList.toggle('talking', !!d);
-    if (!d) return;
-    this.el.who!.textContent = d.who;
-    this.el.text!.textContent = d.text;
-    this.el.more!.style.visibility = d.done ? 'visible' : 'hidden';
+    this.box.talk = d;
+    this.showBox();
+  }
+
+  /** A question in the text box (ask.ts), or none. Called when it changes. */
+  setAsk(q: AskView | null) {
+    this.box.ask = q;
+    this.showBox();
+  }
+
+  /** What the text box says by itself, or nothing. Called when it changes: a new one starts its line running out. */
+  setNote(n: NoteView | null) {
+    this.box.note = n;
+    const timer = this.el.timer!;
+    for (const a of timer.getAnimations()) a.cancel();
+    timer.hidden = !n || n.waiting;
+    // One animation per note, run by the browser: nothing to do each frame.
+    if (n && !n.waiting && n.ms > 0) timer.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: n.ms, easing: 'linear', fill: 'forwards' });
+    this.showBox();
+  }
+
+  /**
+   * The text box: a question first, then what it says by itself, then someone's lines. A question and
+   * what the box says by itself stand above the panels, over a scrim that takes a tap anywhere else;
+   * A, B and the stick stay above it. Only what changed is written to the page.
+   */
+  private showBox() {
+    const { talk, ask, note } = this.box, s = this.boxShown;
+    const mode = ask ? 'ask' : note ? 'note' : talk ? 'talk' : '';
+    if (mode !== s.mode) {
+      s.mode = mode;
+      this.root.classList.toggle('talking', !!mode);
+      this.root.classList.toggle('asking', mode === 'ask' || mode === 'note');
+      this.el.dialog!.dataset.mode = mode;
+      this.el.scrim!.hidden = mode !== 'ask' && mode !== 'note';
+      this.el.choices!.hidden = mode !== 'ask';
+    }
+    const shown = ask ?? note ?? talk;
+    if (!shown) return;
+    if (shown.who !== s.who) this.el.who!.textContent = s.who = shown.who;
+    if (shown.text !== s.text) this.el.text!.textContent = s.text = shown.text;
+    const done = mode === 'talk' && !!talk?.done;
+    if (done !== s.done) this.el.more!.style.visibility = (s.done = done) ? 'visible' : 'hidden';
+    // A question comes anew with every change (setAsk), so the same one is never drawn twice.
+    if (ask === s.ask) return;
+    s.ask = ask;
+    for (const b of this.el.choices!.querySelectorAll<HTMLElement>('[data-choice]')) {
+      const on = b.dataset.choice === ask?.choice;
+      b.toggleAttribute('data-on', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+    const c = ask?.count;
+    this.el.count!.hidden = !c;
+    if (!c) return;
+    this.el.countN!.textContent = `×${c.n}`;
+    // Dimmed at either end, but still pressable, so a finger holding it never gets stuck.
+    const [less, more] = this.el.count!.querySelectorAll<HTMLElement>('[data-step]');
+    less!.setAttribute('aria-disabled', String(c.n <= c.min));
+    more!.setAttribute('aria-disabled', String(c.n >= c.max));
   }
 
   /** Name tags above other players and near piles, positioned in screen pixels. */
@@ -1102,6 +1373,41 @@ function slotHtml(s: SlotView): string {
 function condBar(cond: number | undefined): string {
   if (cond === undefined) return '';
   return `<span class="cond" data-low="${cond < 0.25}"><i style="transform:scaleX(${Math.min(1, Math.max(0, cond)).toFixed(3)})"></i></span>`;
+}
+
+/**
+ * A card as the page shows it (details.ts), in the look of the bag's details: the drawing, the name
+ * with its tier, the slot, its words, a chip for each thing it gives (what wear cut struck through
+ * beside it), how worn it is, its quirk, what it takes, notes, and its one button.
+ */
+export function cardHtml(v: DetailView): string {
+  const title = `<div class="title"><b>${esc(v.name)}</b>${v.count && v.count > 1 ? `<span class="count">× ${v.count}</span>` : ''}${v.tier ? `<span class="tier" data-tier="${v.tier.id}">${esc(v.tier.name)}</span>` : ''}</div>`;
+  const stats = v.stats.length
+    ? `<ul class="stats">${v.stats.map(s => `<li data-kind="${s.kind}" aria-label="${esc(statText(s))}">${esc(s.text)}${s.whole ? `<s>${esc(s.whole)}</s>` : ''}</li>`).join('')}</ul>`
+    : '';
+  const cond = v.cond
+    ? `<div class="condition" data-low="${v.cond.low}">${v.cond.bar ? `<span class="cbar" aria-hidden="true"><i style="transform:scaleX(${v.cond.share.toFixed(3)})"></i></span>` : ''}<span>${esc(v.cond.words)}</span></div>`
+    : '';
+  const costs = v.costs
+    ? `<div class="costs"><span class="ctitle">${esc(v.costs.title)}</span>${v.costs.needs.map(n => `<span class="cost"${n.have >= n.need ? '' : ' data-short'} aria-label="${esc(`${n.name}: it takes ${n.need}, you have ${n.have}`)}">${n.icon}<span class="cname">${esc(n.name)}</span><i>${n.have}/${n.need}</i></span>`).join('')}</div>`
+    : '';
+  const act = v.act
+    ? `<div class="acts"><button type="button" class="act go" data-card-act${v.act.enabled ? '' : ' aria-disabled="true"'}>${esc(v.act.label)}${v.act.then ? ` <span class="then">(${esc(v.act.then)})</span>` : ''}</button></div>`
+    : '';
+  return `<div class="about"><div class="big">${v.icon}</div><div class="words">${title}${v.slot ? `<p class="slotname">${esc(v.slot)}</p>` : ''}<p>${esc(v.text)}</p>${stats}`
+    + `${v.facts.length ? `<p class="facts">${esc(v.facts.join(' · '))}</p>` : ''}${cond}${v.quirk ? `<p class="quirk"><b>✦ ${esc(v.quirk.name)}</b> ${esc(v.quirk.text)}</p>` : ''}${costs}`
+    + `${v.notes.map(n => `<p class="note" data-tone="${n.tone}">${esc(n.text)}</p>`).join('')}</div></div>${act}`;
+}
+
+/** Where in its sheet's list the thing a card is about is drawn. */
+function pickedSelector(r: DetailRef): string {
+  switch (r.from) {
+    case 'bag': return `[data-bag="${r.slot}"]`;
+    case 'worn': return `[data-wear="${r.slot}"]`;
+    case 'stash': return r.n === undefined ? `[data-item="${r.item}"]:not([data-n])` : `[data-item="${r.item}"][data-n="${r.n}"]`;
+    case 'recipe': return `[data-recipe="${r.id}"]`;
+    case 'mend': return `[data-recipe="mend:${r.slot}"]`;
+  }
 }
 
 function esc(t: string): string {

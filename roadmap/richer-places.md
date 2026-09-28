@@ -11,6 +11,8 @@ A pass over the three areas there are (Stonebrook, the Near Woods and the South 
 
 The grass is drawn again: tufts and colors that vary instead of a checkerboard. And the Near Woods gets patches of **tall grass**, knee-high, that you wade into and crouch in: creatures never step into it, a chase ends when you reach it, and nothing notices you while you are in it. It hides you from creatures only: you still tire and get wet there, a hitchhiker can still cling to you, and a surge, a storm or a flash still finds you. The deep ferns are the other way round: they hide the skulkers. The paper maps show the tall grass, so a route can run from patch to patch.
 
+Built so far: the grass and the tall grass. The ground's color drifts on every map instead of a checkerboard, low tufts grow on the grass, and the Near Woods has eight patches of tall grass (seven in its deeper half; the long grass and the deer beds are named) that sway, part around you and hide you from creatures, drawn on its paper map as a hatch. The places pass comes next, and only adds: every road, shelter, pole, lamp and named place stays where it is, the tall grass too.
+
 Why: the world already tells the story better than any mission (pillar 1), and now there are only testers, so the maps can still change. Tall grass gives a player who is being chased a place to run to that is not home (pillar 2), which fits creatures that chase and never fight.
 
 More: [The story](../docs/DESIGN.md#the-story-napo-and-napoland), [Creatures](../docs/DESIGN.md#creatures), [Look and feel](../docs/DESIGN.md#look-and-feel).

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AuthConfig, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, MAX_AUTH_CHARS, MAX_HELLO_BYTES, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, REFILL_PER_SECOND, TileMap,
+  AuthConfig, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, FEED_MAX, MAX_AUTH_CHARS, MAX_HELLO_BYTES, MAX_MESSAGE_BYTES, PROTOCOL_VERSION, REFILL_PER_SECOND, TileMap,
   WEATHER_DRAIN, dirOf, dirToward, energyAfter, energyRate, findPath, parseClientMsg, stepTarget, validateMap, validateWorld, type MapData, type MapObject,
   type NpcLook,
 } from '../src';
@@ -189,6 +189,16 @@ describe('protocol', () => {
     expect(parseClientMsg('{"t":"hello","v":1,"name":"Aldo"}')).toEqual({ t: 'hello', v: 1, name: 'Aldo' });
     expect(parseClientMsg('{"t":"step","dir":"up","seq":3}')).toEqual({ t: 'step', dir: 'up', seq: 3 });
     expect(parseClientMsg('{"t":"face","dir":"left"}')).toEqual({ t: 'face', dir: 'left' });
+  });
+  it('takes how many to feed (1 to FEED_MAX, one when left out) and to throw away (all when left out)', () => {
+    expect(parseClientMsg('{"t":"feed","x":1,"y":2,"slot":0}')).toEqual({ t: 'feed', x: 1, y: 2, slot: 0 });
+    expect(parseClientMsg(`{"t":"feed","x":1,"y":2,"slot":0,"count":${FEED_MAX}}`)).toEqual({ t: 'feed', x: 1, y: 2, slot: 0, count: FEED_MAX });
+    expect(parseClientMsg('{"t":"discard","slot":3,"count":2}')).toEqual({ t: 'discard', slot: 3, count: 2 });
+    expect(parseClientMsg('{"t":"discard","slot":3}')).toEqual({ t: 'discard', slot: 3 });
+    for (const raw of [
+      '{"t":"feed","x":1,"y":2,"slot":0,"count":0}', `{"t":"feed","x":1,"y":2,"slot":0,"count":${FEED_MAX + 1}}`, '{"t":"feed","x":1,"y":2,"slot":0,"count":1.5}',
+      '{"t":"feed","x":1,"y":2,"slot":0,"count":"3"}', '{"t":"discard","slot":0,"count":0}', '{"t":"discard","slot":0,"count":-2}', '{"t":"discard","slot":0,"count":1000}',
+    ]) expect(parseClientMsg(raw), raw).toBeNull();
   });
   it('rejects anything else', () => {
     for (const raw of [

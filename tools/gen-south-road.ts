@@ -428,7 +428,7 @@ const ORDER = '*A!HFC@kvibBnLc-T^o~=",_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', antenna: 'A', sign: '!', board: '!', console: 'k', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b',
-  fence: '-', tree: 'T', rock: 'o', shrooms: ',', fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_',
+  fence: '-', tree: 'T', rock: 'o', shrooms: ',', fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_', woodpile: 'b',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '_' };
 const objGlyph = new Map<number, string>();

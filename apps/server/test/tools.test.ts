@@ -83,7 +83,7 @@ describe('the tools a player owns', () => {
     expect(w.get('b')!.tools).toBeUndefined();
   });
 
-  it('come through giveTool, only to someone online, only a tool and only once: heard and saved at once', () => {
+  it('come through giveTool, only to someone online, only a tool and only once: the list heard and saved at once', () => {
     const w = world({}, rec('a', 'town', 1, 2));
     expect(w.giveTool('nobody', 'radio')).toBe(false);
     expect(w.giveTool('a', 'nail')).toBe(false);
@@ -94,10 +94,8 @@ describe('the tools a player owns', () => {
     expect(w.takeWrites().players).toEqual([]);
 
     expect(w.giveTool('a', 'radio')).toBe(true);
-    expect(w.drain()).toEqual([
-      { to: 'a', msg: { t: 'got', items: [{ item: 'radio', count: 1 }], from: 'tool' } },
-      { to: 'a', msg: { t: 'tools', tools: WITH_RADIO } },
-    ]);
+    // How it came is the caller's to say (a find floats, the workbench says it in the text box).
+    expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'tools', tools: WITH_RADIO } }]);
     // The first of their own writes down the starter tools with it. The bag and the stash never see it.
     expect(w.takeWrites().players.map(p => p.tools)).toEqual([WITH_RADIO]);
     expect(w.get('a')).toMatchObject({ bag: [], stash: { items: {}, out: {} }, tools: WITH_RADIO });
@@ -107,14 +105,14 @@ describe('the tools a player owns', () => {
 });
 
 describe('making a tool at the workbench', () => {
-  it('pays from the stash and gives it for good, never into the stash: got and tools, then crafted and the bench; saved at once', () => {
+  it('pays from the stash and gives it for good, never into the stash: the tools, the bench, then what it did; saved at once', () => {
     const w = world({}, rec('a', 'house', 1, 2, { stash: { items: { nail: 3 }, out: {} } }));
     w.craft('a', 1, 1, 'radio', 1000);
     expect(to(w.drain(), 'a')).toEqual([
-      { t: 'got', items: [{ item: 'radio', count: 1 }], from: 'tool' },
       { t: 'tools', tools: WITH_RADIO },
-      { t: 'crafted', item: 'radio', count: 1 },
       { t: 'bench', stash: [{ item: 'nail', count: 1 }] },
+      // The client says where it went from the item's kind; nothing floats for it.
+      { t: 'did', did: { kind: 'made', item: 'radio', count: 1 } },
     ]);
     expect(w.takeWrites().players.map(p => [p.tools, p.stash])).toEqual([[WITH_RADIO, { items: { nail: 1 }, out: {} }]]);
   });

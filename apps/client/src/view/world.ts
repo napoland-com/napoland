@@ -5,17 +5,19 @@
  *
  * The WebGL renderer lives for the whole visit (createRenderer); a WorldView is built for one map
  * and disposed when you leave it, which frees what it put on the GPU. Big maps stay fast on
- * phones: trees and ferns are drawn in blocks the camera skips when they are off screen, the
+ * phones: trees, ferns and grass are drawn in blocks the camera skips when they are off screen, the
  * props that never move (houses and NAPO's buildings, cars, signs, lamps, poles, masts, barrels,
  * fences, furniture, hearths; napo.ts draws NAPO's) are joined into a few meshes, and only the few
- * lamps and fires nearest you carry a real light.
+ * lamps and fires nearest you carry a real light. grass.ts decides how the ground and the grass look,
+ * and tall grass: players crouch in it, and it sways and parts around them on the GPU.
  * Inside a building (a map of kind 'inside') there is no weather and no world around the room, only
  * black: see interior.ts for the room, fire.ts for the fire and lighting.ts for the light.
  */
 import * as THREE from 'three';
-import { DIR_VEC, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
+import { DIR_VEC, hidden, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, flicker, hearthModel, type Puffs } from './fire';
+import { CROUCH_DROP, CROUCH_LEAN, GrassMaterial, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps } from './grass';
 import { Creatures, Echoes, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomTone, wallShapes, wallTile, windowModel, windowSpots,
@@ -91,8 +93,13 @@ const SURGE_HEMI = new THREE.Color('#9a6ae0');
 const STORM_SKY = new THREE.Color('#1b2126');
 /** Is the lightning blinking at `t` seconds? Every several seconds, never on a fixed beat; the thunder follows it (sound.ts). */
 export const lightningAt = (t: number) => Math.sin(t * 0.71) * Math.sin(t * 1.93) > 0.93;
-/** The forest goes on this many tiles outside the map, so its edge never shows. */
-const RING = 4;
+/**
+ * The forest goes on this many tiles outside the map, so its edge never shows: standing on a map's
+ * last row, an upright phone sees about 15 tiles past it. Its blocks are skipped like any off screen.
+ */
+const RING = 17;
+/** Over this many tiles a road or trail leaving the map fades into the dark ground outside it. */
+const FADE = 6;
 /** Poles farther apart than this belong to different lines: no wire between them. */
 const MAX_WIRE = 10;
 /** One patch of mist for about this many tiles. */
@@ -173,7 +180,15 @@ export class WorldView {
   /** How this place looks in the current weather (lighting.ts). */
   private amb: Ambience;
   private readonly pitch = THREE.MathUtils.degToRad(62);
-  private rigs = new Map<string, { rig: Rig; color: string; look: string; shadow: THREE.Mesh; hitch?: THREE.Group }>();
+  /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass. */
+  private rigs = new Map<string, { rig: Rig; color: string; look: string; shadow: THREE.Mesh; hitch?: THREE.Group; crouch: number }>();
+  /** The ground's colors (grass.ts), and the grass's material: null where no grass grows. */
+  private ground!: Ground;
+  private grass: GrassMaterial | null = null;
+  /** The players nearest you, who part the grass: where, and how far from you (squared), nearest first. Kept, so no frame allocates. */
+  private partX = new Float64Array(PARTERS);
+  private partZ = new Float64Array(PARTERS);
+  private partD = new Float64Array(PARTERS);
   private animate: Array<(t: number, dt: number) => void> = [];
   private hemi = new THREE.HemisphereLight(0xa3b3bb, 0x1d2620, 0.55 * L);
   private sun = new THREE.DirectionalLight(0xc9d4d8, 0.36 * L);
@@ -337,18 +352,16 @@ export class WorldView {
       const corners = [a, b, c, a, c, d], colors = [ca, cb, cc, ca, cc, cd];
       for (let i = 0; i < 6; i++) { const p = corners[i]!, k = colors[i]!; pos.push(p[0], p[1], p[2]); col.push(k.r, k.g, k.b); }
     };
-    const colors: Record<TileKind, [string, string]> = {
-      grass: ['#3f5b3a', '#3a5637'], ferns: ['#2c4430', '#29402d'], road: ['#4b4e53', '#46494e'],
-      lot: ['#5c5b57', '#565551'], mud: ['#554b3c', '#554b3c'], water: ['#152229', '#152229'],
-      // Dark ground under the trees: little light gets through.
-      forest: ['#1f2c21', '#1c291e'],
-      // Floors and walls have their own look (interior.ts); these are only their ground.
-      floor: ['#6b4a31', '#6b4a31'], wall: ['#1d1510', '#1d1510'],
-    };
-    const ground = (kind: TileKind, tx: number, ty: number, raised: boolean) => {
-      const chk = (tx + ty) & 1;
-      const c = new THREE.Color(kind === 'grass' && raised ? (chk ? '#34503a' : '#314b36') : colors[kind][chk]);
-      return c.offsetHSL(0, 0, (hash2(tx * 5, ty * 3) - 0.5) * 0.025);
+    // The ground's color flows from corner to corner (grass.ts): no checkerboard, the same on every visit.
+    const ground = (this.ground = new Ground(map)), corner = [new THREE.Color(), new THREE.Color(), new THREE.Color(), new THREE.Color()] as const;
+    /** A tile's top at height y0, each corner colored; `fade` takes it toward `toward` (the dark past the map's edge). */
+    const top = (kind: TileKind, tx: number, ty: number, y0: number, raised: boolean, fade = 0, toward?: THREE.Color) => {
+      ground.color(kind, tx, ty, tx, ty, raised, corner[0]);
+      ground.color(kind, tx, ty + 1, tx, ty, raised, corner[1]);
+      ground.color(kind, tx + 1, ty + 1, tx, ty, raised, corner[2]);
+      ground.color(kind, tx + 1, ty, tx, ty, raised, corner[3]);
+      if (toward) for (const c of corner) c.lerp(toward, fade);
+      quad([tx, y0, ty], [tx, y0, ty + 1], [tx + 1, y0, ty + 1], [tx + 1, y0, ty], corner[0], corner[1], corner[2], corner[3]);
     };
     // Outdoors, a building's timbers are weathered; indoors the room is warm if a fire burns in it, and
     // concrete if it is one of NAPO's.
@@ -359,7 +372,7 @@ export class WorldView {
       // A wall is a block of its own; one buried in other walls is not drawn at all (the void is black).
       if (kind === 'wall') { wallTile(quad, map, this.shapes, tx, ty, tone); continue; }
       if (kind === 'floor') floorTile(quad, tx, ty, tone, y0);
-      else quad([tx, y0, ty], [tx, y0, ty + 1], [tx + 1, y0, ty + 1], [tx + 1, y0, ty], ground(kind, tx, ty, raised));
+      else top(kind, tx, ty, y0, raised);
       for (const [ox, oy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
         const ny = map.inside(tx + ox, ty + oy) ? this.topY(tx + ox, ty + oy) : 0;
         if (ny >= y0 - 0.001) continue;
@@ -376,7 +389,7 @@ export class WorldView {
     const outer = new THREE.Color(outerColor);
     for (const [key, o] of this.openings) {
       const [x, y] = key.split(',').map(Number) as [number, number];
-      quad([x, 0, y], [x, 0, y + 1], [x + 1, 0, y + 1], [x + 1, 0, y], ground(o.kind, x, y, false).lerp(outer, o.k / (RING + 1)));
+      top(o.kind, x, y, 0, false, Math.min(1, o.k / (FADE + 1)), outer);
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -468,7 +481,10 @@ export class WorldView {
     for (const block of blocks(trees)) {
       this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); }, bodyMat, true);
       this.instanced(shell, block, place, OUTLINE_INSTANCED);
-      this.instanced(this.shadowGeo, block, (t, o) => { o.position.set(t.x, t.z + 0.012, t.y); o.scale.setScalar(0.46 * t.s); }, this.shadowMat);
+      // Outside the map the forest is only a backdrop, too dense to see the ground under it: no shadows, one draw call less a block.
+      if (block.some(t => map.inside(Math.floor(t.x), Math.floor(t.y)))) {
+        this.instanced(this.shadowGeo, block, (t, o) => { o.position.set(t.x, t.z + 0.012, t.y); o.scale.setScalar(0.46 * t.s); }, this.shadowMat);
+      }
     }
 
     const rocks = this.objects('rock');
@@ -515,6 +531,23 @@ export class WorldView {
         if (nl > 0) rustle.set(k, nl); else rustle.delete(k);
       }
     });
+
+    // Grass (grass.ts): low tufts on the grass and knee-high blades in tall grass, each an instanced mesh
+    // per block of the trees' blocks, with one material that sways and parts them on the GPU.
+    const clumps = this.outdoors ? grassClumps(map, this.ground) : [];
+    if (clumps.length) {
+      const grass = (this.grass = new GrassMaterial());
+      for (const [blades, tall] of [[TUFT_BLADES, false], [TALL_BLADES, true]] as const) {
+        const mine = clumps.filter(c => c.tall === tall);
+        if (!mine.length) continue;
+        const geo = clumpGeometry(blades);
+        for (const block of blocks(mine)) {
+          const m = this.instanced(geo, block, (c, o, col) => { o.position.set(c.x, c.h, c.y); o.rotation.y = c.rot; o.scale.set(c.spread, c.height, c.spread); col.copy(c.color); }, grass.material, true);
+          // Swaying and parting move the blades a little past where they stand still.
+          m.boundingSphere!.radius += 0.35;
+        }
+      }
+    }
 
     const shrooms: Array<{ x: number; y: number; s: number }> = [];
     for (const o of this.objects('shrooms')) for (const [sx, sy] of [[0.3, 0.3], [0.7, 0.36], [0.34, 0.72], [0.72, 0.7]] as const) shrooms.push({ x: o.x + sx, y: o.y + sy, s: 0.8 + hash2(o.x * 5 + sx * 10, o.y) * 0.5 });
@@ -871,6 +904,7 @@ export class WorldView {
     this.loot.setGlow(lootGlow(this.map.data.kind, w, this.warmRoom));
     // On aurora nights the dead power lines hum again: their wires glow.
     this.wireMat.color.set(w === 'aurora' ? '#62ffc8' : '#0e1115');
+    this.grass?.setWind(this.storm && this.outdoors ? STORM_WIND : WIND[w]);
     this.applySurge();
     this.updateFog();
   }
@@ -1012,7 +1046,8 @@ export class WorldView {
     this.camera.lookAt(fx, gy + 0.4, fz);
     for (const a of this.animate) a(t, dt);
     this.animateRain({ x: fx, y: fz }, dt);
-    this.syncAvatars(avatars, meId);
+    this.grass?.update(t);
+    this.syncAvatars(avatars, meId, fx, fz, dt);
     const carriers = avatars.filter(a => a.live).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
     this.liveGlows.set(carriers.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
     this.creatures.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
@@ -1065,38 +1100,67 @@ export class WorldView {
     }
   }
 
-  private syncAvatars(avatars: Avatar[], meId: string | null) {
+  /** The players as the game has them now: their models, crouched in tall grass, and the nearest to (fx, fz) parting the grass. */
+  private syncAvatars(avatars: Avatar[], meId: string | null, fx: number, fz: number, dt: number) {
     const seen = new Set<string>();
+    this.partD.fill(Infinity);
     for (const a of avatars) {
       seen.add(a.id);
       let e = this.rigs.get(a.id);
-      // A new jacket or new gear: the character is built again in it.
+      const x = a.x + 0.5, z = a.y + 0.5, gy = this.groundAt(x, z);
+      // Everyone's tile is known, so everyone sees who crouches in tall grass.
+      const inGrass = hidden(this.map, Math.floor(x), Math.floor(z));
+      // A new jacket or new gear: the character is built again in it (as crouched as it was).
       const look = JSON.stringify(a.look ?? {});
       if (!e || e.color !== a.color || e.look !== look) {
+        const crouch = e ? e.crouch : inGrass ? 1 : 0;
         if (e) this.dropRig(e);
-        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0) };
+        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0), crouch };
+        // Turned to face first, then leaned: a crouch leans forward whichever way they face.
+        e.rig.root.rotation.order = 'YXZ';
         this.scene.add(e.rig.root, e.shadow);
         this.rigs.set(a.id, e);
       }
-      const x = a.x + 0.5, z = a.y + 0.5, gy = this.groundAt(x, z), { rig } = e;
-      rig.root.position.set(x, gy + (a.moving ? Math.abs(Math.sin(a.phase)) * 0.045 : 0), z);
-      rig.root.rotation.y = FACE[a.dir];
+      const { rig } = e;
+      const c = (e.crouch = crouchToward(e.crouch, inGrass, dt));
+      // Crouched, only the head and shoulders show over the grass, and the step is shorter.
+      rig.root.position.set(x, gy + (a.moving ? Math.abs(Math.sin(a.phase)) * 0.045 * (1 - c * 0.6) : 0) - CROUCH_DROP * c, z);
+      rig.root.rotation.set(CROUCH_LEAN * c, FACE[a.dir], 0);
       e.shadow.position.set(x, gy + BLOB_Y, z);
-      const sw = a.moving ? Math.sin(a.phase) * 0.95 : a.turnT > 0 ? Math.sin((1 - a.turnT / 0.14) * Math.PI) * 0.45 : 0;
+      const sw = (a.moving ? Math.sin(a.phase) * 0.95 : a.turnT > 0 ? Math.sin((1 - a.turnT / 0.14) * Math.PI) * 0.45 : 0) * (1 - c * 0.45);
       rig.legL.rotation.x = sw; rig.legR.rotation.x = -sw;
-      rig.armL.rotation.x = -sw * 0.7; rig.armR.rotation.x = sw * 0.7;
+      // The arms come forward as if pushing the grass aside.
+      rig.armL.rotation.x = -sw * 0.7 - c * 0.55; rig.armR.rotation.x = sw * 0.7 - c * 0.55;
       if (a.moving) this.rustleAt(x, z);
+      this.parter(x, z, (x - fx) ** 2 + (z - fz) ** 2);
       // Whatever clings to your back rides along.
       if (a.hitched && !e.hitch) e.rig.root.add((e.hitch = hitchhikerModel()));
       if (e.hitch) e.hitch.visible = !!a.hitched;
       if (a.id === meId && this.amb.flashlight) {
         const [dx, dy] = DIR_VEC[a.dir];
-        this.flash.position.set(x + dx * 0.2, gy + 0.75, z + dy * 0.2);
+        // Held where the hands are: lower while crouched, or it would light the top of your own cap.
+        this.flash.position.set(x + dx * 0.2, gy + 0.75 - CROUCH_DROP * c, z + dy * 0.2);
         this.flashTarget.position.set(x + dx * 4, gy, z + dy * 4);
         this.flashTarget.updateMatrixWorld();
       }
     }
     for (const [id, e] of this.rigs) if (!seen.has(id)) { this.dropRig(e); this.rigs.delete(id); }
+    if (this.grass) for (let i = 0; i < PARTERS; i++) this.grass.part(i, this.partX[i]!, this.partZ[i]!, this.partD[i]! < Infinity ? 1 : 0);
+  }
+
+  /** Someone at x, z, `d` (squared) from you: kept among the parters if they are among the nearest. */
+  private parter(x: number, z: number, d: number) {
+    let k = PARTERS;
+    while (k > 0 && d < this.partD[k - 1]!) k--;
+    if (k === PARTERS) return;
+    for (let i = PARTERS - 1; i > k; i--) {
+      this.partX[i] = this.partX[i - 1]!;
+      this.partZ[i] = this.partZ[i - 1]!;
+      this.partD[i] = this.partD[i - 1]!;
+    }
+    this.partX[k] = x;
+    this.partZ[k] = z;
+    this.partD[k] = d;
   }
 
   /** A player left: free their model. The blob shadow's geometry and material are shared by every blob, so they stay. */

@@ -379,10 +379,91 @@ const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES
   for (let i = objects.length - 1; i >= 0; i--) { const o = objects[i]!; if (o.kind === 'shrooms' && at(o.x, o.y) === 't') objects.splice(i, 1); }
 }
 
+/** The places the paper map names, besides the cabins and the way home. */
+const NAMED: Array<{ name: string; x: number; y: number }> = [
+  { name: 'pond', x: 20, y: 41 }, { name: 'the crossroads', x: 32, y: 41 }, { name: 'the rocks', x: 35, y: 23 },
+  { name: 'the bog', x: 57, y: 26 }, { name: 'ring of stones', x: Math.floor(RING.x), y: Math.floor(RING.y) },
+];
+
+// ---- Tall grass ----
+
+// Knee-high grass hides whoever stands in it from creatures (shared/map.ts, hidden): they never step
+// into it, and a chase ends there. It is sown last, and only on grass nothing else uses, so it moves
+// nothing: every road, trail, shelter, pole, lamp, object and named place stays where it was, since
+// players' routes depend on them. Most patches lie in the deeper half, where the watchers and the
+// skulkers roam, beside the trails a chased player runs along.
+const fromHome = stepsHome();
+const poles = objects.filter(o => o.kind === 'pole');
+/**
+ * Tiles a patch may take: open grass off the ways, out of the lights, clear of doors, signs and poles,
+ * and away from the places the paper map names (and a little from the other places worth walking to).
+ */
+function tallMay(x: number, y: number): boolean {
+  const i = y * W + x;
+  if (at(x, y) !== 'g' || way[i] || !walkable(x, y) || shroomAt.has(i) || keepOpen.has(i) || fromHome[i]! < 0) return false;
+  if (poles.some(p => Math.max(Math.abs(p.x - x), Math.abs(p.y - y)) <= 1)) return false;
+  return !NAMED.some(p => Math.hypot(p.x - x, p.y - y) <= 2.5) && !PLACES.some(([, [px, py]]) => Math.hypot(px - x, py - y) <= 1.5);
+}
+/**
+ * The patches: the tile each grows from, how many tiles it takes, and what people call it, if anything.
+ * Seven lie in the deeper half: north of the pond where the west trail comes down from the fern hollow
+ * (the long grass) and south of it on the back way to the campsite; on the old cabin's west side; at
+ * both feet of the rocks, where the trails from the old cabin and to the lonely light meet them (the
+ * deer beds, north); on the rim of the ring of stones' glade; and west of the cabin at the end, where
+ * the east trail comes in. One lies shallow, in the headlight clearing, where a new player finds out
+ * what tall grass is before it matters.
+ */
+const TALL: Array<{ at: P; size: number; name?: string }> = [
+  { at: [17, 36], size: 14, name: 'the long grass' },
+  { at: [13, 46], size: 9 },
+  { at: [43, 40], size: 9 },
+  { at: [38, 26], size: 10 },
+  { at: [37, 19], size: 10, name: 'the deer beds' },
+  { at: [3, 4], size: 12 },
+  { at: [52, 5], size: 8 },
+  { at: [43, 60], size: 6 },
+];
+if (TALL.length < 6 || TALL.length > 9 || TALL.some(p => p.size < 6 || p.size > 16)) throw new Error('the Near Woods has 6 to 9 patches of tall grass, each 6 to 16 tiles');
+const tall = new Uint8Array(W * H);
+/** Grows a patch from its first tile into a rough blob, only onto tiles it may take, never touching another patch. */
+function sow(from: P, size: number, salt: number): number[] {
+  const apart = (x: number, y: number) => {
+    for (let yy = y - 1; yy <= y + 1; yy++) for (let xx = x - 1; xx <= x + 1; xx++) if (tall[yy * W + xx]) return false;
+    return true;
+  };
+  const ok = (x: number, y: number) => tallMay(x, y) && apart(x, y);
+  if (!ok(from[0], from[1])) throw new Error(`tall grass cannot grow from ${from.join(',')}`);
+  const patch: number[] = [], seen = new Set([from[1] * W + from[0]]);
+  const edge: Array<[number, number]> = [[0, from[1] * W + from[0]]];
+  while (patch.length < size && edge.length) {
+    // Nearer tiles first, with a little noise, so the edge is ragged rather than a drawn diamond.
+    edge.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const i = edge.shift()![1], x = i % W, y = (i / W) | 0;
+    patch.push(i);
+    for (const [dx, dy] of SIDES) {
+      const nx = x + dx, ny = y + dy, j = ny * W + nx;
+      if (seen.has(j) || !ok(nx, ny)) continue;
+      seen.add(j);
+      edge.push([Math.hypot(nx - from[0], ny - from[1]) * 0.6 + hash(nx, ny, salt), j]);
+    }
+  }
+  if (patch.length < size) throw new Error(`the tall grass at ${from.join(',')} has room for ${patch.length} tiles, not ${size}`);
+  return patch;
+}
+const patches = TALL.map((p, k) => {
+  const patch = sow(p.at, p.size, 150 + k);
+  for (const i of patch) {
+    tall[i] = 1;
+    tile[(i / W) | 0]![i % W] = 'h';
+  }
+  return patch;
+});
+if (patches.filter(p => fromHome[p[0]!]! >= 50).length * 2 <= patches.length) throw new Error('most of the tall grass belongs in the deeper half');
+
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 7, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 8, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
@@ -398,11 +479,9 @@ const map: MapData = {
   watchers: { count: 3, steps: [55, 999] },
   // Three skulkers in the deep ferns, 50 steps or more out, at night and in a storm.
   skulkers: { count: 3, steps: [50, 999], when: ['night', 'storm'] },
-  // What the paper map names, besides the cabins and the way home.
-  places: [
-    { name: 'pond', x: 20, y: 41 }, { name: 'the crossroads', x: 32, y: 41 }, { name: 'the rocks', x: 35, y: 23 },
-    { name: 'the bog', x: 57, y: 26 }, { name: 'ring of stones', x: Math.floor(RING.x), y: Math.floor(RING.y) },
-  ],
+  // What the paper map names, besides the cabins and the way home. The names of tall grass come after
+  // the older ones, so the paper map writes those where it always did.
+  places: [...NAMED, ...TALL.flatMap(p => (p.name ? [{ name: p.name, x: p.at[0], y: p.at[1] }] : []))],
 };
 
 // One row or object per line, so map changes show up as small, readable diffs.
@@ -430,16 +509,16 @@ writeFileSync(out, json);
 
 // A glance at the result, two map rows per line because a terminal character is about twice as tall
 // as it is wide. Of the two tiles in a character, the one listed first in ORDER wins.
-const ORDER = '*!HC@SFvibBnLc-T^o~=",_. ';
+const ORDER = '*!HC@SFvibBnLc-T^o~=";,_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', sign: '!', board: '!', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b', fence: '-', tree: 'T', rock: 'o', shrooms: ',',
   // Furniture belongs inside (gen-interiors.ts), but a campfire could stand out here one day.
-  fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_',
+  fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_', woodpile: 'b',
   // NAPO's listening post has a mast here, by the ring of stones; its desks stand on the South Road (gen-south-road.ts).
   antenna: 'i', console: 'n',
 };
-const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '.' };
+const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();
 for (const o of objects) for (const [x, y] of objectTiles(o)) objGlyph.set(y * W + x, pick(GLYPH[o.kind], objGlyph.get(y * W + x) ?? ' '));
 function glyph(x: number, y: number): string {
@@ -451,7 +530,7 @@ const frame = '+' + '-'.repeat(W) + '+';
 const rows = [frame];
 for (let y = 0; y < H; y += 2) rows.push('|' + Array.from({ length: W }, (_, x) => pick(glyph(x, y), glyph(x, y + 1))).join('') + '|');
 console.log([...rows, frame].join('\n'));
-console.log(' . ground  " ferns  = old road  ~ water  ^ rocks  * street light  ! sign  H cabin  C car  i pole  o rock  T fir  , shrooms  v way home');
+console.log(' . ground  " ferns  ; tall grass  = old road  ~ water  ^ rocks  * street light  ! sign  H cabin  C car  i pole  o rock  T fir  , shrooms  v way home');
 
 // How deep it goes, measured like the game does (TileMap.homeSteps drives the energy drain).
 const tm = new TileMap(map);
@@ -465,6 +544,10 @@ console.log(`wrote ${out}: ${W}x${H} tiles, ${objects.length} objects (${count('
 console.log(`steps from the way home: ${PLACES.map(([name, p]) => `${name} ${stepsTo(steps, p)}`).join(', ')}`);
 console.log(`deepest: ${deepest} steps, at ${deepTiles.join(' ')}`);
 console.log(`ferns ${map.skulkers!.steps[0]} steps or more out, where skulkers lie: ${lairs} tiles`);
+console.log(`tall grass, ${patches.length} patches: ${patches.map((p, k) => {
+  const s = p.map(i => steps[i]!);
+  return `${TALL[k]!.name ?? `at ${TALL[k]!.at.join(',')}`} ${p.length} tiles ${Math.min(...s)}-${Math.max(...s)} steps`;
+}).join(', ')}`);
 console.log(`shelter doors: ${shelters.map((s, i) => { const d = doorOf(s); return `${cabins[i]!.inside} ${tm.homeSteps(d.x, d.y)} steps`; }).join(', ')}`);
 // The tuning targets in energy.ts: how long a full bar lasts standing still in the rain.
 const lasts = (x: number, y: number) => (ENERGY_MAX / -energyRate(tm, x, y, 'rain') / 60).toFixed(1);
