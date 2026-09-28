@@ -25,6 +25,8 @@ export class Items {
   readonly upgrades: ItemsData['upgrades'];
   /** What the woods may be like on a day or in a week (sky.ts). */
   readonly conditions: ItemsData['conditions'];
+  /** Where the keepsakes lie, and what the whole set home gives (notes.ts). */
+  readonly keepsakes: ItemsData['keepsakes'];
   /** What the Long Night's bonus does, in words ("wire and strange objects grow back twice as fast"); empty without one. */
   readonly longNight: string;
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
@@ -37,6 +39,7 @@ export class Items {
     this.mend = data?.mend;
     this.upgrades = data?.upgrades;
     this.conditions = data?.conditions;
+    this.keepsakes = data?.keepsakes;
     this.longNight = longNightWords(data?.longNight, this.byId);
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
@@ -82,8 +85,8 @@ export function useLabel(item: ItemDef): string {
 export function refusalText(reason: Refusal, action?: RefusedAction): string {
   switch (reason) {
     case 'bag_full': return 'Your bag is full';
-    case 'too_far': return 'Too far';
-    case 'gone': return 'Someone got there first';
+    case 'too_far': return action === 'move' ? 'Only at your own door' : 'Too far';
+    case 'gone': return action === 'move' ? 'They have no cabin on a street yet' : 'Someone got there first';
     case 'not_usable': return 'That cannot be used';
     case 'empty_slot': return 'That slot is empty';
     case 'not_here': return 'Not here';
@@ -98,14 +101,15 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'missing': return 'Your stash lacks what it needs';
     case 'unknown_player': return 'Nobody by that name';
     case 'requests_off': return 'They take no friend requests';
-    case 'not_friends': return 'You can only message friends';
+    case 'not_friends': return action === 'move' ? 'You can only move next to friends' : 'You can only message friends';
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
-    case 'slow_down': return action === 'call' ? 'Catch your breath first' : 'Slow down a little';
+    case 'slow_down': return action === 'call' ? 'Catch your breath first' : action === 'knock' ? 'Give them a moment to answer' : action === 'move' ? 'You only just moved' : 'Slow down a little';
     case 'sign_in_first':
       if (action === 'say' || action === undefined) return 'Sign in to talk';
       if (action === 'outfit' || action === 'pattern' || action === 'badge') return `Sign in to wear ${action === 'outfit' ? 'an outfit' : `a ${action}`}`;
-      return action === 'buy' ? 'Sign in to spend merits' : 'Sign in to make friends';
+      if (action === 'buy') return 'Sign in to spend merits';
+      return action.startsWith('trade') ? 'Sign in to trade' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'bag_at_home': return 'The bag you wear changes only at home';
     case 'whole': return 'It needs no mending';
@@ -117,11 +121,20 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'thanked': return 'Thanks go once a day to each person';
     case 'crate_full': return 'The crate is full';
     case 'no_gear': return 'Gear stays with you: a crate takes none';
+    case 'keepsake': return 'A keepsake stays with you until you bring it home';
     case 'left_one': return 'You left something here this time already';
     case 'took_one': return 'You took something here this time already';
     case 'owned': return 'It is yours already';
     case 'no_merits': return 'You have no merit to spend on it';
     case 'not_owned': return 'It is not yours yet: spend a merit on it first';
+    case 'trades_off': return 'They take no trade requests';
+    case 'busy': return 'They are trading with someone else';
+    case 'trading': return 'Finish the trade you are in first';
+    case 'their_bag_full': return 'Their bag has no room for it';
+    case 'nothing_to_trade': return 'There is nothing to trade yet';
+    case 'placed': return 'It stands in its place already';
+    case 'street_full': return 'Their street has no lot free';
+    case 'neighbors': return 'You live on the same street already';
   }
 }
 
@@ -241,6 +254,8 @@ export function factsOf(def: ItemDef): string[] {
   if (def.charge) out.push('The Old Stone wants it');
   if (def.kind === 'charm') out.push('Works while in your bag');
   if (def.kind === 'tool') out.push('A tool, yours for good');
+  if (def.kind === 'keepsake') out.push('One of a kind: bring it home');
+  if (def.kind === 'furniture' && def.comfort) out.push(`Comfort ${def.comfort}`);
   return out;
 }
 
@@ -269,13 +284,20 @@ export function lookOf(gear: Gear, items: Items, outfit?: string, pattern?: stri
 /**
  * The workbench's recipes against what a stash holds: what each makes, what it needs, whether it can.
  * A tool is yours once: the row of one among your `tools` says you have it, and is never ready (its
- * card says so too, details.ts).
+ * card says so too, details.ts). Furniture for your cabin (comfort.ts) comes after the rest, under a
+ * heading of its own, and the row of a piece already among your `furniture` says it stands in its place.
  */
-export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[], items: Items, tools: readonly string[] = []): RecipeView[] {
-  return recipes.map(r => {
-    const def = items.get(r.make), have = def.kind === 'tool' && tools.includes(r.make), needs = needsOf(r.needs, stash, items);
+export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[], items: Items, tools: readonly string[] = [], furniture: readonly string[] = []): RecipeView[] {
+  const rows = recipes.map((r): RecipeView => {
+    const def = items.get(r.make), needs = needsOf(r.needs, stash, items);
+    if (def.kind === 'furniture') {
+      const placed = furniture.includes(r.make);
+      return { id: r.id, group: 'cabin', name: def.name, icon: iconFor(def), facts: placed ? `Comfort ${def.comfort ?? 0} · In its place` : factsOf(def).join(' · '), needs, can: !placed && needs.every(n => n.have >= n.need) };
+    }
+    const have = def.kind === 'tool' && tools.includes(r.make);
     return { id: r.id, group: 'make', name: def.name, icon: iconFor(def), facts: have ? 'You have it' : factsOf(def).join(' · '), needs, can: !have && needs.every(n => n.have >= n.need) };
   });
+  return [...rows.filter(r => r.group !== 'cabin'), ...rows.filter(r => r.group === 'cabin')];
 }
 
 /**

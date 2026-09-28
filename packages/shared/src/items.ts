@@ -8,20 +8,26 @@
  * When you collapse, what you carry falls out as a pile where you fell: you get it all back, anyone
  * else gets a random half (the rest is lost), and it fades an hour after the collapse.
  */
+import type { Comfort } from './comfort';
 import type { Mods } from './feats';
 import type { Element, Piece, Quirk, Recipe, Slot, Tier, Upgrade } from './gear';
 import type { ParcelsData } from './parcels';
 import type { ConditionsData, Season } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
+import type { KeepsakesData } from './notes';
 
 /**
  * A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn
  * (gear.ts). A tool is yours for good, once made at the workbench or found: never used up, never in a
  * pile, the stash or a trade, weighing nothing, and it takes no bag slot (players keep their tools
  * apart from the bag, like what they wear: a button each in the bag's header). A sealed thing (a NAPO
- * lockbox) stays in the chest at home and is opened there: it holds one of its `holds`.
+ * lockbox) stays in the chest at home and is opened there: it holds one of its `holds`. A keepsake is
+ * one of a kind, left behind by someone (notes.ts): each player finds their own where it lies, once,
+ * and brought home it stays there for good, apart from the stash. Furniture is made at the workbench for
+ * a place in your own cabin (comfort.ts) and set in it at once: never in the bag, the stash, a pile or a
+ * trade.
  */
-export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool' | 'sealed';
+export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool' | 'sealed' | 'keepsake' | 'furniture';
 
 /** One thing a sealed item may hold, by weight: these items, or one item of kind `any`, every one of that kind alike (any charm). */
 export interface Holding {
@@ -124,6 +130,13 @@ export interface ItemDef {
    * While someone carries one it glows: everyone on the map sees them, and watchers come from farther.
    */
   live?: { xp: number; fresh: number; fade: number; into: string };
+  /** Furniture: the place in your own cabin it goes into (comfort.ts), and the comfort it adds there. */
+  furnishes?: Comfort;
+  comfort?: number;
+  /** Furniture: what stands in its place until it is made, spoiled by years of damp, in a plain sentence or two. */
+  spoiled?: string;
+  /** Furniture: with it in its place you always leave your cabin dry (the drying rack). */
+  dries?: boolean;
 }
 
 /** Where one kind of find grows, and how many are out there at once. */
@@ -174,6 +187,8 @@ export interface ItemsData {
   conditions?: ConditionsData;
   /** The welcome parcel and the week's calendar of parcels (parcels.ts). None: no parcels. */
   parcels?: ParcelsData;
+  /** Where each keepsake lies, and what the whole set home gives (notes.ts). None: no keepsakes. */
+  keepsakes?: KeepsakesData;
   /** What grows back faster on a Long Night that has its bonus (sky.ts, world.ts). None: nothing does. */
   longNight?: LongNightData;
 }

@@ -8,8 +8,9 @@
  * taking it out (a thermos drunk, resin burned) is forgotten from `out`, so it never counts against
  * new finds; what it turns into (a strange object looked at) is counted there in its place. Gear
  * counts the same way, piece by piece: a piece taken out, or put on at the chest, is out until it comes
- * back into the stash, from the bag or off your back. The rules are pure functions shared by the server
- * (which owns every stash) and tests.
+ * back into the stash, from the bag or off your back. What was taken out and then traded to a friend is
+ * out for them instead (traded), so no trade earns XP twice. The rules are pure functions shared by the
+ * server (which owns every stash) and tests.
  */
 import { ENERGY_MAX } from './energy';
 import { newPiece, type Piece } from './gear';
@@ -123,13 +124,19 @@ export function stashList(s: Stash, order: readonly ItemDef[]): BagSlot[] {
 /**
  * The stash with one piece for every unit of gear it counts: pieces it had are kept (as many as it
  * counts, in order), missing ones come new (anomalous ones with a quirk), and pieces of anything
- * that is not gear, or no longer lies there, are dropped.
+ * that is not gear, or no longer lies there, are dropped. The pieces of an item these items do not
+ * know (a newer release's) stay as they are, with it.
  */
 export function fitPieces(s: Stash, items: Map<string, ItemDef>, rng: () => number): Stash {
   const pieces: Record<string, Piece[]> = {};
   for (const [id, n] of Object.entries(s.items)) {
     const def = items.get(id);
-    if (def?.kind !== 'gear') continue;
+    if (!def) {
+      const kept = s.pieces?.[id];
+      if (kept) pieces[id] = kept.map(p => ({ ...p }));
+      continue;
+    }
+    if (def.kind !== 'gear') continue;
     const had = (s.pieces?.[id] ?? []).slice(0, n).map(p => ({ ...p }));
     while (had.length < n) had.push(newPiece(def, rng));
     pieces[id] = had;
@@ -240,6 +247,33 @@ export function turnedInto(s: Stash, from: string, into: BagSlot): Stash {
   if (!out.out[from]) delete out.out[from];
   out.out[into.item] = (out.out[into.item] ?? 0) + into.count;
   return out;
+}
+
+/**
+ * A trade between two players (trade.ts), as their stashes count it: of each item a side gave, as many as
+ * it had taken out of its stash and not brought back (never more than it gave) are now the other side's
+ * to bring back instead. So what was taken out and traded earns nothing when it is stashed, whoever
+ * stashes it, and trading back and forth never earns XP twice; a fresh find given to a friend still earns
+ * its XP when they stash it. Both sides count from their stashes as they were: the swap is one step.
+ */
+export function traded(a: Stash, b: Stash, aGave: readonly BagSlot[], bGave: readonly BagSlot[]): [Stash, Stash] {
+  const owed = (s: Stash, gave: readonly BagSlot[]): Record<string, number> => {
+    const by: Record<string, number> = {};
+    for (const g of gave) if (g.count > 0) by[g.item] = (by[g.item] ?? 0) + g.count;
+    for (const item of Object.keys(by)) by[item] = Math.min(by[item]!, s.out[item] ?? 0);
+    return by;
+  };
+  const shift = (s: Stash, lose: Record<string, number>, gain: Record<string, number>): Stash => {
+    const out = { ...s.out };
+    for (const [item, n] of Object.entries(lose)) {
+      out[item] = (out[item] ?? 0) - n;
+      if (out[item]! <= 0) delete out[item];
+    }
+    for (const [item, n] of Object.entries(gain)) if (n > 0) out[item] = (out[item] ?? 0) + n;
+    return { items: { ...s.items }, out, ...copyPieces(s) };
+  };
+  const ab = owed(a, aGave), ba = owed(b, bGave);
+  return [shift(a, ab, ba), shift(b, ba, ab)];
 }
 
 /** `count` of an item were used up (drunk, burned, taken by a watcher...): they will never come back, so they no longer count as out. */

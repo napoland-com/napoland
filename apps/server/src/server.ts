@@ -5,13 +5,13 @@
  * from the environment; tests start it directly.
  */
 import type { AddressInfo } from 'node:net';
-import { DROP_LIFETIME_MS, GUEST_DAYS, THANKS_KEPT_MS, quickCalendar, weatherAt, type ItemsData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
+import { DROP_LIFETIME_MS, GUEST_DAYS, THANKS_KEPT_MS, quickCalendar, weatherAt, type ItemsData, type NotebookData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
 import { legacyAuth, type Auth } from './auth';
 import { createHttpServer } from './http';
 import { log } from './log';
 import { attachNet } from './net';
 import type { Storage } from './storage';
-import { MARK_LIFETIME_MS, World } from './world';
+import { MARK_LIFETIME_MS, World, type Crowd } from './world';
 
 export interface ServerOptions {
   host: string;
@@ -24,6 +24,8 @@ export interface ServerOptions {
   items?: ItemsData;
   /** The story's chapters; they must fit the maps and items (loadStory checks that). No story if unset. */
   story?: StoryData;
+  /** The pages of the field notes; they must fit the maps and items (loadNotebook checks that). No pages if unset. */
+  notebook?: NotebookData;
   /** Words chat masks (content/words.json). None if unset. */
   words?: string[];
   /** Where finds grow and which half of a pile others get: Math.random unless a test sets its own. */
@@ -58,6 +60,8 @@ export interface ServerOptions {
   xpMultiplier?: number;
   /** Development only (RESTED_EVERY_MS): the time away that fills one XP of rest. 20 minutes unless set. */
   restedEveryMs?: number;
+  /** How many make a crowd, in a copy of a town square and of a region (TOWN_CROWD and REGION_CROWD unless set): tests set fewer, and play-tests (TOWN_CROWD, REGION_CROWD). */
+  crowd?: Partial<Crowd>;
   /** With sign-in, how often guests who stayed away GUEST_DAYS are looked for (after start-up); default once a day. */
   forgetGuestsEveryMs?: number;
   /** How often thanks older than THANKS_KEPT_DAYS are deleted (after start-up); default once an hour. */
@@ -91,11 +95,14 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
       log.error('cannot tell since when guests are deleted: none are for now', { err });
     }
   }
+  // Their lots are free again once the World runs (it is made below, after the first cleanup).
+  let world: World | undefined;
   const forgetGuests = async () => {
     if (Date.now() - since < GUEST_DAYS * DAY_MS) return;
     try {
       const gone = await o.storage.forgetGuests(Date.now() - GUEST_DAYS * DAY_MS);
-      if (gone) log.info('guests deleted', { guests: gone, days: GUEST_DAYS });
+      if (gone.length) log.info('guests deleted', { guests: gone.length, days: GUEST_DAYS });
+      world?.forgetLots(gone);
     } catch (err) {
       // Housekeeping: it never keeps the game from running, and it runs again tomorrow.
       log.error('deleting guests who stayed away failed', { err });
@@ -115,6 +122,12 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // What lies in the crates stays until someone takes it.
   const cacheItems = await o.storage.loadCacheItems();
   if (cacheItems.length) log.info('crates loaded', { things: cacheItems.length });
+  // Who found each secret first is kept for good (firsts.ts).
+  const firsts = await o.storage.loadFirsts();
+  if (firsts.length) log.info('first finders loaded', { firsts: firsts.length });
+  // Who lives where on the streets, online or not: after the guests who stayed away are gone, their lots with them.
+  const lots = await o.storage.loadLots();
+  if (lots.length) log.info('lots loaded', { lots: lots.length });
   const forgetThanks = async () => {
     try {
       await o.storage.forgetThanks(Date.now() - THANKS_KEPT_MS);
@@ -128,11 +141,13 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   const longNight = await o.storage.loadLongNight();
   const cycle = o.weather === 'cycle';
   const shift = o.clockShiftMs ?? 0;
-  const world = new World(o.maps, o.homeMap, cycle ? weatherAt(Date.now() + shift).weather : (o.weather as Weather), {
+  world = new World(o.maps, o.homeMap, cycle ? weatherAt(Date.now() + shift).weather : (o.weather as Weather), {
     cycle,
     marks,
     thanks,
     cacheItems,
+    firsts,
+    lots,
     stone,
     longNight,
     now: clock(),
@@ -140,6 +155,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     onCollapse: (id, where) => log.info('player collapsed', { id, ...where }),
     items: o.items,
     story: o.story,
+    notebook: o.notebook,
     rng: o.rng,
     drops,
     // Game time never goes backwards; piles keep wall clock time, which is this far ahead of it.
@@ -148,8 +164,9 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     ...(o.parcelDayMs ? { calendar: quickCalendar(o.parcelDayMs, Date.now() + shift) } : {}),
     xpTimes: o.xpMultiplier,
     ...(o.restedEveryMs ? { restedEveryMs: o.restedEveryMs } : {}),
+    ...(o.crowd ? { crowd: o.crowd } : {}),
   });
-  const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version, auth: auth.config });
+  const http = createHttpServer({ clientDir: o.clientDir, players: () => world!.size, version: o.version, auth: auth.config });
   const net = attachNet({
     auth,
     server: http,

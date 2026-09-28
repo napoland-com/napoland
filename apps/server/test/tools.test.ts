@@ -150,11 +150,33 @@ describe('a tool lying out there', () => {
 
     // The dice say 10 s.
     w.tick(10_999);
-    expect(onMap(w.drain(), 'woods').filter(m => m.t === 'find')).toEqual([]);
+    const early = w.drain();
+    expect([...onMap(early, 'woods'), ...to(early, 'a'), ...to(early, 'b')].filter(m => m.t === 'find')).toEqual([]);
     w.tick(11_000);
-    expect(onMap(w.drain(), 'woods')).toContainEqual({ t: 'find', find: expect.objectContaining({ item: 'radio', x: 5, y: 5 }) });
+    // It grew back for whoever has none: a, who has one now, never hears of it.
+    const grown = w.drain(), find = { t: 'find', find: expect.objectContaining({ item: 'radio', x: 5, y: 5 }) };
+    expect(to(grown, 'b')).toContainEqual(find);
+    expect(to(grown, 'a').filter(m => m.t === 'find')).toEqual([]);
+    expect(onMap(grown, 'woods').filter(m => m.t === 'find')).toEqual([]);
     w.pick('b', 5, 5, 11_000);
     expect(to(w.drain(), 'b')).toContainEqual({ t: 'tools', tools: WITH_RADIO });
+  });
+
+  it('is seen only by whoever does not own it yet: never in the welcome or the arrival of one who does, and gone from their sight once they get it', () => {
+    const w = world({}, rec('a', 'woods', 5, 4, { tools: ['radio'] }), rec('b', 'woods', 5, 6), rec('c', 'woods', 1, 1));
+    const seen = (id: string) => w.findViews('woods', id).map(f => f.item).sort();
+    expect(seen('a')).toEqual(['moss']);
+    expect(seen('b')).toEqual(['moss', 'radio']);
+    // The world as nobody in particular sees it still holds it.
+    expect(w.findViews('woods').map(f => f.item).sort()).toEqual(['moss', 'radio']);
+    const radio = radioIn(w)!;
+    expect(w.join(rec('d', 'woods', 6, 6, { tools: [...STARTER_TOOLS, 'radio'] }), 1000).finds.map(f => f.item)).toEqual(['moss']);
+    expect(w.join(rec('e', 'woods', 6, 5), 1000).finds.map(f => f.item).sort()).toEqual(['moss', 'radio']);
+    w.drain();
+    // Given one some other way (the workbench, say), the one lying here goes from their sight.
+    expect(w.giveTool('c', 'radio')).toBe(true);
+    expect(to(w.drain(), 'c')).toEqual([{ t: 'tools', tools: WITH_RADIO }, { t: 'findGone', id: radio.id }]);
+    expect(seen('c')).toEqual(['moss']);
   });
 
   it('stays where it lies, for someone else, when the picker has one already', () => {
@@ -241,8 +263,8 @@ describe('tools over WebSockets', () => {
 });
 
 describe('the field radio of content/items.json', () => {
-  /** The items as they ship, without their finds (they grow on maps these tests do not have). */
-  const content = { ...(JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData), finds: [] };
+  /** The items as they ship, without their finds and keepsakes (they lie on maps these tests do not have). */
+  const content = { ...(JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData), finds: [], keepsakes: undefined };
   const radioTools = [...STARTER_TOOLS, 'radio'];
 
   it('is rewired at the workbench from 2 copper wire and 1 scrap, for good: never into the stash, and never twice', () => {

@@ -78,6 +78,21 @@ describe('rain, region by region', () => {
     for (const map of ['near-woods', 'south-road', 'stonebrook', 'stonebrook-lodge', 'south-road-bunker']) expect(of(onMap(night, map), 'weather'), map).toEqual([{ t: 'weather', weather: 'night' }]);
   });
 
+  it('shows a note written for the rain by its own region\'s rain', () => {
+    // Thirteen minutes after dawn it rains in the Near Woods and not on the South Road; at 25, the other way round.
+    const read = (m: number) => {
+      const w = realWorld(at(m));
+      w.join(rec('n', 'near-woods', 32, 61, 'up'), 0);
+      w.join(rec('s', 'south-road', 32, 29, 'down'), 0);
+      w.drain();
+      w.talk('n', 32, 60, 1000);
+      w.talk('s', 32, 30, 1000);
+      return w.drain().flatMap(o => (o.msg.t === 'noteRead' ? [o.msg.id] : []));
+    };
+    expect(read(13)).toEqual(['barlow-wiper']);
+    expect(read(25)).toEqual(['barlow-cars']);
+  });
+
   it('counts steps in the rain only where it rains', () => {
     const w = realWorld(at(14));
     w.join(rec('n', 'near-woods', 31, 76, 'up'), 0);
@@ -104,10 +119,17 @@ describe('rain, region by region', () => {
       w.join(rec('r', 'stonebrook', 12, 24, 'up'), 0);
       w.drain();
       w.board('r', 12, 23, 0);
-      return of(to(w.drain(), 'r'), 'board')[0]!.lines.slice(0, 3);
+      return of(to(w.drain(), 'r'), 'board')[0]!.lines.slice(0, 4);
     };
-    expect(board(14)).toEqual(['Night falls in about 18 minutes.', 'The Near Woods: rain for about 10 minutes more.', 'The South Road: dry for about 10 minutes, then rain.']);
-    expect(board(26)).toEqual(['Night falls in about 6 minutes.', 'The Near Woods: dry until nightfall.', 'The South Road: rain for about 4 minutes more.']);
+    // The regions nearest town first; the Far Woods, the wettest, rain at dawn and again from 24 minutes.
+    expect(board(14)).toEqual([
+      'Night falls in about 18 minutes.', 'The Near Woods: rain for about 10 minutes more.', 'The South Road: dry for about 10 minutes, then rain.',
+      'The Far Woods: dry for about 10 minutes, then rain.',
+    ]);
+    expect(board(26)).toEqual([
+      'Night falls in about 6 minutes.', 'The Near Woods: dry until nightfall.', 'The South Road: rain for about 4 minutes more.', 'The Far Woods: rain for about 6 minutes more.',
+    ]);
+    expect(board(4)).toContain('The Far Woods: rain for about 4 minutes more.');
     expect(board(40)[0]).toBe('Night: no rain anywhere. Dawn in about 8 minutes.');
   });
 });

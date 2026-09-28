@@ -7,6 +7,8 @@
  * the deeper you are) or the inside of a building. Every house can be entered: its door is an exit
  * to a small map of its own. Energy only comes back near a fireplace. See energy.ts.
  */
+import { comfortSize, underfootComfort, type Comfort } from './comfort';
+import { STEP_MS } from './movement';
 import type { Dir } from './protocol';
 import type { FlashRule, RainWindow, StormRule, SurgeRule } from './sky';
 
@@ -67,14 +69,17 @@ export interface NpcLook {
 
 export type MapObject =
   | { kind: 'tree'; x: number; y: number; s: number; v: number }
-  | { kind: 'rock'; x: number; y: number; s: number; v: number }
+  /** A rock; with `hum`, one of the rocks deep in the woods that hum back: it glows faintly, the same day and night. */
+  | { kind: 'rock'; x: number; y: number; s: number; v: number; hum?: boolean }
   /**
    * A building you can enter: a wooden cabin (3 by 2, a gabled roof in `roof`), with style 'napo' one
    * of NAPO's concrete buildings (3 by 2 or bigger, a flat roof in `roof`), or with style 'mill' the
    * old sawmill, long and low, timber under a sawtooth roof (`roof` its rusted metal). Lit: someone is
    * home. `curtains`: a cabin whose people left and drew the curtains behind them; its windows never light.
+   * `plate`: a cabin on a street, a lot (MapData.street), with a name plate by its door where its owner's
+   * name shows; its window lights while its owner is at home, whatever `lit` says.
    */
-  | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' | 'mill'; curtains?: boolean }
+  | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' | 'mill'; curtains?: boolean; plate?: true }
   | { kind: 'lamp'; x: number; y: number }
   /**
    * A wooden signpost; with style 'napo' one of NAPO's yellow warning signs, 'cardboard' a piece of
@@ -123,8 +128,18 @@ export type MapObject =
   | { kind: 'stone'; x: number; y: number }
   | { kind: 'npc'; x: number; y: number; id: string; name: string; dir: Dir; lines: string[]; look?: NpcLook }
   | { kind: 'shrooms'; x: number; y: number }
-  /** A tall radio mast, like the NAPO Tower's, with a red light blinking at the top. */
-  | { kind: 'antenna'; x: number; y: number }
+  /** A tall radio mast, like the NAPO Tower's, with a red light blinking at the top; `broken`: snapped halfway, its light long dead. */
+  | { kind: 'antenna'; x: number; y: number; broken?: boolean }
+  /** What is left of a logging camp's bunkhouse, w by h tiles: log walls fallen to a few rounds, no roof. Not a way in: it stands in the way. */
+  | { kind: 'ruin'; x: number; y: number; w: number; h: number }
+  /** The loggers' yarder, rusted where it stood: a boiler and a drum of steel cable on a sled of logs, two tiles by two. */
+  | { kind: 'yarder'; x: number; y: number }
+  /** A wooden cable spool on its side, the yarder's steel cable still wound on it. */
+  | { kind: 'spool'; x: number; y: number }
+  /** An old timber bridge over a creek, laid on the ford beneath it and walked over. `dir`: which way it runs, across the water. */
+  | { kind: 'bridge'; x: number; y: number; dir: 'h' | 'v' }
+  /** A trapper's things against a wall: steel traps on pegs, a pair of snowshoes, a coil of snare wire. */
+  | { kind: 'traps'; x: number; y: number }
   /** One of NAPO's desks with a screen, a radio or a log on it: you read it like a sign, under its `name`. `id` names it for the story. */
   | { kind: 'console'; x: number; y: number; id: string; name: string; text: string[] }
   /**
@@ -173,7 +188,30 @@ export type MapObject =
   /** The saw carriage on its rails, w tiles long east to west, a log still dogged on it. */
   | { kind: 'carriage'; x: number; y: number; w: number }
   /** A drift of sawdust on the mill floor: walked through. */
-  | { kind: 'sawdust'; x: number; y: number };
+  | { kind: 'sawdust'; x: number; y: number }
+  /**
+   * A place in a home of one's own where furniture stands (comfort.ts): spoiled by years of damp until
+   * its owner makes new furniture for it at the workbench. Each player sees their own (their cabin is
+   * theirs alone). `what` says which: a bed two tiles long, the rug three by two (walked over), the rest one.
+   */
+  | { kind: 'comfort'; x: number; y: number; what: Comfort }
+  /**
+   * A handwritten note someone left (notes.ts): on a table, a shelf, a crate or a bed, in a car, on the
+   * luggage, nailed to a pole. It lies on the tile of what it is on, so it blocks nothing itself, and you
+   * read it like a sign, facing that. `id` names it for good (what players read is kept by it), `by`
+   * says who wrote it, `name` what the text box calls it ("Nailed to the pole"). A note with `when`
+   * only shows at night, in the rain or on an aurora night; the rest of the time the box says `faint`.
+   */
+  | { kind: 'note'; x: number; y: number; id: string; by: NoteAuthor; name: string; text: string[]; when?: NoteWhen; faint?: string };
+
+/** Who left notes behind: the ranger, Walt Pruitt when he walked the line, and the Barlows from the cabin at the end. */
+export const NOTE_AUTHORS = ['ranger', 'walt', 'barlows'] as const;
+export type NoteAuthor = (typeof NOTE_AUTHORS)[number];
+/** When a note shows (notes.ts, noteShows): written in something that glows, in wax that only water shows, or scratched with a shard. */
+export const NOTE_WHEN = ['night', 'rain', 'aurora'] as const;
+export type NoteWhen = (typeof NOTE_WHEN)[number];
+/** What a note may lie on: its tile is one of these things' tiles. */
+export const NOTE_ON = ['table', 'shelf', 'crate', 'bed', 'pole', 'car', 'truck', 'luggage'] as const;
 
 /** The ways a paper to read can look (MapObject 'paper'); the first two lie on a table, the others hang on a wall. */
 export const PAPER_LOOKS = ['note', 'list', 'calendar', 'drawing'] as const;
@@ -237,8 +275,20 @@ export interface MapData {
   wake?: { x: number; y: number; dir: Dir };
   /** Places on this map people call by name; the paper map writes them in. */
   places?: MapPlace[];
+  /**
+   * A town only: a street of cabins (Residents' Lane), where each player's cabin stands. The server keeps a
+   * copy of it for each street of neighbors, each of its houses a lot (in the order they are listed),
+   * whose door leads into its owner's own cabin (the private home).
+   */
+  street?: true;
   /** The wilds only: skulkers, creatures that lie in the ferns and chase whoever they hear or see. */
   skulkers?: SkulkerRule;
+  /**
+   * The wilds only: how the forest grows. 'old': old growth, as deep in as the Far Woods, the firs older
+   * and taller with cedars among them, the ferns deep and the light under them dimmer. Left out: the
+   * younger woods nearer town.
+   */
+  forest?: 'old';
   /**
    * Outdoors only: the water that freezes in winter (sky.ts, SEASONS: `frozen`), each by what people call
    * it and its tiles as [x, y]: while it is frozen it is ice, walked on like ground (TileMap.freeze). The
@@ -253,10 +303,24 @@ export interface FrozenWater {
   tiles: Array<[number, number]>;
 }
 
-/** How many watchers roam a region at once, and how far from home (in steps) they wake up. */
+/** A watcher takes a step this often, unless its region's rule says otherwise (WatcherRule.stepMs); players are faster. */
+export const WATCHER_STEP_MS = 520;
+/** ...and this often on aurora nights: watchers are restless then, everywhere by the same share (watcherStepMs). */
+export const AURORA_WATCHER_STEP_MS = 400;
+/** A skulker takes a step this often, unless its region's rule says otherwise: a quarter slower than a walking player, so moving away in time escapes it. */
+export const SKULKER_STEP_MS = 250;
+/**
+ * No creature is ever as quick as you: its pace (a step every so many ms, a watcher's on an aurora night
+ * too) is at least a tenth slower than a walking player's. Moving away in time escapes any of them.
+ */
+export const CREATURE_STEP_MIN_MS = Math.round(STEP_MS * 1.1);
+
+/** How many watchers roam a region at once, how far from home (in steps) they wake up, and how fast they are there. */
 export interface WatcherRule {
   count: number;
   steps: [number, number];
+  /** A step every this many ms (WATCHER_STEP_MS when left out): deeper regions keep quicker ones. */
+  stepMs?: number;
 }
 
 /**
@@ -267,6 +331,19 @@ export interface SkulkerRule {
   count: number;
   steps: [number, number];
   when: Array<'night' | 'storm'>;
+  /** A step every this many ms while it chases (SKULKER_STEP_MS when left out): deeper regions keep quicker ones. */
+  stepMs?: number;
+}
+
+/** How often a region's watchers step: its rule's pace, quicker on an aurora night by the share every watcher is. */
+export function watcherStepMs(rule: WatcherRule | undefined, aurora: boolean): number {
+  const pace = rule?.stepMs ?? WATCHER_STEP_MS;
+  return aurora ? Math.round((pace * AURORA_WATCHER_STEP_MS) / WATCHER_STEP_MS) : pace;
+}
+
+/** How often a region's skulkers step while they chase. */
+export function skulkerStepMs(rule: SkulkerRule | undefined): number {
+  return rule?.stepMs ?? SKULKER_STEP_MS;
 }
 
 /** Where an exit tile leads: the map, the tile you arrive on and your facing. */
@@ -283,9 +360,23 @@ const BLOCKING = new Set<MapObject['kind']>([
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
   'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache',
+  'ruin', 'yarder', 'spool', 'traps',
 ]);
-/** Objects that are only drawn: you walk over or through them. */
-export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust']);
+/**
+ * Objects that are only drawn: you walk over or through them. A note is drawn on what it lies on,
+ * which blocks the way itself.
+ */
+export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'bridge', 'note']);
+
+/** Does this object stop anyone from walking onto its tiles? A comfort place does, but for the rug. */
+export function blocks(o: MapObject): boolean {
+  return o.kind === 'comfort' ? !underfootComfort(o.what) : BLOCKING.has(o.kind);
+}
+
+/** Is this object only drawn, walked over or through (DECOR, and the rug of a comfort place)? */
+export function underfoot(o: MapObject): boolean {
+  return o.kind === 'comfort' ? underfootComfort(o.what) : DECOR.has(o.kind);
+}
 /**
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
@@ -295,11 +386,13 @@ export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'ches
 /** How many tiles an object covers, across and down: houses, vehicles, log decks, beds, rugs and a few more are bigger than one. */
 export function footprint(o: MapObject): [number, number] {
   switch (o.kind) {
-    case 'house': case 'rug': case 'truck': case 'jeep': case 'logs': return [o.w, o.h];
+    case 'house': case 'rug': case 'truck': case 'jeep': case 'logs': case 'ruin': return [o.w, o.h];
     case 'car': return [o.w, o.h ?? 1];
     case 'carriage': return [o.w, 1];
     case 'bed': return [1, 2];
     case 'piano': return [2, 1];
+    case 'yarder': return [2, 2];
+    case 'comfort': return comfortSize(o.what);
     default: return [1, 1];
   }
 }
@@ -321,6 +414,12 @@ export function objectTiles(o: MapObject): Array<[number, number]> {
  */
 export function hidden(map: TileMap, x: number, y: number): boolean {
   return map.kind(x, y) === 'tallgrass';
+}
+
+/** The doors of a street's lots (MapData.street), lot by lot: its houses' doors, in the order the map lists them. None on any other map. */
+export function lotDoors(data: MapData): Array<{ x: number; y: number }> {
+  if (!data.street) return [];
+  return data.objects.flatMap(o => (o.kind === 'house' ? [doorOf(o)] : []));
 }
 
 /**
@@ -374,7 +473,7 @@ export class TileMap {
         this.levels[y * W + x] = Number(lv[x] ?? '0') || 0;
       }
     }
-    for (const o of data.objects) if (BLOCKING.has(o.kind)) for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.blocked[y * W + x] = 1;
+    for (const o of data.objects) if (blocks(o)) for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.blocked[y * W + x] = 1;
     // Every house can be entered: its door tile stays open (it is an exit to the house's inside).
     for (const o of data.objects) {
       if (o.kind !== 'house') continue;

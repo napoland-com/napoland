@@ -223,6 +223,39 @@ describe('the lodge\'s fire', () => {
     expect(lodgeFire(world(BEFORE, { longNight: { ...fed, outAt: NIGHT + 10 * DAY_MS }, now: BEGIN }), BEGIN).left).toBe(FIRE_MAX_S);
   });
 
+  it('is one fire in every copy of the lodge a crowded town opens: the same fuel, fed in any, out in all', () => {
+    // A town of one at a time (crowded copies): b and c are in copies of their own, and so is the lodge they walk into.
+    const w = new World(maps(), 'town', 'overcast', { items: ITEMS, epochOffset: BEFORE, rng: () => 0.5, crowd: { town: 1 } });
+    for (const id of ['a', 'b']) w.join(rec(id, 'town', 7, 3, 'up', { bag: [{ item: 'resin', count: 5 }] }), 0);
+    for (const id of ['a', 'b']) {
+      w.step(id, 'up', 1, 1000);
+      w.step(id, 'up', 2, 2000);
+    }
+    expect([w.zoneOf('a'), w.zoneOf('b')]).toEqual(['house', 'house:2']);
+    w.tick(BEGIN);
+    const left = (key: string, now: number) => w.scene(key, now).fires[0]!.left;
+    expect([left('house', BEGIN), left('house:2', BEGIN)]).toEqual([LODGE_FUEL_S, LODGE_FUEL_S]);
+    w.drain();
+    // Fed in the second copy, it burns as long in the first, and both rooms see it.
+    w.feed('b', 2, 1, 0, BEGIN + 1000, 2);
+    expect(left('house', BEGIN + 1000)).toBe(LODGE_FUEL_S - 1 + 600);
+    expect(onMap(w.drain(), 'house')).toContainEqual({ t: 'fire', fire: { x: 2, y: 1, left: LODGE_FUEL_S - 1 + 600 } });
+    // A copy that opens later in the night has it as it burns.
+    w.join(rec('c', 'town', 7, 3, 'up'), BEGIN + 2000);
+    w.step('c', 'up', 1, BEGIN + 2000);
+    expect(w.zoneOf('c')).toBe('house:3');
+    expect(left('house:3', BEGIN + 2000)).toBe(LODGE_FUEL_S - 2 + 600);
+    // Out in all at once, heard once.
+    const out = BEGIN + 1000 + (LODGE_FUEL_S - 1 + 600) * 1000;
+    w.drain();
+    w.tick(out);
+    expect(of(to(w.drain(), 'a'), 'longNight')).toEqual([{ t: 'longNight', night: { on: true, bonus: true, out: true } }]);
+    expect([left('house', out), left('house:2', out), left('house:3', out)]).toEqual([0, 0, 0]);
+    // Dawn tends it in every copy.
+    w.tick(DAWN);
+    expect([left('house', DAWN), left('house:2', DAWN), left('house:3', DAWN)]).toEqual([null, null, null]);
+  });
+
   it('reads back only a Long Night the server wrote', () => {
     const good: LongNightRecord = { week: WEEK, bonus: true, outAt: NIGHT, out: false, over: false };
     expect(cleanLongNight(good)).toEqual(good);

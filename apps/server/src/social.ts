@@ -9,12 +9,15 @@
  * - Messages go between friends only, and are kept until read: reading them deletes them.
  * - Blocking someone ends a friendship and any request either way, and keeps them from asking again.
  * - A report is kept for the maintainers, with what was written as the reporter quoted it.
+ * - Two settings, kept with the player: one turns friend requests off, the other trade requests from
+ *   friends (trade.ts asks it). Ending a friendship ends a trade between them too.
  * - On a server with sign-in, all of it needs a real person behind it: a guest is refused every
  *   action (sign_in_first; a report needs a reporter who answers for it), and nobody can ask a guest
  *   to be friends. A guest can still be blocked and reported.
  *
  * Whoever a change touches hears their friends list again (if online); the list says which friends
- * are online, and on which map.
+ * are online, and on which map. Who each player online is friends with is kept at hand too, for the
+ * World (a friend's street is one they may move their cabin to).
  */
 import type { PersonView, Refusal, RefusedAction, ReportReason, ServerMsg } from '@napoland/shared';
 import { RollingLimit } from './limits';
@@ -38,6 +41,7 @@ export type SocialMsg =
   | { t: 'block'; id: string; on: boolean }
   | { t: 'report'; id: string; reason: ReportReason; quote?: string }
   | { t: 'requests'; off: boolean }
+  | { t: 'tradeRequests'; off: boolean }
   | { t: 'friends' };
 
 export interface SocialOptions {
@@ -52,15 +56,21 @@ export interface SocialOptions {
   guests?: boolean;
   /** Whether a player online plays as a guest: nothing among friends is sent to them. */
   isGuest?: (id: string) => boolean;
+  /** Two players are friends no more (unfriended, or one blocked the other): a trade between them is off (trade.ts). */
+  unlinked?: (a: string, b: string) => void;
 }
 
 const has = (links: LinkRecord[], from: string, to: string, kind: LinkRecord['kind']) => links.some(l => l.from === from && l.to === to && l.kind === kind);
+/** Nobody: the friends of someone the World asks about who is not online (it asks about everyone online as a player arrives somewhere). */
+const NOBODY: ReadonlySet<string> = new Set();
 
 export class Social {
   private readonly tellLimit: RollingLimit;
   private readonly reportLimit: RollingLimit;
   /** Who each player online blocks, kept at hand: chat asks it for every message (chat.ts). */
   private readonly blocking = new Map<string, Set<string>>();
+  /** Who each player online is friends with, kept at hand the same way. */
+  private readonly befriended = new Map<string, Set<string>>();
 
   constructor(private readonly o: SocialOptions) {
     this.tellLimit = new RollingLimit(TELLS_PER_MINUTE, 60_000, o.clock);
@@ -72,9 +82,15 @@ export class Social {
     return this.blocking.get(id) ?? new Set();
   }
 
+  /** Who `id` is friends with, while they are online (nobody before joined() has run, and nobody for a guest). */
+  friends(id: string): ReadonlySet<string> {
+    return this.befriended.get(id) ?? NOBODY;
+  }
+
   /** A player left: nothing of theirs is kept at hand. */
   left(id: string): void {
     this.blocking.delete(id);
+    this.befriended.delete(id);
   }
 
   /**
@@ -101,6 +117,9 @@ export class Social {
         return this.list(me);
       case 'requests':
         await s.setRequestsOff(me, msg.off);
+        return this.list(me);
+      case 'tradeRequests':
+        await s.setTradesOff(me, msg.off);
         return this.list(me);
       case 'befriend':
         return this.befriend(me, msg);
@@ -187,12 +206,13 @@ export class Social {
     await this.o.storage.setLink(b, a, 'friend', true);
   }
 
-  /** Ends a friendship and any request, either way. */
+  /** Ends a friendship and any request, either way, and a trade between them. */
   private async unlink(a: string, b: string): Promise<void> {
     for (const [x, y] of [[a, b], [b, a]] as const) {
       await this.o.storage.setLink(x, y, 'friend', false);
       await this.o.storage.setLink(x, y, 'request', false);
     }
+    this.o.unlinked?.(a, b);
   }
 
   private refuse(me: string, action: RefusedAction, reason: Refusal): void {
@@ -211,8 +231,9 @@ export class Social {
     const s = this.o.storage;
     const [links, me] = [await s.linksOf(id), await s.findPerson({ id })];
     const out = (kind: LinkRecord['kind']): PersonView[] => links.filter(l => l.from === id && l.kind === kind).map(l => ({ id: l.to, name: l.toName }));
-    // The list is read whole here anyway: the blocks at hand follow it.
+    // The list is read whole here anyway: the blocks and friends at hand follow it.
     this.blocking.set(id, new Set(out('block').map(p => p.id)));
+    this.befriended.set(id, new Set(out('friend').map(p => p.id)));
     this.o.send(id, {
       t: 'friends',
       friends: out('friend').map(p => ({ ...p, map: this.o.where(p.id) ?? null })),
@@ -220,6 +241,7 @@ export class Social {
       outgoing: out('request'),
       blocked: out('block'),
       requestsOff: me?.requestsOff ?? false,
+      tradesOff: me?.tradesOff ?? false,
     });
   }
 }

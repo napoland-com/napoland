@@ -9,8 +9,8 @@
  * furniture never move, so world.ts bakes them with the other props.
  */
 import * as THREE from 'three';
-import { doorOf, type Dir, type MapData, type MapObject, type TileMap } from '@napoland/shared';
-import { curtainColor, curtainPanels } from './left';
+import { NOTE_ON, doorOf, objectTiles, type Dir, type MapData, type MapObject, type TileMap } from '@napoland/shared';
+import { curtainColor, curtainPanels, luggageTop, vehiclePlace } from './left';
 import { box, flat, hash2, part, pivot, toon } from './toon';
 
 /** Height of a wall that stands (the back and side walls), and of one cut down to a baseboard (the front). */
@@ -61,13 +61,14 @@ export function hasFire(data: MapData | undefined): boolean {
 /**
  * Where windows go: in standing back walls with room in front, between two other wall tiles, and not
  * over a fireplace or a cold hearth (its chimney is there), a shelf, a workbench (the board its tools
- * hang on) or a tall clock, nor where a calendar or a drawing hangs. One in a narrow room; two in a wide
- * one, a quarter of the way in from each side.
+ * hang on), a trapper's pegs, a tall clock, a stove's pipe or the trophy shelf, nor where a calendar or a
+ * drawing hangs. One in a narrow room; two in a wide one, a quarter of the way in from each side.
  */
 export function windowSpots(map: TileMap, shapes: readonly WallShape[]): Array<{ x: number; y: number }> {
   const W = map.width, busy = new Set<string>();
   for (const f of [...objectsOf(map.data, 'fireplace'), ...objectsOf(map.data, 'hearth')]) for (const dx of [-1, 0, 1]) busy.add(`${f.x + dx},${f.y}`);
-  for (const s of [...objectsOf(map.data, 'shelf'), ...objectsOf(map.data, 'workbench'), ...objectsOf(map.data, 'clock')]) busy.add(`${s.x},${s.y}`);
+  for (const s of [...objectsOf(map.data, 'shelf'), ...objectsOf(map.data, 'workbench'), ...objectsOf(map.data, 'clock'), ...objectsOf(map.data, 'traps')]) busy.add(`${s.x},${s.y}`);
+  for (const c of objectsOf(map.data, 'comfort')) if (c.what === 'stove' || c.what === 'shelf') busy.add(`${c.x},${c.y}`);
   // A paper on the wall stands on the wall tile itself: the floor it is read from is below it.
   for (const p of objectsOf(map.data, 'paper')) if (map.kind(p.x, p.y) === 'wall') busy.add(`${p.x},${p.y + 1}`);
   const tall = (x: number, y: number) => map.inside(x, y) && shapes[y * W + x] === 'tall';
@@ -328,7 +329,7 @@ const NAPO_INK = '#1a1b1c';
 const CHALK = '#e8e3d3';
 
 /** Which way a shelf's back goes: against a wall north, west or east of it (north if none). */
-function againstWall(map: TileMap, x: number, y: number): number {
+export function againstWall(map: TileMap, x: number, y: number): number {
   if (map.kind(x, y - 1) === 'wall') return 0;
   if (map.kind(x - 1, y) === 'wall') return Math.PI / 2;
   if (map.kind(x + 1, y) === 'wall') return -Math.PI / 2;
@@ -348,8 +349,8 @@ function log(g: THREE.Object3D, r: number, len: number, bark: string, x: number,
 /**
  * Low-poly furniture with toon outlines, placed on its tiles: a bed (head north), a table with a mug
  * and a book, a shelf of books and jars (its back to the nearest wall), a crate (sometimes two), a
- * crate for whoever comes next (indoors and out), a rug, one of NAPO's desks (its back to the wall too)
- * and a woodpile (along its wall). Colors vary by position, the same on every visit. Null for anything else.
+ * crate for whoever comes next (indoors and out), a rug, one of NAPO's desks (its back to the wall too),
+ * a trapper's pegs of traps and snowshoes (on the wall) and a woodpile (along its wall). Colors vary by position, the same on every visit. Null for anything else.
  */
 export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | null {
   const v = hash2(o.x * 3 + 1, o.y * 5 + 2);
@@ -582,6 +583,28 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
       g.add(box(0.2, 0.01, 0.26, '#e6dfcc', 0.12, 0.655, -0.02, false).rotateY(0.25 - v * 0.5));
       return g;
     }
+    case 'traps': {
+      // A trapper's things on their pegs against the wall: steel traps hung by their chains, a coil of
+      // snare wire, and a pair of snowshoes leaning under them.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = againstWall(map, o.x, o.y);
+      g.add(box(0.9, 0.12, 0.05, '#4a3223', 0, 1.3, -0.44, 0.012));
+      for (const x of [-0.3, 0, 0.3]) g.add(box(0.03, 0.03, 0.1, '#3a2a1c', x, 1.3, -0.4, false));
+      for (const [x, y] of [[-0.3, 0.98], [0.3, 0.92]] as const) {
+        // The chain from the top of the jaws up to its peg.
+        g.add(box(0.012, 1.18 - y, 0.012, '#5a5d60', x, (1.28 + y + 0.1) / 2, -0.4, false));
+        g.add(part(new THREE.TorusGeometry(0.1, 0.016, 4, 10), '#6b6f73', x, y, -0.38, false));
+        g.add(box(0.26, 0.03, 0.03, '#44474a', x, y - 0.11, -0.38, false));
+      }
+      g.add(part(new THREE.TorusGeometry(0.075, 0.012, 4, 12), '#b08a58', 0, 1.12, -0.39, false));
+      for (const x of [-0.13, 0.13]) {
+        const shoe = part(new THREE.TorusGeometry(0.11, 0.02, 4, 12), '#8a6a44', x, 0.36, -0.34, false);
+        shoe.scale.set(1, 2.3, 1);
+        shoe.rotation.x = -0.22;
+        g.add(shoe, box(0.012, 0.42, 0.012, '#c9b48a', x, 0.36, -0.34, false));
+      }
+      return g;
+    }
     case 'woodpile': {
       // Split firewood stacked along the wall on two sleepers, one log short on top (it went on the
       // fire), and a chopping block in front with the hatchet left in it.
@@ -617,7 +640,7 @@ export function furnitureModel(o: MapObject, map: TileMap): THREE.Object3D | nul
 }
 
 /** A table on tile x,y: its top and legs, nothing on it yet. */
-function tableModel(x: number, y: number): THREE.Group {
+export function tableModel(x: number, y: number): THREE.Group {
   const g = pivot(x + 0.5, 0, y + 0.5);
   g.add(box(0.86, 0.07, 0.72, '#6b4a31', 0, 0.57, 0));
   for (const [lx, lz] of [[-0.36, -0.29], [0.36, -0.29], [-0.36, 0.29], [0.36, 0.29]] as const) g.add(box(0.07, 0.54, 0.07, '#4a3223', lx, 0.27, lz, false));
@@ -664,6 +687,100 @@ function paperModel(o: Extract<MapObject, { kind: 'paper' }>, v: number): THREE.
   return g;
 }
 
+/** A handwritten sheet, lying flat (or, `upright`, facing south): pale paper and a few pencil lines. */
+function sheet(w: number, d: number, v: number, upright = false): THREE.Group {
+  const s = new THREE.Group();
+  s.add(box(w, 0.006, d, '#ece6d4', 0, 0, 0, 0.005));
+  for (let k = 0; k < 3; k++) s.add(box(w * (0.7 - (k === 2 ? 0.25 : 0)), 0.004, 0.01, '#5e5e6c', -w * 0.05, 0.004, -d * 0.25 + k * d * 0.25, false));
+  s.rotation.y = (v - 0.5) * 0.6;
+  if (upright) s.rotation.set(Math.PI / 2, 0, (v - 0.5) * 0.2);
+  return s;
+}
+
+/**
+ * A note someone left (notes.ts), drawn on what it lies on, where the camera sees it: on a table, a
+ * shelf's top board, a crate's lid, a bed (tucked under a pillow), the suitcases; nailed to a pole, on its
+ * south side at chest height; in a car, under the back wiper, or, on its front half, in the glove box
+ * behind the passenger door, left open. Null when nothing it may lie on is there.
+ */
+export function noteModel(o: Extract<MapObject, { kind: 'note' }>, map: TileMap): THREE.Object3D | null {
+  const under = map.data.objects.find(u => (NOTE_ON as readonly string[]).includes(u.kind) && objectTiles(u).some(([x, y]) => x === o.x && y === o.y));
+  if (!under) return null;
+  const v = hash2(o.x * 7 + 3, o.y * 11 + 5), uv = hash2(under.x * 3 + 1, under.y * 5 + 2);
+  switch (under.kind) {
+    case 'table': {
+      const g = pivot(o.x + 0.5, 0.609, o.y + 0.5);
+      g.add(sheet(0.22, 0.16, v));
+      return g;
+    }
+    case 'shelf': {
+      // On the top board, its edge over the front, where a hand leaves a note on its way out.
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = againstWall(map, o.x, o.y);
+      const s = sheet(0.2, 0.14, v);
+      s.position.set(-0.12, 1.325, -0.16);
+      g.add(s);
+      return g;
+    }
+    case 'crate': {
+      // On the lid of the crate, or of the smaller one stacked on it (furnitureModel's dice).
+      const g = pivot(o.x + 0.5, uv > 0.55 ? 0.94 : 0.561, o.y + 0.5);
+      g.rotation.y = (uv - 0.5) * 0.5 + (uv > 0.55 ? (uv - 0.75) * 1.4 : 0);
+      g.add(sheet(0.18, 0.14, v));
+      return g;
+    }
+    case 'bed': {
+      // A pillow at the head of the bed (north), and the corner of a note out from under it.
+      const g = pivot(o.x + 0.5, 0, under.y + 1);
+      g.add(box(0.5, 0.09, 0.24, '#ece5d4', 0, 0.425, -0.66, 0.012));
+      const s = sheet(0.16, 0.12, v);
+      s.position.set(0.12, 0.386, -0.5);
+      g.add(s);
+      return g;
+    }
+    case 'luggage': {
+      const g = pivot(o.x + 0.5, 0, o.y + 0.5);
+      g.rotation.y = (uv - 0.5) * 0.8;
+      const s = sheet(0.18, 0.13, v);
+      const top = luggageTop(uv);
+      s.position.set(top.x, top.y + 0.004, top.z);
+      g.add(s);
+      return g;
+    }
+    case 'pole': {
+      // Nailed on the side you come up to, at chest height, a nail at the top.
+      const g = pivot(o.x + 0.5, 1.02, o.y + 0.5 + 0.08);
+      g.add(sheet(0.16, 0.2, v, true), box(0.018, 0.018, 0.02, '#3a3a3c', 0, 0.085, 0.006, false));
+      return g;
+    }
+    case 'car': case 'truck': {
+      // The car's own frame: its nose toward local +z. Its front half is the tile its nose points to.
+      const at = vehiclePlace(under), g = pivot(at.x, 0, at.z);
+      g.rotation.y = at.turn;
+      const long = Math.max(under.w, under.h ?? 1), front = objectTiles(under).at(under.dir === 'up' || under.dir === 'left' ? 0 : -1)!;
+      if (long > 1 && front[0] === o.x && front[1] === o.y) {
+        // In the glove box: the passenger door (right of the nose, -x) left open, the dark inside, the paper on the seat.
+        g.add(box(0.012, 0.36, 0.5, '#101418', -0.452, 0.55, 0.07, false));
+        const hinge = pivot(-0.46, 0, 0.33);
+        hinge.rotation.y = 0.7;
+        hinge.add(box(0.05, 0.4, 0.53, '#6b4a2e', -0.025, 0.41, -0.265, 0.015));
+        g.add(hinge);
+        const s = sheet(0.14, 0.1, v);
+        s.position.set(-0.47, 0.5, 0.12);
+        g.add(s);
+      } else {
+        // Under the back wiper, on the rear window.
+        const s = sheet(0.2, 0.14, v);
+        s.position.set(0.12, 0.8, -0.78);
+        s.rotation.x = -0.6;
+        g.add(s, box(0.36, 0.015, 0.015, '#18181b', 0.05, 0.815, -0.79, false));
+      }
+      return g;
+    }
+    default: return null;
+  }
+}
+
 /** Soft dark ellipses under furniture (and a fireplace), so it stands on the floor: [x, z, radius x, radius z]. */
 export function furnitureShadows(map: TileMap): Array<[number, number, number, number]> {
   const out: Array<[number, number, number, number]> = [], inside = map.data.kind === 'inside';
@@ -675,7 +792,7 @@ export function furnitureShadows(map: TileMap): Array<[number, number, number, n
     else if (o.kind === 'chest') out.push([o.x + 0.5, o.y + 0.46, 0.46, 0.32]);
     else if (o.kind === 'workbench') out.push([o.x + 0.5, o.y + 0.42, 0.52, 0.36]);
     else if (o.kind === 'console' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.36, 0.52, 0.32]);
-    else if (o.kind === 'shelf' && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.28, 0.52, 0.26]);
+    else if ((o.kind === 'shelf' || o.kind === 'traps') && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.28, 0.52, 0.26]);
     else if (o.kind === 'paper' && map.kind(o.x, o.y) !== 'wall') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.44]);
     else if (o.kind === 'sheeted' || o.kind === 'crib') out.push([o.x + 0.5, o.y + 0.5, 0.46, 0.4]);
     else if (o.kind === 'clock' || o.kind === 'saw') out.push([o.x + 0.5, o.y + 0.25, 0.36, 0.26]);

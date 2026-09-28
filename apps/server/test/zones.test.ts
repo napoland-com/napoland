@@ -2,9 +2,10 @@
  * Zones: the copies of a map. Each map's main copy is the world everyone shares; any other copy is a
  * zone of its own, with its own players (who hears whom), finds, piles, marks, fires, creatures, flares
  * and flashes, while the sky, the surge and storm clocks and the day's conditions stay the map's, and
- * the Old Stone the world's. Which copy an exit leads into is decided in one place (World.copyFor), and
- * nothing in the game asks for another copy yet, so these tests give the World a plan of their own
- * (Copies). World rules first, then over real WebSockets.
+ * the Old Stone the world's. Which copy an exit leads into is decided in one place (World.copyFor): so
+ * that each copy can be tried here without a crowd to open it, these tests give the World a plan of their
+ * own (Copies). The crowds that open copies in the game are crowds.test.ts's. World rules first, then over
+ * real WebSockets.
  *
  * The fixture town (fixtures.ts) has a second way out here, at 0,0, up into a field of the wilds that
  * arrives on 4,10; the field's way home at 4,11 leads back to the town's 0,1, where the players start.
@@ -113,7 +114,7 @@ const noEnergy = (out: Outgoing[]) => out.filter(o => o.msg.t !== 'energy');
 const MAIN = ['town', 'field', 'house', 'woods'];
 
 describe('copies of a map', () => {
-  it('lead nowhere yet: every exit goes into the main copy, the world everyone shares', () => {
+  it('are not there while nobody crowds a place: every exit goes into the main copy, the world everyone shares', () => {
     const w = new World(maps(), 'town', 'overcast', { items: ITEMS });
     w.join(rec('a'), 0);
     walk(w, 'a', ['up', 'up', 'down'], 1000);
@@ -408,7 +409,7 @@ describe('copies of a map', () => {
     expect(left(out)).toBe(FIRE_MAX_S / 2);
   });
 
-  it('take a player back into the copy they were in while someone is still in it, else into the main copy', () => {
+  it('take a player back into the copy they were in while someone is still in it, else wherever copyFor sends anyone coming in', () => {
     const w = world({}, {}, rec('a'), rec('b'));
     w.send('a', 'field', X).send('b', 'field', X);
     walk(w, 'a', ['up'], 1000);
@@ -421,7 +422,14 @@ describe('copies of a map', () => {
     const again = w.leave('a', 4000)!;
     w.leave('b', 4000);
     w.tick(5000);
+    // Closed: the plan is asked again. With another copy planned, that one; with none, the main copy.
+    w.send('a', 'field', Y);
     w.join(again, 6000);
+    expect(w.zoneOf('a')).toBe(FY);
+    const last = w.leave('a', 6500)!;
+    w.tick(6600);
+    w.send('a', 'field', '');
+    w.join(last, 6700);
     expect(w.zoneOf('a')).toBe('field');
     expect(w.get('a')!.zone).toBeUndefined();
     // A copy of a map that is gone means nothing either: home, to the main copy.

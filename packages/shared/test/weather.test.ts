@@ -4,6 +4,7 @@ import {
   weatherAt, type ItemsData, type MapData, type RainWindow,
 } from '../src';
 import itemsJson from '../../../content/items.json';
+import farWoods from '../../../content/maps/far-woods.json';
 import nearWoods from '../../../content/maps/near-woods.json';
 import southRoad from '../../../content/maps/south-road.json';
 import stonebrook from '../../../content/maps/stonebrook.json';
@@ -88,6 +89,17 @@ describe('rain, region by region (roadmap/regional-weather.md)', () => {
     // So from the Near Woods' first rain to the South Road's last, one of the two is always dry.
     for (let m = 12; m < 30; m += 0.5) {
       const both = [nearWoods, southRoad].map(map => weatherAt(at(m), rain(map)).weather);
+      expect(both, `${m} minutes after dawn`).toContain('overcast');
+    }
+  });
+
+  it('ships the Far Woods the wettest: two showers a day, and never while the Near Woods rain', () => {
+    const windows = rainOf((farWoods as MapData).rain, dayAt(at(0)));
+    const minutes = windows.reduce((n, [a, b]) => n + (b - a) / MIN, 0);
+    expect(windows.length).toBe(2);
+    expect(minutes).toBeGreaterThan(12);
+    for (let m = 0; m < 32; m += 0.5) {
+      const both = [nearWoods, farWoods].map(map => weatherAt(at(m), (map as MapData).rain).weather);
       expect(both, `${m} minutes after dawn`).toContain('overcast');
     }
   });

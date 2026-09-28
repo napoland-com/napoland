@@ -1,7 +1,7 @@
 {
   "id": "south-road",
   "name": "The South Road",
-  "version": 4,
+  "version": 5,
   "kind": "wilds",
   "depth": 1,
   "width": 72,
@@ -447,7 +447,10 @@
     {"kind":"cage","x":50,"y":66,"text":["NAPO · Sample 7 · deep in the Near Woods.","Keep caged. Log the hum at every pulse."]},
     {"kind":"cage","x":51,"y":66,"text":["NAPO · Sample 9 · the ring of stones, Near Woods.","Keep caged. Do not carry past the checkpoint."]},
     {"kind":"cage","x":52,"y":66,"text":["NAPO · Sample 12. No place written.","Keep caged."]},
-    {"kind":"cache","x":19,"y":19,"name":"the crate at the leavers' camp"}
+    {"kind":"cache","x":19,"y":19,"name":"the crate at the leavers' camp"},
+    {"kind":"note","x":38,"y":21,"id":"walt-jam","by":"walt","name":"Under the wiper","text":["Line hasn't moved since noon, and nobody up front says why. I'm walking back for my truck. W.P."]},
+    {"kind":"note","x":32,"y":30,"id":"barlow-cars","by":"barlows","name":"On the suitcases","text":["In the rain, white crayon shows on the wet paper:","ALL THE CARS ARE EMPTY. ONE HAS A DOG BLANKET AND NO DOG. I HOPE THE DOG WALKED TOO. W."],"when":"rain","faint":"The paper looks blank, and feels waxy. Wet, it might show something."},
+    {"kind":"note","x":46,"y":46,"id":"walt-napo-line","by":"walt","name":"Nailed to the pole","text":["Ninth and last pole of NAPO's line. NAPO tags none of its poles, so I counted. Glass insulators the size of your head. W.P."]}
   ],
   "rain": [{"from":1440,"length":360}],
   "places": [

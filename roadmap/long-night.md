@@ -2,7 +2,7 @@
 id: long-night
 title: The Long Night, once a week
 status: done
-order: 450
+order: 540
 area: world
 depends: [survival-dynamics]
 ---

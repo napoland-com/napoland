@@ -13,7 +13,7 @@ import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord, type Storage } from '../src/storage';
-import { colorFor } from '../src/world';
+import { World, colorFor } from '../src/world';
 import { chestMaps, fixtureMaps, itemsData } from './fixtures';
 
 export type Msg<T extends ServerMsg['t']> = Extract<ServerMsg, { t: T }>;
@@ -492,8 +492,10 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   await storage.addReport({ reporter: signed.id, reported: away.id, reason: 'spam', quote: null, at: now - 1000 });
   // Coming back counts: seen now, it stays.
   expect(await storage.seen(back.id, now)).toBe(true);
+  // Only a guest is seen so: someone signed in with is no guest (a guest's hello by token loses to the claim).
+  expect(await storage.seen(signed.id, now)).toBe(false);
 
-  expect(await storage.forgetGuests(cutoff)).toBe(1);
+  expect(await storage.forgetGuests(cutoff)).toEqual([away.id]);
   expect(await storage.findByTokenHash(hashToken(away.token))).toBeNull();
   expect(await storage.nameTaken(away.name)).toBe(false);
   expect((await storage.loadDrops(now - DROP_LIFETIME_MS)).map(d => d.owner)).not.toContain(away.id);
@@ -505,7 +507,7 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   expect(await storage.seen(away.id, now)).toBe(false);
   for (const stays of [lately, signed, back]) expect(await storage.findPerson({ id: stays.id }), stays.name).not.toBeNull();
   // Nobody else has stayed away that long.
-  expect(await storage.forgetGuests(cutoff)).toBe(0);
+  expect(await storage.forgetGuests(cutoff)).toEqual([]);
   // The day this server began to delete guests is kept from the first time it is asked.
   const began = await storage.guestsSince(now);
   expect(await storage.guestsSince(now + 86_400_000)).toBe(began);
@@ -538,6 +540,127 @@ export async function keepsParcels(storage: Storage): Promise<void> {
 }
 
 /**
+ * The field notes kept with a player, on `storage` (in memory, or a real database): none for a new player,
+ * what a save writes, and a save of a record without them (the release before, which never writes them)
+ * leaves them as they are, as a save without a chapter leaves the story.
+ */
+export async function keepsNotebook(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: sub });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect(rec.notebook).toBeUndefined();
+  const noted = { ...rec, notebook: { pages: ['glowcaps', 'pop-23'], blanks: [] }, lastSeenAt: rec.lastSeenAt + 1000 };
+  await storage.save(noted);
+  expect((await load()).notebook).toEqual({ pages: ['glowcaps', 'pop-23'], blanks: [] });
+  const { notebook: _left, ...without } = noted;
+  await storage.save(without);
+  expect((await load()).notebook).toEqual({ pages: ['glowcaps', 'pop-23'], blanks: [] });
+  await storage.save({ ...noted, notebook: { pages: ['glowcaps', 'pop-23', 'watchers'], blanks: ['watcher-stops'] } });
+  expect((await load()).notebook).toEqual({ pages: ['glowcaps', 'pop-23', 'watchers'], blanks: ['watcher-stops'] });
+  // Made with them too.
+  const other = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: other, notebook: { pages: ['moss'], blanks: [] } });
+  expect((await storage.findByAuthSub(other))!.notebook).toEqual({ pages: ['moss'], blanks: [] });
+}
+
+/**
+ * First finders on `storage` (in memory, or a real database): kept with the finder's name (it comes from
+ * the player), the oldest first; never written over by a later finder of the same secret; and gone with
+ * a guest who stayed away, as the database's foreign key takes them.
+ */
+export async function keepsFirsts(storage: Storage): Promise<void> {
+  const ana = await savedPlayer(storage, { lastSeenAt: 1_000 });
+  const bo = await savedPlayer(storage, { authSub: `dev:${randomUUID()}@example.test`, tokenHash: null });
+  const secret = `note:${randomUUID()}`, other = `keepsake:${randomUUID()}`;
+  await storage.saveFirst({ secret, player: ana.id, name: ana.name, day: 3052, at: 5_000 });
+  await storage.saveFirst({ secret, player: bo.id, name: bo.name, day: 3053, at: 6_000 });
+  await storage.saveFirst({ secret: other, player: bo.id, name: bo.name, day: 3050, at: 4_000 });
+  const mine = (await storage.loadFirsts()).filter(f => f.secret === secret || f.secret === other);
+  expect(mine).toEqual([
+    { secret: other, player: bo.id, name: bo.name, day: 3050, at: 4_000 },
+    { secret, player: ana.id, name: ana.name, day: 3052, at: 5_000 },
+  ]);
+  // A guest last seen long ago goes, and their first finds with them: the secret waits for a new first finder.
+  await storage.forgetGuests(2_000);
+  const left = (await storage.loadFirsts()).filter(f => f.secret === secret || f.secret === other);
+  expect(left.map(f => f.secret)).toEqual([other]);
+}
+
+/**
+ * The notes a player read and the keepsakes they brought home, on `storage` (in memory, or a real
+ * database): none for a new player, what a save writes, and a save of a record without them (the release
+ * before, which never writes them) leaves them as they are.
+ */
+export async function keepsNotes(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: sub });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect(rec.notes).toBeUndefined();
+  expect(rec.keepsakes).toBeUndefined();
+  const kept = { ...rec, notes: ['ranger-fires', 'walt-n8'], keepsakes: ['brass-compass'], lastSeenAt: rec.lastSeenAt + 1000 };
+  await storage.save(kept);
+  expect(await load()).toMatchObject({ notes: ['ranger-fires', 'walt-n8'], keepsakes: ['brass-compass'] });
+  const { notes: _notes, keepsakes: _keepsakes, ...without } = kept;
+  await storage.save(without);
+  expect(await load()).toMatchObject({ notes: ['ranger-fires', 'walt-n8'], keepsakes: ['brass-compass'] });
+  await storage.save({ ...kept, notes: [...kept.notes, 'barlow-oil'], keepsakes: [...kept.keepsakes, 'pole-tag'] });
+  expect(await load()).toMatchObject({ notes: ['ranger-fires', 'walt-n8', 'barlow-oil'], keepsakes: ['brass-compass', 'pole-tag'] });
+  // Made with them too.
+  const other = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: other, notes: ['walt-truck'], keepsakes: ['tin-whistle'] });
+  expect(await storage.findByAuthSub(other)).toMatchObject({ notes: ['walt-truck'], keepsakes: ['tin-whistle'] });
+}
+
+/**
+ * What a newer release saved that this one does not know, through the World and `storage` (in memory,
+ * or a real database), as after a rollback to this release: items it has no definition of (in the bag,
+ * in the stash with their pieces and in `out`) and counts it does not keep are never shown and never
+ * lost: the player plays without them, and every save writes them back as they were, so the newer
+ * release, back, finds them. `items` are this release's items (they know moss and nails, not a lantern).
+ */
+export async function keepsWhatANewerReleaseSaved(storage: Storage, items: ItemsData): Promise<void> {
+  const lantern = { item: 'lantern', count: 1, piece: { cond: 0.5, glow: 3 } };
+  const { id, token } = await savedPlayer(storage, {
+    map: 'town', x: 0, y: 5,
+    bag: [{ item: 'moss', count: 2 }, lantern as BagSlot, { item: 'nail', count: 1 }],
+    stats: { found: 4, sparks: 9, charted: { woods: true } } as never,
+    stash: { items: { moss: 1, lantern: 2 }, out: { lantern: 1 }, pieces: { lantern: [{ cond: 1, glow: 1 }, { cond: 0.2, glow: 2 }] } } as never,
+  });
+  const world = new World(fixtureMaps(), 'town', 'overcast', { items });
+  const joined = world.join((await storage.findByTokenHash(hashToken(token)))!, 0);
+  // Played without it: nothing of it is shown.
+  expect(joined.bag).toEqual([{ item: 'moss', count: 2 }, { item: 'nail', count: 1 }]);
+  expect(joined.stash).toEqual([{ item: 'moss', count: 1 }]);
+  // A save of the player as they play writes it all back, as it was.
+  await storage.save(world.get(id)!);
+  const back = (await storage.findByTokenHash(hashToken(token)))!;
+  expect(back.bag).toEqual([{ item: 'moss', count: 2 }, { item: 'nail', count: 1 }, lantern]);
+  expect(back.stats).toEqual({ found: 4, sparks: 9, charted: { woods: true } });
+  expect(back.stash).toEqual({ items: { moss: 1, lantern: 2 }, out: { lantern: 1 }, pieces: { lantern: [{ cond: 1, glow: 1 }, { cond: 0.2, glow: 2 }] } });
+}
+
+/**
+ * The mark that what a player wears was counted as taken out of the stash, once (PlayerRecord.wornOut), on
+ * `storage` (in memory, or a real database): kept with the counts but never among them, and never
+ * forgotten by a save of a record without it.
+ */
+export async function keepsTheWornOutMark(storage: Storage): Promise<void> {
+  const { token } = await savedPlayer(storage, { stats: { found: 2 } });
+  const load = async () => (await storage.findByTokenHash(hashToken(token)))!;
+  const rec = await load();
+  expect(rec.wornOut).toBeUndefined();
+  await storage.save({ ...rec, wornOut: true, lastSeenAt: rec.lastSeenAt + 1000 });
+  const marked = await load();
+  expect(marked.wornOut).toBe(true);
+  expect(marked.stats).toEqual({ found: 2 });
+  const { wornOut: _mark, ...without } = marked;
+  await storage.save({ ...without, lastSeenAt: marked.lastSeenAt + 1000 });
+  expect((await load()).wornOut).toBe(true);
+}
+
+/**
  * Tools, parcels and the outfit kept side by side in one player (on `storage`, in memory or a real
  * database): made with all three, saved with all three changed, and a save with none of them (a record
  * that never had them) loses none. Returns the player's identity and what was kept.
@@ -566,12 +689,14 @@ export async function keepsToolsParcelsAndOutfit(storage: Storage): Promise<{ su
 
 /**
  * One player whole, on `storage` (in memory, or a real database): made with everything a new character
- * can have (the tools, the parcels, the outfit and the thanks received among it), then saved whole,
- * every field comes back as it went (a carried piece and a live find in the bag, the counts, the stash
- * with its pieces, what is worn and how worn, the chapter). A save writes every field it carries but the
- * thanks received, which only creditThanks adds to (a save from an older copy of the player never undoes
- * one), and a save without tools, parcels or an outfit loses none of them. Returns the player's identity
- * and what was kept.
+ * can have (the tools, the parcels, the outfit, the furniture in their cabin, being cozy and the thanks
+ * received among it), then saved whole, every field comes back as it went (a carried piece and a live
+ * find in the bag, the counts, the stash with its pieces, what is worn and how worn, the chapter). A save
+ * writes every field it carries but the thanks received, which only creditThanks adds to (a save from an
+ * older copy of the player never undoes one), and a save without tools, parcels, an outfit or furniture
+ * loses none of them; every save says whether they are cozy, where their cabin stands and whether they keep
+ * their door to themselves, and the letter about their street stays read. Returns the player's identity and
+ * what was kept.
  */
 export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; kept: PlayerRecord }> {
   const sub = `dev:${randomUUID()}@example.test`, id = randomUUID();
@@ -581,7 +706,9 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
     stats: { rainSteps: 40, fed: 3, made: 1, collapsed: 2, surged: 1, told: 0b101, thanked: 7 },
     xp: 120, stash: { items: { moss: 9, coat: 1 }, out: { moss: 2 }, pieces: { coat: [{ cond: 1, level: 1 }] } },
     gear: { shirt: 'coat' }, worn: { shirt: { cond: 0.75, level: 2 } }, story: 'the-lineman', tools: ['stonebrook-map', 'radio'],
-    parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
+    parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', notebook: { pages: ['glowcaps', 'watchers'], blanks: [] }, furniture: ['iron-stove'], cozy: 1_700_000_300_000,
+    street: 2, lot: 7, doorOff: true,
+    createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   };
   expect(await storage.create(rec)).toBe(true);
   const load = async () => (await storage.findByAuthSub(sub))!;
@@ -591,20 +718,41 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
   expect(await load()).toEqual(rec);
   // Thanked meanwhile, by someone else: a save from the copy online before it leaves the count as it is.
   await storage.creditThanks(id);
+  // Later: their door shown again, and the letter about their street read.
+  const { doorOff: _door, ...shown } = rec;
   const later: PlayerRecord = {
-    ...rec, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
+    ...shown, streetTold: true, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
     stash: { items: { moss: 11, coat: 1 }, out: {}, pieces: { coat: [{ cond: 1, level: 1 }] } }, worn: { shirt: { cond: 1, level: 2 } }, tools: [...rec.tools!, 'near-woods-map'],
-    parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', lastSeenAt: rec.lastSeenAt + 1000,
+    parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', notebook: { pages: ['glowcaps', 'watchers'], blanks: ['watcher-stops'] }, furniture: ['iron-stove', 'bed'],
+    cozy: 1_700_000_400_000, street: 3, lot: 0, lastSeenAt: rec.lastSeenAt + 1000,
   };
   await storage.save(later);
   expect(await load()).toEqual({ ...later, stats: { ...later.stats, thanked: 8 } });
-  // A save that carries no tools, parcels or outfit (and no thanks received) keeps them all.
-  const { tools: _tools, parcels: _parcels, outfit: _outfit, ...none } = later;
+  // A save that carries no tools, parcels, outfit, field notes or furniture (and no thanks received) keeps them all.
+  const { tools: _tools, parcels: _parcels, outfit: _outfit, notebook: _notebook, furniture: _furniture, ...none } = later;
   const { thanked: _thanked, ...counts } = later.stats!;
   await storage.save({ ...none, stats: counts, lastSeenAt: later.lastSeenAt + 1000 });
   const kept = await load();
   expect(kept).toEqual({ ...later, stats: { ...later.stats, thanked: 8 }, lastSeenAt: later.lastSeenAt + 1000 });
-  return { sub, kept };
+  // Every save says whether they are cozy: one without it, and they are not.
+  const { cozy: _cozy, ...cold } = kept;
+  await storage.save({ ...cold, lastSeenAt: kept.lastSeenAt + 1000 });
+  expect((await load()).cozy).toBeUndefined();
+  // The letter about their street, once read, stays read, even by a save without it; the door's setting is said by every save.
+  const { streetTold: _told, ...untold } = kept;
+  await storage.save({ ...untold, doorOff: true, lastSeenAt: kept.lastSeenAt + 1200 });
+  expect(await load()).toMatchObject({ streetTold: true, doorOff: true });
+  expect((await storage.loadLots()).find(l => l.id === id)).toEqual({ id, name: rec.name, street: 3, lot: 0, off: true });
+  await storage.save({ ...kept, lastSeenAt: kept.lastSeenAt + 1300 });
+  expect((await load()).doorOff).toBeUndefined();
+  // And where their cabin stands, which everyone's lots are read from: one without it, and it stands on none.
+  expect(await storage.loadLots()).toContainEqual({ id, name: rec.name, street: 3, lot: 0 });
+  const { street: _street, lot: _lot, ...unhoused } = kept;
+  await storage.save({ ...unhoused, lastSeenAt: kept.lastSeenAt + 1500 });
+  expect(await load()).not.toHaveProperty('street');
+  expect((await storage.loadLots()).some(l => l.id === id)).toBe(false);
+  await storage.save({ ...kept, lastSeenAt: kept.lastSeenAt + 2000 });
+  return { sub, kept: await load() };
 }
 
 /**
@@ -713,13 +861,18 @@ export function setup(options: Partial<ServerOptions> | (() => Partial<ServerOpt
  */
 export async function keepsFriendsAndMessages(storage: Storage): Promise<void> {
   const a = await savedPlayer(storage), b = await savedPlayer(storage);
-  expect(await storage.findPerson({ name: a.name.toUpperCase() })).toEqual({ id: a.id, name: a.name, requestsOff: false, signedIn: false });
+  expect(await storage.findPerson({ name: a.name.toUpperCase() })).toEqual({ id: a.id, name: a.name, requestsOff: false, tradesOff: false, signedIn: false });
   expect(await storage.findPerson({ id: randomUUID() })).toBeNull();
   // Whether anyone signed in with them: a guest cannot be asked to be friends.
   const signed = await savedPlayer(storage, { tokenHash: null, authSub: `dev:${randomUUID()}@example.test` });
   expect((await storage.findPerson({ id: signed.id }))?.signedIn).toBe(true);
   await storage.setRequestsOff(b.id, true);
-  expect((await storage.findPerson({ id: b.id }))?.requestsOff).toBe(true);
+  expect((await storage.findPerson({ id: b.id }))).toMatchObject({ requestsOff: true, tradesOff: false });
+  // The two settings are apart: trade requests off leaves friend requests as they were.
+  await storage.setTradesOff(a.id, true);
+  expect((await storage.findPerson({ id: a.id }))).toMatchObject({ requestsOff: false, tradesOff: true });
+  await storage.setTradesOff(a.id, false);
+  expect((await storage.findPerson({ id: a.id }))?.tradesOff).toBe(false);
 
   await storage.setLink(a.id, b.id, 'request', true);
   await storage.setLink(a.id, b.id, 'request', true);
@@ -741,4 +894,21 @@ export async function keepsFriendsAndMessages(storage: Storage): Promise<void> {
   await storage.deleteTells(b.id, a.id);
   expect(await storage.tellsTo(b.id)).toEqual([]);
   await storage.addReport({ reporter: a.id, reported: b.id, reason: 'spam', quote: null, at: 1_700_000_002_000 });
+}
+
+/**
+ * Two players who traded, saved together (on `storage`, in memory or a real database): both bags and
+ * stashes as the swap left them, read back whole.
+ */
+export async function savesATradeTogether(storage: Storage): Promise<void> {
+  const whole = { wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } };
+  const [a, b] = [await savedPlayer(storage, { ...whole, bag: [{ item: 'nail', count: 3 }] }), await savedPlayer(storage, { ...whole, bag: [{ item: 'tea', count: 1 }] })];
+  const load = async (token: string) => (await storage.findByTokenHash(hashToken(token)))!;
+  const [ra, rb] = [await load(a.token), await load(b.token)];
+  const after = [
+    { ...ra, bag: [{ item: 'tea', count: 1 }], stash: { items: {}, out: { tea: 1 } }, lastSeenAt: ra.lastSeenAt + 1000 },
+    { ...rb, bag: [{ item: 'nail', count: 3 }], lastSeenAt: rb.lastSeenAt + 1000 },
+  ];
+  await storage.saveTogether(after);
+  expect([await load(a.token), await load(b.token)]).toEqual(after);
 }

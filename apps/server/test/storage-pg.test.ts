@@ -14,9 +14,11 @@ import { DROP_LIFETIME_MS, utcDay } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type CacheItemRecord, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
 import {
-  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsMerits, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsWholeRow, meritsKeptThroughARestart,
-  outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, signInAndClaim,
+  forgetsGuestsWhoStayedAway, keepsFirsts, keepsFriendsAndMessages, keepsMerits, keepsNotebook, keepsNotes, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsTheWornOutMark,
+  keepsWhatANewerReleaseSaved, keepsWholeRow, meritsKeptThroughARestart, outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn, restKeptThroughARestart,
+  restartKeepsBagsAndPiles, savesATradeTogether, signInAndClaim,
 } from './helpers';
+import { itemsData } from './fixtures';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -62,6 +64,7 @@ describe.skipIf(!url)('PgStorage', () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
       '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql', '016_caches.sql', '017_zones.sql', '018_rested.sql', '019_merits.sql',
+      '020_trades_off.sql', '021_notebook.sql', '022_notes.sql', '023_firsts.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -404,6 +407,14 @@ describe.skipIf(!url)('PgStorage', () => {
     expect((await storage.findByTokenHash(old.tokenHash))!.tools).toEqual(['radio']);
   });
 
+  it('keeps the mark of what was worn counted as taken out, with the counts but not among them, never lost to a save without it', async () => {
+    await keepsTheWornOutMark(storage);
+  });
+
+  it('keeps what a newer release saved that this one does not know, written back as it was saved', async () => {
+    await keepsWhatANewerReleaseSaved(storage, itemsData());
+  });
+
   it('keeps the daily parcels: whether the welcome came, the day of the last one and the days of its week, never lost to a save without them', async () => {
     await keepsParcels(storage);
     // What the columns hold, as the migration made them.
@@ -413,6 +424,63 @@ describe.skipIf(!url)('PgStorage', () => {
     const row = await admin.query(`SELECT parcel_welcome, parcel_day, parcel_days FROM ${schema}.players WHERE id = $1`, [rec.id]);
     expect(row.rows).toEqual([{ parcel_welcome: true, parcel_day: 20_724, parcel_days: 0b1011 }]);
     expect(await storage.findByAuthSub(sub)).toEqual(rec);
+  });
+
+  it('keeps the field notes: the pages opened and the blanks filled in, never lost to a save without them', async () => {
+    await keepsNotebook(storage);
+    // What the column holds, as the migration made it.
+    const rec = { ...player('Pg Notebook'), notebook: { pages: ['pop-23', 'glowcaps'], blanks: ['wire-green'] } };
+    expect(await storage.create(rec)).toBe(true);
+    const row = await admin.query(`SELECT notebook FROM ${schema}.players WHERE id = $1`, [rec.id]);
+    expect(row.rows).toEqual([{ notebook: { pages: ['pop-23', 'glowcaps'], blanks: ['wire-green'] } }]);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(rec);
+    // The release before saves without the column: after a rollback, the pages stay.
+    await admin.query(`UPDATE ${schema}.players SET map = $2, x = $3, y = $4, energy = $5, bag = $6::jsonb, stash = $7::jsonb, last_seen_at = $8 WHERE id = $1`, [
+      rec.id, 'stonebrook', 8, 21, 90, '[]', '{"items": {}, "out": {}}', new Date(rec.lastSeenAt),
+    ]);
+    expect((await storage.findByTokenHash(rec.tokenHash))!.notebook).toEqual({ pages: ['pop-23', 'glowcaps'], blanks: ['wire-green'] });
+    // A player from before it reads as nothing yet.
+    const old = player('Pg Before Notes');
+    await admin.query(
+      `INSERT INTO ${schema}.players (id, name, token_hash, x, y, dir, color, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [old.id, old.name, old.tokenHash, old.x, old.y, old.dir, old.color, new Date(old.createdAt), new Date(old.lastSeenAt)],
+    );
+    expect((await storage.findByTokenHash(old.tokenHash))!.notebook).toBeUndefined();
+  });
+
+  it('keeps the first finders, never written over, and lets a guest who stayed away take theirs', async () => {
+    await keepsFirsts(storage);
+    // What the table holds: the finder by id, and a name only through them.
+    const p = player('Pg First');
+    expect(await storage.create(p)).toBe(true);
+    await storage.saveFirst({ secret: 'note:pg-first', player: p.id, name: 'ignored', day: 3052, at: 7_000 });
+    const row = await admin.query(`SELECT secret, player, day FROM ${schema}.firsts WHERE secret = 'note:pg-first'`);
+    expect(row.rows).toEqual([{ secret: 'note:pg-first', player: p.id, day: 3052 }]);
+    expect((await storage.loadFirsts()).find(f => f.secret === 'note:pg-first')?.name).toBe(p.name);
+  });
+
+  it('keeps the notes read and the keepsakes home, never lost to a save without them', async () => {
+    await keepsNotes(storage);
+    // What the columns hold, as the migration made them.
+    const rec = { ...player('Pg Notes'), notes: ['walt-n8', 'ranger-fires'], keepsakes: ['pole-tag'] };
+    expect(await storage.create(rec)).toBe(true);
+    const row = await admin.query(`SELECT notes, keepsakes FROM ${schema}.players WHERE id = $1`, [rec.id]);
+    expect(row.rows).toEqual([{ notes: ['walt-n8', 'ranger-fires'], keepsakes: ['pole-tag'] }]);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(rec);
+    // The release before saves without the columns: after a rollback, they stay.
+    await admin.query(`UPDATE ${schema}.players SET map = $2, x = $3, y = $4, energy = $5, bag = $6::jsonb, stash = $7::jsonb, last_seen_at = $8 WHERE id = $1`, [
+      rec.id, 'stonebrook', 8, 21, 90, '[]', '{"items": {}, "out": {}}', new Date(rec.lastSeenAt),
+    ]);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toMatchObject({ notes: ['walt-n8', 'ranger-fires'], keepsakes: ['pole-tag'] });
+    // A player from before them reads as nothing yet.
+    const old = player('Pg Before Keepsakes');
+    await admin.query(
+      `INSERT INTO ${schema}.players (id, name, token_hash, x, y, dir, color, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [old.id, old.name, old.tokenHash, old.x, old.y, old.dir, old.color, new Date(old.createdAt), new Date(old.lastSeenAt)],
+    );
+    const before = (await storage.findByTokenHash(old.tokenHash))!;
+    expect(before.notes).toBeUndefined();
+    expect(before.keepsakes).toBeUndefined();
   });
 
   it('gives the parcels through restarts of the server, on the database', async () => {
@@ -446,17 +514,20 @@ describe.skipIf(!url)('PgStorage', () => {
     }
   });
 
-  it('keeps a whole player in one row: tools, parcels, the outfit and the thanks received together, every column round trips, and no save writes the thanks received', async () => {
+  it('keeps a whole player in one row: tools, parcels, the outfit, the field notes and the thanks received together, every column round trips, and no save writes the thanks received', async () => {
     const { sub, kept } = await keepsWholeRow(storage);
     const row = await admin.query(
-      `SELECT map, x, y, dir, energy, bag, wet, stats, xp, stash, gear, worn, story, tools, parcel_welcome, parcel_day, parcel_days, outfit, thanked FROM ${schema}.players WHERE auth_sub = $1`,
+      `SELECT map, x, y, dir, energy, bag, wet, stats, xp, stash, gear, worn, story, tools, parcel_welcome, parcel_day, parcel_days, outfit, thanked, notebook, furniture, cozy_until, street, lot,
+         door_off, street_told
+       FROM ${schema}.players WHERE auth_sub = $1`,
       [sub],
     );
     // The thanks received live in their own column, never among the counts a save writes.
     const { thanked: _thanked, ...counts } = kept.stats!;
     expect(row.rows).toEqual([{
       map: kept.map, x: kept.x, y: kept.y, dir: kept.dir, energy: kept.energy, bag: kept.bag, wet: kept.wet, stats: counts, xp: kept.xp, stash: kept.stash, gear: kept.gear,
-      worn: kept.worn, story: kept.story, tools: kept.tools, parcel_welcome: true, parcel_day: 20_725, parcel_days: 0b11, outfit: 'rain-cape', thanked: 8,
+      worn: kept.worn, story: kept.story, tools: kept.tools, parcel_welcome: true, parcel_day: 20_725, parcel_days: 0b11, outfit: 'rain-cape', thanked: 8, notebook: kept.notebook,
+      furniture: ['iron-stove', 'bed'], cozy_until: new Date(1_700_000_400_000), street: 3, lot: 0, door_off: false, street_told: true,
     }]);
   });
 
@@ -693,9 +764,20 @@ describe.skipIf(!url)('PgStorage', () => {
     expect(await storage.count()).toBe(before + 1);
   });
 
-  it('keeps friends, requests, blocks, unread messages, the requests setting and reports', async () => {
+  it('keeps friends, requests, blocks, unread messages, the requests settings and reports', async () => {
     await keepsFriendsAndMessages(storage);
     const r = await admin.query<{ reason: string; quote: string | null }>(`SELECT reason, quote FROM ${schema}.reports`);
     expect(r.rows).toEqual([{ reason: 'spam', quote: null }]);
+  });
+
+  it('saves two players who traded together, or neither of them', async () => {
+    await savesATradeTogether(storage);
+    const [a, b] = [player('Pg Giver'), player('Pg Taker')];
+    await storage.create(a);
+    await storage.create(b);
+    // The second write breaks a rule of the table: the first goes back with it, so no swap lands in one bag only.
+    const broken = { ...b, dir: 'sideways' } as unknown as PlayerRecord;
+    await expect(storage.saveTogether([{ ...a, bag: [{ item: 'resin', count: 9 }] }, broken])).rejects.toThrow();
+    expect((await storage.findByTokenHash(a.tokenHash))!.bag).toEqual([]);
   });
 });

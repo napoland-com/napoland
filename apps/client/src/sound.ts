@@ -239,6 +239,8 @@ export class Sound {
       // The radio switched on: its click, and the static sweeping as it finds the hum.
       case 'tune': this.click(now); return this.sweep(now + 0.03, 3200, 900, 0.4, 0.22);
       case 'click': return this.click(now);
+      // A lodestone's tug: two low, soft beats, the same in both ears, so it never says which way.
+      case 'tug': this.tone(now, 'sine', 110, 82, 0.34, 0.1); return this.tone(now + 0.17, 'sine', 98, 74, 0.3, 0.07);
     }
   }
 

@@ -24,7 +24,9 @@ export type Shot =
   | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'cry' | 'dawn' }
   | ({ kind: 'call' } & CallSound)
   /** The radio: the Tower's pulse (a burst of static), turned on (a click and a sweep of static) and off (a click). */
-  | { kind: 'pulse' | 'tune' | 'click' };
+  | { kind: 'pulse' | 'tune' | 'click' }
+  /** A lodestone tugs (lodestone.ts): a shard lies near, and it does not say where. */
+  | { kind: 'tug' };
 
 export interface Mix {
   /** How loud each loop should play, 0 to 1. */
@@ -123,6 +125,7 @@ export function soundscape(s: Scene, was?: Scene): Mix {
     if (n.kind === 'surge' && n.view.phase === 'unstable' && radioHears(s.radio, s.storm)) shots.push({ kind: 'pulse' });
     if (n.kind === 'storm' && n.view.phase === 'coming') shots.push({ kind: 'rise' });
     if (n.kind === 'conditions' && n.names.length) shots.push({ kind: 'dawn' });
+    if (n.kind === 'tug') shots.push({ kind: 'tug' });
     // A call, from the side it comes from and as faint as it is far (calls.ts): yours too, from the middle.
     if (n.kind === 'call' && me) shots.push({ kind: 'call', ...callSound(n.call, n.id, n.x - me.x, n.y - me.y) });
   }

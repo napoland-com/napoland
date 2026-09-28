@@ -12,10 +12,12 @@
  *   Above the email, the email card offers the providers the server lists (Google, Apple): the page
  *   leaves for the provider's own sign-in and a new one comes back signed in, which start() plays
  *   like any session kept here. In dev mode their buttons only say they need a Supabase project.
- * Signed in, the guest's token (or one kept from before sign-in) goes with the hello: its character
+ * Signed in by this page (a code it checked, the provider it left for, in dev mode an email typed
+ * here), the guest's token (or one kept from before sign-in) goes with the hello: its character
  * becomes yours if nobody has claimed it yet. An account that has a character already is asked which
  * to play first (the account card); the guest stays in this browser. Someone without a character is
- * asked for a name.
+ * asked for a name. A session this page did not sign in to (kept from before, or one it never asked
+ * for) never takes the guest unasked: without a character of its own, the keep card asks first.
  */
 import {
   AuthConfig, NAME_RE, PROTOCOL_VERSION, type AuthMode, type ClientMsg, type ErrorCode, type OAuthProvider, type ServerMsg,
@@ -122,7 +124,12 @@ export type Screen =
   /** With sign-in, the first card: a name to play at once as a guest, or sign in. `note`: why it is back, when it says. */
   | { kind: 'play'; error: string; note: string }
   /** Signed in to an account that has a character (`name`) while this browser plays a guest: play it, or keep the guest. */
-  | { kind: 'account'; name: string };
+  | { kind: 'account'; name: string }
+  /**
+   * Signed in (as `who`) to an account without a character, by a session this page did not sign in to,
+   * while this browser keeps a guest: keep the guest's character for that account, or play as the guest.
+   */
+  | { kind: 'keep'; who: string | null };
 
 export interface SignInOptions {
   config: AuthConfig;
@@ -175,6 +182,15 @@ export class SignIn {
   private switching = false;
   /** The provider this page is leaving for: if the browser brings the page back as it was (resumed), it did not get there. */
   private leaving: OAuthProvider | null = null;
+  /**
+   * This page signed in itself just now (a code it checked, the provider it left for and came back
+   * from, an email typed here in dev mode), or its player said to keep the guest: until the welcome,
+   * the hellos carry the guest's token, to keep its character. A session found here otherwise (kept
+   * from before, or one this page never asked for) never claims the guest unasked.
+   */
+  private claiming = false;
+  /** The provider this page left for, as the browser brings it back (resumed): what start() then goes by. */
+  private resumedFrom: OAuthProvider | null = null;
 
   constructor(private readonly o: SignInOptions) {}
 
@@ -198,7 +214,9 @@ export class SignIn {
     if (this.mode === 'legacy') return store.get(TOKEN_KEY) ? this.play() : this.askName();
     if (this.mode === 'dev') return this.tab.get(DEV_EMAIL_KEY) || this.guestToken ? this.play() : this.showPlay();
     // Read and forgotten at once: only the page that comes back from the provider may say how it went.
-    const leftFor = this.providerLeftFor();
+    // (A page the browser brought back as it left knows itself where it went, when a later page read the note first.)
+    const leftFor = this.providerLeftFor() ?? this.resumedFrom ?? undefined;
+    this.resumedFrom = null;
     let session: Session | null;
     try {
       session = await this.backend.session();
@@ -207,9 +225,11 @@ export class SignIn {
       return this.play();
     }
     // Back from Google or Apple signed in (supabase-js took the session from the address as the page
-    // started), or with a session kept from before: the hello brings the guest's token, as after a code.
+    // started): the hello brings the guest's token, as after a code. A session kept from before plays
+    // the account without it: the guest is only kept when this page signed in, or its player says so.
     if (session) {
       this.who = session.email;
+      this.claiming = leftFor !== undefined;
       return this.play();
     }
     // Back from one without a session: cancelled, refused, or its code could not be used. The card
@@ -258,8 +278,9 @@ export class SignIn {
       return null;
     }
     // The token claims its character (a guest, or made before sign-in) if nobody has yet; the server
-    // asks first if the account has a character already. Once set aside for that one, it stays out.
-    const claim = token && token !== this.keep.get(SET_ASIDE_KEY) ? token : undefined;
+    // asks first if the account has a character already. Once set aside for that one, it stays out, and
+    // it goes only with a sign-in this page made (or was told to keep the guest with): never unasked.
+    const claim = this.claiming && token && token !== this.keep.get(SET_ASIDE_KEY) ? token : undefined;
     return { ...base, auth, ...(claim && { token: claim }), ...(name && { name }) };
   }
 
@@ -279,6 +300,7 @@ export class SignIn {
       : this.switching ? { title: 'Signed in', sub: `Welcome back, ${msg.name}.\nYour guest character stays in this browser.` }
       : null;
     this.switching = false;
+    this.claiming = false;
     this.name = null;
     this.refreshed = false;
     this.o.store.del(CODE_SENT_KEY);
@@ -299,6 +321,8 @@ export class SignIn {
         return this.askName(message || 'That name cannot be used.');
       case 'need_name':
         this.o.disconnect();
+        // Signed in by a session this page did not make, with a guest kept here: ask before it is the account's.
+        if (!this.claiming && this.keptGuest) return this.show({ kind: 'keep', who: this.mode === 'dev' ? this.tab.get(DEV_EMAIL_KEY) : this.who });
         return this.askName();
       case 'sign_in_required':
         this.o.disconnect();
@@ -340,6 +364,7 @@ export class SignIn {
     this.o.disconnect();
     // A name tried on the play card was for a guest: an account without a character is asked for one.
     this.name = null;
+    this.claiming = false;
     const sent = this.codeSent();
     if (!sent) return this.askEmail('', this.email);
     this.email = sent.email;
@@ -378,6 +403,7 @@ export class SignIn {
    */
   async resumed(): Promise<void> {
     if (!this.leaving) return;
+    this.resumedFrom = this.leaving;
     this.leaving = null;
     return this.start();
   }
@@ -399,7 +425,14 @@ export class SignIn {
     this.play();
   }
 
-  /** The account card's way back: signed out of that account again (in this browser), the guest plays on. */
+  /** The keep card's "Keep it": the guest's character goes with the account signed in with (the claim). */
+  keepGuestCharacter(): void {
+    if (this.screen.kind !== 'keep') return;
+    this.claiming = true;
+    this.play();
+  }
+
+  /** The account card's way back, and the keep card's "Play as a guest instead": signed out of that account again (in this browser), the guest plays on. */
   async keepGuest(): Promise<void> {
     this.show({ kind: 'message', text: 'Connecting...' });
     await this.signOutHere();
@@ -412,6 +445,7 @@ export class SignIn {
     if (!EMAIL_RE.test(email) || email.length > 254) return this.askEmail('That does not look like an email address.', email);
     if (this.mode === 'dev') {
       this.tab.set(DEV_EMAIL_KEY, email.toLowerCase());
+      this.claiming = true;
       return this.play();
     }
     this.show({ kind: 'email', dev: false, email, error: '', busy: true, back: this.backLabel, providers: this.providers, providerError: '' });
@@ -435,6 +469,7 @@ export class SignIn {
       return this.askCode(problemText(err, 'verify'));
     }
     this.who = this.email;
+    this.claiming = true;
     this.o.store.del(CODE_SENT_KEY);
     this.play();
   }
@@ -474,6 +509,7 @@ export class SignIn {
     this.name = null;
     this.who = null;
     this.refreshed = false;
+    this.claiming = false;
     if (this.mode === 'legacy') {
       this.o.store.del(TOKEN_KEY);
       return this.askName();
@@ -571,6 +607,12 @@ export class SignIn {
 
   private get guestToken(): string | null {
     return this.keep.get(TOKEN_KEY);
+  }
+
+  /** A guest this browser keeps that a sign-in could keep: its token, unless it was set aside for the account's own character. */
+  private get keptGuest(): boolean {
+    const token = this.guestToken;
+    return !!token && token !== this.keep.get(SET_ASIDE_KEY);
   }
 
   /** The guest's token names nobody this browser can play without sign-in (any more). */

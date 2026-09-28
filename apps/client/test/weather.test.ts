@@ -86,7 +86,7 @@ describe('hand warmers and rad tablets', () => {
 
   it('ask first, and say a second one only starts the time again', () => {
     expect(useQuestion(warmer, FULL)).toBe('Use a hand warmer? Cold resistance +40% for 5 minutes.');
-    expect(useQuestion(warmer, FULL, undefined, 185)).toBe('Use a hand warmer? The one before still works for 3 minutes. This one starts the 5 minutes again: it does not add up.');
+    expect(useQuestion(warmer, FULL, undefined, undefined, 185)).toBe('Use a hand warmer? The one before still works for 3 minutes. This one starts the 5 minutes again: it does not add up.');
     g.handle(welcome(tinyWoods(), [me(2, 4)], FULL, { bag: [{ item: 'hand-warmer', count: 2 }], body: { ...DRY, effects: [{ item: 'hand-warmer', left: 200 }] } }), 0);
     g.use(0);
     expect(g.askView()?.text).toBe('Use a hand warmer? The one before still works for 3 minutes. This one starts the 5 minutes again: it does not add up.');

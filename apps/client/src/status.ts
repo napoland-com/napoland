@@ -11,7 +11,7 @@ import { minutes, type News } from './game';
 import type { FeatView, StatusView } from './hud';
 import { ELEMENT_WORDS, type Items } from './items';
 import { parcelBanner } from './parcels';
-import { meritText, thousands } from './said';
+import { cozyText, meritText, thousands } from './said';
 import { outfitWords } from './wardrobe';
 
 export interface StatusInput {
@@ -159,6 +159,9 @@ export function statusView(s: StatusInput): StatusView {
   for (const f of s.effects ?? []) if (f.left > 0) rows.push({ label: s.items.get(f.item).name, text: effectText(f, s.items), tone: 'good' });
   if (s.wilds) rows.push({ label: 'Draining', text: drainText({ ...s, wet: s.body.wet, storm: s.storm?.phase === 'storm', season: s.season?.season }) ?? 'Just being out here', tone: 'bad' });
   if (s.body.hitched) rows.push({ label: 'On you', text: 'Something clings to your back. Find a light, a fire or a roof.', tone: 'bad' });
+  // The warmth of your own fire (comfort.ts): out in the wilds you tire slower while it lasts.
+  const cozy = cozyText(s.body.cozy ?? 0, s.body.fireside);
+  if (cozy) rows.push({ label: 'Cozy', text: cozy, tone: 'good' });
   const charms = [...new Set(s.bag.map(b => s.items.get(b.item)).filter(d => d.kind === 'charm').map(d => d.name))];
   if (charms.length) rows.push({ label: 'Charms', text: charms.join(', '), tone: 'good' });
   if (s.surge && s.surge.phase !== 'calm') {
@@ -191,13 +194,22 @@ export function longNightBanner(on: boolean, bonus: boolean, does: string): { ti
 
 /**
  * The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a
- * feat, a level, a chapter of the story, a parcel (which names what came: `items`, and with the welcome
- * parcel, the outfits signing in gave). Null: nothing to say. A level says the outfits it opens, which a
- * guest (`guest`) would wear once signed in.
+ * feat, a level, a chapter of the story, a page of the field notes or a blank filled in on one, a keepsake
+ * home, a parcel (which names what came: `items`, and with the welcome parcel, the outfits signing in
+ * gave). Null: nothing to say, as for a note just read (the text box said it all). A level says the
+ * outfits it opens, which a guest (`guest`) would wear once signed in.
  */
 export function newsBanner(n: News, place: string, items?: Items, guest = false): { title: string; sub: string } | null {
-  // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where.
-  if (n.kind === 'call') return null;
+  // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where. A
+  // lodestone's tug is a pulse on the status panel and a faint sound: a banner would make it loud.
+  if (n.kind === 'call' || n.kind === 'tug' || n.kind === 'note') return null;
+  // One line, for everyone online.
+  if (n.kind === 'first') return { title: n.text, sub: '' };
+  if (n.kind === 'keepsake') {
+    const def = items?.get(n.item), energy = items?.keepsakes?.energy ?? 0;
+    if (n.home >= n.of) return { title: 'All the keepsakes are home', sub: `${def ? `${def.name}, the last of them.\n` : ''}Your energy bar is ${energy} bigger, for good.` };
+    return { title: `Home: ${def?.name ?? 'a keepsake'}`, sub: `${def ? `${def.text}\n` : ''}${n.home} of ${n.of} keepsakes home.` };
+  }
   if (n.kind === 'parcel') return items ? parcelBanner(n.parcel, items, n.outfits) : null;
   if (n.kind === 'conditions') return n.names.length ? { title: 'A new day', sub: n.names.join('\n') } : null;
   if (n.kind === 'aurora') return { title: 'Lights in the sky', sub: 'An aurora: the old wires hum,\nand copper turns up by the poles.' };
@@ -207,6 +219,7 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
     const ice = !n.frozen.length ? '' : n.season === 'winter' ? `\n${capital(listWords(n.frozen))} ${n.frozen.length > 1 ? 'are' : 'is'} frozen: you can walk across.` : n.season === 'spring' ? '\nThe ice is gone.' : '';
     return { title: SEASONS[n.season].name, sub: `${SEASON_DOES[n.season]}${ice}` };
   }
+  if (n.kind === 'cozy') return { title: 'Cozy', sub: `Out in the wilds you tire 10% slower\nfor ${n.minutes} minutes once you leave the fire.` };
   if (n.kind === 'level') {
     const opened = listWords(outfitsOpening(n.from, n.progress.level).map(o => `the ${outfitWords(o.name)}`));
     const outfits = opened ? (guest ? `\nSign in to wear ${opened}.` : `\nNew in your wardrobe: ${opened}.`) : '';
@@ -215,6 +228,9 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
     return { title: `Level ${n.progress.level}`, sub: `Your energy bar grows to ${n.progress.maxEnergy}.\nYou can go a little farther now.${outfits}${top}` };
   }
   if (n.kind === 'chapter') return { title: `Journal: ${n.chapter.title}`, sub: 'A new chapter of the story.\nRead it in your journal, in the menu.' };
+  // Quiet and short: the field notes grow often, and the journal says the rest.
+  if (n.kind === 'page') return { title: `A new page: ${n.page.title}`, sub: '' };
+  if (n.kind === 'blank') return { title: `Filled in: ${n.page.title}`, sub: n.blank.fill };
   if (n.kind === 'rested') return { title: 'Rested', sub: `Your next ${thousands(n.xp)} XP from the chest count double.` };
   if (n.kind === 'merit') {
     const spend = guest ? 'Sign in to spend merits in the wardrobe at your chest.' : `You have ${n.left} to spend in the wardrobe at your chest.`;
