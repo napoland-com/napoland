@@ -25,6 +25,7 @@ import {
   DECOR, ENERGY_MAX, TileMap, doorOf, energyRate, maxEnergy, objectTiles, stormAt, surgeAt, validateMap, type MapData, type MapExit, type MapObject, type StormRule, type SurgeRule,
 } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
+import { BURN_WAY_HOME, FAR_WOODS_GATE, GATE_WIDTH } from './burn-gate';
 import { FAR_WOODS_END, NEAR_WOODS_END } from './trappers-trail';
 
 const W = 80, H = 100, SEED = 20260929;
@@ -171,6 +172,9 @@ const HOLLOW = { x: 46.5, y: 11.5 } as const;
 ellipse(HOLLOW.x, HOLLOW.y, 6.4, 4.8, 0.2, 30, (x, y) => set(x, y, noise(x, y, 1.8, 31) < 0.55 ? 'm' : 'g'));
 // Where the trail comes through the rim, a little open ground: NAPO's sign stands there.
 clearing(38.5, 20.5, 2.6, 1.8, 32);
+// A cut through the rim north out of the bowl, two tiles wide, up to NAPO's gate (placed with the things
+// below), beyond which lies the Burn. A way, so the rim, the rocks and the grass keep off it.
+for (let y = FAR_WOODS_GATE.y; y <= 9; y++) for (let x = FAR_WOODS_GATE.x; x < FAR_WOODS_GATE.x + GATE_WIDTH; x++) { set(x, y, 'm'); way[y * W + x] = 1; }
 
 // Ferns, deep and wide: in the cedar grove, around the cut and the hollow, by the camp and along the
 // old trail, where the skulkers lie.
@@ -292,6 +296,16 @@ must({ kind: 'barrel', x: CABIN.x - 1, y: CABIN.y + 1 });
 const post = { kind: 'house', x: 45, y: 7, w: 3, h: 2, roof: '#6f7375', lit: 0, style: 'napo' } as const;
 must(post);
 must({ kind: 'antenna', x: 50, y: 8, broken: true });
+// NAPO's gate across the cut, the farthest thing it built: too heavy for one, it swings open only for two
+// pulling at once, and lets them through into the Burn (gen-burn.ts), whose way home opens it from that side.
+must({
+  kind: 'gate', x: FAR_WOODS_GATE.x, y: FAR_WOODS_GATE.y, w: GATE_WIDTH, to: 'burn', tx: BURN_WAY_HOME.x, ty: BURN_WAY_HOME.y - 1, dir: 'up',
+  text: [
+    'NAPO · Napoland Zone · Gate N-1. Past here: uncharted. Compasses unreliable.',
+    'Two-person rule: both pull together, or it will not move.',
+    'Crews in pairs only. The gate opens from the far side for the way back.',
+  ],
+});
 const doors = [doorInto('far-woods-trapper-cabin', 'far-woods', cabin), doorInto('far-woods-field-post', 'far-woods', post)];
 /** The tile in front of each door, where you come out. */
 const fronts = [cabin, post].map((h): P => { const d = doorOf(h); return [d.x, d.y + 1]; });
@@ -480,7 +494,7 @@ const SURGE: SurgeRule = { every: 2400, unstable: 300, surge: 150, sweep: 120, o
 const STORM: StormRule = { every: 2400, warn: 60, length: 240, offset: 660 };
 
 const map: MapData = {
-  id: 'far-woods', name: 'The Far Woods', version: 2, kind: 'wilds', depth: 2, width: W, height: H,
+  id: 'far-woods', name: 'The Far Woods', version: 3, kind: 'wilds', depth: 2, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: ENTRY[0], y: ENTRY[1] - 1, dir: 'up' },
@@ -537,7 +551,7 @@ const GLYPH: Record<MapObject['kind'], string> = {
   logs: '#', stump: 'x', skid: '_', stake: '!', jeep: 'J', truck: 'C', luggage: 'b', boxes: 'c', rocker: 'n', piano: 'n', bike: 'n', birdcage: 'n', pump: 'i', cage: 'c',
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
   // What the loggers left at their camp and over the creek, and the trapper's things (in the cabin's room).
-  ruin: 'R', yarder: 'Y', spool: 'o', bridge: '=', traps: 'L',
+  ruin: 'R', yarder: 'Y', spool: 'o', bridge: '=', traps: 'L', gate: 'G',
   // A note lies on something else, which shows.
   note: ' ',
   // The furniture of your own cabin stands there alone (gen-interiors.ts).
