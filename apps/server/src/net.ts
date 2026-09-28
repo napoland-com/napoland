@@ -763,6 +763,7 @@ export function attachNet(o: NetOptions): Net {
       ...(joined.furniture && { furniture: joined.furniture }),
       ...(joined.visit && { visit: joined.visit }),
       ...(joined.street && { street: joined.street }),
+      ...(joined.prints && { prints: joined.prints }),
       ...(joined.doorOff && { doorOff: true }),
       ...(joined.visitsOff && { visitsOff: true }),
       ...(joined.firstSteps && { firstSteps: joined.firstSteps }),

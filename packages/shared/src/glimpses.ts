@@ -7,6 +7,7 @@
  *
  * The server keeps the walks, in memory only, and says when and which; the client walks them.
  */
+import type { Dir } from './protocol';
 
 /** A walk kept for a glimpse is at least this many steps, and at most this many (the last ones before it ended). */
 export const GLIMPSE_STEPS: readonly [number, number] = [20, 40];
@@ -28,4 +29,20 @@ export const GLIMPSE_SEEN = 10;
 export interface GlimpseView {
   color: string;
   steps: Array<[number, number]>;
+}
+
+/**
+ * Footprints in the snow (MapData.forest 'snow', the Ridge): every step anyone takes there stays in the
+ * snow for PRINTS_KEPT_MS, for everyone to see and follow, a map keeping at most PRINTS_PER_MAP (the oldest
+ * go first). Like a glimpse, never whose: a tile, the way the step went, and how long ago.
+ */
+export const PRINTS_KEPT_MS = 60 * 60 * 1000;
+export const PRINTS_PER_MAP = 1500;
+
+/** A footprint as a client hears it on arrival: where, which way the step went, and its age in seconds. */
+export interface PrintView {
+  x: number;
+  y: number;
+  dir: Dir;
+  age: number;
 }

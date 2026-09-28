@@ -413,6 +413,37 @@ const ROOMS: readonly Room[] = [
     ],
   },
   {
+    // The one shelter of the Ridge (gen-ridge.ts): the trappers' high hut, stone below and logs above, under
+    // the icefall. Three bunks for the three on the rope, the wood they carried up, the tally on the wall, and
+    // a fire nobody keeps: it burns down unless whoever passes feeds it. Their map of the high line lies by the
+    // tally for whoever has none (a find: content/items.json). A crate for whoever comes next, last in the list.
+    id: 'ridge-high-hut', name: 'The high hut', version: 1, outside: 'ridge', door: [6, 39],
+    rows: [
+      'xxxxxxx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xxxpxxx',
+    ],
+    things: [
+      { kind: 'fireplace', x: 3, y: 1 },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'bed', x: 5, y: 2 },
+      { kind: 'woodpile', x: 1, y: 4 },
+      {
+        kind: 'paper', x: 2, y: 0, look: 'calendar', name: 'The tally on the wall',
+        text: [
+          'Three names in pencil to every trip up the high line, a stroke for each, years of them. The last three are crossed out and written again, as if to be sure.',
+          'Under them: "The needles turn up here too, but slowly, like they are thinking."',
+          'And last, pressed hard: "The ice sang all night. We tied the rope off for three again at the top. Nobody comes up this line alone."',
+        ],
+      },
+      { kind: 'shelf', x: 5, y: 1 },
+      { kind: 'cache', x: 4, y: 1, name: 'the high hut\'s crate' },
+    ],
+  },
+  {
     // NAPO's field post in the hollow of the Far Woods where the rocks hum back, further gone than the
     // listening post by the ring of stones: a concrete room with no fire, a cot, the shelves and crates
     // of its field kit, and the desk with the post's log, NAPO's last word from up here. Cold and dark.
@@ -971,7 +1002,7 @@ if (import.meta.main) {
   // The other direction of doorInto: the door on the outside map must lead to the room's way in. It is
   // written by the outside map's generator, so after changing a room's size, run that one again too.
   const GENERATOR: Record<string, string> = {
-    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', burn: 'npm run gen:burn', 'residents-lane': 'npm run gen:street',
+    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', burn: 'npm run gen:burn', ridge: 'npm run gen:ridge', 'residents-lane': 'npm run gen:street',
   };
   for (const room of ROOMS) {
     const outside = JSON.parse(readFileSync(resolve(import.meta.dirname, `../content/maps/${room.outside}.json`), 'utf8')) as MapData;

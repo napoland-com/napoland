@@ -64,6 +64,7 @@ import {
   type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type LongNightView, type MapNote, type OfferPick, type ParcelView, type RefusedAction,
   type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type VisitView, type Weather, type LampView, type WorksView,
+  PRINTS_KEPT_MS, PRINTS_PER_MAP, type PrintView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Answer, type Ask } from './ask';
 import { BEAM_IN_S, BEAM_OUT_S, padFor, popAt } from './beam';
@@ -76,7 +77,7 @@ import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, FIRST_STEPS_DONE, FIRST_STEPS_TITLE, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TELEPORT,
   TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, YOU_ARE_DOWN, buyQuestion, cabinWho, checkoutQuestion, comfortLines, didText, didWho, doorText, downLine, feedQuestion, fullFire, haveTool,
-  floodedText, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, placedAlready, raisedText,
+  floodedText, icefallText, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, placedAlready, raisedText,
   rescueQuestion, rescueRefusal, rescueTooTired, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, visitedText,
   visitWho, waltOnTheLongNight, padlocked, IN_YOUR_CHEST, LOST_AND_FOUND, LOST_AND_FOUND_LINES, TAKE_HALF, bundleNotYours, carryLabel, handInQuestion, pileQuestion, returnedLine, thingsOf,
   SLAB, WORKS_FULL, bringQuestion, nothingToGive, worksText, worksWho, slabRefusal, FIRE_CHOICE, FIRE_OPTIONS, TWO_MEALS, WHAT_TO_COOK, ateAlready, cookQuestion, cookShort, giveQuestion, swapQuestion, lampQuestion, upText, type DidContext,
@@ -182,6 +183,10 @@ type Creature = Mover & { kind: CreatureView['kind']; chasing: string | undefine
 
 /** What pulling at one of NAPO's gates alone feels like, before its plate. */
 export const GATE_PULLED = 'You pull at the gate. It gives a little, and no more: it will not move for one.';
+/** What taking hold of the trappers' fixed rope alone (or with one other) feels like, before the words on its board. */
+export const ROPE_PULLED = 'You take the rope and lean back on it. It slides, and holds nothing: tied off for three, it will not hold fewer.';
+/** You see this many tiles past yourself in the snow while it falls up there: a whiteout. */
+export const WHITEOUT = 3;
 
 /** What a sign is called in the text box, by its style. */
 const SIGN_WHO = { plain: 'Sign', napo: 'NAPO sign', cardboard: 'Cardboard sign', mailbox: 'Mailbox' } as const;
@@ -207,7 +212,7 @@ function talkersOf(map: TileMap, pass: Pass, items: Items, nameOf: (id: string) 
     if (o.kind === 'jeep') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO jeep', lines: o.text, kind: 'talk' }));
     // A gate is pulled at from any of its tiles, and its plate read there: the server counts the pull, and
     // when enough pull at once it takes them all through.
-    if (o.kind === 'gate') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO gate', lines: [GATE_PULLED, ...o.text], kind: 'talk' }));
+    if (o.kind === 'gate') return objectTiles(o).map(([x, y]): Talker => (o.look === 'rope' ? { x, y, who: 'Fixed rope', lines: [ROPE_PULLED, ...o.text], kind: 'talk' } : { x, y, who: 'NAPO gate', lines: [GATE_PULLED, ...o.text], kind: 'talk' }));
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
@@ -383,6 +388,10 @@ export class Game {
   unease = 0;
   /** Someone's steps, glimpsed while you are alone out in the wilds (glimpses.ts): the walk under way, if any. */
   readonly passing = new Passing();
+  /** Footprints in the snow (glimpses.ts): where, which way the step went and when (ms, as `now`), oldest first. */
+  private prints: Array<{ x: number; y: number; dir: Dir; at: number }> = [];
+  /** Counts every change to the footprints, so the view lays them again only then. */
+  printChanges = 0;
   /** The Old Stone in town, and your counts toward feats (each feat's rank follows from its count). */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
@@ -868,6 +877,7 @@ export class Game {
         this.stepMs = msg.stepMs;
         this.enter(map, msg.players, msg.finds, msg.drops, someoneElse);
         this.setStreet(msg.street);
+        this.setPrints(msg.prints, now);
         this.doorOff = msg.doorOff === true;
         this.visitsOff = msg.visitsOff === true;
         this.socialChanges++;
@@ -918,6 +928,7 @@ export class Game {
         const old = this.me;
         this.enter(map, msg.players, msg.finds, msg.drops);
         this.setStreet(msg.street);
+        this.setPrints(msg.prints, now);
         this.scene(msg, now);
         // The weather over the new map: its region's own rain (a room, the map outside its door).
         this.weather = msg.weather;
@@ -1349,9 +1360,11 @@ export class Game {
           const predicted = this.pending[i];
           if (i >= 0) this.pending.splice(0, i + 1);
           if (!predicted || predicted.x !== msg.x || predicted.y !== msg.y) this.snap(p, msg.x, msg.y, msg.dir);
+          this.print(msg.x, msg.y, msg.dir, now);
           break;
         }
         this.walk(p, msg.x, msg.y, msg.dir, now);
+        this.print(msg.x, msg.y, msg.dir, now);
         break;
       }
       case 'face': {
@@ -2552,7 +2565,7 @@ export class Game {
     // A tap looks: on ground that opens only with a tool you have not got (the culvert without waders), the
     // box says what it takes. Walking into it only turns you, and says nothing.
     const kind = this.map.kind(x, y), need = kind && TILE_NEEDS[kind];
-    if (need && !this.pass.has(need)) return this.inform('Culvert', floodedText(this.items.get(need)));
+    if (need && !this.pass.has(need)) return kind === 'icefall' ? this.inform('Icefall', icefallText(this.items.get(need))) : this.inform('Culvert', floodedText(this.items.get(need)));
     this.goal = null;
     this.path = findPath(this.map, from.x, from.y, x, y, false, undefined, this.pass);
     if (this.path.length) { const end = this.path.at(-1)!; this.marker = { x: end.x, y: end.y, t: 0 }; }
@@ -2999,11 +3012,36 @@ export class Game {
     return waltOnTheLongNight(n.out, f ? this.fireLeft(f.x, f.y, now) ?? null : null);
   }
 
-  /** You see this many tiles past yourself on this map, when a condition brings fog here (outdoors only). */
+  /** You see this many tiles past yourself on this map, when a condition brings fog here, or while it snows in the snow (a whiteout; outdoors only). */
   fogCap(): number | undefined {
     if (this.current.data.kind === 'inside') return undefined;
     const fogs = activeConditions(this.items.conditions, this.conditions).filter(c => c.map === this.current.data.id && c.fog !== undefined).map(c => c.fog!);
+    if (this.current.data.forest === 'snow' && this.weather === 'rain') fogs.push(WHITEOUT);
     return fogs.length ? Math.min(...fogs) : undefined;
+  }
+
+  /** The season the view here is drawn in: the world's, but always winter up in the snow. */
+  viewSeason(): Season {
+    return this.current.data.forest === 'snow' ? 'winter' : this.season.view.season;
+  }
+
+  /** The footprints in the snow here now, oldest first, each with how far it has faded (0 fresh to 1 gone). */
+  printsNow(now: number): Array<{ x: number; y: number; dir: Dir; faded: number }> {
+    return this.prints.filter(p => now - p.at < PRINTS_KEPT_MS).map(p => ({ x: p.x, y: p.y, dir: p.dir, faded: (now - p.at) / PRINTS_KEPT_MS }));
+  }
+
+  /** The footprints the server told of, arriving (none but in the snow). */
+  private setPrints(prints: PrintView[] | undefined, now: number) {
+    this.prints = (prints ?? []).map(p => ({ x: p.x, y: p.y, dir: p.dir, at: now - p.age * 1000 }));
+    this.printChanges++;
+  }
+
+  /** A step taken in the snow here, anyone's: it stays in it for the next hour, like the ones the server told of. */
+  private print(x: number, y: number, dir: Dir, now: number) {
+    if (this.current.data.forest !== 'snow' || this.current.data.kind !== 'wilds') return;
+    this.prints.push({ x, y, dir, at: now });
+    if (this.prints.length > PRINTS_PER_MAP) this.prints.shift();
+    this.printChanges++;
   }
 
   private conditionNames(ids: string[]): string[] {

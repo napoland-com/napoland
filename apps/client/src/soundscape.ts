@@ -74,7 +74,7 @@ export interface Scene {
 
 /** What your feet sound like on this kind of tile (and on water frozen to ice). */
 export function stepSurface(kind: TileKind | undefined, ice = false): Surface {
-  if (ice) return 'ice';
+  if (ice || kind === 'icefall') return 'ice';
   switch (kind) {
     case 'road': return 'road';
     case 'mud': return 'mud';

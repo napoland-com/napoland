@@ -23,6 +23,7 @@ import {
   DECOR, ENERGY_MAX, TileMap, doorOf, energyRate, maxEnergy, objectTiles, stormAt, surgeAt, validateMap, type MapData, type MapExit, type MapObject, type SurgeRule,
 } from '../packages/shared/src';
 import { BURN_WAY_HOME, FAR_WOODS_GATE, GATE_WIDTH } from './burn-gate';
+import { BURN_ROPE, RIDGE_WAY_HOME, ROPE_WIDTH } from './ridge-rope';
 import { doorInto } from './gen-interiors';
 
 const W = 56, H = 72, SEED = 20261004;
@@ -147,6 +148,9 @@ clearing(WINDFALL.x, WINDFALL.y, 4.4, 3.6, 19);
 const SCAR = { x: 29.5, y: 10.5 } as const;
 ellipse(SCAR.x, SCAR.y, 10.5, 2.6, 0.15, 30, (x, y) => set(x, y, 'l'));
 ellipse(SCAR.x, SCAR.y + 2.4, 11.5, 2.2, 0.3, 31, (x, y) => { if (at(x, y) === 't') set(x, y, noise(x, y, 1.8, 32) < 0.5 ? 'm' : 'g'); });
+// A cut north out of the scar through its lip, three tiles wide, up to the foot of the ice and the trappers'
+// fixed rope (placed with the things below), beyond which lies the Ridge. A way, so the lips and rocks keep off it.
+for (let y = BURN_ROPE.y + 1; y <= 8; y++) for (let x = BURN_ROPE.x; x < BURN_ROPE.x + ROPE_WIDTH; x++) { set(x, y, 'm'); way[y * W + x] = 1; }
 
 // Water: the black creek, running west across the middle of the Burn, ash in its bed; a ford where the trail crosses.
 const CREEK: P[] = [[54, 40], [46, 42], [38, 45], [26, 46], [18, 44], [8, 45], [1, 47]];
@@ -238,6 +242,16 @@ const cabin = { kind: 'house', x: CABIN.x, y: CABIN.y, w: 3, h: 2, roof: '#3d353
 must(cabin);
 must({ kind: 'woodpile', x: CABIN.x + 3, y: CABIN.y + 1 });
 const doors = [doorInto('burn-line-cabin', 'burn', cabin)];
+// The trappers' high line: a fixed rope up the ice at the head of the cut, tied off for three. It holds only
+// with three on it at once, and takes them up onto the Ridge (gen-ridge.ts), whose way home comes back down it.
+must({
+  kind: 'gate', x: BURN_ROPE.x, y: BURN_ROPE.y, w: ROPE_WIDTH, pullers: ROPE_WIDTH, look: 'rope', to: 'ridge', tx: RIDGE_WAY_HOME.x, ty: RIDGE_WAY_HOME.y - 1, dir: 'up',
+  text: [
+    'The trappers\' high line: a rope fixed up the ice, knotted every arm\'s length, three loops at its foot.',
+    'Burned into a board beside it: "Three on the rope, or none. It will not hold one, nor two."',
+    'Coming down, it holds for anyone.',
+  ],
+});
 const front = ((d): P => [d.x, d.y + 1])(doorOf(cabin));
 
 /** A sign beside the way near `p`: the nearest open ground off the ways with room in front of it to read it from, and cutting nobody off. */
@@ -334,6 +348,7 @@ for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
 const PLACES: Array<[string, P]> = [
   ['the snags', [Math.floor(SNAGS.x), Math.floor(SNAGS.y)]], ['the line cabin', front], ['the black creek', [FORD[0], FORD[1] + 2]],
   ['the ash flats', [Math.floor(FLATS.x), Math.floor(FLATS.y)]], ['the windfall', [Math.floor(WINDFALL.x), Math.floor(WINDFALL.y) + 2]], ['the scar', [Math.floor(SCAR.x), Math.floor(SCAR.y) + 2]],
+  ['the high line', [BURN_ROPE.x + 1, BURN_ROPE.y + 2]],
 ];
 const stepsTo = (d: Int32Array, [x, y]: P) => Math.min(...[[0, 0] as P, ...SIDES].map(([dx, dy]) => d[(y + dy) * W + x + dx]!).filter(v => v >= 0));
 {
@@ -408,7 +423,7 @@ const patches = TALL.map((p, k) => {
 const SURGE: SurgeRule = { every: 2400, unstable: 180, surge: 120, sweep: 90, offset: 2100 };
 
 const map: MapData = {
-  id: 'burn', name: 'The Burn', version: 2, kind: 'wilds', depth: 3, width: W, height: H,
+  id: 'burn', name: 'The Burn', version: 3, kind: 'wilds', depth: 3, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: ENTRY[0], y: ENTRY[1] - 1, dir: 'up' },
@@ -452,7 +467,7 @@ const out = resolve(import.meta.dirname, '../content/maps/burn.json');
 writeFileSync(out, json);
 
 // A glance at the result, two map rows per line (a terminal character is about twice as tall as wide).
-const GLYPH: Partial<Record<MapObject['kind'], string>> = { sign: '!', house: 'H', tree: 'T', rock: 'o', shrooms: ',', woodpile: 'b', logs: '#', stump: 'x', stake: '!', antenna: 'A' };
+const GLYPH: Partial<Record<MapObject['kind'], string>> = { gate: 'G', sign: '!', house: 'H', tree: 'T', rock: 'o', shrooms: ',', woodpile: 'b', logs: '#', stump: 'x', stake: '!', antenna: 'A' };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', f: '"', h: ';', m: '.', g: '.', l: '_' };
 const objGlyph = new Map<number, string>();
 for (const o of objects) for (const [x, y] of objectTiles(o)) objGlyph.set(y * W + x, o.kind === 'rock' && o.hum ? '*' : GLYPH[o.kind] ?? '?');

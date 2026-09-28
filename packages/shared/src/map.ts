@@ -35,6 +35,11 @@ export const TILE_CHARS = {
    * the map as nobody's pass opens it.
    */
   c: 'culvert',
+  /**
+   * An icefall: a slope of old ice, walked only by whoever wears crampons (TILE_NEEDS). Drawn as ice; to
+   * everyone else, and to creatures, finds and how far home a tile is, it is a wall of ice nobody climbs.
+   */
+  i: 'icefall',
 } as const;
 export type TileChar = keyof typeof TILE_CHARS;
 export type TileKind = (typeof TILE_CHARS)[TileChar];
@@ -46,8 +51,8 @@ export type TileKind = (typeof TILE_CHARS)[TileChar];
  */
 export type Pass = ReadonlySet<string>;
 
-/** The tile kinds that open only for whoever holds a tool, and which: the flooded culvert, to waders. */
-export const TILE_NEEDS: Readonly<Partial<Record<TileKind, string>>> = { culvert: 'waders' };
+/** The tile kinds that open only for whoever holds a tool, and which: the flooded culvert to waders, the icefall to crampons. */
+export const TILE_NEEDS: Readonly<Partial<Record<TileKind, string>>> = { culvert: 'waders', icefall: 'crampons' };
 
 /** Water in all but name: a flooded culvert is water to whoever is not wading it. */
 export const watery = (kind: TileKind | undefined): boolean => kind === 'water' || kind === 'culvert';
@@ -260,8 +265,10 @@ export type MapObject =
    * GATE_WINDOW_MS of each other, it swings open long enough for them to slip through, and it takes each of
    * them to map `to`, the one at the gate's first tile arriving at tx, ty and the others keeping their offset,
    * like an exit. The way back needs nobody: it opens from the far side (that map's home exit).
+   * `pullers`: how many it takes, GATE_PULLERS left out. `look` 'rope': not NAPO's steel but the trappers'
+   * fixed rope up the ice north of the Burn, which holds only with three on it (the Ridge).
    */
-  | { kind: 'gate'; x: number; y: number; w: number; to: string; tx: number; ty: number; dir: Dir; text: string[] }
+  | { kind: 'gate'; x: number; y: number; w: number; to: string; tx: number; ty: number; dir: Dir; text: string[]; pullers?: number; look?: 'rope' }
   /**
    * Stand on a tile next to it to recover energy while it burns. In town it is always tended; out in
    * the wilds (and in their shelters) it burns down unless someone feeds it, or `tended` says someone
@@ -447,10 +454,11 @@ export interface MapData {
   /**
    * The wilds only: how the forest grows. 'old': old growth, as deep in as the Far Woods, the firs older
    * and taller with cedars among them, the ferns deep and the light under them dimmer. 'burnt': a forest
-   * the answer burned (the Burn), its firs standing black and bare over grey ground. Left out: the
-   * younger woods nearer town.
+   * the answer burned (the Burn), its firs standing black and bare over grey ground. 'snow': above the
+   * Burn, the Ridge, always in winter (its view, its cold, its snow for rain), and its snow keeps the
+   * footprints of the last hour (PRINTS_KEPT_MS). Left out: the younger woods nearer town.
    */
-  forest?: 'old' | 'burnt';
+  forest?: 'old' | 'burnt' | 'snow';
   /**
    * Outdoors only: the water that freezes in winter (sky.ts, SEASONS: `frozen`), each by what people call
    * it and its tiles as [x, y]: while it is frozen it is ice, walked on like ground (TileMap.freeze). The
@@ -580,6 +588,8 @@ type Gate = Extract<MapObject, { kind: 'gate' }>;
 export function gateAt(data: MapData, x: number, y: number): Gate | undefined {
   return data.objects.find((o): o is Gate => o.kind === 'gate' && y === o.y && x >= o.x && x < o.x + o.w);
 }
+/** How many must pull at this gate at once. */
+export const gatePullers = (g: Gate): number => g.pullers ?? GATE_PULLERS;
 /** Where pulling at a gate from below its tile x takes you, like an exit: its first tile to tx, ty, the others keeping their offset. */
 export function gateArrival(g: Gate, x: number): Arrival {
   return { to: g.to, x: g.tx + Math.min(g.w - 1, Math.max(0, x - g.x)), y: g.ty, dir: g.dir };

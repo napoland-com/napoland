@@ -139,7 +139,10 @@ export function validateMap(data: MapData): Problem[] {
       // Pulled from below, one puller a tile: as wide as the pullers it takes, each with ground to stand on.
       if (!o.text?.length || o.text.some(t => !t.trim())) err(`gate at ${o.x},${o.y} has nothing to read`);
       if (data.kind !== 'wilds') err(`gate at ${o.x},${o.y}: NAPO's gates stand out in the wilds`);
-      if (!(Number.isInteger(o.w) && o.w >= GATE_PULLERS && o.w <= 4)) err(`gate at ${o.x},${o.y} is ${o.w} wide: ${GATE_PULLERS} to 4, one tile for each who pulls`);
+      const pullers = o.pullers ?? GATE_PULLERS;
+      if (!(Number.isInteger(pullers) && pullers >= GATE_PULLERS && pullers <= 4)) err(`gate at ${o.x},${o.y} takes ${pullers} to pull: ${GATE_PULLERS} to 4`);
+      if (o.look !== undefined && o.look !== 'rope') err(`gate at ${o.x},${o.y}: look is rope or left out, not ${JSON.stringify(o.look)}`);
+      if (!(Number.isInteger(o.w) && o.w >= pullers && o.w <= 4)) err(`gate at ${o.x},${o.y} is ${o.w} wide: ${pullers} to 4, one tile for each who pulls`);
       else if (objectTiles(o).some(([x, y]) => !map.walkable(x, y + 1))) err(`gate at ${o.x},${o.y}: every tile below it is walkable ground, where people pull from`);
       if (!Dir.safeParse(o.dir).success) err(`gate at ${o.x},${o.y}: dir must be up, down, left or right`);
     }
@@ -313,7 +316,7 @@ export function validateMap(data: MapData): Problem[] {
     for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (map.walkable(x, y) && map.homeSteps(x, y) < 0) lost++;
     if (lost) warn(`${lost} walkable tiles have no way to a home exit`);
   }
-  if (data.forest !== undefined && (!['old', 'burnt'].includes(data.forest) || data.kind !== 'wilds')) err(`forest ${JSON.stringify(data.forest)}: only the wilds say how their forest grows, and it is old, burnt or left out`);
+  if (data.forest !== undefined && (!['old', 'burnt', 'snow'].includes(data.forest) || data.kind !== 'wilds')) err(`forest ${JSON.stringify(data.forest)}: only the wilds say how their forest grows, and it is old, burnt, snow or left out`);
   validateTallGrass(data, map, err, warn);
   const named = new Set<string>();
   for (const p of data.places ?? []) {

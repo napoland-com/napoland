@@ -146,6 +146,18 @@ export function underOldGrowth(a: Ambience): Ambience {
   };
 }
 
+/**
+ * On snow (MapData.forest 'snow', the Ridge) the same weather is brighter: the snow throws back the sky's
+ * light, from the ground up as much as down. Lamps, fires and whatever glows are as bright as anywhere.
+ */
+export function onSnow(a: Ambience): Ambience {
+  return {
+    ...a,
+    hemi: { ...a.hemi, intensity: a.hemi.intensity * 1.45 },
+    sun: { ...a.sun, intensity: a.sun.intensity * 1.2 },
+  };
+}
+
 /** Something that gives light: a street lamp, or a fireplace (as bright as it burns). */
 export interface LightSource {
   kind: 'lamp' | 'fire';

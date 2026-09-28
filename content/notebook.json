@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "pages": [
     {
       "id": "pop-23",
@@ -389,6 +389,62 @@
       "title": "Fused glass",
       "when": { "find": "fused-glass" },
       "text": "Sand and stone melted green and cooled with bubbles in it. Still warm. Two lumps ring when they touch. Nothing I can make takes it yet, but it is worth the carry."
+    },
+    {
+      "id": "the-high-line",
+      "area": "ridge",
+      "title": "The high line",
+      "when": { "read": { "map": "burn", "x": 37, "y": 2 } },
+      "text": "The trappers fixed a rope up the ice, knotted every arm's length. It holds with three on it and not with fewer. Coming down, it holds for anyone."
+    },
+    {
+      "id": "the-ridge",
+      "area": "ridge",
+      "title": "The Ridge",
+      "when": { "read": { "map": "ridge", "x": 23, "y": 47 } },
+      "text": "Above the Burn the woods climb out of the firs into snow. It is always winter up here, and I tire four times as fast as in the Near Woods. My steps stay in the snow behind me, and so do everyone else's."
+    },
+    {
+      "id": "the-high-hut",
+      "area": "ridge",
+      "title": "The high hut",
+      "when": { "read": { "map": "ridge-high-hut", "x": 2, "y": 0 } },
+      "text": "The trappers' hut under the ice: three bunks, three names to every trip on the wall. The needles turn up here too, they wrote, but slowly, as if they were thinking."
+    },
+    {
+      "id": "the-icefall",
+      "area": "ridge",
+      "title": "The icefall",
+      "when": { "read": { "map": "ridge", "x": 9, "y": 40 } },
+      "text": "A slope of old ice straight up from the hut to the snowfield, between walls of rock. Nobody climbs it in boots. In crampons it is the short way up."
+    },
+    {
+      "id": "the-switchbacks",
+      "area": "ridge",
+      "title": "The switchbacks",
+      "when": { "read": { "map": "ridge", "x": 16, "y": 34 } },
+      "text": "The long way up zigzags through the last of the firs. When it snows up here I see a few steps and no more, and the tracks in the snow are the way."
+    },
+    {
+      "id": "the-tarn",
+      "area": "ridge",
+      "title": "The tarn",
+      "when": { "read": { "map": "ridge", "x": 35, "y": 38 } },
+      "text": "Still, dark water in a hollow of the snow. The edges never thaw and the middle never freezes, which is backwards, the trappers noticed."
+    },
+    {
+      "id": "the-crest",
+      "area": "ridge",
+      "title": "The crest",
+      "when": { "read": { "map": "ridge", "x": 23, "y": 12 } },
+      "text": "The top of the Ridge, wind-scoured rock, the rime stones along it humming like the rocks that hum back. Up here the needles spin, and at night the snow beyond glows from underneath."
+    },
+    {
+      "id": "rime-quartz",
+      "area": "ridge",
+      "title": "Rime quartz",
+      "when": { "find": "rime-quartz" },
+      "text": "Clear quartz off the crest's stones, furred with rime that will not melt by any fire. It hums in the hand. Hard enough to put a point on steel."
     },
     {
       "id": "glowcaps",
