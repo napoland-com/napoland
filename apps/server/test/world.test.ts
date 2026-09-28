@@ -275,6 +275,8 @@ describe('World: turning, joining and leaving', () => {
       // Nobody thanked today.
       thanked: [],
       notebook: { version: 0, pages: [], blanks: [] }, notes: [], keepsakes: [], firsts: [],
+      // A town that never changes (no town in the items), and the world's clock as they joined.
+      town: { done: [], given: {} }, clock: 0,
     });
     expect(w.drain()).toEqual([
       { to: '*', map: 'test', except: 'a', msg: { t: 'join', player: joined.player } },

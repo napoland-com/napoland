@@ -202,8 +202,16 @@ export function longNightBanner(on: boolean, bonus: boolean, does: string): { ti
 export function newsBanner(n: News, place: string, items?: Items, guest = false): { title: string; sub: string } | null {
   // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where. A
   // lodestone's tug is a pulse on the status panel and a faint sound: a banner would make it loud. Steps
-  // that are not yours (unease.ts) are only ever heard: said out loud, they would be nothing.
-  if (n.kind === 'call' || n.kind === 'tug' || n.kind === 'note' || n.kind === 'stalk') return null;
+  // that are not yours (unease.ts) are only ever heard: said out loud, they would be nothing. A scene
+  // told needs none either: the box just told it.
+  if (n.kind === 'call' || n.kind === 'tug' || n.kind === 'note' || n.kind === 'stalk' || n.kind === 'scene') return null;
+  // The town came to something, for everyone online (town.ts): its own words, and the sign's number when someone came back.
+  if (n.kind === 'town') {
+    const m = items?.town?.milestones.find(x => x.id === n.id) ?? items?.town?.works.find(x => x.id === n.id);
+    if (!m) return null;
+    const back = 'back' in m && m.back ? `\nThe sign in town says ${n.pop} now.` : '';
+    return { title: m.title, sub: `${m.text}${back}` };
+  }
   // One line, for everyone online.
   if (n.kind === 'first') return { title: n.text, sub: '' };
   if (n.kind === 'keepsake') {

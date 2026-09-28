@@ -21,6 +21,7 @@ export * from './protocol';
 export * from './sky';
 export * from './story';
 export * from './thanks';
+export * from './town';
 export * from './trade';
 export * from './unease';
 export * from './validate';

@@ -90,7 +90,7 @@ export function loadItems(file: string, maps: Iterable<TileMap>): { items: Items
     if (typeof data !== 'object' || data === null || !Array.isArray(data.items) || !Array.isArray(data.finds)) {
       throw new Error('it needs a version, a list of items and a list of finds');
     }
-    problems = validateItems(data, [...maps].map(m => m.data));
+    problems = validateItems(data, [...maps].map(m => m.source));
   } catch (err) {
     // Not JSON, or so far from items that the checks themselves fail.
     throw new Error(`the items in ${file} cannot be read: ${reason(err)}`);
@@ -110,7 +110,7 @@ export function loadStory(file: string, maps: Iterable<TileMap>, items?: ItemsDa
   try {
     data = JSON.parse(readFileSync(file, 'utf8')) as StoryData;
     if (typeof data !== 'object' || data === null || !Array.isArray(data.chapters)) throw new Error('it needs a version and a list of chapters');
-    problems = validateStory(data, [...maps].map(m => m.data), items);
+    problems = validateStory(data, [...maps].map(m => m.source), items);
   } catch (err) {
     throw new Error(`the story in ${file} cannot be read: ${reason(err)}`);
   }
@@ -135,7 +135,7 @@ export function loadNotebook(file: string, maps: Iterable<TileMap>, items?: Item
   try {
     data = JSON.parse(raw) as NotebookData;
     if (typeof data !== 'object' || data === null || !Array.isArray(data.pages)) throw new Error('it needs a version and a list of pages');
-    problems = validateNotebook(data, [...maps].map(m => m.data), items);
+    problems = validateNotebook(data, [...maps].map(m => m.source), items);
   } catch (err) {
     throw new Error(`the field notes in ${file} cannot be read: ${reason(err)}`);
   }

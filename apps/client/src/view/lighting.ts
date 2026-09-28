@@ -168,8 +168,8 @@ export function lightSources(map: TileMap): LightSource[] {
   let lamps = 0;
   for (const o of map.data.objects) {
     const ph = hash2(o.x, o.y) * 6;
-    // Every third lamp flickers.
-    if (o.kind === 'lamp') out.push({ kind: 'lamp', x: o.x + 0.84, y: 1.1, z: o.y + 0.5, flicker: lamps++ % 3 === 1, ph, tx: o.x, ty: o.y });
+    // Every third lamp flickers. A dark one (not mended yet, town.ts) gives no light at all.
+    if (o.kind === 'lamp' && !o.dark) out.push({ kind: 'lamp', x: o.x + 0.84, y: 1.1, z: o.y + 0.5, flicker: lamps++ % 3 === 1, ph, tx: o.x, ty: o.y });
     // In front of a hearth's mouth, so it lights the room; over a campfire's middle.
     else if (o.kind === 'fireplace') out.push({ kind: 'fire', x: o.x + 0.5, y: 0.5, z: o.y + (hearthAt(map, o.x, o.y) ? 0.62 : 0.5), flicker: true, ph, tx: o.x, ty: o.y });
   }

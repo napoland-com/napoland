@@ -15,6 +15,7 @@ import { setLogLevel } from '../src/log';
 import { PgStorage, type CacheItemRecord, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
 import {
   forgetsGuestsWhoStayedAway, keepsFirsts, keepsFriendsAndMessages, keepsMerits, keepsBests, keepsNotebook, keepsNotes, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsTheWornOutMark,
+  keepsTown,
   keepsWhatANewerReleaseSaved, keepsWholeRow, meritsKeptThroughARestart, outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn, restKeptThroughARestart,
   restartKeepsBagsAndPiles, savesATradeTogether, signInAndClaim,
 } from './helpers';
@@ -689,6 +690,25 @@ describe.skipIf(!url)('PgStorage', () => {
       await s.saveStone({ charge: 12.5, awake: true, at: 1_800_000_000_000 });
       await s.saveStone({ charge: 11.25, awake: true, at: 1_800_000_060_000 });
       expect(await s.loadStone()).toEqual({ charge: 11.25, awake: true, at: 1_800_000_060_000 });
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('keeps the town, trusting what was saved only as far as it holds what the town keeps', async () => {
+    const fresh = await freshSchema();
+    const s = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await s.init();
+      await keepsTown(s);
+      // A key of world_state, beside the Old Stone's: no migration.
+      const row = await admin.query(`SELECT value FROM ${fresh.schema}.world_state WHERE key = 'town'`);
+      expect(row.rows[0].value.done.map((d: { id: string }) => d.id)).toEqual(['edith-home', 'south-lights']);
+      const junk = { since: 5, counts: { woke: 2, fed: -1, thanks: 'x' }, given: { roof: { cloth: 1.5, scrap: 2 } }, done: [{ id: 'edith-home', day: 1, at: 2 }, { id: 7 }], more: true };
+      await admin.query(`UPDATE ${fresh.schema}.world_state SET value = $1::jsonb WHERE key = 'town'`, [JSON.stringify(junk)]);
+      expect(await s.loadTown()).toEqual({ since: 5, counts: { woke: 2 }, given: { roof: { scrap: 2 } }, done: [{ id: 'edith-home', day: 1, at: 2 }] });
+      await admin.query(`UPDATE ${fresh.schema}.world_state SET value = '"a town"'::jsonb WHERE key = 'town'`);
+      expect(await s.loadTown()).toBeNull();
     } finally {
       await s.close();
     }

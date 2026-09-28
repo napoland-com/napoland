@@ -7,8 +7,8 @@ import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
 import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
 import {
-  CREATURE_STEP_MIN_MS, FRONTED, GATE_PULLERS, NOTE_AUTHORS, NOTE_ON, NOTE_WHEN, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, gateArrival, hangs, objectTiles, teleportArrival,
-  underfoot, watcherStepMs,
+  CREATURE_STEP_MIN_MS, FRONTED, GATED, GATE_PULLERS, NOTE_AUTHORS, NOTE_ON, NOTE_WHEN, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, gateArrival, hangs, objectTiles,
+  teleportArrival, underfoot, watcherStepMs,
   type MapData, type MapObject, type NpcLook, type TileKind,
 } from './map';
 import { DIRS, stepTarget } from './movement';
@@ -16,7 +16,8 @@ import { ANYWHERE, DURING, SIGHTS, opensOn, readableAt, type NotebookData, type 
 import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
 import { FLASH_BURST_S, FLASH_GLOW_S, NIGHT_FROM, SEASON_ORDER, stormAt, surgeAt, type Season } from './sky';
-import { MAX_REMARKS, MILESTONES, STORY_EVENTS, type StoryData } from './story';
+import { MAX_REMARKS, MAX_SCENES, MILESTONES, SAY_SKIES, STORY_EVENTS, type StoryData } from './story';
+import { TOWN_COUNTS } from './town';
 
 export interface Problem {
   level: 'error' | 'warning';
@@ -84,7 +85,7 @@ export function validateMap(data: MapData): Problem[] {
   if (data.kind === 'wilds' && !data.exits.some(e => e.home)) err('the wilds need an exit marked home: danger is measured from it');
   if (data.kind === 'inside' && !data.exits.length) err('an inside needs a way out (an exit)');
   if (exitTiles.has(`${data.spawn.x},${data.spawn.y}`)) err('the spawn is on an exit');
-  const used = new Map<string, string>();
+  const used = new Map<string, { o: MapObject; name: string }>();
   for (const o of data.objects) {
     if (o.kind === 'house') {
       // Every building can be entered: its door leads inside, and someone must be able to reach it.
@@ -138,9 +139,11 @@ export function validateMap(data: MapData): Problem[] {
       if (underfoot(o)) continue;
       const key = `${x},${y}`;
       const other = used.get(key);
-      if (other) err(`${o.kind} at ${o.x},${o.y} overlaps ${other} on tile ${key}`);
-      used.set(key, `${o.kind} at ${o.x},${o.y}`);
+      // Two things on one tile never stand there together when the town has one until what brings the other.
+      if (other && !apart(other.o, o)) err(`${o.kind} at ${o.x},${o.y} overlaps ${other.name} on tile ${key}`);
+      used.set(key, { o, name: `${o.kind} at ${o.x},${o.y}` });
     }
+    validateTownParts(o, data, err);
     if (o.kind === 'sign' && (!o.text.length || o.text.some(t => !t.trim()))) err(`sign at ${o.x},${o.y} has no text`);
     if (o.kind === 'sign' && o.style !== undefined && !(SIGN_STYLES as readonly string[]).includes(o.style)) err(`sign at ${o.x},${o.y}: style is ${SIGN_STYLES.join(', ')} or left out, not ${JSON.stringify(o.style)}`);
     if (o.kind === 'console' && (!o.name?.trim() || !o.text?.length || o.text.some(t => !t.trim()))) err(`console at ${o.x},${o.y} needs a name and something to read`);
@@ -180,6 +183,8 @@ export function validateMap(data: MapData): Problem[] {
     if (noteTiles.has(`${o.x},${o.y}`)) err(`two notes lie on ${o.x},${o.y}: facing it, only one could be read`);
     noteTiles.add(`${o.x},${o.y}`);
   }
+  validateMapTown(data, err);
+  validateTownLater(data, err);
   const s = data.spawn;
   if (!map.walkable(s.x, s.y)) err(`spawn ${s.x},${s.y} is not walkable`);
   // A home of one's own: only a room with the chest, where each player's stash is, is private.
@@ -284,6 +289,89 @@ export function validateMap(data: MapData): Problem[] {
     if (!Number.isInteger(p.x) || !Number.isInteger(p.y) || !map.inside(p.x, p.y)) err(`the place ${p.name} at ${p.x},${p.y} is not on the map`);
   }
   return out;
+}
+
+/** Do two things never stand on the map together: one there until what the town comes to brings the other? */
+function apart(a: MapObject, b: MapObject): boolean {
+  const ga = 'town' in a ? a.town : undefined, gb = 'town' in b ? b.town : undefined;
+  return !!((ga?.until && ga.until === gb?.from) || (gb?.until && gb.until === ga?.from));
+}
+
+/**
+ * What changes with the town (town.ts) on one object: only what may be gated is (GATED), and only in a
+ * town or a room (the wilds keep their shape, as players' routes need them to); a gate names what the
+ * town comes to (a milestone or a work, which content/items.json checks exist). A hearth that waits for
+ * someone to come home stands against a room's wall and is no fire out there that people feed; a house
+ * lights up or has its roof mended; the town's sign has its painted number; a porch and a ledger are the
+ * town's own.
+ */
+function validateTownParts(o: MapObject, data: MapData, err: (message: string) => void): void {
+  const where = `${o.kind} at ${o.x},${o.y}`;
+  const gate = 'town' in o ? o.town : undefined;
+  if (gate !== undefined) {
+    if (!GATED.has(o.kind)) err(`${where}: only ${[...GATED].join(', ')} change with the town`);
+    if (data.kind === 'wilds') err(`${where}: the wilds keep their shape; only a town or a room changes with the town`);
+    if (typeof gate !== 'object' || gate === null || (gate.from === undefined && gate.until === undefined)) err(`${where}: town is from a milestone or a work, until one, or both`);
+    else for (const id of [gate.from, gate.until]) if (id !== undefined && !ID.test(id)) err(`${where}: town names a milestone or a work by its id, not ${JSON.stringify(id)}`);
+  }
+  if (o.kind === 'lamp' && o.dark !== undefined) err(`${where}: whether a lamp is dark is worked out from the town and the night, never written`);
+  if (o.kind === 'fireplace' && o.town && (data.kind !== 'inside' || o.tended !== undefined || o.name !== undefined)) err(`${where}: a hearth that waits for someone to come home stands in a room, untended and unnamed`);
+  if (o.kind === 'porch') {
+    if (!(Number.isInteger(o.w) && Number.isInteger(o.h) && o.w >= 1 && o.h >= 1 && o.w <= 4 && o.h <= 4)) err(`${where} is ${o.w} by ${o.h}: a porch is 1 to 4 tiles each way`);
+    if (data.kind !== 'town') err(`${where}: a porch stands in a town, out of doors`);
+  }
+  if (o.kind === 'ledger' && data.kind !== 'inside') err(`${where}: the ledger lies open in a room`);
+}
+
+/**
+ * The rest of a map that changes with the town (MapTown): a house by its tile, lit up (nobody comes back
+ * to a house whose people drew its curtains) or its roof mended; the town's sign by its tile, with its
+ * painted number; a room's names.
+ */
+function validateMapTown(data: MapData, err: (message: string) => void): void {
+  const t = data.town;
+  if (t === undefined) return;
+  const from = (id: unknown, where: string) => { if (!ID.test(typeof id === 'string' ? id : '')) err(`${where}: from names a milestone or a work of the town, by its id`); };
+  for (const [i, c] of (t.houses ?? []).entries()) {
+    const where = `town: house ${i + 1}`;
+    const h = data.objects.find(o => o.kind === 'house' && o.x === c?.x && o.y === c?.y);
+    if (h?.kind !== 'house') err(`${where}: there is no house at ${c?.x},${c?.y}`);
+    else if (c.lit && h.curtains) err(`${where}: curtains are drawn only where nobody lives, and nobody comes back to such a house`);
+    from(c?.from, where);
+    if (c?.lit === undefined && c?.roof === undefined) err(`${where}: it lights the house (lit: 1) or mends its roof (roof), or both`);
+    if (c?.lit !== undefined && c.lit !== 1) err(`${where}: it lights the house: lit is 1`);
+    if (c?.roof !== undefined && !COLOR.test(c.roof)) err(`${where}: a mended roof is a color, #rrggbb`);
+  }
+  if (t.sign !== undefined) {
+    const s = data.objects.find(o => o.kind === 'sign' && o.x === t.sign!.x && o.y === t.sign!.y);
+    if (s?.kind !== 'sign' || s.style !== undefined || s.town) err(`town: sign: there is no plain signpost at ${t.sign.x},${t.sign.y}`);
+    if (!(Number.isInteger(t.sign.pop) && t.sign.pop >= 1)) err('town: sign: pop is the whole number painted on it');
+  }
+  for (const [i, n] of (t.names ?? []).entries()) {
+    if (data.kind !== 'inside') err('town: names: only a room takes another name as the town changes');
+    from(n?.from, `town: names ${i + 1}`);
+    if (typeof n?.name !== 'string' || !n.name.trim()) err(`town: names ${i + 1}: a name says something`);
+  }
+}
+
+/**
+ * The map once the town has come to everything this map changes with: what then stands in the way must
+ * leave the spawn and every door open, and whatever is read or talked to must still have its tile in
+ * front of it. (The map as it starts is checked like any other.)
+ */
+function validateTownLater(data: MapData, err: (message: string) => void): void {
+  const all = new Set<string>();
+  for (const o of data.objects) {
+    if ('town' in o && o.town) for (const id of [o.town.from, o.town.until]) if (id) all.add(id);
+  }
+  for (const c of data.town?.houses ?? []) all.add(c.from);
+  if (!all.size) return;
+  const later = new TileMap(data, all);
+  if (!later.walkable(data.spawn.x, data.spawn.y)) err(`once the town has come to ${[...all].join(', ')}, the spawn is not walkable`);
+  for (const o of later.data.objects) {
+    if (FRONTED.has(o.kind) && !later.walkable(o.x, o.y + 1)) err(`once the town has come to ${[...all].join(', ')}, the tile in front of the ${o.kind} at ${o.x},${o.y} is not walkable`);
+    if (o.kind === 'house') { const d = doorOf(o); if (!later.walkable(d.x, d.y + 1)) err(`once the town has come to ${[...all].join(', ')}, the door of the house at ${o.x},${o.y} is blocked`); }
+  }
 }
 
 /**
@@ -525,6 +613,15 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
     if (!offTown(m)) out.push({ level: 'error', map: m.data.id, message: `wake: only the home off the home town (${homeId}), or off its street, is where you wake up, and this room's door opens elsewhere` });
   }
   if (wakes.length > 1) out.push({ level: 'error', map: wakes[1]!.data.id, message: `wake: ${wakes.map(m => m.data.id).join(' and ')} both have one, but everyone wakes up in the same home` });
+
+  // A hearth that waits for someone to come home is in one of the town's houses: once lit, it is a
+  // town fire, tended for good (fires.ts), never one out there that people feed, nor the Long Night's.
+  for (const map of byId.values()) {
+    if (!map.source.objects.some(o => o.kind === 'fireplace' && o.town)) continue;
+    const street = byId.get(map.source.exits[0]?.to ?? '');
+    if (street?.source.kind !== 'town') out.push({ level: 'error', map: map.source.id, message: 'a hearth that waits for someone to come home stands in a house in town' });
+    if (map.source.objects.some(o => o.kind === 'fireplace' && o.town && o.longNight)) out.push({ level: 'error', map: map.source.id, message: 'a hearth that waits for someone to come home is not the Long Night\'s fire' });
+  }
 
   // The Long Night's fire (the lodge's) is one, in a room off the home town, and never the home's: the
   // home fire stays tended, so a new player always has a safe fire.
@@ -827,6 +924,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
   }
   const byId = new Map(maps.map(m => [m.id, m]));
   const conditionIds = validateConditions(data, byId, err);
+  const townIds = validateTown(data, ids, tools, sealed, keepsakes, maps, err);
   const tileKinds = new Set<string>(Object.values(TILE_CHARS));
   data.finds.forEach((f, n) => {
     const name = `find ${n} (${f.item} in ${f.map})`;
@@ -847,6 +945,11 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (f.condition !== undefined) {
       if (!conditionIds.has(f.condition)) err(`${name}: grows while ${f.condition} is on, which is not a condition`);
       if (f.when !== undefined) err(`${name}: grows with a condition or at a time (when), not both`);
+    }
+    if (f.town !== undefined) {
+      if (f.when !== undefined || f.condition !== undefined || f.season !== undefined) err(`${name}: grows with the town, or at a time, with a condition or in a season: one of them`);
+      if (typeof f.town !== 'object' || f.town === null || (f.town.from === undefined && f.town.until === undefined)) err(`${name}: town is from a milestone or a work, until one, or both`);
+      else for (const id of [f.town.from, f.town.until]) if (id !== undefined && !townIds.has(id)) err(`${name}: grows with ${id}, which is no milestone or work of the town`);
     }
     if (f.season !== undefined) {
       if (!(SEASON_ORDER as readonly string[]).includes(f.season)) err(`${name}: grows in ${JSON.stringify(f.season)}, which is not a season (${SEASON_ORDER.join(', ')})`);
@@ -914,12 +1017,13 @@ export function validateStory(story: StoryData, maps: MapData[], items?: ItemsDa
     err('there are no chapters');
     return out;
   }
-  const people = new Map<string, number>(), desks = new Map<string, number>();
+  const people = new Map<string, MapObject[]>(), desks = new Map<string, number>();
   for (const m of maps) for (const o of m.objects) {
-    if (o.kind === 'npc') people.set(o.id, (people.get(o.id) ?? 0) + 1);
+    if (o.kind === 'npc') people.set(o.id, [...(people.get(o.id) ?? []), o]);
     if (o.kind === 'console') desks.set(o.id, (desks.get(o.id) ?? 0) + 1);
   }
-  for (const [id, n] of people) if (n > 1) err(`${n} people have the id ${id}: the story could not tell them apart`);
+  // Someone who moves with the town stands in two places, but never in both at once (their gates part them).
+  for (const [id, list] of people) if (list.length > 1 && !list.every((a, i) => list.every((b, j) => i === j || apart(a, b)))) err(`${list.length} people have the id ${id}: the story could not tell them apart`);
   for (const [id, n] of desks) if (n > 1) err(`${n} desks have the id ${id}: the story could not tell them apart`);
   const mapIds = new Set(maps.map(m => m.id)), itemIds = new Set((items?.items ?? []).map(i => i.id)), ids = new Set<string>();
   story.chapters.forEach((c, i) => {
@@ -959,6 +1063,124 @@ export function validateStory(story: StoryData, maps: MapData[], items?: ItemsDa
     if (typeof r.line !== 'string' || !r.line.trim()) err(`${name} says nothing`);
   });
   if (Array.isArray(remarks) && remarks.length > MAX_REMARKS) err(`there are ${remarks.length} remarks, and which were said is kept for at most ${MAX_REMARKS}`);
+  // Scenes and what people say while something holds: about people, notes, keepsakes and the town that exist.
+  const notes = new Set(maps.flatMap(m => m.objects.flatMap(o => (o.kind === 'note' ? [o.id] : []))));
+  const town = new Set([...(items?.town?.milestones ?? []), ...(items?.town?.works ?? [])].map(m => m.id));
+  const keepsakes = new Set((items?.items ?? []).filter(i => i.kind === 'keepsake').map(i => i.id));
+  const pageId = (p: unknown, where: string) => { if (!ID.test(typeof p === 'string' ? p : '')) err(`${where}: a page of the field notes by its id`); };
+  const sceneIds = new Set<string>(), scenes = story.scenes ?? [];
+  if (!Array.isArray(scenes)) err('scenes is a list');
+  else scenes.forEach((s, i) => {
+    if (typeof s !== 'object' || s === null) return err(`scene ${i + 1}: a scene has an id, who tells it, a title, when it opens and its lines`);
+    const name = `scene ${i + 1} (${JSON.stringify(s.id)})`;
+    if (!ID.test(s.id ?? '')) err(`${name}: an id is lowercase words joined by hyphens`);
+    if (sceneIds.has(s.id)) err(`${name} is there twice`);
+    sceneIds.add(s.id);
+    if (!people.has(s.who)) err(`${name}: nobody has the id ${String(s.who)}`);
+    if (typeof s.title !== 'string' || !s.title.trim()) err(`${name} needs a title`);
+    if (!Array.isArray(s.lines) || !s.lines.length || s.lines.some(l => typeof l !== 'string' || !l.trim())) err(`${name} says nothing`);
+    const w = s.when ?? {};
+    if (!Object.keys(w).length) err(`${name}: when says what opens it (a level, notes read, pages open, the town)`);
+    if (w.level !== undefined && !(Number.isInteger(w.level) && w.level >= 1)) err(`${name}: a level is a whole number from 1`);
+    for (const n of w.notes ?? []) if (!notes.has(n)) err(`${name}: there is no note ${n}`);
+    for (const p of w.pages ?? []) pageId(p, name);
+    if (w.town !== undefined && items && !town.has(w.town)) err(`${name}: ${w.town} is no milestone or work of the town`);
+    return undefined;
+  });
+  if (Array.isArray(scenes) && scenes.length > MAX_SCENES) err(`there are ${scenes.length} scenes, and which were told is kept for at most ${MAX_SCENES}`);
+  const says = story.says ?? [];
+  if (!Array.isArray(says)) err('says is a list');
+  else says.forEach((s, i) => {
+    const name = `say ${i + 1}`;
+    if (typeof s !== 'object' || s === null) return err(`${name}: who says it, when, and the line`);
+    if (!people.has(s.who)) err(`${name}: nobody has the id ${String(s.who)}`);
+    if (typeof s.line !== 'string' || !s.line.trim()) err(`${name} says nothing`);
+    const w = s.when ?? {};
+    if (!Object.keys(w).length) err(`${name}: when says what it waits for`);
+    if (w.sky !== undefined && !(SAY_SKIES as readonly string[]).includes(w.sky)) err(`${name}: the sky is ${SAY_SKIES.join(', ')}`);
+    if (w.note !== undefined && !notes.has(w.note)) err(`${name}: there is no note ${w.note}`);
+    // What the items say (keepsakes, the town) is checked when the items are given.
+    if (w.keepsake !== undefined && items && !keepsakes.has(w.keepsake)) err(`${name}: ${w.keepsake} is not a keepsake`);
+    if (w.page !== undefined) pageId(w.page, name);
+    if (w.town !== undefined && items && !town.has(w.town)) err(`${name}: ${w.town} is no milestone or work of the town`);
+    if (w.level !== undefined && !(Number.isInteger(w.level) && w.level >= 1)) err(`${name}: a level is a whole number from 1`);
+    return undefined;
+  });
+  return out;
+}
+
+/**
+ * The town (town.ts): its painted number, its milestones (each on a count the server keeps, reached at a
+ * number from 1, with the banner everyone reads) and the works of its ledger (each needing items that
+ * are given and used up: never a tool, a sealed thing or a keepsake), every id once across both; what
+ * changes with the town on the maps names one of them; and the swaps people make, each with someone who
+ * stands on a map, for items that can be carried. Returns every milestone and work id.
+ */
+function validateTown(
+  data: ItemsData, ids: Set<string>, tools: Set<string>, sealed: Set<string>, keepsakes: Set<string>, maps: MapData[], err: (message: string) => void,
+): Set<string> {
+  const out = new Set<string>();
+  const t = data.town;
+  const carried = (item: string, where: string) => {
+    if (!ids.has(item)) err(`${where}: ${item} is not an item`);
+    else if (tools.has(item)) err(`${where}: ${item} is a tool: tools are never given or used up`);
+    else if (sealed.has(item)) err(`${where}: ${item} is a sealed thing: ${NO_BAG}`);
+    else if (keepsakes.has(item)) err(`${where}: ${item} is a keepsake: it stays with you until it is home`);
+  };
+  const said = (v: unknown, where: string) => { if (typeof v !== 'string' || !v.trim()) err(`${where} says nothing`); };
+  if (t) {
+    if (!(Number.isInteger(t.pop) && t.pop >= 1)) err('town: pop is the whole number painted on the town\'s sign');
+    for (const [list, kind] of [[t.milestones ?? [], 'milestone'], [t.works ?? [], 'work']] as const) for (const m of list) {
+      const name = `town: ${kind} ${JSON.stringify(m?.id)}`;
+      if (!ID.test(m?.id ?? '')) err(`${name}: an id is lowercase words joined by hyphens`);
+      if (out.has(m.id)) err(`${name} is there twice (milestones and works share their ids)`);
+      out.add(m.id);
+      said(m.title, `${name}: its title`);
+      said(m.text, `${name}: its text`);
+    }
+    for (const m of t.milestones ?? []) {
+      const name = `town: milestone ${JSON.stringify(m.id)}`;
+      if (!(TOWN_COUNTS as readonly string[]).includes(m.when?.count)) err(`${name}: counts ${TOWN_COUNTS.join(', ')}`);
+      if (!(Number.isInteger(m.when?.n) && m.when.n >= 1)) err(`${name}: is reached at a whole number from 1`);
+      if (m.back !== undefined && !(typeof m.back === 'string' && m.back.trim())) err(`${name}: back names who comes back, or is left out`);
+    }
+    for (const w of t.works ?? []) {
+      const name = `town: work ${JSON.stringify(w.id)}`;
+      said(w.name, `${name}: its name`);
+      said(w.perk, `${name}: its perk`);
+      if (!Array.isArray(w.needs) || !w.needs.length) err(`${name} needs nothing`);
+      else {
+        const seen = new Set<string>();
+        for (const n of w.needs) {
+          carried(n?.item, name);
+          if (seen.has(n.item)) err(`${name} needs ${n.item} twice`);
+          seen.add(n.item);
+          if (!(Number.isInteger(n?.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
+        }
+      }
+    }
+  }
+  // Everything on the maps that changes with the town names a milestone or a work of it.
+  for (const m of maps) {
+    const named = (id: string | undefined, what: string) => { if (id !== undefined && !out.has(id)) err(`${m.id}: ${what} changes with ${id}, which is no milestone or work of the town`); };
+    for (const o of m.objects) if ('town' in o && o.town) { named(o.town.from, `the ${o.kind} at ${o.x},${o.y}`); named(o.town.until, `the ${o.kind} at ${o.x},${o.y}`); }
+    for (const c of m.town?.houses ?? []) named(c.from, `the house at ${c.x},${c.y}`);
+    for (const n of m.town?.names ?? []) named(n.from, 'its name');
+  }
+  const people = new Set(maps.flatMap(m => m.objects.flatMap(o => (o.kind === 'npc' ? [o.id] : []))));
+  const swapIds = new Set<string>();
+  for (const s of data.swaps ?? []) {
+    const name = `swap ${JSON.stringify(s?.id)}`;
+    if (!/^[a-z][a-z0-9-]*$/.test(s?.id ?? '')) err(`${name}: ids are lowercase letters, digits and -`);
+    if (swapIds.has(s.id)) err(`${name} is defined twice`);
+    swapIds.add(s.id);
+    if (!people.has(s.who)) err(`${name}: nobody has the id ${String(s.who)}`);
+    for (const side of ['give', 'get'] as const) {
+      carried(s[side]?.item, `${name}: what it ${side}s`);
+      if (!(Number.isInteger(s[side]?.count) && s[side].count >= 1)) err(`${name}: what it ${side}s is a whole number from 1`);
+    }
+    if (s.give?.item === s.get?.item) err(`${name} gives what it gets`);
+  }
   return out;
 }
 

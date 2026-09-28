@@ -12,7 +12,7 @@ import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
-import { MemoryStorage, type PlayerRecord, type Storage } from '../src/storage';
+import { MemoryStorage, type PlayerRecord, type Storage, type TownRecord } from '../src/storage';
 import { World, colorFor } from '../src/world';
 import { chestMaps, fixtureMaps, itemsData } from './fixtures';
 
@@ -629,6 +629,25 @@ export async function keepsBests(storage: Storage): Promise<void> {
   expect((await load()).bests).toEqual(bests);
   await storage.save({ ...kept, bests: { ...bests, longestS: 900 } });
   expect((await load()).bests).toEqual({ ...bests, longestS: 900 });
+}
+
+/**
+ * The town (town.ts), one for everyone, on `storage` (in memory, or a real database whose town nobody saved
+ * yet): none until it is first saved, then whole as the last save wrote it, a later save over the one before.
+ */
+export async function keepsTown(storage: Storage): Promise<void> {
+  expect(await storage.loadTown()).toBeNull();
+  const first: TownRecord = { since: 1_800_000_000_000, counts: { woke: 1, fed: 12 }, given: { 'south-lights': { wire: 2 } }, done: [{ id: 'edith-home', day: 3061, at: 1_800_000_060_000 }] };
+  await storage.saveTown(first);
+  // What was saved stays as it was: the World goes on changing its own town.
+  first.counts.woke = 9;
+  expect(await storage.loadTown()).toEqual({ ...first, counts: { woke: 1, fed: 12 } });
+  const later: TownRecord = {
+    since: first.since, counts: { woke: 1, fed: 40, thanks: 3 }, given: { 'board-shelter': { cloth: 1 } },
+    done: [{ id: 'edith-home', day: 3061, at: 1_800_000_060_000 }, { id: 'south-lights', day: 3062, at: 1_800_000_120_000 }],
+  };
+  await storage.saveTown(later);
+  expect(await storage.loadTown()).toEqual(later);
 }
 
 /**

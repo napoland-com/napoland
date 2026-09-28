@@ -1,7 +1,7 @@
 import {
   PROTOCOL_VERSION, STEP_MS, type BagSlot, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type FlashView, type StormView, type ItemsData,
   type LongNightView, type MapData, type MarkView, type MeritsView, type NotebookView, type PlayerView, type ProgressView, type SeasonView, type ServerMsg, type StoneView, type StoryData,
-  type StoryView, type SurgeView, type ConditionsView, type Weather,
+  type StoryView, type SurgeView, type ConditionsView, type TownView, type Weather,
 } from '@napoland/shared';
 import { Items } from '../src/items';
 
@@ -130,6 +130,9 @@ export interface Extras {
   notebook?: NotebookView;
   /** Whom you thanked today (UTC), by id. */
   thanked?: string[];
+  /** What the town has come to (town.ts), and the world's clock as the welcome was sent. */
+  town?: TownView;
+  clock?: number;
 }
 /** Dry, light and alone. */
 export const DRY: BodyView = { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} };
@@ -152,8 +155,8 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
     // No Long Night on, and the next one with its bonus, unless a test says otherwise.
     longNight: extras.longNight ?? { on: false, bonus: true, out: false },
     thanked: extras.thanked ?? [],
-    // Nothing read and nothing home yet.
-    notes: [], keepsakes: [], firsts: [],
+    // Nothing read and nothing home yet, and the town as it was before anything came back.
+    notes: [], keepsakes: [], firsts: [], town: extras.town ?? { done: [], given: {} }, clock: extras.clock ?? 0,
   };
 }
 

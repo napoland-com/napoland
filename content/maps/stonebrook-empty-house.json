@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-empty-house",
   "name": "The empty house",
-  "version": 2,
+  "version": 3,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -25,6 +25,7 @@
     "000000000"
   ],
   "spawn": {"x":4,"y":5,"dir":"up"},
+  "town": {"names":[{"from":"edith-home","name":"Edith's house"}]},
   "exits": [
     {"x":4,"y":6,"w":1,"h":1,"to":"stonebrook","tx":15,"ty":21,"dir":"down"}
   ],
@@ -36,6 +37,8 @@
     {"kind":"crate","x":3,"y":3},
     {"kind":"table","x":1,"y":4},
     {"kind":"crate","x":6,"y":5},
+    {"kind":"fireplace","x":4,"y":1,"town":{"from":"edith-home"}},
+    {"kind":"npc","id":"edith","name":"Edith","look":{"coat":"#5d586b","scarf":"#a8834a","hair":"#e4dfd4","skin":"#d6ad8e"},"x":5,"y":3,"dir":"down","lines":["Come in and shut the door. The heat's for me, but you can stand in it.","Somebody slept here while I was down the road. Folded my blankets, took four tins of beans, and left a note saying they'd pay it back. I kept it.","The girl left one too. A house next door with a light on, she wrote. That was your house. You'll have been asleep.","The stone woke, so I came home. I said I would. I don't say things I don't do.","Ruth sends her regards. She doesn't, but she would if she thought of it."],"town":{"from":"edith-home"}},
     {"kind":"note","x":1,"y":4,"id":"barlow-tins","by":"barlows","name":"A list on the table","text":["Slept here one night. Used two blankets, folded them back. Took four tins of beans. We will pay it back. E. Barlow"]},
     {"kind":"note","x":2,"y":1,"id":"barlow-next-door","by":"barlows","name":"A note on the shelf","text":["There is a house next door with a light on. Mom says let them sleep. Wren"]}
   ]

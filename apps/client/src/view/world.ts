@@ -33,7 +33,7 @@ import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
 } from './interior';
-import { bridgeModel, bridgeRails, cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
+import { bridgeModel, bridgeRails, cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding, porchModel } from './left';
 import { SNOW, ambience, assignBeams, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
 import { HUM, TELEPORT_RINGS, TELEPORT_ROCK_Y, napoBuilding, napoProp, napoSign, teleportCore, towerModel, type TeleportCore } from './napo';
@@ -375,6 +375,8 @@ export class WorldView {
   private flickerAt: Array<{ x: number; y: number }> = [];
   private flashes = new Flashes();
   private echoes = new Echoes();
+  /** Roofs the town built over a few tiles (porches), and how solid each is drawn now: they fade over whoever stands under them. */
+  private porches: Array<{ roof: THREE.Mesh; x0: number; y0: number; x1: number; y1: number; k: number }> = [];
   /** What stands at the edge of the fog when you are uneasy (unease.ts): only on a map where watchers roam. */
   private farFigure: FarFigure | null = null;
   /** Someone's steps, glimpsed while you are alone out there (glimpses.ts): only on a map of the wilds. */
@@ -485,6 +487,7 @@ export class WorldView {
     this.animate = [];
     this.wisps = [];
     this.puffs = [];
+    this.porches = [];
   }
 
   /** Height of the ground a character stands on: on water frozen over, the ice. */
@@ -787,8 +790,11 @@ export class WorldView {
         continue;
       }
       if (h.style === 'mill') {
-        // The old sawmill (left.ts): the same doorway, dark; nothing has burned in there since it closed.
-        still.push(millBuilding(h, doorX, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }));
+        // The old sawmill (left.ts): the same doorway, dark until someone lights its stove again (town.ts);
+        // then the doorway glows, its windows warm, and its burner's stack smokes.
+        const { root, stack } = millBuilding(h, doorX, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }, fire ? { warm: this.warm, doorGlow: this.doorGlow } : undefined);
+        if (fire) chimneys.push(stack);
+        still.push(root);
         continue;
       }
       const g = new THREE.Group(), cx = h.x + h.w / 2, cz = h.y + h.h / 2;
@@ -901,9 +907,18 @@ export class WorldView {
       const g = new THREE.Group();
       g.position.set(l.x + 0.5, 0, l.y + 0.5);
       g.add(part(flat(new THREE.CylinderGeometry(0.045, 0.06, 1.3, 6)), '#2f343c', 0, 0.65, 0, 0.02));
-      // The head keeps its own glowing material: all the lamp heads become one mesh of their own.
-      g.add(box(0.42, 0.05, 0.08, '#2f343c', 0.18, 1.3, 0), part(new THREE.BoxGeometry(0.2, 0.1, 0.16), this.lampMat, 0.34, 1.24, 0, 0.02));
+      // The head keeps its own glowing material: all the lamp heads become one mesh of their own. One the
+      // town has not mended yet (town.ts) stands dark, its glass broken grey.
+      g.add(box(0.42, 0.05, 0.08, '#2f343c', 0.18, 1.3, 0), part(new THREE.BoxGeometry(0.2, 0.1, 0.16), l.dark ? '#3a3f45' : this.lampMat, 0.34, 1.24, 0, 0.02));
       still.push(g);
+    }
+    // A roof on posts the town built (town.ts): over the notice board, where the rain keeps off. Its roof
+    // fades while someone stands under it, whom this camera would otherwise not see.
+    for (const p of this.objects('porch')) {
+      const { posts, roof } = porchModel(p);
+      still.push(posts);
+      this.scene.add(roof);
+      this.porches.push({ roof, x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h, k: 1 });
     }
     // Utility poles with sagging wires, in the order the map lists them.
     const poles = this.objects('pole');
@@ -1369,6 +1384,12 @@ export class WorldView {
     this.creatures.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
     for (const c of this.creatureList) if (c.moving) this.rustleAt(c.x + 0.5, c.y + 0.5);
     this.echoes.update(t, (x, z) => this.groundAt(x, z));
+    for (const r of this.porches) {
+      // Under it, or a row in front, where its roof comes between this camera and whoever stands there.
+      const under = avatars.some(a => a.x + 0.5 >= r.x0 && a.x + 0.5 < r.x1 && a.y + 0.5 >= r.y0 && a.y + 0.5 < r.y1 + 1);
+      r.k += ((under ? 0.22 : 1) - r.k) * Math.min(1, dt * 8);
+      (r.roof.material as THREE.MeshToonMaterial).opacity = r.k;
+    }
     this.farFigure?.update(t, fx, fz);
     this.passer?.update(t);
     this.light(fx, fz, t, dt);

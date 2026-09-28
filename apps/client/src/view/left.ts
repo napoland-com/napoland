@@ -13,7 +13,7 @@
  */
 import * as THREE from 'three';
 import type { Dir, MapObject } from '@napoland/shared';
-import { box, flat, hash2, part, pivot, toon } from './toon';
+import { box, flat, hash2, ownToon, part, pivot, toon } from './toon';
 
 type House = Extract<MapObject, { kind: 'house' }>;
 type Car = Extract<MapObject, { kind: 'car' }>;
@@ -405,7 +405,9 @@ export const MILL_WALL_H = 1.2;
  * it, small windows, and the stack of its burner at the back. The doorway is open, like every door,
  * and black: nothing burns in there any more.
  */
-export function millBuilding(h: House, doorX: number, door: { w: number; h: number; back: number }): THREE.Group {
+export function millBuilding(
+  h: House, doorX: number, door: { w: number; h: number; back: number }, lit?: { warm: THREE.Material; doorGlow: THREE.Material },
+): { root: THREE.Group; stack: THREE.Vector3 } {
   const cx = h.x + h.w / 2, cz = h.y + h.h / 2;
   const g = pivot(cx, 0, cz);
   const wall = '#5e5246', batten = '#473d34', H = MILL_WALL_H;
@@ -441,21 +443,40 @@ export function millBuilding(h: House, doorX: number, door: { w: number; h: numb
   // The burner's stack at the back, taller than anything in town but the trees.
   g.add(part(flat(new THREE.CylinderGeometry(0.16, 0.19, 3.1, 8)), '#6b3a22', W / 2 - 0.45, 1.55, back + 0.3, 0.02));
   g.add(part(flat(new THREE.CylinderGeometry(0.22, 0.2, 0.12, 8)), '#4a2a18', W / 2 - 0.45, 3.1, back + 0.3, 0.015));
-  // The doorway, black inside; its frame; the big door slid aside on its rail; the company's board over it.
-  g.add(part(new THREE.BoxGeometry(door.w - 0.02, door.h - 0.02, fd), toon('#0a0807', { side: THREE.BackSide }), dx, door.h / 2, fz + 0.005, false));
+  // The doorway, black inside, or warm once someone lights the stove again (town.ts); its frame; the big
+  // door slid aside on its rail; the company's board over it.
+  g.add(part(new THREE.BoxGeometry(door.w - 0.02, door.h - 0.02, fd), lit ? lit.doorGlow : toon('#0a0807', { side: THREE.BackSide }), dx, door.h / 2, fz + 0.005, false));
   for (const s of [-1, 1]) g.add(box(0.07, door.h + 0.05, 0.08, '#2e241c', dx + s * (door.w / 2 + 0.035), (door.h + 0.05) / 2, front + 0.01, 0.015));
   g.add(box(door.w + 1.3, 0.05, 0.05, '#2a2724', dx + 0.5, door.h + 0.12, front + 0.04, false));
   g.add(box(0.9, door.h + 0.06, 0.05, '#51463c', dx + door.w / 2 + 0.5, (door.h + 0.06) / 2, front + 0.06, 0.015));
   for (const y of [0.25, 0.6]) g.add(box(0.86, 0.03, 0.012, batten, dx + door.w / 2 + 0.5, y, front + 0.09, false));
   g.add(box(1.5, 0.2, 0.03, '#b9ad94', dx - 0.1, H - 0.14, front + 0.03, 0.012));
   for (let k = 0; k < 9; k++) g.add(box(0.07, 0.09, 0.005, '#2a2420', dx - 0.72 + k * 0.155, H - 0.14, front + 0.05, false));
-  // Small windows either side, dark; one boarded.
+  // Small windows either side, dark, one boarded; with the stove lit, the first of them is warm.
   const spots = [dx - 1.1, dx - 2.0, dx + 2.05].filter(x => Math.abs(x) < W / 2 - 0.3);
   spots.forEach((wx, k) => {
-    g.add(box(0.42, 0.34, 0.03, '#2a221b', wx, 0.78, front + 0.02, false), box(0.34, 0.26, 0.035, '#1c1f24', wx, 0.78, front + 0.03, false));
+    g.add(box(0.42, 0.34, 0.03, '#2a221b', wx, 0.78, front + 0.02, false));
+    g.add(lit && k === 0 ? part(new THREE.BoxGeometry(0.34, 0.26, 0.035), lit.warm, wx, 0.78, front + 0.03, false) : box(0.34, 0.26, 0.035, '#1c1f24', wx, 0.78, front + 0.03, false));
     if (k === 1) { const p = box(0.44, 0.07, 0.02, '#6b5a44', wx, 0.8, front + 0.06, false); p.rotation.z = 0.3; g.add(p); }
   });
-  return g;
+  return { root: g, stack: new THREE.Vector3(cx + W / 2 - 0.45, 3.2, cz + back + 0.3) };
+}
+
+/**
+ * A roof on posts the town built over a few tiles (town.ts, the notice board's shelter): its posts, baked
+ * with the other props, and its roof apart, in a material of its own, so it can fade while someone stands
+ * under it (this camera would hide them).
+ */
+export function porchModel(p: { x: number; y: number; w: number; h: number }): { posts: THREE.Group; roof: THREE.Mesh } {
+  const cx = p.x + p.w / 2, cz = p.y + p.h / 2, hw = p.w / 2 - 0.1, hh = p.h / 2 - 0.1;
+  const posts = pivot(cx, 0, cz);
+  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) posts.add(box(0.08, 1.5, 0.08, '#6b5134', sx * hw, 0.75, sz * hh));
+  for (const sz of [-1, 1]) posts.add(box(p.w - 0.1, 0.07, 0.07, '#5a432c', 0, 1.46, sz * hh, false));
+  // New tin over fresh boards, tipped toward the front so the rain runs off it.
+  const roof = new THREE.Mesh(flat(new THREE.BoxGeometry(p.w + 0.24, 0.06, p.h + 0.24)), ownToon('#7b8288', { transparent: true }));
+  roof.position.set(cx, 1.56, cz);
+  roof.rotation.x = 0.1;
+  return { posts, roof };
 }
 
 /** Curtains drawn across a dark window (world.ts's cabins, interior.ts's rooms): two panels nearly meeting, and a valance. */

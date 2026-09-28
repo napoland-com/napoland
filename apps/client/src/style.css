@@ -560,7 +560,10 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .chapter[data-latest] { box-shadow: inset 0 0 0 1px #8a7440; }
 .chapter[data-latest] h3 { color: #ffcf5a; }
 /* Its three parts under tabs, like the chest's: the story, the field notes (area by area, each with its count) and the notes people left. */
-.journal-sheet .sheet-head .chest-tabs { flex: 1; min-width: 0; }
+.journal-sheet .sheet-head .chest-tabs { flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+/* Four parts: on the narrowest screens the tabs sit a little closer, and the strip scrolls rather than push the close button off. */
+.journal-sheet .sheet-head .chest-tabs::-webkit-scrollbar { display: none; }
+.hud .journal-sheet .chest-tabs button { padding: 0 .4em; }
 .journal-body[hidden] { display: none; }
 .field-notes { gap: calc(var(--u) * 1); }
 .field-notes .area { display: grid; gap: calc(var(--u) * .5); }

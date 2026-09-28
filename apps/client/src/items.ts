@@ -27,6 +27,9 @@ export class Items {
   readonly conditions: ItemsData['conditions'];
   /** Where the keepsakes lie, and what the whole set home gives (notes.ts). */
   readonly keepsakes: ItemsData['keepsakes'];
+  /** The town's milestones and the works of its ledger, and what the townspeople swap (town.ts). */
+  readonly town: ItemsData['town'];
+  readonly swaps: NonNullable<ItemsData['swaps']>;
   /** What the Long Night's bonus does, in words ("wire and strange objects grow back twice as fast"); empty without one. */
   readonly longNight: string;
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
@@ -40,6 +43,8 @@ export class Items {
     this.upgrades = data?.upgrades;
     this.conditions = data?.conditions;
     this.keepsakes = data?.keepsakes;
+    this.town = data?.town;
+    this.swaps = data?.swaps ?? [];
     this.longNight = longNightWords(data?.longNight, this.byId);
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
@@ -99,7 +104,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'not_gear': return 'That is not something you wear';
     case 'bag_too_full': return 'What you carry does not fit in that bag';
     case 'keep_bag': return 'You always carry a bag';
-    case 'missing': return 'Your stash lacks what it needs';
+    case 'missing': return action === 'swap' ? 'You do not carry enough of it' : 'Your stash lacks what it needs';
     case 'unknown_player': return 'Nobody by that name';
     case 'requests_off': return 'They take no friend requests';
     case 'not_friends': return action === 'move' ? 'You can only move next to friends' : 'You can only message friends';
@@ -133,6 +138,8 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'trading': return 'Finish the trade you are in first';
     case 'their_bag_full': return 'Their bag has no room for it';
     case 'nothing_to_trade': return 'There is nothing to trade yet';
+    case 'cold': return 'Nobody keeps this hearth yet. It stays cold';
+    case 'not_needed': return 'The ledger wants no more of that for it';
     case 'placed': return 'It stands in its place already';
     case 'street_full': return 'Their street has no lot free';
     case 'neighbors': return 'You live on the same street already';

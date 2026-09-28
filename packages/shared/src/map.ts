@@ -67,6 +67,84 @@ export interface NpcLook {
   hat?: string;
 }
 
+/**
+ * What the town has come to decides some things (town.ts): a gate holds from a milestone the whole
+ * server reached or a work of the town's ledger done (`from`), until one (`until`), or between the two.
+ * A lamp or a fireplace outside its gate stands dark and cold; anything else is simply not there.
+ */
+export interface TownGate {
+  from?: string;
+  until?: string;
+}
+
+/**
+ * What else on a map changes with the town (town.ts), beside what stands on it within a gate. Kept apart
+ * from the objects it changes, so a map that grows with the town keeps what was on it as it was.
+ */
+export interface MapTown {
+  /** A house (by its top-left tile) that lights up from a milestone or a work done on, someone living there again, or has its roof mended. */
+  houses?: Array<{ x: number; y: number; from: string; lit?: 1; roof?: string }>;
+  /** The town's sign (by its tile) and the number painted on it: someone chalks that over as people come back. */
+  sign?: { x: number; y: number; pop: number };
+  /** A room only: what it is called from a milestone or a work done on, the last that holds winning (the empty house is Edith's house once she is home). */
+  names?: Array<{ from: string; name: string }>;
+}
+
+/** The town as it was before anything came back: nothing reached, nothing done. */
+export const NO_TOWN: ReadonlySet<string> = new Set();
+
+/** Does a gate hold, with the town come to `done`? No gate always holds. */
+export function gateOpen(g: TownGate | undefined, done: ReadonlySet<string>): boolean {
+  return (!g?.from || done.has(g.from)) && (!g?.until || !done.has(g.until));
+}
+
+/** Does anything on this map change with the town? */
+export function touchedByTown(data: MapData): boolean {
+  return !!data.town || data.objects.some(o => 'town' in o && o.town);
+}
+
+/**
+ * The line someone chalked under the number painted on the town's sign, once people came back (`pop`,
+ * town.ts): none while the painted number is still right.
+ */
+export function chalkLine(painted: number, pop: number): string | undefined {
+  return pop > painted ? `The ${painted} is crossed out in chalk. Beside it, in the same chalk: ${pop}.` : undefined;
+}
+
+/**
+ * The map as the town has it when it has come to `done` (town.ts), with `pop` people in it: someone who
+ * comes or goes stands here only within their gate, a sign or a porch likewise; a lamp outside its gate
+ * stands dark, a hearth outside its gate cold (a hearth, not a fireplace); a house takes the changes that
+ * hold (lit, a mended roof); the town's sign says what was chalked on it; a room takes the last name
+ * that holds. The same map, as it was, when nothing on it changes with the town.
+ */
+export function townData(data: MapData, done: ReadonlySet<string>, pop = 0): MapData {
+  if (!touchedByTown(data)) return data;
+  const t = data.town ?? {};
+  const objects = data.objects.flatMap((o): MapObject[] => {
+    if (o.kind === 'house') {
+      let h = o;
+      for (const c of t.houses ?? []) if (c.x === o.x && c.y === o.y && done.has(c.from)) h = { ...h, ...(c.lit ? { lit: 1 as const } : {}), ...(c.roof ? { roof: c.roof } : {}) };
+      return [h];
+    }
+    if (o.kind === 'sign' && t.sign && t.sign.x === o.x && t.sign.y === o.y) {
+      const chalk = chalkLine(t.sign.pop, pop);
+      return chalk ? [{ ...o, text: [...o.text, chalk] }] : [o];
+    }
+    if (!('town' in o) || !o.town || gateOpen(o.town, done)) return [o];
+    if (o.kind === 'lamp') return [{ ...o, dark: true }];
+    if (o.kind === 'fireplace') return [{ kind: 'hearth', x: o.x, y: o.y }];
+    return [];
+  });
+  const name = (t.names ?? []).filter(n => done.has(n.from)).at(-1)?.name ?? data.name;
+  return { ...data, name, objects };
+}
+
+/** Two workings-out of one map that stand the same (the same name, the same objects in the same order). */
+function sameMap(a: MapData, b: MapData): boolean {
+  return a === b || (a.name === b.name && a.objects.length === b.objects.length && a.objects.every((o, i) => JSON.stringify(o) === JSON.stringify(b.objects[i])));
+}
+
 export type MapObject =
   | { kind: 'tree'; x: number; y: number; s: number; v: number }
   /** A rock; with `hum`, one of the rocks deep in the woods that hum back: it glows faintly, the same day and night. */
@@ -80,12 +158,17 @@ export type MapObject =
    * name shows; its window lights while its owner is at home, whatever `lit` says.
    */
   | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' | 'mill'; curtains?: boolean; plate?: true }
-  | { kind: 'lamp'; x: number; y: number }
+  /**
+   * A street light. `town`: it stands broken and dark outside its gate (town.ts). `dark`: it is dark now,
+   * as the town (or the night) has it: only ever worked out (townData), never written in a map.
+   */
+  | { kind: 'lamp'; x: number; y: number; town?: TownGate; dark?: true }
   /**
    * A wooden signpost; with style 'napo' one of NAPO's yellow warning signs, 'cardboard' a piece of
-   * cardboard someone wrote on, 'mailbox' the mailbox by a door with the family's name on it.
+   * cardboard someone wrote on, 'mailbox' the mailbox by a door with the family's name on it. `town`: what
+   * it says only within that gate (a mailbox with a name painted on again, town.ts).
    */
-  | { kind: 'sign'; x: number; y: number; text: string[]; style?: 'napo' | 'cardboard' | 'mailbox' }
+  | { kind: 'sign'; x: number; y: number; text: string[]; style?: 'napo' | 'cardboard' | 'mailbox'; town?: TownGate }
   | { kind: 'pole'; x: number; y: number }
   | { kind: 'fence'; x: number; y: number; dir: 'h' | 'v' }
   | { kind: 'barrel'; x: number; y: number }
@@ -126,7 +209,8 @@ export type MapObject =
   /** One of NAPO's sample cages: a rock from deep in the woods behind steel mesh; you read its tag like a sign. */
   | { kind: 'cage'; x: number; y: number; text: string[] }
   | { kind: 'stone'; x: number; y: number }
-  | { kind: 'npc'; x: number; y: number; id: string; name: string; dir: Dir; lines: string[]; look?: NpcLook }
+  /** A townsperson. `town`: someone who comes or goes with the town (town.ts), here only within that gate. */
+  | { kind: 'npc'; x: number; y: number; id: string; name: string; dir: Dir; lines: string[]; look?: NpcLook; town?: TownGate }
   | { kind: 'shrooms'; x: number; y: number }
   /** A tall radio mast, like the NAPO Tower's, with a red light blinking at the top; `broken`: snapped halfway, its light long dead. */
   | { kind: 'antenna'; x: number; y: number; broken?: boolean }
@@ -156,11 +240,19 @@ export type MapObject =
    * out there keeps it going. `name`: what people call a fire in the open (the notice board says it),
    * for example "the leavers' camp"; a fire in a room goes by the room's name. `longNight`: the lodge's
    * fire, which nobody tends on the Long Night (sky.ts): it burns down like a shelter's until dawn, and
-   * the town keeps it going.
+   * the town keeps it going. `town`: a hearth in town that stays cold until someone comes home to light
+   * it (town.ts).
    */
-  | { kind: 'fireplace'; x: number; y: number; tended?: boolean; name?: string; longNight?: boolean }
+  | { kind: 'fireplace'; x: number; y: number; tended?: boolean; name?: string; longNight?: boolean; town?: TownGate }
   /** A notice board: reading it tells how things stand out there (the server writes it). */
   | { kind: 'board'; x: number; y: number }
+  /**
+   * A roof on posts over w by h tiles, walked under: whoever stands under it keeps out of the rain and
+   * dries off, as under any roof. Built by the town (`town`: a work of its ledger, town.ts).
+   */
+  | { kind: 'porch'; x: number; y: number; w: number; h: number; town?: TownGate }
+  /** The town's ledger, open on its stand: what each broken part of town needs, and where you give it (town.ts). */
+  | { kind: 'ledger'; x: number; y: number }
   /** Your stash: a chest at home. Everyone who opens it sees only their own things in it. */
   | { kind: 'chest'; x: number; y: number }
   /** The workbench, beside the chest at home: it makes gear from what your stash holds (recipes in content/items.json). */
@@ -291,6 +383,8 @@ export interface MapData {
   wake?: { x: number; y: number; dir: Dir };
   /** Places on this map people call by name; the paper map writes them in. */
   places?: MapPlace[];
+  /** What else on this map changes with the town (town.ts): houses that light up, the town's sign, a room's name. */
+  town?: MapTown;
   /**
    * A town only: a street of cabins (Residents' Lane), where each player's cabin stands. The server keeps a
    * copy of it for each street of neighbors, each of its houses a lot (in the order they are listed),
@@ -376,7 +470,7 @@ const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
-  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport',
+  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport', 'ledger',
   'ruin', 'yarder', 'spool', 'traps', 'gate',
 ]);
 
@@ -385,9 +479,9 @@ export const GATE_PULLERS = 2;
 export const GATE_WINDOW_MS = 5000;
 /**
  * Objects that are only drawn: you walk over or through them. A note is drawn on what it lies on,
- * which blocks the way itself.
+ * which blocks the way itself; a porch is a roof you walk under.
  */
-export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'bridge', 'note']);
+export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust', 'bridge', 'note', 'porch']);
 
 /** Does this object stop anyone from walking onto its tiles? A comfort place does, but for the rug. */
 export function blocks(o: MapObject): boolean {
@@ -402,7 +496,13 @@ export function underfoot(o: MapObject): boolean {
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
  */
-export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache', 'teleport']);
+export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache', 'teleport', 'ledger']);
+/**
+ * What the town's state may gate (TownGate, town.ts): who is where, a lamp or a hearth that stays dark
+ * until the town mends or lights it, what a sign says, and a porch the town builds. Nothing else comes
+ * or goes: the map keeps its shape.
+ */
+export const GATED = new Set<MapObject['kind']>(['npc', 'sign', 'lamp', 'fireplace', 'porch']);
 
 /** Where a teleport sets you down: on the tile in front of it (below), facing away from it. */
 export function teleportArrival(t: { x: number; y: number }): { x: number; y: number; dir: Dir } {
@@ -412,7 +512,7 @@ export function teleportArrival(t: { x: number; y: number }): { x: number; y: nu
 /** How many tiles an object covers, across and down: houses, vehicles, log decks, beds, rugs and a few more are bigger than one. */
 export function footprint(o: MapObject): [number, number] {
   switch (o.kind) {
-    case 'house': case 'rug': case 'truck': case 'jeep': case 'logs': case 'ruin': return [o.w, o.h];
+    case 'house': case 'rug': case 'truck': case 'jeep': case 'logs': case 'ruin': case 'porch': return [o.w, o.h];
     case 'car': return [o.w, o.h ?? 1];
     case 'carriage': case 'gate': return [o.w, 1];
     case 'bed': return [1, 2];
@@ -471,6 +571,7 @@ export class TileMap {
   readonly height: number;
   readonly kinds: TileKind[];
   readonly levels: Uint8Array;
+  /** 1 where something stands in the way (worked out again when the town changes what stands where). */
   readonly blocked: Uint8Array;
   /** Index into data.exits of the exit on each tile, or -1. */
   private readonly exitIndex: Int16Array;
@@ -478,10 +579,12 @@ export class TileMap {
   private readonly litTiles: Uint8Array;
   /** 1 next to a fireplace, where energy comes back. */
   private readonly warmTiles: Uint8Array;
+  /** 1 under a roof out of doors (a porch): the rain keeps off. */
+  private readonly roofTiles: Uint8Array;
   /** Steps from each tile to the nearest home exit (-1: no way there); all 0 in towns. */
-  private readonly stepsHome: Int32Array;
+  private stepsHome: Int32Array;
   /** The same with the ice walked on (null: nothing here freezes): the ways home in winter, which may be shorter. */
-  private readonly stepsHomeFrozen: Int32Array | null;
+  private stepsHomeFrozen: Int32Array | null;
   /** 1 on the water that freezes in winter (data.ice). */
   private readonly iceTiles: Uint8Array;
   /** Water here freezes in winter (data.ice lists some). */
@@ -489,26 +592,85 @@ export class TileMap {
   /** Frozen now: the ice is walked on. The server and the client set it as the season turns (freeze). */
   private frozen = false;
   /** The most steps any tile is from home: where a surge starts. 0 in towns and insides. */
-  readonly deepest: number;
+  private deep = 0;
+  /** The map as the town has it now (townData): who is where, which lamps and hearths are lit. */
+  private now: MapData;
+  /** What the town has come to, as this map was last worked out for it (town.ts). */
+  private done: ReadonlySet<string>;
 
-  constructor(readonly data: MapData) {
-    const W = data.width, H = data.height;
+  /**
+   * `source` is the map as content has it; `done` what the town has come to (milestones reached, works
+   * done: town.ts), which decides who is where on it and which of its lamps and hearths are lit, and `pop`
+   * how many live in town (what is chalked on its sign). None: the town as it was before anything came back.
+   */
+  constructor(readonly source: MapData, done: ReadonlySet<string> = NO_TOWN, pop = 0) {
+    const W = source.width, H = source.height;
     this.width = W;
     this.height = H;
     this.kinds = new Array<TileKind>(W * H);
     this.levels = new Uint8Array(W * H);
     this.blocked = new Uint8Array(W * H);
     for (let y = 0; y < H; y++) {
-      const row = data.tiles[y] ?? '';
-      const lv = data.levels[y] ?? '';
+      const row = source.tiles[y] ?? '';
+      const lv = source.levels[y] ?? '';
       for (let x = 0; x < W; x++) {
         const c = row[x] as TileChar;
         const kind = TILE_CHARS[c];
-        if (!kind) throw new Error(`map ${data.id}: unknown tile '${row[x]}' at ${x},${y}`);
+        if (!kind) throw new Error(`map ${source.id}: unknown tile '${row[x]}' at ${x},${y}`);
         this.kinds[y * W + x] = kind;
         this.levels[y * W + x] = Number(lv[x] ?? '0') || 0;
       }
     }
+    this.exitIndex = new Int16Array(W * H).fill(-1);
+    (source.exits ?? []).forEach((e, i) => {
+      for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) if (this.inside(x, y)) this.exitIndex[y * W + x] = i;
+    });
+    this.litTiles = new Uint8Array(W * H);
+    this.warmTiles = new Uint8Array(W * H);
+    this.roofTiles = new Uint8Array(W * H);
+    // The water that freezes in winter is the map's own: the town never changes it.
+    this.iceTiles = new Uint8Array(W * H);
+    for (const water of source.ice ?? []) for (const [x, y] of water.tiles ?? []) if (this.inside(x, y) && this.kinds[y * W + x] === 'water') this.iceTiles[y * W + x] = 1;
+    this.hasIce = this.iceTiles.includes(1);
+    this.stepsHome = new Int32Array(W * H);
+    this.stepsHomeFrozen = null;
+    this.done = done;
+    this.now = townData(source, done, pop);
+    this.build();
+  }
+
+  /** The map as the town has it now: the objects standing on it (who is where, which lamps are dark) and its name. */
+  get data(): MapData {
+    return this.now;
+  }
+
+  /** The most steps any tile is from home: where a surge starts. 0 in towns and insides. */
+  get deepest(): number {
+    return this.deep;
+  }
+
+  /** What the town has come to, as this map follows it. */
+  get town(): ReadonlySet<string> {
+    return this.done;
+  }
+
+  /**
+   * The town has come to `done` (town.ts): who is where, and which lamps and hearths are lit, follow it.
+   * True when anything on this map changed.
+   */
+  setTown(done: ReadonlySet<string>, pop = 0): boolean {
+    this.done = done;
+    const next = townData(this.source, done, pop);
+    if (sameMap(next, this.now)) return false;
+    this.now = next;
+    this.build();
+    return true;
+  }
+
+  /** What stands where, what is lit and warm and under a roof, and how far each tile is from home: all from the objects standing now. */
+  private build(): void {
+    const W = this.width, data = this.now;
+    this.blocked.fill(0);
     for (const o of data.objects) if (blocks(o)) for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.blocked[y * W + x] = 1;
     // Every house can be entered: its door tile stays open (it is an exit to the house's inside).
     for (const o of data.objects) {
@@ -516,27 +678,23 @@ export class TileMap {
       const d = doorOf(o);
       if (this.inside(d.x, d.y)) this.blocked[d.y * W + d.x] = 0;
     }
+    // A lamp the town has not mended yet (or one gone dark) lights nothing.
+    this.around(this.litTiles, o => o.kind === 'lamp' && !o.dark, LAMP_RADIUS);
+    this.around(this.warmTiles, o => o.kind === 'fireplace', FIRE_RADIUS);
+    this.roofTiles.fill(0);
+    for (const o of data.objects) if (o.kind === 'porch') for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.roofTiles[y * W + x] = 1;
 
-    this.exitIndex = new Int16Array(W * H).fill(-1);
-    (data.exits ?? []).forEach((e, i) => {
-      for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) if (this.inside(x, y)) this.exitIndex[y * W + x] = i;
-    });
-
-    this.litTiles = this.around('lamp', LAMP_RADIUS);
-    this.warmTiles = this.around('fireplace', FIRE_RADIUS);
-
-    this.iceTiles = new Uint8Array(W * H);
-    for (const water of data.ice ?? []) for (const [x, y] of water.tiles ?? []) if (this.inside(x, y) && this.kinds[y * W + x] === 'water') this.iceTiles[y * W + x] = 1;
-    this.hasIce = this.iceTiles.includes(1);
-
-    // Distance home, walking, the year round; and in winter, with the ice walked on too.
+    // Distance home, walking, the year round; and in winter, with the ice walked on too. Worked out
+    // again as the town changes what stands where, frozen or not as it is now.
+    const frozen = this.frozen;
+    this.frozen = false;
     this.stepsHome = this.stepsFromHome();
     this.frozen = this.hasIce;
     this.stepsHomeFrozen = this.hasIce ? this.stepsFromHome() : null;
-    this.frozen = false;
+    this.frozen = frozen;
     let deepest = 0;
     for (const v of this.stepsHome) if (v > deepest) deepest = v;
-    this.deepest = deepest;
+    this.deep = deepest;
   }
 
   /**
@@ -606,16 +764,21 @@ export class TileMap {
     return this.inside(x, y) && this.warmTiles[y * this.width + x] === 1;
   }
 
-  /** The tiles within `radius` of any object of `kind`, center to center. */
-  private around(kind: MapObject['kind'], radius: number): Uint8Array {
-    const out = new Uint8Array(this.width * this.height), r = Math.ceil(radius);
-    for (const o of this.data.objects) {
-      if (o.kind !== kind) continue;
+  /** Marks in `out` the tiles within `radius` of every object that `is`, center to center. */
+  private around(out: Uint8Array, is: (o: MapObject) => boolean, radius: number): void {
+    out.fill(0);
+    const r = Math.ceil(radius);
+    for (const o of this.now.objects) {
+      if (!is(o)) continue;
       for (let y = o.y - r; y <= o.y + r; y++) for (let x = o.x - r; x <= o.x + r; x++) {
         if (this.inside(x, y) && Math.hypot(x - o.x, y - o.y) <= radius) out[y * this.width + x] = 1;
       }
     }
-    return out;
+  }
+
+  /** Is this tile under a roof out of doors (a porch), where the rain keeps off? */
+  roofed(x: number, y: number): boolean {
+    return this.inside(x, y) && this.roofTiles[y * this.width + x] === 1;
   }
 
   /** Walking steps from this tile to the nearest home exit (across the ice while it is frozen); 0 in towns and insides, -1 if there is no way. */

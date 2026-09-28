@@ -13,8 +13,9 @@ import type { Mods } from './feats';
 import type { Element, Piece, Quirk, Recipe, Slot, Tier, Upgrade } from './gear';
 import type { ParcelsData } from './parcels';
 import type { ConditionsData, Season } from './sky';
-import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
+import { objectTiles, type MapObject, type TileKind, type TileMap, type TownGate } from './map';
 import type { KeepsakesData } from './notes';
+import type { SwapDef, TownData } from './town';
 
 /**
  * A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn
@@ -162,6 +163,12 @@ export interface FindRule {
   condition?: string;
   /** Only within `r` tiles (center to center) of tile x,y: crates by the pond. */
   around?: { x: number; y: number; r: number };
+  /**
+   * Only within this gate of the town (town.ts): from a milestone reached or a work done, until one, or
+   * between. The cloth the empty house held lies on the lodge's shelves once Edith is home. Never with
+   * `when` or `condition`.
+   */
+  town?: TownGate;
   /** Only in this season (sky.ts), and gone when it is over: more glowcaps in spring, more resin in autumn. Never with `when` or `condition`. */
   season?: Season;
 }
@@ -189,6 +196,10 @@ export interface ItemsData {
   parcels?: ParcelsData;
   /** Where each keepsake lies, and what the whole set home gives (notes.ts). None: no keepsakes. */
   keepsakes?: KeepsakesData;
+  /** What the townspeople swap for what you carry spare (town.ts): Walt, at the lodge. None: nobody swaps. */
+  swaps?: SwapDef[];
+  /** The town's milestones and the works of its ledger (town.ts). None: the town never changes. */
+  town?: TownData;
   /** What grows back faster on a Long Night that has its bonus (sky.ts, world.ts). None: nothing does. */
   longNight?: LongNightData;
 }

@@ -1,7 +1,7 @@
 {
   "id": "south-road-bunker",
   "name": "The NAPO Bunker",
-  "version": 4,
+  "version": 5,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -35,6 +35,7 @@
     {"kind":"table","x":2,"y":3},
     {"kind":"crate","x":7,"y":4},
     {"kind":"npc","id":"ruth","name":"Ruth","x":3,"y":3,"dir":"down","look":{"coat":"#7d8f86","scarf":"#b33a3a","hair":"#2b2421","skin":"#8d5a3c"},"lines":["Come in out of the wet. I keep this fire going. The ones farther down the road, you'll have to feed yourself.","I was NAPO's nurse. When they pulled out, somebody had to stay with the ones who wouldn't go.","The station is down the road, past the cars. Vera is still in the laboratory. She says she's listening.","Read the notice on the wall. NAPO got a lot of things wrong, but not those.","The road ends at the checkpoint. Nobody has kept it in years. Don't go looking past the barrier."]},
+    {"kind":"npc","id":"edith","name":"Edith","look":{"coat":"#5d586b","scarf":"#a8834a","hair":"#e4dfd4","skin":"#d6ad8e"},"x":5,"y":3,"dir":"down","lines":["Edith. Edith Lund. The house next to yours in town is mine. Has been for fifty years.","NAPO said everybody out of town. Nobody said anything about the bunker, so here I am. Ruth doesn't mind. Ruth minds, but she doesn't say.","I'm not walking down to that barrier and out. I've lived in Stonebrook all my life. I can wait out two weeks.","The day that stone in town wakes up again, I'm going home. Walt says it's close. Walt says a lot of things.","Keep your feet dry. Nobody out here is going to knit you new socks."],"town":{"until":"edith-home"}},
     {"kind":"cache","x":1,"y":3,"name":"the bunker's crate"},
     {"kind":"note","x":2,"y":1,"id":"ranger-ruth","by":"ranger","name":"A note on the shelf","text":["Ruth: the Barlows are still out in the cabin at the end. Dan says they go when the crews stop coming.","Look in on them if you can. I take them what I can carry."]}
   ],

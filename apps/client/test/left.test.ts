@@ -138,7 +138,7 @@ describe('what the leavers left, and the logging days', () => {
 describe('the sawmill', () => {
   const mill = map('stonebrook').objects.find((o): o is Extract<MapObject, { kind: 'house' }> => o.kind === 'house' && o.style === 'mill')!;
   const door = { w: 0.6, h: 0.84, back: 0.2 };
-  const model = millBuilding(mill, doorOf(mill).x, door);
+  const model = millBuilding(mill, doorOf(mill).x, door).root;
 
   it('stands on its tiles, long and low, the burner\'s stack the only thing above its roof', () => {
     const [w, h] = footprint(mill);

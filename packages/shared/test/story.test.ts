@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_REMARKS, TALK_TURN, chapterOf, journal, linesInTurn, nextChapter, reachedBy, remarksDue, storyLines, toldAfter, validateStory, type ItemsData, type MapData, type MapObject, type Remark, type StoryData } from '../src';
+import {
+  MAX_REMARKS, MAX_SCENES, TALK_TURN, chapterOf, journal, linesInTurn, nextChapter, reachedBy, remarksDue, sceneDue, scenesAfter, scenesTold, storyLines, toldAfter, validateStory,
+  type ItemsData, type MapData, type MapObject, type Remark, type StoryData,
+} from '../src';
 
 /** A short story: home, then bring something home, then talk to Tom, then read the station's log. */
 function story(): StoryData {
@@ -92,7 +95,7 @@ describe('what people say once, after the first time you did something', () => {
   });
 
   it('comes before what they have to say about the day (Mira\'s word from the woods, Walt\'s on the Long Night), which comes before what they always say', () => {
-    const today = ['Long Night tonight.'];
+    const today = { day: ['Long Night tonight.'] };
     expect(storyLines(told(), 'home', 'tom', ['Pull up a chair.'], { made: 1 }, today)).toEqual(['Made that yourself?', 'Long Night tonight.', 'Pull up a chair.']);
     expect(storyLines(told(), 'the-lineman', 'tom', ['Pull up a chair.'], {}, today)).toEqual(['Go down the south road.', 'Long Night tonight.', 'Pull up a chair.']);
     // Talking to them moves the story on: the hint still comes last.
@@ -189,6 +192,81 @@ describe('validateStory', () => {
     expect(msgs).toMatch(/2 people have the id tom/);
     expect(msgs).toMatch(/2 desks have the id station-log/);
     expect(errors({ version: 0, chapters: [] })).toMatch(/version must be a whole number from 1\nthere are no chapters/);
+  });
+
+  it('lets someone who moves with the town stand in two places, never in both at once', () => {
+    const edith = (town: { from?: string; until?: string }): MapObject => ({ kind: 'npc', id: 'edith', name: 'Edith', x: 0, y: 0, dir: 'down', lines: ['Edith.'], town });
+    const two = (a: MapObject, b: MapObject) => validateStory(story(), [...world(), place('bunker', [a]), place('home', [b])], items).map(p => p.message);
+    expect(two(edith({ until: 'edith-home' }), edith({ from: 'edith-home' }))).toEqual([]);
+    expect(two(edith({ until: 'edith-home' }), edith({ from: 'lights' })).join()).toMatch(/2 people have the id edith/);
+  });
+});
+
+describe('scenes: what someone tells you once, at length (story.ts)', () => {
+  /** Tom's two scenes (one at level 3 once his tag is read, one once the town has its lights) and Mira's lines about the sky and the town. */
+  function told(): StoryData {
+    return {
+      ...story(),
+      remarks: [{ id: 'first-made', who: 'tom', after: 'made', line: 'You made that?' }],
+      scenes: [
+        { id: 'tom-hum', who: 'tom', title: 'The hum', when: { level: 3, notes: ['tom-tag'] }, lines: ['It hummed.', 'Nobody believed me.'] },
+        { id: 'tom-lights', who: 'tom', title: 'The lights', when: { town: 'lights' }, lines: ['They came on.'] },
+      ],
+      says: [
+        { who: 'mira', when: { town: 'lights' }, line: 'The street is lit now.' },
+        { who: 'mira', when: { sky: 'storm' }, line: 'A storm up in the woods.' },
+        { who: 'mira', when: { sky: 'night' }, line: 'Dark out.' },
+        { who: 'mira', when: { keepsake: 'tag', level: 5 }, line: 'You have the tag.' },
+      ],
+    };
+  }
+
+  it('opens as you level up and read what it waits for, and is told once, in place of the rest', () => {
+    const s = told(), lines = ['Hello.'];
+    expect(sceneDue(s, 'tom', {}, { level: 3, notes: [] })).toBeUndefined();
+    expect(sceneDue(s, 'tom', {}, { level: 2, notes: ['tom-tag'] })).toBeUndefined();
+    expect(sceneDue(s, 'tom', {}, { level: 3, notes: ['tom-tag'] })?.id).toBe('tom-hum');
+    // Told in place of what he always says; the remark once due still comes first.
+    expect(storyLines(s, 'the-answer', 'tom', lines, { made: 1 }, { level: 3, notes: ['tom-tag'] })).toEqual(['You made that?', 'It hummed.', 'Nobody believed me.']);
+    const after = scenesAfter(s, 'tom', {}, { level: 3, notes: ['tom-tag'] });
+    expect(after).toBe(1);
+    expect(storyLines(s, 'the-answer', 'tom', lines, { scenes: after }, { level: 3, notes: ['tom-tag'] })).toEqual(['Hello.']);
+    // The next one opens with the town, and is kept in the story's order.
+    expect(sceneDue(s, 'tom', { scenes: after }, { town: ['lights'] })?.id).toBe('tom-lights');
+    const both = scenesAfter(s, 'tom', { scenes: after }, { town: ['lights'] });
+    expect(scenesTold(s, { scenes: both }).map(x => x.id)).toEqual(['tom-hum', 'tom-lights']);
+    // Nothing due: nothing more told.
+    expect(scenesAfter(s, 'tom', { scenes: both }, { town: ['lights'] })).toBe(both);
+  });
+
+  it('puts what they heard about the day and the sky first, then what holds about you and the town, then what they always say', () => {
+    const s = told(), always = ['Watch your energy.'];
+    const ctx = { level: 6, keepsakes: ['tag'], town: ['lights'], sky: { weather: 'aurora', storm: true }, day: ['Word from the woods today: thick fog.'] };
+    expect(storyLines(s, 'what-glows', 'mira', always, {}, ctx)).toEqual([
+      'Ask Tom about the Old Stone.', 'Word from the woods today: thick fog.', 'A storm up in the woods.', 'Dark out.', 'The street is lit now.', 'You have the tag.', 'Watch your energy.',
+    ]);
+    // Nothing holds: what they always say, after the chapter's hint.
+    expect(storyLines(s, 'what-glows', 'mira', always, {}, { level: 1, sky: { weather: 'rain', storm: false } })).toEqual(['Ask Tom about the Old Stone.', 'Watch your energy.']);
+  });
+
+  it('is checked with the story: people, notes and the town that exist, lines to say, and few enough scenes to keep', () => {
+    const maps = [...world(), place('woods', [{ kind: 'note', id: 'tom-tag', by: 'walt', name: 'Nailed to the pole', x: 0, y: 0, text: ['N-1.'] }])];
+    const withTown = { ...items, items: [{ id: 'glowcap' }, { id: 'tag', kind: 'keepsake' }], town: { pop: 23, milestones: [], works: [{ id: 'lights' }] } } as unknown as ItemsData;
+    expect(validateStory(told(), maps, withTown)).toEqual([]);
+    const bad: StoryData = {
+      ...told(),
+      scenes: [
+        { id: 'Bad Id', who: 'nobody', title: '', when: {}, lines: [] },
+        { id: 'tom-hum', who: 'tom', title: 'T', when: { level: 0, notes: ['unwritten'], town: 'never' }, lines: ['x'] },
+      ],
+      says: [{ who: 'mira', when: { sky: 'hail' as never, keepsake: 'glowcap' }, line: '' }],
+    };
+    const said = validateStory(bad, maps, withTown).map(p => p.message).join('\n');
+    for (const want of [/an id is lowercase/, /nobody has the id nobody/, /needs a title/, /says nothing/, /when says what opens it/, /a level is a whole number from 1/, /there is no note unwritten/, /never is no milestone or work/, /the sky is rain, night, aurora, storm/, /glowcap is not a keepsake/]) {
+      expect(said).toMatch(want);
+    }
+    const many: StoryData = { ...told(), scenes: Array.from({ length: MAX_SCENES + 1 }, (_, i) => ({ id: `s-${i}`, who: 'tom', title: 'T', when: { level: 1 }, lines: ['x'] })) };
+    expect(validateStory(many, maps, withTown).map(p => p.message).join()).toMatch(/which were told is kept for at most 30/);
   });
 });
 

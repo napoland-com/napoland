@@ -65,6 +65,8 @@ export interface Config {
   xpMultiplier: number;
   /** Development only: the time away (ms) that fills one XP of rest (0: 20 minutes, as it should), to play-test the cup of rest without days away. */
   restedEveryMs: number;
+  /** Development only: milestones and works the town has come to from the start (their ids), to play-test Stonebrook as it wakes up. */
+  townDone: string[];
   /**
    * Development only: how many players make a crowd in a copy of a town square, and of a region of the
    * wilds (0: as many as they should, TOWN_CROWD and REGION_CROWD in world.ts), to play-test crowded
@@ -180,6 +182,17 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
     if (get('NODE_ENV') === 'production') errors.push('RESTED_EVERY_MS fills everyone\'s rest faster than time away does, so it is refused when NODE_ENV=production');
     else restedEveryMs = int('RESTED_EVERY_MS', 0, 100, 3_600_000);
   }
+  let townDone: string[] = [];
+  const townList = get('TOWN_DONE');
+  if (townList !== undefined) {
+    // The town is one for everyone, and comes to what it does by what the whole server does: a live server never skips ahead.
+    if (get('NODE_ENV') === 'production') errors.push('TOWN_DONE moves the whole town on, so it is refused when NODE_ENV=production');
+    else {
+      townDone = [...new Set(townList.split(',').map(t => t.trim()).filter(Boolean))];
+      const bad = townDone.filter(t => !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(t));
+      if (bad.length) errors.push(`TOWN_DONE lists milestones and works of the town by their ids, got ${bad.map(b => `"${b}"`).join(', ')}`);
+    }
+  }
   // How many make a crowd is the same everywhere, for everyone: a live server never splits a handful of players apart.
   const crowd = (name: string): number => {
     if (get(name) === undefined) return 0;
@@ -235,7 +248,7 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
     port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, storyFile: storyFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
-    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, restedEveryMs, townCrowd, regionCrowd, glimpseEveryMs, auth,
+    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, restedEveryMs, townCrowd, regionCrowd, glimpseEveryMs, townDone, auth,
   };
 }
 

@@ -6,7 +6,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
-import type { BagSlot, Dir, Gear, NotebookState, ParcelState, Piece, ReportReason, Stash, Stats, ThanksFor, Worn } from '@napoland/shared';
+import type { BagSlot, Dir, Gear, NotebookState, ParcelState, Piece, ReportReason, Stash, Stats, ThanksFor, TownCount, Worn } from '@napoland/shared';
 import { log } from './log';
 
 export interface PlayerBests {
@@ -280,6 +280,19 @@ export interface StoneRecord {
 }
 
 /**
+ * The town (packages/shared/src/town.ts), one for everyone: since when (ms since the epoch) it counts,
+ * what it counted since (the Old Stone waking, fires fed out there, thanks given), what was given to each
+ * work of its ledger not done yet (by item), and what it has come to: the milestones reached and the
+ * works done, in the order they came, each with the Zone's day and when. Nothing about any one player.
+ */
+export interface TownRecord {
+  since: number;
+  counts: Partial<Record<TownCount, number>>;
+  given: Record<string, Record<string, number>>;
+  done: Array<{ id: string; day: number; at: number }>;
+}
+
+/**
  * The Long Night (world.ts), kept across restarts: the week (weekIndex) of the one on or the last one the
  * server saw, whether it had its bonus, when the lodge's fire runs out (ms since the epoch), whether it
  * went out, and whether that night is over (dawn came while the server ran).
@@ -411,6 +424,9 @@ export interface Storage {
   /** The Old Stone as it was last saved, or null. */
   loadStone(): Promise<StoneRecord | null>;
   saveStone(stone: StoneRecord): Promise<void>;
+  /** The town as it was last saved, or null: a town that starts counting now. */
+  loadTown(): Promise<TownRecord | null>;
+  saveTown(town: TownRecord): Promise<void>;
   /** The Long Night as it was last saved, or null. */
   loadLongNight(): Promise<LongNightRecord | null>;
   saveLongNight(night: LongNightRecord): Promise<void>;
@@ -477,6 +493,16 @@ const savedStats = (stats: Stats | undefined): Stats => {
   return rest;
 };
 const thanksKey = (t: Pick<ThanksRecord, 'giver' | 'helper' | 'day'>) => `${t.giver} ${t.helper} ${t.day}`;
+/** The town as saved, trusted only as far as it holds what the town keeps: anything else reads as none. */
+function cleanTown(v: unknown): TownRecord | null {
+  const t = (typeof v === 'object' && v !== null ? v : {}) as Partial<TownRecord>;
+  if (typeof t.since !== 'number') return null;
+  const whole = (n: unknown): n is number => Number.isInteger(n) && (n as number) > 0;
+  const counts = Object.fromEntries(Object.entries(t.counts ?? {}).filter(([, n]) => whole(n)));
+  const given = Object.fromEntries(Object.entries(t.given ?? {}).map(([w, g]) => [w, Object.fromEntries(Object.entries(g ?? {}).filter(([, n]) => whole(n)))]));
+  const done = (Array.isArray(t.done) ? t.done : []).filter(d => typeof d?.id === 'string' && typeof d.day === 'number' && typeof d.at === 'number').map(d => ({ id: d.id, day: d.day, at: d.at }));
+  return { since: t.since, counts, given, done };
+}
 
 export class MemoryStorage implements Storage {
   private readonly byId = new Map<string, PlayerRecord>();
@@ -489,6 +515,7 @@ export class MemoryStorage implements Storage {
   private readonly cacheItems = new Map<number, Omit<CacheItemRecord, 'name'>>();
   private readonly firsts = new Map<string, Omit<FirstRecord, 'name'>>();
   private stone: StoneRecord | null = null;
+  private town: TownRecord | null = null;
   private longNight: LongNightRecord | null = null;
   private since: number | undefined;
   private readonly off = new Set<string>();
@@ -730,6 +757,14 @@ export class MemoryStorage implements Storage {
 
   async saveStone(stone: StoneRecord): Promise<void> {
     this.stone = { ...stone };
+  }
+
+  async loadTown(): Promise<TownRecord | null> {
+    return this.town && structuredClone(this.town);
+  }
+
+  async saveTown(town: TownRecord): Promise<void> {
+    this.town = structuredClone(town);
   }
 
   async loadLongNight(): Promise<LongNightRecord | null> {
@@ -1321,6 +1356,19 @@ export class PgStorage implements Storage {
     await this.pool.query(
       `INSERT INTO world_state (key, value) VALUES ('stone', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
       [JSON.stringify(stone)],
+    );
+  }
+
+  async loadTown(): Promise<TownRecord | null> {
+    const r = await this.pool.query<{ value: unknown }>("SELECT value FROM world_state WHERE key = 'town'");
+    return cleanTown(r.rows[0]?.value);
+  }
+
+  async saveTown(town: TownRecord): Promise<void> {
+    // A key of world_state, like the Old Stone: no migration, and a release before the town never reads it.
+    await this.pool.query(
+      `INSERT INTO world_state (key, value) VALUES ('town', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [JSON.stringify(town)],
     );
   }
 

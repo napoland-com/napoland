@@ -20,9 +20,11 @@ describe('cloth (roadmap/cloth-supply.md)', () => {
 
   it('grows 35 to 45 an hour for the whole server, enough to craft and mend: a raincoat in two good trips', () => {
     // Every find picked up the moment it grows, which is right once a few people play: count × 3600 /
-    // the mean respawn, an hour. Only what grows every day: not on aurora nights, not on a condition's day.
+    // the mean respawn, an hour. Only what grows every day: not on aurora nights, not on a condition's
+    // day, and in the town as it starts (the empty house's cloth moves to the lodge's shelves once Edith
+    // is home: the same cloth, somewhere else).
     const perHour = rules
-      .filter(f => f.when === undefined && f.condition === undefined)
+      .filter(f => f.when === undefined && f.condition === undefined && !f.town?.from)
       .reduce((n, f) => n + (f.count * 3600) / ((f.respawn[0] + f.respawn[1]) / 2), 0);
     expect(perHour).toBeGreaterThanOrEqual(35);
     expect(perHour).toBeLessThanOrEqual(45);
@@ -745,5 +747,111 @@ describe('the pass that put more of the story in the places (roadmap/richer-plac
       expect(cages.length).toBeGreaterThanOrEqual(3);
       for (const c of cages) expect(c.kind === 'cage' && c.text[0]!.startsWith('NAPO')).toBe(true);
     });
+  });
+});
+
+describe('Stonebrook wakes up (roadmap/stonebrook-wakes.md)', () => {
+  const town = items.town!;
+  const story = JSON.parse(readFileSync(resolve(content, 'story.json'), 'utf8')) as StoryData;
+  const stonebrook = maps.get('stonebrook')!;
+  /** Where a person stands on any map as content has them, whatever the town has come to, with their gate. */
+  const npcs = (id: string) => [...maps.values()].flatMap(m => m.source.objects.flatMap(o => (o.kind === 'npc' && o.id === id ? [{ map: m.source.id, town: o.town }] : [])));
+  const as = (id: string, done: string[]) => new TileMap(maps.get(id)!.source, new Set(done));
+
+  it('brings three people from before back for good, each when the whole server reaches a milestone: Edith first, the first time the Old Stone wakes', () => {
+    expect(town.milestones.map(m => [m.id, m.when.count, m.back])).toEqual([['edith-home', 'woke', 'Edith'], ['mill-stove', 'fed', 'Arvid'], ['lodge-cook', 'thanks', 'Maud']]);
+    expect(town.milestones[0]!.when.n).toBe(1);
+    for (const m of town.milestones) {
+      expect(m.title.length, m.id).toBeGreaterThan(5);
+      // Somewhere in town from their milestone on, and only then.
+      expect(npcs(m.back!.toLowerCase()).filter(p => p.town?.from === m.id), m.id).toHaveLength(1);
+    }
+  });
+
+  it('keeps Edith in the NAPO Bunker with Ruth until she is home, then in the empty house next to yours by her own fire, and nowhere else', () => {
+    expect(npcs('edith')).toEqual([{ map: 'south-road-bunker', town: { until: 'edith-home' } }, { map: 'stonebrook-empty-house', town: { from: 'edith-home' } }]);
+    expect(npcs('ruth')).toEqual([{ map: 'south-road-bunker', town: undefined }]);
+    const empty = maps.get('stonebrook-empty-house')!, home = as('stonebrook-empty-house', ['edith-home']);
+    expect([empty.data.name, home.data.name]).toEqual(['The empty house', 'Edith\'s house']);
+    // A cold hearth until she lights it: then a fire, warm beside it.
+    const fire = empty.source.objects.find(o => o.kind === 'fireplace')!;
+    expect(fire).toMatchObject({ town: { from: 'edith-home' } });
+    expect(empty.data.objects.find(o => o.x === fire.x && o.y === fire.y)?.kind).toBe('hearth');
+    expect([empty.warm(fire.x, fire.y + 1), home.warm(fire.x, fire.y + 1)]).toEqual([false, true]);
+    // The Barlows' notes stay on her table.
+    const notes = (m: TileMap) => m.data.objects.flatMap(o => (o.kind === 'note' ? [o.id] : []));
+    expect(notes(home)).toEqual(notes(empty));
+    expect(notes(empty)).toEqual(['barlow-tins', 'barlow-next-door']);
+    // In town, the house the door opens into lights up, and her name is on the mailbox again.
+    const door = stonebrook.source.exits.find(e => e.to === 'stonebrook-empty-house')!;
+    const house = stonebrook.source.objects.find(o => o.kind === 'house' && objectTiles(o).some(([x, y]) => x === door.x && y === door.y))!;
+    expect(house).toMatchObject({ lit: 0 });
+    expect(as('stonebrook', ['edith-home']).data.objects.find(o => o.kind === 'house' && o.x === house.x && o.y === house.y)).toMatchObject({ lit: 1 });
+    const mailbox = (m: TileMap) => m.data.objects.flatMap(o => (o.kind === 'sign' && o.style === 'mailbox' && Math.abs(o.x - door.x) <= 1 && o.y === door.y + 1 ? [o.text[0]] : []));
+    expect(mailbox(stonebrook)).toEqual(['A mailbox. The name painted on it went with the weather.']);
+    expect(mailbox(as('stonebrook', ['edith-home']))).toEqual(['LUND, freshly painted.']);
+  });
+
+  it('moves the cloth the empty house held to the lodge\'s shelves once Edith is home: the same cloth, never in both', () => {
+    const [was, now] = ['stonebrook-empty-house', 'stonebrook-lodge'].map(id => items.finds.find(f => f.item === 'cloth' && f.map === id)!);
+    expect([was!.town, now!.town]).toEqual([{ until: 'edith-home' }, { from: 'edith-home' }]);
+    expect([now!.count, now!.respawn]).toEqual([was!.count, was!.respawn]);
+    expect(findTiles(maps.get('stonebrook-lodge')!, now!).length).toBeGreaterThanOrEqual(3 * now!.count);
+  });
+
+  it('chalks everyone who came back over the number on the town\'s sign: people from before, never players', () => {
+    expect(town.pop).toBe(23);
+    const at = stonebrook.source.town!.sign!;
+    const sign = (m: TileMap) => m.data.objects.find(o => o.kind === 'sign' && o.x === at.x && o.y === at.y)!;
+    expect(sign(stonebrook)).toMatchObject({ text: ['Stonebrook. Pop. 23', expect.any(String)] });
+    const all = new TileMap(stonebrook.source, new Set(town.milestones.map(m => m.id)), 26);
+    expect(sign(all)).toMatchObject({ text: ['Stonebrook. Pop. 23', expect.any(String), 'The 23 is crossed out in chalk. Beside it, in the same chalk: 26.'] });
+  });
+
+  it('keeps a ledger in the lodge for the street lights on the south road, a roof over the notice board and the sawmill\'s roof, each mended for good', () => {
+    expect(town.works.map(w => w.id)).toEqual(['south-lights', 'board-shelter', 'mill-roof']);
+    expect(maps.get('stonebrook-lodge')!.source.objects.filter(o => o.kind === 'ledger')).toHaveLength(1);
+    for (const w of town.works) for (const n of w.needs) expect(items.items.some(i => i.id === n.item && i.kind === 'resource'), `${w.id}: ${n.item}`).toBe(true);
+    // The lights: dark on the south road until mended, lit for good after.
+    const lamps = stonebrook.source.objects.filter(o => o.kind === 'lamp' && o.town?.from === 'south-lights');
+    expect(lamps.length).toBeGreaterThanOrEqual(3);
+    const lit = as('stonebrook', ['south-lights']);
+    for (const l of lamps) expect([stonebrook.lit(l.x, l.y + 1), lit.lit(l.x, l.y + 1)], `${l.x},${l.y}`).toEqual([false, true]);
+    // The roof: over the notice board and where it is read from.
+    const board = stonebrook.source.objects.find(o => o.kind === 'board')!;
+    expect([stonebrook.roofed(board.x, board.y + 1), as('stonebrook', ['board-shelter']).roofed(board.x, board.y + 1)]).toEqual([false, true]);
+    // The mill's roof: more scrap turns up on its dry floor.
+    expect(items.finds.filter(f => f.town?.from === 'mill-roof').map(f => [f.item, f.map])).toEqual([['scrap', 'stonebrook-sawmill']]);
+  });
+
+  it('has Walt swap what you carry spare: 10 glowcaps for a cloth, 5 scrap for a road flare', () => {
+    expect(items.swaps).toEqual([
+      { id: 'glowcaps-for-cloth', who: 'walt', give: { item: 'glowcap', count: 10 }, get: { item: 'cloth', count: 1 } },
+      { id: 'scrap-for-flare', who: 'walt', give: { item: 'scrap', count: 5 }, get: { item: 'flare', count: 1 } },
+    ]);
+    expect(npcs('walt')).toEqual([{ map: 'stonebrook-lodge', town: undefined }]);
+  });
+
+  it('has Walt tell four scenes, each opening at a level once his notes are read, and Edith two once she is home', () => {
+    const scenes = story.scenes!, byId = notesOf([...maps.values()].map(m => m.source));
+    const walt = scenes.filter(s => s.who === 'walt');
+    expect(walt.map(s => s.id)).toEqual(['walt-hum', 'walt-answer', 'walt-two-weeks', 'walt-stayed']);
+    for (const s of walt) {
+      expect(s.when.level, s.id).toBeGreaterThan(1);
+      expect(s.when.notes?.length, s.id).toBeGreaterThan(0);
+      for (const n of s.when.notes!) expect(byId.get(n)?.note.by, `${s.id}: ${n}`).toBe('walt');
+    }
+    const levels = walt.map(s => s.when.level!);
+    expect(levels).toEqual([...levels].sort((a, b) => a - b));
+    expect(scenes.filter(s => s.who === 'edith').map(s => [s.id, s.when.town])).toEqual([['edith-kept', 'edith-home'], ['edith-kari', 'edith-home']]);
+    for (const s of scenes) expect(s.lines.length, s.id).toBeGreaterThanOrEqual(4);
+  });
+
+  it('has people speak to the sky (a storm over the woods, an aurora night) and to everything the town comes to', () => {
+    const says = story.says!;
+    for (const sky of ['storm', 'aurora'] as const) expect(says.filter(s => s.when.sky === sky).length, sky).toBeGreaterThanOrEqual(2);
+    for (const m of [...town.milestones, ...town.works]) expect(says.some(s => s.when.town === m.id), m.id).toBe(true);
+    // Each person's words are their own: nobody says a line twice.
+    expect(new Set(says.map(s => s.line)).size).toBe(says.length);
   });
 });

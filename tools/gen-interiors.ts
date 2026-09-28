@@ -20,7 +20,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { TileMap, doorOf, hangs, objectTiles, underfoot, validateMap, type Comfort, type Dir, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { TileMap, doorOf, hangs, objectTiles, underfoot, validateMap, type Comfort, type Dir, type MapData, type MapExit, type MapObject, type MapTown } from '../packages/shared/src';
 import { noteAt } from './notes-left';
 
 type House = Extract<MapObject, { kind: 'house' }>;
@@ -43,6 +43,8 @@ interface Room {
   private?: true;
   /** Where you wake up in it, by the fire: as a new player, and after a collapse. */
   wake?: { x: number; y: number; dir: Dir };
+  /** What else about the room changes with the town (map.ts, MapTown): its name, once someone comes home to it. */
+  town?: MapTown;
   /**
    * Behind every door of its street (gen-street.ts), not one house's: each lot's cabin is this room, its
    * owner's own copy of it. `door` is then the first lot's, where its way out leads unless the server says
@@ -53,6 +55,52 @@ interface Room {
 
 /** The camera shows about six tiles around you: a room this size fits on any screen. */
 const MAX_W = 11, MAX_H = 8;
+
+type Npc = Extract<MapObject, { kind: 'npc' }>;
+
+// ---- People who come back to town with it (packages/shared/src/town.ts): each stands in a room only
+// within the gate of the milestone that brings them, so the town is one for everyone. Their words here
+// are what they always say; what they say once, at length, or about the sky and the town is in
+// content/story.json (scenes and says).
+
+/** Edith Lund, older, dry and practical: the house next to yours is hers. She waits out the years with Ruth in the bunker. */
+const EDITH = { kind: 'npc', id: 'edith', name: 'Edith', look: { coat: '#5d586b', scarf: '#a8834a', hair: '#e4dfd4', skin: '#d6ad8e' } } as const;
+const EDITH_BUNKER = [
+  'Edith. Edith Lund. The house next to yours in town is mine. Has been for fifty years.',
+  'NAPO said everybody out of town. Nobody said anything about the bunker, so here I am. Ruth doesn\'t mind. Ruth minds, but she doesn\'t say.',
+  'I\'m not walking down to that barrier and out. I\'ve lived in Stonebrook all my life. I can wait out two weeks.',
+  'The day that stone in town wakes up again, I\'m going home. Walt says it\'s close. Walt says a lot of things.',
+  'Keep your feet dry. Nobody out here is going to knit you new socks.',
+];
+const EDITH_HOME = [
+  'Come in and shut the door. The heat\'s for me, but you can stand in it.',
+  'Somebody slept here while I was down the road. Folded my blankets, took four tins of beans, and left a note saying they\'d pay it back. I kept it.',
+  'The girl left one too. A house next door with a light on, she wrote. That was your house. You\'ll have been asleep.',
+  'The stone woke, so I came home. I said I would. I don\'t say things I don\'t do.',
+  'Ruth sends her regards. She doesn\'t, but she would if she thought of it.',
+];
+/** Arvid Holm, who ran the mill's head saw: he comes back up from the bunker once the fires out there stay fed (mill-stove). */
+const ARVID: Npc = {
+  kind: 'npc', id: 'arvid', name: 'Arvid', x: 9, y: 2, dir: 'down', town: { from: 'mill-stove' },
+  look: { coat: '#8a3a2e', scarf: '#2f3a36', hair: '#8c8780', skin: '#c49270' },
+  lines: [
+    'Arvid Holm. I ran the head saw in here thirty-one winters. Then came the winter it didn\'t open.',
+    'The fires out there are lit again, enough that I thought: somebody\'s keeping this place. So I came up from the bunker.',
+    'Nothing in here works but the stove. The stove always drew.',
+    'The saw\'s still true. Nobody\'s touched it. I oil it anyway.',
+    'Ruth said I\'d freeze up here. Ruth says that about everywhere.',
+  ],
+};
+/** Maud, who cooked for NAPO's crews: she comes up to the lodge once the town thanks each other enough (lodge-cook). */
+const MAUD: Npc = {
+  kind: 'npc', id: 'maud', name: 'Maud', x: 7, y: 2, dir: 'down', town: { from: 'lodge-cook' },
+  look: { coat: '#d8cfbd', scarf: '#9b3d34', hair: '#b8683e', skin: '#e9c6a6' },
+  lines: [
+    'Maud. I cooked for NAPO\'s crews, three shifts, till there were no crews. Then I cooked for Ruth, who eats like a bird.',
+    'Folk up here thank each other, I hear. For fires, for arrows on the ground. A town that says thank you is a town worth cooking for.',
+    'There\'s coffee by the fire when there\'s coffee. Take a thermos. Bring it back or don\'t: I\'ve a stack of NAPO\'s.',
+  ],
+};
 
 const ROOMS: readonly Room[] = [
   {
@@ -95,9 +143,12 @@ const ROOMS: readonly Room[] = [
     ],
   },
   {
-    // Whoever lived next door left with the others and never came back: no fire, dust, what they
-    // could not carry. The only dark room in town.
-    id: 'stonebrook-empty-house', name: 'The empty house', version: 2, outside: 'stonebrook', door: [15, 20],
+    // Edith Lund's house, next door to yours: she stayed down the road in the NAPO Bunker with Ruth when
+    // the town left, and it stood empty, cold hearth and dust, what she did not carry. The Barlows slept
+    // here one night on their way out. Once the Old Stone wakes she comes home (town.ts, edith-home):
+    // the hearth burns again, she sits by it, and the room is Edith's house; their notes stay on the
+    // table, since she kept them.
+    id: 'stonebrook-empty-house', name: 'The empty house', version: 3, outside: 'stonebrook', door: [15, 20],
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -107,6 +158,7 @@ const ROOMS: readonly Room[] = [
       'xpppppppx',
       'xxxxpxxxx',
     ],
+    town: { names: [{ from: 'edith-home', name: 'Edith\'s house' }] },
     things: [
       { kind: 'shelf', x: 2, y: 1 },
       { kind: 'crate', x: 6, y: 1 },
@@ -115,6 +167,9 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 3, y: 3 },
       { kind: 'table', x: 1, y: 4 },
       { kind: 'crate', x: 6, y: 5 },
+      // Her hearth, cold until she comes home to it, and Edith by it once she has.
+      { kind: 'fireplace', x: 4, y: 1, town: { from: 'edith-home' } },
+      { ...EDITH, x: 5, y: 3, dir: 'down', lines: EDITH_HOME, town: { from: 'edith-home' } },
       // The Barlows slept here one night on their way out (notes-left.ts).
       noteAt('barlow-tins', 1, 4),
       noteAt('barlow-next-door', 2, 1),
@@ -153,7 +208,7 @@ const ROOMS: readonly Room[] = [
     // logged the woods. Walt Pruitt sits by the fire: he kept the north line for the power company and
     // then NAPO's, and remembers how it all went wrong. On the Long Night nobody tends that fire, and the
     // town keeps it going until dawn (longNight).
-    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 5, outside: 'stonebrook', door: [8, 31],
+    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 6, outside: 'stonebrook', door: [8, 31],
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -188,8 +243,14 @@ const ROOMS: readonly Room[] = [
           'The night they switched the Tower on, the woods lit up like a town and the Old Stone cracked. You can still see the crack.',
           'Every forty minutes since, the woods surge. Regular as a clock. You\'d think something out there was keeping time.',
           'NAPO said two weeks, and I went with the rest. Came back for my truck, up where the north road gives out. It never started again, so I stayed.',
+          'Glowcaps to spare? Ten buys you a cloth off me: I keep the lodge\'s lamps in them. Five scrap buys a road flare, company issue.',
+          'The ledger on the stand is the town\'s. What\'s broken, and what it needs. Put down what you can spare.',
         ],
       },
+      // The town's ledger (town.ts): what each broken part of town needs, and where anyone gives it. Walt keeps it.
+      { kind: 'ledger', x: 1, y: 4 },
+      // Maud, once the town has thanked each other enough to be worth cooking for.
+      MAUD,
     ],
   },
   {
@@ -378,7 +439,7 @@ const ROOMS: readonly Room[] = [
   {
     // The NAPO Bunker, the first building down the South Road and its nearest shelter to town: bunks,
     // NAPO's rules for staff on the wall, and Ruth, who keeps the fire going, so it never goes out.
-    id: 'south-road-bunker', name: 'The NAPO Bunker', version: 4, outside: 'south-road', door: [42, 15], style: 'napo',
+    id: 'south-road-bunker', name: 'The NAPO Bunker', version: 5, outside: 'south-road', door: [42, 15], style: 'napo',
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -414,6 +475,8 @@ const ROOMS: readonly Room[] = [
           'The road ends at the checkpoint. Nobody has kept it in years. Don\'t go looking past the barrier.',
         ],
       },
+      // Edith, one of the ones who would not go, until the Old Stone wakes and she goes home (town.ts, edith-home).
+      { ...EDITH, x: 5, y: 3, dir: 'down', lines: EDITH_BUNKER, town: { until: 'edith-home' } },
       { kind: 'cache', x: 1, y: 3, name: 'the bunker\'s crate' },
       noteAt('ranger-ruth', 2, 1),
     ],
@@ -715,8 +778,9 @@ const ROOMS: readonly Room[] = [
   {
     // The old sawmill's floor, dark since it closed: the head saw against the back wall, the carriage on
     // its rails in front of it with the last log still dogged on, belts up to the line shaft, sawdust
-    // drifted where it fell, and a few logs that were never cut. No fire, nobody.
-    id: 'stonebrook-sawmill', name: 'The sawmill', version: 1, outside: 'stonebrook', door: [36, 28], style: 'mill',
+    // drifted where it fell, and a few logs that were never cut. No fire and nobody, until Arvid, who ran
+    // the head saw, comes back up to it and lights its stove (town.ts, mill-stove).
+    id: 'stonebrook-sawmill', name: 'The sawmill', version: 2, outside: 'stonebrook', door: [36, 28], style: 'mill',
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -742,6 +806,9 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 9, y: 4 },
       { kind: 'crate', x: 9, y: 5 },
       { kind: 'sawdust', x: 3, y: 5 },
+      // The mill's stove, cold since it shut, and Arvid by it once he comes back up to light it (town.ts, mill-stove).
+      { kind: 'fireplace', x: 8, y: 1, town: { from: 'mill-stove' } },
+      ARVID,
     ],
   },
 ];
@@ -780,6 +847,7 @@ function build(room: Room): MapData {
     ...(room.style && { style: room.style }),
     ...(room.private && { private: room.private }),
     ...(room.wake && { wake: { ...room.wake } }),
+    ...(room.town && { town: structuredClone(room.town) }),
   };
 }
 
@@ -819,6 +887,7 @@ function json(map: MapData): string {
     `  "spawn": ${JSON.stringify(map.spawn)},`,
     ...(map.private ? ['  "private": true,'] : []),
     ...(map.wake ? [`  "wake": ${JSON.stringify(map.wake)},`] : []),
+    ...(map.town ? [`  "town": ${JSON.stringify(map.town)},`] : []),
     '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
     '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), `  ]${map.style ? ',' : ''}`,
     ...(map.style ? [`  "style": ${JSON.stringify(map.style)}`] : []),
@@ -829,7 +898,7 @@ function json(map: MapData): string {
 
 /** A glance at a room: # wall, . floor, + warm floor (next to the fire), v the way out, z where you wake up, letters for furniture. */
 const GLYPH: Partial<Record<MapObject['kind'], string>> = {
-  fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@',
+  fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@', ledger: 'D',
   hearth: 'f', sheeted: 's', boxes: 'n', crib: 'C', clock: 'k', paper: '?', saw: 'S', carriage: '=', sawdust: ':', logs: 'l', luggage: 'u', cache: 'X',
   traps: 't', teleport: 'N',
 };
