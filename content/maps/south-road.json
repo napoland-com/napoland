@@ -1,7 +1,7 @@
 {
   "id": "south-road",
   "name": "The South Road",
-  "version": 3,
+  "version": 4,
   "kind": "wilds",
   "depth": 1,
   "width": 72,
@@ -449,6 +449,7 @@
     {"kind":"cage","x":52,"y":66,"text":["NAPO · Sample 12. No place written.","Keep caged."]},
     {"kind":"cache","x":19,"y":19,"name":"the crate at the leavers' camp"}
   ],
+  "rain": [{"from":1440,"length":360}],
   "places": [
     {"name":"the leavers' camp","x":22,"y":22},
     {"name":"the Tower","x":51,"y":47},

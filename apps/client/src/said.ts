@@ -6,9 +6,9 @@
  */
 import {
   CACHE_SIZE, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, toNextMerit, type BagSlot, type Did, type Dir,
-  type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
+  type Element, type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
 } from '@napoland/shared';
-import { oddsText, pieceName, type Items } from './items';
+import { ELEMENT_WORDS, oddsText, pieceName, type Items } from './items';
 
 // ---------- naming things in a sentence ----------
 
@@ -62,6 +62,11 @@ function burnsOn(left: number): string {
 const COMPASS: Readonly<Record<Dir, string>> = { up: 'north', down: 'south', left: 'west', right: 'east' };
 const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 
+/** What an effect gives while it works (effects.ts), in words: "cold resistance +40%", "... and radiation resistance +20%". */
+export function effectWords(def: ItemDef): string {
+  return listOf(Object.entries(def.use?.resist ?? {}).map(([e, v]) => `${ELEMENT_WORDS[e as Element].toLowerCase()} resistance +${Math.round((v ?? 0) * 100)}%`));
+}
+
 // ---------- the questions ----------
 
 /** A: at a fire. "Feed the fire resin?" (how many is asked beside it). */
@@ -76,11 +81,18 @@ export function stoneQuestion(def: ItemDef, n: number): string {
 
 /**
  * Use, in the bag: what it does, and a word when the bar has little room for what a drink gives. An
- * arrow shows `markS` seconds (a day, longer for a good neighbor: markLifetime).
+ * arrow shows `markS` seconds (a day, longer for a good neighbor: markLifetime). An effect says what it
+ * gives and for how long, or, while one of the same still works (`running` seconds more), that this one
+ * only starts its time again.
  */
-export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000): string {
+export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000, running?: number): string {
   const u = def.use ?? {}, n = nounOf(def);
   if (u.identify) return `Look closely at the ${n}? It will be used up.`;
+  if (u.resist && u.lasts) {
+    const does = `${effectWords(def)} for ${howLong(u.lasts)}`;
+    if (running !== undefined && running > 0) return `Use ${aOf(def)}? The one before still works for ${howLong(running)}. This one starts the ${howLong(u.lasts)} again: it does not add up.`;
+    return `Use ${aOf(def)}? ${capital(does)}.`;
+  }
   if (u.energy) {
     const room = energy ? energy.max - energy.value : Infinity;
     if (u.energy > 0 && room < 0.5) return `Drink the ${n}? Your energy is full already.`;
@@ -332,6 +344,12 @@ export function didText(did: Did, items: Items): string {
       }
       if (did.flare !== undefined) said.push(`The ${n} hisses red. For ${howLong(did.flare)}, nothing comes near you.`);
       if (did.mark) said.push(`You crush the ${n}. An arrow glows where you stand, pointing ${COMPASS[did.mark.dir]}. Everyone sees it for ${howLong(did.mark.left)}.`);
+      if (did.effect) {
+        const lasts = howLong(did.effect.lasts);
+        said.push(did.effect.again
+          ? `You use the ${n}. The one before still worked: the ${lasts} start again, ${effectWords(def)}.`
+          : `You use the ${n}. ${capital(effectWords(def))} for ${lasts}.`);
+      }
       return said.length ? said.join(' ') : `You use the ${n}.`;
     }
     case 'made': {

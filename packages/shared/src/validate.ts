@@ -9,7 +9,7 @@ import { DECOR, FRONTED, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, ha
 import { DIRS, stepTarget } from './movement';
 import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
-import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
+import { FLASH_BURST_S, FLASH_GLOW_S, NIGHT_FROM } from './sky';
 import { MAX_REMARKS, MILESTONES, STORY_EVENTS, type StoryData } from './story';
 
 export interface Problem {
@@ -174,6 +174,7 @@ export function validateMap(data: MapData): Problem[] {
     else if (r.warn + r.length >= r.every) err('storm: warn and length must leave clear time in every round');
     if (r.offset !== undefined && !Number.isFinite(r.offset)) err('storm: offset is a number of seconds');
   }
+  if (data.rain !== undefined) validateRain(data, err);
   if (data.flashes) {
     const f = data.flashes;
     if (data.kind !== 'wilds') err('flashes happen only in the wilds');
@@ -216,6 +217,23 @@ export function validateMap(data: MapData): Problem[] {
     if (!Number.isInteger(p.x) || !Number.isInteger(p.y) || !map.inside(p.x, p.y)) err(`the place ${p.name} at ${p.x},${p.y} is not on the map`);
   }
   return out;
+}
+
+/**
+ * A region's rain (sky.ts): windows of whole seconds counted from dawn, each over by nightfall (the
+ * night is dry everywhere), none overlapping another (one long window says it plainly). Only outdoors:
+ * a room hears the rain of the map its door opens onto.
+ */
+function validateRain(data: MapData, err: (message: string) => void): void {
+  const rain = data.rain;
+  if (!Array.isArray(rain)) return void err('rain: a list of windows, each {from, length} in seconds after dawn (an empty list: it never rains)');
+  if (data.kind === 'inside') err('rain: a room hears the rain of the map its door opens onto, so it has none of its own');
+  if (!rain.every(w => Number.isInteger(w?.from) && w.from >= 0 && Number.isInteger(w?.length) && w.length > 0)) {
+    return void err('rain: each window starts some whole seconds after dawn, from 0, and lasts whole seconds above 0');
+  }
+  for (const w of rain) if (w.from + w.length > NIGHT_FROM) err(`rain: the window from ${w.from} runs past nightfall (${NIGHT_FROM} seconds after dawn), and the night is dry`);
+  const sorted = [...rain].sort((a, b) => a.from - b.from);
+  for (let i = 1; i < sorted.length; i++) if (sorted[i]!.from < sorted[i - 1]!.from + sorted[i - 1]!.length) err(`rain: the windows from ${sorted[i - 1]!.from} and ${sorted[i]!.from} overlap: make them one`);
 }
 
 /**
@@ -409,6 +427,17 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       if (v !== undefined && !(typeof v === 'number' && v > 0)) err(`${name}: ${field} must be a number above 0`);
     }
     if (i.use?.flare !== undefined && !(i.use.flare > 0)) err(`${name}: a flare burns for some seconds above 0`);
+    if (i.use && (i.use.resist !== undefined || i.use.lasts !== undefined)) {
+      // An effect (effects.ts): what it resists, and for how long, always together.
+      const { resist, lasts } = i.use;
+      if (i.kind !== 'consumable') err(`${name}: only a consumable gives an effect for a while (resist, lasts)`);
+      if (!(Number.isInteger(lasts) && lasts! > 0)) err(`${name}: an effect lasts some whole seconds above 0`);
+      if (!resist || typeof resist !== 'object' || !Object.keys(resist).length) err(`${name}: an effect resists something (resist)`);
+      for (const [e, v] of Object.entries(resist ?? {})) {
+        if (!ELEMENTS.includes(e as Element)) err(`${name}: its effect resists an unknown element ${e}`);
+        else if (!(typeof v === 'number' && v > 0 && v <= 1)) err(`${name}: its effect's resistance is a share above 0, at most 1`);
+      }
+    }
     if (i.use?.identify && !i.reveals?.length) err(`${name} can be identified but reveals nothing`);
     if (i.reveals && !i.use?.identify) err(`${name} reveals things but cannot be identified`);
     if (i.live) {

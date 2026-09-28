@@ -58,6 +58,13 @@ export interface ItemUse {
   flare?: number;
   /** Look at it closely, which needs a roof and light in town: it turns into one of its `reveals`. */
   identify?: boolean;
+  /**
+   * An effect (effects.ts): for `lasts` seconds you resist these elements that much more (a hand warmer:
+   * cold 0.4 for 300), on top of your gear and under the same cap. A second of the same item while the
+   * first still works starts its time again: it never adds up.
+   */
+  resist?: Partial<Record<Element, number>>;
+  lasts?: number;
 }
 
 export interface ItemDef {

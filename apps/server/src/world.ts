@@ -67,6 +67,7 @@
 import {
   CACHE_NEAR,
   CACHE_SIZE,
+  DAY_S,
   DIR_VEC,
   MARK_LIFETIME_MS,
   QUIRKS,
@@ -99,7 +100,9 @@ import {
   canMake,
   cleanRested,
   conditionsAt,
+  dayAt,
   dayIndex,
+  effectResist,
   daysThisWeek,
   everyDaySoFar,
   weekIndex,
@@ -168,6 +171,7 @@ import {
   toolsOf,
   untilSurge,
   utcDay,
+  rainAhead,
   weatherAt,
   weekdayOf,
   wetRate,
@@ -183,6 +187,7 @@ import {
   type Did,
   type Dir,
   type DropView,
+  type EffectView,
   type EnergyView,
   type FindView,
   type FindWhen,
@@ -209,6 +214,7 @@ import {
   type ProgressView,
   type Recipe,
   type Refusal,
+  type Resist,
   type Stash,
   type ServerMsg,
   type Stats,
@@ -343,6 +349,8 @@ export interface Joined extends Scene {
   map: MapRef;
   /** Everyone in the player's zone, the player included. */
   players: PlayerView[];
+  /** The weather over their map (a room: the map outside its door). */
+  weather: Weather;
   energy: EnergyView;
   body: BodyView;
   bag: BagSlot[];
@@ -598,7 +606,9 @@ const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 const flashView = (f: Flash, now: number): FlashView => ({ x: f.x, y: f.y, kind: f.kind, left: round((f.until - now) / 1000, 1) });
 const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), max: p.max, rate: round(p.rate, 3) });
 const copyWorn = (w: Worn | undefined): Worn => Object.fromEntries(Object.entries(w ?? {}).map(([s, p]) => [s, { ...p, cond: round(p.cond, 3) }]));
-const bodyView = (p: Online): BodyView => ({ wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched, worn: copyWorn(p.rec.worn) });
+const bodyView = (p: Online, effects: EffectView[]): BodyView => ({
+  wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched, worn: copyWorn(p.rec.worn), ...(effects.length ? { effects } : {}),
+});
 /**
  * Draining and not empty yet, or refilling and not full yet. Holding (rate 0) changes nothing.
  * Wetness is left out: it moves at a steady rate the client counts on, and is told when that turns.
@@ -717,8 +727,20 @@ export class World {
   /** readyAt of players who left mid-step, so leaving and joining again cannot skip the wait. */
   private readonly resting = new Map<string, number>();
   private outbox: Outgoing[] = [];
+  /** The weather everywhere, when it is fixed (not `cycle`): what setWeather last set. */
   private sky: Weather;
   private readonly cycle: boolean;
+  /**
+   * Each map's weather as its players last heard it (sky.ts): night comes to every map at once, rain to
+   * each region by its own windows, and a room has the weather of the map its door opens onto.
+   */
+  private readonly skies = new Map<string, Weather>();
+  /**
+   * Effects working on each player (effects.ts), by player id, then by the item that gives it: when it
+   * ends, on the game clock. Kept apart from who is online, so they run on while a player is away (a
+   * dropped connection loses nothing), and forgotten once over.
+   */
+  private readonly effects = new Map<string, Map<string, number>>();
   /** Players sign in here: one nobody signed in with is a guest (WorldOptions.guests). */
   private readonly guests: boolean;
   /** Stashing earns this many times an item's XP: 1, but for play-tests (WorldOptions.xpTimes). */
@@ -848,6 +870,8 @@ export class World {
     this.onCollapse = options.onCollapse;
     this.rng = options.rng ?? Math.random;
     this.epochOffset = options.epochOffset ?? 0;
+    // Every map's weather from the start: the one given, where it is fixed; else the sky now, region by region.
+    for (const m of this.maps.values()) this.skies.set(m.data.id, this.cycle ? this.regionWeather(m, (options.now ?? 0) + this.epochOffset) : weather);
     // Every map's main copy, the world everyone shares: its fires start burning now.
     for (const m of this.maps.values()) this.newZone(m, '', options.now ?? 0);
 
@@ -921,8 +945,9 @@ export class World {
     }
   }
 
+  /** The weather over the home town (where it is fixed, everywhere's). */
   get weather(): Weather {
-    return this.sky;
+    return this.weatherOf(this.home);
   }
 
   get size(): number {
@@ -1059,7 +1084,8 @@ export class World {
     this.giveParcel(p, now);
     const here = zone.key, today = utcDay(now + this.epochOffset);
     return {
-      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
+      player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), weather: this.weatherOf(map), energy: energyView(p), body: bodyView(p, this.effectViews(r.id, now)),
+      bag: bagView(r.bag, now + this.epochOffset),
       stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats },
       progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
@@ -1188,7 +1214,8 @@ export class World {
     }
     if (use.mark) this.paint(p, now);
     if (use.flare) this.light(p, use.flare, now);
-    // The bar may have jumped, the bag got lighter: the client counts on from the new values.
+    const again = use.resist && use.lasts ? this.affect(id, def.id, use.lasts, now) : undefined;
+    // The bar may have jumped, the bag got lighter, an effect works: the client counts on from the new values.
     this.refresh(p, now);
     this.tell(p, now);
     this.sendBag(p, now);
@@ -1199,6 +1226,7 @@ export class World {
       ...(use.flare ? { flare: use.flare } : {}),
       ...(use.mark ? { mark: { dir: p.rec.dir, left: markLifetime(p.mods) / 1000 } } : {}),
       ...(into ? { into } : {}),
+      ...(again !== undefined ? { effect: { lasts: use.lasts!, ...(again ? { again: true as const } : {}) } } : {}),
     });
     // Something that takes energy could empty the bar.
     if (p.rec.energy <= 0) this.collapse(p, now);
@@ -1958,10 +1986,9 @@ export class World {
    * come grow. Call it often (every TICK_MS).
    */
   tick(now: number): void {
-    const wall = now + this.epochOffset;
     // A copy nobody is in costs nothing from here on (its piles and marks stay, and so does storage's copy of them).
     this.closeEmptied();
-    if (this.cycle) this.setWeather(weatherAt(wall).weather, now);
+    this.moveWeather(now);
     this.moveSurges(now);
     this.moveStorms(now);
     this.moveConditions(now);
@@ -1977,6 +2004,11 @@ export class World {
       }
       if (p.queue.length) this.runQueue(p, now);
       if (p.live) this.fadeLive(p, now);
+      // An effect that is over no longer counts: they hear their rates, and their body, without it.
+      if (this.endEffects(p.rec.id, now)) {
+        this.refresh(p, now);
+        this.tell(p, now);
+      }
       this.surged(p, now);
       this.hitch(p, now);
       this.rerate(p, now);
@@ -1993,21 +2025,56 @@ export class World {
     this.fadePiles(now);
     this.fadeMarks(now);
     this.forgetThanks(now);
+    this.forgetEffects(now);
     this.growFinds(now);
   }
 
-  /** Changes the weather everywhere. Energy rates follow: bad weather drains faster, and rain soaks. */
+  /**
+   * Fixes the weather everywhere (a fixed WEATHER, and the tests): every map has it until it is set
+   * again. Energy rates follow: bad weather drains faster, and rain soaks.
+   */
   setWeather(weather: Weather, now: number): void {
-    if (weather === this.sky) return;
-    const aurora = weather === 'aurora' || this.sky === 'aurora';
     this.sky = weather;
-    for (const z of this.zones.values()) if (z.players.size) this.outbox.push({ to: '*', map: z.key, msg: { t: 'weather', weather } });
-    if (aurora) for (const rule of this.rules) if (rule.when === 'aurora') this.openRule(rule, weather === 'aurora', now);
-    for (const p of this.players.values()) {
+    for (const map of this.maps.values()) this.turnWeather(map, weather, now);
+  }
+
+  /** With the weather cycling, every map follows its region's sky (sky.ts): the night everywhere at once, rain by the region's own windows. */
+  private moveWeather(now: number): void {
+    if (!this.cycle) return;
+    const wall = now + this.epochOffset;
+    for (const map of this.maps.values()) this.turnWeather(map, this.regionWeather(map, wall), now);
+  }
+
+  /**
+   * The weather over one map turns: everyone on it (in every copy of it) hears it, its aurora finds grow
+   * or go, and whoever is there drains at the new rate from now on (up to now, at the old one).
+   */
+  private turnWeather(map: TileMap, weather: Weather, now: number): void {
+    const was = this.weatherOf(map);
+    if (was === weather) return;
+    this.skies.set(map.data.id, weather);
+    for (const zone of this.copiesOf(map.data.id)) if (zone.players.size) this.toZone(zone.key, { t: 'weather', weather });
+    if (weather === 'aurora' || was === 'aurora') for (const rule of this.rules) if (rule.when === 'aurora' && rule.map === map) this.openRule(rule, weather === 'aurora', now);
+    for (const zone of this.copiesOf(map.data.id)) for (const p of [...zone.players]) {
       // Up to now at the rate of the old weather, which the player still has.
       if (this.advance(p, now) <= 0) this.collapse(p, now);
       else this.rerate(p, now);
     }
+  }
+
+  /** The map whose sky a map is under: a room hears the weather of the map its door opens onto. */
+  private outdoors(map: TileMap): TileMap {
+    return map.data.kind === 'inside' ? this.around.get(map.data.id) ?? map : map;
+  }
+
+  /** The weather over a map at a wall time, by its region's rain windows (sky.ts). */
+  private regionWeather(map: TileMap, wall: number): Weather {
+    return weatherAt(wall, this.outdoors(map).data.rain).weather;
+  }
+
+  /** The weather over a map now, as its players last heard it. */
+  private weatherOf(map: TileMap): Weather {
+    return this.skies.get(map.data.id) ?? this.sky;
   }
 
   /** Everything queued since the last drain, in order. */
@@ -2078,7 +2145,7 @@ export class World {
       // The pack mule counts what the bag really weighs: a feel made lighter by its own ranks or a charm
       // must not slow the count toward its next rank.
       const real = bagLoad(p.rec.bag, this.items);
-      for (const stat of STEP_STATS) if (stepCounts(stat, p.map, x, y, this.sky, real)) this.count(p, stat, now);
+      for (const stat of STEP_STATS) if (stepCounts(stat, p.map, x, y, this.weatherOf(p.map), real)) this.count(p, stat, now);
     }
     const exit = p.map.exitAt(x, y);
     if (exit) this.cross(p, exit, now);
@@ -2219,7 +2286,7 @@ export class World {
     this.toZone(here, { t: 'join', player: this.viewOf(p) }, id);
     this.outbox.push({
       to: id,
-      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), stats: { ...p.rec.stats }, reason },
+      msg: { t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), stats: { ...p.rec.stats }, weather: this.weatherOf(p.map), reason },
       // Where the network hears them from now on, when it is not the map's main copy (its key is the map's id).
       ...(p.zone.copy ? { zone: here } : {}),
     });
@@ -2236,10 +2303,11 @@ export class World {
     p.load = bagLoad(p.rec.bag, this.items, p.mods.load);
     p.max = this.maxOf(p.rec);
     p.slots = bagSlotsOf(p.rec.gear ?? {}, this.items);
-    const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn);
+    // What they wear, and the effects working on them (a hand warmer), under the one cap.
+    const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn, this.boost(p.rec.id, now));
     const warmth = p.map.warm(x, y) ? p.zone.fires.warmth(x, y, now) : 0;
-    const storm = this.stormOf(p.map, now)?.phase === 'storm';
-    p.rate = energyRate(p.map, x, y, this.sky, {
+    const storm = this.stormOf(p.map, now)?.phase === 'storm', weather = this.weatherOf(p.map);
+    p.rate = energyRate(p.map, x, y, weather, {
       warmth: warmth * p.mods.warmth,
       wet: p.rec.wet,
       load: p.load,
@@ -2253,7 +2321,7 @@ export class World {
       farDrain: p.mods.farDrain,
     });
     // Wind resistance (a raincoat) keeps the rain out.
-    p.wetRate = wetRate(p.map.data.kind, this.sky, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
+    p.wetRate = wetRate(p.map.data.kind, weather, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
   }
 
   /**
@@ -2297,7 +2365,7 @@ export class World {
     p.heardWetRate = p.wetRate;
     p.heardLoad = p.load;
     p.heardAt = now;
-    this.outbox.push({ to: p.rec.id, msg: { t: 'energy', energy: energyView(p), body: bodyView(p) } });
+    this.outbox.push({ to: p.rec.id, msg: { t: 'energy', energy: energyView(p), body: bodyView(p, this.effectViews(p.rec.id, now)) } });
   }
 
   /**
@@ -2378,7 +2446,7 @@ export class World {
       for (const rule of this.rules) if (rule.when === 'unstable' && rule.map === map) this.openRule(rule, s.phase !== 'calm', now);
     }
     // The first tick also opens aurora finds if the world starts on an aurora night.
-    for (const rule of this.rules) if (rule.when === 'aurora' && rule.open !== (this.sky === 'aurora')) this.openRule(rule, this.sky === 'aurora', now);
+    for (const rule of this.rules) if (rule.when === 'aurora' && rule.open !== (this.weatherOf(rule.map) === 'aurora')) this.openRule(rule, !rule.open, now);
   }
 
   /** A region's storm clock now (for an inside, the region around it), or null for a map that never storms. */
@@ -2570,6 +2638,54 @@ export class World {
     return woke;
   }
 
+  // ---------- effects ----------
+
+  /**
+   * `item`'s effect starts on player `id` now, for `lasts` seconds (effects.ts). A second of the same
+   * while the first still works starts its time again: it never adds up. True when one still worked.
+   */
+  private affect(id: string, item: string, lasts: number, now: number): boolean {
+    let mine = this.effects.get(id);
+    if (!mine) this.effects.set(id, (mine = new Map()));
+    const again = (mine.get(item) ?? -Infinity) > now;
+    mine.set(item, now + lasts * 1000);
+    return again;
+  }
+
+  /** The effects working on player `id` now, with the seconds left of each (to a tenth, as the client counts them down). */
+  private effectViews(id: string, now: number, exact = false): EffectView[] {
+    const mine = this.effects.get(id);
+    if (!mine) return [];
+    return [...mine].flatMap(([item, until]) => {
+      const left = exact ? (until - now) / 1000 : round((until - now) / 1000, 1);
+      return left > 0 ? [{ item, left }] : [];
+    });
+  }
+
+  /** What the effects working on player `id` resist now, together (on top of their gear: resistOf caps the sum), to the last millisecond. */
+  private boost(id: string, now: number): Partial<Resist> {
+    return this.effects.has(id) ? effectResist(this.effectViews(id, now, true), this.items) : {};
+  }
+
+  /** Forgets player `id`'s effects that are over; true when one was. */
+  private endEffects(id: string, now: number): boolean {
+    const mine = this.effects.get(id);
+    if (!mine) return false;
+    let ended = false;
+    for (const [item, until] of mine) {
+      if (until > now) continue;
+      mine.delete(item);
+      ended = true;
+    }
+    if (!mine.size) this.effects.delete(id);
+    return ended;
+  }
+
+  /** The effects of players who are away run out on their own: forgotten once over (those online, in tick). */
+  private forgetEffects(now: number): void {
+    for (const id of this.effects.keys()) if (!this.players.has(id)) this.endEffects(id, now);
+  }
+
   // ---------- hitchhikers, flares, marks ----------
 
   /** In the dark, deep in and away from light, something may cling to you; light, a fire or a roof shakes it off. */
@@ -2582,7 +2698,7 @@ export class World {
       if (safe || this.nearFlare(p.zone, x, y, now)) this.unhitch(p);
       return;
     }
-    const dark = this.sky === 'night' || this.sky === 'aurora';
+    const sky = this.weatherOf(p.map), dark = sky === 'night' || sky === 'aurora';
     if (safe || !dark || p.map.homeSteps(x, y) < HITCH_STEPS || this.nearFlare(p.zone, x, y, now)) return;
     if (this.rng() < 1 - Math.exp((-dt / HITCH_EVERY_S) * p.mods.hitch)) {
       p.hitched = true;
@@ -2668,9 +2784,9 @@ export class World {
    * nothing to it.
    */
   private walkWatchers(now: number): void {
-    const every = this.sky === 'aurora' ? AURORA_WATCHER_STEP_MS : WATCHER_STEP_MS;
     for (const zone of this.zones.values()) {
       if (!zone.watchers.length || this.asleep.has(zone.map.data.id)) continue;
+      const every = this.weatherOf(zone.map) === 'aurora' ? AURORA_WATCHER_STEP_MS : WATCHER_STEP_MS;
       for (const w of zone.watchers) {
         // Asked again for each watcher: another one's touch may have just sent someone home.
         const here = [...zone.players];
@@ -2770,7 +2886,8 @@ export class World {
 
   /** Skulkers are out at night (aurora nights too) or in a storm, as their region's rule says. */
   private skulkersOut(map: TileMap, rule: SkulkerRule, now: number): boolean {
-    if (rule.when.includes('night') && (this.sky === 'night' || this.sky === 'aurora')) return true;
+    const sky = this.weatherOf(map);
+    if (rule.when.includes('night') && (sky === 'night' || sky === 'aurora')) return true;
     return rule.when.includes('storm') && this.stormOf(map, now)?.phase === 'storm';
   }
 
@@ -2900,13 +3017,7 @@ export class World {
 
   /** The notice board: the weather, each region's surge clock, the fires that need feeding, recent collapses, the Old Stone. */
   private news(now: number): string[] {
-    const lines: string[] = [];
-    const wall = now + this.epochOffset;
-    if (this.cycle) {
-      const w = weatherAt(wall);
-      const next = weatherAt(wall + w.left * 1000 + 1000).weather;
-      lines.push(`${WEATHER_WORDS[this.sky]} now. ${capital(WEATHER_WORDS[next])} ${about(w.left)}.`);
-    } else lines.push(`${WEATHER_WORDS[this.sky]}.`);
+    const lines = this.weatherLines(now);
     lines.push(...this.conditionLines(now));
     for (const map of this.maps.values()) {
       const s = this.surgeOf(map, now), rule = map.data.surge;
@@ -2942,6 +3053,26 @@ export class World {
     if (this.stone) {
       const st = this.stoneView(now);
       lines.push(st.awake ? `The Old Stone is awake: surges are gentler for ${about(st.left, true)}.` : `The Old Stone sleeps. ${st.charge} of ${st.need} shards fed.`);
+    }
+    return lines;
+  }
+
+  /**
+   * The notice board on the weather: the day or the night, one for the whole world, then each region out
+   * there on its own rain ("The Near Woods: rain for about 6 minutes more.", "The South Road: dry for about
+   * 12 minutes, then rain."). A fixed weather is said as it is.
+   */
+  private weatherLines(now: number): string[] {
+    if (!this.cycle) return [`${WEATHER_WORDS[this.sky]}.`];
+    const wall = now + this.epochOffset, d = dayAt(wall);
+    if (d.into >= d.night) return [`${d.aurora ? 'An aurora night' : 'Night'}: no rain anywhere. Dawn ${about(DAY_S - d.into)}.`];
+    const lines = [`Night falls ${about(d.night - d.into)}.`];
+    for (const map of this.maps.values()) {
+      if (map.data.kind !== 'wilds') continue;
+      const r = rainAhead(wall, map.data.rain), name = map.data.name;
+      if (!r) lines.push(`${name}: dry until nightfall.`);
+      else if (r.raining) lines.push(`${name}: rain for ${about(r.left, true)} more.`);
+      else lines.push(`${name}: dry for ${about(r.left, true)}, then rain.`);
     }
     return lines;
   }
@@ -3637,7 +3768,6 @@ export function pathStep(
 }
 
 const WEATHER_WORDS: Record<Weather, string> = { overcast: 'Overcast', rain: 'Rain', night: 'Night', aurora: 'An aurora night' };
-const capital = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 const lower = (s: string) => s[0]!.toLowerCase() + s.slice(1);
 
 /** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours"). */

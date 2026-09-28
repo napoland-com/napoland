@@ -12,7 +12,8 @@
  * dormitory and the stores); the NAPO Tower in its fence east of it, with its shed and a ridge behind;
  * a bog west (the sinks) and NAPO's field site east; and at the end the checkpoint on the quarantine
  * line, where a barrier and a truck close the road. No surges, storms or flashes (no surge, storm or
- * flashes rule), and nothing watches from its trees: the danger is how far it goes.
+ * flashes rule), and nothing watches from its trees: the danger is how far it goes. Its rain is its own
+ * (`rain`): later in the day than the Near Woods', and shorter.
  *
  * Energy only comes back by a fire: the bunker's (tended), the camp's, the laboratory's, the
  * dormitory's and the checkpoint's (these burn down unless someone feeds them). The rooms are in
@@ -472,12 +473,15 @@ onForest({ kind: 'cache', x: CAMP[0] - 3, y: CAMP[1] - 3, name: 'the crate at th
 // ---- Output ----
 
 const map: MapData = {
-  id: 'south-road', name: 'The South Road', version: 3, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'south-road', name: 'The South Road', version: 4, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 35, y: 2, dir: 'down' },
   exits: [EXIT, ...doors],
   objects,
+  // The calmer way is the drier one too: its rain comes as the Near Woods' stops, 24 minutes after dawn,
+  // and lasts half as long, 6 minutes. So from 12 to 30 minutes after dawn one of the two is always dry.
+  rain: [{ from: 24 * 60, length: 6 * 60 }],
   // What the paper map names, besides NAPO's buildings and the way home. The newer names come after,
   // so the paper map writes the older ones where it always did.
   places: [
@@ -498,6 +502,7 @@ const json = [
   `  "spawn": ${JSON.stringify(map.spawn)},`,
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
   '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
+  `  "rain": ${JSON.stringify(map.rain)},`,
   '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ]',
   '}',
   '',

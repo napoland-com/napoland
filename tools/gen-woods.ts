@@ -562,12 +562,14 @@ for (const [x, y] of [[27, 71], [28, 70], [27, 73], [28, 74]] as const) onForest
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 9, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 10, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
   exits: [EXIT, ...doors],
   objects,
+  // Rain from 12 minutes after dawn, for 12: the wettest part of the day, while the South Road is dry.
+  rain: [{ from: 12 * 60, length: 12 * 60 }],
   // Every 40 minutes: 6 restless, then a surge of 2.5 minutes whose front takes 1.5 to sweep home.
   surge: { every: 2400, unstable: 360, surge: 150, sweep: 90 },
   // Every 40 minutes too, halfway between two surges: a minute's warning, then 3 minutes of storm.
@@ -598,6 +600,7 @@ const json = [
   `  "spawn": ${JSON.stringify(map.spawn)},`,
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
   '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
+  `  "rain": ${JSON.stringify(map.rain)},`,
   `  "surge": ${JSON.stringify(map.surge)},`,
   `  "storm": ${JSON.stringify(map.storm)},`,
   `  "flashes": ${JSON.stringify(map.flashes)},`,

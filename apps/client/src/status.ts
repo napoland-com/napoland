@@ -3,13 +3,13 @@
  * can be tested; hud.ts shows it and main.ts asks for it.
  */
 import {
-  ELEMENTS, FEATS, GUEST_DAYS, LEVEL_MAX, MERIT_XP, RESTED_MAX, meritsLeft, outfitsOpening, rankOf, rankText, toNextMerit, type BagSlot, type BodyView, type Element, type EnergyView, type Feat,
+  ELEMENTS, FEATS, GUEST_DAYS, LEVEL_MAX, MERIT_XP, RESTED_MAX, meritsLeft, outfitsOpening, rankOf, rankText, toNextMerit, type BagSlot, type BodyView, type EffectView, type Element, type EnergyView, type Feat,
   type FlashKind, type MeritsView, type ProgressView, type Stats, type StoneView, type StormView, type SurgeView, type Weather,
 } from '@napoland/shared';
 import { listWords } from './details';
 import { minutes, type News } from './game';
 import type { FeatView, StatusView } from './hud';
-import type { Items } from './items';
+import { ELEMENT_WORDS, type Items } from './items';
 import { parcelBanner } from './parcels';
 import { meritText, thousands } from './said';
 import { outfitWords } from './wardrobe';
@@ -31,8 +31,10 @@ export interface StatusInput {
   bag: readonly BagSlot[];
   items: Items;
   progress: ProgressView;
-  /** What your gear resists, in words (items.ts, resistText); null for nothing. */
+  /** What your gear and the effects working on you resist, in words (items.ts, resistText); null for nothing. */
   resists: string | null;
+  /** The effects working on you now (effects.ts), counted down: each shows with its time left. */
+  effects?: readonly EffectView[];
   /** What you wear that is wearing down (items.ts, wearText); null when all of it is fine. */
   wear: string | null;
   /** The quirks of what you wear, by name. */
@@ -79,6 +81,18 @@ export function levelText(p: ProgressView): string {
   return p.to === null ? `Level ${p.level} · ${p.xp} XP, the top` : `Level ${p.level} · ${p.xp} XP, ${p.to - p.xp} to go`;
 }
 
+/** "4:05": minutes and seconds left of something short, an effect. */
+const minSec = (seconds: number) => {
+  const s = Math.max(0, Math.ceil(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+/** An effect working on you, in the status panel: what it gives and how long it still works ("Cold +40% for 4:05 more"). */
+export function effectText(f: EffectView, items: Items): string {
+  const gives = Object.entries(items.get(f.item).use?.resist ?? {}).map(([e, v]) => `${ELEMENT_WORDS[e as Element]} +${Math.round((v ?? 0) * 100)}%`);
+  return `${gives.join(', ')} for ${minSec(f.left)} more`;
+}
+
 /** What wears you down out there now, element by element ("Cold: rain, wet · Wind: the storm"); null for nothing. */
 export function drainText(s: { weather: Weather; wet: number; storm: boolean; caught: boolean; flash: FlashKind | null }): string | null {
   const by: Record<Element, string[]> = { heat: [], cold: [], wind: [], electricity: [], radiation: [] };
@@ -112,6 +126,8 @@ export function statusView(s: StatusInput): StatusView {
   if (s.wear) rows.push({ label: 'Wear', text: `${s.wear}. Mend it at the workbench at home.`, tone: s.wear.includes('worn out') ? 'bad' : 'plain' });
   if (s.quirks.length) rows.push({ label: 'Quirks', text: s.quirks.join(', '), tone: 'good' });
   rows.push({ label: 'Resists', text: s.resists ?? 'Nothing yet. Make gear at the workbench at home.', tone: s.resists ? 'good' : 'plain' });
+  // Each effect working on you (a hand warmer), with its time left: it counts in Resists above.
+  for (const f of s.effects ?? []) if (f.left > 0) rows.push({ label: s.items.get(f.item).name, text: effectText(f, s.items), tone: 'good' });
   if (s.wilds) rows.push({ label: 'Draining', text: drainText({ ...s, wet: s.body.wet, storm: s.storm?.phase === 'storm' }) ?? 'Just being out here', tone: 'bad' });
   if (s.body.hitched) rows.push({ label: 'On you', text: 'Something clings to your back. Find a light, a fire or a roof.', tone: 'bad' });
   const charms = [...new Set(s.bag.map(b => s.items.get(b.item)).filter(d => d.kind === 'charm').map(d => d.name))];
@@ -139,6 +155,7 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
   if (n.kind === 'call') return null;
   if (n.kind === 'parcel') return items ? parcelBanner(n.parcel, items, n.outfits) : null;
   if (n.kind === 'conditions') return n.names.length ? { title: 'A new day', sub: n.names.join('\n') } : null;
+  if (n.kind === 'aurora') return { title: 'Lights in the sky', sub: 'An aurora: the old wires hum,\nand copper turns up by the poles.' };
   if (n.kind === 'level') {
     const opened = listWords(outfitsOpening(n.from, n.progress.level).map(o => `the ${outfitWords(o.name)}`));
     const outfits = opened ? (guest ? `\nSign in to wear ${opened}.` : `\nNew in your wardrobe: ${opened}.`) : '';

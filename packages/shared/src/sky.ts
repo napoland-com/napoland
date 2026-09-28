@@ -3,8 +3,11 @@
  * each region's surge clock. Fixed schedules, so players can learn them and share them ("the woods
  * surge at a quarter to"), and the server can restart without the sky jumping.
  *
- * The day: overcast, rain, overcast again, then night. Every third night is an aurora: lights in the
- * sky, dead power lines hum, copper grows back near the poles, creatures get restless.
+ * The day: overcast from dawn, then night. Day and night are one for the whole world (one sun), and
+ * every third night is an aurora: lights in the sky, dead power lines hum, copper grows back near the
+ * poles, creatures get restless. Rain is each region's own: its map says when in the day it rains
+ * (`rain`, rain windows counted from dawn), so the South Road can be dry while the Near Woods pour.
+ * Rain falls only by day; the night is dry everywhere.
  *
  * A surge: a region is calm most of the time, then restless for a few minutes (rare finds show up,
  * and it is announced), then a surge sweeps it from its deepest tile toward the way home. Caught in it,
@@ -16,19 +19,81 @@ import type { Weather } from './protocol';
 
 /** One day of weather, in seconds. */
 export const DAY_S = 48 * 60;
-const DAY: ReadonlyArray<readonly [Weather, number]> = [['overcast', 12 * 60], ['rain', 12 * 60], ['overcast', 8 * 60], ['night', 16 * 60]];
+/** Night falls this many seconds after dawn: 32 minutes of day, then 16 of night. */
+export const NIGHT_FROM = 32 * 60;
 /** Every this many days, the night is an aurora. */
 export const AURORA_EVERY = 3;
 
-/** The weather at a wall clock time (ms since the epoch), and the seconds until it changes. */
-export function weatherAt(wallMs: number): { weather: Weather; left: number } {
+/**
+ * When it rains over a region (its map's `rain`): from `from` seconds after dawn, for `length`
+ * seconds. Rain falls only by day, so every window ends by nightfall (NIGHT_FROM).
+ */
+export interface RainWindow {
+  from: number;
+  length: number;
+}
+
+/** The rain of a map that says nothing about it: 12 minutes of it, from 12 minutes after dawn (Stonebrook's and the Near Woods'). */
+export const DEFAULT_RAIN: readonly RainWindow[] = [{ from: 12 * 60, length: 12 * 60 }];
+
+/** The day at a wall time, the same everywhere: which day (dayIndex), seconds since its dawn, when its night falls, and whether its night is an aurora. */
+export interface DayView {
+  day: number;
+  into: number;
+  night: number;
+  aurora: boolean;
+}
+
+export function dayAt(wallMs: number): DayView {
   const s = wallMs / 1000, day = Math.floor(s / DAY_S);
-  let t = s - day * DAY_S;
-  for (const [w, len] of DAY) {
-    if (t < len) return { weather: w === 'night' && day % AURORA_EVERY === AURORA_EVERY - 1 ? 'aurora' : w, left: len - t };
-    t -= len;
+  return { day, into: s - day * DAY_S, night: NIGHT_FROM, aurora: day % AURORA_EVERY === AURORA_EVERY - 1 };
+}
+
+/**
+ * A region's rain windows on a day, as [start, end) seconds after dawn: in order, joined where they
+ * touch or overlap, and cut at nightfall, since the night is dry everywhere.
+ */
+export function rainOf(rain: readonly RainWindow[] | undefined, day: DayView): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  const windows = [...(rain ?? DEFAULT_RAIN)].sort((a, b) => a.from - b.from);
+  for (const w of windows) {
+    const a = Math.max(0, w.from), b = Math.min(day.night, w.from + w.length);
+    if (b <= a) continue;
+    const last = out.at(-1);
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
   }
-  return { weather: 'overcast', left: 1 };
+  return out;
+}
+
+/**
+ * The weather over a region at a wall clock time (ms since the epoch), and the seconds until it
+ * changes there: the night (or an aurora) everywhere at once, and by day rain in the region's own
+ * windows (`rain`, its map's; left out, DEFAULT_RAIN), overcast between them.
+ */
+export function weatherAt(wallMs: number, rain: readonly RainWindow[] = DEFAULT_RAIN): { weather: Weather; left: number } {
+  const d = dayAt(wallMs);
+  if (d.into >= d.night) return { weather: d.aurora ? 'aurora' : 'night', left: DAY_S - d.into };
+  for (const [a, b] of rainOf(rain, d)) {
+    if (d.into < a) return { weather: 'overcast', left: a - d.into };
+    if (d.into < b) return { weather: 'rain', left: b - d.into };
+  }
+  return { weather: 'overcast', left: d.night - d.into };
+}
+
+/**
+ * A region's rain from now until nightfall, for the notice board: it rains, and stops in `left`
+ * seconds; or it is dry, and the next rain comes in `left` seconds. Null: no more rain before night
+ * (or it is night already).
+ */
+export function rainAhead(wallMs: number, rain: readonly RainWindow[] = DEFAULT_RAIN): { raining: boolean; left: number } | null {
+  const d = dayAt(wallMs);
+  if (d.into >= d.night) return null;
+  for (const [a, b] of rainOf(rain, d)) {
+    if (d.into < a) return { raining: false, left: a - d.into };
+    if (d.into < b) return { raining: true, left: b - d.into };
+  }
+  return null;
 }
 
 /** How a region surges, in seconds: one round every `every`, ending with `unstable` then `surge`. */
@@ -172,7 +237,7 @@ export interface ConditionsView {
   next: string | null;
 }
 
-/** The day at a wall time: the same one weatherAt uses. It starts at dawn (overcast after the night). */
+/** The day at a wall time: the same one weatherAt uses (dayAt). It starts at dawn (overcast after the night). */
 export function dayIndex(wallMs: number): number {
   return Math.floor(wallMs / 1000 / DAY_S);
 }

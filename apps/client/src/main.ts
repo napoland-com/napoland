@@ -95,7 +95,8 @@ let view = new WorldView(renderer, maps.home(), peek);
 view.pixelScale = resolution.scale;
 /** Every view asks the game how big each fire burns, as it draws. */
 const watchFires = (v: WorldView) => v.setFires((x, y) => fireLevel(game.fireLeft(x, y, performance.now())));
-let weather: Weather = 'rain';
+/** The sky as the view draws it: the weather over your map (game.weather), and the view it was set on. */
+let skyShown: { weather: Weather | null; view: WorldView | null } = { weather: null, view: null };
 /** The server accepts game messages only after its welcome on the current connection. */
 let welcomed = false;
 /** The first welcome of this page shows where you are; later ones are reconnects. */
@@ -116,12 +117,12 @@ const wardrobeNow = (): WardrobeState => ({
 });
 /** The status panel, as the game stands now. */
 const showStatus = () => {
-  const now = performance.now();
+  const now = performance.now(), effects = game.effectsNow(now);
   hud.setStatus(statusView({
     energy: game.energy(now), body: game.bodyNow(now), surge: game.surgeNow(now), caught: game.caught(now), stone: game.stone, stats: game.stats, bag: game.bag, items,
-    progress: game.progress, resists: resistText(game.myGear, items, game.myWorn),
+    progress: game.progress, resists: resistText(game.myGear, items, game.myWorn, effects), effects,
     wear: wearText(game.myGear, game.myWorn, items), quirks: quirkNames(game.myWorn, items),
-    storm: game.stormNow(now), flash: game.flashed(now), weather, wilds: game.map.data.kind === 'wilds', guest: game.guest, merits: game.merits,
+    storm: game.stormNow(now), flash: game.flashed(now), weather: game.weather, wilds: game.map.data.kind === 'wilds', guest: game.guest, merits: game.merits,
   }));
 };
 /**
@@ -304,7 +305,8 @@ const arrival = new Arrival(held => {
     view.dispose();
     view = new WorldView(renderer, game.map, peek);
     view.pixelScale = resolution.scale;
-    view.setWeather(weather);
+    view.setWeather(game.weather);
+    skyShown = { weather: game.weather, view };
     watchFires(view);
     resize();
   }
@@ -571,8 +573,6 @@ conn.onMessage = (msg: ServerMsg) => {
       hud.setGuest(msg.guest);
       hud.setLogoutLabel(msg.guest ? 'Sign in' : authMode === 'legacy' ? 'Log out' : 'Sign out');
       hud.setConnection('online', ping);
-      weather = msg.weather;
-      view.setWeather(weather);
       break;
     case 'zone':
       if (!known(msg.map)) return outdated();
@@ -580,11 +580,6 @@ conn.onMessage = (msg: ServerMsg) => {
       // the collapse brings may come just before or just after it.
       if (msg.reason === 'collapse') leftPile = game.carrying(now);
       break;
-    case 'weather':
-      if (msg.weather === 'aurora' && weather !== 'aurora') hud.showBanner('Lights in the sky', 'An aurora: the old wires hum,\nand copper turns up by the poles.');
-      weather = msg.weather;
-      view.setWeather(weather);
-      return;
     case 'pong':
       ping = now - msg.at;
       hud.setConnection('online', ping);
@@ -787,6 +782,11 @@ function frame(now: number) {
       hud.showBanner('Your gear hums', `${game.map.data.name} grows restless in about a minute.`);
     }
   }
+  // The weather over your map (your region's, a room's the map outside it): the sky turns with it.
+  if (game.weather !== skyShown.weather || view !== skyShown.view) {
+    skyShown = { weather: game.weather, view };
+    view.setWeather(game.weather);
+  }
   view.setStone(game.stone.awake);
   const surge = game.surgeNow(now), caught = game.caught(now);
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
@@ -875,9 +875,9 @@ function frame(now: number) {
     hud.setTools(toolViews((toolsShown = game.tools), items, (radioShown = radioOn)));
   }
   // Every change to the finds counts in lootChanges, a new map's too.
-  if (radio && (game.lootChanges !== spotsFor.loot || weather !== spotsFor.weather)) {
-    spotsFor = { loot: game.lootChanges, weather };
-    radioSpots = heardFinds(game.finds.values(), radio.senses, weather);
+  if (radio && (game.lootChanges !== spotsFor.loot || game.weather !== spotsFor.weather)) {
+    spotsFor = { loot: game.lootChanges, weather: game.weather };
+    radioSpots = heardFinds(game.finds.values(), radio.senses, game.weather);
   }
   if (game.chest !== chestShown || game.progress !== progressShown) {
     if (game.chest && !chestShown) hud.toggleStash(true);
@@ -903,7 +903,7 @@ function frame(now: number) {
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;
   const scene: Scene = {
-    map: map.data.id, kind: map.data.kind, weather, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
+    map: map.data.id, kind: map.data.kind, weather: game.weather, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
     me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty) } : null,
     fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),
     poles: map.data.objects.filter(o => o.kind === 'pole'),

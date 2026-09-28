@@ -1,7 +1,7 @@
 {
   "id": "stonebrook",
   "name": "Stonebrook",
-  "version": 10,
+  "version": 11,
   "kind": "town",
   "depth": 0,
   "width": 44,
@@ -820,6 +820,7 @@
     {"kind":"luggage","x":10,"y":36},
     {"kind":"boxes","x":9,"y":36}
   ],
+  "rain": [{"from":720,"length":720}],
   "places": [
     {"name":"the Old Stone","x":15,"y":8},
     {"name":"the notice board","x":12,"y":23},
