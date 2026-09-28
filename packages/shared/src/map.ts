@@ -456,9 +456,11 @@ export interface MapData {
    * and taller with cedars among them, the ferns deep and the light under them dimmer. 'burnt': a forest
    * the answer burned (the Burn), its firs standing black and bare over grey ground. 'snow': above the
    * Burn, the Ridge, always in winter (its view, its cold, its snow for rain), and its snow keeps the
-   * footprints of the last hour (PRINTS_KEPT_MS). Left out: the younger woods nearer town.
+   * footprints of the last hour (PRINTS_KEPT_MS). 'marsh': east of the Far Woods, the Marsh, its drowned
+   * trees standing grey in the water, its mist never lifting, lights drifting over its water. Left out: the
+   * younger woods nearer town.
    */
-  forest?: 'old' | 'burnt' | 'snow';
+  forest?: 'old' | 'burnt' | 'snow' | 'marsh';
   /**
    * Outdoors only: the water that freezes in winter (sky.ts, SEASONS: `frozen`), each by what people call
    * it and its tiles as [x, y]: while it is frozen it is ice, walked on like ground (TileMap.freeze). The

@@ -316,7 +316,7 @@ export function validateMap(data: MapData): Problem[] {
     for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (map.walkable(x, y) && map.homeSteps(x, y) < 0) lost++;
     if (lost) warn(`${lost} walkable tiles have no way to a home exit`);
   }
-  if (data.forest !== undefined && (!['old', 'burnt', 'snow'].includes(data.forest) || data.kind !== 'wilds')) err(`forest ${JSON.stringify(data.forest)}: only the wilds say how their forest grows, and it is old, burnt, snow or left out`);
+  if (data.forest !== undefined && (!['old', 'burnt', 'snow', 'marsh'].includes(data.forest) || data.kind !== 'wilds')) err(`forest ${JSON.stringify(data.forest)}: only the wilds say how their forest grows, and it is old, burnt, snow, marsh or left out`);
   validateTallGrass(data, map, err, warn);
   const named = new Set<string>();
   for (const p of data.places ?? []) {

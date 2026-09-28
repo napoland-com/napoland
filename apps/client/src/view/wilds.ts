@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { FLASH_BURST_S, FLASH_GLOW_S, FLASH_RADIUS, type Dir, type DropView, type FlashView, type MarkView } from '@napoland/shared';
 import { makePlayer, type Rig } from './characters';
 import { Puffs } from './fire';
-import { OUTLINE, box, disposeTree, flat, merge, ownToon, part, pivot, softTexture } from './toon';
+import { OUTLINE, box, disposeTree, flat, hash2, merge, ownToon, part, pivot, softTexture } from './toon';
 import type { CreatureAvatar } from './world';
 
 const TURN: Record<Dir, number> = { up: 0, right: -Math.PI / 2, down: Math.PI, left: Math.PI / 2 };
@@ -453,6 +453,41 @@ export class SnowPrints {
     this.geo.dispose();
     this.mat.dispose();
     this.mesh.dispose();
+  }
+}
+
+/** Lights drifting over a marsh's water (MapData.forest 'marsh'): how many, how far each wanders from its own water, and how high it floats. */
+const MARSH_LIGHTS = 7, LIGHT_WANDER = 2.6, LIGHT_Y = 0.5;
+
+/**
+ * The lights on the Marsh's water: pale green-gold points that drift slowly over the channels and the pools,
+ * swelling and fading, never quite where you look for them. They lead nowhere and do nothing; the cutters'
+ * signs say to keep to the road. Each keeps to its own stretch of water, picked by its number, so everyone
+ * sees the same lights in the same places at the same time.
+ */
+export class MarshLights {
+  readonly root = new THREE.Group();
+  private readonly lights: Array<{ mesh: THREE.Mesh; mat: THREE.MeshBasicMaterial; x: number; y: number; ph: number }> = [];
+
+  constructor(water: ReadonlyArray<readonly [number, number]>) {
+    if (!water.length) return;
+    const geo = new THREE.SphereGeometry(0.08, 8, 6), halo = new THREE.SphereGeometry(0.22, 8, 6);
+    for (let k = 0; k < MARSH_LIGHTS; k++) {
+      const [x, y] = water[Math.floor(hash2(k * 31 + 7, k * 17 + 3) * water.length)]!;
+      const mat = new THREE.MeshBasicMaterial({ color: 0xd8ffc0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.add(new THREE.Mesh(halo, mat));
+      this.root.add(mesh);
+      this.lights.push({ mesh, mat, x: x + 0.5, y: y + 0.5, ph: k * 1.9 });
+    }
+  }
+
+  /** Every frame: `t` in seconds. */
+  update(t: number) {
+    for (const l of this.lights) {
+      l.mesh.position.set(l.x + Math.sin(t * 0.07 + l.ph) * LIGHT_WANDER, LIGHT_Y + Math.sin(t * 1.3 + l.ph) * 0.08, l.y + Math.cos(t * 0.05 + l.ph * 1.7) * LIGHT_WANDER * 0.8);
+      l.mat.opacity = 0.15 + 0.55 * Math.max(0, Math.sin(t * 0.21 + l.ph));
+    }
   }
 }
 

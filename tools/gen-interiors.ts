@@ -444,6 +444,37 @@ const ROOMS: readonly Room[] = [
     ],
   },
   {
+    // The one shelter of the Marsh (gen-marsh.ts): the peat cutters' hut on the bog, where the town's cutters
+    // slept in May. Their bunks, the peat they stacked to dry and never carried home, their tally of the cutting
+    // and a fire nobody keeps: it burns down unless whoever passes feeds it. Their map of the bog lies by the
+    // tally for whoever has none (a find: content/items.json). A crate for whoever comes next, last in the list.
+    id: 'marsh-cutters-hut', name: 'The cutters\' hut', version: 1, outside: 'marsh', door: [12, 16],
+    rows: [
+      'xxxxxxx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xxxpxxx',
+    ],
+    things: [
+      { kind: 'fireplace', x: 3, y: 1 },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'bed', x: 5, y: 2 },
+      { kind: 'woodpile', x: 5, y: 4 },
+      {
+        kind: 'paper', x: 1, y: 3, look: 'note', name: 'The cutting book',
+        text: [
+          'The cutters\' book, a line a day in May: how many rows cut, how many turned to dry.',
+          'The last May, the lines get short: "Lights on the water again. Nobody went out to them."',
+          'And last: "Left the peat stacked. Come back in August for it." Nobody did.',
+        ],
+      },
+      { kind: 'shelf', x: 5, y: 1 },
+      { kind: 'cache', x: 4, y: 1, name: 'the cutters\' crate' },
+    ],
+  },
+  {
     // NAPO's field post in the hollow of the Far Woods where the rocks hum back, further gone than the
     // listening post by the ring of stones: a concrete room with no fire, a cot, the shelves and crates
     // of its field kit, and the desk with the post's log, NAPO's last word from up here. Cold and dark.
@@ -1002,7 +1033,7 @@ if (import.meta.main) {
   // The other direction of doorInto: the door on the outside map must lead to the room's way in. It is
   // written by the outside map's generator, so after changing a room's size, run that one again too.
   const GENERATOR: Record<string, string> = {
-    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', burn: 'npm run gen:burn', ridge: 'npm run gen:ridge', 'residents-lane': 'npm run gen:street',
+    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', burn: 'npm run gen:burn', ridge: 'npm run gen:ridge', marsh: 'npm run gen:marsh', 'residents-lane': 'npm run gen:street',
   };
   for (const room of ROOMS) {
     const outside = JSON.parse(readFileSync(resolve(import.meta.dirname, `../content/maps/${room.outside}.json`), 'utf8')) as MapData;

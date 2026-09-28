@@ -283,8 +283,8 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
 
   it('stands in every place out there where people rest by a fire: the shelters, and by the fire in the open', () => {
     expect(shelters.map(m => m.data.id).sort()).toEqual([
-      'burn-line-cabin', 'far-woods-trapper-cabin', 'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'ridge-high-hut', 'south-road-bunker', 'south-road-checkpoint',
-      'south-road-dormitory', 'south-road-laboratory',
+      'burn-line-cabin', 'far-woods-trapper-cabin', 'marsh-cutters-hut', 'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'ridge-high-hut', 'south-road-bunker',
+      'south-road-checkpoint', 'south-road-dormitory', 'south-road-laboratory',
     ]);
     for (const m of shelters) expect(crates.filter(c => c.map === m), m.data.id).toHaveLength(1);
     expect(openFires.map(f => `${f.map.data.id} ${f.x},${f.y}`)).toEqual(['south-road 22,22']);
@@ -296,7 +296,7 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
 
   it('has a name each, for the letter of whoever left something in it', () => {
     expect(crates.map(c => c.o.kind === 'cache' && c.o.name).sort()).toEqual([
-      'the bunker\'s crate', 'the checkpoint\'s crate', 'the crate at the leavers\' camp', 'the crate in the cabin at the end', 'the dormitory\'s crate',
+      'the bunker\'s crate', 'the checkpoint\'s crate', 'the crate at the leavers\' camp', 'the crate in the cabin at the end', 'the cutters\' crate', 'the dormitory\'s crate',
       'the high hut\'s crate', 'the laboratory\'s crate', 'the line cabin\'s crate', 'the old cabin\'s crate', 'the ranger\'s crate', 'the trapper\'s crate',
     ]);
   });
@@ -476,11 +476,11 @@ describe('a field notebook (roadmap/field-notebook.md)', () => {
     expect(validateNotebook(notebook, all, items)).toEqual([]);
   });
 
-  // The notebook grows as the world does: about ten pages for each area it has (the Ridge made it six and anywhere).
-  it('has about ten pages an area, across the six areas and anywhere, each with a count worth filling', () => {
+  // The notebook grows as the world does: about ten pages for each area it has (the Marsh made it seven and anywhere).
+  it('has about ten pages an area, across the seven areas and anywhere, each with a count worth filling', () => {
     const areas = new Map<string, number>();
     for (const p of notebook.pages) areas.set(p.area, (areas.get(p.area) ?? 0) + 1);
-    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', 'burn', 'ridge', ANYWHERE]);
+    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', 'burn', 'ridge', 'marsh', ANYWHERE]);
     expect(notebook.pages.length).toBeGreaterThanOrEqual(8 * areas.size);
     expect(notebook.pages.length).toBeLessThanOrEqual(12 * areas.size);
     for (const [area, n] of areas) expect(n, area).toBeGreaterThanOrEqual(8);
@@ -1110,8 +1110,10 @@ describe('mending the woods together (roadmap/trail-works.md)', () => {
     return ([x, y]: readonly [number, number]) => d[y * W + x]!;
   };
 
-  it('are a footbridge by the pond that takes scrap, 5 a day to keep up, and a street light in its clearing that takes copper wire, 2 a day', () => {
-    expect(works.map(w => [w.id, w.build, w.item, w.wear])).toEqual([['pond-footbridge', 'footbridge', 'scrap', 5], ['pond-light', 'light', 'wire', 2]]);
+  it('are a footbridge by the pond that takes scrap, 5 a day to keep up, and a street light in its clearing that takes copper wire, 2 a day (and the Marsh\'s boardwalks, roadmap/the-marsh.md)', () => {
+    expect(works.map(w => [w.id, w.build, w.item, w.wear])).toEqual([
+      ['pond-footbridge', 'footbridge', 'scrap', 5], ['pond-light', 'light', 'wire', 2], ['marsh-boardwalk-west', 'footbridge', 'scrap', 4], ['marsh-boardwalk-east', 'footbridge', 'wire', 2],
+    ]);
     for (const w of works) {
       // More to stand again than a day's wear, and never more than a week of it put by ahead.
       expect(w.need).toBeGreaterThan(w.wear);
