@@ -86,7 +86,7 @@ describe('your own cabin', () => {
     const out = w.drain();
     expect(out.filter(o => o.to === 'a').map(o => o.msg.t)).toContain('chapter');
     expect(out).toContainEqual({ to: 'a', msg: { t: 'chest', stash: [{ item: 'moss', count: 2 }] } });
-    w.chest('b', 3, 1);
+    w.chest('b', 3, 1, 1000);
     expect(w.drain()).toEqual([{ to: 'b', msg: { t: 'chest', stash: [{ item: 'nail', count: 1 }] } }]);
     expect(w.get('a')!.story).toBe('stored');
   });

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "pages": [
     {
       "id": "pop-23",
@@ -337,7 +337,7 @@
       "id": "charms",
       "area": "anywhere",
       "title": "Charms",
-      "when": [{ "find": "warm-pebble" }, { "find": "hollow-feather" }, { "find": "humming-bead" }],
+      "when": [{ "find": "warm-pebble" }, { "find": "hollow-feather" }, { "find": "humming-bead" }, { "find": "ember-coal" }, { "find": "pale-moth" }],
       "text": "Some strange things work while they ride in the bag. A warm pebble keeps the rain out, a hollow feather lightens the load, a humming bead keeps things from clinging."
     },
     {

@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION } from '@napoland/shared';
 import { MAX_UNREAD } from '../src/social';
 import { MemoryStorage } from '../src/storage';
-import { Client, keepsFriendsAndMessages, setup, waitFor, type Msg } from './helpers';
+import { Client, keepsFriendsAndMessages, savesATradeTogether, setup, waitFor, type Msg } from './helpers';
 
 /** The next friends list a client hears. */
 const list = (c: Client, match: (m: Msg<'friends'>) => boolean = () => true) => c.next('friends', match);
@@ -18,7 +18,7 @@ describe('friends', () => {
     const a = await enter({ map: 'town' });
     const b = await enter({ map: 'woods', x: 4, y: 1 });
     a.c.send({ t: 'befriend', name: b.welcome.name.toUpperCase() });
-    expect(await list(a.c)).toEqual({ t: 'friends', friends: [], incoming: [], outgoing: [{ id: b.id, name: b.welcome.name }], blocked: [], requestsOff: false });
+    expect(await list(a.c)).toEqual({ t: 'friends', friends: [], incoming: [], outgoing: [{ id: b.id, name: b.welcome.name }], blocked: [], requestsOff: false, tradesOff: false });
     expect((await list(b.c)).incoming).toEqual([{ id: a.id, name: a.welcome.name }]);
     b.c.send({ t: 'answer', id: a.id, yes: true });
     expect((await list(b.c)).friends).toEqual([{ id: a.id, name: a.welcome.name, map: 'town' }]);
@@ -133,7 +133,11 @@ describe('blocks and reports', () => {
 });
 
 describe('storage', () => {
-  it('keeps friends, requests, blocks, unread messages, the requests setting and reports in memory', async () => {
+  it('keeps friends, requests, blocks, unread messages, the requests settings and reports in memory', async () => {
     await keepsFriendsAndMessages(new MemoryStorage());
+  });
+
+  it('saves two players who traded together, in memory', async () => {
+    await savesATradeTogether(new MemoryStorage());
   });
 });

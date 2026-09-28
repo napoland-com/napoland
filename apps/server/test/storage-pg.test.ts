@@ -14,9 +14,11 @@ import { DROP_LIFETIME_MS, utcDay } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type CacheItemRecord, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
 import {
-  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsMerits, keepsNotebook, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsWholeRow, meritsKeptThroughARestart,
-  outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, signInAndClaim,
+  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsMerits, keepsNotebook, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsTheWornOutMark, keepsWhatANewerReleaseSaved,
+  keepsWholeRow, meritsKeptThroughARestart, outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, savesATradeTogether,
+  signInAndClaim,
 } from './helpers';
+import { itemsData } from './fixtures';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -62,7 +64,7 @@ describe.skipIf(!url)('PgStorage', () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
       '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql', '016_caches.sql', '017_zones.sql', '018_rested.sql', '019_merits.sql',
-      '020_notebook.sql',
+      '020_trades_off.sql', '021_notebook.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -405,6 +407,14 @@ describe.skipIf(!url)('PgStorage', () => {
     expect((await storage.findByTokenHash(old.tokenHash))!.tools).toEqual(['radio']);
   });
 
+  it('keeps the mark of what was worn counted as taken out, with the counts but not among them, never lost to a save without it', async () => {
+    await keepsTheWornOutMark(storage);
+  });
+
+  it('keeps what a newer release saved that this one does not know, written back as it was saved', async () => {
+    await keepsWhatANewerReleaseSaved(storage, itemsData());
+  });
+
   it('keeps the daily parcels: whether the welcome came, the day of the last one and the days of its week, never lost to a save without them', async () => {
     await keepsParcels(storage);
     // What the columns hold, as the migration made them.
@@ -698,9 +708,20 @@ describe.skipIf(!url)('PgStorage', () => {
     expect(await storage.count()).toBe(before + 1);
   });
 
-  it('keeps friends, requests, blocks, unread messages, the requests setting and reports', async () => {
+  it('keeps friends, requests, blocks, unread messages, the requests settings and reports', async () => {
     await keepsFriendsAndMessages(storage);
     const r = await admin.query<{ reason: string; quote: string | null }>(`SELECT reason, quote FROM ${schema}.reports`);
     expect(r.rows).toEqual([{ reason: 'spam', quote: null }]);
+  });
+
+  it('saves two players who traded together, or neither of them', async () => {
+    await savesATradeTogether(storage);
+    const [a, b] = [player('Pg Giver'), player('Pg Taker')];
+    await storage.create(a);
+    await storage.create(b);
+    // The second write breaks a rule of the table: the first goes back with it, so no swap lands in one bag only.
+    const broken = { ...b, dir: 'sideways' } as unknown as PlayerRecord;
+    await expect(storage.saveTogether([{ ...a, bag: [{ item: 'resin', count: 9 }] }, broken])).rejects.toThrow();
+    expect((await storage.findByTokenHash(a.tokenHash))!.bag).toEqual([]);
   });
 });

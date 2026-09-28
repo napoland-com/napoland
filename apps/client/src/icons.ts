@@ -86,6 +86,16 @@ const ICONS: Record<string, string> = {
     <circle cx="16" cy="16" r="6.5" fill="#7ff3e6"/>
     <path d="M13.2 13.6c.9-1.2 2.2-1.8 3.6-1.8" stroke="#effffd" stroke-width="1.4"/>
     <path d="M5.5 11.5c-1.4 3-1.4 6 0 9M26.5 11.5c1.4 3 1.4 6 0 9M8.8 13.4c-.6 1.7-.6 3.5 0 5.2M23.2 13.4c.6 1.7.6 3.5 0 5.2" stroke="#9ff5ec" stroke-width="1.3"/>`),
+  // A lump of coal that never went out: black, cracked, and red in the cracks.
+  'ember-coal': icon(`${halo(16, 18, 12, '#ff6a3a')}
+    <path d="M6 20.5c0-4.8 4.4-8.5 10.2-8.5 5.6 0 9.8 3.4 9.8 7.8 0 4.6-4.4 7.2-10 7.2S6 25 6 20.5z" fill="#2b2322"/>
+    <path d="M10.5 18.5l3.2 1.6 2-2.6 3 2.2 2.8-1.4M13.7 20.1l-.6 3.4M18.7 19.7l.8 3.2" stroke="#ff7a3c" stroke-width="1.5"/>`),
+  // A pale moth, its wings spread, with a dark spot on each.
+  'pale-moth': icon(`${halo(16, 16, 13, '#f2ecd8')}
+    <path d="M16 11c-3-5.5-10.5-6.5-11.5-2.5-.8 3.4 2.8 6.4 7.2 6.8-3.6 1.2-5.2 4.6-3 6.8 2.2 2.1 5.9-.6 7.3-4.6 1.4 4 5.1 6.7 7.3 4.6 2.2-2.2.6-5.6-3-6.8 4.4-.4 8-3.4 7.2-6.8C26.5 4.5 19 5.5 16 11z" fill="#e9e3d0"/>
+    <path d="M16 10.5v11" stroke-width="1.8"/>
+    <path d="M15 9.5c-.8-1.6-2-2.6-3.2-3M17 9.5c.8-1.6 2-2.6 3.2-3" stroke-width="1.1"/>
+    <circle cx="10" cy="11" r="1.4" fill="#b9ad90" stroke="none"/><circle cx="22" cy="11" r="1.4" fill="#b9ad90" stroke="none"/>`),
   // NAPO's grey steel lockbox: a lid, a band of NAPO yellow and a padlock that has not been opened since the evacuation.
   lockbox: icon(`<path d="M4.5 13h23v13.5c0 .8-.7 1.5-1.5 1.5H6c-.8 0-1.5-.7-1.5-1.5z" fill="#7d8b92"/>
     <path d="M4 9.8c0-1 .8-1.8 1.8-1.8h20.4c1 0 1.8.8 1.8 1.8V13H4z" fill="#aebbc1"/>

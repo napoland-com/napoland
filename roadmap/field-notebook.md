@@ -2,7 +2,7 @@
 id: field-notebook
 title: A field notebook
 status: done
-order: 430
+order: 450
 area: gameplay
 depends: [paper-map]
 ---
