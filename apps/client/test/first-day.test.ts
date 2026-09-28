@@ -5,7 +5,7 @@ import type { ClientMsg, ItemsData, MapData, NextGear, PlayerView, StoryData } f
 import { Game } from '../src/game';
 import { Items } from '../src/items';
 import { Maps } from '../src/maps';
-import { FIRST_WAKE, goalText } from '../src/said';
+import { goalText } from '../src/said';
 import { FULL, START, storyData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
 
 /** What players read comes from the real items and recipes, so it is tested with them. */
@@ -172,13 +172,13 @@ describe('what people say once, as the game says it', () => {
 describe('a new player\'s first wake', () => {
   const game = () => new Game(new Maps([home(), tinyTown()]), () => {}, items, storyData());
 
-  it('says the story\'s first chapter in the text box, and who knows the woods, before any letter', () => {
+  it('says the story\'s first chapter in the text box, alone, before any letter: first steps say what to do', () => {
     const g = game();
     g.handle(welcome(home(), [me(2, 2)], FULL, { items: items.version, story: { version: 2, chapter: 'home' } }), 1000);
     g.handle({ t: 'streetLetter', doorOff: false }, 1000);
     expect(g.firstWake()).toBe(true);
     g.idle(1000, false);
-    expect(g.dialog).toMatchObject({ who: 'Home', lines: ['You woke up at home.', FIRST_WAKE] });
+    expect(g.dialog).toMatchObject({ who: 'Home', lines: ['You woke up at home.'] });
     g.dialog = null;
     g.idle(1000, false);
     expect(g.dialog).toMatchObject({ who: 'Letter' });

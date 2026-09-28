@@ -76,7 +76,7 @@ import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, FIRST_STEPS_DONE, FIRST_STEPS_TITLE, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TELEPORT,
   TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, YOU_ARE_DOWN, buyQuestion, cabinWho, checkoutQuestion, comfortLines, didText, didWho, doorText, downLine, feedQuestion, fullFire, haveTool,
-  knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, FIRST_WAKE, placedAlready, raisedText,
+  knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, placedAlready, raisedText,
   rescueQuestion, rescueRefusal, rescueTooTired, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, visitedText,
   visitWho, waltOnTheLongNight, padlocked, IN_YOUR_CHEST, LOST_AND_FOUND, LOST_AND_FOUND_LINES, TAKE_HALF, bundleNotYours, carryLabel, handInQuestion, pileQuestion, returnedLine, thingsOf,
   SLAB, slabRefusal, FIRE_CHOICE, FIRE_OPTIONS, TWO_MEALS, WHAT_TO_COOK, ateAlready, cookQuestion, cookShort,
@@ -2561,7 +2561,7 @@ export class Game {
   firstWake(): boolean {
     const first = this.story.chapters[0];
     if (!this.online || !first || this.chapter !== first.id || this.progress.xp > 0) return false;
-    this.letters.unshift({ who: first.title, lines: [first.text, FIRST_WAKE] });
+    this.letters.unshift({ who: first.title, lines: [first.text] });
     return true;
   }
 

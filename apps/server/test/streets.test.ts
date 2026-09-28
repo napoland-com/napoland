@@ -360,6 +360,17 @@ describe('the letter about your street', () => {
     expect(of(to(w.drain(), 'c'), 'streetLetter')).toEqual([]);
   });
 
+  it('waits until a new player\'s first steps are done: one thing at a time', () => {
+    const w = world([lot('a', 1, 0)]);
+    w.join(rec('a', 'house', 2, 2, 'down', { zone: 'a', firstSteps: 1 }), 0);
+    w.returned('a', 0);
+    expect(of(to(w.drain(), 'a'), 'streetLetter')).toEqual([]);
+    // Done with them (as on coming home with a first find), the next time home brings it.
+    w.join({ ...w.leave('a', 1000)!, firstSteps: undefined }, 2000);
+    w.returned('a', 2000);
+    expect(of(to(w.drain(), 'a'), 'streetLetter')).toEqual([{ t: 'streetLetter', doorOff: false }]);
+  });
+
   it('never comes where there is no street', () => {
     const plain = new World([new TileMap(townData()), new TileMap({ ...home(), exits: [{ x: 2, y: 4, w: 1, h: 1, to: 'town', tx: 7, ty: 3, dir: 'down' }] }), new TileMap(woodsData())], 'town', 'overcast', { items: itemsData() });
     plain.join(rec('a', 'house', 2, 2, 'down', { zone: 'a' }), 0);
@@ -376,7 +387,7 @@ describe('a door kept to oneself, over the network', () => {
     const options = () => ({ ...serverDefaults(), storage, maps: maps(), items: itemsData(), weather: 'overcast' as const, clock: () => now, auth: devAuth() });
     let server = await startServer(options());
     const clients: Client[] = [];
-    // Everyone new wakes up at home, and reads the letter about their street there first.
+    // Everyone new wakes up at home; the letter about their street waits until their first steps are done.
     const hello = async (hi: { auth?: string; name?: string }) => {
       const c = await Client.open(server.port);
       clients.push(c);
@@ -398,8 +409,8 @@ describe('a door kept to oneself, over the network', () => {
       const ann = await hello({ auth: 'ann@example.test', name: 'Ann' });
       const gus = await hello({ name: 'Gus' });
       expect(gus.welcome.guest).toBe(true);
-      for (const p of [bob, ann, gus]) expect(await p.c.next('streetLetter')).toEqual({ t: 'streetLetter', doorOff: false });
-      await Promise.all([bob, ann, gus].map(p => p.c.settle()));
+      // New players read the street's letter once their first steps are done, not on waking up.
+      for (const p of [bob, ann, gus]) expect((await p.c.settle()).filter(m => m.t === 'streetLetter')).toEqual([]);
 
       // A guest keeps his door to himself: saved at once.
       gus.c.send({ t: 'doorOff', off: true });
@@ -437,11 +448,11 @@ describe('a door kept to oneself, over the network', () => {
       const back = await hello({ auth: 'ann@example.test' });
       expect(back.welcome.street).toEqual({ mine: 1, lots: [{}, { name: 'Ann' }, {}] });
       expect(back.welcome.doorOff).toBeUndefined();
-      // Home again: the letter was read before, and never comes twice.
+      // Home again, still in her first steps: the letter still waits.
       await go(back.c, ['right', 'right', 'right', 'right', 'up']);
       expect(await back.c.next('zone')).toMatchObject({ map: { id: 'house' } });
       expect((await back.c.settle()).filter(m => m.t === 'streetLetter')).toEqual([]);
-      expect(storage.get(ann.id)).toMatchObject({ streetTold: true });
+      expect(storage.get(ann.id)?.streetTold).toBeUndefined();
       // Bob, back, finds his setting in his welcome.
       const bobBack = await hello({ auth: 'bob@example.test' });
       expect(bobBack.welcome.doorOff).toBe(true);

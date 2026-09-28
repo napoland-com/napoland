@@ -2747,9 +2747,10 @@ export class World {
    */
   private homecoming(p: Online, now: number): void {
     p.gifts = 0;
-    // The first time home since streets came (a new player's too): a letter says what the street sees of
-    // them and where to hide it, once, before any thanks.
-    if (this.street && !p.rec.streetTold) {
+    // The first time home since streets came: a letter says what the street sees of them and where to hide
+    // it, once, before any thanks. A new player reads it once their first steps are done, not on waking up
+    // for the first time: one thing at a time (DESIGN.md, the first moments).
+    if (this.street && !p.rec.streetTold && !p.rec.firstSteps) {
       p.rec.streetTold = true;
       this.saveNow.set(p.rec.id, p.rec);
       this.outbox.push({ to: p.rec.id, msg: { t: 'streetLetter', doorOff: p.rec.doorOff === true } });
