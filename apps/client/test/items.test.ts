@@ -53,11 +53,14 @@ describe('what items look like', () => {
   it('draws every item in content/items.json: an icon for the bag and a model for the ground', () => {
     expect(content.items.length).toBeGreaterThan(0);
     for (const i of content.items) {
-      // Gear is drawn by its slot, in its color, and a map as a map: never a sack. Neither grows as a find, so they need no model on the ground.
-      // Furniture is drawn by the place it goes into, at the workbench; it stands in the cabin, never on the ground.
+      // Gear is drawn by its slot, in its color, and a map as a map: never a sack. Gear never grows as a
+      // find, so it needs no model on the ground; a tool that does (the Far Woods' map, found in the
+      // trapper's cabin) has one of its own. Furniture is drawn by the place it goes into, at the
+      // workbench; it stands in the cabin, never on the ground.
       if (i.kind === 'gear' || i.kind === 'tool' || i.kind === 'furniture') {
         expect(iconFor(i), i.id).not.toBe(itemIcon('fir-cone'));
-        expect(content.finds.map(f => f.item), i.id).not.toContain(i.id);
+        if (i.kind === 'tool' && content.finds.some(f => f.item === i.id)) expect(lookOf(i.id), i.id).toBe(i.id);
+        else expect(content.finds.map(f => f.item), i.id).not.toContain(i.id);
         continue;
       }
       expect(DRAWN_ITEMS, i.id).toContain(i.id);

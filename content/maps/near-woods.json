@@ -1,15 +1,15 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 11,
+  "version": 12,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
   "height": 80,
   "tiles": [
-    "tttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
-    "tttttggttttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
-    "ttthhhgggttttttttttttttttttttttttttttttttttttttttttttttttttttttt",
+    "tttttttttttttttttttttttttttttttttttttttttttttttttttttmtttttttttt",
+    "tttttggttttttttttttttttttttttttttttttttttttttttttttttmtttttttttt",
+    "ttthhhgggtttttttttttttttttttttttttttttttttttttttttttggtttttttttt",
     "tthhhgggggttttttttttttttttttttttttttttttttttttttttttggggggtttttt",
     "tthhggggggttttttttttttttttttgggggtttttttgmmmmtttttttghgggggttttt",
     "tthgggggggmttttttttttttttttgggggggttttttmmttmtttttthhhgggggttttt",
@@ -175,7 +175,8 @@
     {"x":31,"y":79,"w":2,"h":1,"to":"stonebrook","tx":29,"ty":1,"dir":"down","home":true},
     {"x":47,"y":38,"w":1,"h":1,"to":"near-woods-old-cabin","tx":4,"ty":4,"dir":"up"},
     {"x":30,"y":6,"w":1,"h":1,"to":"near-woods-ranger-hut","tx":3,"ty":4,"dir":"up"},
-    {"x":55,"y":4,"w":1,"h":1,"to":"near-woods-end-cabin","tx":4,"ty":5,"dir":"up"}
+    {"x":55,"y":4,"w":1,"h":1,"to":"near-woods-end-cabin","tx":4,"ty":5,"dir":"up"},
+    {"x":53,"y":0,"w":1,"h":1,"to":"far-woods","tx":40,"ty":98,"dir":"up"}
   ],
   "objects": [
     {"kind":"lamp","x":33,"y":70},
@@ -311,6 +312,7 @@
     {"kind":"stump","x":28,"y":70,"s":1.07,"v":0.643,"burned":true},
     {"kind":"stump","x":27,"y":73,"s":1.099,"v":0.783,"burned":true},
     {"kind":"stump","x":28,"y":74,"s":1.061,"v":0.361,"burned":true},
+    {"kind":"sign","x":52,"y":2,"text":["The Far Woods, up the trappers' trail.","Past here the old trappers went in pairs. Up there you tire twice as fast as down here.","Feed the fire in the trapper's cabin on the way in, so it still burns on your way out."]},
     {"kind":"note","x":33,"y":72,"id":"walt-n8","by":"walt","name":"Nailed to the pole","text":["N-8. Walked the line, 7 to 16. All sound. W.P."]},
     {"kind":"note","x":34,"y":58,"id":"walt-n10","by":"walt","name":"Nailed to the pole","text":["N-10. Hum on the cond., no load on it. Grounded it. Still hums. Reported. W.P."]},
     {"kind":"note","x":32,"y":54,"id":"walt-n11","by":"walt","name":"Nailed to the pole","text":["N-11. Compass on the dash points up the line, not north. Since spring. Office says get a new compass. W.P."]},

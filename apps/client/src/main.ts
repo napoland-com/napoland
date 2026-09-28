@@ -287,7 +287,7 @@ function openMap() {
   const item = mapFor(game.map.data.id, game.tools, t => items.get(t).chart, id => maps.find(id));
   const data = item ? maps.find(items.get(item).chart!) : undefined;
   const map = data && maps.get(data);
-  if (!map) return game.murmur('No map of this place');
+  if (!map) return game.noMap();
   hud.toggleBag(false);
   hud.showPaper(paperMap(map, id => maps.find(id)?.name));
 }

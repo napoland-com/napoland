@@ -115,10 +115,17 @@ describe('rain, region by region', () => {
       w.join(rec('r', 'stonebrook', 12, 24, 'up'), 0);
       w.drain();
       w.board('r', 12, 23, 0);
-      return of(to(w.drain(), 'r'), 'board')[0]!.lines.slice(0, 3);
+      return of(to(w.drain(), 'r'), 'board')[0]!.lines.slice(0, 4);
     };
-    expect(board(14)).toEqual(['Night falls in about 18 minutes.', 'The Near Woods: rain for about 10 minutes more.', 'The South Road: dry for about 10 minutes, then rain.']);
-    expect(board(26)).toEqual(['Night falls in about 6 minutes.', 'The Near Woods: dry until nightfall.', 'The South Road: rain for about 4 minutes more.']);
+    // The regions nearest town first; the Far Woods, the wettest, rain at dawn and again from 24 minutes.
+    expect(board(14)).toEqual([
+      'Night falls in about 18 minutes.', 'The Near Woods: rain for about 10 minutes more.', 'The South Road: dry for about 10 minutes, then rain.',
+      'The Far Woods: dry for about 10 minutes, then rain.',
+    ]);
+    expect(board(26)).toEqual([
+      'Night falls in about 6 minutes.', 'The Near Woods: dry until nightfall.', 'The South Road: rain for about 4 minutes more.', 'The Far Woods: rain for about 6 minutes more.',
+    ]);
+    expect(board(4)).toContain('The Far Woods: rain for about 4 minutes more.');
     expect(board(40)[0]).toBe('Night: no rain anywhere. Dawn in about 8 minutes.');
   });
 });
