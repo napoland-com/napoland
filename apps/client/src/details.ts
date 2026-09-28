@@ -175,6 +175,20 @@ export function actText(act: NonNullable<DetailView['act']>): string {
   return act.then ? `${act.label} (${act.then})` : act.label;
 }
 
+/**
+ * What pressing a card's button does (so do A on it and a double tap): what it can do is done, and the
+ * card closes. Greyed out, the button shakes and the card stays to say why; making and mending still
+ * go to the game then, which says in the text box what the stash lacks, and sends nothing (ask-first:
+ * everything that uses something up goes through one place, which asks first or says why not).
+ */
+export function cardPress(v: DetailView): { does?: DetailAct; close: boolean; shake: boolean } {
+  const act = v.act;
+  if (!act) return { close: false, shake: false };
+  if (act.enabled) return { does: act.does, close: true, shake: false };
+  const asks = act.does.kind === 'make' || act.does.kind === 'mend';
+  return { ...(asks ? { does: act.does } : {}), close: false, shake: true };
+}
+
 /** The card for what a tap is on, as the game stands; null when it is gone (it was worn, stashed, made or mended). */
 export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
   const { items } = s;

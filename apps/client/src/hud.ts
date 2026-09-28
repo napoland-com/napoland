@@ -7,7 +7,7 @@
  */
 import { BAG_SLOTS, RANKS, SLOTS, type BodyView, type Dir, type EnergyView, type Slot, type SurgeView } from '@napoland/shared';
 import { aboutBody, versionView } from './about';
-import { DOUBLE_TAP_MS, DoubleTap, refKey, statText, type DetailAct, type DetailRef, type DetailView } from './details';
+import { DOUBLE_TAP_MS, DoubleTap, cardPress, refKey, statText, type DetailAct, type DetailRef, type DetailView } from './details';
 import type { FriendsView } from './friends';
 import { liveState, type SlotView } from './items';
 import type { JournalView } from './journal';
@@ -929,17 +929,15 @@ export class Hud {
   private doCard(where: 'stash' | 'bench', ref: DetailRef) {
     const view = this.h.details?.(ref);
     if (!view) return this.closeCard();
-    if (!view.act?.enabled) {
-      this.openCard(where, ref);
-      // Its button, greyed out, gives a shake: the card says why.
-      const button = this.el[`${where}Card`]!.querySelector('[data-card-act]');
-      if (button && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        button.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-5px)' }, { transform: 'translateX(5px)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(0)' }], { duration: 260, easing: 'ease-out' });
-      }
-      return;
+    const press = cardPress(view);
+    if (press.close) this.closeCard();
+    else this.openCard(where, ref);
+    // Its button, greyed out, gives a shake: the card says why (and the text box too, for making and mending).
+    const button = press.shake ? this.el[`${where}Card`]!.querySelector('[data-card-act]') : null;
+    if (button && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      button.animate([{ transform: 'translateX(0)' }, { transform: 'translateX(-5px)' }, { transform: 'translateX(5px)' }, { transform: 'translateX(-3px)' }, { transform: 'translateX(0)' }], { duration: 260, easing: 'ease-out' });
     }
-    this.closeCard();
-    this.run(view.act.does);
+    if (press.does) this.run(press.does);
   }
 
   private run(a: DetailAct) {
