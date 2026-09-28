@@ -15,7 +15,7 @@
  * black: see interior.ts for the room, fire.ts for the fire and lighting.ts for the light.
  */
 import * as THREE from 'three';
-import { DIR_VEC, hidden, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
+import { DIR_VEC, hidden, watery, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { Afterglows, LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
 import { CROUCH_DROP, CROUCH_LEAN, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial } from './grass';
@@ -24,7 +24,7 @@ import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
 } from './interior';
-import { cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
+import { cardboardModel, carModel, culvertMouthModel, culvertMouths, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding, shedBuilding } from './left';
 import { ambience, assignLights, lightSources, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
 import { napoBuilding, napoProp, napoSign, towerModel } from './napo';
@@ -112,6 +112,9 @@ const MAX_WIRE = 10;
 const MIST_TILES = 190;
 /** Blob shadows and the tap marker lie just above rugs (whose tops are at most 0.026), which lie on the floor. */
 const BLOB_Y = 0.036;
+/** The water's surface (the pond's, the creek's and the culvert's), and how deep someone wading the culvert sinks into it. */
+const WATER_Y = -0.1;
+const WADE_DROP = 0.3;
 /** A house's doorway: its width and height, and how deep it goes in (the front wall's thickness). */
 const DOOR_W = 0.6;
 const DOOR_H = 0.84;
@@ -199,8 +202,8 @@ export class WorldView {
   /** How this place looks in the current weather (lighting.ts). */
   private amb: Ambience;
   private readonly pitch = THREE.MathUtils.degToRad(62);
-  /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass. */
-  private rigs = new Map<string, { rig: Rig; color: string; look: string; shadow: THREE.Mesh; hitch?: THREE.Group; crouch: number }>();
+  /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass, `wade` as they wade into the culvert's water. */
+  private rigs = new Map<string, { rig: Rig; color: string; look: string; shadow: THREE.Mesh; hitch?: THREE.Group; crouch: number; wade: number }>();
   /** The ground's colors (grass.ts), and the grass's material: null where no grass grows. */
   private ground!: Ground;
   private grass: GrassMaterial | null = null;
@@ -346,9 +349,9 @@ export class WorldView {
     this.puffs = [];
   }
 
-  /** Height of the ground a character stands on. */
+  /** Height of the ground a character stands on. A flooded culvert lies as low as water, and is as full. */
   private topY(x: number, y: number): number {
-    return this.map.level(x, y) * 0.55 + (this.map.kind(x, y) === 'water' ? -0.34 : 0);
+    return this.map.level(x, y) * 0.55 + (watery(this.map.kind(x, y)) ? -0.34 : 0);
   }
   private groundAt(x: number, y: number): number {
     return Math.max(0, this.topY(Math.floor(x), Math.floor(y)));
@@ -399,7 +402,8 @@ export class WorldView {
       for (const [ox, oy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
         const ny = map.inside(tx + ox, ty + oy) ? this.topY(tx + ox, ty + oy) : 0;
         if (ny >= y0 - 0.001) continue;
-        const w = new THREE.Color(raised ? '#4f4336' : kind === 'mud' ? '#4a4034' : '#3f3529');
+        // The culvert the loggers dug is walled in stone gone grey, where any other bank is earth.
+        const w = new THREE.Color(map.kind(tx + ox, ty + oy) === 'culvert' ? '#5e5c55' : raised ? '#4f4336' : kind === 'mud' ? '#4a4034' : '#3f3529');
         w.offsetHSL(0, 0, (hash2(tx + ox * 7, ty + oy * 11) - 0.5) * 0.05);
         let a: [number, number], b: [number, number];
         if (oy === -1) { a = [tx, ty]; b = [tx + 1, ty]; } else if (oy === 1) { a = [tx + 1, ty + 1]; b = [tx, ty + 1]; }
@@ -437,12 +441,12 @@ export class WorldView {
       if (road(x, y) && road(x, y + 1) && !road(x, y - 1) && !road(x, y + 2) && x % 2 === 0) dashes.push([x + 0.5, y + 1, false]);
     }
     this.instanced(new THREE.BoxGeometry(0.5, 0.01, 0.07), dashes, ([x, y, vertical], o, c) => { o.position.set(x, 0.006, y); o.rotation.y = vertical ? Math.PI / 2 : 0; c.set('#9c8a4a'); });
-    // The pond surface, gently moving.
+    // The pond surface, gently moving; the culvert's water is part of it.
     let x0 = W, y0 = H, x1 = -1, y1 = -1;
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (map.kind(x, y) === 'water') { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (watery(map.kind(x, y))) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
     if (x1 >= 0) {
       const wg = new THREE.PlaneGeometry(x1 - x0 + 2.2, y1 - y0 + 2.2, 16, 10).rotateX(-Math.PI / 2);
-      this.scene.add(part(wg, ownToon('#1d3a48', { transparent: true, opacity: 0.9 }), (x0 + x1 + 1) / 2, -0.1, (y0 + y1 + 1) / 2, false));
+      this.scene.add(part(wg, ownToon('#1d3a48', { transparent: true, opacity: 0.9 }), (x0 + x1 + 1) / 2, WATER_Y, (y0 + y1 + 1) / 2, false));
       const wpos = wg.attributes.position as THREE.BufferAttribute;
       this.animate.push(t => {
         for (let i = 0; i < wpos.count; i++) wpos.setY(i, Math.sin(t * 1.8 + wpos.getX(i) * 1.4 + wpos.getZ(i)) * 0.03);
@@ -615,6 +619,11 @@ export class WorldView {
         still.push(millBuilding(h, doorX, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }));
         continue;
       }
+      if (h.style === 'shed') {
+        // A board shed (left.ts), its door shut on a padlock: whoever carries what opens it walks in all the same.
+        still.push(shedBuilding(h, doorX, { w: DOOR_W, h: DOOR_H }));
+        continue;
+      }
       const g = new THREE.Group(), cx = h.x + h.w / 2, cz = h.y + h.h / 2;
       g.position.set(cx, 0, cz);
       // The door's middle across the front: 0 for the usual three-tile house, whose door is its middle tile.
@@ -698,6 +707,8 @@ export class WorldView {
       still.push(car);
     });
 
+    // The culvert's mouths (a rusted steel pipe half under the water, in its stone headwall), where it opens onto ground.
+    for (const m of culvertMouths(this.map)) still.push(culvertMouthModel(m.x, m.y, m.dir));
     for (const b of this.objects('board')) still.push(boardModel(b.x, b.y));
     for (const s of this.objects('sign')) {
       if (s.style === 'napo') { still.push(napoSign(s)); continue; }
@@ -1140,14 +1151,15 @@ export class WorldView {
       seen.add(a.id);
       let e = this.rigs.get(a.id);
       const x = a.x + 0.5, z = a.y + 0.5, gy = this.groundAt(x, z);
-      // Everyone's tile is known, so everyone sees who crouches in tall grass.
+      // Everyone's tile is known, so everyone sees who crouches in tall grass, and who wades the culvert.
       const inGrass = hidden(this.map, Math.floor(x), Math.floor(z));
+      const inWater = this.map.kind(Math.floor(x), Math.floor(z)) === 'culvert';
       // A new jacket or new gear: the character is built again in it (as crouched as it was).
       const look = JSON.stringify(a.look ?? {});
       if (!e || e.color !== a.color || e.look !== look) {
-        const crouch = e ? e.crouch : inGrass ? 1 : 0;
+        const crouch = e ? e.crouch : inGrass ? 1 : 0, wade = e ? e.wade : inWater ? 1 : 0;
         if (e) this.dropRig(e);
-        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0), crouch };
+        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0), crouch, wade };
         // Turned to face first, then leaned: a crouch leans forward whichever way they face.
         e.rig.root.rotation.order = 'YXZ';
         this.scene.add(e.rig.root, e.shadow);
@@ -1155,10 +1167,13 @@ export class WorldView {
       }
       const { rig } = e;
       const c = (e.crouch = crouchToward(e.crouch, inGrass, dt));
+      // Wading, the water comes up to the waist: sinking in as they step down into it, as quick as a crouch.
+      const wd = (e.wade = crouchToward(e.wade, inWater, dt));
       // Crouched, only the head and shoulders show over the grass, and the step is shorter.
-      rig.root.position.set(x, gy + (a.moving ? Math.abs(Math.sin(a.phase)) * 0.045 * (1 - c * 0.6) : 0) - CROUCH_DROP * c, z);
+      rig.root.position.set(x, gy + (a.moving ? Math.abs(Math.sin(a.phase)) * 0.045 * (1 - c * 0.6) : 0) - CROUCH_DROP * c - WADE_DROP * wd, z);
       rig.root.rotation.set(CROUCH_LEAN * c, FACE[a.dir], 0);
-      e.shadow.position.set(x, gy + BLOB_Y, z);
+      // On the water, the shadow lies on its surface.
+      e.shadow.position.set(x, wd > 0.5 ? WATER_Y + 0.01 : gy + BLOB_Y, z);
       const sw = (a.moving ? Math.sin(a.phase) * 0.95 : a.turnT > 0 ? Math.sin((1 - a.turnT / 0.14) * Math.PI) * 0.45 : 0) * (1 - c * 0.45);
       rig.legL.rotation.x = sw; rig.legR.rotation.x = -sw;
       // The arms come forward as if pushing the grass aside.
@@ -1171,7 +1186,7 @@ export class WorldView {
       if (a.id === meId && this.amb.flashlight) {
         const [dx, dy] = DIR_VEC[a.dir];
         // Held where the hands are: lower while crouched, or it would light the top of your own cap.
-        this.flash.position.set(x + dx * 0.2, gy + 0.75 - CROUCH_DROP * c, z + dy * 0.2);
+        this.flash.position.set(x + dx * 0.2, gy + 0.75 - CROUCH_DROP * c - WADE_DROP * wd, z + dy * 0.2);
         this.flashTarget.position.set(x + dx * 4, gy, z + dy * 4);
         this.flashTarget.updateMatrixWorld();
       }

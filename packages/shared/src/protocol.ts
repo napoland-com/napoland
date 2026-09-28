@@ -447,7 +447,9 @@ export type Refusal =
   /** The bag of whoever you trade with has no room for what they would get (yours has: `bag_full` is yours). */
   | 'their_bag_full'
   /** Neither side gives anything. */
-  | 'nothing_to_trade';
+  | 'nothing_to_trade'
+  /** A padlocked door (MapExit.lock): it takes a tool you do not have. */
+  | 'padlocked';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -731,7 +733,7 @@ export type ServerMsg =
 
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
-  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
+  | 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
   | 'thank' | 'cacheLeave' | 'cacheTake'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';

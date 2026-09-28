@@ -166,7 +166,7 @@ describe('validateItems', () => {
       'item "near-woods-map": only a tool charts a map', 'item "near-woods-map": only a tool has an icon (everything else is drawn by its id)', 'the starter tool near-woods-map is not a tool',
     ]);
     // Its button in the bag's header needs a drawing the client has.
-    const noIcon = ['item "near-woods-map": a tool needs an icon for its button in the bag\'s header (map, radio)'];
+    const noIcon = ['item "near-woods-map": a tool needs an icon for its button in the bag\'s header (map, radio, cutters, waders)'];
     expect(errors({ ...map, icon: undefined })).toEqual(noIcon);
     expect(errors({ ...map, icon: 'lantern' as never })).toEqual(noIcon);
     expect(errors({ ...map, icon: 'radio' })).toEqual([]);

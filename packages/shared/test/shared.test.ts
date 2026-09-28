@@ -361,7 +361,7 @@ describe('what NAPO left behind', () => {
   it('knows the styles of building and of sign there are, and no others', () => {
     const brick = tinyMap();
     brick.objects[0] = { ...cabin(), style: 'brick' as 'napo' };
-    expect(validateMap(brick).map(p => p.message).join('\n')).toMatch(/house at 1,0: style is napo, mill or left out, not "brick"/);
+    expect(validateMap(brick).map(p => p.message).join('\n')).toMatch(/house at 1,0: style is napo, mill, shed or left out, not "brick"/);
     const signs = tinyMap();
     signs.objects[1] = { kind: 'sign', x: 3, y: 3, text: ['Hello'], style: 'brick' as 'napo' };
     expect(validateMap(signs).map(p => p.message).join('\n')).toMatch(/sign at 3,3: style is napo, cardboard, mailbox or left out/);
@@ -422,7 +422,7 @@ describe('what the town, the leavers and NAPO left (roadmap/richer-places.md)', 
     expect(validateMap(floor)).toEqual([]);
     expect(validateWorld([town, woodsMap(), floor], 'tiny')).toEqual([]);
     expect(validateWorld([town, woodsMap(), tinyHouse()], 'tiny').map(p => p.message).join('\n')).toMatch(/house at 0,0: the mill leads into tiny-house, which is a cabin's room/);
-    expect(validateMap({ ...tinyHouse(), style: 'barn' as 'mill' }).map(p => p.message).join('\n')).toMatch(/napo \(one of NAPO's rooms\) or mill/);
+    expect(validateMap({ ...tinyHouse(), style: 'barn' as 'mill' }).map(p => p.message).join('\n')).toMatch(/napo \(one of NAPO's rooms\), mill \(the sawmill's floor\) or shed/);
   });
 
   it('parks cars, trucks and jeeps along their length, one tile across, in a real paint', () => {

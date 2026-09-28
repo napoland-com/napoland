@@ -479,6 +479,8 @@ interface Online {
   visit: { cache: string; left: boolean; took: boolean } | null;
   /** Their afterglow (a quirk, gear.ts) lasts until then (game time): they glow faintly, and watchers keep off them. */
   afterglowUntil?: number;
+  /** What opens the tiles that open only for some (TileMap.walkable): the tools they own. Made again whenever they get one. */
+  pass: Set<string>;
 }
 
 /** A crate for whoever comes next (caches.ts) on its map and tile, and what lies in it, oldest first. */
@@ -1060,13 +1062,15 @@ export class World {
     };
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
     // saved tile may be inside something new or part of an exit now (start at that map's spawn). Never
-    // start inside a wall, or on an exit that would move you the moment you step.
+    // start inside a wall, or on an exit that would move you the moment you step. Whoever left while
+    // wading the culvert comes back in it: what they own opens it for them as it did.
+    const pass = new Set(toolsOf(r.tools, this.items));
     let map = this.maps.get(r.map), copy: string;
     if (!map) {
       ({ map, x: r.x, y: r.y, dir: r.dir } = this.wakeUp);
       copy = this.copyFor(r, map);
     } else {
-      if (!map.walkable(r.x, r.y) || map.exitAt(r.x, r.y)) toSpawn(r, map);
+      if (!map.walkable(r.x, r.y, pass) || map.exitAt(r.x, r.y)) toSpawn(r, map);
       copy = this.rejoin(r, map);
     }
     const zone = this.zoneFor(map, copy, now);
@@ -1096,7 +1100,7 @@ export class World {
     this.resting.delete(r.id);
     const p: Online = {
       rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
-      hitchAt: now, trail: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
+      hitchAt: now, trail: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null, pass,
     };
     this.refresh(p, now);
     this.revisit(p);
@@ -1744,6 +1748,8 @@ export class World {
     if (!p || this.items.get(item)?.kind !== 'tool' || this.owns(p, item)) return false;
     // The first of their own writes down the starter tools they carried until now.
     p.rec.tools = [...(p.rec.tools ?? STARTER_TOOLS), item];
+    // Waders open the culvert, bolt cutters the shed's door: from their very next step.
+    p.pass = new Set(toolsOf(p.rec.tools, this.items));
     this.saveNow.set(id, p.rec);
     this.outbox.push({ to: id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items) } });
     return true;
@@ -2189,10 +2195,13 @@ export class World {
     // Energy that ran out before this step could start: the player collapses instead of walking.
     if (this.advance(p, now) <= 0) return this.collapse(p, now);
     const { x, y } = stepTarget(p.rec.x, p.rec.y, dir);
-    if (!p.map.walkable(x, y)) {
+    if (!p.map.walkable(x, y, p.pass)) {
       // Steps queued behind this one were planned from a tile the player never reached.
       p.queue.length = 0;
-      return this.reject(p, seq);
+      this.reject(p, seq);
+      // A padlocked door says why it stays shut; the culvert without waders is only water, and says nothing.
+      if (p.map.exitAt(x, y) && p.map.needs(x, y)) this.refuse(p, 'step', 'padlocked');
+      return;
     }
     const { id } = p.rec;
     p.rec.x = x;
@@ -3606,7 +3615,7 @@ export class World {
 
   private refuse(
     p: Online,
-    action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
+    action: 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
       | 'thank' | 'cacheLeave' | 'cacheTake',
     reason: Refusal,
   ): void {

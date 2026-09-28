@@ -5,7 +5,7 @@
 import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
 import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
-import { DECOR, FRONTED, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, hangs, objectTiles, type MapData, type MapObject, type NpcLook, type TileKind } from './map';
+import { DECOR, FRONTED, PAPER_LOOKS, TILE_CHARS, TILE_NEEDS, TileMap, doorOf, footprint, hangs, objectTiles, type MapData, type MapObject, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
 import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
@@ -23,14 +23,14 @@ const ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 /** What a townsperson's look may set (map.ts, NpcLook). */
 const NPC_LOOK = ['coat', 'scarf', 'hair', 'skin', 'hat'] as const satisfies ReadonlyArray<keyof NpcLook>;
 /** The styles a building and a sign come in besides the plain one (map.ts, MapObject). */
-const HOUSE_STYLES = ['napo', 'mill'] as const;
+const HOUSE_STYLES = ['napo', 'mill', 'shed'] as const;
 const SIGN_STYLES = ['napo', 'cardboard', 'mailbox'] as const;
 /** How long each vehicle is, in tiles, from the shortest to the longest: always one tile across. */
 const VEHICLE_LENGTH = { car: [2, 2], jeep: [2, 2], truck: [2, 4] } as const;
 const COLOR = /^#[0-9a-f]{6}$/i;
 /** What a style of building is called, and a room of that style. */
-const BUILDING = { napo: 'a NAPO building', mill: 'the mill', none: 'a cabin' } as const;
-const ROOM = { napo: 'one of NAPO\'s rooms', mill: 'the mill\'s floor', none: 'a cabin\'s room' } as const;
+const BUILDING = { napo: 'a NAPO building', mill: 'the mill', shed: 'a shed', none: 'a cabin' } as const;
+const ROOM = { napo: 'one of NAPO\'s rooms', mill: 'the mill\'s floor', shed: 'a shed\'s floor', none: 'a cabin\'s room' } as const;
 /** Why a sealed thing may not be where content puts it (validateItems): it comes only in a parcel, and stays in the stash until opened. */
 const NO_BAG = 'those never go in a bag';
 const OPENED = 'those are only ever opened';
@@ -56,7 +56,7 @@ export function validateMap(data: MapData): Problem[] {
   else if (data.kind !== 'wilds' && data.depth !== 0) err(`${data.kind === 'town' ? 'a town' : 'an inside'} has depth 0`);
   else if (data.kind === 'wilds' && data.depth < 1) err('the wilds have depth 1 or more');
   if (!Array.isArray(data.exits)) err('exits must be a list (it may be empty)');
-  if (data.style !== undefined && (!(HOUSE_STYLES as readonly string[]).includes(data.style) || data.kind !== 'inside')) err(`style ${JSON.stringify(data.style)}: only an inside has a style, and it is napo (one of NAPO's rooms) or mill (the sawmill's floor)`);
+  if (data.style !== undefined && (!(HOUSE_STYLES as readonly string[]).includes(data.style) || data.kind !== 'inside')) err(`style ${JSON.stringify(data.style)}: only an inside has a style, and it is napo (one of NAPO's rooms), mill (the sawmill's floor) or shed (a shed's floor)`);
   if (out.some(p => p.level === 'error')) return out;
 
   const map = new TileMap(data);
@@ -66,8 +66,12 @@ export function validateMap(data: MapData): Problem[] {
     if (!e.to) err(`exit ${i} has no target map`);
     if (!Dir.safeParse(e.dir).success) err(`${name}: dir must be up, down, left or right`);
     if (!(e.w >= 1 && e.h >= 1)) err(`${name}: w and h must be 1 or more`);
+    if (e.lock !== undefined && !(typeof e.lock === 'string' && /^[a-z][a-z0-9-]*$/.test(e.lock))) err(`${name}: a lock names the tool that opens it, by its item id`);
+    if (e.lock !== undefined && e.home) err(`${name}: the way home is never locked`);
     for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) {
-      if (!map.walkable(x, y)) err(`${name}: tile ${x},${y} is not walkable, so nobody can use the exit there`);
+      // A padlocked door is walked by whoever carries what opens it.
+      if (!map.passable(x, y)) err(`${name}: tile ${x},${y} is not walkable, so nobody can use the exit there`);
+      else if (map.needs(x, y) !== undefined && map.needs(x, y) !== e.lock) err(`${name}: tile ${x},${y} opens only with ${map.needs(x, y)}: an exit is on open ground, or locked`);
       if (exitTiles.has(`${x},${y}`)) err(`${name}: tile ${x},${y} belongs to two exits`);
       exitTiles.add(`${x},${y}`);
     }
@@ -83,10 +87,11 @@ export function validateMap(data: MapData): Problem[] {
       if (!exitTiles.has(`${d.x},${d.y}`)) err(`house at ${o.x},${o.y}: its door ${d.x},${d.y} is not an exit, but every building must lead inside`);
       if (!map.walkable(d.x, d.y + 1)) err(`house at ${o.x},${o.y}: the tile in front of its door (${d.x},${d.y + 1}) is not walkable`);
       // A cabin is drawn 3 by 2; NAPO's buildings and the mill are drawn to their size.
-      if (o.style !== undefined && !(HOUSE_STYLES as readonly string[]).includes(o.style)) err(`house at ${o.x},${o.y}: style is napo, mill or left out, not ${JSON.stringify(o.style)}`);
-      else if (!o.style && (o.w !== 3 || o.h !== 2)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a cabin is 3 by 2 (only NAPO's buildings and the mill come in other sizes)`);
+      if (o.style !== undefined && !(HOUSE_STYLES as readonly string[]).includes(o.style)) err(`house at ${o.x},${o.y}: style is napo, mill, shed or left out, not ${JSON.stringify(o.style)}`);
+      else if (!o.style && (o.w !== 3 || o.h !== 2)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a cabin is 3 by 2 (only NAPO's buildings, the mill and a shed come in other sizes)`);
       else if (o.style === 'napo' && !(o.w >= 3 && o.w <= 9 && o.h >= 2 && o.h <= 5)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a NAPO building is 3 to 9 wide and 2 to 5 deep`);
       else if (o.style === 'mill' && !(o.w >= 5 && o.w <= 9 && o.h >= 2 && o.h <= 4)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: the mill is long and low, 5 to 9 wide and 2 to 4 deep`);
+      else if (o.style === 'shed' && (o.w !== 2 || o.h !== 2)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a shed is 2 by 2`);
       // Curtains are what the people who left drew behind them: never in a lit house, a mill or NAPO's.
       if (o.curtains && (o.style || o.lit)) err(`house at ${o.x},${o.y}: curtains are drawn only in a cabin nobody lives in (no style, not lit)`);
     }
@@ -297,6 +302,8 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
       const where = `exit ${i} (to ${e.to})`;
       const target = byId.get(e.to);
       if (!target) return out.push({ level: 'error', map: map.data.id, message: `${where}: there is no map ${e.to}` });
+      // A padlock is on a door: behind it is a room, never the way on to somewhere else.
+      if (e.lock && target.data.kind !== 'inside') out.push({ level: 'error', map: map.data.id, message: `${where}: is locked, but a lock is only ever on a door into a room` });
       for (let y = e.y; y < e.y + e.h; y++) for (let x = e.x; x < e.x + e.w; x++) {
         const a = map.exitAt(x, y)!;
         if (!target.walkable(a.x, a.y)) out.push({ level: 'error', map: map.data.id, message: `${where}: tile ${x},${y} arrives on ${a.x},${a.y} in ${e.to}, which is not walkable` });
@@ -486,6 +493,16 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (tools.has(n.item)) err(`${name} needs ${n.item}, a tool: tools are never used up`);
       else if (sealed.has(n.item)) err(`${name} needs ${n.item}, a sealed thing: ${OPENED}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
+    }
+  }
+  // What opens a locked door or a gated kind of ground (the culvert) is a tool: owned for good, never used up or lost.
+  for (const m of maps) {
+    const needs = new Set<string>();
+    for (const e of m.exits ?? []) if (e.lock) needs.add(e.lock);
+    for (const row of m.tiles) for (const c of row) { const need = TILE_NEEDS[TILE_CHARS[c as keyof typeof TILE_CHARS]]; if (need) needs.add(need); }
+    for (const need of needs) {
+      if (!ids.has(need)) err(`map ${m.id}: some of it opens only with ${need}, which is not an item`);
+      else if (!tools.has(need)) err(`map ${m.id}: some of it opens only with ${need}, which is not a tool: what opens the way is yours for good`);
     }
   }
   // What a radio listens for must be something that lies out there.

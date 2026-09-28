@@ -1,0 +1,33 @@
+{
+  "id": "near-woods-shed",
+  "name": "The ranger's shed",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 5,
+  "height": 5,
+  "tiles": [
+    "xxxxx",
+    "xpppx",
+    "xpppx",
+    "xpppx",
+    "xxpxx"
+  ],
+  "levels": [
+    "00000",
+    "00000",
+    "00000",
+    "00000",
+    "00000"
+  ],
+  "spawn": {"x":2,"y":3,"dir":"up"},
+  "exits": [
+    {"x":2,"y":4,"w":1,"h":1,"to":"near-woods","tx":32,"ty":4,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"shelf","x":1,"y":1},
+    {"kind":"paper","x":2,"y":1,"look":"note","name":"Note on the bench","text":["In pencil, on a page torn out of the ranger's log:","Every morning there is something on this bench that was not here the night before.","I put a padlock on the door. It still turns up.","Take it to town and look at it in the light, if you must. Another one comes."]},
+    {"kind":"crate","x":3,"y":1}
+  ],
+  "style": "shed"
+}

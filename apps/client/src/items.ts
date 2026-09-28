@@ -125,6 +125,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'trading': return 'Finish the trade you are in first';
     case 'their_bag_full': return 'Their bag has no room for it';
     case 'nothing_to_trade': return 'There is nothing to trade yet';
+    case 'padlocked': return 'A padlock, rusted shut';
   }
 }
 

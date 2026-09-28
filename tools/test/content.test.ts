@@ -338,6 +338,8 @@ describe('the pass that put more of the story in the places (roadmap/richer-plac
         const was = b.tiles[y]![x]!, is = now.data.tiles[y]![x]!;
         if (was === is) continue;
         if (id === 'stonebrook') expect('gm'.includes(was) && 'wm'.includes(is) && !standing.has(`${x},${y}`), `${id} ${x},${y}: ${was} to ${is}`).toBe(true);
+        // The flooded culvert that came after (roadmap/locked-places.md) passes under the creek: water it stays, to all but waders.
+        else if (was === 'w') expect(is, `${id} ${x},${y}: ${was} to ${is}`).toBe('c');
         else expect(was, `${id} ${x},${y}: ${was} to ${is}`).toBe('t');
       }
     }
@@ -462,5 +464,116 @@ describe('the pass that put more of the story in the places (roadmap/richer-plac
       expect(cages.length).toBeGreaterThanOrEqual(3);
       for (const c of cages) expect(c.kind === 'cage' && c.text[0]!.startsWith('NAPO')).toBe(true);
     });
+  });
+});
+
+describe('places you can see but not reach yet (roadmap/locked-places.md)', () => {
+  const woods = maps.get('near-woods')!, W = woods.width;
+  const bog = woods.data.places!.find(p => p.name === 'the bog')!;
+  const shed = woods.data.objects.find((o): o is Extract<MapObject, { kind: 'house' }> => o.kind === 'house' && o.style === 'shed')!;
+  const hut = woods.data.objects.find((o): o is Extract<MapObject, { kind: 'house' }> => o.kind === 'house' && woods.exitAt(doorOf(o).x, doorOf(o).y)?.to === 'near-woods-ranger-hut')!;
+  const culvert: Array<[number, number]> = [];
+  for (let y = 0; y < woods.height; y++) for (let x = 0; x < W; x++) if (woods.kind(x, y) === 'culvert') culvert.push([x, y]);
+  const WADERS = new Set(['waders']);
+  const sides = (x: number, y: number) => [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const;
+  /** Walking steps from a tile to every other, as the game walks them, with what a pass opens. */
+  const walk = (from: readonly [number, number], pass?: ReadonlySet<string>) => {
+    const d = new Int32Array(W * woods.height).fill(-1), queue = [from[1] * W + from[0]];
+    d[queue[0]!] = 0;
+    for (let h = 0; h < queue.length; h++) {
+      const i = queue[h]!, x = i % W, y = Math.floor(i / W);
+      for (const [nx, ny] of sides(x, y)) {
+        if (!woods.walkable(nx, ny, pass) || woods.exitAt(nx, ny) || d[ny * W + nx]! >= 0) continue;
+        d[ny * W + nx] = d[i]! + 1;
+        queue.push(ny * W + nx);
+      }
+    }
+    return ([x, y]: readonly [number, number]) => d[y * W + x]!;
+  };
+  /** Where the culvert opens onto ground anyone walks (its mouths), and the ground each opens onto, the northern first. */
+  const mouths = culvert.flatMap(([x, y]) => sides(x, y).filter(([nx, ny]) => woods.walkable(nx, ny)).map(g => ({ at: [x, y] as const, ground: g }))).sort((a, b) => a.at[1] - b.at[1]);
+
+  it('a padlocked shed behind the ranger\'s hut, whose door only bolt cutters open, into a dark room of its own', () => {
+    expect([shed.w, shed.h]).toEqual([2, 2]);
+    // Behind the hut: north of it, and no farther off to either side than the hut is wide.
+    expect(shed.y + shed.h).toBeLessThanOrEqual(hut.y);
+    expect(hut.y - (shed.y + shed.h)).toBeLessThanOrEqual(2);
+    expect(Math.abs(shed.x + 1 - (hut.x + 1.5))).toBeLessThanOrEqual(2);
+    const door = doorOf(shed), exit = woods.data.exits.find(e => e.x === door.x && e.y === door.y)!;
+    expect(exit).toMatchObject({ to: 'near-woods-shed', lock: 'bolt-cutters' });
+    expect(woods.walkable(door.x, door.y)).toBe(false);
+    expect(woods.walkable(door.x, door.y, new Set(['bolt-cutters']))).toBe(true);
+    const room = maps.get('near-woods-shed')!;
+    expect(room.data).toMatchObject({ kind: 'inside', style: 'shed' });
+    expect(room.data.private).toBeUndefined();
+    expect(room.data.objects.some(o => o.kind === 'fireplace')).toBe(false);
+    expect(room.data.objects.some(o => o.kind === 'paper')).toBe(true);
+  });
+
+  it('where a strange object grows back every half hour, for everyone', () => {
+    const rules = items.finds.filter(f => f.map === 'near-woods-shed');
+    expect(rules).toEqual([expect.objectContaining({ item: 'strange', count: 1, respawn: [1800, 1800] })]);
+    expect(rules[0]!.when).toBeUndefined();
+    expect(findTiles(maps.get('near-woods-shed')!, rules[0]!).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('a flooded culvert from the bog that comes out south of the creek, in the headlight clearing, entered only at its ends', () => {
+    expect(culvert.length).toBeGreaterThan(20);
+    // One run, whose every tile is water to anyone without waders.
+    const seen = new Set([culvert[0]![1] * W + culvert[0]![0]]), todo = [culvert[0]!];
+    while (todo.length) {
+      const [x, y] = todo.pop()!;
+      for (const [nx, ny] of sides(x, y)) if (woods.kind(nx, ny) === 'culvert' && !seen.has(ny * W + nx)) { seen.add(ny * W + nx); todo.push([nx, ny]); }
+    }
+    expect(seen.size).toBe(culvert.length);
+    for (const [x, y] of culvert) expect(!woods.walkable(x, y) && woods.walkable(x, y, WADERS), `${x},${y}`).toBe(true);
+    // Its two mouths: one by the bog, one south of the creek, in the clearing; nowhere else does it touch ground.
+    expect(new Set(mouths.map(m => `${m.at[0]},${m.at[1]}`)).size).toBe(2);
+    const north = mouths[0]!, south = mouths.at(-1)!;
+    expect(Math.hypot(north.ground[0] - bog.x, north.ground[1] - bog.y)).toBeLessThan(7);
+    expect(woods.homeSteps(...north.ground)).toBeGreaterThan(75);
+    // It passes under the creek, and what it comes out onto lies south of where it does.
+    const under = culvert.filter(([x, y]) => woods.kind(x, y - 1) === 'water' || woods.kind(x, y + 1) === 'water');
+    expect(under.length).toBeGreaterThan(0);
+    expect(south.ground[1]).toBeGreaterThan(Math.min(...under.map(([, y]) => y)));
+    expect(woods.homeSteps(...south.ground)).toBeLessThan(40);
+  });
+
+  it('saves about 44 steps from the bog to where it comes out, in waders, and a few on the whole way home', () => {
+    const from = [bog.x, bog.y] as const, out = mouths.at(-1)!.ground;
+    const round = walk(from)(out), through = walk(from, WADERS)(out);
+    expect(round - through).toBeGreaterThanOrEqual(40);
+    expect(round - through).toBeLessThanOrEqual(48);
+    const home = [31, woods.height - 2] as const;
+    expect(walk(from, WADERS)(home)).toBeLessThan(walk(from)(home));
+  });
+
+  it('moved nothing: the shed and its door came last, and every tile anyone walks is as far from home as without them', () => {
+    expect(woods.data.objects.at(-1)).toBe(shed);
+    expect(woods.data.exits.at(-1)).toMatchObject({ to: 'near-woods-shed' });
+    // The woods as they were: forest where the culvert runs and the shed stands (its ground was cut out of the firs).
+    const under = new Set(objectTiles(shed).map(([x, y]) => `${x},${y}`));
+    const without = new TileMap({
+      ...woods.data, tiles: woods.data.tiles.map((r, y) => [...r.replaceAll('c', 't')].map((c, x) => (under.has(`${x},${y}`) ? 't' : c)).join('')),
+      exits: woods.data.exits.slice(0, -1), objects: woods.data.objects.slice(0, -1),
+    });
+    expect(woods.deepest).toBe(without.deepest);
+    for (let y = 0; y < woods.height; y++) for (let x = 0; x < W; x++) {
+      if (!without.walkable(x, y)) continue;
+      expect(woods.walkable(x, y), `${x},${y}`).toBe(true);
+      expect(woods.homeSteps(x, y), `${x},${y}`).toBe(without.homeSteps(x, y));
+    }
+  });
+
+  it('are opened by tools made at the workbench at home from what comes from deep in: shards, and wire', () => {
+    for (const id of ['bolt-cutters', 'waders']) {
+      const def = items.items.find(i => i.id === id)!, recipe = items.recipes!.find(r => r.make === id)!;
+      expect(def).toMatchObject({ kind: 'tool', stack: 1 });
+      expect(def.about?.length).toBeGreaterThan(0);
+      expect(recipe.needs.find(n => n.item === 'shard')?.count).toBeGreaterThanOrEqual(1);
+      expect(recipe.needs.find(n => n.item === 'wire')?.count).toBeGreaterThanOrEqual(1);
+    }
+    expect(items.items.find(i => i.id === 'bolt-cutters')!.icon).toBe('cutters');
+    expect(items.items.find(i => i.id === 'waders')!.icon).toBe('waders');
   });
 });

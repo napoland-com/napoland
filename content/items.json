@@ -1,5 +1,5 @@
 {
-  "version": 21,
+  "version": 22,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -25,6 +25,8 @@
     {"id":"near-woods-map","name":"Map of the Near Woods","kind":"tool","stack":1,"chart":"near-woods","icon":"map","text":"An old paper map, drawn by hand by someone who walked the woods. It never tells you where you are: find the road, the pond, the poles and the cabins around you, and work it out."},
     {"id":"south-road-map","name":"Map of the South Road","kind":"tool","stack":1,"chart":"south-road","icon":"map","text":"A map of NAPO's old grounds, traced by hand from one of NAPO's own. It never tells you where you are: find the road, the station's fence, the masts and the checkpoint around you, and work it out."},
     {"id":"radio","name":"Field radio","noun":"radio","kind":"tool","stack":1,"icon":"radio","senses":{"finds":[{"item":"shard"},{"item":"live-shard"},{"item":"strange"},{"item":"wire","when":"aurora"}],"loud":6,"faint":15},"text":"An old NAPO field radio, rewired to listen. Out in the wilds it crackles, louder the nearer you are to something strange: a shard, a strange object, or copper wire on an aurora night. Anywhere else it only hums.","about":"Out in the wilds it crackles louder the nearer you are to something strange. Its button turns it off and on."},
+    {"id":"bolt-cutters","name":"Bolt cutters","noun":"pair of bolt cutters","plural":"pairs of bolt cutters","kind":"tool","stack":1,"icon":"cutters","text":"Long-handled bolt cutters, forged from scrap at the workbench, their jaws edged with shard. They bite through a rusted padlock like a dry twig.","about":"They bite through the rusted padlock on the shed behind the ranger's hut."},
+    {"id":"waders","name":"Waders","noun":"pair of waders","plural":"pairs of waders","kind":"tool","stack":1,"icon":"waders","text":"Chest waders of cloth sealed with resin, the seams bound with copper wire, a shard sewn into the lining against the cold. In them you wade the flooded culvert by the bog.","about":"In them you wade the flooded culvert by the bog, and come out dry south of the creek."},
     {"id":"worn-cap","name":"Worn cap","kind":"gear","stack":1,"slot":"cap","tier":"worn","color":"#d63b33","weight":0.1,"text":"A faded red cap. It keeps the hair out of your eyes and nothing else out."},
     {"id":"worn-shirt","name":"Worn shirt","kind":"gear","stack":1,"slot":"shirt","tier":"worn","color":"#2f3440","weight":0.3,"text":"A thin flannel shirt under your jacket. Fine in town."},
     {"id":"worn-gloves","name":"Fingerless gloves","kind":"gear","stack":1,"slot":"gloves","tier":"worn","color":"#7a6048","weight":0.1,"text":"Knitted gloves with the fingertips cut off. Your fingers still go numb in the cold."},
@@ -74,6 +76,7 @@
     {"item":"thermos","map":"near-woods-end-cabin","near":{"kinds":["fireplace","table","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"flare","map":"near-woods","near":{"kinds":["car"],"radius":2},"count":1,"respawn":[1800,3600]},
     {"item":"flare","map":"near-woods-ranger-hut","near":{"kinds":["bed","crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]},
+    {"item":"strange","map":"near-woods-shed","near":{"kinds":["paper"],"radius":1.5},"count":1,"respawn":[1800,1800]},
     {"item":"glowcap","map":"south-road","on":["mud","ferns"],"steps":[20,60],"count":3,"respawn":[90,240]},
     {"item":"glowcap","map":"south-road","on":["mud","ferns"],"steps":[61,999],"count":6,"respawn":[90,240]},
     {"item":"resin","map":"south-road","on":["grass"],"steps":[8,40],"count":2,"respawn":[300,600]},
@@ -111,6 +114,8 @@
   ],
   "recipes": [
     {"id":"radio","make":"radio","needs":[{"item":"wire","count":2},{"item":"scrap","count":1}]},
+    {"id":"bolt-cutters","make":"bolt-cutters","needs":[{"item":"scrap","count":6},{"item":"wire","count":2},{"item":"shard","count":2}]},
+    {"id":"waders","make":"waders","needs":[{"item":"cloth","count":8},{"item":"resin","count":6},{"item":"wire","count":3},{"item":"shard","count":1}]},
     {"id":"wool-cap","make":"wool-cap","needs":[{"item":"cloth","count":6},{"item":"resin","count":1}]},
     {"id":"raincoat","make":"raincoat","needs":[{"item":"cloth","count":8},{"item":"resin","count":4}]},
     {"id":"rubber-gloves","make":"rubber-gloves","needs":[{"item":"resin","count":6},{"item":"cloth","count":2}]},

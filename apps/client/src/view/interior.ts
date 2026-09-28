@@ -147,13 +147,16 @@ export interface RoomTone {
 
 /**
  * A room's colors, by its style: a cabin's (warm and honey-toned by a fire, grey and weathered in an
- * empty house), NAPO's (true or 'napo': concrete, warm grey by a fire) or the mill's (dusty boards,
- * dark: nothing has burned there since it closed).
+ * empty house), NAPO's (true or 'napo': concrete, warm grey by a fire), the mill's (dusty boards, dark:
+ * nothing has burned there since it closed) or a shed's (rough boards gone grey, cold: it never had a fire).
  */
-export function roomTone(warm: boolean, style: boolean | 'napo' | 'mill' = false): RoomTone {
+export function roomTone(warm: boolean, style: boolean | 'napo' | 'mill' | 'shed' = false): RoomTone {
   const c = (s: string) => new THREE.Color(s);
   if (style === 'mill') {
     return { plank: c('#6a5d4d'), gap: c('#221b15'), log: c('#584c40'), seam: c('#211b16'), rim: c('#3b3229'), top: c('#15120f'), cut: c('#15120f'), boards: true };
+  }
+  if (style === 'shed') {
+    return { plank: c('#5e574d'), gap: c('#1d1a16'), log: c('#57524a'), seam: c('#1f1c18'), rim: c('#38342e'), top: c('#131210'), cut: c('#131210'), boards: true };
   }
   if (style) {
     return warm

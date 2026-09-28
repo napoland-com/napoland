@@ -50,8 +50,8 @@ export interface Sketch {
   water: Pt[];
   /** Road tiles, drawn as one band. */
   roads: Pt[];
-  /** Cabins, NAPO's concrete buildings (`flat`: a flat roof, no gable) and the sawmill (`mill`: a sawtooth roof). */
-  houses: Array<{ x: number; y: number; w: number; h: number; flat: boolean; mill: boolean }>;
+  /** Cabins, NAPO's concrete buildings (`flat`: a flat roof, no gable), the sawmill (`mill`: a sawtooth roof) and sheds (`shed`: a lean-to's one slope). */
+  houses: Array<{ x: number; y: number; w: number; h: number; flat: boolean; mill: boolean; shed?: boolean }>;
   poles: Pt[];
   wires: Array<[Pt, Pt]>;
   /** Radio masts, like the NAPO Tower: tall enough to steer by. */
@@ -70,6 +70,8 @@ export interface Sketch {
   skids: Array<[Pt, Pt]>;
   /** Small things left in the places, each with a mark of its own. */
   things: Array<{ at: Pt; kind: Thing }>;
+  /** Flooded culverts, each the middles of its tiles from one mouth to the other: a dashed line, and "flooded" beside it. */
+  culverts: Pt[][];
   labels: Array<{ x: number; y: number; text: string }>;
 }
 
@@ -105,7 +107,7 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
   const { width: W, height: H } = map;
   const s: Sketch = {
     title: map.data.name, width: W, height: H, forest: [], trees: [], ground: [], grass: [], water: [], roads: [], houses: [], poles: [], wires: [], masts: [], fences: [], cars: [], signs: [],
-    logs: [], stumps: [], stakes: [], skids: [], things: [], labels: [],
+    logs: [], stumps: [], stakes: [], skids: [], things: [], culverts: [], labels: [],
   };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const kind = map.kind(x, y), r = hash(x, y, 1);
@@ -119,7 +121,9 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
     else if (map.walkable(x, y) && r < 0.12) s.ground.push(drift(x, y, 4));
   }
   for (const o of map.data.objects) {
-    if (o.kind === 'house') s.houses.push({ x: o.x + (hash(o.x, o.y, 5) - 0.5) * 0.6, y: o.y + (hash(o.x, o.y, 6) - 0.5) * 0.6, w: o.w, h: o.h, flat: o.style === 'napo', mill: o.style === 'mill' });
+    if (o.kind === 'house') {
+      s.houses.push({ x: o.x + (hash(o.x, o.y, 5) - 0.5) * 0.6, y: o.y + (hash(o.x, o.y, 6) - 0.5) * 0.6, w: o.w, h: o.h, flat: o.style === 'napo', mill: o.style === 'mill', ...(o.style === 'shed' ? { shed: true } : {}) });
+    }
     else if (o.kind === 'pole') s.poles.push(drift(o.x, o.y, 8));
     else if (o.kind === 'antenna') s.masts.push(drift(o.x, o.y, 14));
     // Along the middle of its tile, like the fence in the world; drawn with a steady hand, so a yard stays closed.
@@ -137,6 +141,7 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
     else if (THINGS.has(o.kind)) s.things.push({ at: o.kind === 'piano' ? [o.x + 1, o.y + 0.5] : drift(o.x, o.y, 19), kind: o.kind as Thing });
   }
   s.poles.forEach((a, i) => s.poles.slice(i + 1).forEach(b => { if (Math.hypot(a[0] - b[0], a[1] - b[1]) <= MAX_WIRE) s.wires.push([a, b]); }));
+  s.culverts = culvertRuns(map);
   // The ways out first, then the places people call by name, then the buildings by their doors: a name
   // people steer by keeps its spot, and a door's name finds room around it (a street of houses has many).
   // A name is written once: where the map names a place as its door does, the place's name stands.
@@ -156,6 +161,11 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
   rooms.forEach(exitLabel);
   const pond = biggest(map, 'water');
   if (!map.data.places && pond.length >= POND_TILES) labels.push({ x: pond.reduce((n, [x]) => n + x, 0) / pond.length + 0.5, y: pond.reduce((n, [, y]) => n + y, 0) / pond.length + 0.5, text: 'pond' });
+  // Last, so every name written before keeps its spot: "flooded" beside the middle of each culvert.
+  for (const run of s.culverts) {
+    const [x, y] = run[Math.floor(run.length / 2)]!;
+    labels.push({ x: x + 3.5, y, text: 'flooded' });
+  }
   s.labels = apart(labels, W, H, [...s.masts.map(mastBox), ...s.signs.map(signBox)]);
   return s;
 }
@@ -181,6 +191,27 @@ function apart(labels: ReadonlyArray<Sketch['labels'][number] & { below?: number
     done.push({ ...at, y: lines.find(y => free({ ...at, y })) ?? at.y });
   }
   return done;
+}
+
+/**
+ * Each flooded culvert as a line through its tiles, from one mouth to the other: it starts at a tile with
+ * one culvert tile beside it (an end), and goes on to the one beside it it has not been on.
+ */
+export function culvertRuns(map: TileMap): Pt[][] {
+  const W = map.width, seen = new Set<number>(), runs: Pt[][] = [];
+  const culvert = (x: number, y: number) => map.kind(x, y) === 'culvert';
+  const next = (x: number, y: number): Pt[] => ([[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]] as Pt[]).filter(([nx, ny]) => culvert(nx, ny) && !seen.has(ny * W + nx));
+  for (const loose of [true, false]) for (let y = 0; y < map.height; y++) for (let x = 0; x < W; x++) {
+    // Ends first; a culvert with no end (a ring) from anywhere on it.
+    if (!culvert(x, y) || seen.has(y * W + x) || (loose && next(x, y).length !== 1)) continue;
+    const run: Pt[] = [];
+    for (let at: Pt | undefined = [x, y]; at; at = next(at[0], at[1])[0]) {
+      seen.add(at[1] * W + at[0]);
+      run.push([at[0] + 0.5, at[1] + 0.5]);
+    }
+    runs.push(run);
+  }
+  return runs;
 }
 
 /** The biggest patch of joined tiles of one kind. */
@@ -291,6 +322,17 @@ function draw(s: Sketch): HTMLCanvasElement {
     if (hash(x, y, 12) > 0.25) continue;
     g.beginPath(); g.moveTo(X(x + 0.1), Y(y + 0.5)); g.quadraticCurveTo(X(x + 0.5), Y(y + 0.2), X(x + 0.9), Y(y + 0.5)); g.stroke();
   }
+  // A flooded culvert: a dashed line in the water's ink, a ring at each mouth.
+  g.strokeStyle = 'rgba(40,70,90,.8)';
+  g.lineWidth = 1.6;
+  g.setLineDash([5, 3]);
+  for (const run of s.culverts) {
+    g.beginPath();
+    run.forEach(([x, y], k) => (k ? g.lineTo(X(x), Y(y)) : g.moveTo(X(x), Y(y))));
+    g.stroke();
+  }
+  g.setLineDash([]);
+  for (const run of s.culverts) for (const [x, y] of [run[0]!, run.at(-1)!]) { g.beginPath(); g.arc(X(x), Y(y), PX * 0.3, 0, Math.PI * 2); g.stroke(); }
   g.fillStyle = 'rgba(59,46,34,.35)';
   for (const [x, y] of s.ground) g.fillRect(X(x), Y(y), 1.5, 1.5);
   // Tall grass: three short strokes a tile, splayed like a tuft, in a green-grey pencil.
@@ -348,7 +390,8 @@ function draw(s: Sketch): HTMLCanvasElement {
       g.beginPath(); g.moveTo(X(h.x), Y(h.y + 0.4));
       for (let k = 0; k < teeth; k++) { g.lineTo(X(h.x + tw * (k + 1)), Y(h.y - 0.4)); g.lineTo(X(h.x + tw * (k + 1)), Y(h.y + 0.4)); }
       g.stroke();
-    } else { g.beginPath(); g.moveTo(X(h.x - 0.2), Y(h.y + 0.4)); g.lineTo(X(h.x + h.w / 2), Y(h.y - 0.6)); g.lineTo(X(h.x + h.w + 0.2), Y(h.y + 0.4)); g.stroke(); }
+    } else if (h.shed) { g.beginPath(); g.moveTo(X(h.x - 0.15), Y(h.y + 0.4)); g.lineTo(X(h.x + h.w + 0.15), Y(h.y - 0.2)); g.stroke(); }
+    else { g.beginPath(); g.moveTo(X(h.x - 0.2), Y(h.y + 0.4)); g.lineTo(X(h.x + h.w / 2), Y(h.y - 0.6)); g.lineTo(X(h.x + h.w + 0.2), Y(h.y + 0.4)); g.stroke(); }
   }
   // Masts: a tall narrow A with its cross braces, and a dot at the top for the light.
   g.fillStyle = INK;

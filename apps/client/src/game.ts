@@ -36,7 +36,7 @@
 import {
   BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, cacheTakes, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits,
   inSurge, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter,
-  upgradable, utcDay, whyNotBuy, DIR_VEC, type CacheItemView, type LookKind, type MeritsView, type Mods, type NextGear,
+  upgradable, utcDay, whyNotBuy, DIR_VEC, type CacheItemView, type LookKind, type MeritsView, type Mods, type NextGear, type Pass,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type OfferPick, type ParcelView, type RefusedAction, type StormView, type TradeEnd, type TradeView,
@@ -49,7 +49,7 @@ import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
-  mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
+  mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, padlocked, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import type { Maps } from './maps';
@@ -75,11 +75,12 @@ interface Mover {
 
 /**
  * Something you face and press A at: a person, a sign or one of NAPO's desks (talk), the notice
- * board (the server writes it), a fire or the Old Stone (you feed them). People and desks are in
- * the story (`story`): talking to one, or reading one, may move it on.
+ * board (the server writes it), a fire or the Old Stone (you feed them), a door you cannot open yet
+ * (locked: it says why). People and desks are in the story (`story`): talking to one, or reading one,
+ * may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'locked';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
@@ -132,8 +133,13 @@ type Creature = Mover & { kind: CreatureView['kind']; chasing: string | undefine
 /** What a sign is called in the text box, by its style. */
 const SIGN_WHO = { plain: 'Sign', napo: 'NAPO sign', cardboard: 'Cardboard sign', mailbox: 'Mailbox' } as const;
 
-function talkersOf(map: TileMap): Talker[] {
-  return map.data.objects.flatMap((o: MapObject): Talker[] => {
+/**
+ * Everything you face and press A at on a map. A door locked with a tool `pass` does not hold (the shed's
+ * padlock, without bolt cutters) says why it stays shut; one it holds is a door like any other.
+ */
+function talkersOf(map: TileMap, pass: Pass, items: Items): Talker[] {
+  const locked = map.data.exits.flatMap((e): Talker[] => (e.lock && !pass.has(e.lock) ? [{ x: e.x, y: e.y, who: 'Padlock', lines: [padlocked(items.get(e.lock))], kind: 'locked' }] : []));
+  return [...locked, ...map.data.objects.flatMap((o: MapObject): Talker[] => {
     if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines, kind: 'talk', id: o.id, story: { talk: o.id } }];
     if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: SIGN_WHO[o.style ?? 'plain'], lines: o.text, kind: 'talk' }];
     if (o.kind === 'console') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', story: { read: o.id } }];
@@ -148,7 +154,7 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
     if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
     return [];
-  });
+  })];
 }
 
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -253,6 +259,11 @@ export class Game {
   conditions: ConditionsView = { today: [], week: null, next: null };
   /** Your tools (item ids), in the order you got them: as the welcome said, then whole again whenever you get one. Replaced, never changed in place. */
   tools: string[] = [];
+  /**
+   * What your tools open (TileMap.walkable): the culvert in waders, the shed's door with bolt cutters. Your
+   * steps are predicted, and your paths found, with it, as the server checks them.
+   */
+  pass: Pass = new Set();
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The id of the chapter of the story you are in, as the server said ('' until its welcome). */
@@ -377,10 +388,27 @@ export class Game {
   private tradeAsk: PersonView | null = null;
   /** A lodestone you wear (a quirk): when it tugs. */
   private readonly lodestone = new Lodestone();
+  /** The padlocked door you last walked into, so pushing against it says so once, not every frame. */
+  private bumped: string | null = null;
 
   constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY) {
     this.current = maps.home();
-    this.talkers = talkersOf(this.current);
+    this.talkers = talkersOf(this.current, this.pass, this.items);
+  }
+
+  /** Your tools, whole: what they open, and the doors that say why they stay shut, follow them. */
+  private setTools(tools: string[]) {
+    this.tools = tools;
+    this.pass = new Set(tools);
+    this.talkers = talkersOf(this.current, this.pass, this.items);
+  }
+
+  /** Why the door next to you stays shut, when the server kept you from it: what opens the padlock you face, or that nearest you. */
+  private lockedText(): string {
+    const me = this.me, [dx, dy] = me ? DIR_VEC[me.dir] : [0, 0];
+    const near = me ? [[me.tx + dx, me.ty + dy], [me.tx, me.ty - 1], [me.tx, me.ty + 1], [me.tx - 1, me.ty], [me.tx + 1, me.ty]] as const : [];
+    const lock = near.map(([x, y]) => (this.map.exitAt(x, y) ? this.map.needs(x, y) : undefined)).find(l => l !== undefined);
+    return padlocked(lock ? this.items.get(lock) : undefined);
   }
 
   /** The map we are on: the one the server's welcome or latest zone named. */
@@ -481,7 +509,7 @@ export class Game {
         this.merits = msg.merits ?? { spent: 0, owned: [] };
         // Time away worth a word: stashing counts double for a while, and the arrival says so.
         if ((msg.restedAway ?? 0) >= RESTED_NOTICE && (msg.progress.rested ?? 0) > 0) this.news.push({ kind: 'rested', xp: msg.progress.rested! });
-        this.tools = msg.tools;
+        this.setTools(msg.tools);
         this.chapter = msg.story.chapter;
         this.storyChanges++;
         this.wall = { now, ms: msg.serverTime };
@@ -745,7 +773,7 @@ export class Game {
         break;
       }
       case 'tools':
-        this.tools = msg.tools;
+        this.setTools(msg.tools);
         break;
       case 'got': {
         this.picking = null;
@@ -798,6 +826,8 @@ export class Game {
         if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
         if (TRADE_ACTIONS.has(msg.action)) { this.inform('Trade', tradeRefusal(msg.reason, this.trade?.with.name ?? this.tradeWith?.name ?? 'them')); break; }
         if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
+        // A step the server kept you from: a padlocked door, which says why in the box.
+        if (msg.action === 'step') { if (msg.reason === 'padlocked') this.inform('Padlock', this.lockedText()); break; }
         if (msg.action === 'call') { this.murmur(refusalText(msg.reason, msg.action)); break; }
         // A thanks is answered with the helper's name: the one asked about.
         if (msg.action === 'thank' && this.thanking) {
@@ -846,7 +876,7 @@ export class Game {
   private enter(map: TileMap, players: PlayerView[], finds: FindView[], drops: DropView[], someoneElse = false) {
     if (map !== this.current || someoneElse) {
       this.current = map;
-      this.talkers = talkersOf(map);
+      this.talkers = talkersOf(map, this.pass, this.items);
       this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.benchCard = null; this.cache = null; this.caching = null;
       this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
       this.clearBox();
@@ -961,6 +991,7 @@ export class Game {
       return;
     }
     if (t.kind === 'fire') return this.tend(t.x, t.y);
+    if (t.kind === 'locked') return this.inform(t.who, t.lines[0] ?? padlocked(undefined));
     if (t.kind === 'chest') {
       if (!this.online) return;
       this.opening = { x: t.x, y: t.y, at: this.clock };
@@ -1512,26 +1543,28 @@ export class Game {
     const me = this.me;
     if (!me) return;
     const from = { x: me.tx, y: me.ty };
+    // Every way is found with what your tools open (the culvert in waders), as the server would take it.
     // Something to pick up: walk onto it (finds are small, so a tap on one lands on its own tile).
     if (this.thingAt(x, y)) {
       this.goal = { pick: { x, y } };
-      this.path = findPath(this.map, from.x, from.y, x, y);
+      this.path = findPath(this.map, from.x, from.y, x, y, false, undefined, this.pass);
       const end = this.path.at(-1) ?? from;
       this.marker = { x: end.x, y: end.y, t: 0 };
       return;
     }
-    // People and signs are tall: a tap on the head lands on the tile behind them.
+    // People and signs are tall: a tap on the head lands on the tile behind them. So is a padlocked
+    // door you cannot open yet: its shed stands behind it, and tapped, it says why it stays shut.
     const talker = this.talkerAt(x, y) ?? this.talkerAt(x, y + 1);
     if (talker) {
       this.goal = { talk: talker };
-      this.path = findPath(this.map, from.x, from.y, talker.x, talker.y, true);
+      this.path = findPath(this.map, from.x, from.y, talker.x, talker.y, true, undefined, this.pass);
       const end = this.path.at(-1) ?? from;
       this.marker = { x: end.x, y: end.y, t: 0 };
       return;
     }
     if (!this.map.inside(x, y)) return;
     this.goal = null;
-    this.path = findPath(this.map, from.x, from.y, x, y);
+    this.path = findPath(this.map, from.x, from.y, x, y, false, undefined, this.pass);
     if (this.path.length) { const end = this.path.at(-1)!; this.marker = { x: end.x, y: end.y, t: 0 }; }
   }
 
@@ -1916,14 +1949,22 @@ export class Game {
       this.reach(me, this.goal);
       this.goal = null;
     }
-    if (!dir) return;
+    if (!dir) { this.bumped = null; return; }
     if (this.pending.length >= MAX_UNCONFIRMED) return; // wait for the server to catch up
     const to = stepTarget(me.tx, me.ty, dir);
-    if (!this.map.walkable(to.x, to.y)) {
+    if (!this.map.walkable(to.x, to.y, this.pass)) {
       if (me.dir !== dir) { me.dir = dir; this.send({ t: 'face', dir }); }
       this.path = [];
+      // Walking into a padlocked door says why it stays shut, once for each push against it.
+      const door = `${to.x},${to.y}`;
+      const lock = this.map.exitAt(to.x, to.y) ? this.map.needs(to.x, to.y) : undefined;
+      if (lock && this.bumped !== door) {
+        this.bumped = door;
+        this.inform('Padlock', padlocked(this.items.get(lock)));
+      }
       return;
     }
+    this.bumped = null;
     if (this.path.length) this.path.shift();
     // Stepping off an arrow the way it points follows it (thanks.ts).
     this.offers.stepped(me.tx, me.ty, dir, to, this.marks);
