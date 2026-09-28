@@ -148,7 +148,7 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
     conditions: extras.conditions ?? { today: [], week: null, next: null },
     thanked: extras.thanked ?? [],
     // Nothing read and nothing home yet.
-    notes: [], keepsakes: [],
+    notes: [], keepsakes: [], firsts: [],
   };
 }
 

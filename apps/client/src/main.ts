@@ -851,6 +851,8 @@ function frame(now: number) {
     // A note read needs no banner (the text box just said it), only a dot on the journal's Notes until it is looked at.
     // A keepsake home waits like a level, for the chest to close, and puts the same dot there.
     if (n.kind === 'note' || n.kind === 'keepsake') { if (n.kind === 'keepsake') toSay.push(n); if (!(hud.journalOpen && hud.journalTab === 'notes')) hud.setNotesNews(true); continue; }
+    // A first finder: one line for everyone online, waiting like the rest for panels and talk to be done.
+    if (n.kind === 'first') { toSay.push(n); continue; }
     if (n.kind === 'feat') { toSay.push(n); continue; }
     // A dot on the chest's Wardrobe tab too, until it is looked at, when the level opened an outfit.
     if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
@@ -879,7 +881,7 @@ function frame(now: number) {
   }
   if (game.notesChanges !== notesShown) {
     notesShown = game.notesChanges;
-    hud.setNotes(notesView(maps.all(), game.notesRead, items.keepsakes, game.keepsakesHome, id => items.byId.get(id), game.freshNotes));
+    hud.setNotes(notesView(maps.all(), game.notesRead, items.keepsakes, game.keepsakesHome, id => items.byId.get(id), game.freshNotes, game.firsts, game.myName()));
   }
   if (hud.statusOpen && (now - statusAt > 500 || game.statsChanges !== statsShown)) { statusAt = now; statsShown = game.statsChanges; showStatus(); }
   // A friend's card says whether they are near enough to trade with, as they walk.

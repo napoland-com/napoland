@@ -108,6 +108,7 @@ import {
   daysThisWeek,
   emptyNotebook,
   everyDaySoFar,
+  firstOnBoard,
   isKeepsake,
   keepsakeEnergy,
   keepsakeFindId,
@@ -115,8 +116,11 @@ import {
   notebookIndex,
   noted,
   noteShows,
+  notesOf,
   readableAt,
   readEvents,
+  secretKey,
+  secretTitle,
   weekIndex,
   seeded,
   charmsIn,
@@ -191,6 +195,8 @@ import {
   offerFrom,
   swapOffers,
   traded,
+  zoneDay,
+  type FirstView,
   type OfferPick,
   type Arrival,
   type BagSlot,
@@ -255,7 +261,7 @@ import {
   type Weather,
 } from '@napoland/shared';
 import { FIRE_LOW_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
 
 export { MARK_LIFETIME_MS };
 
@@ -309,6 +315,8 @@ export const FLARE_RADIUS = 5;
 /** The Old Stone wakes with this many shards in it; awake, one burns away every STONE_SHARD_S. */
 export const STONE_NEED = 20;
 export const STONE_SHARD_S = 30 * 60;
+/** The notice board shows this many first finders, the latest first. */
+export const FIRSTS_ON_BOARD = 3;
 /** The notice board counts collapses this far back. */
 const COLLAPSES_MS = 60 * 60 * 1000;
 /**
@@ -403,6 +411,8 @@ export interface Joined extends Scene {
   /** The notes people left that the player read, and the keepsakes they brought home (notes.ts), by id. */
   notes: string[];
   keepsakes: string[];
+  /** Who found each secret found so far first (firsts.ts). */
+  firsts: FirstView[];
 }
 
 /** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
@@ -421,6 +431,8 @@ export interface Writes {
   credits: string[];
   /** Things left in crates (or taken out of them: undefined), by id. */
   caches: Array<{ id: number; item: CacheItemRecord | undefined }>;
+  /** First finders since (firsts.ts): each kept once, for good. */
+  firsts: FirstRecord[];
 }
 
 export interface WorldOptions {
@@ -444,6 +456,8 @@ export interface WorldOptions {
   thanks?: ThanksRecord[];
   /** What lay in the crates before a restart. */
   cacheItems?: CacheItemRecord[];
+  /** The first finders of the secrets found so far (firsts.ts), as saved. */
+  firsts?: FirstRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
   /**
@@ -701,6 +715,8 @@ const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...(r.notebook ? { notebook: { pages: [...r.notebook.pages], blanks: [...r.notebook.blanks] } } : {}),
   ...(r.notes ? { notes: [...r.notes] } : {}), ...(r.keepsakes ? { keepsakes: [...r.keepsakes] } : {}),
 });
+/** A first finder as everyone sees them: the secret, their name, the Zone's day. */
+const firstView = (f: FirstRecord): FirstView => ({ secret: f.secret, name: f.name, day: f.day });
 /**
  * A bag as a keepsake may be in it: one of each at most, and none that is home already (a save from
  * before it came home, or two tabs at once). Everything else stays as it is.
@@ -910,6 +926,11 @@ export class World {
   private readonly keepsakes: KeepsakesData | undefined;
   /** The tiles a keepsake lies on, by map: shared finds never grow there, so none ever lies under another. */
   private readonly keepsakeTiles = new Map<string, Set<number>>();
+  /** Every note on the maps by id, for what a secret is called on the notice board (firsts.ts). */
+  private readonly notesById: ReturnType<typeof notesOf>;
+  /** The first finder of each secret found so far, by its key (firsts.ts), and those to write. */
+  private readonly firsts = new Map<string, FirstRecord>();
+  private firstWrites: FirstRecord[] = [];
   /** The game time of the last tick: what everyone sees of an afterglow is counted from it. */
   private tickAt = 0;
 
@@ -987,6 +1008,8 @@ export class World {
     }
     for (const m of this.maps.values()) this.cratesIn(m, '');
     for (const c of options.cacheItems ?? []) this.restoreCacheItem(c);
+    this.notesById = notesOf([...this.maps.values()].map(m => m.data));
+    for (const f of options.firsts ?? []) if (!this.firsts.has(f.secret)) this.firsts.set(f.secret, { ...f });
 
     // Where each map's creatures may wake is the same in every copy of it: worked out once.
     for (const m of this.maps.values()) {
@@ -1196,6 +1219,7 @@ export class World {
       notebook: { version: this.notebook.data.version, ...(r.notebook ?? emptyNotebook()) },
       notes: [...(r.notes ?? [])],
       keepsakes: [...(r.keepsakes ?? [])],
+      firsts: [...this.firsts.values()].map(firstView),
       // Theirs alone, beside the zone's: the keepsakes lying here for them.
       finds: this.findsFor(r, zone),
     };
@@ -2260,7 +2284,9 @@ export class World {
       thanks: [...this.thanksWrites.values()].map(t => ({ ...t, what: { ...t.what } })),
       credits: this.credits,
       caches: [...this.cacheWrites].map(([id, c]) => ({ id, item: c && { ...c } })),
+      firsts: this.firstWrites,
     };
+    this.firstWrites = [];
     this.pileWrites.clear();
     this.saveNow.clear();
     this.markWrites.clear();
@@ -2637,6 +2663,7 @@ export class World {
     p.rec.notes = [...(p.rec.notes ?? []), note.id];
     this.saveNow.set(p.rec.id, p.rec);
     this.outbox.push({ to: p.rec.id, msg: { t: 'noteRead', id: note.id } });
+    this.first(p, secretKey({ kind: 'note', id: note.id }), now);
     // Not stashing: no play-test multiple and no rest, only the note's own XP.
     const before = levelOf(p.rec.xp ?? 0);
     p.rec.xp = (p.rec.xp ?? 0) + NOTE_XP;
@@ -2672,6 +2699,21 @@ export class World {
     this.got(p, [{ item: kept.item, count: 1 }], 'find', now);
     this.outbox.push({ to: p.rec.id, msg: { t: 'findGone', id: kept.id } });
     this.rerate(p, now);
+    this.first(p, secretKey({ kind: 'keepsake', item: kept.item }), now);
+  }
+
+  /**
+   * The player found a secret (firsts.ts): the first on the server to do so is kept with it, for good, and
+   * everyone online hears it, blocked or not (it is news of the world, not a message from anyone). A guest
+   * can be first.
+   */
+  private first(p: Online, secret: string, now: number): void {
+    if (this.firsts.has(secret)) return;
+    const wall = Math.floor(now + this.epochOffset);
+    const f: FirstRecord = { secret, player: p.rec.id, name: p.rec.name, day: zoneDay(wall), at: wall };
+    this.firsts.set(secret, f);
+    this.firstWrites.push({ ...f });
+    this.outbox.push({ to: 'all', msg: { t: 'first', first: firstView(f) } });
   }
 
   /**
@@ -3387,6 +3429,12 @@ export class World {
       const st = this.stoneView(now);
       lines.push(st.awake ? `The Old Stone is awake: surges are gentler for ${about(st.left, true)}.` : `The Old Stone sleeps. ${st.charge} of ${st.need} shards fed.`);
     }
+    // The latest three first finders, the latest first: something to talk about, and somewhere nobody has been.
+    const latest = [...this.firsts.values()].sort((a, b) => b.at - a.at).flatMap(f => {
+      const title = secretTitle(f.secret, this.notesById, this.items);
+      return title ? [firstOnBoard(firstView(f), title)] : [];
+    });
+    lines.push(...latest.slice(0, FIRSTS_ON_BOARD));
     return lines;
   }
 

@@ -8,6 +8,7 @@ import { CALL_KINDS, type CallKind } from './calls';
 import { MAX_SAY_CHARS, type ChatTo } from './chat';
 import type { EnergyView } from './energy';
 import type { Stats } from './feats';
+import type { FirstView } from './firsts';
 import type { Gear, Quirk, Worn } from './gear';
 import type { BagSlot } from './items';
 import type { MeritsView } from './merits';
@@ -605,6 +606,8 @@ export type ServerMsg =
       notes: string[];
       /** The keepsakes you brought home (notes.ts), by item id, in the order they came: theirs for good. */
       keepsakes: string[];
+      /** Who was the first on the server to find each secret found so far (firsts.ts), and on which day. */
+      firsts: FirstView[];
       serverTime: number;
     }
   /**
@@ -708,6 +711,8 @@ export type ServerMsg =
   | { t: 'noteRead'; id: string }
   /** This keepsake is home now, yours for good (notes.ts); with the whole set home your bar is bigger, in the next `energy`. */
   | { t: 'keepsake'; item: string }
+  /** To everyone online: someone (you too) is the first on the server to find a secret (firsts.ts). */
+  | { t: 'first'; first: FirstView }
   /** What is in your stash, whole, after you opened the chest or anything went in or out. */
   | { t: 'chest'; stash: BagSlot[] }
   /** A parcel came into your chest (parcels.ts): when you arrived signed in, or at midnight UTC while you played. */

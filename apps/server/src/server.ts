@@ -117,6 +117,9 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // What lies in the crates stays until someone takes it.
   const cacheItems = await o.storage.loadCacheItems();
   if (cacheItems.length) log.info('crates loaded', { things: cacheItems.length });
+  // Who found each secret first is kept for good (firsts.ts).
+  const firsts = await o.storage.loadFirsts();
+  if (firsts.length) log.info('first finders loaded', { firsts: firsts.length });
   const forgetThanks = async () => {
     try {
       await o.storage.forgetThanks(Date.now() - THANKS_KEPT_MS);
@@ -133,6 +136,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     marks,
     thanks,
     cacheItems,
+    firsts,
     stone,
     now: clock(),
     // Where players run out tells how hard each part of the world really is.

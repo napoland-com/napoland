@@ -131,3 +131,36 @@ describe('notes people left, in the journal', () => {
     expect(notesHtml(notesView(all, [], items().keepsakes, [], item))).toBe(`<p class="none">${NOTHING_YET}</p>`);
   });
 });
+
+describe('first finders, in the game and the journal', () => {
+  const all = [town(), woods()];
+  const item = (id: string) => ITEMS.byId.get(id);
+
+  it('come with the welcome, and a new one says in one line who found what first, "you" when it was you', () => {
+    const g = new Game(maps(), () => {}, ITEMS, storyData());
+    g.handle({ ...welcome(woods(), [me(2, 2, 'up')], undefined, { story: { version: storyData().version, chapter: 'home' }, items: ITEMS.version }), firsts: [{ secret: 'note:walt-n8', name: 'Bo', day: 3040 }] }, 1000);
+    expect([...g.firsts.keys()]).toEqual(['note:walt-n8']);
+    const changes = g.notesChanges;
+    g.handle({ t: 'first', first: { secret: 'note:ranger-fires', name: 'Ana', day: 3052 } }, 2000);
+    g.handle({ t: 'first', first: { secret: 'keepsake:compass', name: 'Aldo', day: 3052 } }, 2000);
+    // A secret this copy does not know is kept, and goes unsaid.
+    g.handle({ t: 'first', first: { secret: 'note:written-later', name: 'Cy', day: 3053 } }, 2000);
+    expect(g.notesChanges).toBe(changes + 3);
+    expect(g.news.filter(n => n.kind === 'first')).toEqual([
+      { kind: 'first', text: 'Ana is the first to read the ranger\'s note in Testbrook.' },
+      { kind: 'first', text: 'You are the first to find the brass compass.' },
+    ]);
+    expect(newsBanner(g.news.find(n => n.kind === 'first')!, 'The Test Woods', ITEMS)).toEqual({ title: 'Ana is the first to read the ranger\'s note in Testbrook.', sub: '' });
+  });
+
+  it('put who found it first under each note and keepsake in the journal, "you" when it was you', () => {
+    const firsts = new Map([
+      ['note:walt-n8', { secret: 'note:walt-n8', name: 'Bo', day: 3040 }],
+      ['keepsake:compass', { secret: 'keepsake:compass', name: 'Aldo', day: 3052 }],
+    ]);
+    const v = notesView(all, ['walt-n8', 'in-the-dark'], items().keepsakes, ['compass'], item, new Set(), firsts, 'Aldo');
+    expect(v.authors.map(a => a.notes.map(n => n.first))).toEqual([[undefined], ['First read by Bo, day 3,040.']]);
+    expect(v.keepsakes!.home.map(h => h.first)).toEqual(['First found by you, day 3,052.']);
+    expect(notesHtml(v)).toContain('<p class="first">First read by Bo, day 3,040.</p></article>');
+  });
+});

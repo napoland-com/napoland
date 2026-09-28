@@ -2,7 +2,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  ANYWHERE, CACHE_NEAR, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, notesOf, objectTiles, opensOn, stepTarget, upgradable, upgradeChance,
+  ANYWHERE, CACHE_NEAR, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, itemIndex, notesOf, objectTiles, opensOn, secretKey, secretTitle,
+  stepTarget, upgradable, upgradeChance,
   validateItems, validateNotebook, type ItemsData, type MapData, type MapNote, type MapObject, type NotebookData, type Sight, type StoryData,
 } from '@napoland/shared';
 
@@ -398,6 +399,12 @@ describe('notes and keepsakes left behind (roadmap/notes-left-behind.md)', () =>
     // Rain only wets paper out of doors.
     for (const n of notes.filter(n => n.note.when === 'rain')) expect(n.map.kind, n.note.id).not.toBe('inside');
     expect(notes.filter(n => n.note.when).length).toBeLessThanOrEqual(notes.length / 3);
+  });
+
+  it('names every note and keepsake for the first to find it: whose note and where, or the keepsake (roadmap/first-finders.md)', () => {
+    const byId = notesOf(all.map(m => m.data)), defs = itemIndex(items);
+    for (const { note } of notes) expect(secretTitle(secretKey({ kind: 'note', id: note.id }), byId, defs), note.id).toMatch(/^(the ranger's|Walt's|the Barlows') note (by|in) the /);
+    for (const p of items.keepsakes!.places) expect(secretTitle(secretKey({ kind: 'keepsake', item: p.item }), byId, defs), p.item).toMatch(/^the [a-zA-Z ]+$/);
   });
 
   it('lays five keepsakes, one of a kind each, where the notes lead: each on open ground somebody can walk to', () => {
