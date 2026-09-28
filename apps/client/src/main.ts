@@ -15,7 +15,7 @@ import {
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
-import { detailView, type DetailRef } from './details';
+import { detailView } from './details';
 import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
@@ -156,8 +156,7 @@ const hud = new Hud(screen, {
   goal: () => {
     const next = game.nextGear();
     if (!next || !game.benchBeside()) return;
-    goalCard = { from: 'recipe', id: next.recipe.id };
-    game.openBench();
+    game.openBench({ from: 'recipe', id: next.recipe.id });
   },
   // The workbench's rows are recipes, mending ("mend:" and the slot) and upgrades ("up:" and the piece, upgradeId).
   craft: recipe => {
@@ -638,8 +637,6 @@ let chestShown: typeof game.chest = null;
 let capacityShown = 0;
 /** The workbench and the gear worn, as their sheets show them. */
 let benchShown: typeof game.bench = null;
-/** The card the first goal asked the workbench to open with, once it has. */
-let goalCard: DetailRef | null = null;
 /** Glowing footprints (a quirk): the tile each player was last seen on, and the prints left on this map, oldest first. */
 const printTiles = new Map<string, string>();
 let prints: Array<{ map: string; x: number; y: number; dir: Dir; at: number }> = [];
@@ -762,9 +759,9 @@ function frame(now: number) {
   if (benchChanged) {
     if (game.bench && !benchShown) {
       hud.toggleBench(true);
-      if (goalCard) hud.cardOf('bench', goalCard);
+      const card = game.takeBenchCard();
+      if (card) hud.cardOf('bench', card);
     }
-    goalCard = null;
     if (!game.bench && benchShown) hud.toggleBench(false);
     benchShown = game.bench;
   }
