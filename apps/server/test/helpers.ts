@@ -310,6 +310,9 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   for (const stays of [lately, signed, back]) expect(await storage.findPerson({ id: stays.id }), stays.name).not.toBeNull();
   // Nobody else has stayed away that long.
   expect(await storage.forgetGuests(cutoff)).toBe(0);
+  // The day this server began to delete guests is kept from the first time it is asked.
+  const began = await storage.guestsSince(now);
+  expect(await storage.guestsSince(now + 86_400_000)).toBe(began);
   return { away: away.id, reporter: signed.id };
 }
 

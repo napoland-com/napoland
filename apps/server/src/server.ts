@@ -70,7 +70,19 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // With sign-in, whoever has not signed in plays as a guest, and a guest who has not played for
   // GUEST_DAYS is deleted with their pile and marks. Without sign-in (legacy), nobody is a guest.
   const guests = auth.mode !== 'legacy';
+  // Nobody is deleted before every player could read the rule in the game: GUEST_DAYS after this
+  // server first began to delete guests (the privacy policy promises to say such a change in the game
+  // before it takes effect, and characters from before sign-in count as guests too).
+  let since = Date.now();
+  if (guests) {
+    try {
+      since = await o.storage.guestsSince(since);
+    } catch (err) {
+      log.error('cannot tell since when guests are deleted: none are for now', { err });
+    }
+  }
   const forgetGuests = async () => {
+    if (Date.now() - since < GUEST_DAYS * DAY_MS) return;
     try {
       const gone = await o.storage.forgetGuests(Date.now() - GUEST_DAYS * DAY_MS);
       if (gone) log.info('guests deleted', { guests: gone, days: GUEST_DAYS });

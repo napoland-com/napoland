@@ -153,6 +153,12 @@ export interface Storage {
    * messages. Never one someone signed in with. Returns how many went.
    */
   forgetGuests(seenBefore: number): Promise<number>;
+  /**
+   * When this server began to delete guests who stay away (ms since the epoch): the first call stores
+   * `now`, every later one returns it. No guest goes before GUEST_DAYS after it, so every player can
+   * read the rule in the game (a guest's status panel) before it takes anything.
+   */
+  guestsSince(now: number): Promise<number>;
   /** How many players exist. */
   count(): Promise<number>;
   /** Every pile dropped after `after` (ms since the epoch), oldest first. Older ones have faded: they are forgotten. */
@@ -201,6 +207,7 @@ export class MemoryStorage implements Storage {
   private readonly drops = new Map<string, Omit<DropRecord, 'name'>>();
   private readonly marks = new Map<number, Omit<MarkRecord, 'name' | 'color'>>();
   private stone: StoneRecord | null = null;
+  private since: number | undefined;
   private readonly off = new Set<string>();
   private links: Array<{ from: string; to: string; kind: LinkKind }> = [];
   private tells: Array<Omit<TellRecord, 'fromName'>> = [];
@@ -277,6 +284,10 @@ export class MemoryStorage implements Storage {
       this.tells = this.tells.filter(t => t.from !== rec.id && t.to !== rec.id);
     }
     return gone;
+  }
+
+  async guestsSince(now: number): Promise<number> {
+    return (this.since ??= now);
   }
 
   async count(): Promise<number> {
@@ -554,6 +565,13 @@ export class PgStorage implements Storage {
     // about them stays, without them (ON DELETE SET NULL). An index covers exactly these rows (011).
     const r = await this.pool.query('DELETE FROM players WHERE auth_sub IS NULL AND last_seen_at < $1', [new Date(seenBefore)]);
     return r.rowCount ?? 0;
+  }
+
+  async guestsSince(now: number): Promise<number> {
+    await this.pool.query(`INSERT INTO world_state (key, value) VALUES ('guests_since', $1::jsonb) ON CONFLICT (key) DO NOTHING`, [JSON.stringify(now)]);
+    const r = await this.pool.query<{ value: unknown }>("SELECT value FROM world_state WHERE key = 'guests_since'");
+    const v = r.rows[0]?.value;
+    return typeof v === 'number' && Number.isFinite(v) ? v : now;
   }
 
   async count(): Promise<number> {

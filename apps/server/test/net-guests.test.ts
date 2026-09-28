@@ -180,6 +180,8 @@ describe('guests who stay away', () => {
     const signed = await savedPlayer(storage, { lastSeenAt: now - 400 * DAY_MS, authSub: 'dev:long-gone@example.test' });
     await storage.saveDrop({ owner: away.id, name: away.name, map: 'woods', x: 3, y: 6, items: [{ item: 'moss', count: 2 }], droppedAt: now - 1000 });
     await storage.saveMark({ id: 1, owner: away.id, name: away.name, color: '#fff', map: 'woods', x: 3, y: 5, dir: 'up', placedAt: now - 1000 });
+    // This server has deleted guests for longer than GUEST_DAYS, so everyone had time to read the rule.
+    await storage.guestsSince(now - GUEST_DAYS * DAY_MS - 60_000);
 
     // Without sign-in every character is made that way, and none is a guest: nobody goes.
     const legacy = await startServer({ ...serverDefaults(), storage, items: itemsData() });
@@ -202,10 +204,30 @@ describe('guests who stay away', () => {
   it('are looked for again every day (every few ms here)', async () => {
     setLogLevel('silent');
     const storage = new MemoryStorage();
+    await storage.guestsSince(Date.now() - GUEST_DAYS * DAY_MS - 60_000);
     const server = await startServer({ ...serverDefaults(), storage, items: itemsData(), auth: devAuth(), forgetGuestsEveryMs: 20 });
     try {
       const later = await savedPlayer(storage, { lastSeenAt: Date.now() - GUEST_DAYS * DAY_MS - 60_000 });
       await waitFor(() => !storage.get(later.id), 'the next round of the cleanup');
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it(`wait ${GUEST_DAYS} days after a server first deletes guests, so every player can read the rule in the game first`, async () => {
+    setLogLevel('silent');
+    const now = Date.now();
+    const storage = new MemoryStorage();
+    // Made before sign-in, never claimed, last played long ago: a guest now, and told only once back.
+    const old = await savedPlayer(storage, { lastSeenAt: now - 400 * DAY_MS });
+    const server = await startServer({ ...serverDefaults(), storage, items: itemsData(), auth: devAuth(), forgetGuestsEveryMs: 20 });
+    try {
+      await new Promise(r => setTimeout(r, 100));
+      expect(storage.get(old.id)).toBeDefined();
+      // The day the rule began is kept: a restart does not start the wait again.
+      const began = await storage.guestsSince(now + DAY_MS);
+      expect(began).toBeGreaterThanOrEqual(now);
+      expect(began).toBeLessThan(now + DAY_MS);
     } finally {
       await server.stop();
     }
