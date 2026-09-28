@@ -10,7 +10,8 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type OAuthProvider, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type OAuthProvider,
+  type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
@@ -35,6 +36,7 @@ import { levelText, newsBanner, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
 import { WorldView, createRenderer, lightningAt } from './view/world';
+import { wardrobeView, type WardrobeState } from './wardrobe';
 import { guardZoom } from './zoom';
 
 // Before anything can be touched: on iPhones two thumbs (the stick and A) would zoom the page.
@@ -101,6 +103,8 @@ const closePanels = () => {
   hud.toggleBag(false); hud.toggleJournal(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false); hud.toggleChat(false);
   return open;
 };
+/** What the wardrobe knows: whether you play as a guest, your level and the outfit you wear. */
+const wardrobeNow = (): WardrobeState => ({ guest: game.guest, level: game.progress.level, wearing: game.myOutfit });
 /** The status panel, as the game stands now. */
 const showStatus = () => {
   const now = performance.now();
@@ -147,6 +151,7 @@ const hud = new Hud(screen, {
   wear: slot => game.wear(slot),
   doff: slot => game.doff(slot),
   open: item => game.openSealed(item),
+  outfit: id => game.wearOutfit(id),
   // At the workbench, the first goal opens the card of what to make (once the workbench has answered).
   goal: () => {
     const next = game.nextGear();
@@ -165,6 +170,7 @@ const hud = new Hud(screen, {
   // What a tap in the chest, at the workbench or in the bag shows, from what the open chest or workbench says your stash holds.
   details: (ref, where) => detailView(ref, {
     items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools, panel: where === 'bag' ? 'bag' : 'home',
+    wardrobe: wardrobeNow(),
   }),
   chat: a => {
     if (a.a === 'tab') chatTab = a.to;
@@ -640,13 +646,16 @@ let prints: Array<{ map: string; x: number; y: number; dir: Dir; at: number }> =
 /** When the last hum said the region grows restless: one hum for each time it does. */
 let humFor = -Infinity;
 let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: null };
+/** The wardrobe as drawn: a guest's gate, or the outfits of a level, and the one worn. */
+let wardrobeShown = '';
 let toolsShown: string[] | null = null;
 let progressShown: typeof game.progress | null = null;
 let storyShown = -1;
 /**
- * Chapters and feats' ranks reached and not announced yet. Each waits until it can be read: for what
- * is being said (a chapter reached by talking to someone), the panel that is open (the stash you put
- * things in, the workbench you mend at), the fade and the banner already up.
+ * Chapters, feats' ranks and levels reached and not announced yet. Each waits until it can be read: for
+ * what is being said (a chapter reached by talking to someone), the panel that is open (the stash you
+ * put things in, which is where levels come, and the workbench you mend at), the fade and the banner
+ * already up.
  */
 const toSay: News[] = [];
 /** The scene sound was mixed for last frame: what changed since is what makes a one-shot. */
@@ -718,14 +727,16 @@ function frame(now: number) {
     // A dot on the menu until the journal is opened (it shows the chapter at once if it is open).
     if (n.kind === 'chapter') { toSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
     if (n.kind === 'feat') { toSay.push(n); continue; }
+    // A dot on the chest's Wardrobe tab too, until it is looked at, when the level opened an outfit.
+    if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
     // A parcel that comes on arrival waits for the place's name to be read first; one that comes while
     // the chest is open needs no banner, as the stash says what came (below).
     if (n.kind === 'parcel') { if (!game.chest) toSay.push(n); continue; }
-    const b = newsBanner(n, game.map.data.name, items);
+    const b = newsBanner(n, game.map.data.name, items, game.guest);
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (toSay.length && !game.dialog && !boxUp() && !panelOpen() && !hud.bannerUp && !arrival.dark) {
-    const b = newsBanner(toSay.shift()!, game.map.data.name, items);
+    const b = newsBanner(toSay.shift()!, game.map.data.name, items, game.guest);
     if (b) hud.showBanner(b.title, b.sub);
   }
   if (game.storyChanges !== storyShown) {
@@ -765,6 +776,12 @@ function frame(now: number) {
   if (game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn) {
     gearShown = { gear: game.myGear, worn: game.myWorn };
     hud.setWearing(wornViews(game.myGear, items, game.myWorn));
+  }
+  // A guest who signs in has the outfits at once; a new level opens more.
+  const wardrobe = wardrobeNow(), wardrobeKey = `${wardrobe.guest}|${wardrobe.level}|${wardrobe.wearing}`;
+  if (wardrobeKey !== wardrobeShown) {
+    wardrobeShown = wardrobeKey;
+    hud.setWardrobe(wardrobeView(wardrobe));
   }
   // Your maps are one button, which opens the one for where you are; any other tool has its own, in the order you got them.
   if (game.tools !== toolsShown) hud.setTools(toolViews((toolsShown = game.tools), items));

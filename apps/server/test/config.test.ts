@@ -135,6 +135,15 @@ describe('loadConfig: signing in', () => {
     expect(problem({ PARCEL_DAY_MS: 'a minute' })).toMatch(/PARCEL_DAY_MS must be a whole number/);
   });
 
+  it('multiplies the XP of stashing for a play-test, never in production', () => {
+    expect(loadConfig({}, REPO).xpMultiplier).toBe(1);
+    expect(loadConfig({ XP_MULTIPLIER: '1000' }, REPO).xpMultiplier).toBe(1000);
+    expect(loadConfig({ XP_MULTIPLIER: '1', NODE_ENV: 'production' }, REPO).xpMultiplier).toBe(1);
+    expect(problem({ XP_MULTIPLIER: '100', NODE_ENV: 'production' })).toMatch(/XP_MULTIPLIER .* refused when NODE_ENV=production/);
+    expect(problem({ XP_MULTIPLIER: '0' })).toMatch(/XP_MULTIPLIER must be a whole number from 1/);
+    expect(problem({ XP_MULTIPLIER: '2.5' })).toMatch(/XP_MULTIPLIER must be a whole number/);
+  });
+
   it('takes a Supabase project: its address (as an origin) and its publishable key', () => {
     expect(loadConfig(supabase, REPO).auth).toEqual({ mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: PUBLISHABLE, jwtSecret: undefined, providers: [] });
     expect(loadConfig({ ...supabase, SUPABASE_URL: 'https://abcd.supabase.co/' }, REPO).auth).toMatchObject({ url: 'https://abcd.supabase.co' });

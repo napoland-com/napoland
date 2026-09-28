@@ -84,7 +84,8 @@ describe('the game, when a parcel comes and a lockbox is opened', () => {
   it('makes the news of a parcel, and tells the chest once what came since it last opened', () => {
     g.handle({ t: 'parcel', parcel: WELCOME }, now);
     g.handle({ t: 'parcel', parcel: day(1) }, now);
-    expect(g.news).toEqual([{ kind: 'parcel', parcel: WELCOME }, { kind: 'parcel', parcel: day(1) }]);
+    // The welcome parcel comes with the first sign-in, which gives the NAPO work suit: its banner names it (wardrobe.test.ts).
+    expect(g.news).toEqual([{ kind: 'parcel', parcel: WELCOME, outfits: ['napo-suit'] }, { kind: 'parcel', parcel: day(1) }]);
     expect(g.takeParcels()).toEqual([WELCOME, day(1)]);
     expect(g.takeParcels()).toEqual([]);
   });
