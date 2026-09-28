@@ -400,6 +400,9 @@ export class WorldView {
   /** The Old Stone's crystal, brighter while it is awake. */
   private crystalMat = stoneCrystal();
   private stoneAwake = false;
+  /** The seams of a slab (slab.ts): dark cracks in the stone, glowing violet like the Old Stone while the woods are restless. */
+  private seamMat = ownToon('#2c2a33', { emissive: 0x000000 });
+  private slabGlow = false;
   /** How much a surge washes this map now, 0 to 1. */
   private surgeK = 0;
   /** A storm blows over this map (outdoors). */
@@ -754,7 +757,9 @@ export class WorldView {
     }
 
     const shrooms: Array<{ x: number; y: number; s: number }> = [];
-    for (const o of this.objects('shrooms')) for (const [sx, sy] of [[0.3, 0.3], [0.7, 0.36], [0.34, 0.72], [0.72, 0.7]] as const) shrooms.push({ x: o.x + sx, y: o.y + sy, s: 0.8 + hash2(o.x * 5 + sx * 10, o.y) * 0.5 });
+    // Nothing grows on a slab's stone: the glowcaps drawn where it lies stay under it.
+    const slabs = new Set(this.objects('slab').map(o => `${o.x},${o.y}`));
+    for (const o of this.objects('shrooms')) if (!slabs.has(`${o.x},${o.y}`)) for (const [sx, sy] of [[0.3, 0.3], [0.7, 0.36], [0.34, 0.72], [0.72, 0.7]] as const) shrooms.push({ x: o.x + sx, y: o.y + sy, s: 0.8 + hash2(o.x * 5 + sx * 10, o.y) * 0.5 });
     this.instanced(flat(new THREE.CylinderGeometry(0.022, 0.03, 0.12, 5)), shrooms, (f, o, c) => { o.position.set(f.x, 0.06 * f.s, f.y); o.scale.setScalar(f.s); c.set('#d9d2c0'); });
     this.instanced(new THREE.IcosahedronGeometry(0.075, 0), shrooms, (f, o) => { o.position.set(f.x, 0.13 * f.s, f.y); o.scale.set(f.s, f.s * 0.55, f.s); }, this.capMat);
   }
@@ -971,6 +976,27 @@ export class WorldView {
         for (const d of debris.children) d.position.y = d.userData.y + Math.sin(t * 1.4 + d.userData.ph) * 0.12;
       });
     }
+
+    // A slab in the middle of a ring of stones (slab.ts): flat stone set in the ground, cracked along its
+    // seams, which glow violet like the Old Stone's crystal while the woods are restless, and pulse.
+    const slabs = this.objects('slab');
+    for (const sl of slabs) {
+      const g = new THREE.Group();
+      g.position.set(sl.x + 0.5, 0, sl.y + 0.5);
+      g.rotation.y = (hash2(sl.x, sl.y) - 0.5) * 0.3;
+      g.add(box(0.94, 0.08, 0.86, '#6f6b63', 0, 0.04, 0, 0.02), box(0.8, 0.02, 0.72, '#7b776e', 0, 0.085, 0, false));
+      still.push(g);
+      const seams = new THREE.Group();
+      seams.position.copy(g.position);
+      seams.rotation.y = g.rotation.y;
+      for (const [x, z, len, turn] of [[-0.12, -0.05, 0.62, 0.35], [0.18, 0.12, 0.4, -0.9], [-0.25, 0.22, 0.3, 1.3], [0.2, -0.22, 0.34, 0.2]] as const) {
+        const seam = part(new THREE.BoxGeometry(len, 0.012, 0.035), this.seamMat, x, 0.1, z, false);
+        seam.rotation.y = turn;
+        seams.add(seam);
+      }
+      this.scene.add(seams);
+    }
+    if (slabs.length) this.animate.push(t => { if (this.slabGlow) this.seamMat.emissive.setHex(0x8a4dff).multiplyScalar(0.55 + 0.45 * Math.sin(t * 2.2)); });
 
     for (const n of this.objects('npc')) {
       const { root, bang } = makeNpc(n.look);
@@ -1285,6 +1311,13 @@ export class WorldView {
   /** The piles on this map, for the echoes that walk to them: call it when they change or you move to another tile. */
   setEchoes(drops: Iterable<DropView>, focus: { x: number; y: number }) {
     this.echoes.set(drops, focus);
+  }
+
+  /** The woods are restless: a slab's seams glow (slab.ts), pulsing; calm, they are dark cracks again. */
+  setSlab(glow: boolean) {
+    if (glow === this.slabGlow) return;
+    this.slabGlow = glow;
+    if (!glow) this.seamMat.emissive.setHex(0x000000);
   }
 
   /** The Old Stone awake: its crystal and light burn brighter, and it turns faster. */

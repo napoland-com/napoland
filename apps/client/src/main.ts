@@ -10,8 +10,8 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, SEASONS, bagSlotsOf, inTheDark, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData,
-  type MapRef, type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, SEASONS, bagSlotsOf, inTheDark, meritsOf, outfitsOpening, slabGlows, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear,
+  type ItemsData, type MapData, type MapRef, type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
@@ -872,6 +872,7 @@ function frame(now: number) {
     view.setWeather(game.weather);
   }
   view.setStone(game.stone.awake);
+  view.setSlab(slabGlows(game.surgeNow(now)));
   const surge = game.surgeNow(now), caught = game.caught(now);
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
   hud.setSurge(surge, caught);

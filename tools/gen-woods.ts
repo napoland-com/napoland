@@ -8,8 +8,9 @@
  * old cabin. West lies the pond, north the rocks. Past them there is one lonely lamp nobody wired,
  * with a ranger's hut behind it, and beyond it the deepest spots: a ring of stones (west) and the
  * cabin at the end (east). NAPO was here too: its Zone warning where the road comes in, and a
- * listening post by the ring, the rocks that hum back to the Old Stone. From the cabin at the end the
- * trappers' trail climbs north off the map, into the Far Woods (gen-far-woods.ts).
+ * listening post by the ring, the rocks that hum back to the Old Stone. In the middle of the ring lies a
+ * flat slab, the stones' own sealed crate, which opens only for two while the woods are restless. From the
+ * cabin at the end the trappers' trail climbs north off the map, into the Far Woods (gen-far-woods.ts).
  *
  * Energy only comes back by a fire, so the three buildings are shelters that keep one burning (their
  * rooms are in gen-interiors.ts): the old cabin, the hut and the cabin at the end, each a stage deeper.
@@ -599,6 +600,15 @@ onForest({
   }
 }
 
+// ---- The slab (slab.ts) ----
+
+// In the middle of the ring of stones, where the rocks hum back, a flat slab lies in the ground: the
+// stones' own sealed crate, which two people open together while the woods are restless. Placed after
+// everything that stands in the woods, so nothing placed before it moves (only the notes people left
+// come after it: they lie last on every map); walked over like the ground (and over the glowcaps drawn
+// on its tile), so every way through the ring stays as it was.
+place({ kind: 'slab', x: Math.floor(RING.x), y: Math.floor(RING.y), name: 'the slab in the ring of stones', holds: [{ item: 'strange', count: 2 }, { item: 'shard', count: 1 }] });
+
 // ---- Notes people left (notes-left.ts) ----
 
 // Laid last, on what already stands here, so nothing moves: a note blocks nothing and changes no ground.
@@ -619,7 +629,7 @@ onForest({
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 13, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 14, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
@@ -696,6 +706,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   comfort: 'n',
   // NAPO's teleport stands in every cabin and by the notice board in town (gen-interiors.ts, gen-map.ts).
   teleport: 'N',
+  // The ring of stones' slab, in its middle.
+  slab: '=',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();

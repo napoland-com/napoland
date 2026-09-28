@@ -352,6 +352,37 @@ describe('the lost and found (roadmap/lost-and-found.md)', () => {
   });
 });
 
+describe('a crate that needs two (roadmap/sealed-crates.md)', () => {
+  const woods = maps.get('near-woods')!;
+  const slabs = [...maps.values()].flatMap(m => m.data.objects.flatMap(o => (o.kind === 'slab' ? [{ map: m, o }] : [])));
+  const ring = woods.data.places!.find(p => p.name === 'ring of stones')!;
+
+  it('is one slab, in the middle of the ring of stones, holding two strange objects and a shard, named for the notice board', () => {
+    expect(slabs.map(s => s.map.data.id)).toEqual(['near-woods']);
+    const { o } = slabs[0]!;
+    expect([o.x, o.y]).toEqual([ring.x, ring.y]);
+    if (o.kind !== 'slab') throw new Error('not a slab');
+    expect(o.holds).toEqual([{ item: 'strange', count: 2 }, { item: 'shard', count: 1 }]);
+    expect(o.name).toBe('the slab in the ring of stones');
+    // The rocks of the ring stand around it, within a few steps each way.
+    const rocks = woods.data.objects.filter(r => r.kind === 'rock' && Math.hypot(r.x - o.x, r.y - o.y) <= 3.5);
+    expect(rocks.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it('moved nothing: it is the last thing in the woods but the notes people left, lying in open ground people walk, faced from all four sides', () => {
+    const { o } = slabs[0]!;
+    // Notes lie last on every map (notes-left-behind.md); before them, nothing comes after the slab.
+    const first = woods.data.objects.findIndex(n => n.kind === 'note');
+    expect(woods.data.objects.slice(0, first < 0 ? undefined : first).at(-1)).toBe(o);
+    expect(woods.walkable(o.x, o.y)).toBe(true);
+    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) expect(woods.walkable(o.x + dx, o.y + dy), `${dx},${dy}`).toBe(true);
+    // It opens while the woods are restless: they surge.
+    expect(woods.data.surge).toBeDefined();
+    // Nothing grows on it.
+    for (const rule of items.finds.filter(f => f.map === 'near-woods')) expect(findTiles(woods, rule).some(t => t.x === o.x && t.y === o.y), rule.item).toBe(false);
+  });
+});
+
 describe('tall grass in the Near Woods (roadmap/richer-places.md)', () => {
   const map = maps.get('near-woods')!;
   const W = map.width;

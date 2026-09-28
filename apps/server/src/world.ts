@@ -158,6 +158,9 @@ import {
   calendarDay,
   carrierShare,
   copyBundle,
+  SLAB_PAIR_MS,
+  slabGlows,
+  surgeRound,
   canMake,
   canRescue,
   cleanIds,
@@ -973,6 +976,8 @@ function tilesOf<T>(index: Map<string, Map<number, T>>, key: string): Map<number
   if (!tiles) index.set(key, (tiles = new Map()));
   return tiles;
 }
+/** Who opened a slab (by map, whatever copy of it, and tile), for the once-each rule: the map first, so a map's are forgotten together. */
+const slabKey = (id: string, map: TileMap, o: { x: number; y: number }) => `${map.data.id} ${o.x},${o.y} ${id}`;
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: w.kind, x: w.x, y: w.y, dir: w.dir, ...(w.chasing !== undefined && { chasing: w.chasing }) });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] =>
   bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}), ...(s.piece ? { piece: { ...s.piece } } : {}), ...(s.bundle ? { bundle: copyBundle(s.bundle) } : {}) }));
@@ -1269,6 +1274,12 @@ export class World {
   private lastReturnId = 0;
   /** The game time the old ones are next looked at: they go at their own pace, no tick needs to. */
   private returnsForgetAt = 0;
+  /**
+   * Hands put to a slab (slab.ts) that nobody joined yet, by the slab's zone and tile: whose, and when
+   * (game time). And who opened which slab in which restless phase (slabKey: once each), in memory.
+   */
+  private readonly slabPresses = new Map<string, { id: string; at: number }>();
+  private readonly slabOpened = new Map<string, number>();
   /** The game time of the last tick: what everyone sees of an afterglow is counted from it. */
   private tickAt = 0;
   /** The walks kept for glimpses, by map id, oldest first: GLIMPSES_PER_MAP at most, a day at most, in memory only. */
@@ -3023,6 +3034,46 @@ export class World {
     }
   }
 
+  // ---------- the slab in the ring of stones (slab.ts) ----------
+
+  /**
+   * `id` puts their hands to the slab on tile x,y, next to it and facing it. While it glows (its region is
+   * restless), hands put to it within SLAB_PAIR_MS of someone else's, who is still beside it, lift it: each
+   * of the two takes what it holds, into the bag. Alone it will not move, but the hands stay on it for
+   * SLAB_PAIR_MS, for whoever comes. Each player opens it once a restless phase, and only with room in the
+   * bag for all it holds: a bag that has none is told so, and its hands do not count.
+   */
+  slab(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.spent(p, now)) return this.refuse(p, 'slab', p.slump ? 'down' : 'too_far');
+    const o = p.map.data.objects.find((s): s is Extract<MapObject, { kind: 'slab' }> => s.kind === 'slab' && s.x === x && s.y === y);
+    if (!o || manhattan(x, y, p.rec.x, p.rec.y) !== 1 || !faces(p.rec.x, p.rec.y, p.rec.dir, x, y)) return this.refuse(p, 'slab', 'too_far');
+    const rule = p.map.data.kind === 'wilds' ? p.map.data.surge : undefined;
+    if (!rule || !slabGlows(this.surgeOf(p.map, now))) return this.refuse(p, 'slab', 'cold');
+    const round = surgeRound(rule, now + this.epochOffset), opened = (q: Online) => this.slabOpened.get(slabKey(q.rec.id, p.map, o)) === round;
+    if (opened(p)) return this.refuse(p, 'slab', 'opened');
+    if (addAllToBag(p.rec.bag, o.holds, this.items, p.slots).left.length) return this.refuse(p, 'slab', 'bag_full');
+    const key = `${p.zone.key} ${x},${y}`, first = this.slabPresses.get(key);
+    const q = first && first.id !== id && now - first.at <= SLAB_PAIR_MS ? this.players.get(first.id) : undefined;
+    // Whoever put their hands to it first is still there, with room, and has not had it this time.
+    if (q && q.zone === p.zone && !q.slump && manhattan(x, y, q.rec.x, q.rec.y) === 1 && !opened(q) && !addAllToBag(q.rec.bag, o.holds, this.items, q.slots).left.length) {
+      this.slabPresses.delete(key);
+      for (const [r, other] of [[q, p], [p, q]] as const) {
+        r.rec.bag = addAllToBag(r.rec.bag, o.holds, this.items, r.slots).bag;
+        this.slabOpened.set(slabKey(r.rec.id, p.map, o), round);
+        this.saveNow.set(r.rec.id, r.rec);
+        this.sendBag(r, now);
+        this.rerate(r, now);
+        this.did(r, { kind: 'slab', with: other.rec.name, got: o.holds.map(s => ({ item: s.item, count: s.count })) });
+      }
+      return;
+    }
+    this.slabPresses.set(key, { id, at: now });
+    this.refuse(p, 'slab', 'one_pair');
+  }
+
   /** The player's counts toward feats as they are now: the status panel asks when it opens. */
   stats(id: string): void {
     const p = this.players.get(id);
@@ -4056,11 +4107,20 @@ export class World {
       if (!s || this.surgePhase.get(map.data.id) === s.phase) continue;
       const first = !this.surgePhase.has(map.data.id);
       this.surgePhase.set(map.data.id, s.phase);
+      // A restless time over: who opened this map's slab in it matters no more, and no hands wait on it.
+      if (s.phase === 'calm') this.forgetSlab(map);
       if (!first) this.toCopies(map.data.id, { t: 'surge', surge: s });
       for (const rule of this.rules) if (rule.when === 'unstable' && rule.map === map) this.openRule(rule, s.phase !== 'calm', now);
     }
     // The first tick also opens aurora finds if the world starts on an aurora night.
     for (const rule of this.rules) if (rule.when === 'aurora' && rule.open !== (this.weatherOf(rule.map) === 'aurora')) this.openRule(rule, !rule.open, now);
+  }
+
+  /** A restless time is over on `map`: who opened its slabs then, and hands still on them, are forgotten. */
+  private forgetSlab(map: TileMap): void {
+    for (const k of this.slabOpened.keys()) if (k.startsWith(`${map.data.id} `)) this.slabOpened.delete(k);
+    // By the zone's key: the map's, or the map's and a copy's (zoneKey).
+    for (const k of this.slabPresses.keys()) if (k.startsWith(`${map.data.id} `) || k.startsWith(`${map.data.id}:`)) this.slabPresses.delete(k);
   }
 
   /** A region's storm clock now (for an inside, the region around it), or null for a map that never storms. */
@@ -4985,6 +5045,8 @@ export class World {
       if (s.phase === 'surge') lines.push(`${map.data.name}: a surge is on, ${about(s.left)} more. Get to a light.`);
       else if (s.phase === 'unstable') lines.push(`${map.data.name}: restless. A surge comes ${about(s.left)}.`);
       else lines.push(`${map.data.name}: calm. The next surge comes ${about(untilSurge(rule, s))}.`);
+      // Restless, the slab glows (slab.ts): two people there now can open it.
+      if (slabGlows(s)) for (const o of map.data.objects) if (o.kind === 'slab') lines.push(`${capital(o.name)} is glowing.`);
     }
     for (const map of regions) {
       const s = this.stormOf(map, now), rule = map.data.storm;
@@ -5800,7 +5862,7 @@ export class World {
   private refuse(
     p: Online,
     action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
-      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn',
+      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab',
     reason: Refusal,
   ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
@@ -6013,6 +6075,7 @@ const SEASON_WORDS: Record<Season, string> = {
   winter: 'colder out there, and snow instead of rain',
 };
 const lower = (s: string) => s[0]!.toLowerCase() + s.slice(1);
+const capital = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
 /** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours", "about 3 days"). */
 function about(seconds: number, plain = false): string {

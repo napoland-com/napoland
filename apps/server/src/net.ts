@@ -409,6 +409,9 @@ export function attachNet(o: NetOptions): Net {
       case 'handIn':
         world.handIn(s.id, msg.x, msg.y, now);
         return flush();
+      case 'slab':
+        world.slab(s.id, msg.x, msg.y, now);
+        return flush();
       case 'doorOff':
         // Guests too: a guest's name is on a door as well.
         world.doorOff(s.id, msg.off, now);

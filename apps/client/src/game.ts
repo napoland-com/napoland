@@ -70,10 +70,10 @@ import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, FIRST_STEPS_DONE, FIRST_STEPS_TITLE, FIRST_WAKE, GONE, INDOORS, IN_YOUR_CHEST, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, LOST_AND_FOUND, LOST_AND_FOUND_LINES, MARKED,
-  NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TAKE_HALF, TELEPORT, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, YOU_ARE_DOWN, bundleNotYours, buyQuestion, cabinWho, carryLabel, comfortLines, didText,
-  didWho, doorText, downLine, feedQuestion, fullFire, handInQuestion, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn,
-  openQuestion, pileQuestion, placedAlready, raisedText, rescueQuestion, rescueRefusal, rescueTooTired, returnedLine, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines,
-  teleportQuestion, thingsOf, tossQuestion, upgradeQuestion, useQuestion, visitedText, visitWho, waltOnTheLongNight,
+  NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, SLAB, TAKE_HALF, TELEPORT, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, YOU_ARE_DOWN, bundleNotYours, buyQuestion, cabinWho, carryLabel,
+  comfortLines, didText, didWho, doorText, downLine, feedQuestion, fullFire, handInQuestion, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard,
+  notYours, nothingToBurn, openQuestion, pileQuestion, placedAlready, raisedText, rescueQuestion, rescueRefusal, rescueTooTired, returnedLine, sentence, shortOf, shutText, slabRefusal,
+  stashShort, stoneQuestion, streetLetterLines, teleportQuestion, thingsOf, tossQuestion, upgradeQuestion, useQuestion, visitedText, visitWho, waltOnTheLongNight,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { trophiesIn } from './view/cabin';
@@ -106,7 +106,7 @@ interface Mover {
  * the story (`story`): talking to one, or reading one, may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport' | 'lostfound';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport' | 'lostfound' | 'slab';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
@@ -196,6 +196,7 @@ function talkersOf(map: TileMap): Talker[] {
     // Furniture in your cabin reads from any side of it; the rug is walked over, not faced.
     if (o.kind === 'comfort' && o.what !== 'rug') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: '', lines: [], kind: 'comfort', what: o.what }));
     if (o.kind === 'lostfound') return [{ x: o.x, y: o.y, who: LOST_AND_FOUND, lines: LOST_AND_FOUND_LINES, kind: 'lostfound' }];
+    if (o.kind === 'slab') return [{ x: o.x, y: o.y, who: SLAB, lines: [], kind: 'slab' }];
     return [];
   });
 }
@@ -1244,6 +1245,8 @@ export class Game {
           this.inform(this.note?.waiting ? this.note.who : '', thankRefusal(msg.reason, this.thanking.name));
           break;
         }
+        // The slab answers in the box, in its own words.
+        if (msg.action === 'slab') { this.inform(SLAB, slabRefusal(msg.reason)); break; }
         // So is getting someone up: by the name of whoever was down.
         if (msg.action === 'rescue' && this.rescuing) {
           this.inform(this.rescuing.name, rescueRefusal(msg.reason, this.rescuing.name));
@@ -1495,6 +1498,11 @@ export class Game {
       return;
     }
     if (t.kind === 'lostfound') return this.leaveInBox(t);
+    // The slab (slab.ts): hands put to it, which uses nothing up, so nothing is asked; the server says how it went.
+    if (t.kind === 'slab') {
+      if (this.online) this.send({ t: 'slab', x: t.x, y: t.y });
+      return;
+    }
     return this.offer(t.x, t.y);
   }
 
@@ -2119,8 +2127,8 @@ export class Game {
       this.marker = { x: end.x, y: end.y, t: 0 };
       return;
     }
-    // People and signs are tall: a tap on the head lands on the tile behind them.
-    const talker = this.talkerAt(x, y) ?? this.talkerAt(x, y + 1);
+    // People and signs are tall: a tap on the head lands on the tile behind them. A slab lies flat.
+    const behind = this.talkerAt(x, y + 1), talker = this.talkerAt(x, y) ?? (behind?.kind === 'slab' ? undefined : behind);
     // A door on your street is walked into, as any house's: your own, and a neighbor's (the server lets you in,
     // or says why not). One nobody lives behind, or that stayed shut, is walked up to, and knocked at.
     if (talker?.kind === 'door' && !this.barred(talker.x, talker.y)) ({ x, y } = talker);
