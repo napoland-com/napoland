@@ -19,7 +19,7 @@ import {
   BUBBLE_S, STEP_MS, activeConditions, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, journal, stepTarget, storyLines, surgeFront, DIR_VEC,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
   type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type StormView,
+  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type RefusedAction, type StormView,
 } from '@napoland/shared';
 import type { FriendsMsg, TalkLine } from './friends';
 import { countOf, lookOf, refusalText, useText, type Items } from './items';
@@ -136,10 +136,17 @@ const NO_STORY: StoryData = { version: 0, chapters: [] };
 /** Lines of chat a session keeps to scroll back through. */
 export const CHAT_LOG = 100;
 
+/** What a `refused` can answer among friends: the friends panel says why. */
+const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
+
 export class Game {
   meId: string | null = null;
   /** True between the server's welcome and the connection dropping; no steps are taken otherwise. */
   online = false;
+  /** You play as a guest (the welcome said): chat and friends wait for sign-in. */
+  guest = false;
+  /** Who on this map plays as a guest: nobody can ask them to be friends yet. */
+  guests = new Set<string>();
   /** Set while the screen fades out on the way to another map: nobody walks on a map that is going away. */
   held = false;
   players = new Map<string, Mover>();
@@ -333,6 +340,7 @@ export class Game {
         if (!map || msg.items !== this.items.version || msg.story.version !== this.story.version) { this.disconnected(now); break; }
         this.meId = msg.you;
         this.online = true;
+        this.guest = msg.guest === true;
         this.stepMs = msg.stepMs;
         this.enter(map, msg.players, msg.finds, msg.drops);
         this.scene(msg, now);
@@ -488,6 +496,10 @@ export class Game {
         this.quirks.set(msg.player.id, msg.player.quirks ?? []);
         if (msg.player.live) this.live.add(msg.player.id);
         else this.live.delete(msg.player.id);
+        // A guest who signed in comes back in as someone who is not one.
+        if (msg.player.guest) this.guests.add(msg.player.id);
+        else this.guests.delete(msg.player.id);
+        this.socialChanges++;
         break;
       case 'glow':
         if (msg.on) this.live.add(msg.id);
@@ -583,8 +595,8 @@ export class Game {
         this.socialChanges++;
         break;
       case 'refused':
-        if (msg.action === 'befriend' || msg.action === 'tell') { this.socialNote = refusalText(msg.reason); this.socialChanges++; break; }
-        if (msg.action === 'say') { this.chatNote = refusalText(msg.reason); this.chatChanges++; break; }
+        if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
+        if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
         if (msg.action === 'pick') this.picking = null;
         if (msg.action === 'use') this.using = null;
         if (msg.action === 'feed') this.feeding = null;
@@ -619,6 +631,8 @@ export class Game {
     }
     this.players.clear();
     for (const p of players) this.players.set(p.id, this.mover(p));
+    this.guests = new Set(players.filter(p => p.guest).map(p => p.id));
+    this.socialChanges++;
     this.gear = new Map(players.map(p => [p.id, p.gear ?? {}]));
     this.quirks = new Map(players.map(p => [p.id, p.quirks ?? []]));
     this.live = new Set(players.filter(p => p.live).map(p => p.id));

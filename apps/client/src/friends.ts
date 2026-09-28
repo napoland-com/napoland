@@ -22,8 +22,8 @@ export interface FriendsView {
   friends: Array<PersonView & { where: string; unread: boolean }>;
   outgoing: PersonView[];
   blocked: PersonView[];
-  /** Someone's card: open from the list or from their name tag. */
-  person: (PersonView & { where: string | null; standing: Standing; lines: TalkLine[] }) | null;
+  /** Someone's card: open from the list or from their name tag. `guest`: they play as a guest, so no friends yet (blocking and reporting still work). */
+  person: (PersonView & { where: string | null; standing: Standing; lines: TalkLine[]; guest?: true }) | null;
 }
 
 /** "The Near Woods", "offline": where a friend is, by our copy of the map's name. */
@@ -40,9 +40,10 @@ export function standingOf(f: FriendsMsg | null, id: string): Standing {
   return 'none';
 }
 
+/** `s.guests`: who plays as a guest, among the players the game knows of. */
 export function friendsView(
   f: FriendsMsg | null,
-  s: { person: PersonView | null; talks: ReadonlyMap<string, readonly TalkLine[]>; unread: ReadonlySet<string> },
+  s: { person: PersonView | null; talks: ReadonlyMap<string, readonly TalkLine[]>; unread: ReadonlySet<string>; guests?: ReadonlySet<string> },
   nameOf: (map: string) => string | undefined,
 ): FriendsView {
   const friends = (f?.friends ?? [])
@@ -58,7 +59,10 @@ export function friendsView(
     friends,
     outgoing: f?.outgoing ?? [],
     blocked: f?.blocked ?? [],
-    person: p && { id: p.id, name: p.name, where: friend ? whereText(friend.map, nameOf) : null, standing: standingOf(f, p.id), lines: [...(s.talks.get(p.id) ?? [])] },
+    person: p && {
+      id: p.id, name: p.name, where: friend ? whereText(friend.map, nameOf) : null, standing: standingOf(f, p.id), lines: [...(s.talks.get(p.id) ?? [])],
+      ...(s.guests?.has(p.id) && { guest: true as const }),
+    },
   };
 }
 

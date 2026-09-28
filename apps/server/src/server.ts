@@ -1,9 +1,10 @@
 /**
  * One running game server: HTTP + WebSocket on one port, the World (with the piles saved before a
- * restart), its tick and periodic saves. main.ts builds it from the environment; tests start it directly.
+ * restart), its tick and periodic saves, and with sign-in, the daily cleanup of guests who stayed
+ * away. main.ts builds it from the environment; tests start it directly.
  */
 import type { AddressInfo } from 'node:net';
-import { DROP_LIFETIME_MS, weatherAt, type ItemsData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
+import { DROP_LIFETIME_MS, GUEST_DAYS, weatherAt, type ItemsData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
 import { legacyAuth, type Auth } from './auth';
 import { createHttpServer } from './http';
 import { log } from './log';
@@ -50,7 +51,11 @@ export interface ServerOptions {
   auth?: Auth;
   /** Development only (CLOCK_SHIFT_MS): the sky, the surges and the conditions run this many ms ahead of the wall clock. */
   clockShiftMs?: number;
+  /** With sign-in, how often guests who stayed away GUEST_DAYS are looked for (after start-up); default once a day. */
+  forgetGuestsEveryMs?: number;
 }
+
+const DAY_MS = 86_400_000;
 
 export interface RunningServer {
   readonly port: number;
@@ -61,6 +66,21 @@ export interface RunningServer {
 
 export async function startServer(o: ServerOptions): Promise<RunningServer> {
   const clock = o.clock ?? (() => performance.now());
+  const auth = o.auth ?? legacyAuth();
+  // With sign-in, whoever has not signed in plays as a guest, and a guest who has not played for
+  // GUEST_DAYS is deleted with their pile and marks. Without sign-in (legacy), nobody is a guest.
+  const guests = auth.mode !== 'legacy';
+  const forgetGuests = async () => {
+    try {
+      const gone = await o.storage.forgetGuests(Date.now() - GUEST_DAYS * DAY_MS);
+      if (gone) log.info('guests deleted', { guests: gone, days: GUEST_DAYS });
+    } catch (err) {
+      // Housekeeping: it never keeps the game from running, and it runs again tomorrow.
+      log.error('deleting guests who stayed away failed', { err });
+    }
+  };
+  // Before the piles and marks are loaded, so none of theirs is.
+  if (guests) await forgetGuests();
   // Piles fade an hour after the collapse, restart or not; older ones are forgotten.
   const drops = await o.storage.loadDrops(Date.now() - DROP_LIFETIME_MS);
   if (drops.length) log.info('piles loaded', { piles: drops.length });
@@ -83,8 +103,8 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     drops,
     // Game time never goes backwards; piles keep wall clock time, which is this far ahead of it.
     epochOffset: Date.now() + shift - clock(),
+    guests,
   });
-  const auth = o.auth ?? legacyAuth();
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version, auth: auth.config });
   const net = attachNet({
     auth,
@@ -117,6 +137,8 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
 
   const tick = setInterval(() => net.tick(), o.tickMs);
   const save = setInterval(() => void net.saveAll(), o.saveEveryMs);
+  // A guest who plays is seen at once (net.ts), so this never takes one who is online.
+  const cleanup = guests ? setInterval(() => void forgetGuests(), o.forgetGuestsEveryMs ?? DAY_MS) : undefined;
   let stopping: Promise<void> | undefined;
 
   return {
@@ -126,6 +148,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
       stopping ??= (async () => {
         clearInterval(tick);
         clearInterval(save);
+        clearInterval(cleanup);
         const closed = new Promise<void>(resolve => http.close(() => resolve()));
         await net.close(1012);
         http.closeAllConnections();

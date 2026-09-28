@@ -3,7 +3,7 @@
  * can be tested; hud.ts shows it and main.ts asks for it.
  */
 import {
-  ELEMENTS, FEATS, type BagSlot, type BodyView, type Element, type EnergyView, type FlashKind, type ProgressView, type Stats, type StoneView, type StormView, type SurgeView, type Weather,
+  ELEMENTS, FEATS, GUEST_DAYS, type BagSlot, type BodyView, type Element, type EnergyView, type FlashKind, type ProgressView, type Stats, type StoneView, type StormView, type SurgeView, type Weather,
 } from '@napoland/shared';
 import { minutes, type News } from './game';
 import type { StatusView } from './hud';
@@ -32,7 +32,12 @@ export interface StatusInput {
   wear: string | null;
   /** The quirks of what you wear, by name. */
   quirks: string[];
+  /** You play as a guest (the welcome said). */
+  guest?: boolean;
 }
+
+/** What the Status tab tells a guest, above everything else: where their progress lives, how long, and what keeps it. */
+export const GUEST_NOTE = `You are playing as a guest. Your progress lives in this browser: clearing its data loses it, and a guest who stays away for ${GUEST_DAYS} days is deleted. Signing in keeps everything.`;
 
 /** "Level 3 · 150 XP, 120 to go": where you stand, for the status panel and the stash's header. */
 export function levelText(p: ProgressView): string {
@@ -82,7 +87,7 @@ export function statusView(s: StatusInput): StatusView {
     const have = s.stats[f.stat] ?? 0;
     return { name: f.name, text: f.text, done: have >= f.need, progress: Math.min(1, have / f.need) };
   });
-  return { rows, feats };
+  return { rows, feats, ...(s.guest && { guest: GUEST_NOTE }) };
 }
 
 /** The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a feat, a level, a chapter of the story. Null: nothing to say. */

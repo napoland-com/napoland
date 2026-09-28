@@ -12,7 +12,7 @@ import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 17;
 
 export const Dir = z.enum(['up', 'down', 'left', 'right']);
 export type Dir = z.infer<typeof Dir>;
@@ -42,6 +42,13 @@ export type AuthMode = AuthConfig['mode'];
 export const AUTH_MODES: readonly AuthMode[] = ['legacy', 'dev', 'supabase'];
 
 /**
+ * With sign-in (dev and supabase), whoever has not signed in plays as a guest: a character that lives
+ * in the browser that made it, like the characters made before sign-in. Chat and friends wait for sign-in.
+ * A guest who has not played for this many days is deleted, with their pile and marks.
+ */
+export const GUEST_DAYS = 30;
+
+/**
  * The longest sign-in a hello may carry: a Supabase access token (a JWT) grows with the profile a
  * provider such as Google puts in it, and is usually 1 to 2 KB.
  */
@@ -57,8 +64,10 @@ export const ClientMsg = z.discriminatedUnion('t', [
   /**
    * First message on a connection. Without sign-in (legacy), a saved token logs back in; otherwise
    * a name creates a new player. With sign-in, `auth` says who you are (Supabase's access token, or
-   * the email in dev mode): you get your character; a `token` saved before sign-in claims its
-   * character if nobody has yet; `name` makes a new one.
+   * the email in dev mode): you get your character; the `token` of a guest (or of a character made
+   * before sign-in) claims its character if nobody has yet, and if you have a character already you
+   * are asked first (has_character); `name` makes a new one. Without `auth` on such a server you
+   * play as a guest: the `token` this browser keeps, or a new guest with `name`.
    */
   z.object({
     t: z.literal('hello'),
@@ -238,8 +247,10 @@ export type Refusal =
   | 'too_many'
   /** Too many messages at once. */
   | 'slow_down'
-  /** Only signed-in players can talk. */
+  /** That needs sign-in: talking, and everything among friends (a guest has neither until they sign in). */
   | 'sign_in_first'
+  /** They play as a guest: friends need both players signed in. */
+  | 'guest'
   /** Gear stays in the chest: it is put on from there. */
   | 'gear_stays'
   /** That is as good as new already, or cannot be mended. */
@@ -277,6 +288,8 @@ export interface PlayerView {
   quirks: Quirk[];
   /** They carry a live find (items.ts): a column of light over them that everyone on the map sees. */
   live?: true;
+  /** They play as a guest (only on a server with sign-in): no friends until they sign in. */
+  guest?: true;
 }
 
 /** A map by id and version; a client whose copy has another version reloads. */
@@ -298,10 +311,12 @@ export type ServerMsg =
       v: number;
       you: string;
       name: string;
-      /** Only without sign-in (legacy): keep it to log in again later, it is the only credential. */
+      /** Without sign-in (legacy), and for a guest: keep it to log in again later, it is the only credential. */
       token?: string;
-      /** Set when this sign-in just claimed the character of the hello's token (made before sign-in). */
+      /** Set when this sign-in just claimed the character of the hello's token (a guest's, or made before sign-in). */
       claimed?: true;
+      /** You play as a guest: nobody signed in with this character (only on a server with sign-in). */
+      guest: boolean;
       /** The map you are on. */
       map: MapRef;
       /** Everyone on your map, you included. */
@@ -351,8 +366,8 @@ export type ServerMsg =
   | { t: 'bag'; bag: BagSlot[] }
   /** You got these (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message. */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'identify' }
-  /** A pick, use, discard or feed that did not happen, and why. */
-  | { t: 'refused'; action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'befriend' | 'tell' | 'say'; reason: Refusal }
+  /** Something asked for that did not happen, and why. */
+  | { t: 'refused'; action: RefusedAction; reason: Refusal }
   /** Someone said something you can hear: to everyone online, or near them on your map (a bubble over their head). You hear your own too. */
   | { t: 'said'; to: ChatTo; id: string; name: string; text: string }
   /** Your friends (with who is online, and where), requests to you and from you, who you block and your setting: whole, after any change and when asked. */
@@ -423,15 +438,25 @@ export type ServerMsg =
   | { t: 'reject'; seq: number; x: number; y: number; dir: Dir }
   | { t: 'weather'; weather: Weather }
   | { t: 'pong'; at: number; serverTime: number }
-  | { t: 'error'; code: ErrorCode; message: string };
+  /** The hello (or the game here) ended; `name` comes with has_character: the account's own character. */
+  | { t: 'error'; code: ErrorCode; message: string; name?: string };
+
+/** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
+export type RefusedAction =
+  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'say'
+  | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
 
 /**
  * need_name: signed in, but there is no character yet; say hello again with a name.
- * sign_in_required: the server wants sign-in, and the hello proved nobody (no auth, or it is
- * malformed, expired or not from our Supabase project).
+ * sign_in_required: the server wants sign-in, and the hello proved nobody (an auth that is
+ * malformed, expired or not from our Supabase project, or neither a guest's token nor a name), or
+ * the hello's token is of a character someone signed in with: only they play it, signed in.
+ * has_character: signed in with the token of a guest, but the account has a character of its own
+ * (the error's `name`): one character per account, so the client asks which to play, and says hello
+ * again without the token to play the account's. The guest stays as it was.
  */
 export type ErrorCode =
-  | 'bad_message' | 'bad_version' | 'bad_name' | 'unknown_token' | 'too_fast' | 'replaced' | 'server_full' | 'need_name' | 'sign_in_required';
+  | 'bad_message' | 'bad_version' | 'bad_name' | 'unknown_token' | 'too_fast' | 'replaced' | 'server_full' | 'need_name' | 'sign_in_required' | 'has_character';
 
 /** Every message but the hello. */
 export const MAX_MESSAGE_BYTES = 1024;
