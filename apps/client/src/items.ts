@@ -101,6 +101,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'gear_stays': return 'Put gear on from the chest';
     case 'whole': return 'It needs no mending';
+    case 'sealed_stays': return 'It stays in the chest: open it there';
   }
 }
 

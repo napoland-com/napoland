@@ -1,9 +1,9 @@
 /**
  * A tap looks, an action is a second step. In the chest and at the workbench a tap on anything opens
  * its card: what a piece of gear is (tier, what it resists and the energy it adds as worn down as it
- * is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a mend takes, or
- * what something in your bag or stash is. The card's one button does the one thing that can be done
- * with it; so do A and a second tap on the same thing (DoubleTap).
+ * is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a mend takes, what
+ * a lockbox may hold, or what something in your bag or stash is. The card's one button does the one
+ * thing that can be done with it; so do A and a second tap on the same thing (DoubleTap).
  *
  * Plain logic with no page in it, so it can be tested: main.ts builds a card from the game
  * (detailView), hud.ts draws it and sends what its button does.
@@ -11,6 +11,7 @@
 import { WEAR_FADES, mendCost, pieceFactor, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type Piece, type Slot, type Tier, type Worn } from '@napoland/shared';
 import { iconFor } from './icons';
 import { ELEMENT_WORDS, conditionText, countOf, factsOf, slotName, type Items } from './items';
+import { holdsText } from './said';
 
 /** A second tap on the same thing within this many milliseconds does what its card's button does. */
 export const DOUBLE_TAP_MS = 350;
@@ -79,7 +80,8 @@ export type DetailAct =
   | { kind: 'wear'; item: string; n: number }
   | { kind: 'off'; slot: Slot }
   | { kind: 'make'; recipe: string }
-  | { kind: 'mend'; slot: Slot };
+  | { kind: 'mend'; slot: Slot }
+  | { kind: 'open'; item: string };
 
 /** Something a piece gives: "Wind 14%" (the element's color), "+5 energy", "Holds 12 things". */
 export interface StatView {
@@ -204,6 +206,12 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
     }
     case 'stash': {
       const def = items.get(ref.item);
+      if (def.kind === 'sealed') {
+        const have = countOf(s.stash, ref.item);
+        if (!have) return null;
+        // It never leaves the chest: its one button opens it (which asks first), one at a time.
+        return { ...itemCard(def, have), notes: [{ text: holdsText(def, items), tone: 'plain' }], act: { label: have > 1 ? 'Open one' : 'Open', enabled: true, does: { kind: 'open', item: ref.item } } };
+      }
       if (def.kind !== 'gear') {
         const have = countOf(s.stash, ref.item);
         if (!have) return null;

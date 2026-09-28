@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DROP_LIFETIME_MS } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord } from '../src/storage';
-import { forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, playFirstThenSignIn, restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
+import { forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsParcels, parcelsThroughRestarts, playFirstThenSignIn, restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -57,7 +57,7 @@ describe.skipIf(!url)('PgStorage', () => {
   it('applies each migration once', async () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
-      '011_guests.sql',
+      '011_guests.sql', '013_parcels.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -219,6 +219,28 @@ describe.skipIf(!url)('PgStorage', () => {
     expect(await storage.findByTokenHash(rec.tokenHash!)).toEqual(reader);
     await storage.save(rec);
     expect((await storage.findByTokenHash(rec.tokenHash!))!.story).toBe('the-lineman');
+  });
+
+  it('keeps the daily parcels: whether the welcome came, the day of the last one and the days of its week, never lost to a save without them', async () => {
+    await keepsParcels(storage);
+    // What the columns hold, as the migration made them.
+    const sub = `dev:${randomUUID()}@example.test`;
+    const rec = { ...player('Pg Parcels'), tokenHash: null, authSub: sub, parcels: { welcome: true, day: 20_724, days: 0b1011 } };
+    expect(await storage.create(rec)).toBe(true);
+    const row = await admin.query(`SELECT parcel_welcome, parcel_day, parcel_days FROM ${schema}.players WHERE id = $1`, [rec.id]);
+    expect(row.rows).toEqual([{ parcel_welcome: true, parcel_day: 20_724, parcel_days: 0b1011 }]);
+    expect(await storage.findByAuthSub(sub)).toEqual(rec);
+  });
+
+  it('gives the parcels through restarts of the server, on the database', async () => {
+    const fresh = await freshSchema();
+    const pgStorage = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await pgStorage.init();
+      await parcelsThroughRestarts(pgStorage);
+    } finally {
+      await pgStorage.close();
+    }
   });
 
   it('keeps XP and the stash, with what was taken out of it', async () => {

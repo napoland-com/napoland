@@ -29,6 +29,31 @@ describe('cloth (roadmap/cloth-supply.md)', () => {
   });
 });
 
+describe('a parcel a day (roadmap/daily-parcels.md)', () => {
+  const p = items.parcels!;
+  const said = (list: Array<{ item: string; count: number }>) => list.map(s => `${s.count} ${s.item}`).join(', ');
+
+  it('welcomes whoever signs in with 5 resin, 4 cloth, a thermos and 2 road flares', () => {
+    expect(said(p.welcome)).toBe('5 resin, 4 cloth, 1 thermos, 2 flare');
+  });
+
+  it('shares out the town\'s stores on a calendar of seven days, Monday first', () => {
+    expect(p.week.map(said)).toEqual([
+      '3 resin, 2 cloth', '1 thermos, 2 scrap', '2 flare, 2 cloth', '3 resin, 2 wire', '1 thermos, 3 cloth', '2 scrap, 2 wire, 1 flare', '4 resin, 1 thermos',
+    ]);
+    // And Sunday's holds a NAPO lockbox for whoever came back on all seven days.
+    expect(p.allWeek).toEqual([{ item: 'lockbox', count: 1 }]);
+  });
+
+  it('keeps the NAPO lockbox in the chest, holding 3 shards, a strange object, a charm or 6 cloth and 4 wire', () => {
+    const box = items.items.find(i => i.id === 'lockbox')!;
+    expect(box).toMatchObject({ name: 'NAPO lockbox', kind: 'sealed', seal: 'It has been sealed since the evacuation.' });
+    expect(box.xp).toBeUndefined();
+    expect(box.holds!.map(h => (h.any ? `any ${h.any}` : said(h.items!)))).toEqual(['3 shard', '1 strange', 'any charm', '6 cloth, 4 wire']);
+    expect(items.finds.some(f => f.item === 'lockbox')).toBe(false);
+  });
+});
+
 describe('the workbench at home (roadmap/workbench-at-home.md)', () => {
   const home = maps.get('stonebrook-home')!, lodge = maps.get('stonebrook-lodge')!;
   const all = (map: TileMap, kind: 'chest' | 'workbench') => map.data.objects.filter(o => o.kind === kind);

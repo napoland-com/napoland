@@ -293,6 +293,9 @@ export function attachNet(o: NetOptions): Net {
       case 'take':
         world.take(s.id, msg.x, msg.y, msg.item, msg.count, now);
         return flush();
+      case 'open':
+        world.open(s.id, msg.x, msg.y, msg.item, now);
+        return flush();
       case 'talk':
         world.talk(s.id, msg.x, msg.y, now);
         return flush();

@@ -61,6 +61,7 @@ async function main(): Promise<void> {
     maxConnectionsPerIp: cfg.maxConnectionsPerIp,
     newPlayersPerIpPerHour: cfg.newPlayersPerIpPerHour,
     clockShiftMs: cfg.clockShiftMs,
+    parcelDayMs: cfg.parcelDayMs,
     auth,
   });
   log.info('server started', {

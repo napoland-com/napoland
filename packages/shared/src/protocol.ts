@@ -8,11 +8,12 @@ import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { Gear, Quirk, Worn } from './gear';
 import type { BagSlot } from './items';
+import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 18;
+export const PROTOCOL_VERSION = 19;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -113,6 +114,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('mend'), x: z.number().int(), y: z.number().int(), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
   /** Take up to `count` of an item out of the chest on tile x,y, as much as fits in your bag. */
   z.object({ t: z.literal('take'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), count: z.number().int().positive().max(9999) }),
+  /** Open a sealed item (a NAPO lockbox) in your stash, at the chest on tile x,y: what it holds goes into the stash. */
+  z.object({ t: z.literal('open'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40) }),
   /** Ask someone to be your friend, by id (tapping their name tag) or by name. If they asked you already, you are friends. */
   z.object({ t: z.literal('befriend'), id: z.uuid().optional(), name: PlayerName.optional() }),
   /** Answer someone's friend request: yes makes you friends, no drops it. */
@@ -213,7 +216,7 @@ export interface StoneView {
 /**
  * What something you asked for did, once the server carried it out: the client says it in the text box,
  * in its own words, from these facts (never guessed). One of these follows every feed, use, discard,
- * craft and mend that went through, after everything else the action changed; a refusal is `refused`.
+ * craft, mend and open that went through, after everything else the action changed; a refusal is `refused`.
  */
 export type Did =
   /** A fire took `count` of `item`, and has `left` seconds of fuel now; `lit`: it was out. */
@@ -231,7 +234,9 @@ export type Did =
   /** The `item` you wear is mended: whole again. */
   | { kind: 'mended'; item: string }
   /** You threw away `count` of `item`. */
-  | { kind: 'thrown'; item: string; count: number };
+  | { kind: 'thrown'; item: string; count: number }
+  /** You opened a sealed `item` (a NAPO lockbox) at the chest: what it held (`got`) is in your stash now. */
+  | { kind: 'opened'; item: string; got: BagSlot[] };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -285,7 +290,9 @@ export type Refusal =
   /** Gear stays in the chest: it is put on from there. */
   | 'gear_stays'
   /** That is as good as new already, or cannot be mended. */
-  | 'whole';
+  | 'whole'
+  /** A sealed thing stays in the chest: it is opened there. */
+  | 'sealed_stays';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -401,7 +408,7 @@ export type ServerMsg =
    * out to be comes in `did` instead.
    */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop'; double?: true }
-  /** What a feed, use, discard, craft or mend you asked for did (for the text box). */
+  /** What a feed, use, discard, craft, mend or open you asked for did (for the text box). */
   | { t: 'did'; did: Did }
   /** Something asked for that did not happen, and why. */
   | { t: 'refused'; action: RefusedAction; reason: Refusal }
@@ -450,11 +457,13 @@ export type ServerMsg =
   | { t: 'chapter'; id: string }
   /** What is in your stash, whole, after you opened the chest or anything went in or out. */
   | { t: 'chest'; stash: BagSlot[] }
+  /** A parcel came into your chest (parcels.ts): when you arrived signed in, or at midnight UTC while you played. */
+  | { t: 'parcel'; parcel: ParcelView }
   /** Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did). */
   | { t: 'progress'; progress: ProgressView; gained: number }
   /** On your map: what someone wears now (you too, after you changed it). */
   | { t: 'gear'; id: string; gear: Gear; quirks: Quirk[] }
-  /** The workbench you opened: what your stash holds, whole, after opening it, making or mending something. */
+  /** The workbench you opened: what your stash holds, whole, after opening it, making or mending something, or a parcel came. */
   | { t: 'bench'; stash: BagSlot[] }
   /** On your map: a find grew here, or someone took one / it went. */
   | { t: 'find'; find: FindView }
@@ -478,7 +487,7 @@ export type ServerMsg =
 
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
-  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'say'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'open' | 'say'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
 
 /**

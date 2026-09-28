@@ -4,9 +4,10 @@
  */
 import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
-import { STARTER_TOOLS, findTiles, type ItemsData } from './items';
+import { STARTER_TOOLS, findTiles, type BagSlot, type ItemsData } from './items';
 import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
+import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
 import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
 import { STORY_EVENTS, type StoryData } from './story';
@@ -292,7 +293,12 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     for (const [field, v] of [['noun', i.noun], ['plural', i.plural], ['about', i.about]] as const) {
       if (v !== undefined && !(typeof v === 'string' && v.trim())) err(`${name}: ${field}, when given, says something`);
     }
-    if (!['resource', 'consumable', 'charm', 'gear', 'tool'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear or tool`);
+    if (!['resource', 'consumable', 'charm', 'gear', 'tool', 'sealed'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear, tool or sealed`);
+    if (i.kind === 'sealed') {
+      if (!i.holds?.length) err(`${name}: a sealed thing holds something`);
+      if (i.use || i.xp || i.fuel || i.charge || i.reveals) err(`${name}: a sealed thing is only opened, at the chest, and earns no XP`);
+    } else if (i.holds || i.seal !== undefined) err(`${name}: only a sealed thing holds something`);
+    if (i.seal !== undefined && !(typeof i.seal === 'string' && i.seal.trim())) err(`${name}: seal, when given, says something`);
     if (i.kind === 'tool') {
       if (i.stack !== 1) err(`${name}: a tool stacks one to a slot`);
       if (i.use || i.weight || i.xp || i.fuel || i.charge) err(`${name}: a tool is never used up, weighs nothing and earns no XP`);
@@ -381,6 +387,39 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     // Looking closely says what it turned out to be and what that is good for: the `about` line.
     const into = data.items.find(d => d.id === r.item);
     if (into && !into.about?.trim()) warn(`item ${JSON.stringify(r.item)}: ${i.id} may turn out to be it, but it has no about line to say what it is good for`);
+  }
+  // What goes into the stash from a lockbox or a parcel: things that lie in a stash (not tools), and never another sealed thing inside a sealed one.
+  const stashable = (id: string, where: string, sealed = false) => {
+    const def = data.items.find(d => d.id === id);
+    if (!def) return err(`${where}: ${id} is not an item`);
+    if (def.kind === 'tool') err(`${where}: ${id} is a tool, which never lies in a stash`);
+    if (sealed && def.kind === 'sealed') err(`${where}: ${id} is sealed too`);
+  };
+  const slotsOf = (list: unknown, where: string, sealed = false) => {
+    if (!Array.isArray(list) || !list.length) return err(`${where}: a list of items and counts, not empty`);
+    for (const s of list as BagSlot[]) {
+      stashable(s?.item, where, sealed);
+      if (!(Number.isInteger(s?.count) && s.count >= 1)) err(`${where}: each count is a whole number from 1`);
+    }
+  };
+  for (const i of data.items) i.holds?.forEach((h, n) => {
+    const where = `item ${JSON.stringify(i.id)}: holding ${n + 1}`;
+    if (!(typeof h.weight === 'number' && h.weight > 0)) err(`${where}: its weight is above 0`);
+    if ((h.items === undefined) === (h.any === undefined)) return err(`${where}: it is some items, or any one of a kind`);
+    if (h.items !== undefined) {
+      slotsOf(h.items, where, true);
+      // Opening one says what was inside and, when it is one thing, what that is good for.
+      const one = h.items.length === 1 ? data.items.find(d => d.id === h.items![0]!.item) : undefined;
+      if (one && !one.about?.trim()) warn(`item ${JSON.stringify(one.id)}: ${i.id} may hold it, but it has no about line to say what it is good for`);
+    } else if (!(['resource', 'consumable', 'charm'] as const).includes(h.any as never)) err(`${where}: any is resource, consumable or charm`);
+    else if (!data.items.some(d => d.kind === h.any)) err(`${where}: any ${h.any}, but there is none`);
+  });
+  const p = data.parcels;
+  if (p) {
+    slotsOf(p.welcome, 'parcels: the welcome parcel');
+    if (!Array.isArray(p.week) || p.week.length !== WEEKDAYS.length) err(`parcels: week is a parcel for each of the ${WEEKDAYS.length} days, Monday first`);
+    else p.week.forEach((day, n) => slotsOf(day, `parcels: ${WEEKDAYS[n]}'s parcel`));
+    if (p.allWeek !== undefined) slotsOf(p.allWeek, 'parcels: allWeek');
   }
   const byId = new Map(maps.map(m => [m.id, m]));
   const conditionIds = validateConditions(data, byId, err);
