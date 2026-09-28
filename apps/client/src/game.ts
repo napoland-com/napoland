@@ -31,7 +31,7 @@ import {
   type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
-import { pieceAt } from './details';
+import { pieceAt, type DetailRef } from './details';
 import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
@@ -296,8 +296,10 @@ export class Game {
   private later: { who: string; text: string } | null = null;
   /** A chest asked to open and not answered yet. */
   private opening: { x: number; y: number; at: number } | null = null;
-  /** A workbench asked to open and not answered yet. */
-  private benching: { x: number; y: number; at: number } | null = null;
+  /** A workbench asked to open and not answered yet, and the card it is to open on (the first goal's), if any. */
+  private benching: { x: number; y: number; at: number; card?: DetailRef } | null = null;
+  /** The card the workbench that just opened is to show: taken once (takeBenchCard). */
+  private benchCard: DetailRef | null = null;
   /** When the server last emptied a bag that held something. */
   private emptiedAt = -Infinity;
 
@@ -535,7 +537,7 @@ export class Game {
       case 'bench': {
         this.stash = msg.stash;
         const b = this.benching;
-        if (b && this.clock - b.at < ANSWER_WAIT_MS) { this.bench = { x: b.x, y: b.y, stash: msg.stash }; this.benching = null; }
+        if (b && this.clock - b.at < ANSWER_WAIT_MS) { this.bench = { x: b.x, y: b.y, stash: msg.stash }; this.benchCard = b.card ?? null; this.benching = null; }
         else if (this.bench) this.bench = { ...this.bench, stash: msg.stash };
         break;
       }
@@ -674,7 +676,7 @@ export class Game {
     this.online = false;
     this.pending = []; this.path = []; this.goal = null;
     // Answers to what we asked went with the connection, and what was being asked may no longer hold.
-    this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null;
+    this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.benchCard = null;
     this.clearBox();
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
@@ -689,7 +691,7 @@ export class Game {
     if (map !== this.current) {
       this.current = map;
       this.talkers = talkersOf(map);
-      this.chest = null; this.opening = null; this.bench = null; this.benching = null;
+      this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.benchCard = null;
       this.dialog = null; this.marker = null; this.floats = [];
       this.clearBox();
     }
@@ -1014,7 +1016,9 @@ export class Game {
     const owned = new Set([...Object.values(this.myGear), ...gearIn(stash), ...gearIn(this.bag)]);
     // Gear only: a recipe that makes a tool (yours for good, never worn) is never the first goal.
     const gear = this.items.recipes.filter(r => this.items.get(r.make).kind === 'gear');
-    return nearestRecipe(gear, owned, count(stash), count(this.bag));
+    // A live find carried goes into the stash as what it fades into (a live shard is a shard there).
+    const bag = this.bag.map(s => ({ item: this.items.get(s.item).live?.into ?? s.item, count: s.count }));
+    return nearestRecipe(gear, owned, count(stash), count(bag));
   }
 
   /** The workbench right next to you, where it can be opened; null when there is none. */
@@ -1024,12 +1028,23 @@ export class Game {
     return b ? { x: b.x, y: b.y } : null;
   }
 
-  /** Opens the workbench next to you, as A at it does (the server answers with what the stash holds). */
-  openBench() {
+  /**
+   * Opens the workbench next to you, as A at it does (the server answers with what the stash holds), on
+   * `card` once it answers (the first goal's recipe). The card goes with the asking: an answer that never
+   * comes, or comes too late, another open, or another map forgets it.
+   */
+  openBench(card?: DetailRef) {
     const b = this.benchBeside();
     if (!b || !this.online) return;
-    this.benching = { ...b, at: this.clock };
+    this.benching = { ...b, at: this.clock, ...(card ? { card } : {}) };
     this.send({ t: 'bench', x: b.x, y: b.y });
+  }
+
+  /** The card the workbench that just opened is to show (the first goal's), once; null when none. */
+  takeBenchCard(): DetailRef | null {
+    const c = this.benchCard;
+    this.benchCard = null;
+    return c;
   }
 
   /** What you wear. */

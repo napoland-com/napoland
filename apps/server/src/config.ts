@@ -150,8 +150,10 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
     else clockShiftMs = Number(shift);
   }
   let parcelDayMs = 0;
-  if (get('PARCEL_DAY_MS') !== undefined) {
-    // A day for everyone's parcels: a live server must follow the real calendar.
+  const parcelDay = get('PARCEL_DAY_MS');
+  // 0 is the real calendar, as when it is not set, anywhere. Anything else is a day for everyone's
+  // parcels: a live server must follow the real calendar.
+  if (parcelDay !== undefined && !/^0+$/.test(parcelDay)) {
     if (get('NODE_ENV') === 'production') errors.push('PARCEL_DAY_MS shortens the days of everyone\'s parcels, so it is refused when NODE_ENV=production');
     else parcelDayMs = int('PARCEL_DAY_MS', 0, 5000, 86_400_000);
   }

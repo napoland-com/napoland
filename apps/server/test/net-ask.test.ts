@@ -108,7 +108,7 @@ describe('asking first, over the network', () => {
     a.c.send({ t: 'craft', x: 1, y: 1, recipe: 'coat' });
     const made = await news(a.c);
     expect(made.at(-1)).toEqual({ t: 'did', did: { kind: 'made', item: 'coat', count: 1 } });
-    expect(made.map(m => m.t)).toEqual(['bench', 'did']);
+    expect(made.map(m => m.t)).toEqual(['stats', 'bench', 'did']);
     a.c.send({ t: 'mend', x: 1, y: 1, slot: 'shirt' });
     expect((await news(a.c)).at(-1)).toEqual({ t: 'did', did: { kind: 'mended', item: 'coat' } });
     // One cloth left: not enough for either.

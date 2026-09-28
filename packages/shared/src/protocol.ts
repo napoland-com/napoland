@@ -518,7 +518,10 @@ export type ServerMsg =
   | { t: 'board'; lines: string[] }
   /** You reached rank `rank` (1 to RANKS) of a feat (feats.ts), told once; `stats` is where your counts stand now. */
   | { t: 'feat'; id: string; rank: number; stats: Stats }
-  /** Your counts toward feats, as you asked (`stats`): the ranks follow from them (feats.ts, rankOf). */
+  /**
+   * Your counts toward feats, as you asked (`stats`): the ranks follow from them (feats.ts, rankOf). Also
+   * sent unasked when a count that people remark on goes up (gear made, a collapse, a surge: story.ts).
+   */
   | { t: 'stats'; stats: Stats }
   /** You reached this chapter of the story (story.ts): it goes into your journal. */
   | { t: 'chapter'; id: string }
