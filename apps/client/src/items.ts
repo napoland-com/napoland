@@ -5,8 +5,9 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, WEAR_FADES, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, upgradable, upgradeChance, wearSeconds, type BagSlot, type EffectView, type Element, type Gear, type ItemDef,
-  type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction, type Slot, type Upgrade, type Worn,
+  BAG_SLOTS, SLOTS, WEAR_FADES, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, shopLookOf, upgradable, upgradeChance, wearSeconds,
+  type BagSlot, type EffectView, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction, type ShopData, type Slot,
+  type Upgrade, type Worn,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
 import type { Look } from './view/characters';
@@ -86,7 +87,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
   switch (reason) {
     case 'bag_full': return 'Your bag is full';
     case 'too_far': return action === 'move' ? 'Only at your own door' : 'Too far';
-    case 'gone': return action === 'move' ? 'They have no cabin on a street yet' : 'Someone got there first';
+    case 'gone': return action === 'move' ? 'They have no cabin on a street yet' : action === 'checkout' ? 'The shop does not sell that' : 'Someone got there first';
     case 'not_usable': return 'That cannot be used';
     case 'empty_slot': return 'That slot is empty';
     case 'not_here': return 'Not here';
@@ -105,11 +106,14 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'not_friends': return action === 'move' ? 'You can only move next to friends' : 'You can only message friends';
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
-    case 'slow_down': return action === 'call' ? 'Catch your breath first' : action === 'knock' ? 'Give them a moment to answer' : action === 'move' ? 'You only just moved' : 'Slow down a little';
+    case 'slow_down':
+      if (action === 'checkout') return 'Give it a moment before you try again';
+      return action === 'call' ? 'Catch your breath first' : action === 'knock' ? 'Give them a moment to answer' : action === 'move' ? 'You only just moved' : 'Slow down a little';
     case 'sign_in_first':
       if (action === 'say' || action === undefined) return 'Sign in to talk';
       if (action === 'outfit' || action === 'pattern' || action === 'badge') return `Sign in to wear ${action === 'outfit' ? 'an outfit' : `a ${action}`}`;
       if (action === 'buy') return 'Sign in to spend merits';
+      if (action === 'checkout') return 'Sign in to buy looks';
       return action.startsWith('trade') ? 'Sign in to trade' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'bag_at_home': return 'The bag you wear changes only at home';
@@ -127,7 +131,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'took_one': return 'You took something here this time already';
     case 'owned': return 'It is yours already';
     case 'no_merits': return 'You have no merit to spend on it';
-    case 'not_owned': return 'It is not yours yet: spend a merit on it first';
+    case 'not_owned': return action === 'outfit' ? 'It is not yours yet' : 'It is not yours yet: spend a merit on it first';
     case 'trades_off': return 'They take no trade requests';
     case 'busy': return 'They are trading with someone else';
     case 'trading': return 'Finish the trade you are in first';
@@ -136,6 +140,8 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'placed': return 'It stands in its place already';
     case 'street_full': return 'Their street has no lot free';
     case 'neighbors': return 'You live on the same street already';
+    case 'shop_closed': return 'The shop is closed';
+    case 'shop_down': return 'The shop cannot reach Stripe right now. Try again in a moment';
   }
 }
 
@@ -262,10 +268,10 @@ export function factsOf(def: ItemDef): string[] {
 
 /**
  * What someone looks like in what they wear (characters.ts): each piece's color, and the bag's size;
- * or, in an outfit (outfits.ts), the outfit and the bag alone, since nothing else of the gear shows.
- * An outfit this copy does not have leaves them in their gear.
+ * or, in an outfit (outfits.ts, or one the `shop` sells), the outfit and the bag alone, since nothing
+ * else of the gear shows. An outfit this copy does not have leaves them in their gear.
  */
-export function lookOf(gear: Gear, items: Items, outfit?: string, pattern?: string): Look {
+export function lookOf(gear: Gear, items: Items, outfit?: string, pattern?: string, shop?: ShopData): Look {
   // No cap: the hair shows. (Other slots, left bare, keep the old look: nobody walks out barefoot.)
   const out: Look = gear.cap ? {} : { cap: null };
   for (const slot of SLOTS) {
@@ -276,8 +282,8 @@ export function lookOf(gear: Gear, items: Items, outfit?: string, pattern?: stri
     if (slot === 'bag' && def.bag) out.bagSize = Math.sqrt(def.bag / BAG_SLOTS);
   }
   // A pattern goes on the jacket, whatever is worn: the gear's, or an outfit's.
-  const patterned = meritLookOf(pattern, 'pattern') ? { pattern: pattern! } : {};
-  if (!outfitOf(outfit)) return { ...out, ...patterned };
+  const patterned = meritLookOf(pattern, 'pattern') || shopLookOf(shop, pattern, 'pattern') ? { pattern: pattern! } : {};
+  if (!outfitOf(outfit) && !shopLookOf(shop, outfit, 'outfit')) return { ...out, ...patterned };
   // The pack still shows over any outfit: how much someone carries matters out there.
   return { outfit, ...(out.bag ? { bag: out.bag } : {}), ...(out.bagSize ? { bagSize: out.bagSize } : {}), ...patterned };
 }

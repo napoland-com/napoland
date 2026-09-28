@@ -1,6 +1,7 @@
 /**
- * The HTTP side: /health for load balancers, /auth-config for the client's sign-in screen and,
- * when the client has been built, its static files, so one process can serve the whole game.
+ * The HTTP side: /health for load balancers, /auth-config for the client's sign-in screen, Stripe's
+ * webhook for the shop while it is open (POST /stripe-webhook) and, when the client has been built, its
+ * static files, so one process can serve the whole game.
  */
 import { createReadStream, type Stats } from 'node:fs';
 import { stat } from 'node:fs/promises';
@@ -34,6 +35,10 @@ const CONTENT_TYPES: Record<string, string> = {
 
 /** Vite puts a content hash in every file name under /assets/, so they never change. */
 const IMMUTABLE = 'public, max-age=31536000, immutable';
+/** Where Stripe sends the shop's events. */
+export const STRIPE_WEBHOOK_PATH = '/stripe-webhook';
+/** The most a webhook's body may be: Stripe's events are a few kilobytes. */
+export const WEBHOOK_MAX_BYTES = 256 * 1024;
 
 export interface HttpOptions {
   /** Serve the built client from here; without it, only /health exists. */
@@ -44,6 +49,12 @@ export interface HttpOptions {
   version?: string;
   /** How players sign in, for /auth-config (with sign-in, the providers the card offers too). Default: without sign-in (legacy). */
   auth?: AuthConfig;
+  /**
+   * The shop's webhook (shop.ts): Stripe's event as it came, byte for byte (its signature is over them),
+   * with its Stripe-Signature header; the answer goes back to Stripe. None: the shop is closed, and the
+   * address is not there (404).
+   */
+  stripeWebhook?: (body: Buffer, signature: string | undefined) => Promise<{ status: number; body: string }>;
 }
 
 export function createHttpServer(opts: HttpOptions): Server {
@@ -54,6 +65,7 @@ export function createHttpServer(opts: HttpOptions): Server {
   const authConfig = JSON.stringify(opts.auth ?? { mode: 'legacy' });
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (pathOf(req.url) === STRIPE_WEBHOOK_PATH) return webhook(req, res);
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
     let pathname: string;
     try {
@@ -87,6 +99,18 @@ export function createHttpServer(opts: HttpOptions): Server {
     pipeline(createReadStream(found.file), res, () => {});
   }
 
+  /** POST /stripe-webhook: the body read whole (up to WEBHOOK_MAX_BYTES), untouched, for the shop to check and act on. */
+  async function webhook(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!opts.stripeWebhook) return reply(res, 404, 'Not found');
+    if (req.method !== 'POST') return reply(res, 405, 'Method not allowed', { Allow: 'POST' });
+    if (Number(req.headers['content-length'] ?? 0) > WEBHOOK_MAX_BYTES) return tooLarge(req, res);
+    const body = await readBody(req, WEBHOOK_MAX_BYTES);
+    if (!body) return tooLarge(req, res);
+    const signature = req.headers['stripe-signature'];
+    const answer = await opts.stripeWebhook(body, typeof signature === 'string' ? signature : undefined);
+    return reply(res, answer.status, answer.body);
+  }
+
   return createServer((req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
@@ -96,6 +120,40 @@ export function createHttpServer(opts: HttpOptions): Server {
       else reply(res, 500, 'Internal error');
     });
   });
+}
+
+/** A request's path, or undefined for one that is no URL. */
+function pathOf(url: string | undefined): string | undefined {
+  try {
+    return new URL(url ?? '/', 'http://localhost').pathname;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A request's body, whole, or undefined once it runs past `max` bytes (what is left of it is not kept). */
+function readBody(req: IncomingMessage, max: number): Promise<Buffer | undefined> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      if (size > max) return;
+      size += chunk.length;
+      if (size > max) resolve(undefined);
+      else chunks.push(chunk);
+    });
+    req.on('end', () => {
+      if (size <= max) resolve(Buffer.concat(chunks));
+    });
+    req.on('error', reject);
+  });
+}
+
+/** 413, and the connection closed: the rest of an oversized body is not read. */
+function tooLarge(req: IncomingMessage, res: ServerResponse): void {
+  res.setHeader('Connection', 'close');
+  reply(res, 413, 'Too large');
+  res.on('finish', () => req.destroy());
 }
 
 /**

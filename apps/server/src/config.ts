@@ -4,8 +4,9 @@
  */
 import { existsSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { AUTH_MODES, OAUTH_PROVIDERS, Weather, isOAuthProvider, type OAuthProvider } from '@napoland/shared';
+import { AUTH_MODES, OAUTH_PROVIDERS, SHOP_CURRENCIES, Weather, isOAuthProvider, type OAuthProvider } from '@napoland/shared';
 import { LOG_LEVELS, type LogLevel } from './log';
+import { STRIPE_API } from './stripe';
 
 /**
  * How players sign in (auth.ts has what each mode means). `providers` (AUTH_PROVIDERS): Google and
@@ -25,6 +26,29 @@ export type AuthSettings =
       jwtSecret: string | undefined;
       providers: OAuthProvider[];
     };
+
+/**
+ * The shop for looks (shop.ts), open only once the owner has set up payments (docs/OPERATIONS.md, "The
+ * shop"): Stripe's secret key and the webhook's signing secret (both only in the server's .env, never
+ * logged and never sent anywhere but Stripe), the terms of sale, the currency the prices are in, and the
+ * game's own address, where players come back to after paying.
+ */
+export interface ShopSettings {
+  /** Stripe's secret key (sk_...), or a restricted key (rk_...) that may create Checkout Sessions. */
+  secretKey: string;
+  /** The webhook endpoint's signing secret (whsec_...): it proves an event comes from Stripe. */
+  webhookSecret: string;
+  /** The owner's terms of sale: public, every player can open it from the shop. */
+  terms: string;
+  /** What the prices are in: lowercase ISO 4217, a currency content/shop.json prices every look in. */
+  currency: string;
+  /** The game's own address (an origin), where Stripe sends players back: never taken from a request. */
+  publicUrl: string;
+  /** Stripe's API: its own, or in development a fake Stripe on this machine (STRIPE_API). */
+  api: string;
+  /** A live key: real money. Refused outside production. */
+  live: boolean;
+}
 
 export interface Config {
   port: number;
@@ -78,6 +102,10 @@ export interface Config {
    */
   glimpseEveryMs: number;
   auth: AuthSettings;
+  /** The shop, when it is set up and turned on (SHOP_ENABLED); none: closed. */
+  shop: ShopSettings | undefined;
+  /** SHOP_ENABLED is on, but these settings are not set: the shop stays closed (for the log: names, never values). */
+  shopMissing: string[];
 }
 
 type Env = Record<string, string | undefined>;
@@ -232,11 +260,84 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
     auth = { mode: 'supabase', url: url ?? '', publishableKey: key ?? '', jwtSecret, providers };
   }
 
+  // The shop. Its keys are checked whenever they are set, so a wrong one stops the server the day it is
+  // written, not the day the shop opens; none is ever repeated, so the log cannot spread it further.
+  const production = get('NODE_ENV') === 'production';
+  const shopEnabled = bool('SHOP_ENABLED', false);
+  const secretKey = get('STRIPE_SECRET_KEY');
+  let live = false;
+  if (secretKey !== undefined) {
+    const kind = stripeKeyKind(secretKey);
+    if (kind === 'publishable') errors.push('STRIPE_SECRET_KEY is a publishable key (pk_...): the server needs a secret key (sk_...) or a restricted key (rk_...) from the Stripe dashboard');
+    else if (kind === undefined) errors.push('STRIPE_SECRET_KEY is not a Stripe secret key (sk_test_..., sk_live_..., or a restricted rk_...)');
+    else {
+      live = kind === 'live';
+      if (live && !production) errors.push('STRIPE_SECRET_KEY is a live key, which takes real money, so it is refused unless NODE_ENV=production: use a test key (sk_test_...) here');
+      else if (live && auth.mode === 'dev') errors.push('STRIPE_SECRET_KEY is a live key, and AUTH_MODE=dev lets anyone sign in as anyone: a live key needs real sign-in');
+    }
+  }
+  const webhookSecret = get('STRIPE_WEBHOOK_SECRET');
+  if (webhookSecret !== undefined && !/^whsec_\S{16,}$/.test(webhookSecret)) errors.push('STRIPE_WEBHOOK_SECRET must be the webhook endpoint\'s signing secret (whsec_...)');
+  const termsRaw = get('SHOP_TERMS_URL');
+  const terms = termsRaw === undefined ? undefined : webAddress(termsRaw, false);
+  if (termsRaw !== undefined && terms === undefined) errors.push(`SHOP_TERMS_URL must be the https address of the terms of sale (http only on this machine), got "${termsRaw}"`);
+  const currencyRaw = get('SHOP_CURRENCY'), currency = currencyRaw?.toLowerCase();
+  if (currency !== undefined && !Object.hasOwn(SHOP_CURRENCIES, currency)) errors.push(`SHOP_CURRENCY must be one of ${Object.keys(SHOP_CURRENCIES).join(', ')}, got "${currencyRaw}"`);
+  const publicRaw = get('PUBLIC_URL');
+  const publicUrl = publicRaw === undefined ? undefined : webAddress(publicRaw, true);
+  if (publicRaw !== undefined && publicUrl === undefined) errors.push(`PUBLIC_URL must be the game's own address, like https://www.napoland.com (http only on this machine), got "${publicRaw}"`);
+  let api = STRIPE_API;
+  const apiRaw = get('STRIPE_API');
+  if (apiRaw !== undefined) {
+    // The secret key goes wherever this points: a live server only ever talks to Stripe itself.
+    const fake = webAddress(apiRaw, true);
+    if (production) errors.push('STRIPE_API sends the shop\'s secret key somewhere other than Stripe, so it is refused when NODE_ENV=production');
+    else if (fake === undefined || !isLocal(fake)) errors.push(`STRIPE_API must be a fake Stripe on this machine, like http://localhost:12111, got "${apiRaw}"`);
+    else api = fake;
+  }
+  if (shopEnabled && auth.mode === 'legacy') errors.push('SHOP_ENABLED needs sign-in, since a look bought belongs to an account: AUTH_MODE=supabase (or dev, on this machine)');
+  const needed: Record<string, string | undefined> = { STRIPE_SECRET_KEY: secretKey, STRIPE_WEBHOOK_SECRET: webhookSecret, SHOP_TERMS_URL: termsRaw, SHOP_CURRENCY: currency, PUBLIC_URL: publicRaw };
+  const shopMissing = shopEnabled ? Object.keys(needed).filter(k => needed[k] === undefined) : [];
+  const shop = shopEnabled && !shopMissing.length ? { secretKey: secretKey!, webhookSecret: webhookSecret!, terms: terms!, currency: currency!, publicUrl: publicUrl!, api, live } : undefined;
+
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
     port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, storyFile: storyFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
-    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, restedEveryMs, townCrowd, regionCrowd, glimpseEveryMs, auth,
+    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, restedEveryMs, townCrowd, regionCrowd, glimpseEveryMs, auth, shop, shopMissing,
   };
+}
+
+/**
+ * What kind of Stripe key `key` is: a secret (or restricted) key in test or live mode, a publishable key
+ * (which only a browser may have, and which cannot create a payment), or none Stripe makes.
+ */
+function stripeKeyKind(key: string): 'test' | 'live' | 'publishable' | undefined {
+  if (/^pk_(test|live)_/.test(key)) return 'publishable';
+  const m = /^(?:sk|rk)_(test|live)_[A-Za-z0-9_]{8,}$/.exec(key);
+  return m ? (m[1] as 'test' | 'live') : undefined;
+}
+
+/**
+ * An address a setting names, or undefined if it is not one: https (plain http only on this machine),
+ * without credentials; `origin`: only the origin, as a page's address starts (no path, query or fragment).
+ */
+function webAddress(raw: string, origin: boolean): string | undefined {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && isLocal(u.origin))) return undefined;
+  if (u.username || u.password) return undefined;
+  if (!origin) return u.href;
+  return u.search || u.hash || u.pathname.replace(/\/+$/, '') !== '' ? undefined : u.origin;
+}
+
+/** An origin on this machine. */
+function isLocal(origin: string): boolean {
+  const host = new URL(origin).hostname;
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
 }
 
 /**

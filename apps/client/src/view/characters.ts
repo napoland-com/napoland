@@ -1,8 +1,9 @@
 /**
  * Chibi characters built from boxes: big head, short legs, outlines. Players differ by jacket color and
- * by what they wear: each piece of gear in its color, or an outfit over all of it (outfits.ts), which
- * changes how they look and nothing else. Either way the pack they carry shows, and how big it is. Past
- * level 20 a pattern on the jacket (merits.ts) goes over either, in a shade of the cloth it is on.
+ * by what they wear: each piece of gear in its color, or an outfit over all of it (outfits.ts, or one
+ * bought in the shop, shop.ts), which changes how they look and nothing else. Either way the pack they
+ * carry shows, and how big it is. Past level 20 a pattern on the jacket (merits.ts, or the shop's) goes
+ * over either, in a shade of the cloth it is on.
  *
  * What a character wears is plain data first (dressOf: a Dress), so which look shows can be tested
  * without drawing; makePlayer draws a Dress. Each moving part (the body, each leg, each arm) is baked
@@ -97,6 +98,12 @@ export interface Dress {
 }
 
 const SKIN = '#f2cda8';
+/**
+ * How thick a pattern's patch is, and how far a band stands out from what it goes round: far enough in
+ * front of an outfit's own patches, belts and bands that no two faces share a depth from the camera's
+ * distance (they would flicker). An outfit's own small patches are as thick.
+ */
+const PLATE = 0.016, PROUD = 0.009;
 const HAIR = '#2b2421';
 const PACK = '#6b5a3a';
 const ROLL = '#4f6a52';
@@ -118,6 +125,11 @@ const HIVIS = '#e0712c', HIVIS_DARK = '#b3531b', REFLECTIVE = '#e2e6e2', WALT_HA
 const CAPE = '#2f5b3f', CAPE_DARK = '#244a33';
 const WOOL = '#6e4a2e', WOOL_DARK = '#4b3120', FELT = '#8b6c40', BRASS = '#d6b24c';
 const RAG_RED = '#a8584a', RAG_MUSTARD = '#c39a3e', RAG_TEAL = '#3e7c77', RAG_BLUE = '#4f6b95', STITCH = '#e6d6ae';
+// The shop's outfits (content/shop.json): never earned, each its own colors.
+const OILSKIN = '#e5b53a', OILSKIN_DARK = '#b8892a', TOGGLE = '#6b4a24', RUBBER = '#1f2326';
+const PARKA = '#2c4a63', PARKA_DARK = '#1f3547', FUR = '#e6d9c2', MITTEN = '#a33b3b';
+const DRESS = '#26324a', DRESS_DARK = '#1b2436', GLOVE = '#ecebe6', VISOR = '#15181e';
+const KNIT = '#b33a4a', KNIT_CREAM = '#e6d6ae', KNIT_GREEN = '#2f6b4a', KNIT_BAND = '#7a2a36';
 
 /**
  * How each outfit looks, by id (outfits.ts); the pack is always the one worn. Whatever is on the front
@@ -174,6 +186,52 @@ export const OUTFIT_LOOKS: Readonly<Record<string, Omit<Dress, 'bag' | 'bagSize'
     ],
     arm: [],
   },
+  // From the shop, then. Yellow oilskin to the knees over oilskin trousers and black rubber boots, two
+  // toggles down the front, and a sou'wester: a low crown, a brim all round, a flap down the back of the neck.
+  'lighthouse-oilskin': {
+    body: OILSKIN, sleeveL: OILSKIN, sleeveR: OILSKIN, front: OILSKIN_DARK, pants: OILSKIN, shoes: RUBBER, hands: SKIN, packBack: 0,
+    parts: [
+      skirt(OILSKIN), b(0.07, 0.022, 0.014, TOGGLE, 0, 0.27, 0.14, false), b(0.07, 0.022, 0.014, TOGGLE, 0, 0.33, 0.14, false),
+      b(0.43, 0.1, 0.39, OILSKIN, 0, 0.935, -0.01), b(0.54, 0.025, 0.5, OILSKIN, 0, 0.9, -0.02), b(0.48, 0.14, 0.05, OILSKIN, 0, 0.83, -0.25),
+    ],
+    arm: [],
+  },
+  // A long navy parka, pockets low on the front, its hood up and lined in fur round the face (thick, so it
+  // shows past the brow), fur at the cuffs, and red mittens.
+  'winter-parka': {
+    body: PARKA, sleeveL: PARKA, sleeveR: PARKA, front: PARKA_DARK, pants: '#3a3a40', shoes: '#4a3322', hands: MITTEN, packBack: 0,
+    parts: [
+      cone(0.2, 0.235, 0.1, 6, PARKA, 0, 0.19, 0), b(0.1, 0.03, 0.014, PARKA_DARK, -0.1, 0.27, 0.127, false), b(0.1, 0.03, 0.014, PARKA_DARK, 0.1, 0.27, 0.127, false),
+      b(0.47, 0.13, 0.43, PARKA, 0, 0.9, -0.01), b(0.47, 0.3, 0.12, PARKA, 0, 0.75, -0.16), b(0.05, 0.3, 0.34, PARKA, -0.235, 0.74, -0.01), b(0.05, 0.3, 0.34, PARKA, 0.235, 0.74, -0.01),
+      b(0.5, 0.06, 0.06, FUR, 0, 0.855, 0.2), b(0.06, 0.26, 0.06, FUR, -0.235, 0.72, 0.18), b(0.06, 0.26, 0.06, FUR, 0.235, 0.72, 0.18),
+    ],
+    arm: [b(0.106, 0.035, 0.126, FUR, 0, -0.175, 0, false)],
+  },
+  // NAPO's navy dress uniform: yellow buttons in two rows and a yellow hem, yellow boards on the shoulders,
+  // white gloves, and a peaked cap with a yellow band, NAPO's badge on its front and a black visor.
+  'napo-dress-uniform': {
+    body: DRESS, sleeveL: DRESS, sleeveR: DRESS, front: DRESS_DARK, pants: '#1f2738', shoes: '#141414', hands: GLOVE, packBack: 0,
+    parts: [
+      ...[0.27, 0.33].flatMap(y => [-0.075, 0.075].map(x => b(0.03, 0.03, 0.014, NAPO_YELLOW, x, y, 0.127, false))), b(0.372, 0.02, 0.252, NAPO_YELLOW, 0, 0.232, 0, false),
+      b(0.46, 0.12, 0.42, DRESS, 0, 0.93, 0), b(0.47, 0.035, 0.43, NAPO_YELLOW, 0, 0.885, 0, false), b(0.07, 0.05, 0.012, NAPO_YELLOW, 0, 0.945, 0.216, false),
+      b(0.32, 0.035, 0.15, VISOR, 0, 0.87, 0.25),
+    ],
+    arm: [b(0.11, 0.022, 0.13, NAPO_YELLOW, 0, 0.012, 0, false)],
+  },
+  // A cranberry sweater knitted by hand: a cream band across it with cranberry diamonds, green at the hem and
+  // the cuffs and a cream stripe up each sleeve, jeans, and cream earmuffs on a band over the hair. The band
+  // stands clear of the strip down the front, which is the sweater's own cranberry: a sweater has no zip.
+  'festival-sweater': {
+    body: KNIT, sleeveL: KNIT, sleeveR: KNIT, front: KNIT, pants: '#3d4658', shoes: '#6b4a31', hands: SKIN, packBack: 0,
+    parts: [
+      b(0.366, 0.06, 0.28, KNIT_CREAM, 0, 0.31, 0, false),
+      ...[-0.135, -0.045, 0.045, 0.135].map((x): Part => ({ box: [0.035, 0.035, PLATE], at: [x, 0.31, 0.14 + PLATE / 2], color: KNIT, line: false, spin: Math.PI / 4 })),
+      b(0.372, 0.03, 0.252, KNIT_GREEN, 0, 0.235, 0, false),
+      b(0.44, 0.03, 0.06, KNIT_BAND, 0, 0.885, 0), b(0.02, 0.1, 0.05, KNIT_BAND, -0.225, 0.83, 0), b(0.02, 0.1, 0.05, KNIT_BAND, 0.225, 0.83, 0),
+      b(0.07, 0.12, 0.13, KNIT_CREAM, -0.225, 0.72, 0), b(0.07, 0.12, 0.13, KNIT_CREAM, 0.225, 0.72, 0),
+    ],
+    arm: [b(0.106, 0.03, 0.126, KNIT_GREEN, 0, -0.175, 0, false), b(0.106, 0.03, 0.126, KNIT_CREAM, 0, -0.1, 0, false)],
+  },
 };
 
 /**
@@ -216,13 +274,6 @@ export function shadeOf(hex: string): string {
   return `#${rgb.map(c => Math.round(light ? c * 0.62 : c + (255 - c) * 0.42).toString(16).padStart(2, '0')).join('')}`;
 }
 
-/**
- * How thick a pattern's patch is, and how far a band stands out from what it goes round: far enough in
- * front of an outfit's own patches, belts and bands that no two faces share a depth from the camera's
- * distance (they would flicker).
- */
-const PLATE = 0.016, PROUD = 0.009;
-
 type Bell = Extract<Torso, { kind: 'bell' }>;
 /** A bell's radius at height y (it widens toward the bottom), and the half-width of its front face there, and how far that face stands from the middle. */
 function bellAt(t: Bell, y: number): { r: number; half: number; front: number } {
@@ -258,6 +309,19 @@ function patch(t: Torso, u0: number, v0: number, u1: number, v1: number, color: 
   return bar(t, u0, (v0 + v1) / 2, u1, (v0 + v1) / 2, tall, color, lift);
 }
 
+/** A diamond, a square turned half a right angle, `size` along its sides, lying flat on the torso's front at u,v. */
+function diamond(t: Torso, u: number, v: number, size: number, color: string): Part {
+  const a = onFront(t, u, v), tilt = t.kind === 'bell' ? -bellLean(t) : 0;
+  return { box: [size, size, PLATE], at: [a.x, a.y, a.z + PLATE / 2 / Math.cos(tilt)], color, line: false, spin: Math.PI / 4, ...(tilt ? { tilt } : {}) };
+}
+
+/** Halfway between two colors: a second shade, between a cloth and its shadeOf. */
+function between(a: string, b: string): string {
+  const rgb = (hex: string) => { const n = parseInt(hex.slice(1, 7), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+  const x = rgb(a), y = rgb(b);
+  return `#${x.map((c, i) => Math.round((c + y[i]!) / 2).toString(16).padStart(2, '0')).join('')}`;
+}
+
 /** A band all the way round the torso, from v0 up to v1. */
 function band(t: Torso, v0: number, v1: number, color: string): Part {
   const y0 = t.y + (v0 * t.h) / 2, y1 = t.y + (v1 * t.h) / 2;
@@ -276,6 +340,7 @@ const sleevePatch = (side: -1 | 1, y: number, h: number, d: number, color: strin
 export interface PatternParts { body: Part[]; armL: Part[]; armR: Part[] }
 const TAPE = '#e2e6e2';
 const RAG = { red: '#a8584a', mustard: '#c39a3e', teal: '#3e7c77', blue: '#4f6b95' } as const;
+const AURORA = { green: '#5fd49a', violet: '#9b7be0' } as const, BOLT = '#f2c94c';
 
 /**
  * How each jacket pattern looks, by id (merits.ts), from the clothes it goes on: in a shade of their cloth
@@ -327,6 +392,25 @@ export const PATTERN_LOOKS: Readonly<Record<string, (d: Dress) => PatternParts>>
       body: [patch(t, -0.85, -0.85, -0.3, -0.2, RAG.mustard), patch(t, 0.3, -0.5, 0.8, 0.1, RAG.teal), patch(t, -0.15, -0.95, 0.3, -0.55, RAG.blue)],
       armL: sleeves ? [sleevePatch(-1, -0.1, 0.07, 0.075, RAG.red)] : [], armR: sleeves ? [sleevePatch(1, -0.06, 0.06, 0.08, RAG.blue)] : [],
     };
+  },
+  // From the shop, then. Argyle: diamonds in two rows low on the front, in two shades of the cloth, and a
+  // diamond on each sleeve's side.
+  argyle: d => {
+    const t = d.torso, ink = shadeOf(d.body), mid = between(d.body, ink), sleeves = t.kind === 'box';
+    const rows: Array<[number, number, string]> = [[-0.55, -0.35, ink], [0, -0.35, mid], [0.55, -0.35, ink], [-0.28, -0.8, mid], [0.28, -0.8, ink]];
+    const side = (s: -1 | 1, cloth: string): Part => ({ box: [PLATE, 0.055, 0.055], at: [s * (SLEEVE.w / 2 + PLATE / 2), SLEEVE.y, 0], color: shadeOf(cloth), line: false, tilt: Math.PI / 4 });
+    return { body: rows.map(([u, v, c]) => diamond(t, u, v, 0.07, c)), armL: sleeves ? [side(-1, d.sleeveL)] : [], armR: sleeves ? [side(1, d.sleeveR)] : [] };
+  },
+  // Aurora bands: a green band and a violet one round the body, low, and a green cuff on each sleeve.
+  'aurora-bands': d => {
+    const t = d.torso, sleeve = t.kind === 'box' ? [cuff(-0.125, -0.155, AURORA.green)] : [];
+    return { body: [band(t, -0.8, -0.6, AURORA.green), band(t, -0.5, -0.3, AURORA.violet)], armL: sleeve, armR: [...sleeve] };
+  },
+  // Lightning: a yellow bolt down the front, a zigzag of three bars, and a small one on the right sleeve.
+  lightning: d => {
+    const t = d.torso;
+    const bolt = [bar(t, 0.35, 0.1, -0.12, -0.35, 0.05, BOLT), bar(t, -0.2, -0.3, 0.22, -0.45, 0.05, BOLT), bar(t, 0.16, -0.42, -0.3, -0.95, 0.05, BOLT)];
+    return { body: bolt, armL: [], armR: t.kind === 'box' ? [sleevePatch(1, -0.08, 0.08, 0.025, BOLT)] : [] };
   },
 };
 

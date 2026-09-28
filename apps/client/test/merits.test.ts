@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { BADGES, MERITS_FROM, MERIT_XP, OUTFITS, PATTERNS, xpFor, type ClientMsg, type MapData, type MeritsView, type PlayerView, type ProgressView } from '@napoland/shared';
+import { BADGES, MERITS_FROM, MERIT_XP, OUTFITS, PATTERNS, xpFor, type ClientMsg, type MapData, type MeritsView, type PlayerView, type ProgressView, type ShopData } from '@napoland/shared';
 import { cardPress, detailView, refKey, type DetailState, type DetailView } from '../src/details';
 import { Game } from '../src/game';
 import { cardHtml, wardrobeTilesHtml } from '../src/hud';
@@ -17,6 +17,10 @@ import { newsBanner, statusView, type StatusInput } from '../src/status';
 import { MERITS_COME, NO_BADGE, NO_PATTERN, lookIcon, wardrobeView, type WardrobeState } from '../src/wardrobe';
 import { PATTERN_LOOKS, dressOf, makePlayer, shadeOf } from '../src/view/characters';
 import { FULL, ITEMS, tinyTown, welcome } from './fixtures';
+import shopJson from '../../../content/shop.json';
+
+/** What the shop sells: its patterns are drawn like the others. */
+const SHOP = shopJson as ShopData;
 
 /** XP worth `n` merits, 260 XP past the last (1,240 to the next). */
 const worth = (n: number) => MERITS_FROM + n * MERIT_XP + 260;
@@ -261,8 +265,8 @@ describe('merits in the game', () => {
 });
 
 describe('a pattern as the world draws it', () => {
-  it('has a drawing for every pattern, and none for one this copy does not have', () => {
-    expect(Object.keys(PATTERN_LOOKS).sort()).toEqual(PATTERNS.map(p => p.id).sort());
+  it('has a drawing for every pattern, bought with merits or in the shop, and none for one this copy does not have', () => {
+    expect(Object.keys(PATTERN_LOOKS).sort()).toEqual([...PATTERNS.map(p => p.id), ...SHOP.looks.filter(l => l.kind === 'pattern').map(l => l.id)].sort());
     expect(dressOf('#3a86ff', { pattern: 'polka-dots' })).toEqual(dressOf('#3a86ff'));
     expect(lookOf({}, ITEMS, undefined, 'polka-dots')).toEqual(lookOf({}, ITEMS));
     expect(lookOf({}, ITEMS, 'rain-cape', 'chevron')).toEqual({ outfit: 'rain-cape', pattern: 'chevron' });

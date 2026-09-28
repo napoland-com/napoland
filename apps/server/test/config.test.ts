@@ -3,6 +3,7 @@ import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config';
+import { fakeKey } from './fixtures';
 
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 
@@ -254,5 +255,98 @@ describe('loadConfig: Google and Apple', () => {
 
   it('shows their buttons in dev mode too, where a tap says they need a Supabase project', () => {
     expect(loadConfig({ AUTH_MODE: 'dev', AUTH_PROVIDERS: 'google,apple' }, REPO).auth).toEqual({ mode: 'dev', providers: ['google', 'apple'] });
+  });
+});
+
+describe('loadConfig: the shop', () => {
+  // Made up for the tests: never a real key.
+  const TEST_KEY = fakeKey('sk_test'), LIVE_KEY = fakeKey('sk_live'), SECRET = fakeKey('whsec', 'FakeSigningSecret0000000000');
+  const RESTRICTED = fakeKey('rk_test', '51FakeRestricted000000'), PUBLISHABLE = fakeKey('pk_test', '51FakePublishable000000');
+  const shop = {
+    AUTH_MODE: 'dev', SHOP_ENABLED: '1', STRIPE_SECRET_KEY: TEST_KEY, STRIPE_WEBHOOK_SECRET: SECRET, SHOP_TERMS_URL: 'https://example.test/terms',
+    SHOP_CURRENCY: 'EUR', PUBLIC_URL: 'https://play.example.test/',
+  };
+  const problem = (env: Record<string, string>) => {
+    try {
+      loadConfig(env, REPO);
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return '';
+  };
+
+  it('is closed unless it is turned on and set up', () => {
+    expect(loadConfig({}, REPO)).toMatchObject({ shop: undefined, shopMissing: [] });
+    // Set up, but not turned on.
+    const { SHOP_ENABLED: _on, ...off } = shop;
+    expect(loadConfig(off, REPO)).toMatchObject({ shop: undefined, shopMissing: [] });
+    expect(loadConfig({ ...shop, SHOP_ENABLED: '0' }, REPO).shop).toBeUndefined();
+  });
+
+  it('opens with all of it: the keys, the terms of sale, the currency and the game\'s own address', () => {
+    expect(loadConfig(shop, REPO)).toMatchObject({
+      shop: {
+        secretKey: TEST_KEY, webhookSecret: SECRET, terms: 'https://example.test/terms', currency: 'eur', publicUrl: 'https://play.example.test',
+        api: 'https://api.stripe.com', live: false,
+      },
+      shopMissing: [],
+    });
+    // A restricted key that may only create Checkout Sessions is a good one to give it.
+    expect(loadConfig({ ...shop, STRIPE_SECRET_KEY: RESTRICTED }, REPO).shop?.secretKey).toBe(RESTRICTED);
+  });
+
+  it('stays closed, saying what is missing, when it is turned on but not all set up', () => {
+    const { STRIPE_WEBHOOK_SECRET: _secret, PUBLIC_URL: _url, ...half } = shop;
+    expect(loadConfig(half, REPO)).toMatchObject({ shop: undefined, shopMissing: ['STRIPE_WEBHOOK_SECRET', 'PUBLIC_URL'] });
+    expect(loadConfig({ AUTH_MODE: 'dev', SHOP_ENABLED: 'true' }, REPO).shopMissing).toEqual(['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'SHOP_TERMS_URL', 'SHOP_CURRENCY', 'PUBLIC_URL']);
+  });
+
+  it('refuses to start with a publishable key where the secret key goes, or anything that is no key, and never repeats it', () => {
+    expect(problem({ ...shop, STRIPE_SECRET_KEY: PUBLISHABLE })).toMatch(/STRIPE_SECRET_KEY is a publishable key/);
+    const livePublishable = fakeKey('pk_live', '51FakePublishable000000');
+    expect(problem({ ...shop, STRIPE_SECRET_KEY: livePublishable })).not.toContain(livePublishable);
+    expect(problem({ STRIPE_SECRET_KEY: 'sb_secret_abcdefghijklmnop' })).toMatch(/STRIPE_SECRET_KEY is not a Stripe secret key/);
+    expect(problem({ STRIPE_SECRET_KEY: 'sb_secret_abcdefghijklmnop' })).not.toContain('sb_secret_abcdefghijklmnop');
+    // Checked whenever it is set, turned on or not: a wrong key stops the server the day it is written.
+    expect(problem({ STRIPE_SECRET_KEY: PUBLISHABLE })).toMatch(/publishable key/);
+  });
+
+  it('refuses a live key, which takes real money, anywhere but in production, and with dev sign-in', () => {
+    expect(problem({ ...shop, STRIPE_SECRET_KEY: LIVE_KEY })).toMatch(/STRIPE_SECRET_KEY is a live key, which takes real money, so it is refused unless NODE_ENV=production/);
+    expect(problem({ ...shop, STRIPE_SECRET_KEY: LIVE_KEY })).not.toContain(LIVE_KEY);
+    expect(problem({ ...shop, STRIPE_SECRET_KEY: fakeKey('rk_live', '51FakeRestricted000000') })).toMatch(/live key/);
+    const production = { ...shop, NODE_ENV: 'production', AUTH_MODE: 'supabase', SUPABASE_URL: 'https://abcd.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_x' };
+    expect(loadConfig({ ...production, STRIPE_SECRET_KEY: LIVE_KEY }, REPO).shop).toMatchObject({ live: true });
+    // Test mode in production: the owner's first purchase.
+    expect(loadConfig(production, REPO).shop).toMatchObject({ live: false });
+    expect(problem({ ...shop, NODE_ENV: 'production', ALLOW_DEV_AUTH: '1', STRIPE_SECRET_KEY: LIVE_KEY })).toMatch(/AUTH_MODE=dev lets anyone sign in as anyone: a live key needs real sign-in/);
+  });
+
+  it('checks the webhook\'s secret, the terms of sale, the currency and the game\'s address', () => {
+    expect(problem({ ...shop, STRIPE_WEBHOOK_SECRET: TEST_KEY })).toMatch(/STRIPE_WEBHOOK_SECRET must be the webhook endpoint's signing secret \(whsec_\.\.\.\)/);
+    expect(problem({ ...shop, STRIPE_WEBHOOK_SECRET: 'whsec_short' })).toMatch(/STRIPE_WEBHOOK_SECRET/);
+    for (const terms of ['example.test/terms', 'http://example.test/terms', 'https://user:pass@example.test/terms', 'javascript:alert(1)']) {
+      expect([terms, problem({ ...shop, SHOP_TERMS_URL: terms })]).toEqual([terms, expect.stringMatching(/SHOP_TERMS_URL must be the https address of the terms of sale/)]);
+    }
+    expect(loadConfig({ ...shop, SHOP_TERMS_URL: 'http://localhost:5173/terms.html' }, REPO).shop?.terms).toBe('http://localhost:5173/terms.html');
+    expect(problem({ ...shop, SHOP_CURRENCY: 'jpy' })).toMatch(/SHOP_CURRENCY must be one of eur, usd, gbp, chf, got "jpy"/);
+    for (const url of ['https://play.example.test/game', 'https://play.example.test/?x=1', 'http://play.example.test', 'play.example.test']) {
+      expect([url, problem({ ...shop, PUBLIC_URL: url })]).toEqual([url, expect.stringMatching(/PUBLIC_URL must be the game's own address/)]);
+    }
+    expect(loadConfig({ ...shop, PUBLIC_URL: 'http://localhost:5173' }, REPO).shop?.publicUrl).toBe('http://localhost:5173');
+  });
+
+  it('needs sign-in: a look bought belongs to an account', () => {
+    expect(problem({ ...shop, AUTH_MODE: 'legacy' })).toMatch(/SHOP_ENABLED needs sign-in/);
+  });
+
+  it('talks to a fake Stripe on this machine for a play-test, never in production', () => {
+    expect(loadConfig({ ...shop, STRIPE_API: 'http://localhost:12111' }, REPO).shop?.api).toBe('http://localhost:12111');
+    expect(problem({ ...shop, STRIPE_API: 'https://stripe.evil.example' })).toMatch(/STRIPE_API must be a fake Stripe on this machine/);
+    expect(problem({ ...shop, NODE_ENV: 'production', ALLOW_DEV_AUTH: '1', STRIPE_API: 'http://localhost:12111' })).toMatch(/STRIPE_API sends the shop's secret key somewhere other than Stripe, so it is refused when NODE_ENV=production/);
+  });
+
+  it('never takes a misspelt switch for off', () => {
+    expect(problem({ ...shop, SHOP_ENABLED: 'yes' })).toMatch(/SHOP_ENABLED must be 1, true, 0 or false/);
   });
 });

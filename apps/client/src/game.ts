@@ -12,6 +12,9 @@
  *   the server's answer (`did`, worded by said.ts);
  * - a parcel that comes into your chest (signed in, the first time you play each day) is news, and the
  *   stash says what came in it the next time it opens;
+ * - while the shop is open, a look is bought in the wardrobe (shop.ts): it asks first, with its price and
+ *   the waiver, and the game goes to Stripe's page the server opens; the look is yours once the server
+ *   says Stripe told it so, and coming back from that page the text box says whether it has yet;
  * - people and NAPO's desks are in the story (story.ts): what someone says follows the chapter you
  *   are in (and, once, what you did for the first time), and the server hears whom you talked to or
  *   what you read (a desk, a sign, a paper, a tag: where, never what it says); it says when a chapter
@@ -47,9 +50,10 @@
  * - the Long Night is the server's too (`longNight`): its banners, and what Walt says while it is on.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter,
-  emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf,
-  nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf,
+  dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft,
+  meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf, stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter,
+  upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type ShopData, type ShopOpen,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
@@ -66,11 +70,12 @@ import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, FIRST_STEPS_DONE, FIRST_STEPS_TITLE, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TELEPORT, TENDED, TOOK_ONE,
-  TOO_DARK, YOUR_CABIN, buyQuestion, cabinWho, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion,
-  noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion,
-  useQuestion, visitedText, visitWho, waltOnTheLongNight,
+  TOO_DARK, YOUR_CABIN, buyQuestion, cabinWho, checkoutQuestion, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion,
+  moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion,
+  upgradeQuestion, useQuestion, visitedText, visitWho, waltOnTheLongNight,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
+import { SHOP_OPENING, SHOP_THANKS, payPage, refundedLine, returnLine, type ShopReturn } from './shop';
 import { trophiesIn } from './view/cabin';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
@@ -144,6 +149,8 @@ const ANSWER_WAIT_MS = 2500;
  * carried then.
  */
 const JUST_NOW_MS = 1000;
+/** Coming back from Stripe's page, "Your payment is being confirmed." stays up this long unless something closes it: Stripe's word mostly comes in seconds. */
+const CONFIRMING_MS = 60_000;
 /** Piles show whose they are while you are this close (tiles, center to center). */
 export const PILE_TAG_TILES = 3.5;
 /** A cabin's name plate shows whose it is while you are this close to the tile in front of its door: its neighbors' show as you pass between them. */
@@ -241,7 +248,12 @@ export type News =
   /** Your lodestone tugs (lodestone.ts): a shard lies near. It never says where. */
   | { kind: 'tug' }
   /** Steps that are not yours, behind you (unease.ts): how many, and on what ground. For the ears alone. */
-  | { kind: 'stalk'; steps: number; ground: TileKind | undefined };
+  | { kind: 'stalk'; steps: number; ground: TileKind | undefined }
+  /**
+   * A look you bought in the shop is yours now (Stripe told the server it is paid), as it goes in a sentence;
+   * `said`: the text box said so already, coming back from Stripe's page, so only the wardrobe's dot is news.
+   */
+  | { kind: 'bought'; noun: string; plural: boolean; said: boolean };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -256,7 +268,7 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport', 'checkout']);
 /** If the server has not moved you this long after the teleport was sent, the trip is off: you are shown where you stand. */
 const BEAM_WAIT_MS = 4000;
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
@@ -458,6 +470,17 @@ export class Game {
   badges = new Map<string, string>();
   /** What you spent of your merits, and the looks you bought, as the server last told it; what you earned follows from your XP. */
   merits: MeritsView = { spent: 0, owned: [] };
+  /** The shop, while the server says it is open: the currency of its prices and its terms of sale. Null: closed, no Shop tab. */
+  shopOpen: ShopOpen | null = null;
+  /** The looks you bought in the shop (paid, not refunded), as the server last told it. Replaced whole on every change. */
+  shopOwned: string[] = [];
+  /**
+   * Where you came back from, from Stripe's page (main.ts reads it from the page's address): said in the
+   * text box once the welcome comes, signed in, and, while the payment is being confirmed, when it is.
+   */
+  returning: ShopReturn | null = null;
+  /** Goes to the payment page the server opened (main.ts: the browser leaves the game for it). None in tests. */
+  goTo: ((url: string) => void) | null = null;
   /** Feats just earned, for the interface to announce (it empties the list). */
   news: News[] = [];
   /** A question in the text box (ask.ts): until it is answered, nobody walks and A, B and the stick answer it. */
@@ -527,6 +550,8 @@ export class Game {
 
   constructor(
     private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY, readonly notebook: NotebookData = NO_NOTEBOOK,
+    /** What the shop sells (content/shop.json, bundled like the items): what a look bought or worn is. */
+    readonly shop: ShopData = NO_SHOP,
   ) {
     this.current = maps.home();
     this.talkers = talkersOf(this.current);
@@ -681,7 +706,8 @@ export class Game {
         // A map we do not have, or other items, another story or other field notes than the server's:
         // this client is out of date and about to reload, so it must not play. (A server from before the
         // field notes sends none: then there are none to keep.)
-        if (!map || msg.items !== this.items.version || msg.story.version !== this.story.version || (msg.notebook && msg.notebook.version !== this.notebook.version)) {
+        if (!map || msg.items !== this.items.version || msg.story.version !== this.story.version || (msg.notebook && msg.notebook.version !== this.notebook.version)
+          || (msg.shop && msg.shop.version !== this.shop.version)) {
           this.disconnected(now);
           break;
         }
@@ -715,6 +741,9 @@ export class Game {
         this.statsChanges++;
         this.progress = msg.progress;
         this.merits = msg.merits ?? { spent: 0, owned: [] };
+        // A server from before the shop says nothing of it: closed, nothing bought.
+        this.shopOpen = msg.shop?.open ?? null;
+        this.shopOwned = [...msg.shop?.owned ?? []];
         // Time away worth a word: stashing counts double for a while, and the arrival says so.
         if ((msg.restedAway ?? 0) >= RESTED_NOTICE && (msg.progress.rested ?? 0) > 0) this.news.push({ kind: 'rested', xp: msg.progress.rested! });
         this.tools = msg.tools;
@@ -730,6 +759,7 @@ export class Game {
         this.keepsakesHome = [...msg.keepsakes ?? []];
         this.firsts = new Map((msg.firsts ?? []).map(f => [f.secret, f]));
         this.notesChanges++;
+        this.settleReturn();
         break;
       }
       case 'zone': {
@@ -987,6 +1017,17 @@ export class Game {
       case 'merits':
         this.merits = msg.merits;
         break;
+      case 'shop':
+        this.boughtNow(msg.owned);
+        break;
+      case 'checkout': {
+        // The payment page is Stripe's (or, playing on this machine, a fake Stripe's): the game leaves for it.
+        const url = payPage(msg.url);
+        if (!url) { this.inform('Shop', sentence(refusalText('shop_down', 'checkout'))); break; }
+        this.inform('Shop', SHOP_OPENING);
+        this.goTo?.(url);
+        break;
+      }
       case 'parcel': {
         this.parcels = [...this.parcels, msg.parcel];
         // The welcome parcel comes with the first sign-in, which opens the wardrobe too: its banner names what is new in it.
@@ -1725,6 +1766,63 @@ export class Game {
     if (why) return this.inform('Wardrobe', why === 'no_merits' ? noMerit(this.progress.xp) : sentence(refusalText(why, 'buy')));
     const text = buyQuestion(look, meritsLeft(this.progress.xp, this.merits.spent));
     this.ask({ who: 'Wardrobe', text, yes: () => this.act('Wardrobe', text, { t: 'buy', x: c.x, y: c.y, look: id }) });
+  }
+
+  /**
+   * At the open chest, in the wardrobe's Shop tab: buy a look, paid on Stripe's page. It asks first, with its
+   * price and the waiver the law asks for ("Buy the lighthouse oilskin for €2.99? You get it at once, so you
+   * give up the 14 days to change your mind."), or says why not. Said yes to, the server opens the payment,
+   * and the game goes there; the look is yours once the server says Stripe told it so.
+   */
+  checkout(id: string) {
+    const c = this.chest, look = shopLookOf(this.shop, id), open = this.shopOpen;
+    if (!c || !this.online || !look) return;
+    const why = whyNotCheckout(look, this.shopOwned, !this.guest, !!open);
+    if (why) return this.inform('Shop', sentence(refusalText(why, 'checkout')));
+    const price = priceOf(look, open!.currency);
+    if (price === undefined) return this.inform('Shop', sentence(refusalText('shop_closed', 'checkout')));
+    const text = checkoutQuestion(look, price, open!.currency);
+    this.ask({ who: 'Shop', text, yes: () => this.act('Shop', SHOP_OPENING, { t: 'checkout', x: c.x, y: c.y, look: id, waiver: true }) });
+  }
+
+  /**
+   * What you bought in the shop, whole, as the server says it now (Stripe told it a look is paid, or
+   * refunded). A look new to you is news, and said in the text box when it is the one you came back from
+   * paying for; one refunded is said in the box too.
+   */
+  private boughtNow(owned: readonly string[]) {
+    const before = this.shopOwned;
+    this.shopOwned = [...owned];
+    for (const id of owned) {
+      const look = shopLookOf(this.shop, id);
+      if (before.includes(id) || !look) continue;
+      const back = this.returning?.paid && this.returning.look === id;
+      if (back) {
+        this.returning = null;
+        this.inform('Shop', SHOP_THANKS);
+      }
+      this.news.push({ kind: 'bought', noun: look.noun, plural: !!look.plural, said: !!back });
+    }
+    for (const id of before) {
+      const look = shopLookOf(this.shop, id);
+      if (look && !owned.includes(id)) this.inform('Shop', refundedLine(look));
+    }
+  }
+
+  /**
+   * Back from Stripe's page (`returning`), once you are in the game signed in: nothing paid; the look yours
+   * already; or, until the server says it is, that the payment is being confirmed, which stays up a while.
+   */
+  private settleReturn() {
+    const r = this.returning;
+    if (!r || this.guest) return;
+    const line = returnLine(r, this.shopOwned);
+    if (!line.waiting) {
+      this.returning = null;
+      return this.inform('Shop', line.text);
+    }
+    this.note = { who: 'Shop', text: line.text, until: this.clock + CONFIRMING_MS, waiting: false };
+    this.boxChanges++;
   }
 
   /**
@@ -2504,7 +2602,7 @@ export class Game {
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
       afterglow: (this.afterglows.get(p.id) ?? 0) > this.clock,
-      look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id)),
+      look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id), this.shop),
       ...(b && p.id === this.meId && { beam: { phase: b.phase, t: b.t, pad: b.pad } }),
     }));
   }

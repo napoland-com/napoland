@@ -48,6 +48,23 @@ describe('the privacy policy', () => {
     expect(words).not.toContain('nobody else ever is');
   });
 
+  it('says what buying a look keeps (never a card), that Stripe answers for the payment itself, and how long the records stay', () => {
+    expect(page).toContain('<h3>Buying looks</h3>');
+    expect(words).toContain('Stripe processes the payment and your card, under its own privacy policy');
+    expect(page).toContain('href="https://stripe.com/privacy"');
+    expect(words).toContain('Your card never reaches the game');
+    // What the server sends Stripe (stripe.ts): the look, its price and the character's id in the metadata.
+    expect(words).toContain('only which look you are buying, its price, and your character\'s id');
+    // What storage keeps (purchases): the look, when, the amount and currency, Stripe's reference; and when refunded.
+    expect(words).toContain('which look, when, the price and currency, and Stripe\'s reference for the payment');
+    expect(words).toContain('a look being bought or refunded, with the character\'s id, the look and Stripe\'s reference');
+    const kept = listUnder('How long we keep it').find(li => li.startsWith('What you bought in the shop'));
+    expect(kept).toMatch(/as long as your character exists, and after that, without your character, as long as the law requires/);
+    // A deleted character's purchases stay without it (ON DELETE SET NULL): the deletion paragraph says so.
+    expect(words).toContain('The records of the looks you bought stay, without your character');
+    expect(listUnder('Why we are allowed to').some(li => li.includes('Art. 6(1)(c) GDPR'))).toBe(true);
+  });
+
   it('says that a new character\'s first steps are kept until it took the last', () => {
     expect(words).toContain('while it is new which of its first steps it is on');
     expect(words).toContain('forgotten once it took the last');

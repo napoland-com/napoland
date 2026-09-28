@@ -3,6 +3,7 @@
  * the fixture maps, and WebSocket clients that keep every message they get.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
+import { request } from 'node:http';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
 import {
@@ -12,9 +13,10 @@ import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
-import { MemoryStorage, type PlayerRecord, type Storage } from '../src/storage';
+import { MemoryStorage, type PlayerRecord, type PurchaseRecord, type Storage } from '../src/storage';
+import { signPayload, type Fetch } from '../src/stripe';
 import { World, colorFor } from '../src/world';
-import { chestMaps, fixtureMaps, itemsData } from './fixtures';
+import { chestMaps, fixtureMaps, itemsData, shopData, shopSettings } from './fixtures';
 
 export type Msg<T extends ServerMsg['t']> = Extract<ServerMsg, { t: T }>;
 
@@ -920,6 +922,172 @@ export async function keepsFriendsAndMessages(storage: Storage): Promise<void> {
   await storage.deleteTells(b.id, a.id);
   expect(await storage.tellsTo(b.id)).toEqual([]);
   await storage.addReport({ reporter: a.id, reported: b.id, reason: 'spam', quote: null, at: 1_700_000_002_000 });
+}
+
+/**
+ * A fake Stripe for the shop's tests, never the network: every checkout it is asked for is a page of its own
+ * on Stripe's checkout host, and it keeps what it was asked. `failNext` makes its next answer a failure:
+ * no answer at all, or an error from Stripe.
+ */
+export function fakeStripe() {
+  const asked: Array<{ url: string; params: Record<string, string>; headers: Record<string, string> }> = [];
+  let n = 0, fail: 'network' | 'error' | null = null;
+  const fetch: Fetch = async (url, init) => {
+    asked.push({ url, params: Object.fromEntries(new URLSearchParams(init.body)), headers: init.headers });
+    const how = fail;
+    fail = null;
+    if (how === 'network') throw new Error('Stripe cannot be reached');
+    if (how === 'error') return { ok: false, status: 500, json: async () => ({ error: { type: 'api_error' } }) };
+    const id = `cs_test_fake_${++n}`;
+    return { ok: true, status: 200, json: async () => ({ id, url: `https://checkout.stripe.com/c/pay/${id}` }) };
+  };
+  return { fetch, asked, failNext: (how: 'network' | 'error') => { fail = how; } };
+}
+
+/**
+ * A Stripe event as its webhook sends it: a checkout of the game's completed (paid unless `paid` is false;
+ * not the game's when `ours` is false), with what Stripe says of its customer, which the game never keeps.
+ */
+export function paidEvent(o: { player: string; look: string; session?: string; amount?: number; currency?: string; pi?: string | null; live?: boolean; paid?: boolean; ours?: boolean }): string {
+  const session = o.session ?? `cs_test_${randomUUID()}`;
+  return JSON.stringify({
+    id: `evt_${randomUUID()}`, object: 'event', type: 'checkout.session.completed', livemode: o.live ?? false,
+    data: {
+      object: {
+        id: session, object: 'checkout.session', mode: 'payment', payment_status: o.paid === false ? 'unpaid' : 'paid', amount_total: o.amount ?? 299, currency: o.currency ?? 'eur',
+        payment_intent: o.pi === undefined ? `pi_${randomUUID()}` : o.pi, customer_details: { email: 'buyer@example.test', name: 'A Buyer' },
+        metadata: o.ours === false ? {} : { napoland_player: o.player, napoland_look: o.look },
+      },
+    },
+  });
+}
+
+/** A Stripe event as its webhook sends it: the charge of payment `pi` refunded, in full unless `full` is false. */
+export function refundEvent(o: { pi: string; full?: boolean; live?: boolean }): string {
+  return JSON.stringify({
+    id: `evt_${randomUUID()}`, object: 'event', type: 'charge.refunded', livemode: o.live ?? false,
+    data: { object: { id: `ch_${randomUUID()}`, object: 'charge', payment_intent: o.pi, amount: 299, amount_refunded: o.full === false ? 100 : 299, refunded: o.full !== false } },
+  });
+}
+
+/**
+ * Sends `body` to the webhook of the server on `port` (POST /stripe-webhook unless said), signed as Stripe
+ * signs it with `secret` at `t` (seconds; now unless said), or with the header `signature` as given (none:
+ * no header). Returns the status and what it answered.
+ */
+export function postWebhook(port: number, body: string | Buffer, sign: { secret: string; t?: number } | { signature?: string }, o: { path?: string; method?: string } = {}): Promise<{ status: number; body: string }> {
+  const signature = 'secret' in sign ? signPayload(body, sign.secret, sign.t ?? Math.floor(Date.now() / 1000)) : sign.signature;
+  return new Promise((resolve, reject) => {
+    const req = request(
+      { host: '127.0.0.1', port, path: o.path ?? '/stripe-webhook', method: o.method ?? 'POST', headers: { 'Content-Type': 'application/json', ...(signature !== undefined ? { 'Stripe-Signature': signature } : {}) } },
+      res => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', chunk => (text += chunk));
+        res.on('end', () => resolve({ status: res.statusCode!, body: text }));
+      },
+    );
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+/**
+ * Purchases kept on `storage` (in memory, or a real database): none for a new player; a checkout paid is
+ * kept once however often Stripe says it; a player's looks are those of their paid purchases, each once,
+ * in the order they first bought it, read with the player and never written by a save; a refund takes a
+ * look back unless another payment for it stands; a purchase for a player who is gone is kept whose-less.
+ * Returns the player's id and the sessions of their purchases.
+ */
+export async function keepsPurchases(storage: Storage): Promise<{ id: string; sessions: string[] }> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  const { id } = await savedPlayer(storage, { tokenHash: null, authSub: sub, wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  expect((await load()).shop).toBeUndefined();
+  expect(await storage.shopLooksOf(id)).toEqual([]);
+  const at = 1_800_000_000_000, pi = `pi_${randomUUID()}`;
+  const paid: PurchaseRecord = { session: `cs_test_${randomUUID()}`, player: id, look: 'winter-parka', amount: 299, currency: 'eur', paymentIntent: pi, status: 'paid', created: at, refunded: null };
+  expect(await storage.addPurchase(paid)).toBe(true);
+  // Stripe sends it again until it hears it arrived: kept once.
+  expect(await storage.addPurchase({ ...paid, created: at + 5000 })).toBe(false);
+  expect((await load()).shop).toEqual(['winter-parka']);
+  // Another look, and the first bought again (two tabs at once): each look once, in the order first bought.
+  const heart = { ...paid, session: `cs_test_${randomUUID()}`, paymentIntent: `pi_${randomUUID()}`, look: 'heart', amount: 99, created: at + 1000 };
+  const again = { ...paid, session: `cs_test_${randomUUID()}`, paymentIntent: `pi_${randomUUID()}`, created: at + 2000 };
+  expect(await storage.addPurchase(heart)).toBe(true);
+  expect(await storage.addPurchase(again)).toBe(true);
+  expect(await storage.shopLooksOf(id)).toEqual(['winter-parka', 'heart']);
+  // A save never writes them, whatever the record says: only Stripe's word does.
+  const rec = await load();
+  await storage.save({ ...rec, shop: [], lastSeenAt: rec.lastSeenAt + 1000 });
+  expect((await load()).shop).toEqual(['winter-parka', 'heart']);
+  const { shop: _shop, ...without } = rec;
+  await storage.save({ ...without, lastSeenAt: rec.lastSeenAt + 2000 });
+  expect(await load()).toEqual({ ...rec, lastSeenAt: rec.lastSeenAt + 2000 });
+  // The first payment refunded: the parka stays theirs by the second, now bought after the heart.
+  expect(await storage.refundPurchase(pi, at + 10_000)).toEqual({ player: id, look: 'winter-parka' });
+  expect(await storage.refundPurchase(pi, at + 20_000)).toBeNull();
+  expect(await storage.shopLooksOf(id)).toEqual(['heart', 'winter-parka']);
+  expect(await storage.refundPurchase(again.paymentIntent!, at + 30_000)).toEqual({ player: id, look: 'winter-parka' });
+  expect((await load()).shop).toEqual(['heart']);
+  // Another of the account's sales: nothing of the game's.
+  expect(await storage.refundPurchase(`pi_${randomUUID()}`, at)).toBeNull();
+  // A player gone before Stripe's word came: the payment is kept, whose-less, and nobody has its look.
+  const gone = { ...paid, session: `cs_test_${randomUUID()}`, paymentIntent: null, player: randomUUID() };
+  expect(await storage.addPurchase(gone)).toBe(true);
+  expect(await storage.shopLooksOf(gone.player)).toEqual([]);
+  return { id, sessions: [paid.session, heart.session, again.session] };
+}
+
+/**
+ * The shop through a restart, over the network with dev sign-in, on `first` and then `second` (the same
+ * storage, or two connections to the same database), with a fake Stripe. Signed in at the chest, a player
+ * opens a payment for the winter parka; Stripe's webhook says it is paid, and they hear it at once and put it
+ * on. After the restart they come back with it bought and on, and whoever joins sees it; the shop has it as
+ * theirs, so a second payment for it is refused.
+ */
+export async function shopKeptThroughARestart(first: Storage, second: Storage): Promise<void> {
+  setLogLevel('silent');
+  const stripe = fakeStripe();
+  const options = (storage: Storage): ServerOptions => ({
+    ...serverDefaults(), storage, maps: chestMaps(), items: itemsData(), auth: devAuth(), shop: { settings: shopSettings(), catalog: shopData(), fetch: stripe.fetch },
+  });
+  const who = randomUUID().slice(0, 8), mail = `shop-${who}@example.test`;
+  const saved = await savedPlayer(first, { map: 'house', x: 3, y: 2, dir: 'up', tokenHash: null, authSub: `dev:${mail}` });
+  const signIn = async (port: number) => {
+    const c = await Client.open(port);
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, auth: mail });
+    return { c, welcome: await c.next('welcome') };
+  };
+
+  const one = await startServer(options(first));
+  try {
+    const { c, welcome } = await signIn(one.port);
+    expect(welcome.shop).toEqual({ version: 3, owned: [], open: { currency: 'eur', terms: 'https://example.test/terms' } });
+    c.send({ t: 'checkout', x: 3, y: 1, look: 'winter-parka', waiver: true });
+    expect(await c.next('checkout')).toMatchObject({ look: 'winter-parka', url: expect.stringMatching(/^https:\/\/checkout\.stripe\.com\//) });
+    expect(await postWebhook(one.port, paidEvent({ player: saved.id, look: 'winter-parka' }), { secret: shopSettings().webhookSecret })).toEqual({ status: 200, body: 'Kept' });
+    expect(await c.next('shop')).toEqual({ t: 'shop', owned: ['winter-parka'] });
+    c.send({ t: 'outfit', x: 3, y: 1, outfit: 'winter-parka' });
+    expect(await c.next('outfit')).toEqual({ t: 'outfit', id: saved.id, outfit: 'winter-parka' });
+    c.ws.terminate();
+    await waitFor(() => one.world.size === 0, 'the player to leave');
+  } finally {
+    await one.stop();
+  }
+  expect(await second.findByAuthSub(`dev:${mail}`)).toMatchObject({ outfit: 'winter-parka', shop: ['winter-parka'] });
+
+  const two = await startServer(options(second));
+  try {
+    const { c, welcome } = await signIn(two.port);
+    expect(welcome.shop.owned).toEqual(['winter-parka']);
+    expect(welcome.players.find(p => p.id === saved.id)).toMatchObject({ outfit: 'winter-parka' });
+    c.send({ t: 'checkout', x: 3, y: 1, look: 'winter-parka', waiver: true });
+    expect(await c.next('refused')).toEqual({ t: 'refused', action: 'checkout', reason: 'owned' });
+    c.ws.terminate();
+  } finally {
+    await two.stop();
+  }
 }
 
 /**

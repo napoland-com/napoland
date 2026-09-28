@@ -5,8 +5,9 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, comfortMax, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit,
-  type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
+  CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, comfortMax, countable, fireFull, formatPrice, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands,
+  toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type ShopLook, type StoneView,
+  type Upgrade,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, oddsText, pieceName, type Items } from './items';
 
@@ -344,6 +345,17 @@ export function buyQuestion(look: MeritLook, left: number): string {
 export function noMerit(xp: number): string {
   if (levelOf(xp) < LEVEL_MAX) return `Past level ${LEVEL_MAX}, every ${thousands(MERIT_XP)} XP earns a merit.`;
   return `You have no merit to spend. ${thousands(toNextMerit(xp))} XP to the next.`;
+}
+
+// ---------- the shop ----------
+
+/**
+ * Before a look is bought in the shop, at the wardrobe, with what it costs and the waiver the law asks for:
+ * the look comes at once, so the 14 days to change your mind are given up. "Buy the lighthouse oilskin for
+ * €2.99? You get it at once, so you give up the 14 days to change your mind."
+ */
+export function checkoutQuestion(look: ShopLook, price: number, currency: string): string {
+  return `Buy ${look.noun} for ${formatPrice(price, currency)}? You get ${look.plural ? 'them' : 'it'} at once, so you give up the 14 days to change your mind.`;
 }
 
 /** After: "The chevron pattern is yours for good. 2 merits left to spend." */
