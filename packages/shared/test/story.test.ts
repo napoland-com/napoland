@@ -123,6 +123,11 @@ describe('what people say once, after the first time you did something', () => {
     ]);
     const many = Array.from({ length: MAX_REMARKS + 1 }, (_, i): Remark => ({ id: `r-${i}`, who: 'mira', after: 'made', line: 'Hm.' }));
     expect(errors(many)).toEqual([`there are ${MAX_REMARKS + 1} remarks, and which were said is kept for at most ${MAX_REMARKS}`]);
+    // One that is not a remark at all is said to be so, and the rest are checked as ever.
+    expect(errors([null as never, REMARKS[0]!, 'Boo.' as never])).toEqual([
+      'remark 1: a remark has an id, who says it, after what, and the line',
+      'remark 3: a remark has an id, who says it, after what, and the line',
+    ]);
   });
 });
 

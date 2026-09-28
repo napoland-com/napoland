@@ -207,6 +207,26 @@ describe('checking the parcels and sealed things in content', () => {
     expect(errors({ items: [...ITEMS, ...tools, { id: 'box', name: 'Box', kind: 'resource', stack: 1, text: 'A box.', holds: lockbox.holds }] })).toEqual(['item "box": only a sealed thing holds something']);
   });
 
+  it('says what is wrong with a holding that is not one, rather than stopping there', () => {
+    const sealed = (holds: unknown) => ({ items: [...ITEMS.filter(i => i.id !== 'lockbox'), ...tools, { ...lockbox, holds: holds as never }] });
+    expect(errors(sealed([null, { weight: 1, any: 'charm' }]))).toEqual(['item "lockbox": holding 1: it is a weight, and some items or any one of a kind']);
+    expect(errors(sealed([{ weight: 1, items: [null] }]))).toEqual(['item "lockbox": holding 1: undefined is not an item', 'item "lockbox": holding 1: each count is a whole number from 1']);
+    expect(errors(sealed([{ weight: 1, items: null }]))).toEqual(['item "lockbox": holding 1: a list of items and counts, not empty']);
+    expect(errors(sealed({ weight: 1, any: 'charm' }))).toEqual(['item "lockbox": a sealed thing holds something', 'item "lockbox": holds is a list']);
+  });
+
+  it('keeps a sealed thing out of every way into a bag, the workbench\'s making and what it costs: it comes in a parcel and is opened', () => {
+    const odd: ItemDef = { id: 'odd', name: 'Strange object', kind: 'resource', stack: 1, xp: 15, text: '?', use: { identify: true }, reveals: [{ item: 'lockbox', count: 1, weight: 1 }] };
+    const live: ItemDef = { id: 'live-box', name: 'Live box', kind: 'resource', stack: 1, text: 'Humming.', live: { xp: 40, fresh: 240, fade: 5, into: 'lockbox' } };
+    expect(errors({ items: [...ITEMS, ...tools, odd] })).toEqual(['item "odd" reveals lockbox, a sealed thing: those never go in a bag']);
+    expect(errors({ items: [...ITEMS, ...tools, live] })).toEqual(['item "live-box": turns into lockbox, a sealed thing: those never go in a bag']);
+    expect(errors({ finds: [{ item: 'lockbox', map: 'room', count: 1, respawn: [10, 20] }] })).toEqual(['find 0 (lockbox in room): lockbox is a sealed thing: those never go in a bag']);
+    expect(errors({ recipes: [{ id: 'box', make: 'lockbox', needs: [{ item: 'resin', count: 1 }] }] })).toEqual(['recipe "box" makes lockbox, a sealed thing: those come only in parcels']);
+    expect(errors({ recipes: [{ id: 'glue', make: 'resin', needs: [{ item: 'lockbox', count: 1 }] }] })).toEqual(['recipe "glue" needs lockbox, a sealed thing: those are only ever opened']);
+    expect(errors({ mend: { sturdy: [{ item: 'lockbox', count: 1 }] } })).toEqual(['mend: sturdy needs lockbox, a sealed thing: those are only ever opened']);
+    expect(errors({ upgrades: [{ needs: [{ item: 'lockbox', count: 1 }] }] })).toEqual(['upgrades: +1 needs lockbox, a sealed thing: those are only ever opened']);
+  });
+
   it('warns when one thing a lockbox may hold alone has no line to say what it is good for', () => {
     const plain = { ...lockbox, holds: [{ weight: 1, items: [{ item: 'resin', count: 3 }] }] };
     expect(validateItems({ ...data({}), items: [...ITEMS.filter(i => i.id !== 'lockbox'), ...tools, plain] }, [room])).toEqual([
