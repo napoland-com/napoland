@@ -13,7 +13,7 @@ import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 20;
+export const PROTOCOL_VERSION = 21;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -79,6 +79,13 @@ export const MAX_TELL_CHARS = 200;
 export const ReportReason = z.enum(['rude', 'spam', 'cheating', 'other']);
 export type ReportReason = z.infer<typeof ReportReason>;
 
+/** A piece of gear at the workbench: one you wear (by its slot), or the `n`th of an item in your stash (the stash's order). */
+export const PieceAt = z.discriminatedUnion('from', [
+  z.object({ from: z.literal('worn'), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
+  z.object({ from: z.literal('stash'), item: z.string().min(1).max(40), n: z.number().int().nonnegative().max(999) }),
+]);
+export type PieceAt = z.infer<typeof PieceAt>;
+
 export const ClientMsg = z.discriminatedUnion('t', [
   /**
    * First message on a connection. Without sign-in (legacy), a saved token logs back in; otherwise
@@ -121,14 +128,32 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('equip'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), n: z.number().int().nonnegative().max(999).optional() }),
   /** Take off what you wear in `slot`, at the chest on tile x,y: it goes into the stash. The bag cannot be taken off. */
   z.object({ t: z.literal('unequip'), x: z.number().int(), y: z.number().int(), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
+  /**
+   * Put on the piece of gear in bag slot `slot`, anywhere: what you wore in its slot goes into the bag in
+   * its place. Never a bag: the bag you wear changes only at home, at the chest.
+   */
+  z.object({ t: z.literal('wear'), slot: z.number().int().nonnegative().max(63) }),
+  /** Take off what you wear in `slot`, anywhere: it goes into the bag, if there is room. Never the bag. */
+  z.object({ t: z.literal('doff'), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
   /** Open the workbench on tile x,y, next to you: the server answers with what your stash holds. */
   z.object({ t: z.literal('bench'), x: z.number().int(), y: z.number().int() }),
   /** Make recipe `recipe` at the workbench on tile x,y, from your stash, into your stash. */
   z.object({ t: z.literal('craft'), x: z.number().int(), y: z.number().int(), recipe: z.string().min(1).max(40) }),
   /** Mend the piece you wear in `slot` at the workbench on tile x,y, paying from your stash (`mend` in content/items.json). */
   z.object({ t: z.literal('mend'), x: z.number().int(), y: z.number().int(), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
-  /** Take up to `count` of an item out of the chest on tile x,y, as much as fits in your bag. */
-  z.object({ t: z.literal('take'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), count: z.number().int().positive().max(9999) }),
+  /**
+   * Upgrade a piece you wear or keep in the stash one level, at the workbench on tile x,y, paying from your
+   * stash (`upgrades` in content/items.json). From +7 it may not take: the materials are spent either way.
+   */
+  z.object({ t: z.literal('upgrade'), x: z.number().int(), y: z.number().int(), of: PieceAt }),
+  /**
+   * Take up to `count` of an item out of the chest on tile x,y, as much as fits in your bag. Gear comes
+   * out one piece at a time: the `n`th of that item in the stash (the first when left out).
+   */
+  z.object({
+    t: z.literal('take'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), count: z.number().int().positive().max(9999),
+    n: z.number().int().nonnegative().max(999).optional(),
+  }),
   /** Open a sealed item (a NAPO lockbox) in your stash, at the chest on tile x,y: what it holds goes into the stash. */
   z.object({ t: z.literal('open'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40) }),
   /** Wear an outfit (outfits.ts) from the wardrobe at the chest on tile x,y, or none (null): your gear shows again. */
@@ -233,7 +258,8 @@ export interface StoneView {
 /**
  * What something you asked for did, once the server carried it out: the client says it in the text box,
  * in its own words, from these facts (never guessed). One of these follows every feed, use, discard,
- * craft, mend and open that went through, after everything else the action changed; a refusal is `refused`.
+ * craft, mend, upgrade and open that went through (an upgrade that did not take went through: its
+ * materials are spent), after everything else the action changed; a refusal is `refused`.
  */
 export type Did =
   /** A fire took `count` of `item`, and has `left` seconds of fuel now; `lit`: it was out. */
@@ -243,7 +269,7 @@ export type Did =
   /**
    * One `item` from your bag was used up: the energy it gave you (as much as your bar had room for), the
    * seconds a flare burns, the arrow painted (which way it points, and for how many seconds everyone sees
-   * it), what a strange object turned out to be.
+   * it), what a strange object turned out to be (a piece of gear with its piece: its quirk is rolled).
    */
   | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot }
   /**
@@ -251,10 +277,12 @@ export type Did =
    * instead, yours for good: your tools came before this in a `tools` message.
    */
   | { kind: 'made'; item: string; count: number }
-  /** The `item` you wear is mended: whole again. */
-  | { kind: 'mended'; item: string }
-  /** You threw away `count` of `item`. */
-  | { kind: 'thrown'; item: string; count: number }
+  /** The `item` you wear (at `level`, when upgraded) is mended: whole again. */
+  | { kind: 'mended'; item: string; level?: number }
+  /** A piece of `item` is `level` now; `failed`: the upgrade did not take, the piece stays at `level` and the materials are spent. */
+  | { kind: 'upgraded'; item: string; level: number; failed?: true }
+  /** You threw away `count` of `item` (a piece at `level`, when upgraded). */
+  | { kind: 'thrown'; item: string; count: number; level?: number }
   /** You opened a sealed `item` (a NAPO lockbox) at the chest: what it held (`got`) is in your stash now. */
   | { kind: 'opened'; item: string; got: BagSlot[] };
 
@@ -307,12 +335,16 @@ export type Refusal =
   | 'sign_in_first'
   /** They play as a guest: friends need both players signed in. */
   | 'guest'
-  /** Gear stays in the chest: it is put on from there. */
-  | 'gear_stays'
+  /** The bag you wear changes only at home, at the chest: not from the bag. */
+  | 'bag_at_home'
   /** That is as good as new already, or cannot be mended. */
   | 'whole'
   /** You have that tool already: each is yours once, for good (a find of it stays for someone else). */
   | 'have_tool'
+  /** Worn clothes and bags are not upgraded (nor is what is not gear). */
+  | 'not_upgradable'
+  /** It is as high as a piece goes. */
+  | 'top_level'
   /** A sealed thing stays in the chest: it is opened there. */
   | 'sealed_stays'
   /** Your level has not reached that outfit yet. */
@@ -442,7 +474,7 @@ export type ServerMsg =
    * out to be comes in `did` instead.
    */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool'; double?: true }
-  /** What a feed, use, discard, craft, mend or open you asked for did (for the text box). */
+  /** What a feed, use, discard, craft, mend, upgrade or open you asked for did (for the text box). */
   | { t: 'did'; did: Did }
   /** Something asked for that did not happen, and why. */
   | { t: 'refused'; action: RefusedAction; reason: Refusal }
@@ -462,9 +494,10 @@ export type ServerMsg =
   | { t: 'creatureGone'; id: number }
   /**
    * A creature reached you: you lost energy, and one of what you carried (if anything) went: a watcher
-   * takes it, a skulker makes you drop a whole bag slot of it into your pile where you stand.
+   * takes it, a skulker makes you drop a whole bag slot of it into your pile where you stand. `level`: it
+   * was a piece upgraded that far.
    */
-  | { t: 'touched'; by: CreatureView['kind']; lost: string | null }
+  | { t: 'touched'; by: CreatureView['kind']; lost: string | null; level?: number }
   /** Something clung to your back, or let go of it. */
   | { t: 'hitch'; on: boolean }
   /** On your map: someone lit a flare. */
@@ -523,7 +556,7 @@ export type ServerMsg =
 
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
-  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'open' | 'outfit' | 'say'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'say'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
 
 /**

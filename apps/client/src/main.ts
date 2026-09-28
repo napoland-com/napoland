@@ -19,7 +19,7 @@ import { detailView, type DetailRef } from './details';
 import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
-import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, wearText, wornViews } from './items';
+import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, upgradeOf, upgradeViews, wearText, wornViews } from './items';
 import { journalView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
@@ -144,10 +144,12 @@ const hud = new Hud(screen, {
   // Steps count toward feats without the server telling each one: the panel asks for the counts as they are.
   status: () => { game.askStats(); showStatus(); },
   store: slot => game.store(slot),
-  take: item => game.take(item),
+  take: (item, n) => game.take(item, n),
   stashClosed: () => game.closeChest(),
   equip: (item, n) => game.equip(item, n),
   unequip: slot => game.unequip(slot),
+  wear: slot => game.wear(slot),
+  doff: slot => game.doff(slot),
   open: item => game.openSealed(item),
   outfit: id => game.wearOutfit(id),
   // At the workbench, the first goal opens the card of what to make (once the workbench has answered).
@@ -157,11 +159,19 @@ const hud = new Hud(screen, {
     goalCard = { from: 'recipe', id: next.recipe.id };
     game.openBench();
   },
-  // The workbench's rows are recipes, and mending ("mend:" and the slot).
-  craft: recipe => (recipe.startsWith('mend:') ? game.mend(recipe.slice(5) as Slot) : game.craft(recipe)),
+  // The workbench's rows are recipes, mending ("mend:" and the slot) and upgrades ("up:" and the piece, upgradeId).
+  craft: recipe => {
+    const up = upgradeOf(recipe);
+    if (up) game.upgrade(up);
+    else if (recipe.startsWith('mend:')) game.mend(recipe.slice(5) as Slot);
+    else game.craft(recipe);
+  },
   benchClosed: () => game.closeBench(),
-  // What a tap in the chest or at the workbench shows, from what the open one says your stash holds.
-  details: ref => detailView(ref, { items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools, wardrobe: wardrobeNow() }),
+  // What a tap in the chest, at the workbench or in the bag shows, from what the open chest or workbench says your stash holds.
+  details: (ref, where) => detailView(ref, {
+    items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools, panel: where === 'bag' ? 'bag' : 'home',
+    wardrobe: wardrobeNow(),
+  }),
   chat: a => {
     if (a.a === 'tab') chatTab = a.to;
     else if (a.a === 'say') game.say(a.to, a.text);
@@ -758,9 +768,10 @@ function frame(now: number) {
     if (!game.bench && benchShown) hud.toggleBench(false);
     benchShown = game.bench;
   }
-  // Also when what you wear wears down or is mended: its mend row changes.
+  // Also when what you wear wears down, is mended or upgraded: its mend and upgrade rows change.
   if (game.bench && (benchChanged || game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn)) {
-    hud.setBench([...mendViews(game.myGear, game.myWorn, game.bench.stash, items), ...recipeViews(items.recipes, game.bench.stash, items, game.tools)]);
+    const { stash } = game.bench;
+    hud.setBench([...mendViews(game.myGear, game.myWorn, stash, items), ...upgradeViews(game.myGear, game.myWorn, stash, items), ...recipeViews(items.recipes, stash, items, game.tools)]);
   }
   if (game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn) {
     gearShown = { gear: game.myGear, worn: game.myWorn };

@@ -3,7 +3,7 @@
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
 import { MODS, modChanges, type Mods } from './feats';
-import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
+import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
 import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
 import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
@@ -371,6 +371,18 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`mend: each need is a whole number from 1`);
     }
   }
+  if (data.upgrades !== undefined && !Array.isArray(data.upgrades)) err('upgrades: a list, what each level costs, +1 first');
+  else if ((data.upgrades?.length ?? 0) > UPGRADE_MAX) err(`upgrades: at most ${UPGRADE_MAX} levels`);
+  (Array.isArray(data.upgrades) ? data.upgrades : []).forEach((u, i) => {
+    const name = `upgrades: +${i + 1}`;
+    if (!u?.needs?.length) err(`${name} costs nothing`);
+    for (const n of u?.needs ?? []) {
+      if (!ids.has(n.item)) err(`${name} needs ${n.item}, which is not an item`);
+      else if (tools.has(n.item)) err(`${name} needs ${n.item}, a tool: tools are never used up`);
+      if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
+    }
+    if (u?.chance !== undefined && !(typeof u.chance === 'number' && u.chance > 0 && u.chance <= 1)) err(`${name}: chance is a share above 0, at most 1`);
+  });
   for (const q of data.quirks ?? []) {
     if (!QUIRKS.includes(q.id)) err(`quirk ${q.id}: the game knows ${QUIRKS.join(', ')}`);
     if (!q.name?.trim() || !q.text?.trim()) err(`quirk ${q.id} needs a name and a text`);

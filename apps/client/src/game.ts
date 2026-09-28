@@ -24,19 +24,20 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe, outfitsFor,
-  stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, DIR_VEC, type NextGear,
+  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe, nextUpgrade,
+  outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, DIR_VEC, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
-  type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
+  type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
+import { pieceAt } from './details';
 import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
-import { countOf, lookOf, refusalText, type Items } from './items';
+import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, makeQuestion, mendQuestion, noShard, nothingToBurn, openQuestion, sentence,
-  shortOf, stashShort, stoneQuestion, tossQuestion, useQuestion,
+  shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import type { Maps } from './maps';
 import type { Avatar } from './view/world';
@@ -156,7 +157,7 @@ export const CHAT_LOG = 100;
 /** What a `refused` can answer among friends: the friends panel says why. */
 const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'open']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open']);
 
 export class Game {
   meId: string | null = null;
@@ -445,7 +446,7 @@ export class Game {
         this.creatures.delete(msg.id);
         break;
       case 'touched': {
-        const lost = msg.lost && this.items.get(msg.lost).name.toLowerCase();
+        const lost = msg.lost && pieceName(this.items.get(msg.lost), msg.level).toLowerCase();
         if (msg.by === 'skulker') {
           this.floatOverMe(lost ? `It caught you. You dropped your ${lost}` : 'It caught you', EERIE, 1);
           this.floatOverMe('It slipped back into the ferns', NO);
@@ -813,11 +814,11 @@ export class Game {
     this.send(slot === undefined ? { t: 'store', x: c.x, y: c.y } : { t: 'store', x: c.x, y: c.y, slot });
   }
 
-  /** Take a stack of an item out of the open chest (as much as fits the server decides). */
-  take(item: string) {
+  /** Take a stack of an item out of the open chest (as much as fits the server decides); a piece of gear, the `n`th of its kind. */
+  take(item: string, n?: number) {
     const c = this.chest;
     if (!c || !this.online) return;
-    this.send({ t: 'take', x: c.x, y: c.y, item, count: this.items.get(item).stack });
+    this.send({ t: 'take', x: c.x, y: c.y, item, count: this.items.get(item).stack, ...(n ? { n } : {}) });
   }
 
   /** Close the chest (the panel went away). */
@@ -911,12 +912,29 @@ export class Game {
   mend(slot: Slot) {
     const b = this.bench, id = this.myGear[slot];
     if (!b || !this.online || !id) return;
-    const def = this.items.get(id), cost = mendCost(def, this.items.mend);
+    const def = this.items.get(id), cost = mendCost(def, this.items.mend), level = this.myWorn[slot]?.level;
     if (!cost) return;
     const short = shortOf(cost, b.stash);
-    if (short.length) return this.inform('Workbench', stashShort(short, this.items, { mend: def }));
-    const text = mendQuestion(def, cost, this.items);
+    if (short.length) return this.inform('Workbench', stashShort(short, this.items, { mend: def, level }));
+    const text = mendQuestion(def, cost, this.items, level);
     this.ask({ who: 'Workbench', text, yes: () => this.act('Workbench', text, { t: 'mend', x: b.x, y: b.y, slot }) });
+  }
+
+  /**
+   * At the open workbench: upgrade a piece you wear or keep in the stash one level. It asks first, with
+   * what it uses and, from +7, how often it works ("Upgrade your raincoat to +7? It uses 4 shards and a
+   * strange object. It works 7 times in 10."), or says what the stash lacks. The server rolls the dice.
+   */
+  upgrade(of: PieceAt) {
+    const b = this.bench;
+    if (!b || !this.online) return;
+    const at = pieceAt(of, { items: this.items, bag: this.bag, stash: b.stash, gear: this.myGear, worn: this.myWorn });
+    const level = at?.piece.level ?? 0, next = at && upgradable(at.def) ? nextUpgrade(level, this.items.upgrades) : undefined;
+    if (!at || !next) return;
+    const short = shortOf(next.needs, b.stash);
+    if (short.length) return this.inform('Workbench', stashShort(short, this.items, { upgrade: at.def, to: level + 1 }));
+    const text = upgradeQuestion(at.def, level + 1, next, this.items);
+    this.ask({ who: 'Workbench', text, yes: () => this.act('Workbench', text, { t: 'upgrade', x: b.x, y: b.y, of }) });
   }
 
   unequip(slot: Slot) {
@@ -937,6 +955,19 @@ export class Game {
    */
   private newOutfits(): string[] {
     return this.guest || this.myOutfit ? [] : outfitsFor(this.progress.level, true).map(o => o.id);
+  }
+
+  /**
+   * Anywhere, from the bag: put on the piece in bag slot `slot` (what it replaces goes into the bag), or
+   * take off what a slot wears into the bag. Nothing is used up, so nothing asks first; the server says
+   * no when it cannot (a full bag), and the bag and what you wear follow its answer.
+   */
+  wear(slot: number) {
+    if (this.online && this.bag[slot]) this.send({ t: 'wear', slot });
+  }
+
+  doff(slot: Slot) {
+    if (this.online && this.myGear[slot]) this.send({ t: 'doff', slot });
   }
 
   /**
@@ -971,7 +1002,9 @@ export class Game {
       for (const s of list) n[s.item] = (n[s.item] ?? 0) + s.count;
       return n;
     };
-    const owned = new Set([...Object.values(this.myGear), ...stash.filter(s => this.items.get(s.item).kind === 'gear').map(s => s.item)]);
+    // A piece carried in the bag is owned as much as one in the stash: taken off out there, it is not the next thing to make.
+    const gearIn = (list: readonly BagSlot[]) => list.filter(s => this.items.get(s.item).kind === 'gear').map(s => s.item);
+    const owned = new Set([...Object.values(this.myGear), ...gearIn(stash), ...gearIn(this.bag)]);
     // Gear only: a recipe that makes a tool (yours for good, never worn) is never the first goal.
     const gear = this.items.recipes.filter(r => this.items.get(r.make).kind === 'gear');
     return nearestRecipe(gear, owned, count(stash), count(this.bag));
@@ -1141,10 +1174,10 @@ export class Game {
   discard(slot: number) {
     const s = this.bag[slot];
     if (!s || !this.online) return;
-    const def = this.items.get(s.item), all = s.count, text = (n: number) => tossQuestion(def, n, all);
+    const def = this.items.get(s.item), all = s.count, level = s.piece?.level, who = pieceName(def, level), text = (n: number) => tossQuestion(def, n, all, level);
     this.ask({
-      who: def.name, text, count: { min: 1, max: all },
-      yes: n => this.actOn(slot, def.id, def.name, text(n), i => ({ t: 'discard', slot: i, count: n })),
+      who, text, count: { min: 1, max: all },
+      yes: n => this.actOn(slot, def.id, who, text(n), i => ({ t: 'discard', slot: i, count: n })),
     });
   }
 

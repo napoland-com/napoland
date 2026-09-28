@@ -4,8 +4,8 @@
  * concrete, and every number from the data (content/items.json: nouns, fuel, uses, recipes, what
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
-import { aOf, amount, countable, fireFull, nounOf, pluralOf, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type NextGear, type Recipe, type StoneView } from '@napoland/shared';
-import type { Items } from './items';
+import { aOf, amount, countable, fireFull, nounOf, pluralOf, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type NextGear, type Recipe, type StoneView, type Upgrade } from '@napoland/shared';
+import { oddsText, pieceName, type Items } from './items';
 
 // ---------- naming things in a sentence ----------
 
@@ -20,6 +20,11 @@ export function counted(def: ItemDef, n: number): string {
 /** Whether "they" (not "it") stands for `n` of it: several of what is counted, or a pair. */
 function they(def: ItemDef, n: number): boolean {
   return countable(def) ? n > 1 : nounOf(def).endsWith('s');
+}
+
+/** One piece in a sentence, with its level once it has one: "raincoat", "raincoat +3", "rubber gloves +1". */
+export function pieceNoun(def: ItemDef, level = 0): string {
+  return level > 0 ? `${nounOf(def)} +${level}` : nounOf(def);
 }
 
 /** "a", "a and b", "a, b and c" (or "or"). */
@@ -81,9 +86,12 @@ export function useQuestion(def: ItemDef, energy: EnergyView | null): string {
   return `Use the ${n}? It will be used up.`;
 }
 
-/** Throw away, in the bag: `n` of the `inSlot` the slot holds. "Throw away 3 resin? It is gone for good." */
-export function tossQuestion(def: ItemDef, n: number, inSlot: number): string {
-  const what = n === 1 && inSlot === 1 ? `the ${nounOf(def)}` : n === inSlot ? `all ${n} ${pluralOf(def)}` : amount(def, n);
+/**
+ * Throw away, in the bag: `n` of the `inSlot` the slot holds. "Throw away 3 resin? It is gone for good."
+ * A piece is named with its level: "Throw away the raincoat +3?"
+ */
+export function tossQuestion(def: ItemDef, n: number, inSlot: number, level = 0): string {
+  const what = n === 1 && inSlot === 1 ? `the ${pieceNoun(def, level)}` : n === inSlot ? `all ${n} ${pluralOf(def)}` : amount(def, n);
   return `Throw away ${what}? ${they(def, n) ? 'They are' : 'It is'} gone for good.`;
 }
 
@@ -93,9 +101,18 @@ export function makeQuestion(recipe: Recipe, items: Items): string {
   return `Make ${n === 1 ? aOf(made) : amount(made, n)}? It uses ${listOf(recipe.needs.map(x => counted(items.get(x.item), x.count)))}.`;
 }
 
-/** At the workbench: "Mend your raincoat? It uses 2 cloth and 1 scrap." */
-export function mendQuestion(def: ItemDef, cost: readonly BagSlot[], items: Items): string {
-  return `Mend your ${nounOf(def)}? It uses ${listOf(cost.map(x => counted(items.get(x.item), x.count)))}.`;
+/** At the workbench: "Mend your raincoat? It uses 2 cloth and 1 scrap." (with its level: "your raincoat +3"). */
+export function mendQuestion(def: ItemDef, cost: readonly BagSlot[], items: Items, level = 0): string {
+  return `Mend your ${pieceNoun(def, level)}? It uses ${listOf(cost.map(x => counted(items.get(x.item), x.count)))}.`;
+}
+
+/**
+ * At the workbench: "Upgrade your raincoat to +7? It uses 4 shards and a strange object. It works 7 times
+ * in 10." What always works says only what it uses.
+ */
+export function upgradeQuestion(def: ItemDef, to: number, next: Upgrade, items: Items): string {
+  const uses = `Upgrade your ${nounOf(def)} to +${to}? It uses ${listOf(next.needs.map(x => amount(items.get(x.item), x.count)))}.`;
+  return next.chance === undefined || next.chance >= 1 ? uses : `${uses} ${oddsText(next)}`;
 }
 
 /** At the chest, before a sealed thing is opened: "Open the NAPO lockbox? It has been sealed since the evacuation." */
@@ -159,10 +176,15 @@ export const NO_ROOM = 'Your bag is full. Make room first.';
 /** Asked and answered, but the bag no longer holds it (a watcher took it, say). */
 export const GONE = 'It is not in your bag any more.';
 
-/** The stash lacks what making or mending takes: "Your stash is short of 3 cloth and 1 resin for a raincoat." */
-export function stashShort(short: readonly BagSlot[], items: Items, what: { make: ItemDef } | { mend: ItemDef }): string {
+/**
+ * The stash lacks what making, mending or upgrading takes: "Your stash is short of 3 cloth and 1 resin for
+ * a raincoat.", "...to mend your raincoat.", "...to upgrade your raincoat to +5."
+ */
+export function stashShort(short: readonly BagSlot[], items: Items, what: { make: ItemDef } | { mend: ItemDef; level?: number } | { upgrade: ItemDef; to: number }): string {
   const list = listOf(short.map(x => counted(items.get(x.item), x.count)));
-  return 'make' in what ? `Your stash is short of ${list} for ${aOf(what.make)}.` : `Your stash is short of ${list} to mend your ${nounOf(what.mend)}.`;
+  if ('make' in what) return `Your stash is short of ${list} for ${aOf(what.make)}.`;
+  if ('mend' in what) return `Your stash is short of ${list} to mend your ${pieceNoun(what.mend, what.level)}.`;
+  return `Your stash is short of ${list} to upgrade your ${nounOf(what.upgrade)} to +${what.to}.`;
 }
 
 /** Where a tool is once you have it: never the stash or the bag, but a button of its own in the bag's header. */
@@ -188,8 +210,9 @@ export function didWho(did: Did, items: Items): string {
   switch (did.kind) {
     case 'fire': return 'Fire';
     case 'stone': return 'The Old Stone';
-    case 'made': case 'mended': return 'Workbench';
-    case 'used': case 'thrown': case 'opened': return items.get(did.item).name;
+    case 'made': case 'mended': case 'upgraded': return 'Workbench';
+    case 'used': case 'opened': return items.get(did.item).name;
+    case 'thrown': return pieceName(items.get(did.item), did.level);
   }
 }
 
@@ -210,9 +233,11 @@ export function didText(did: Did, items: Items): string {
     case 'used': {
       const n = nounOf(def), said: string[] = [];
       if (did.into) {
-        const into = items.get(did.into.item);
+        const into = items.get(did.into.item), quirk = did.into.piece?.quirk;
         said.push(`It turns out to be ${amount(into, did.into.count)}.`);
         if (into.about) said.push(into.about);
+        // Its quirk is rolled as it lands in the bag: the card in the bag says what it does.
+        if (quirk) said.push(`It has a quirk: ${items.quirk(quirk).name.toLowerCase()}.`);
       }
       if (did.energy !== undefined) {
         said.push(did.energy === 0 ? `You drink the ${n}, but your energy was full already.` : `You drink the ${n}: ${signed(did.energy)} energy.`);
@@ -228,9 +253,16 @@ export function didText(did: Did, items: Items): string {
       return `You make ${did.count === 1 ? aOf(def) : amount(def, did.count)}. ${pl ? 'They wait' : 'It waits'} in your stash${gear ? `: put ${pl ? 'them' : 'it'} on at the chest` : ''}.`;
     }
     case 'mended':
-      return `You mend your ${nounOf(def)}: as good as new.`;
+      return `You mend your ${pieceNoun(def, did.level)}: as good as new.`;
+    case 'upgraded': {
+      // "The raincoat is +7 now.", "The rubber gloves are +7 now."
+      const pl = they(def, 1), noun = `The ${nounOf(def)}`;
+      return did.failed
+        ? `It did not take. ${noun} ${pl ? 'stay' : 'stays'} +${did.level}, and the materials are gone.`
+        : `${noun} ${pl ? 'are' : 'is'} +${did.level} now.`;
+    }
     case 'thrown':
-      return `You throw away ${amount(def, did.count)}.`;
+      return did.level ? `You throw away the ${pieceNoun(def, did.level)}.` : `You throw away ${amount(def, did.count)}.`;
     case 'opened': {
       // One thing inside says what it is good for, as a strange object does.
       const about = did.got.length === 1 ? items.get(did.got[0]!.item).about : undefined;
