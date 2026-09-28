@@ -25,6 +25,7 @@ import { Connection, serverUrl } from './net';
 import { Sound, type SoundSetting } from './sound';
 import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
+import { Resolution } from './quality';
 import { levelText, newsBanner, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
@@ -73,8 +74,11 @@ app.appendChild(screen);
 const renderer = createRenderer(canvas);
 /** A view sees other maps' data: a house whose room keeps a fire has smoke over its chimney. */
 const peek = (id: string) => maps.find(id);
+/** How sharp the world is drawn: a step coarser while a slow phone needs it (quality.ts). */
+const resolution = new Resolution();
 /** The view of the map you are on; replaced (and the old one freed) when you arrive somewhere else. */
 let view = new WorldView(renderer, maps.home(), peek);
+view.pixelScale = resolution.scale;
 /** Every view asks the game how big each fire burns, as it draws. */
 const watchFires = (v: WorldView) => v.setFires((x, y) => fireLevel(game.fireLeft(x, y, performance.now())));
 let weather: Weather = 'rain';
@@ -224,6 +228,7 @@ const arrival = new Arrival(held => {
   if (view.map !== game.map) {
     view.dispose();
     view = new WorldView(renderer, game.map, peek);
+    view.pixelScale = resolution.scale;
     view.setWeather(weather);
     watchFires(view);
     resize();
@@ -593,6 +598,8 @@ function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, Math.max(0, (now - last) / 1000));
+  const scale = resolution.frame(now - last);
+  if (scale !== null) { view.pixelScale = scale; resize(); }
   last = now;
   arrival.update(dt);
   game.held = arrival.leaving;
