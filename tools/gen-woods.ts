@@ -687,7 +687,7 @@ const GLYPH: Record<MapObject['kind'], string> = {
   logs: '#', stump: 'x', skid: '_', stake: '!', jeep: 'J',
   // The rest of what people left stands in town, on the South Road and in the rooms.
   truck: 'C', luggage: 'b', boxes: 'c', rocker: 'n', piano: 'n', bike: 'n', birdcage: 'n', pump: 'i', cage: 'c',
-  hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
+  hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_', lostfound: 'c',
   // The loggers' camp, the gorge's bridge and the trapper's things are the Far Woods' (gen-far-woods.ts).
   ruin: 'H', yarder: '#', spool: 'o', bridge: '=', traps: 'L', gate: 'G',
   // A note lies on something else, which shows.

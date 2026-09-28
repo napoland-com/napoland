@@ -31,11 +31,19 @@ export interface Ask {
   yes(n: number): void;
   /** NO, B or a tap outside the box: nothing happens, nothing is spent. */
   no?(): void;
+  /**
+   * Two things to choose between, instead of YES and NO (at someone else's pile: "Take half" or "Carry it
+   * to the lodge for Ana"): the words on each, and what the second one does. B and a tap outside the box
+   * still back out, and nothing happens.
+   */
+  choices?: { yes: string; other: string; run(): void };
   /** What the question is about, when something else may take it back before it is answered (a friend's ask to trade that is over). */
   tag?: 'trade';
 }
 
 export type Choice = 'yes' | 'no';
+/** How a question is answered: a choice, or backed out of (B, a tap outside the box), which is NO where there is one. */
+export type Answer = Choice | 'back';
 
 export class Question {
   choice: Choice = 'yes';
@@ -81,7 +89,18 @@ export class Question {
 
   /** What the text box draws for it. */
   view(): AskView {
-    return { who: this.ask.who, text: this.text, choice: this.choice, count: this.counts ? { n: this.n, min: this.min, max: this.max } : null };
+    const c = this.ask.choices;
+    return {
+      who: this.ask.who, text: this.text, choice: this.choice, count: this.counts ? { n: this.n, min: this.min, max: this.max } : null,
+      ...(c ? { labels: { yes: c.yes, no: c.other } } : {}),
+    };
+  }
+
+  /** What an answer does: YES, the second of two choices, or NO (backing out is NO). */
+  run(answer: Answer): void {
+    if (answer === 'yes') return this.ask.yes(this.n);
+    if (answer === 'no' && this.ask.choices) return this.ask.choices.run();
+    this.ask.no?.();
   }
 }
 

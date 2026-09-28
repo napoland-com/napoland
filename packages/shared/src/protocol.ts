@@ -31,8 +31,9 @@ import { OFFER_MAX } from './trade';
  * the road to your street, and NAPO's teleport (`teleport`), which a client that did not know would never use.
  * 35: the teleport in town takes you home, and a new player's first steps (`firstSteps`, in the welcome too).
  * 36: the window to be saved, someone down out in the wilds, whom an older page could not show or get up.
+ * 37: the lost and found, whose bundles, questions and letters an older page could not show.
  */
-export const PROTOCOL_VERSION = 36;
+export const PROTOCOL_VERSION = 37;
 
 /**
  * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
@@ -264,6 +265,14 @@ export const ClientMsg = z.discriminatedUnion('t', [
    */
   z.object({ t: z.literal('rescue'), who: z.uuid() }),
   /**
+   * Carry `owner`'s pile on tile x,y (yours, or one of the four next to it) to the lodge for them
+   * (lostfound.ts): all of it, tied up into a bundle that takes one bag slot. Someone else's pile only;
+   * `pick` still takes half of it.
+   */
+  z.object({ t: z.literal('carry'), x: z.number().int(), y: z.number().int(), owner: z.uuid() }),
+  /** Leave every bundle you carry in the lost and found box on tile x,y, next to you: each goes back to whoever lost it. */
+  z.object({ t: z.literal('handIn'), x: z.number().int(), y: z.number().int() }),
+  /**
    * A at a door on your street, on tile x,y next to you: a neighbor's, you knock (they hear it if they are
    * home, and you hear whether they are); your own, what it offers (moving next to a friend: `doorstep`).
    */
@@ -289,6 +298,17 @@ export type ClientMsg = z.infer<typeof ClientMsg>;
 export interface FindView {
   id: number;
   item: string;
+  x: number;
+  y: number;
+}
+
+/**
+ * What you lost, carried back to the lodge (lostfound.ts): by whom (null: someone you block, who is not
+ * named), and where you lost it (a map and tile, which the letter says by landmark).
+ */
+export interface ReturnedView {
+  by: string | null;
+  map: string;
   x: number;
   y: number;
 }
@@ -425,7 +445,14 @@ export type Did =
   /** Your cabin moved next to `name`'s, onto their street: you stand in front of its door there now. */
   | { kind: 'moved'; name: string }
   /** You gave `who` (their `name`) RESCUE_ENERGY of your energy, and they got up (rescue.ts). */
-  | { kind: 'rescued'; who: string; name: string };
+  | { kind: 'rescued'; who: string; name: string }
+  /**
+   * You tied up a pile to carry to the lodge (lostfound.ts): `names`, whose things you carry now, the
+   * pile's owner first (another bundle that lay in it stays its owner's).
+   */
+  | { kind: 'carried'; names: string[] }
+  /** You left what you carried for `names` in the lost and found box: it is back in their chests, and you earned `xp`. */
+  | { kind: 'handedIn'; names: string[]; xp: number };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -537,7 +564,9 @@ export type Refusal =
   /** You are down (rescue.ts): you cannot walk or act until someone gets you up, or you collapse. */
   | 'down'
   /** Getting someone up takes more energy than you have: more than RESCUE_ENERGY. */
-  | 'too_tired';
+  | 'too_tired'
+  /** It is someone else's things, in a bundle (lostfound.ts): carried to the lodge, never opened, stashed, thrown away or left. */
+  | 'not_yours';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -833,8 +862,13 @@ export type ServerMsg =
    * text box says it, and it will not be in your letter.
    */
   | { t: 'thanked'; name: string; what: ThanksFor; energy?: number; line?: true }
-  /** You came home: who thanked you while you were away, and for what, the most thanked first. */
-  | { t: 'letter'; thanks: ThanksGroup[] }
+  /**
+   * You came home: who thanked you while you were away, and for what, the most thanked first; and who
+   * carried what you lost back to the lodge (lostfound.ts), the latest first.
+   */
+  | { t: 'letter'; thanks: ThanksGroup[]; returned?: ReturnedView[] }
+  /** What you lost came back to your chest while you play (lostfound.ts): who carried it, and where you lost it. */
+  | { t: 'returned'; returned: ReturnedView }
   /**
    * The crate on tile x,y of your map, as you opened it, or since it changed while you visit it: what is
    * in it, the newest first, and whether you left one and took one this visit.
@@ -977,7 +1011,7 @@ export type ServerMsg =
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue'
+  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 

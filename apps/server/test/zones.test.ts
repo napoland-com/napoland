@@ -207,7 +207,7 @@ describe('copies of a map', () => {
     expect(w.dropViews('field')).toEqual([]);
     expect(w.zoneOf('a')).toBe('town');
     const writes = w.takeWrites();
-    expect(writes.drops).toEqual([{ owner: 'a', drop: { owner: 'a', name: 'A', map: 'field', zone: X, x: 4, y: 10, items: [{ item: 'moss', count: 3 }], droppedAt: at, trail: [] } }]);
+    expect(writes.drops).toEqual([{ owner: 'a', drop: { owner: 'a', name: 'A', map: 'field', zone: X, x: 4, y: 10, items: [{ item: 'moss', count: 3 }], droppedAt: at, trail: [], owed: {} } }]);
     storage.push(writes.drops[0]!.drop!);
     // Right where it lies, but in the main copy: nothing there.
     w.pick('c', 4, 10, at + 1000);

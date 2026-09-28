@@ -1,5 +1,5 @@
 {
-  "version": 28,
+  "version": 29,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -27,6 +27,7 @@
     {"id":"fused-glass","name":"Fused glass","noun":"lump of fused glass","plural":"lumps of fused glass","kind":"resource","stack":5,"xp":20,"weight":0.6,"text":"Sand and stone from the scar in the Burn, melted into green glass where the light came up, and cooled with bubbles in it. It is warm, and two lumps ring when they touch. Nothing at the workbench takes it yet: it is worth the carry home.","about":"Only the scar in the Burn gives it. Nothing at the workbench takes it yet: bring it home."},
     {"id":"lockbox","name":"NAPO lockbox","noun":"NAPO lockbox","plural":"NAPO lockboxes","kind":"sealed","stack":1,"text":"A grey steel box with NAPO stencilled on the lid, sealed since the evacuation. The residents keep one for whoever comes back on every day of a week. Open it at the chest.","seal":"It has been sealed since the evacuation.",
       "holds":[{"weight":3,"items":[{"item":"shard","count":3}]},{"weight":2,"items":[{"item":"strange","count":1}]},{"weight":2,"any":"charm"},{"weight":3,"items":[{"item":"cloth","count":6},{"item":"wire","count":4}]}]},
+    {"id":"bundle","name":"Bundle","kind":"bundle","stack":1,"text":"Someone else's things, tied up to carry to the lost and found box in Stonebrook Lodge, by Walt. Leave it there, and it goes back to them."},
     {"id":"stonebrook-map","name":"Map of Stonebrook","kind":"tool","stack":1,"chart":"stonebrook","icon":"map","text":"Stonebrook, drawn by hand by someone who stayed: the lodge, the Old Stone, the pond and the two roads out of town. It never tells you where you are: find the lodge, the Old Stone and the street lights around you, and work it out."},
     {"id":"near-woods-map","name":"Map of the Near Woods","kind":"tool","stack":1,"chart":"near-woods","icon":"map","text":"An old paper map, drawn by hand by someone who walked the woods. It never tells you where you are: find the road, the pond, the poles and the cabins around you, and work it out."},
     {"id":"south-road-map","name":"Map of the South Road","kind":"tool","stack":1,"chart":"south-road","icon":"map","text":"A map of NAPO's old grounds, traced by hand from one of NAPO's own. It never tells you where you are: find the road, the station's fence, the masts and the checkpoint around you, and work it out."},

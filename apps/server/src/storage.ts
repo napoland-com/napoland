@@ -106,6 +106,12 @@ export interface PlayerRecord {
    */
   kept?: Kept;
   /**
+   * Up to which of the things carried back to the lodge for them (ReturnRecord ids, in the order they came
+   * back) the player's stash holds already: saved with the stash, in the same write, so a thing that came
+   * back is put into the chest once, whatever else is written or lost around it. None: 0.
+   */
+  returned?: number;
+  /**
    * What the player wears was counted as taken out of the stash, once (World.join): the releases before
    * gear went on the road put pieces on without counting them. Kept with the counts (`wornOut` in the
    * stats' jsonb, no migration), and never forgotten by a save without it.
@@ -185,6 +191,11 @@ export interface DropRecord {
   droppedAt: number;
   /** The last tiles they walked out there, oldest first: their echo walks them. None: no echo. */
   trail?: Array<[number, number]>;
+  /**
+   * Of each item in it, how many the owner had taken out of their stash as they collapsed (Stash.out):
+   * carried back to the lodge, those earn nothing (lostfound.ts). None (a pile of an older release): all of it.
+   */
+  owed?: Record<string, number>;
 }
 
 /** An arrow someone painted on the ground. Each player has a few; they fade a day after, or longer for a good neighbor. */
@@ -255,6 +266,29 @@ export interface CacheItemRecord {
   name: string;
   /** When it was left, ms since the epoch. */
   at: number;
+}
+
+/**
+ * What someone carried back to the lodge for its owner (lostfound.ts): the bundle it was (each handed in
+ * once), whose it is, who carried it (their id, null once they are gone, and name), where it was lost,
+ * what it held, the XP the carrier got for it, when, and whether the owner was told (in their text box,
+ * or their letter home). It goes into the owner's chest as it comes back, or as they next come into the
+ * game (their `returned` says up to which one); kept until then, and THANKS_KEPT_DAYS after.
+ */
+export interface ReturnRecord {
+  /** In the order things came back, never going down (ms since the epoch it came back, or one past the last). */
+  id: number;
+  bundle: string;
+  owner: string;
+  carrier: string | null;
+  name: string;
+  map: string;
+  x: number;
+  y: number;
+  items: BagSlot[];
+  xp: number;
+  at: number;
+  told: boolean;
 }
 
 /** A player's lot on a street, for the World to know who lives where, online or not: their name goes on its plate. */
@@ -408,6 +442,15 @@ export interface Storage {
   loadCacheItems(): Promise<CacheItemRecord[]>;
   saveCacheItem(c: CacheItemRecord): Promise<void>;
   removeCacheItem(id: number): Promise<void>;
+  /**
+   * What was carried back to the lodge and is still to be put into its owner's chest (past their
+   * `returned`), or came back after `after` (ms since the epoch), oldest first; the rest is forgotten.
+   */
+  loadReturns(after: number): Promise<ReturnRecord[]>;
+  /** Stores a thing carried back, or what changed about it (told). One per bundle. */
+  saveReturn(r: ReturnRecord): Promise<void>;
+  /** Forgets what came back before `before` (ms since the epoch) and is in its owner's chest already. Returns how many went. */
+  forgetReturns(before: number): Promise<number>;
   /** The Old Stone as it was last saved, or null. */
   loadStone(): Promise<StoneRecord | null>;
   saveStone(stone: StoneRecord): Promise<void>;
@@ -460,7 +503,7 @@ function withZone<T extends { zone?: string }>(r: T, zone: string | undefined): 
  */
 const stored = (rec: PlayerRecord): PlayerRecord => tidy(withZone(copyRecord(rec), rec.zone));
 const tidy = (out: PlayerRecord): PlayerRecord => {
-  for (const k of ['outfit', 'pattern', 'badge', 'rested', 'meritsSpent'] as const) if (!out[k]) delete out[k];
+  for (const k of ['outfit', 'pattern', 'badge', 'rested', 'meritsSpent', 'returned'] as const) if (!out[k]) delete out[k];
   if (!out.looks?.length) delete out.looks;
   // What a newer release saved goes back where it was saved: in the bag.
   if (out.kept) {
@@ -477,6 +520,7 @@ const savedStats = (stats: Stats | undefined): Stats => {
   return rest;
 };
 const thanksKey = (t: Pick<ThanksRecord, 'giver' | 'helper' | 'day'>) => `${t.giver} ${t.helper} ${t.day}`;
+const copyReturn = (r: ReturnRecord): ReturnRecord => ({ ...r, items: copyBag(r.items) });
 
 export class MemoryStorage implements Storage {
   private readonly byId = new Map<string, PlayerRecord>();
@@ -487,6 +531,7 @@ export class MemoryStorage implements Storage {
   private readonly marks = new Map<number, Omit<MarkRecord, 'name' | 'color'>>();
   private readonly thanks = new Map<string, Omit<ThanksRecord, 'name'>>();
   private readonly cacheItems = new Map<number, Omit<CacheItemRecord, 'name'>>();
+  private readonly returns = new Map<number, ReturnRecord>();
   private readonly firsts = new Map<string, Omit<FirstRecord, 'name'>>();
   private stone: StoneRecord | null = null;
   private longNight: LongNightRecord | null = null;
@@ -550,6 +595,8 @@ export class MemoryStorage implements Storage {
         ...(rec.meritsSpent !== undefined ? { meritsSpent: rec.meritsSpent } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}),
         ...(rec.furniture ? { furniture: [...rec.furniture] } : {}),
         ...(rec.bests ? { bests: copyBests(rec.bests) } : cur.bests ? { bests: cur.bests } : {}),
+        // Like the database: what came back is never put into the chest twice, whatever an older copy says.
+        returned: Math.max(cur.returned ?? 0, rec.returned ?? 0),
       });
       // Every save says whether they are cozy, and where their cabin stands, as it says where they are.
       if (rec.cozy !== undefined) cur.cozy = rec.cozy;
@@ -601,6 +648,10 @@ export class MemoryStorage implements Storage {
       for (const [id, m] of this.marks) if (m.owner === rec.id) this.marks.delete(id);
       for (const [key, t] of this.thanks) if (t.giver === rec.id || t.helper === rec.id) this.thanks.delete(key);
       for (const [id, c] of this.cacheItems) if (c.owner === rec.id) this.cacheItems.delete(id);
+      for (const [id, r] of this.returns) {
+        if (r.owner === rec.id) this.returns.delete(id);
+        else if (r.carrier === rec.id) r.carrier = null;
+      }
       for (const [secret, f] of this.firsts) if (f.player === rec.id) this.firsts.delete(secret);
       this.off.delete(rec.id);
       this.tradesOff.delete(rec.id);
@@ -629,7 +680,7 @@ export class MemoryStorage implements Storage {
     const out: DropRecord[] = [];
     for (const [owner, d] of this.drops) {
       if (d.droppedAt <= after) this.drops.delete(owner);
-      else out.push({ ...d, name: this.byId.get(owner)!.name, items: copyBag(d.items), trail: (d.trail ?? []).map(([x, y]) => [x, y] as [number, number]) });
+      else out.push({ ...d, name: this.byId.get(owner)!.name, items: copyBag(d.items), trail: (d.trail ?? []).map(([x, y]) => [x, y] as [number, number]), ...(d.owed ? { owed: { ...d.owed } } : {}) });
     }
     return out.sort((a, b) => a.droppedAt - b.droppedAt);
   }
@@ -638,7 +689,7 @@ export class MemoryStorage implements Storage {
     // Like the database's foreign key: a pile belongs to a player who exists.
     if (!this.byId.has(drop.owner)) throw new Error(`there is no player ${drop.owner}`);
     const { name: _name, ...stored } = drop;
-    this.drops.set(drop.owner, withZone({ ...stored, items: copyBag(drop.items) }, drop.zone));
+    this.drops.set(drop.owner, withZone({ ...stored, items: copyBag(drop.items), ...(drop.owed ? { owed: { ...drop.owed } } : {}) }, drop.zone));
   }
 
   async removeDrop(owner: string): Promise<void> {
@@ -710,6 +761,34 @@ export class MemoryStorage implements Storage {
 
   async removeCacheItem(id: number): Promise<void> {
     this.cacheItems.delete(id);
+  }
+
+  async loadReturns(after: number): Promise<ReturnRecord[]> {
+    await this.forgetReturns(after + 1);
+    return [...this.returns.values()].map(copyReturn).sort((a, b) => a.id - b.id);
+  }
+
+  async saveReturn(r: ReturnRecord): Promise<void> {
+    // Like the database's foreign key and unique bundle: its owner exists, and a bundle comes back once.
+    if (!this.byId.has(r.owner)) throw new Error(`there is no player ${r.owner}`);
+    const had = this.returns.get(r.id);
+    if (!had && [...this.returns.values()].some(o => o.bundle === r.bundle)) throw new Error(`bundle ${r.bundle} came back already`);
+    this.returns.set(r.id, had ? { ...had, told: r.told } : copyReturn(r));
+  }
+
+  async forgetReturns(before: number): Promise<number> {
+    let gone = 0;
+    for (const [id, r] of this.returns) {
+      if (r.at >= before || r.id > (this.byId.get(r.owner)?.returned ?? 0)) continue;
+      this.returns.delete(id);
+      gone++;
+    }
+    return gone;
+  }
+
+  /** The stored things carried back, for tests. */
+  storedReturns(): ReturnRecord[] {
+    return [...this.returns.values()].map(copyReturn);
   }
 
   async loadFirsts(): Promise<FirstRecord[]> {
@@ -863,6 +942,8 @@ interface PlayerRow {
   visits_off: boolean;
   /** A new player's first step to take now; null when done, or for anyone older (029_first_steps.sql). */
   first_steps: number | null;
+  /** Up to which thing carried back the stash holds it (030_returns.sql); bigint, which node-postgres hands over as text. */
+  returned: string;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -877,6 +958,8 @@ interface DropRow {
   items: unknown;
   dropped_at: Date;
   trail: unknown;
+  /** Null for a pile of a release before 026: all of it counts as owed. */
+  owed: unknown;
 }
 
 interface MarkRow {
@@ -914,6 +997,22 @@ interface CacheItemRow {
   left_at: Date;
 }
 
+interface ReturnRow {
+  /** bigint: as text. */
+  id: string;
+  bundle: string;
+  owner: string;
+  carrier: string | null;
+  carrier_name: string;
+  map: string;
+  x: number;
+  y: number;
+  items: unknown;
+  xp: number;
+  at: Date;
+  told: boolean;
+}
+
 interface ThanksRow {
   giver: string;
   helper: string;
@@ -931,6 +1030,11 @@ const trail = (json: unknown): Array<[number, number]> =>
   Array.isArray(json) ? json.filter((t): t is [number, number] => Array.isArray(t) && t.length === 2 && t.every(Number.isInteger)) : [];
 /** A jsonb object of counts as the server wrote it; anything else reads as none (the World checks it again). */
 const stats = (json: unknown): Stats => (typeof json === 'object' && json !== null && !Array.isArray(json) ? (json as Stats) : {});
+/** A jsonb object of whole counts from 0 by item, as the server wrote it; anything else (null: a release before 026) reads as unknown. */
+const owedOf = (json: unknown): Record<string, number> | undefined => {
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) return undefined;
+  return Object.fromEntries(Object.entries(json).filter((e): e is [string, number] => Number.isInteger(e[1]) && (e[1] as number) >= 0));
+};
 /** Saved counts without the mark of what was worn counted as taken out (PlayerRecord.wornOut). */
 const withoutMark = (s: Stats): Stats => {
   const { wornOut: _mark, ...counts } = s as Stats & { wornOut?: unknown };
@@ -1020,6 +1124,7 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.street_told ? { streetTold: true as const } : {}),
   ...(r.visits_off ? { visitsOff: true as const } : {}),
   ...(r.first_steps ? { firstSteps: r.first_steps } : {}),
+  ...(Number(r.returned) > 0 ? { returned: Number(r.returned) } : {}),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -1027,10 +1132,10 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
 /** A jsonb thanks' `what` as the server wrote it, or null for anything else (such a thanks is left out). */
 const thanksFor = (json: unknown): ThanksFor | null => {
   const w = (typeof json === 'object' && json !== null ? json : {}) as Partial<Record<string, unknown>>;
-  if ((w.kind !== 'fire' && w.kind !== 'mark' && w.kind !== 'cache' && w.kind !== 'rescue') || typeof w.map !== 'string' || !Number.isInteger(w.x) || !Number.isInteger(w.y)) return null;
+  if ((w.kind !== 'fire' && w.kind !== 'mark' && w.kind !== 'cache' && w.kind !== 'rescue' && w.kind !== 'returned') || typeof w.map !== 'string' || !Number.isInteger(w.x) || !Number.isInteger(w.y)) return null;
   const at = { map: w.map, x: w.x as number, y: w.y as number };
   if (w.kind === 'cache') return typeof w.item === 'string' ? { kind: 'cache', ...at, item: w.item } : null;
-  if (w.kind === 'rescue') return typeof w.who === 'string' ? { kind: 'rescue', ...at, who: w.who } : null;
+  if (w.kind === 'rescue' || w.kind === 'returned') return typeof w.who === 'string' ? { kind: w.kind, ...at, who: w.who } : null;
   return { kind: w.kind, ...at };
 };
 
@@ -1058,7 +1163,8 @@ const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, colo
   merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
   badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, notebook = COALESCE($31::jsonb, notebook), notes = COALESCE($32::jsonb, notes),
   keepsakes = COALESCE($33::jsonb, keepsakes), furniture = COALESCE($34::jsonb, furniture), cozy_until = $35, street = $36, lot = $37, door_off = $38,
-  street_told = street_told OR $39, bests = COALESCE($40::jsonb, bests), visits_off = $41, first_steps = $42, last_seen_at = $13 WHERE id = $1`;
+  street_told = street_told OR $39, bests = COALESCE($40::jsonb, bests), visits_off = $41, first_steps = $42, returned = GREATEST(returned, $43::bigint),
+  last_seen_at = $13 WHERE id = $1`;
 
 // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
 function saveParams(rec: PlayerRecord): unknown[] {
@@ -1072,7 +1178,7 @@ function saveParams(rec: PlayerRecord): unknown[] {
     rec.notes ? JSON.stringify(rec.notes) : null, rec.keepsakes ? JSON.stringify(rec.keepsakes) : null,
     rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
     rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null, rec.doorOff === true, rec.streetTold === true,
-    rec.bests ? JSON.stringify(rec.bests) : null, rec.visitsOff === true, rec.firstSteps ?? null,
+    rec.bests ? JSON.stringify(rec.bests) : null, rec.visitsOff === true, rec.firstSteps ?? null, rec.returned ?? 0,
   ];
 }
 
@@ -1199,21 +1305,25 @@ export class PgStorage implements Storage {
   async loadDrops(after: number): Promise<DropRecord[]> {
     await this.pool.query('DELETE FROM drops WHERE dropped_at <= $1', [new Date(after)]);
     const r = await this.pool.query<DropRow>(
-      `SELECT d.owner, p.name, d.map, d.zone, d.x, d.y, d.items, d.dropped_at, d.trail
+      `SELECT d.owner, p.name, d.map, d.zone, d.x, d.y, d.items, d.dropped_at, d.trail, d.owed
        FROM drops d JOIN players p ON p.id = d.owner
        ORDER BY d.dropped_at`,
     );
-    return r.rows.map(d => ({
-      owner: d.owner, name: d.name, map: d.map, ...(d.zone ? { zone: d.zone } : {}), x: d.x, y: d.y, items: slots(d.items), droppedAt: d.dropped_at.getTime(), trail: trail(d.trail),
-    }));
+    return r.rows.map(d => {
+      const owed = owedOf(d.owed);
+      return {
+        owner: d.owner, name: d.name, map: d.map, ...(d.zone ? { zone: d.zone } : {}), x: d.x, y: d.y, items: slots(d.items), droppedAt: d.dropped_at.getTime(), trail: trail(d.trail),
+        ...(owed ? { owed } : {}),
+      };
+    });
   }
 
   async saveDrop(drop: DropRecord): Promise<void> {
     await this.pool.query(
-      `INSERT INTO drops (owner, map, zone, x, y, items, dropped_at, trail) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
+      `INSERT INTO drops (owner, map, zone, x, y, items, dropped_at, trail, owed) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, $9::jsonb)
        ON CONFLICT (owner) DO UPDATE SET map = EXCLUDED.map, zone = EXCLUDED.zone, x = EXCLUDED.x, y = EXCLUDED.y, items = EXCLUDED.items, dropped_at = EXCLUDED.dropped_at,
-         trail = EXCLUDED.trail`,
-      [drop.owner, drop.map, drop.zone ?? '', drop.x, drop.y, JSON.stringify(drop.items), new Date(drop.droppedAt), JSON.stringify(drop.trail ?? [])],
+         trail = EXCLUDED.trail, owed = EXCLUDED.owed`,
+      [drop.owner, drop.map, drop.zone ?? '', drop.x, drop.y, JSON.stringify(drop.items), new Date(drop.droppedAt), JSON.stringify(drop.trail ?? []), drop.owed ? JSON.stringify(drop.owed) : null],
     );
   }
 
@@ -1298,6 +1408,28 @@ export class PgStorage implements Storage {
 
   async removeCacheItem(id: number): Promise<void> {
     await this.pool.query('DELETE FROM cache_items WHERE id = $1', [id]);
+  }
+
+  async loadReturns(after: number): Promise<ReturnRecord[]> {
+    await this.forgetReturns(after + 1);
+    const r = await this.pool.query<ReturnRow>('SELECT id, bundle, owner, carrier, carrier_name, map, x, y, items, xp, at, told FROM returns ORDER BY id');
+    return r.rows.map(t => ({
+      id: Number(t.id), bundle: t.bundle, owner: t.owner, carrier: t.carrier, name: t.carrier_name, map: t.map, x: t.x, y: t.y, items: slots(t.items), xp: t.xp, at: t.at.getTime(), told: t.told,
+    }));
+  }
+
+  async saveReturn(t: ReturnRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO returns (id, bundle, owner, carrier, carrier_name, map, x, y, items, xp, at, told) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)
+       ON CONFLICT (id) DO UPDATE SET told = EXCLUDED.told`,
+      [t.id, t.bundle, t.owner, t.carrier, t.name, t.map, t.x, t.y, JSON.stringify(t.items), t.xp, new Date(t.at), t.told],
+    );
+  }
+
+  async forgetReturns(before: number): Promise<number> {
+    // Only what is in its owner's chest already (their `returned` says so, in the same row as the chest).
+    const r = await this.pool.query('DELETE FROM returns r USING players p WHERE p.id = r.owner AND r.id <= p.returned AND r.at < $1', [new Date(before)]);
+    return r.rowCount ?? 0;
   }
 
   async loadFirsts(): Promise<FirstRecord[]> {

@@ -2,8 +2,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  ANYWHERE, CACHE_NEAR, COMFORTS, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, comfortMax, doorOf, findPath, findTiles, hidden, itemIndex, lotDoors, notesOf, objectTiles, opensOn,
-  secretKey, secretTitle, stepTarget, teleportArrival, upgradable, upgradeChance,
+  ANYWHERE, BUNDLE, CACHE_NEAR, COMFORTS, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, comfortMax, doorOf, findPath, findTiles, hidden, itemIndex, lotDoors, notesOf, objectTiles,
+  opensOn, secretKey, secretTitle, stepTarget, storyLines, teleportArrival, upgradable, upgradeChance,
   validateItems, validateNotebook, type ItemsData, type MapData, type MapExit, type MapNote, type MapObject, type NotebookData, type Sight, type StoryData,
 } from '@napoland/shared';
 
@@ -313,6 +313,42 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
       // You open it from the tile in front of it, as you do the chest.
       expect(map.walkable(o.x, o.y + 1), map.data.id).toBe(true);
     }
+  });
+});
+
+describe('the lost and found (roadmap/lost-and-found.md)', () => {
+  const lodge = maps.get('stonebrook-lodge')!;
+  const boxes = [...maps.values()].flatMap(m => m.data.objects.flatMap(o => (o.kind === 'lostfound' ? [{ map: m, o }] : [])));
+  const walt = lodge.data.objects.find(o => o.kind === 'npc' && o.id === 'walt')!;
+
+  it('is one box in the whole world, in Stonebrook Lodge at Walt\'s elbow, opened from the tile beside where you talk to him', () => {
+    expect(boxes.map(b => b.map.data.id)).toEqual(['stonebrook-lodge']);
+    const { o } = boxes[0]!;
+    expect(Math.abs(o.x - walt.x) + Math.abs(o.y - walt.y)).toBe(1);
+    expect(lodge.walkable(o.x, o.y)).toBe(false);
+    // You stand below it, as at the chest, a step from where you stand to talk to Walt, and a few from the door.
+    expect(lodge.walkable(o.x, o.y + 1)).toBe(true);
+    expect(Math.abs(o.x - walt.x) + Math.abs(o.y + 1 - (walt.y + 1))).toBe(1);
+    const path = findPath(lodge, lodge.data.spawn.x, lodge.data.spawn.y, o.x, o.y + 1);
+    expect(path.at(-1)).toEqual({ x: o.x, y: o.y + 1 });
+  });
+
+  it('moved nothing in the lodge: the box is the last thing in it, on floor that was open', () => {
+    expect(lodge.data.objects.at(-1)).toBe(boxes[0]!.o);
+    const before = new TileMap({ ...lodge.data, objects: lodge.data.objects.slice(0, -1) });
+    expect(before.walkable(boxes[0]!.o.x, boxes[0]!.o.y)).toBe(true);
+  });
+
+  it('has Walt say what it is for, last of what he always says, through the one place people\'s lines come from', () => {
+    const lines = walt.kind === 'npc' ? walt.lines : [];
+    expect(lines.at(-1)).toBe('Folks leave what they find here. Somebody\'s always glad of it.');
+    const story = JSON.parse(readFileSync(resolve(content, 'story.json'), 'utf8')) as StoryData;
+    expect(storyLines(story, story.chapters.at(-1)!.id, 'walt', lines).at(-1)).toBe(lines.at(-1));
+  });
+
+  it('knows the one bundle every carried pile is, and nothing in content gives one', () => {
+    expect(items.items.filter(i => i.kind === 'bundle').map(i => i.id)).toEqual([BUNDLE]);
+    expect(validateItems(items, [...maps.values()].map(m => m.data)).filter(p => p.level === 'error')).toEqual([]);
   });
 });
 

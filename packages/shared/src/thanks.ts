@@ -41,15 +41,17 @@ export function utcDay(wallMs: number): number {
 
 /**
  * What a thanks was for, as the helper's letter names it: a fire (on its map and tile), an arrow (where
- * it was painted), something left in a crate for whoever comes next (its item, and the crate's tile), or
+ * it was painted), something left in a crate for whoever comes next (its item, and the crate's tile),
  * getting someone back up who was down out there (where they lay, and who: the thanks is theirs, given
- * as they got up, rescue.ts).
+ * as they got up, rescue.ts), or carrying what someone lost back to the lodge (where they lost it, and
+ * who: the thanks is theirs, given as it came back, lostfound.ts).
  */
 export type ThanksFor =
   | { kind: 'fire'; map: string; x: number; y: number }
   | { kind: 'mark'; map: string; x: number; y: number }
   | { kind: 'cache'; map: string; x: number; y: number; item: string }
-  | { kind: 'rescue'; map: string; x: number; y: number; who: string };
+  | { kind: 'rescue'; map: string; x: number; y: number; who: string }
+  | { kind: 'returned'; map: string; x: number; y: number; who: string };
 
 /** One thing thanked for, as a letter lists it: how many thanks, from how many people, and the names of the latest (two at most). */
 export interface ThanksGroup {
@@ -61,8 +63,9 @@ export interface ThanksGroup {
 
 /**
  * One key for the same thing thanked for, so the letter groups the thanks for it: the same fire, the same
- * arrow, the same item left in the same crate, or the same person got back up in the same spot.
+ * arrow, the same item left in the same crate, or the same person got back up (or their things carried
+ * back) from the same spot.
  */
 export function thanksKey(w: ThanksFor): string {
-  return `${w.kind}:${w.map}:${w.x},${w.y}${w.kind === 'cache' ? `:${w.item}` : w.kind === 'rescue' ? `:${w.who}` : ''}`;
+  return `${w.kind}:${w.map}:${w.x},${w.y}${w.kind === 'cache' ? `:${w.item}` : w.kind === 'rescue' || w.kind === 'returned' ? `:${w.who}` : ''}`;
 }
