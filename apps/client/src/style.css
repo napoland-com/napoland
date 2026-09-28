@@ -418,6 +418,37 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .act:disabled, .hud .act[aria-disabled="true"] { opacity: .45; cursor: default; }
 .detail .words p.facts { margin-top: .35em; font-size: calc(var(--u) * 1.02); color: #b9b2a2; }
 .detail .words p.facts[hidden] { display: none; }
+/* A trade (trade.ts): where it stands, what each side gives (a row each), your bag to give from, and
+   Ready and Trade at the foot, which stays in sight while the rest scrolls. It opens where the bag does. */
+.trade-sheet { overflow: hidden; }
+.trade-sheet .trade-line, .trade-sheet .offer, .trade-sheet .stash-title, .trade-sheet .hint, .trade-foot { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.trade-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; }
+.trade-line { margin: 0; padding: .45em .75em; border-radius: 9px; background: #151a22; box-shadow: inset 0 0 0 1px #3a4356; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); line-height: 1.35; color: #ffe3a1; }
+.offer { display: grid; gap: calc(var(--u) * .45); }
+.offer .hint { margin: 0; }
+.orow { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: calc(var(--u) * .6); padding: .35em .5em; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+.orow .big { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); display: grid; place-items: center; border-radius: 8px; background: #1c222c; }
+.orow .big svg { width: 80%; height: 80%; }
+.hud .orow .words { display: grid; gap: .1em; justify-items: start; min-width: 0; width: 100%; padding: .2em 0; border: 0; border-radius: 6px; background: none; box-shadow: none; text-align: left; font-family: var(--font-text); font-weight: 700; }
+.orow .words b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.15); color: #ffcf5a; }
+.orow .ofacts { font-size: calc(var(--u) * .95); line-height: 1.3; color: #b9b2a2; }
+.orow .ocount { display: flex; align-items: center; gap: calc(var(--u) * .35); }
+.hud .orow .step { width: var(--hit); height: var(--hit); flex: none; }
+.hud .orow .step svg { width: 44%; height: 44%; stroke-width: 2.6; }
+.hud .orow .step[aria-disabled="true"] { opacity: .35; }
+.orow .n { min-width: 2.4em; text-align: center; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.3); color: #f1ece0; font-variant-numeric: tabular-nums; }
+.orow .otext { grid-column: 1 / -1; margin: 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.05); line-height: 1.35; color: #d3ccbb; }
+/* Your bag in a trade: what you give is ringed in gold, with a tick in its corner. */
+.hud .trade-sheet .slot[data-given] { background: #262d3a; box-shadow: inset 0 0 0 2px #ffcf5a; }
+.slot .given { position: absolute; left: 7%; top: 7%; width: max(12px, calc(var(--u) * 1.3)); height: max(12px, calc(var(--u) * 1.3)); border-radius: 50%; background: #ffcf5a; }
+.slot .given::after { content: ""; position: absolute; left: 36%; top: 20%; width: 24%; height: 44%; border: solid #1a0f04; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.trade-foot { display: grid; gap: calc(var(--u) * .4); padding-top: var(--gap); border-top: 2px solid #2a3240; }
+.trade-foot .acts { display: flex; gap: calc(var(--u) * .6); }
+.hud .trade-foot .act { flex: 1 1 0; min-width: 0; min-height: var(--hit); text-align: center; }
+.hud .trade-foot .act.ready[data-on] { background: #22362a; border-color: #8fd98a; color: #cfe9c3; }
+.hud .trade-foot .act.ready[data-on]::before { content: "✓ "; }
+.hud .trade-foot .act.go[data-pressed] { background: #3a3024; border-color: #8a7440; color: #ffe3a1; }
+.trade-foot .fine { margin: 0; text-align: center; font-family: var(--font-text); font-weight: 700; font-size: max(11px, calc(var(--u) * .95)); color: #8a8474; }
 /* The status panel: rows about you, then the feats. It sits where the bag does. */
 /* Friends: the list, someone's card and a conversation. Text you type is at least 16px, so iPhone Safari never zooms in. */
 .friends-sheet .note { margin: 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.15); color: #ffb4a0; }

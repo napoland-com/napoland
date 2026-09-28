@@ -26,6 +26,9 @@
  *   it tells us, we show them; so is what everyone wears, gear and outfits (you choose yours at the chest);
  * - a call (calls.ts) goes to the server, which says who heard it: each one heard, yours too, is sung
  *   from where it came, and a note rises over the caller's head;
+ * - a trade with a friend face to face (trade.ts) is the server's: a friend's ask comes as a question
+ *   in the text box, your side runs ahead of the server's answer while you change it, and how it ended
+ *   is said in the box;
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
  * - energy, wetness, fires and the surge clock are counted forward between the server's reports, so
  *   everything moves smoothly.
@@ -36,7 +39,7 @@ import {
   upgradable, utcDay, whyNotBuy, DIR_VEC, type CacheItemView, type LookKind, type MeritsView, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
+  type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type OfferPick, type ParcelView, type RefusedAction, type StormView, type TradeEnd, type TradeView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -50,6 +53,7 @@ import {
 } from './said';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
+import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
 import type { Avatar } from './view/world';
 
 interface Mover {
@@ -184,7 +188,9 @@ const NO_STORY: StoryData = { version: 0, chapters: [] };
 export const CHAT_LOG = 100;
 
 /** What a `refused` can answer among friends: the friends panel says why. */
-const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
+const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'tradeRequests', 'friends']);
+/** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
+const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
 const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy']);
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
@@ -275,6 +281,12 @@ export class Game {
   socialNote: string | null = null;
   /** Counts every change to all of the above, so the panel is rebuilt only when something changed. */
   socialChanges = 0;
+  /** Your trade as the server last told it (trade.ts); null while you are in none. */
+  trade: TradeView | null = null;
+  /** Your side of it as you last set it: it runs ahead of the server's answer, and every answer sets it again. */
+  tradeMine: BagSlot[] = [];
+  /** Counts every change to the trade, so its panel is drawn again only when something changed. */
+  tradeChanges = 0;
   /** What you heard said this session, oldest first, at most CHAT_LOG lines; replaced whole on every change. Nothing said is kept anywhere. */
   chat: Array<{ to: ChatTo; id: string; name: string; text: string; mine: boolean }> = [];
   /** Something was said since the chat panel was last looked at (the interface clears it). */
@@ -352,6 +364,12 @@ export class Game {
   private wall = { now: 0, ms: 0 };
   /** A letter from home (thanks while you were away), until the text box is free to show it. */
   private letter: string[] | null = null;
+  /** Whom you last asked to trade: a refusal names them (the trade is the server's to make). */
+  private tradeWith: PersonView | null = null;
+  /** You called off the trade with this player: what the server says of it until it has heard you is old news. */
+  private callingOff: string | null = null;
+  /** A friend's ask to trade, waiting for the text box to be free of a question or someone's lines. */
+  private tradeAsk: PersonView | null = null;
 
   constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY) {
     this.current = maps.home();
@@ -730,6 +748,12 @@ export class Game {
         this.friends = msg;
         this.socialChanges++;
         break;
+      case 'trade':
+        this.traded(msg.trade);
+        break;
+      case 'tradeOver':
+        this.tradeOver(msg.with, msg.end);
+        break;
       case 'called':
         // A hidden tab runs no frames to take them: what it heard long ago goes, so the lists stay short.
         this.calls = this.calls.filter(c => now - c.at < CALL_NOTE_S * 1000);
@@ -756,6 +780,7 @@ export class Game {
         break;
       case 'refused':
         if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
+        if (TRADE_ACTIONS.has(msg.action)) { this.inform('Trade', tradeRefusal(msg.reason, this.trade?.with.name ?? this.tradeWith?.name ?? 'them')); break; }
         if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
         if (msg.action === 'call') { this.murmur(refusalText(msg.reason, msg.action)); break; }
         // A thanks is answered with the helper's name: the one asked about.
@@ -787,6 +812,9 @@ export class Game {
     this.pending = []; this.path = []; this.goal = null;
     // Answers to what we asked went with the connection, and what was being asked may no longer hold.
     this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.benchCard = null; this.caching = null; this.cache = null;
+    // A trade lasts only while both are online: the server calls it off.
+    if (this.trade) this.tradeChanges++;
+    this.trade = null; this.tradeMine = []; this.tradeAsk = null; this.callingOff = null;
     this.clearBox();
     this.offers.reset();
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
@@ -1042,14 +1070,120 @@ export class Game {
     this.send({ t: 'tell', to, text: t });
   }
 
-  /** Any other friends action: answer, unfriend, block, report, the requests setting, or asking for the list again. */
-  social(msg: Extract<ClientMsg, { t: 'answer' | 'unfriend' | 'block' | 'report' | 'requests' | 'friends' }>) {
+  /** Any other friends action: answer, unfriend, block, report, the settings, or asking for the list again. */
+  social(msg: Extract<ClientMsg, { t: 'answer' | 'unfriend' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends' }>) {
     if (this.online) this.send(msg);
   }
 
   /** Something new for the menu's dot: a friend request, or a message not opened yet. */
   get socialNews(): boolean {
     return this.unread.size > 0 || (this.friends?.incoming.length ?? 0) > 0;
+  }
+
+  // ---------- trades ----------
+
+  /** Asks a friend to trade (their card's Trade): the server asks them, and the trade panel opens once it says so. */
+  askTrade(p: PersonView) {
+    if (!this.online || this.trade) return;
+    this.tradeWith = p;
+    this.callingOff = null;
+    this.send({ t: 'tradeOpen', id: p.id });
+  }
+
+  /** Where a friend is for a trade, as their card says it: near enough, on your map but too far, or not here. */
+  tradeReach(id: string): TradeReach {
+    const me = this.me, them = this.players.get(id);
+    return tradeReach(me && { x: me.tx, y: me.ty }, them && { x: them.tx, y: them.ty });
+  }
+
+  /** A tap on bag slot `slot` in the trade panel: what it holds goes into your side, or comes back out of it. */
+  tradeTap(slot: number) {
+    this.setOffer(tapSlot(this.tradeMine, this.bag, slot, this.items));
+  }
+
+  /** − (-1) or + (1) on row `i` of your side. */
+  tradeStep(i: number, by: -1 | 1) {
+    this.setOffer(stepRow(this.tradeMine, this.bag, i, by, this.items));
+  }
+
+  /** Ready, or not any more (it can be pressed once both are in). */
+  tradeReady() {
+    const t = this.trade;
+    if (t?.state === 'open' && this.online) this.send({ t: 'tradeReady', on: !t.ready });
+  }
+
+  /** Trade: once both are ready, both press it and the server swaps both sides. */
+  tradeConfirm() {
+    const t = this.trade;
+    if (t?.state === 'open' && t.ready && t.theyReady && !t.confirmed && this.online) this.send({ t: 'tradeConfirm' });
+  }
+
+  /** A on the trade panel: Ready, and once both are ready, Trade. */
+  tradePressA() {
+    const t = this.trade;
+    if (t?.state !== 'open') return;
+    if (!t.ready) this.tradeReady();
+    else this.tradeConfirm();
+  }
+
+  /** The trade panel closed: the trade is off, for both. What the server says of it until it hears this is old news. */
+  tradeCancel() {
+    const t = this.trade;
+    if (!t) return;
+    this.callingOff = t.with.id;
+    this.trade = null;
+    this.tradeMine = [];
+    this.tradeChanges++;
+    if (this.online) this.send({ t: 'tradeCancel' });
+  }
+
+  /** Your side changed: both Readys go (as the server will say), and it goes to the server as picks of your bag. */
+  private setOffer(picks: OfferPick[]) {
+    const t = this.trade;
+    if (!t || t.state === 'asked' || !this.online) return;
+    this.tradeMine = offerOf(picks, this.bag, this.items);
+    this.trade = { ...t, ready: false, theyReady: false, confirmed: false, theyConfirmed: false };
+    this.tradeChanges++;
+    this.send({ t: 'tradeOffer', items: picks });
+  }
+
+  /** The trade as the server tells it: a friend's ask is a question in the text box; anything else, the panel shows. */
+  private traded(t: TradeView) {
+    if (this.callingOff === t.with.id) return;
+    const was = this.trade;
+    this.trade = t;
+    this.tradeMine = t.mine;
+    this.tradeChanges++;
+    if (t.state === 'asked' && !(was?.state === 'asked' && was.with.id === t.with.id)) this.askToTrade(t.with);
+  }
+
+  /** "Ana wants to trade. Open the trade?", once the text box is free: a question or someone's lines keep it until they are done. */
+  private askToTrade(p: PersonView) {
+    if (this.question || this.dialog) {
+      this.tradeAsk = p;
+      return;
+    }
+    this.tradeAsk = null;
+    const answer = (yes: boolean) => { if (this.online && this.trade?.with.id === p.id) this.send({ t: 'tradeAnswer', id: p.id, yes }); };
+    this.ask({ who: 'Trade', text: tradeQuestion(p.name), tag: 'trade', yes: () => answer(true), no: () => answer(false) });
+  }
+
+  /** The trade is over: the panel closes, a question that still asks goes, and the box says how it ended. */
+  private tradeOver(p: PersonView, end: TradeEnd) {
+    if (this.callingOff === p.id) this.callingOff = null;
+    // (One called off by closing its panel is over already here; a trade with someone else since stays.)
+    if (!this.trade || this.trade.with.id === p.id) {
+      this.trade = null;
+      this.tradeMine = [];
+      this.tradeChanges++;
+      if (this.question?.ask.tag === 'trade') {
+        this.question = null;
+        this.boxChanges++;
+      }
+    }
+    if (this.tradeAsk?.id === p.id) this.tradeAsk = null;
+    const text = tradeOverText(end, p.name, this.items);
+    if (text) this.inform('Trade', text);
   }
 
   /** Puts on the `n`th piece of `item` in the stash (their order in the chest). */
@@ -1574,8 +1708,13 @@ export class Game {
     });
   }
 
-  /** Says what waited for the box, once the box is free. */
+  /** Says what waited for the box, once the box is free: a friend's ask to trade first, as it does not wait long. */
   private sayLater() {
+    const p = this.tradeAsk;
+    if (p && !this.question && !this.dialog) {
+      if (this.trade?.state === 'asked' && this.trade.with.id === p.id) return this.askToTrade(p);
+      this.tradeAsk = null;
+    }
     const l = this.later;
     if (!l || this.question || this.dialog || this.note) return;
     this.later = null;
