@@ -137,6 +137,8 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     }
   };
   const stone = await o.storage.loadStone();
+  // Whether the lodge's fire lasted through the last Long Night, and how it burns if one is on.
+  const longNight = await o.storage.loadLongNight();
   const cycle = o.weather === 'cycle';
   const shift = o.clockShiftMs ?? 0;
   world = new World(o.maps, o.homeMap, cycle ? weatherAt(Date.now() + shift).weather : (o.weather as Weather), {
@@ -147,6 +149,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     firsts,
     lots,
     stone,
+    longNight,
     now: clock(),
     // Where players run out tells how hard each part of the world really is.
     onCollapse: (id, where) => log.info('player collapsed', { id, ...where }),

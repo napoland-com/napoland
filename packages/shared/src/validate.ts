@@ -14,7 +14,7 @@ import { DIRS, stepTarget } from './movement';
 import { ANYWHERE, DURING, SIGHTS, opensOn, readableAt, type NotebookData, type NotebookEvent } from './notebook';
 import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
-import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
+import { FLASH_BURST_S, FLASH_GLOW_S, NIGHT_FROM, SEASON_ORDER, stormAt, surgeAt, type Season } from './sky';
 import { MAX_REMARKS, MILESTONES, STORY_EVENTS, type StoryData } from './story';
 
 export interface Problem {
@@ -137,6 +137,9 @@ export function validateMap(data: MapData): Problem[] {
     if (o.kind === 'console' && (!o.name?.trim() || !o.text?.length || o.text.some(t => !t.trim()))) err(`console at ${o.x},${o.y} needs a name and something to read`);
     if (o.kind === 'console' && !ID.test(o.id ?? '')) err(`console at ${o.x},${o.y}: its id is lowercase words joined by hyphens (the story names it by it)`);
     if (o.kind === 'fireplace' && o.name !== undefined && !o.name.trim()) err(`fireplace at ${o.x},${o.y}: a name says something, or is left out`);
+    if (o.kind === 'fireplace' && o.longNight !== undefined && (o.longNight !== true || o.tended === true || data.kind !== 'inside')) {
+      err(`fireplace at ${o.x},${o.y}: longNight is true or left out, on a fire in a room in town that nobody marked tended`);
+    }
     if (o.kind === 'cache' && !o.name?.trim()) err(`cache at ${o.x},${o.y} needs a name: what a letter calls it ("the old cabin's crate")`);
     if (o.kind === 'comfort') {
       // Each player's cabin is theirs alone: only there does furniture wait to be made again (comfort.ts).
@@ -210,6 +213,13 @@ export function validateMap(data: MapData): Problem[] {
     else if (r.warn + r.length >= r.every) err('storm: warn and length must leave clear time in every round');
     if (r.offset !== undefined && !Number.isFinite(r.offset)) err('storm: offset is a number of seconds');
   }
+  if (data.rain !== undefined) validateRain(data, err);
+  if (data.ice !== undefined) validateIce(data, map, err, warn);
+  // Storms come between surges in every season, the autumn's twice-as-many too (stormAt).
+  if (data.surge && data.storm && !out.some(p => p.level === 'error' && /^(surge|storm):/.test(p.message))) {
+    const clash = stormsClash(data);
+    if (clash) err(`storm: in ${clash.season} a storm (or its warning) blows while the region is restless or surging, ${clash.at} seconds into the round: move it (offset) to between the surges`);
+  }
   if (data.flashes) {
     const f = data.flashes;
     if (data.kind !== 'wilds') err('flashes happen only in the wilds');
@@ -258,6 +268,66 @@ export function validateMap(data: MapData): Problem[] {
     if (!Number.isInteger(p.x) || !Number.isInteger(p.y) || !map.inside(p.x, p.y)) err(`the place ${p.name} at ${p.x},${p.y} is not on the map`);
   }
   return out;
+}
+
+/**
+ * A region's rain (sky.ts): windows of whole seconds counted from dawn, each over by nightfall (the
+ * night is dry everywhere), none overlapping another (one long window says it plainly). Only outdoors:
+ * a room hears the rain of the map its door opens onto.
+ */
+function validateRain(data: MapData, err: (message: string) => void): void {
+  const rain = data.rain;
+  if (!Array.isArray(rain)) return void err('rain: a list of windows, each {from, length} in seconds after dawn (an empty list: it never rains)');
+  if (data.kind === 'inside') err('rain: a room hears the rain of the map its door opens onto, so it has none of its own');
+  if (!rain.every(w => Number.isInteger(w?.from) && w.from >= 0 && Number.isInteger(w?.length) && w.length > 0)) {
+    return void err('rain: each window starts some whole seconds after dawn, from 0, and lasts whole seconds above 0');
+  }
+  for (const w of rain) if (w.from + w.length > NIGHT_FROM) err(`rain: the window from ${w.from} runs past nightfall (${NIGHT_FROM} seconds after dawn), and the night is dry`);
+  const sorted = [...rain].sort((a, b) => a.from - b.from);
+  for (let i = 1; i < sorted.length; i++) if (sorted[i]!.from < sorted[i - 1]!.from + sorted[i - 1]!.length) err(`rain: the windows from ${sorted[i - 1]!.from} and ${sorted[i]!.from} overlap: make them one`);
+}
+
+/**
+ * The water that freezes in winter (`ice`): each by a name people say ("the pond") and its tiles, which
+ * are water on the map, each once; only outdoors. Ice nobody can step onto from the shore would be ice
+ * nobody crosses, which is worth a warning.
+ */
+function validateIce(data: MapData, map: TileMap, err: (message: string) => void, warn: (message: string) => void): void {
+  const ice = data.ice;
+  if (!Array.isArray(ice)) return void err('ice: a list of the water that freezes in winter, each {name, tiles}');
+  if (data.kind === 'inside') err('ice: only water outdoors freezes');
+  const seen = new Set<string>();
+  for (const water of ice) {
+    const name = typeof water?.name === 'string' && water.name.trim() ? water.name : '';
+    if (!name) err('ice: each frozen water has a name people say, like "the pond"');
+    if (!Array.isArray(water?.tiles) || !water.tiles.length) { err(`ice: ${name || 'a frozen water'} has no tiles`); continue; }
+    let shore = false;
+    for (const t of water.tiles) {
+      const [x, y] = Array.isArray(t) ? t : [NaN, NaN];
+      if (!Number.isInteger(x) || !Number.isInteger(y) || !map.inside(x!, y!)) { err(`ice: ${JSON.stringify(t)} is not a tile of the map`); continue; }
+      if (map.kind(x!, y!) !== 'water') err(`ice: ${x},${y} is not water`);
+      if (seen.has(`${x},${y}`)) err(`ice: ${x},${y} is listed twice`);
+      seen.add(`${x},${y}`);
+      if (DIRS.some(d => { const n = stepTarget(x!, y!, d); return map.walkable(n.x, n.y); })) shore = true;
+    }
+    if (!shore) warn(`ice: ${name || 'a frozen water'} has no shore to step onto it from, so nobody can cross it`);
+  }
+}
+
+/**
+ * The first moment, if any, in some season, when a storm or its warning blows over a region while it is
+ * restless or surging: over whole rounds of both clocks (a day at most), a second at a time.
+ */
+function stormsClash(data: MapData): { season: Season; at: number } | undefined {
+  const surge = data.surge!, storm = data.storm!;
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  const round = Math.min(86_400, (surge.every / gcd(surge.every, storm.every)) * storm.every);
+  for (const season of SEASON_ORDER) {
+    for (let t = 0; t < round; t++) {
+      if (stormAt(storm, t * 1000, season).phase !== 'clear' && surgeAt(surge, t * 1000).phase !== 'calm') return { season, at: t };
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -411,6 +481,19 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   }
   if (wakes.length > 1) out.push({ level: 'error', map: wakes[1]!.data.id, message: `wake: ${wakes.map(m => m.data.id).join(' and ')} both have one, but everyone wakes up in the same home` });
 
+  // The Long Night's fire (the lodge's) is one, in a room off the home town, and never the home's: the
+  // home fire stays tended, so a new player always has a safe fire.
+  const nights = [...byId.values()].filter(m => m.data.objects.some(o => o.kind === 'fireplace' && o.longNight));
+  for (const m of nights) {
+    const off = m.data.exits.some(e => e.to === homeId);
+    if (!off || m.data.wake || m.data.private || m.data.objects.some(o => o.kind === 'chest')) {
+      out.push({ level: 'error', map: m.data.id, message: `longNight: the fire nobody tends on the Long Night is in a room off ${homeId} that is not the home` });
+    }
+  }
+  if (nights.length > 1 || nights.some(m => m.data.objects.filter(o => o.kind === 'fireplace' && o.longNight).length > 1)) {
+    out.push({ level: 'error', map: nights.at(-1)!.data.id, message: 'longNight: one fire in the world goes untended on the Long Night, the lodge\'s' });
+  }
+
   // What a player read is kept by the note's id, whichever map it lies on.
   const notes = new Map<string, string>();
   for (const map of byId.values()) for (const o of map.data.objects) {
@@ -517,6 +600,17 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       if (v !== undefined && !(typeof v === 'number' && v > 0)) err(`${name}: ${field} must be a number above 0`);
     }
     if (i.use?.flare !== undefined && !(i.use.flare > 0)) err(`${name}: a flare burns for some seconds above 0`);
+    if (i.use && (i.use.resist !== undefined || i.use.lasts !== undefined)) {
+      // An effect (effects.ts): what it resists, and for how long, always together.
+      const { resist, lasts } = i.use;
+      if (i.kind !== 'consumable') err(`${name}: only a consumable gives an effect for a while (resist, lasts)`);
+      if (!(Number.isInteger(lasts) && lasts! > 0)) err(`${name}: an effect lasts some whole seconds above 0`);
+      if (!resist || typeof resist !== 'object' || !Object.keys(resist).length) err(`${name}: an effect resists something (resist)`);
+      for (const [e, v] of Object.entries(resist ?? {})) {
+        if (!ELEMENTS.includes(e as Element)) err(`${name}: its effect resists an unknown element ${e}`);
+        else if (!(typeof v === 'number' && v > 0 && v <= 1)) err(`${name}: its effect's resistance is a share above 0, at most 1`);
+      }
+    }
     if (i.use?.identify && !i.reveals?.length) err(`${name} can be identified but reveals nothing`);
     if (i.reveals && !i.use?.identify) err(`${name} reveals things but cannot be identified`);
     if (i.live) {
@@ -703,6 +797,17 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     else p.week.forEach((day, n) => slotsOf(day, `parcels: ${WEEKDAYS[n]}'s parcel`));
     if (p.allWeek !== undefined) slotsOf(p.allWeek, 'parcels: allWeek');
   }
+  const night = data.longNight;
+  if (night) {
+    if (!Array.isArray(night.items) || !night.items.length) err('longNight: items lists what grows back faster that night');
+    for (const id of Array.isArray(night.items) ? night.items : []) {
+      if (!ids.has(id)) err(`longNight: there is no item ${id}`);
+      else if (!data.finds.some(f => f.item === id)) warn(`longNight: ${id} grows back faster, but no find grows it`);
+    }
+    if (Array.isArray(night.items) && new Set(night.items).size !== night.items.length) err('longNight: an item is listed twice');
+    // Faster, and not so fast that a find is back before anyone has walked on.
+    if (!(typeof night.regrow === 'number' && night.regrow > 1 && night.regrow <= 4)) err('longNight: regrow is how many times as fast, above 1 and at most 4');
+  }
   const byId = new Map(maps.map(m => [m.id, m]));
   const conditionIds = validateConditions(data, byId, err);
   const tileKinds = new Set<string>(Object.values(TILE_CHARS));
@@ -732,6 +837,10 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (f.condition !== undefined) {
       if (!conditionIds.has(f.condition)) err(`${name}: grows while ${f.condition} is on, which is not a condition`);
       if (f.when !== undefined) err(`${name}: grows with a condition or at a time (when), not both`);
+    }
+    if (f.season !== undefined) {
+      if (!(SEASON_ORDER as readonly string[]).includes(f.season)) err(`${name}: grows in ${JSON.stringify(f.season)}, which is not a season (${SEASON_ORDER.join(', ')})`);
+      if (f.when !== undefined || f.condition !== undefined) err(`${name}: grows in a season, or with a condition or at a time (when): one of them`);
     }
     if (f.around) {
       const { x, y, r } = f.around;

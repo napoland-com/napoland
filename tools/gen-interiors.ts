@@ -119,8 +119,9 @@ const ROOMS: readonly Room[] = [
     // Where the town gathers: the biggest room, long tables, and the fire in the middle of the back wall.
     // Its firewood is stacked against the east wall, split the way the town split it when it still
     // logged the woods. Walt Pruitt sits by the fire: he kept the north line for the power company and
-    // then NAPO's, and remembers how it all went wrong.
-    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 4, outside: 'stonebrook', door: [8, 31],
+    // then NAPO's, and remembers how it all went wrong. On the Long Night nobody tends that fire, and the
+    // town keeps it going until dawn (longNight).
+    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 5, outside: 'stonebrook', door: [8, 31],
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -132,7 +133,7 @@ const ROOMS: readonly Room[] = [
       'xxxxxpxxxxx',
     ],
     things: [
-      { kind: 'fireplace', x: 5, y: 1 },
+      { kind: 'fireplace', x: 5, y: 1, longNight: true },
       { kind: 'rug', x: 4, y: 2, w: 3, h: 2 },
       { kind: 'shelf', x: 1, y: 1 },
       { kind: 'shelf', x: 2, y: 1 },

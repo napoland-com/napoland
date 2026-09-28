@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { CacheItemView } from './caches';
 import { CALL_KINDS, type CallKind } from './calls';
 import { MAX_SAY_CHARS, type ChatTo } from './chat';
+import type { EffectView } from './effects';
 import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { FirstView } from './firsts';
@@ -15,12 +16,17 @@ import type { MeritsView } from './merits';
 import type { NotebookView } from './notebook';
 import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
-import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
+import type { ConditionsView, FlashView, SeasonView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
 import { OFFER_MAX } from './trade';
 
-/** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 29;
+/**
+ * Bump when a change breaks older clients; they reload to get the new version. 30: the weather is each
+ * region's (a `zone` says the new map's), and effects run for a while (BodyView.effects). 31: seasons,
+ * whose winter freezes water that is then walked on (a client that did not know would never step on it).
+ * 32: the Long Night (`longNight`, in the welcome too), whose lodge fire is fed like a shelter's.
+ */
+export const PROTOCOL_VERSION = 32;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -327,6 +333,17 @@ export interface FlareView {
   left: number;
 }
 
+/**
+ * The Long Night (sky.ts, longNightAt), as the server keeps it: whether it is on; whether it has its
+ * bonus, the faster regrowth (the one on, or else the next one: the lodge's fire lasted through the one
+ * before it); and while it is on, whether the lodge's fire went out, which loses the next one its bonus.
+ */
+export interface LongNightView {
+  on: boolean;
+  bonus: boolean;
+  out: boolean;
+}
+
 /** The Old Stone in town: fed shards wake it; awake, it calms every surge until its charge runs out. */
 export interface StoneView {
   /** Shards in it now. */
@@ -352,11 +369,15 @@ export type Did =
   /**
    * One `item` from your bag was used up: the energy it gave you (as much as your bar had room for), the
    * seconds a flare burns, the arrow painted (which way it points, and for how many seconds everyone sees
-   * it), what a strange object turned out to be (a piece of gear with its piece: its quirk is rolled), and
-   * the energy a charm in your bag gave on top (`lift`: which charm, and how much; a pale moth, as a
-   * glowcap is crushed).
+   * it), what a strange object turned out to be (a piece of gear with its piece: its quirk is rolled), the
+   * energy a charm in your bag gave on top (`lift`: which charm, and how much; a pale moth, as a glowcap is
+   * crushed), and the effect it started for `lasts` seconds (effects.ts; `again`: one of the same still
+   * worked, and its time started over instead of adding up).
    */
-  | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number } }
+  | {
+      kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number };
+      effect?: { lasts: number; again?: true };
+    }
   /** You cooked `count` of the meal `item` at a fire: it is in your bag. */
   | { kind: 'cooked'; item: string; count: number }
   /** You ate (or drank) the meal `item` (meals.ts): it works until you come home or collapse; `energy`, what it gave the bar at once. */
@@ -397,6 +418,8 @@ export interface BodyView {
   hitched: boolean;
   /** What you wear, piece by piece: its condition (it wears down out in the wilds) and quirk. */
   worn: Worn;
+  /** Effects working on you (effects.ts), with the seconds left of each as sent; none: nothing works on you. */
+  effects?: EffectView[];
   /**
    * Cozy (comfort.ts): seconds of it left, as of this message. None: you are not. It holds while you stand
    * by your own fire long enough, and counts down from when you leave it.
@@ -622,6 +645,7 @@ export type ServerMsg =
       finds: FindView[];
       drops: DropView[];
       stepMs: number;
+      /** The weather over your map now (each region has its own rain; a room, the one of the map outside its door). */
       weather: Weather;
       energy: EnergyView;
       bag: BagSlot[];
@@ -642,6 +666,10 @@ export type ServerMsg =
       stone: StoneView;
       /** What the woods are like today, this week and next week (sky.ts, conditionsAt). */
       conditions: ConditionsView;
+      /** The season, and the seconds left of it (sky.ts): what freezes, how it rains, how the world looks. */
+      season: SeasonView;
+      /** The Long Night, on or coming. */
+      longNight: LongNightView;
       /** What you did so far that counts toward feats: each feat's rank follows from its count (feats.ts, rankOf). */
       stats: Stats;
       /** Your XP and level, and the rest saved up while you were away (progress.ts). */
@@ -679,11 +707,13 @@ export type ServerMsg =
     }
   /**
    * You are on another map now, at x,y: you walked through an exit, or you collapsed and woke up at
-   * home. Forget the old map's players, finds, piles and pending steps; the lists are the new map's.
+   * home. Forget the old map's players, finds, piles and pending steps; the lists are the new map's, and
+   * so is the weather (each region has its own rain; a room, the one of the map outside its door).
    */
   | {
       t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; finds: FindView[]; drops: DropView[]; reason: 'exit' | 'collapse';
       fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
+      weather: Weather;
       /** In your own cabin: the furniture you made and set in its places (item ids). Nobody else is told. */
       furniture?: string[];
       /** On your street: its lots, and which is yours. */
@@ -784,6 +814,10 @@ export type ServerMsg =
   | { t: 'stone'; stone: StoneView }
   /** A new day's conditions (everyone hears them at dawn, and when the week turns). */
   | { t: 'conditions'; conditions: ConditionsView }
+  /** The season turned (everyone hears it, as the week turns): the new one, and the seconds left of it. */
+  | { t: 'season'; season: SeasonView }
+  /** The Long Night began, the lodge's fire went out in it, or it ended at dawn (everyone hears it): how it stands now. */
+  | { t: 'longNight'; night: LongNightView }
   /** The notice board, read: one line per thing worth knowing. */
   | { t: 'board'; lines: string[] }
   /** You reached rank `rank` (1 to RANKS) of a feat (feats.ts), told once; `stats` is where your counts stand now. */
@@ -841,6 +875,7 @@ export type ServerMsg =
   | { t: 'face'; id: string; dir: Dir }
   /** The server refused step seq; the player is really at x,y facing dir. */
   | { t: 'reject'; seq: number; x: number; y: number; dir: Dir }
+  /** The weather over your map turned (the night comes everywhere at once; rain, region by region). */
   | { t: 'weather'; weather: Weather }
   | { t: 'pong'; at: number; serverTime: number }
   /** The hello (or the game here) ended; `name` comes with has_character: the account's own character. */

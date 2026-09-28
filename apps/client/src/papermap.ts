@@ -15,6 +15,8 @@ const MAX_WIRE = 10;
 const DRIFT = 0.35;
 /** A pond is at least this many water tiles; smaller puddles get no name. */
 const POND_TILES = 6;
+/** What is written by the water that freezes in winter (a map's `ice`). */
+export const FROZEN = 'frozen in winter';
 /** How much room a word takes on the paper, in tiles: a letter's width, and a line's height. */
 const LETTER = 0.95;
 const LINE = 1.9;
@@ -170,6 +172,12 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
   rooms.forEach(exitLabel);
   const pond = biggest(map, 'water');
   if (!map.data.places && pond.length >= POND_TILES) labels.push({ x: pond.reduce((n, [x]) => n + x, 0) / pond.length + 0.5, y: pond.reduce((n, [, y]) => n + y, 0) / pond.length + 0.5, text: 'pond' });
+  // A note for the water that freezes, written after every name so it moves none: by the pond, the
+  // brook, whatever someone who walked it in winter wanted to remember.
+  for (const water of map.data.ice ?? []) {
+    const tiles = water.tiles;
+    if (tiles.length) labels.push({ x: tiles.reduce((n, [x]) => n + x, 0) / tiles.length + 0.5, y: tiles.reduce((n, [, y]) => n + y, 0) / tiles.length + 0.5, text: FROZEN });
+  }
   s.labels = apart(labels, W, H, [...s.masts.map(mastBox), ...s.signs.map(signBox)]);
   return s;
 }

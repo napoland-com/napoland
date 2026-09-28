@@ -5,8 +5,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  DAY_S, MEALS_MAX, RESIST_MAX, TileMap, bagShort, carriesFood, charmsIn, cleanMeals, cookable, cooks, findTiles, isMeal, itemIndex, mealMods, modsOf, nearestCooking, payBag,
-  resistOf, sinceRain, validateItems, weatherAt, whyNotEat, type ItemsData, type MapData,
+  DAY_S, MEALS_MAX, RESIST_MAX, TileMap, bagShort, carriesFood, charmsIn, cleanMeals, cookable, cooks, findTiles, isMeal, itemIndex, longNightAt, longNightFrom, mealMods, modsOf,
+  nearestCooking, payBag, resistOf, seasonAt, sinceRain, validateItems, weatherAt, whyNotEat, type ItemsData, type MapData, type Season,
 } from '../src';
 import json from '../../../content/items.json';
 import woodsJson from '../../../content/maps/near-woods.json';
@@ -118,14 +118,38 @@ describe('the finds that cook', () => {
 });
 
 describe('the rain', () => {
-  it('says how long ago it stopped: 0 while it rains, then counting, back to the day before', () => {
-    // A day: 12 minutes overcast, 12 of rain, then overcast and the night.
-    const day = 7 * DAY_S * 1000, at = (min: number) => day + min * 60_000;
-    expect(weatherAt(at(13)).weather).toBe('rain');
-    expect(sinceRain(at(13))).toBe(0);
-    expect(sinceRain(at(23.5))).toBe(0);
-    expect(sinceRain(at(30))).toBe(6 * 60);
+  const WEEK_MS = 7 * 86_400_000;
+  /** The second game day of the first week of `season` from late September 2026 (a Monday, 00:00 UTC, is a dawn), `min` minutes after its dawn. */
+  const dayOf = (season: Season) => {
+    let t = Date.UTC(2026, 8, 28);
+    while (seasonAt(t) !== season) t += WEEK_MS;
+    return (min: number) => t + DAY_S * 1000 + min * 60_000;
+  };
+  const woods = (woodsJson as MapData).rain, south = [{ from: 24 * 60, length: 6 * 60 }];
+
+  it('says how long ago it stopped over a region: 0 while it rains, then counting, back to the day before', () => {
+    // An autumn day in the Near Woods: rain from 12 to 24 minutes after dawn, then overcast and the night.
+    const at = dayOf('autumn');
+    expect(weatherAt(at(13), woods).weather).toBe('rain');
+    expect(sinceRain(at(13), woods)).toBe(0);
+    expect(sinceRain(at(23.5), woods)).toBe(0);
+    expect(sinceRain(at(30), woods)).toBe(6 * 60);
     // Before today's rain: yesterday's, which stopped 24 minutes before the day ended.
-    expect(sinceRain(at(5))).toBe((24 + 5) * 60);
+    expect(sinceRain(at(5), woods)).toBe((24 + 5) * 60);
+  });
+
+  it('follows each region\'s own windows, as long as the season makes them', () => {
+    // The South Road rains from 24 to 30 minutes after dawn: still raining there when the woods' stopped.
+    const at = dayOf('autumn');
+    expect(sinceRain(at(29), south)).toBe(0);
+    expect(sinceRain(at(29), woods)).toBe(5 * 60);
+    expect(sinceRain(at(31), south)).toBe(60);
+    // Spring rains half as long again (the woods 12 to 30 minutes), summer half as long (12 to 18).
+    expect(sinceRain(dayOf('spring')(29), woods)).toBe(0);
+    expect(sinceRain(dayOf('summer')(20), woods)).toBe(2 * 60);
+    // The Long Night is dry all day: the morning after it, the last rain fell the day before it, too long ago to count.
+    const after = longNightFrom(longNightAt(Date.UTC(2026, 8, 28)).week) + DAY_S * 1000 + 5 * 60_000;
+    expect(weatherAt(after - DAY_S * 1000 + 13 * 60_000, woods).weather).toBe('aurora');
+    expect(sinceRain(after, woods)).toBe(Infinity);
   });
 });

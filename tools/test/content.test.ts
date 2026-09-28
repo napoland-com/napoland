@@ -59,7 +59,8 @@ describe('a parcel a day (roadmap/daily-parcels.md)', () => {
 });
 
 describe('a first goal on the first day (roadmap/first-day.md)', () => {
-  const woods = items.finds.filter(f => f.map === 'near-woods' && f.when === undefined && f.condition === undefined);
+  // What grows every day: not at a time, on a condition's day or in a season only.
+  const woods = items.finds.filter(f => f.map === 'near-woods' && f.when === undefined && f.condition === undefined && f.season === undefined);
   /** How many of an item lie out at once on rules that stay within the first 40 steps into the Near Woods, and on the rest. */
   const near = (item: string) => woods.filter(f => f.item === item && f.steps && f.steps[1] <= 40).reduce((n, f) => n + f.count, 0);
   const deeper = (item: string) => woods.filter(f => f.item === item && !(f.steps && f.steps[1] <= 40)).reduce((n, f) => n + f.count, 0);

@@ -5,8 +5,8 @@ import type { ClientMsg, ItemsData, MapData, NextGear, PlayerView, StoryData } f
 import { Game } from '../src/game';
 import { Items } from '../src/items';
 import { Maps } from '../src/maps';
-import { goalText } from '../src/said';
-import { FULL, storyData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
+import { FIRST_WAKE, goalText } from '../src/said';
+import { FULL, START, storyData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
 
 /** What players read comes from the real items and recipes, so it is tested with them. */
 const content = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData;
@@ -166,5 +166,32 @@ describe('what people say once, as the game says it', () => {
   it('stays said once the server says so, in the counts it sends', () => {
     g.handle({ t: 'stats', stats: { collapsed: 1, told: 1 } }, now);
     expect(talk()).toEqual(['Bring something home first.', 'Lost?']);
+  });
+});
+
+describe('a new player\'s first wake', () => {
+  const game = () => new Game(new Maps([home(), tinyTown()]), () => {}, items, storyData());
+
+  it('says the story\'s first chapter in the text box, and who knows the woods, before any letter', () => {
+    const g = game();
+    g.handle(welcome(home(), [me(2, 2)], FULL, { items: items.version, story: { version: 2, chapter: 'home' } }), 1000);
+    g.handle({ t: 'streetLetter', doorOff: false }, 1000);
+    expect(g.firstWake()).toBe(true);
+    g.idle(1000, false);
+    expect(g.dialog).toMatchObject({ who: 'Home', lines: ['You woke up at home.', FIRST_WAKE] });
+    g.dialog = null;
+    g.idle(1000, false);
+    expect(g.dialog).toMatchObject({ who: 'Letter' });
+  });
+
+  it('is said only while nothing is done yet: the first chapter, and no XP', () => {
+    const later = game();
+    later.handle(welcome(home(), [me(2, 2)], FULL, { items: items.version, story: { version: 2, chapter: 'what-glows' } }), 1000);
+    expect(later.firstWake()).toBe(false);
+    const earned = game();
+    earned.handle(welcome(home(), [me(2, 2)], FULL, { items: items.version, story: { version: 2, chapter: 'home' }, progress: { ...START, xp: 12 } }), 1000);
+    expect(earned.firstWake()).toBe(false);
+    earned.idle(1000, false);
+    expect(earned.dialog).toBeNull();
   });
 });

@@ -37,20 +37,22 @@
  *   in the text box, your side runs ahead of the server's answer while you change it, and how it ended
  *   is said in the box;
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
- * - energy, wetness, fires and the surge clock are counted forward between the server's reports, so
- *   everything moves smoothly.
+ * - energy, wetness, fires, the surge clock and the effects working on you (a hand warmer) are counted
+ *   forward between the server's reports, so everything moves smoothly;
+ * - the weather is your region's: the server says it as you arrive (welcome, zone) and when it turns;
+ * - the Long Night is the server's too (`longNight`): its banners, and what Walt says while it is on.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, carriesFood, charmsIn, cookable, cooks, dirOf,
-  dirToward, emptyNotebook, nearestCooking, whyNotEat,
-  energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe,
-  nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, SEASONS, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, carriesFood, charmsIn, cookable,
+  cooks, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost,
+  meritLookOf, meritsLeft, meritsOf, modsOf, nearestCooking, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront,
+  takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotEat, DIR_VEC, type Blank,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
-  type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Recipe, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData,
-  type SurgeView, type TileMap,
-  type CallKind, type ChatTo, type Comfort, type ConditionsView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView, type StreetView,
-  type TradeEnd, type TradeView, type Weather,
+  type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Recipe, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView,
+  type StoryData, type SurgeView, type TileMap,
+  type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type LongNightView, type MapNote, type OfferPick, type ParcelView, type RefusedAction,
+  type Season, type SeasonView, type StormView, type StreetView, type TradeEnd, type TradeView, type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -61,8 +63,8 @@ import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, FIRE_CHOICE, FIRE_OPTIONS, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TENDED, TOOK_ONE,
   TOO_DARK, TWO_MEALS, WHAT_TO_COOK, YOUR_CABIN, ateAlready, buyQuestion, cabinWho, comfortLines, cookQuestion, cookShort, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText,
-  leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn, openQuestion, placedAlready, sentence, shortOf, stashShort, stoneQuestion, streetLetterLines,
-  tossQuestion, upgradeQuestion, useQuestion,
+  leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn, openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, stashShort, stoneQuestion,
+  streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, waltOnTheLongNight,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { trophiesIn } from './view/cabin';
@@ -193,6 +195,15 @@ export function xpFloat(gained: number, fromRest = 0): string {
 /** News from the world for the interface to announce (status.ts, newsBanner). A feat's is the rank just reached. */
 export type News =
   | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView }
+  /** The night over your map turned into an aurora: lights in the sky. */
+  | { kind: 'aurora' }
+  /** The season turned (as the week did); `frozen`: where water freezes, named, for the winter's word. */
+  | { kind: 'season'; season: Season; frozen: string[] }
+  /**
+   * The Long Night began (`on`; `bonus`: with its faster regrowth), or dawn ended it (`bonus`: the lodge's
+   * fire held, so the next one keeps it).
+   */
+  | { kind: 'longNight'; on: boolean; bonus: boolean }
   /** A new level: where it stands now, and the level before (one stash can climb several). */
   | { kind: 'level'; progress: ProgressView; from: number }
   /** You arrive rested: time away filled the cup, which holds `xp` of doubled stashing now. */
@@ -275,6 +286,12 @@ export class Game {
   surge: { view: SurgeView; at: number } | null = null;
   /** This map's storm clock as told, and when (null: it never storms). */
   storm: { view: StormView; at: number } | null = null;
+  /** The weather over your map, as the server last said it: your region's (a room, the map outside its door). Some notes need it to be read. */
+  weather: Weather = 'rain';
+  /** The season as the server last said it, and when (our clock): it counts down from there. */
+  season: { view: SeasonView; at: number } = { view: { season: 'spring', left: 0 }, at: 0 };
+  /** The Long Night as the server last said it. */
+  longNight: LongNightView = { on: false, bonus: true, out: false };
   /** Flashes on this map, until when they are over (our clock). */
   flashes: Array<{ x: number; y: number; kind: FlashKind; until: number }> = [];
   /** How wet you are, your load and whether something clings to you, as told and when. */
@@ -320,8 +337,6 @@ export class Game {
   freshPages = new Set<string>();
   /** Counts every change to the field notes (and to which pages are fresh), so they are redrawn only then. */
   notebookChanges = 0;
-  /** The weather everywhere, as the server said (main.ts sets it as it comes): what some notes need to be read. */
-  weather: Weather = 'rain';
   /** The notes people left that you read (notes.ts), by id, in the order you read them. Replaced whole on every change. */
   notesRead: string[] = [];
   /** Notes read since the journal's notes were last looked at: it marks them. */
@@ -443,7 +458,8 @@ export class Game {
   /** The server's wall clock at our `now` (the welcome says it): the UTC day turns by it. */
   private wall = { now: 0, ms: 0 };
   /** Letters from home (who thanked you while you were away, the one about your street), in the order they came, each until the text box is free to show it. */
-  private letters: string[][] = [];
+  /** What the text box brings up by itself when it is free (idle): letters, and a new player's first wake. */
+  private letters: { who: string; lines: string[] }[] = [];
   /** Whom you last asked to trade: a refusal names them (the trade is the server's to make). */
   private tradeWith: PersonView | null = null;
   /** You called off the trade with this player: what the server says of it until it has heard you is old news. */
@@ -508,6 +524,25 @@ export class Game {
   /** The charms and anomalous gear your stash holds, one of each: what stands on the trophy shelf. */
   trophies() {
     return trophiesIn(this.stash ?? [], id => this.items.get(id));
+  }
+
+  /** The season right now, its time left counted down from the server's last word. */
+  seasonNow(now: number): SeasonView {
+    const s = this.season;
+    return { season: s.view.season, left: Math.max(0, s.view.left - Math.max(0, now - s.at) / 1000) };
+  }
+
+  /** The season, as the server says it: in winter the water the maps mark as ice is walked on here too (TileMap.freeze), as on the server. */
+  private setSeason(view: SeasonView, now: number, news: boolean) {
+    const turned = view.season !== this.season.view.season;
+    this.season = { view, at: now };
+    this.maps.freeze(SEASONS[view.season].frozen);
+    if (news && turned) this.news.push({ kind: 'season', season: view.season, frozen: this.maps.icy() });
+  }
+
+  /** The effects working on you right now (a hand warmer), counted down from the server's last report; none offline. */
+  effectsNow(now: number): EffectView[] {
+    return this.online ? effectsAfter(this.body.view.effects, Math.max(0, now - this.body.at) / 1000) : [];
   }
 
   /** Seconds of fuel the fire on tile x,y has left now; null for a tended fire, undefined where there is none. */
@@ -579,6 +614,9 @@ export class Game {
         this.doorOff = msg.doorOff === true;
         this.socialChanges++;
         this.scene(msg, now);
+        this.weather = msg.weather;
+        this.setSeason(msg.season, now, false);
+        this.longNight = msg.longNight;
         this.bag = msg.bag;
         this.bagAt = now;
         this.stash = msg.stash ?? null;
@@ -601,7 +639,6 @@ export class Game {
         this.thankedToday = new Set(msg.thanked ?? []);
         this.fieldNotes = { pages: [...msg.notebook?.pages ?? []], blanks: [...msg.notebook?.blanks ?? []] };
         this.notebookChanges++;
-        this.weather = msg.weather;
         this.notesRead = [...msg.notes ?? []];
         this.keepsakesHome = [...msg.keepsakes ?? []];
         this.firsts = new Map((msg.firsts ?? []).map(f => [f.secret, f]));
@@ -615,6 +652,8 @@ export class Game {
         this.enter(map, msg.players, msg.finds, msg.drops);
         this.setStreet(msg.street);
         this.scene(msg, now);
+        // The weather over the new map: its region's own rain (a room, the map outside its door).
+        this.weather = msg.weather;
         this.stats = msg.stats;
         this.statsChanges++;
         if (msg.furniture) this.setFurniture(msg.furniture);
@@ -638,6 +677,18 @@ export class Game {
         this.body = { view: msg.body, at: now };
         break;
       }
+      case 'weather':
+        if (msg.weather === 'aurora' && this.weather !== 'aurora') this.news.push({ kind: 'aurora' });
+        this.weather = msg.weather;
+        break;
+      case 'season':
+        this.setSeason(msg.season, now, true);
+        break;
+      case 'longNight':
+        // It began, or dawn came: said once, in a banner. The fire going out in the night is the notice board's and Walt's to say.
+        if (msg.night.on !== this.longNight.on) this.news.push({ kind: 'longNight', on: msg.night.on, bonus: msg.night.bonus });
+        this.longNight = msg.night;
+        break;
       case 'fire':
         this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now, fed: msg.fire.fed ?? [] });
         break;
@@ -658,7 +709,7 @@ export class Game {
         this.socialChanges++;
         break;
       case 'streetLetter':
-        this.letters.push(streetLetterLines(msg.doorOff));
+        this.letters.push({ who: 'Letter', lines: streetLetterLines(msg.doorOff) });
         break;
       case 'doorstep':
         this.offerMoves(msg.moves);
@@ -848,7 +899,7 @@ export class Game {
       }
       case 'letter': {
         const lines = letterLines(msg.thanks, id => this.maps.find(id), this.items);
-        if (lines.length) this.letters.push(lines);
+        if (lines.length) this.letters.push({ who: 'Letter', lines });
         break;
       }
       case 'progress':
@@ -1149,9 +1200,9 @@ export class Game {
       // What people say comes in one order (storyLines, story.ts): the chapter's hint, what they say once
       // about what you did for the first time, what they have heard (Mira: what the woods are like today),
       // then what they always say. The server hears who you talked to, or what you read.
-      const word = t.id === 'mira' ? this.miraWord() : null, own = word ? [word, ...t.lines] : t.lines;
+      const word = t.id === 'mira' ? this.miraWord() : t.id === 'walt' ? this.waltWord() : null, today = word ? [word] : [];
       const person = t.story && 'talk' in t.story ? t.story.talk : undefined;
-      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, own, this.stats) : own });
+      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, t.lines, this.stats, today) : [...today, ...t.lines] });
       // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
       const told = person ? toldAfter(this.story, person, this.stats) : undefined;
       if (told !== undefined && told !== (this.stats.told ?? 0)) { this.stats = { ...this.stats, told }; this.statsChanges++; }
@@ -1849,8 +1900,10 @@ export class Game {
     const def = this.items.get(s.item), why = this.whyNotUse(slot, def);
     if (why) return this.inform(def.name, why);
     // An arrow shows as long as your feats and charms say (Good neighbor), and a pale moth gives energy back: the server's rules.
+    // An effect still working says so, since a second one only starts its time again.
     const mods = modsOf(this.stats, charmsIn(this.bag, this.items.byId));
-    const text = useQuestion(def, this.energy(this.clock), markLifetime(mods) / 1000, def.use?.mark ? this.markLift(mods) : undefined);
+    const running = def.use?.lasts ? this.effectsNow(this.clock).find(f => f.item === def.id)?.left : undefined;
+    const text = useQuestion(def, this.energy(this.clock), markLifetime(mods) / 1000, def.use?.mark ? this.markLift(mods) : undefined, running);
     this.ask({ who: def.name, text, yes: () => { done?.(); this.actOn(slot, def.id, def.name, text, i => ({ t: 'use', slot: i })); } });
   }
 
@@ -2011,7 +2064,7 @@ export class Game {
     const free = this.online && !covered && !this.held && !this.question && !this.note && !this.dialog;
     const letter = free && this.letters.shift();
     if (letter) {
-      this.openDialog({ x: 0, y: 0, who: 'Letter', lines: letter, kind: 'talk' });
+      this.openDialog({ x: 0, y: 0, who: letter.who, lines: letter.lines, kind: 'talk' });
       return;
     }
     const me = this.online ? this.me : undefined, blocked = new Set((this.friends?.blocked ?? []).map(p => p.id));
@@ -2022,6 +2075,18 @@ export class Game {
       skip: id => this.thankedToday.has(id) || blocked.has(id),
     });
     if (offer) this.offerThanks(offer);
+  }
+
+  /**
+   * A new player's first moment, at home by the fire: the story's first chapter in the text box, before any
+   * letter, and who knows the woods. Only while nothing is done yet (the first chapter, no XP). True when it
+   * is to be said: main.ts keeps that, so each character hears it once.
+   */
+  firstWake(): boolean {
+    const first = this.story.chapters[0];
+    if (!this.online || !first || this.chapter !== first.id || this.progress.xp > 0) return false;
+    this.letters.unshift({ who: first.title, lines: [first.text, FIRST_WAKE] });
+    return true;
   }
 
   /** "Ana fed this fire. Thank Ana?" YES sends the thanks; NO means never again for that fire or arrow this session. */
@@ -2137,6 +2202,17 @@ export class Game {
       ...(week ? [`This week: ${week}.`] : []),
     ];
     return parts.length ? parts.join(' ') : null;
+  }
+
+  /**
+   * What Walt has to say on the Long Night: the lodge's fire is the town's to keep going until dawn, and
+   * how long it has (when he sits by it, as he does); or that it went out. Nothing any other night.
+   */
+  waltWord(now = this.clock): string | null {
+    const n = this.longNight;
+    if (!n.on) return null;
+    const f = this.current.data.objects.find(o => o.kind === 'fireplace' && o.longNight);
+    return waltOnTheLongNight(n.out, f ? this.fireLeft(f.x, f.y, now) ?? null : null);
   }
 
   /** You see this many tiles past yourself on this map, when a condition brings fog here (outdoors only). */

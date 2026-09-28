@@ -904,6 +904,10 @@ describe('echoes and the notice board', () => {
     const lines = of(to(w.drain(), 'a'), 'board')[0]!.lines;
     expect(lines).toEqual([
       'Rain.',
+      // The first week after the epoch is a spring's, four days of it left (sky.ts, seasons).
+      'Spring, for about 4 days more: longer rain, and more glowcaps out there. Summer comes next.',
+      // The first Long Night is on the Saturday, at 19:12 UTC; this world grows nothing faster on it.
+      'The Long Night comes in about 3 days: an aurora from dawn to dawn.',
       expect.stringMatching(/^The Field: /),
       'Gone out: the campfire in the Field. Bring something that burns.',
       'Nobody collapsed in the last hour.',
@@ -1079,8 +1083,11 @@ describe('what the woods are like today', () => {
     const [week, next] = view.week === 'copper' ? ['copper week. Wire by every pole, all week.', 'quiet woods'] : ['quiet woods. The watchers sleep all week.', 'copper week'];
     const w = world(fieldData(12), 'rain', { items: { ...ITEMS, conditions }, epochOffset: now }, rec('a', 'town', 0, 5));
     w.board('a', 0, 4, 0);
-    expect(of(to(w.drain(), 'a'), 'board')[0]!.lines.slice(0, 4)).toEqual([
+    expect(of(to(w.drain(), 'a'), 'board')[0]!.lines.slice(0, 6)).toEqual([
       'Rain.',
+      // Day 20000 is in a winter's week, with two days of it left; nothing freezes in the Field.
+      'Winter, for about 2 days more: colder out there, and snow instead of rain. Spring comes next.',
+      'The Long Night comes in about 27 hours: an aurora from dawn to dawn.',
       'Today in the Field: thick fog.',
       'You will not see far.',
       `This week: ${week} Next week: ${next}.`,

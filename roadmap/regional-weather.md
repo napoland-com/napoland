@@ -1,13 +1,13 @@
 ---
 id: regional-weather
 title: Weather per region, hand warmers and rad tablets
-status: planned
-order: 22
+status: done
+order: 520
 area: gameplay
 depends: [hazards-anomalies]
 ---
 
-Each region gets its own weather cycle instead of one sky for the whole world, so the Near Woods can be dry while a region farther out is in rain or snow, and the notice board tells them apart. And two consumables that give a resistance for a while: **hand warmers** (cold) and **rad tablets** (radiation), found or crafted, used from the bag like a thermos.
+Each region gets its own rain, on the wall clock, while day and night stay one for the whole world (one sun): the South Road is dry while the Near Woods pour, and the other way round later in the day, and the notice board tells them apart. And two consumables that give a resistance for a while: **hand warmers** (cold) and **rad tablets** (radiation), found in NAPO's first-aid stores or made at the workbench, used from the bag like a thermos.
 
 The Far Woods ([far-woods](far-woods.md)) came first and share the one sky for now: when each region gets its own weather, give them rain windows of their own (wetter than the Near Woods', the old growth drips), kept apart from the Near Woods' as their surge and storm clocks are.
 

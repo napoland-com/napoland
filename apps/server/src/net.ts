@@ -33,7 +33,7 @@ import { log } from './log';
 import { Calls } from './calls';
 import { Chat } from './chat';
 import { Social, type SocialMsg } from './social';
-import type { CacheItemRecord, DropRecord, FirstRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, MarkRecord, PlayerRecord, Storage, StoneRecord, ThanksRecord } from './storage';
 import { Trades, type TradeMsg } from './trade';
 import { colorFor, type World } from './world';
 
@@ -164,6 +164,7 @@ export function attachNet(o: NetOptions): Net {
   const pendingCaches = new Map<number, Promise<void>>();
   const pendingFirsts = new Map<string, Promise<void>>();
   let pendingStone: Promise<void> = Promise.resolve();
+  let pendingNight: Promise<void> = Promise.resolve();
   let saving = false;
   let closing = false;
   /** Open sockets per client address. */
@@ -647,7 +648,7 @@ export function attachNet(o: NetOptions): Net {
       finds: joined.finds,
       drops: joined.drops,
       stepMs: world.stepMs,
-      weather: world.weather,
+      weather: joined.weather,
       energy: joined.energy,
       bag: joined.bag,
       stash: joined.stash,
@@ -661,6 +662,8 @@ export function attachNet(o: NetOptions): Net {
       body: joined.body,
       stone: joined.stone,
       conditions: joined.conditions,
+      season: joined.season,
+      longNight: joined.longNight,
       stats: joined.stats,
       progress: joined.progress,
       ...(joined.restedAway > 0 && { restedAway: joined.restedAway }),
@@ -848,9 +851,15 @@ export function attachNet(o: NetOptions): Net {
     return pendingStone;
   }
 
-  /** Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag changed with one, the Old Stone. */
+  /** The Long Night, in order like the Old Stone: the last write is how it stands. */
+  function persistNight(night: LongNightRecord): Promise<void> {
+    pendingNight = pendingNight.then(() => storage.saveLongNight(night)).catch((err: unknown) => log.error('saving the Long Night failed', { err }));
+    return pendingNight;
+  }
+
+  /** Starts the writes the World asked for: every pile, mark and thanks that changed, the players whose bag changed with one, the Old Stone, the Long Night. */
   function store(): void {
-    const { drops, players, marks, stone, thanks, credits, caches, firsts } = world.takeWrites();
+    const { drops, players, marks, stone, thanks, credits, caches, firsts, longNight } = world.takeWrites();
     // Players first: a pile or a mark belongs to a player who must exist in the database.
     for (const rec of players) void persist(rec);
     for (const { owner, drop } of drops) void persistDrop(owner, drop);
@@ -860,6 +869,7 @@ export function attachNet(o: NetOptions): Net {
     for (const helper of credits) void persistCredit(helper);
     for (const f of firsts) void persistFirst(f);
     if (stone) void persistStone(stone);
+    if (longNight) void persistNight(longNight);
   }
 
   /**
@@ -964,6 +974,7 @@ export function attachNet(o: NetOptions): Net {
       // Includes writes for players who left just before, so storage can be closed after this.
       await Promise.all([
         ...pendingSaves.values(), ...pendingDrops.values(), ...pendingMarks.values(), ...pendingThanks.values(), ...pendingCredits.values(), ...pendingCaches.values(), ...pendingFirsts.values(), pendingStone,
+        pendingNight,
       ]);
       // Clients get a moment to answer the close; then their sockets are cut.
       const force = setTimeout(() => {

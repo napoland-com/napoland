@@ -480,12 +480,16 @@ const SURGE: SurgeRule = { every: 2400, unstable: 300, surge: 150, sweep: 120, o
 const STORM: StormRule = { every: 2400, warn: 60, length: 240, offset: 660 };
 
 const map: MapData = {
-  id: 'far-woods', name: 'The Far Woods', version: 1, kind: 'wilds', depth: 2, width: W, height: H,
+  id: 'far-woods', name: 'The Far Woods', version: 2, kind: 'wilds', depth: 2, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: ENTRY[0], y: ENTRY[1] - 1, dir: 'up' },
   exits: [EXIT, ...doors],
   objects,
+  // Old growth holds the damp: the wettest region, two showers a day, from dawn to 8 minutes after it and
+  // from 24 minutes until nightfall, and none while the Near Woods' rain falls (12 to 24), so the way up
+  // through both meets one rain at a time.
+  rain: [{ from: 0, length: 8 * 60 }, { from: 24 * 60, length: 8 * 60 }],
   surge: SURGE,
   storm: STORM,
   // Every minute, a flash near someone 20 steps or more in.
@@ -510,6 +514,7 @@ const json = [
   `  "spawn": ${JSON.stringify(map.spawn)},`,
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
   '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
+  `  "rain": ${JSON.stringify(map.rain)},`,
   `  "surge": ${JSON.stringify(map.surge)},`,
   `  "storm": ${JSON.stringify(map.storm)},`,
   `  "flashes": ${JSON.stringify(map.flashes)},`,

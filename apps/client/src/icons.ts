@@ -104,6 +104,19 @@ const ICONS: Record<string, string> = {
     <path d="M6.5 24.5l14-14 3.5 3.5-14 14z" fill="#c8362c"/>
     <path d="M4.2 26.8l2.3-2.3 3.5 3.5-2.3 2.3z" fill="#2c2c30"/>
     <path d="M22.3 8.9l2.2-2.2M24.9 11.5l2.5-.8M20.5 6.5l.8-2.5" stroke="#ffd08a" stroke-width="1.6"/>`),
+  // A NAPO hand warmer: a flat orange packet, hot, with the warmth rising off it.
+  'hand-warmer': icon(`${halo(16, 18, 13, '#ff8a3a')}
+    <rect x="6.5" y="12" width="19" height="14" rx="3" fill="#e0683a"/>
+    <path d="M6.5 16.5h19" stroke="#ffcf8a" stroke-width="1.3"/>
+    <path d="M11 21h10" stroke="#ffd9b0" stroke-width="1.2"/>
+    <path d="M11.5 9.5c-1.2-1.4 1.2-2.6 0-4.2M16 9.5c-1.2-1.4 1.2-2.6 0-4.2M20.5 9.5c-1.2-1.4 1.2-2.6 0-4.2" stroke="#ffd08a" stroke-width="1.4"/>`),
+  // A foil strip of NAPO's rad tablets over a band of NAPO yellow: one pressed out, two still in.
+  'rad-tablet': icon(`<rect x="4.5" y="9" width="23" height="14" rx="2" fill="#aebbc1"/>
+    <rect x="5.2" y="19.6" width="21.6" height="2.8" fill="#d6ad2f" stroke="none"/>
+    <circle cx="10" cy="14.2" r="3" fill="#f4f1e8"/>
+    <circle cx="16" cy="14.2" r="3" fill="#7d8b92"/>
+    <circle cx="22" cy="14.2" r="3" fill="#f4f1e8"/>
+    <path d="M9 13.6h2M21 13.6h2" stroke="#b7b2a6" stroke-width="1"/>`),
   // A dark knot with light in its seams: nobody knows what it is yet.
   strange: icon(`${halo(16, 16, 13, '#b39bff')}
     <path d="M16 4.5c6 0 9.5 4.4 9.5 9.2 0 6.7-5.4 13.8-9.5 13.8S6.5 20.4 6.5 13.7c0-4.8 3.5-9.2 9.5-9.2z" fill="#3a3448"/>

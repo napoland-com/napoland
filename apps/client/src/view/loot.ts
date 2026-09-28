@@ -19,7 +19,7 @@ import { OUTLINE, OUTLINE_INSTANCED, bake, box, flat, hash2, ownToon, part, pivo
 /** Items with a look of their own; any other item is drawn as a sack. */
 export const ITEM_LOOKS = [
   'glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'live-shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead', 'ember-coal', 'pale-moth',
-  'cedar-bark', 'battery', 'resin-tear', 'far-woods-map',
+  'hand-warmer', 'rad-tablet', 'cedar-bark', 'battery', 'resin-tear', 'far-woods-map',
   // What cooks at a fire, and the meals it cooks into (meals.ts): a meal lies on the ground only where someone dropped it.
   'huckleberries', 'fiddleheads', 'fir-tips', 'chanterelles', 'fir-tip-tea', 'chanterelle-stew', 'berry-pemmican',
   // The keepsakes people left (notes.ts): each lies for one player alone, in a soft gold light.
@@ -57,6 +57,8 @@ const STYLE: Record<Look, Style> = {
   'warm-pebble': { pool: '#ff9a4a', size: 1.2, top: 0.16, glow: { color: '#ff9447', emissive: '#8a3a0c' } },
   'hollow-feather': { pool: '#e8e2d6', size: 1.2, top: 0.12 },
   'humming-bead': { pool: '#5ff0e0', size: 1.3, top: 0.3, glow: { color: '#8ff7ee', emissive: '#1f8f86' }, floats: true },
+  'hand-warmer': { pool: '#ffb070', size: 1.2, top: 0.1 },
+  'rad-tablet': { pool: '#e4eeff', size: 1.15, top: 0.08 },
   'ember-coal': { pool: '#ff6a3a', size: 1.25, top: 0.16, glow: { color: '#ff6a38', emissive: '#a3280c' } },
   'pale-moth': { pool: '#f2ecd8', size: 1.3, top: 0.34, glow: { color: '#efe8d2', emissive: '#6e6650' }, floats: true },
   'cedar-bark': { pool: '#e0955a', size: 1.2, top: 0.14 },
@@ -206,6 +208,25 @@ export function lootModel(look: Look, glow: THREE.Material): THREE.Group {
     case 'humming-bead': {
       g.add(part(new THREE.IcosahedronGeometry(0.07, 1), glow, 0, 0.26, 0, 0.012));
       g.add(part(flat(new THREE.TorusGeometry(0.1, 0.008, 4, 16)), '#c9d6d4', 0, 0.26, 0, false));
+      break;
+    }
+    case 'hand-warmer': {
+      // Two of NAPO's hand warmers, flat orange packets, one fallen across the other.
+      for (const [x, y, z, turn] of [[-0.03, 0.02, 0.02, 0.2], [0.05, 0.05, -0.03, -0.45]] as const) {
+        const packet = pivot(x, y, z);
+        packet.rotation.y = turn;
+        packet.add(box(0.26, 0.03, 0.17, '#d8643a', 0, 0, 0, 0.012), box(0.26, 0.004, 0.04, '#ffcf8a', 0, 0.017, -0.035, false));
+        g.add(packet);
+      }
+      break;
+    }
+    case 'rad-tablet': {
+      // A foil strip of rad tablets on a band of NAPO yellow: two still in it, one pressed out beside it.
+      const strip = pivot(0, 0.012, 0);
+      strip.rotation.y = 0.3;
+      strip.add(box(0.3, 0.014, 0.12, '#aebbc1', 0, 0, 0, 0.01), box(0.3, 0.003, 0.03, '#d6ad2f', 0, 0.008, 0.04, false));
+      for (const x of [-0.08, 0.08]) strip.add(part(flat(new THREE.CylinderGeometry(0.035, 0.035, 0.022, 8)), '#f4f1e8', x, 0.014, -0.01, false));
+      g.add(strip, part(flat(new THREE.CylinderGeometry(0.035, 0.035, 0.02, 8)), '#f4f1e8', 0.2, 0.01, 0.12, 0.008));
       break;
     }
     case 'huckleberries': {

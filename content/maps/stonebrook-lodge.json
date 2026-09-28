@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-lodge",
   "name": "Stonebrook Lodge",
-  "version": 4,
+  "version": 5,
   "kind": "inside",
   "depth": 0,
   "width": 11,
@@ -31,7 +31,7 @@
     {"x":5,"y":7,"w":1,"h":1,"to":"stonebrook","tx":8,"ty":32,"dir":"down"}
   ],
   "objects": [
-    {"kind":"fireplace","x":5,"y":1},
+    {"kind":"fireplace","x":5,"y":1,"longNight":true},
     {"kind":"rug","x":4,"y":2,"w":3,"h":2},
     {"kind":"shelf","x":1,"y":1},
     {"kind":"shelf","x":2,"y":1},

@@ -191,7 +191,9 @@ clearing(55, 6, 4, 3, 94);
 ferns(58.5, 7.5, 1.8, 1.6, 95);
 
 // Water: the pond; the creek that runs out of it, under the track (a ford) and away east; bog pools.
-ellipse(13.5, 41.5, 3.8, 2.6, 0.12, 100, water);
+// The pond freezes in winter, hard enough to cross (its `ice`); the creek, running water, never does.
+const pond: P[] = [];
+ellipse(13.5, 41.5, 3.8, 2.6, 0.12, 100, (x, y) => { water(x, y); pond.push([x, y]); });
 for (const [x, y] of polyline([[16, 43], [22, 47], [26, 49], [29, 51], [33, 53], [38, 55], [43, 56], [49, 55], [55, 57], [62, 58]])) water(x, y);
 ellipse(55, 24.5, 1.5, 1, 0.3, 102, water);
 ellipse(59.5, 27.5, 1, 0.9, 0.3, 103, water);
@@ -617,12 +619,14 @@ onForest({
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 11, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 13, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
   exits: [EXIT, ...doors, FAR_WAY],
   objects,
+  // Rain from 12 minutes after dawn, for 12: the wettest part of the day, while the South Road is dry.
+  rain: [{ from: 12 * 60, length: 12 * 60 }],
   // Every 40 minutes: 6 restless, then a surge of 2.5 minutes whose front takes 1.5 to sweep home.
   surge: { every: 2400, unstable: 360, surge: 150, sweep: 90 },
   // Every 40 minutes too, halfway between two surges: a minute's warning, then 3 minutes of storm.
@@ -633,6 +637,8 @@ const map: MapData = {
   watchers: { count: 3, steps: [55, 999] },
   // Three skulkers in the deep ferns, 50 steps or more out, at night and in a storm.
   skulkers: { count: 3, steps: [50, 999], when: ['night', 'storm'] },
+  // The pond, frozen in winter: what of it is still water, row by row.
+  ice: [{ name: 'the pond', tiles: pond.filter(([x, y]) => at(x, y) === 'w').sort((a, b) => a[1] - b[1] || a[0] - b[0]).map(([x, y]) => [x, y]) }],
   // What the paper map names, besides the cabins and the way home. The names of tall grass come after
   // the older ones, and what the loggers and NAPO left after those, so the paper map writes the older
   // names where it always did.
@@ -653,11 +659,13 @@ const json = [
   `  "spawn": ${JSON.stringify(map.spawn)},`,
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
   '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
+  `  "rain": ${JSON.stringify(map.rain)},`,
   `  "surge": ${JSON.stringify(map.surge)},`,
   `  "storm": ${JSON.stringify(map.storm)},`,
   `  "flashes": ${JSON.stringify(map.flashes)},`,
   `  "watchers": ${JSON.stringify(map.watchers)},`,
   `  "skulkers": ${JSON.stringify(map.skulkers)},`,
+  `  "ice": ${JSON.stringify(map.ice)},`,
   '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ]',
   '}',
   '',

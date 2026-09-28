@@ -1,7 +1,7 @@
 import {
   PROTOCOL_VERSION, STEP_MS, type BagSlot, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type FlashView, type StormView, type ItemsData,
-  type MapData, type MarkView, type MeritsView, type NotebookView, type PlayerView, type ProgressView, type ServerMsg, type StoneView, type StoryData, type StoryView, type SurgeView,
-  type ConditionsView,
+  type LongNightView, type MapData, type MarkView, type MeritsView, type NotebookView, type PlayerView, type ProgressView, type SeasonView, type ServerMsg, type StoneView, type StoryData,
+  type StoryView, type SurgeView, type ConditionsView, type Weather,
 } from '@napoland/shared';
 import { Items } from '../src/items';
 
@@ -126,7 +126,8 @@ export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 export interface Extras {
   finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; stash?: BagSlot[]; items?: number;
   fires?: FireView[]; marks?: MarkView[]; creatures?: CreatureView[]; flares?: FlareView[]; flashes?: FlashView[]; surge?: SurgeView | null; storm?: StormView | null; body?: BodyView; stone?: StoneView;
-  progress?: ProgressView; tools?: string[]; story?: StoryView; conditions?: ConditionsView; merits?: MeritsView; notebook?: NotebookView;
+  progress?: ProgressView; tools?: string[]; story?: StoryView; conditions?: ConditionsView; merits?: MeritsView; season?: SeasonView; longNight?: LongNightView;
+  notebook?: NotebookView;
   /** Whom you thanked today (UTC), by id. */
   thanked?: string[];
 }
@@ -146,15 +147,24 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
     story: extras.story ?? { version: 0, chapter: '' },
     notebook: extras.notebook ?? { version: 0, pages: [], blanks: [] },
     conditions: extras.conditions ?? { today: [], week: null, next: null },
+    // Spring, unless a test says otherwise: nothing frozen, the usual colors.
+    season: extras.season ?? { season: 'spring', left: 86_400 },
+    // No Long Night on, and the next one with its bonus, unless a test says otherwise.
+    longNight: extras.longNight ?? { on: false, bonus: true, out: false },
     thanked: extras.thanked ?? [],
     // Nothing read and nothing home yet.
     notes: [], keepsakes: [], firsts: [],
   };
 }
 
-export function zone(map: MapData, x: number, y: number, players: PlayerView[], reason: 'exit' | 'collapse' = 'exit', extras: Pick<Extras, 'finds' | 'drops' | 'fires' | 'marks' | 'creatures' | 'flares' | 'flashes' | 'surge' | 'storm'> = {}): Extract<ServerMsg, { t: 'zone' }> {
+export function zone(
+  map: MapData, x: number, y: number, players: PlayerView[], reason: 'exit' | 'collapse' = 'exit',
+  extras: Pick<Extras, 'finds' | 'drops' | 'fires' | 'marks' | 'creatures' | 'flares' | 'flashes' | 'surge' | 'storm'> & { weather?: Weather } = {},
+): Extract<ServerMsg, { t: 'zone' }> {
   return {
     t: 'zone', map: ref(map), x, y, dir: 'up', players, finds: extras.finds ?? [], drops: extras.drops ?? [], reason,
     fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], flashes: extras.flashes ?? [], surge: extras.surge ?? null, storm: extras.storm ?? null, stats: {},
+    // The new map's own weather: rain, as the welcome's, unless a test says otherwise.
+    weather: extras.weather ?? 'rain',
   };
 }
