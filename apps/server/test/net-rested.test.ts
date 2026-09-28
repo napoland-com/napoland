@@ -5,9 +5,10 @@
  * back after being taken out, touch none of it; the cup is saved, and coming straight back fills nothing.
  */
 import { describe, expect, it } from 'vitest';
-import { PROTOCOL_VERSION, RESTED_MAX, type ClientMsg, type ItemsData } from '@napoland/shared';
+import { PROTOCOL_VERSION, RESTED_MAX, TileMap, type ClientMsg, type ItemsData } from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import { MemoryStorage } from '../src/storage';
+import { zoneKey } from '../src/world';
 import { chestMaps, itemsData } from './fixtures';
 import { keepsRested, restKeptThroughARestart, savedPlayer, setup, waitFor, type Client } from './helpers';
 
@@ -23,6 +24,12 @@ const hello = (more: Partial<Extract<ClientMsg, { t: 'hello' }>>): ClientMsg => 
 const BY_THE_CHEST = { map: 'house', x: 3, y: 2, dir: 'up' } as const;
 /** What the client heard of its XP, from now until it is answered, taken out. */
 const progress = async (c: Client) => (await c.settle()).flatMap(m => (m.t === 'progress' ? [m] : []));
+/**
+ * The same world with the house made a home of one's own, as the real one is (cabin.test.ts): whoever is
+ * in it is alone in a copy of their own. Its way out at 2,4 leads onto the town's 7,3; the town's door
+ * at 7,2 leads back in onto 2,3.
+ */
+const cabinMaps = (): TileMap[] => chestMaps().map(m => (m.data.id === 'house' ? new TileMap({ ...m.data, private: true, wake: { x: 2, y: 2, dir: 'down' } }) : m));
 
 describe('rest while away, over WebSockets', () => {
   const { ctx, enter, open, welcomed } = setup({ maps: chestMaps(), items: items() });
@@ -103,6 +110,42 @@ describe('rest while away, over WebSockets', () => {
     const back = await welcomed(third, hello({ token: saved.token }));
     expect(back.progress).toMatchObject({ xp: 18, rested: 21 });
     expect(back.restedAway).toBeUndefined();
+  });
+});
+
+describe('rest in your own cabin', () => {
+  const { ctx, enter, login } = setup({ maps: cabinMaps(), items: items() });
+
+  it('doubles what is stashed at its chest; out into town and back in is no time away, and neither is coming straight back', async () => {
+    const a = await enter({ ...BY_THE_CHEST, lastSeenAt: Date.now() - 10 * HOUR - MINUTE, bag: [{ item: 'nail', count: 2 }, { item: 'moss', count: 1 }] });
+    expect(a.welcome.progress.rested).toBe(30);
+    expect(ctx.server.world.zoneOf(a.id)).toBe(zoneKey('house', a.id));
+    await a.c.settle();
+    // Two nails: 6 XP, and 6 more out of the cup.
+    a.c.send({ t: 'store', x: 3, y: 1, slot: 0 });
+    expect(await progress(a.c)).toEqual([{ t: 'progress', progress: expect.objectContaining({ xp: 12, rested: 24 }), gained: 12, fromRest: 6 }]);
+    // Out through the door into the town everyone shares, and back into their own cabin, to the chest.
+    const seen = ctx.server.world.get(a.id)!.lastSeenAt;
+    (['left', 'down', 'down'] as const).forEach((dir, i) => a.c.send({ t: 'step', dir, seq: i + 1 }));
+    expect(await a.c.next('zone')).toMatchObject({ map: { id: 'town' }, x: 7, y: 3 });
+    a.c.send({ t: 'step', dir: 'up', seq: 4 });
+    expect(await a.c.next('zone')).toMatchObject({ map: { id: 'house' }, x: 2, y: 3 });
+    a.c.send({ t: 'step', dir: 'up', seq: 5 });
+    a.c.send({ t: 'step', dir: 'right', seq: 6 });
+    await waitFor(() => ctx.server.world.get(a.id)?.x === 3 && ctx.server.world.get(a.id)?.y === 2, 'a to be back by the chest');
+    expect(ctx.server.world.zoneOf(a.id)).toBe(zoneKey('house', a.id));
+    // Two copies, and not a leave: still seen as they arrived, the cup as it was.
+    expect(ctx.server.world.get(a.id)).toMatchObject({ lastSeenAt: seen, rested: 24 });
+    await a.c.settle();
+    a.c.send({ t: 'store', x: 3, y: 1 });
+    expect(await progress(a.c)).toEqual([{ t: 'progress', progress: expect.objectContaining({ xp: 16, rested: 22 }), gained: 4, fromRest: 2 }]);
+    // Gone, and straight back: in their own cabin again, with the cup as they left it.
+    a.c.ws.close();
+    await waitFor(() => !ctx.server.world.has(a.id), 'a to leave');
+    const back = await login(a.token);
+    expect(back.welcome.progress).toMatchObject({ xp: 16, rested: 22 });
+    expect(back.welcome.restedAway).toBeUndefined();
+    expect(ctx.server.world.zoneOf(a.id)).toBe(zoneKey('house', a.id));
   });
 });
 

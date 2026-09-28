@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { MERITS_FROM, MERIT_XP, TileMap, type Dir, type ItemsData, type ServerMsg } from '@napoland/shared';
 import type { PlayerRecord } from '../src/storage';
-import { World, colorFor, type Outgoing } from '../src/world';
+import { World, colorFor, zoneKey, type Outgoing } from '../src/world';
 import { fixtureMaps, houseData } from './fixtures';
 
 /** The fixture house with a chest at 3,1: stand at 3,2 facing up to reach it. */
@@ -14,6 +14,11 @@ const withChest = () => {
   const h = houseData();
   return new TileMap({ ...h, objects: [...h.objects, { kind: 'chest', x: 3, y: 1 }] });
 };
+/**
+ * The same house made a home of one's own, as the real one is (cabin.test.ts): whoever is in it is alone
+ * in a copy of their own. Its way out at 2,4 leads onto the town's 7,3.
+ */
+const cabin = () => new TileMap({ ...withChest().data, private: true, wake: { x: 2, y: 2, dir: 'down' } });
 const ITEMS: ItemsData = { version: 1, items: [{ id: 'shard', name: 'Shard', kind: 'resource', stack: 5, text: 'Warm.', xp: 12 }], finds: [] };
 /** XP worth `n` merits, and a little more toward the next. */
 const worth = (n: number) => MERITS_FROM + n * MERIT_XP + 100;
@@ -106,6 +111,25 @@ describe('wearing a look', () => {
     expect(onMap(w.drain(), 'house')).toEqual([{ t: 'pattern', id: 'a', pattern: 'checks' }, { t: 'badge', id: 'a', badge: null }]);
     expect(w.get('a')).toMatchObject({ pattern: 'checks', badge: null });
     expect(w.views('house').find(p => p.id === 'a')!.badge).toBeUndefined();
+  });
+
+  it('at the chest in their own cabin is theirs alone to see, until they walk out into town, where everyone sees it', () => {
+    const w = new World([...fixtureMaps().filter(m => m.data.id !== 'house'), cabin()], 'town', 'overcast', { items: ITEMS, rng: () => 0, guests: true });
+    for (const r of [rec('a', 3, 2, 2, { zone: 'a' }), rec('b', 3, 2, 0, { zone: 'b' }), rec('t', 0, 5, 0, { map: 'town' })]) w.join(r, 0);
+    expect(w.zoneOf('a')).toBe(zoneKey('house', 'a'));
+    w.drain();
+    w.buy('a', 3, 1, 'chevron', 1000);
+    w.buy('a', 3, 1, 'lamp', 1000);
+    w.pattern('a', 3, 1, 'chevron', 1000);
+    w.badge('a', 3, 1, 'lamp', 1000);
+    const out = w.drain();
+    expect(onMap(out, zoneKey('house', 'a'))).toEqual([{ t: 'pattern', id: 'a', pattern: 'chevron' }, { t: 'badge', id: 'a', badge: 'lamp' }]);
+    expect([...onMap(out, 'town'), ...onMap(out, zoneKey('house', 'b')), ...to(out, 'b'), ...to(out, 't')]).toEqual([]);
+    // Out: from 3,2 to the way out at 2,4, and into the town everyone shares.
+    (['left', 'down', 'down'] as const).forEach((dir, i) => w.step('a', dir, i + 1, 1200 + i * 200));
+    const joined = w.drain().find(o => 'map' in o && o.map === 'town' && o.msg.t === 'join');
+    expect(joined?.msg).toMatchObject({ t: 'join', player: { id: 'a', pattern: 'chevron', badge: 'lamp' } });
+    expect(w.views('town').find(p => p.id === 'a')).toMatchObject({ pattern: 'chevron', badge: 'lamp' });
   });
 
   it('says nothing when it changes nothing, and refuses one not theirs, the wrong kind, one the game does not have, from away, and a guest', () => {

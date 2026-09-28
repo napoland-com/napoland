@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-home",
   "name": "Home",
-  "version": 3,
+  "version": 4,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -25,6 +25,8 @@
     "000000000"
   ],
   "spawn": {"x":4,"y":5,"dir":"up"},
+  "private": true,
+  "wake": {"x":4,"y":2,"dir":"down"},
   "exits": [
     {"x":4,"y":6,"w":1,"h":1,"to":"stonebrook","tx":8,"ty":21,"dir":"down"}
   ],

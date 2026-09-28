@@ -6,9 +6,10 @@
  * was spent and bought is kept.
  */
 import { describe, expect, it } from 'vitest';
-import { MERITS_FROM, MERIT_XP, PROTOCOL_VERSION, xpFor, type ClientMsg } from '@napoland/shared';
+import { MERITS_FROM, MERIT_XP, PROTOCOL_VERSION, TileMap, xpFor, type ClientMsg } from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import { MemoryStorage } from '../src/storage';
+import { zoneKey } from '../src/world';
 import { chestMaps, itemsData } from './fixtures';
 import { keepsMerits, meritsKeptThroughARestart, savedPlayer, setup, waitFor } from './helpers';
 
@@ -114,6 +115,36 @@ describe('merits over WebSockets', () => {
       expect(await a.c.next('error')).toMatchObject({ code: 'bad_message' });
       expect((await a.c.closed).code).toBe(1008);
     }
+  });
+});
+
+describe('merits in your own cabin', () => {
+  // The house made a home of one's own, as the real one is (cabin.test.ts): its way out at 2,4 leads onto the town's 7,3.
+  const maps = () => chestMaps().map(m => (m.data.id === 'house' ? new TileMap({ ...m.data, private: true, wake: { x: 2, y: 2, dir: 'down' } }) : m));
+  const { ctx, open, welcomed } = setup({ maps: maps(), items: itemsData(), auth: devAuth() });
+
+  const signedIn = async (xp: number, where: object) => {
+    const mail = email('c');
+    const saved = await savedPlayer(ctx.storage, { tokenHash: null, authSub: `dev:${mail}`, xp, ...where });
+    const c = await open();
+    await welcomed(c, hello({ auth: mail }));
+    await c.settle();
+    return { c, id: saved.id };
+  };
+
+  it('buys and wears a look at the chest in there out of everyone\'s sight; walking out into town, everyone sees it on them', async () => {
+    const t = await signedIn(0, { map: 'town', x: 6, y: 3, dir: 'up' });
+    const a = await signedIn(worth(1), { map: 'house', x: 3, y: 2, dir: 'up' });
+    expect(ctx.server.world.zoneOf(a.id)).toBe(zoneKey('house', a.id));
+    a.c.send({ t: 'buy', x: 3, y: 1, look: 'reflective' });
+    expect(await a.c.next('did')).toEqual({ t: 'did', did: { kind: 'bought', look: 'reflective', left: 0 } });
+    a.c.send({ t: 'pattern', x: 3, y: 1, pattern: 'reflective' });
+    expect(await a.c.next('pattern')).toEqual({ t: 'pattern', id: a.id, pattern: 'reflective' });
+    // Nobody in town heard any of it.
+    expect((await t.c.settle()).filter(m => m.t !== 'energy')).toEqual([]);
+    (['left', 'down', 'down'] as const).forEach((dir, i) => a.c.send({ t: 'step', dir, seq: i + 1 }));
+    expect((await t.c.next('join', m => m.player.id === a.id)).player).toMatchObject({ pattern: 'reflective' });
+    expect((await a.c.next('zone')).players.find(p => p.id === a.id)).toMatchObject({ pattern: 'reflective' });
   });
 });
 

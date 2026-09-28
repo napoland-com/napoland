@@ -1,11 +1,11 @@
 /**
  * The WebSocket side: one connection per player. Holds each address to its limits, checks the
  * hello (and with it who is signing in, see auth.ts), feeds client messages to the World and sends
- * out what the World has to say, each message to the players it is for: one player, or everyone on
- * one map. Nothing a client sends is trusted. It also stores players (now and then, and when they
- * leave), piles and marks (whenever one changes), thanks (whenever one is given or told, with one more
- * thanks received for its helper), what lies in the crates (whenever a thing is left or taken) and the
- * Old Stone (whenever it is fed or falls asleep).
+ * out what the World has to say, each message to the players it is for: one player, or everyone in
+ * one zone (a copy of a map). Nothing a client sends is trusted. It also stores players (now and then,
+ * and when they leave), piles and marks (whenever one changes), thanks (whenever one is given or told,
+ * with one more thanks received for its helper), what lies in the crates (whenever a thing is left or
+ * taken) and the Old Stone (whenever it is fed or falls asleep).
  * Friends, requests, blocks, private messages and reports go to social.ts, one player's in order;
  * what is said to chat.ts, and calls without words to calls.ts. On a server with sign-in, whoever
  * says hello without it plays as a guest (a character that lives in their browser, by its token);
@@ -103,7 +103,9 @@ interface Session {
   state: 'hello' | 'auth' | 'play' | 'closed';
   /** The player's id, once in the world. */
   id: string;
-  /** The map whose news this player hears, once in the world. */
+  /** The zone whose news this player hears, once in the world (its key: a map's id for its main copy). */
+  zone: string;
+  /** The map of that zone, which is all anyone else is told of where they are (friends). */
   map: string;
   /** Plays as a guest (nobody signed in with the character, on a server with sign-in): no chat, no friends. */
   guest: boolean;
@@ -138,7 +140,7 @@ export function attachNet(o: NetOptions): Net {
   const conns = new Set<Session>();
   /** Sessions whose player is in the world, by player id. */
   const playing = new Map<string, Session>();
-  /** The same sessions by the map they hear, for messages to everyone on a map. */
+  /** The same sessions by the zone they hear, for messages to everyone in a zone. */
   const audiences = new Map<string, Set<Session>>();
   /** New players between the capacity check and world.join (creating them takes a database round trip). */
   let joining = 0;
@@ -217,6 +219,7 @@ export function attachNet(o: NetOptions): Net {
       ip,
       state: 'hello',
       id: '',
+      zone: '',
       map: '',
       guest: false,
       tokens: RATE_BURST,
@@ -512,8 +515,9 @@ export function attachNet(o: NetOptions): Net {
   }
 
   /**
-   * A new player at the home map's spawn: with a new token without sign-in (`sub` null: in legacy
-   * mode, or a guest), or belonging to `sub`. Undefined if that failed the session.
+   * A new player, where everyone wakes up (World.wakeUp: at home, by the fire): with a new token
+   * without sign-in (`sub` null: in legacy mode, or a guest), or belonging to `sub`. Undefined if that
+   * failed the session.
    */
   async function newPlayer(s: Session, name: string, sub: string | null): Promise<Entry | undefined> {
     if (isFull()) return void fail(s, 'server_full', FULL_TEXT);
@@ -533,9 +537,10 @@ export function attachNet(o: NetOptions): Net {
       const token = sub === null ? randomBytes(32).toString('base64url') : undefined;
       const id = randomUUID();
       const now = Date.now();
-      const { id: map, spawn } = world.home.data;
+      // Where everyone wakes up: at home, by the fire (the World puts them in a copy of the home of their own).
+      const { map, x, y, dir } = world.wakeUp;
       const rec: PlayerRecord = {
-        id, name, tokenHash: token === undefined ? null : hashToken(token), authSub: sub, map, x: spawn.x, y: spawn.y, dir: spawn.dir,
+        id, name, tokenHash: token === undefined ? null : hashToken(token), authSub: sub, map: map.data.id, x, y, dir,
         color: colorFor(id), energy: ENERGY_MAX, bag: [], wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} }, createdAt: now, lastSeenAt: now,
       };
       // create() also refuses the name if another player took it since nameTaken().
@@ -563,7 +568,7 @@ export function attachNet(o: NetOptions): Net {
     s.id = rec.id;
     s.guest = guests && rec.authSub === null;
     playing.set(rec.id, s);
-    hear(s, joined.map.id);
+    hear(s, world.zoneOf(rec.id)!, joined.map.id);
     send(s, {
       t: 'welcome',
       v: PROTOCOL_VERSION,
@@ -635,7 +640,7 @@ export function attachNet(o: NetOptions): Net {
     if (!s.id || playing.get(s.id) !== s) return undefined;
     playing.delete(s.id);
     social.left(s.id);
-    hear(s, '');
+    hear(s, '', '');
     const rec = world.leave(s.id, clock());
     flush();
     if (rec && save) void persist(rec);
@@ -747,9 +752,9 @@ export function attachNet(o: NetOptions): Net {
 
   /**
    * Sends everything the World has queued, in order, and starts the writes it asked for. Runs after
-   * every World call. A message for a map goes to the players on it at that point of the queue: a
-   * player who changes maps hears the new map from their `zone` message on, even when several
-   * players moved in the same tick.
+   * every World call. A message for a zone goes to the players in it at that point of the queue: a
+   * player who changes zones hears the new one from their `zone` message on (a copy's key comes with it,
+   * never to the client), even when several players moved in the same tick.
    */
   function flush(): void {
     for (const out of world.drain()) {
@@ -764,24 +769,25 @@ export function attachNet(o: NetOptions): Net {
       }
       const s = playing.get(out.to);
       if (!s) continue;
-      if (out.msg.t === 'zone') hear(s, out.msg.map.id);
+      if (out.msg.t === 'zone') hear(s, ('zone' in out ? out.zone : undefined) ?? out.msg.map.id, out.msg.map.id);
       sendRaw(s, data);
     }
     store();
   }
 
-  /** Makes a session hear the news of another map ('' for none). */
-  function hear(s: Session, map: string): void {
-    if (s.map) {
-      const old = audiences.get(s.map);
+  /** Makes a session hear the news of another zone, on `map` ('' for none). */
+  function hear(s: Session, zone: string, map: string): void {
+    if (s.zone) {
+      const old = audiences.get(s.zone);
       old?.delete(s);
-      if (old?.size === 0) audiences.delete(s.map);
+      if (old?.size === 0) audiences.delete(s.zone);
     }
+    s.zone = zone;
     s.map = map;
-    if (!map) return;
-    const audience = audiences.get(map);
+    if (!zone) return;
+    const audience = audiences.get(zone);
     if (audience) audience.add(s);
-    else audiences.set(map, new Set([s]));
+    else audiences.set(zone, new Set([s]));
   }
 
   function send(s: Session, msg: ServerMsg): void {
@@ -825,7 +831,7 @@ export function attachNet(o: NetOptions): Net {
       for (const s of conns) {
         if (s.id && playing.get(s.id) === s) {
           playing.delete(s.id);
-          hear(s, '');
+          hear(s, '', '');
           const rec = world.leave(s.id, now);
           if (rec) recs.push(rec);
         }

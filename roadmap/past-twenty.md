@@ -2,7 +2,7 @@
 id: past-twenty
 title: Something for XP past level 20
 status: done
-order: 410
+order: 420
 area: gameplay
 depends: [home-stash-xp-levels, outfits]
 ---
