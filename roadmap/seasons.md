@@ -1,13 +1,13 @@
 ---
 id: seasons
 title: Seasons
-status: idea
-order: 30
+status: done
+order: 440
 area: world
 depends: [hazards-anomalies]
 ---
 
-Each region gets its own seasons, on top of its weather and of day and night. In winter, for example, some lakes freeze and can be crossed.
+Seasons on the wall clock, a week each from Monday 00:00 UTC, spring, summer, autumn and winter, the same for everyone and on the notice board: longer rain and more glowcaps in spring, shorter rain and a longer dusk in summer, more resin and storms twice as often in autumn, and in winter a harder cold, snow, a light frost on everything, and the pond in the Near Woods and the brook in Stonebrook frozen hard enough to cross.
 
 Why: a world that stays the same map but changes over the year gives people new routes to find and to share.
 

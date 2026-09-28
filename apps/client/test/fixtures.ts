@@ -1,6 +1,7 @@
 import {
   PROTOCOL_VERSION, STEP_MS, type BagSlot, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type FlashView, type StormView, type ItemsData,
-  type MapData, type MarkView, type MeritsView, type PlayerView, type ProgressView, type ServerMsg, type StoneView, type StoryData, type StoryView, type SurgeView, type ConditionsView, type Weather,
+  type MapData, type MarkView, type MeritsView, type PlayerView, type ProgressView, type SeasonView, type ServerMsg, type StoneView, type StoryData, type StoryView, type SurgeView, type ConditionsView,
+  type Weather,
 } from '@napoland/shared';
 import { Items } from '../src/items';
 
@@ -125,7 +126,7 @@ export const FULL: EnergyView = { value: 100, max: 100, rate: 0 };
 export interface Extras {
   finds?: FindView[]; drops?: DropView[]; bag?: BagSlot[]; stash?: BagSlot[]; items?: number;
   fires?: FireView[]; marks?: MarkView[]; creatures?: CreatureView[]; flares?: FlareView[]; flashes?: FlashView[]; surge?: SurgeView | null; storm?: StormView | null; body?: BodyView; stone?: StoneView;
-  progress?: ProgressView; tools?: string[]; story?: StoryView; conditions?: ConditionsView; merits?: MeritsView;
+  progress?: ProgressView; tools?: string[]; story?: StoryView; conditions?: ConditionsView; merits?: MeritsView; season?: SeasonView;
   /** Whom you thanked today (UTC), by id. */
   thanked?: string[];
 }
@@ -144,6 +145,8 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
     // A game made without a story has none (version 0).
     story: extras.story ?? { version: 0, chapter: '' },
     conditions: extras.conditions ?? { today: [], week: null, next: null },
+    // Spring, unless a test says otherwise: nothing frozen, the usual colors.
+    season: extras.season ?? { season: 'spring', left: 86_400 },
     thanked: extras.thanked ?? [],
   };
 }

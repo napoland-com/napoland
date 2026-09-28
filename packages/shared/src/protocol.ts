@@ -14,14 +14,15 @@ import type { BagSlot } from './items';
 import type { MeritsView } from './merits';
 import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
-import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
+import type { ConditionsView, FlashView, SeasonView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
 
 /**
  * Bump when a change breaks older clients; they reload to get the new version. 26: the weather is each
- * region's (a `zone` says the new map's), and effects run for a while (BodyView.effects).
+ * region's (a `zone` says the new map's), and effects run for a while (BodyView.effects). 27: seasons,
+ * whose winter freezes water that is then walked on (a client that did not know would never step on it).
  */
-export const PROTOCOL_VERSION = 26;
+export const PROTOCOL_VERSION = 27;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -517,6 +518,8 @@ export type ServerMsg =
       stone: StoneView;
       /** What the woods are like today, this week and next week (sky.ts, conditionsAt). */
       conditions: ConditionsView;
+      /** The season, and the seconds left of it (sky.ts): what freezes, how it rains, how the world looks. */
+      season: SeasonView;
       /** What you did so far that counts toward feats: each feat's rank follows from its count (feats.ts, rankOf). */
       stats: Stats;
       /** Your XP and level, and the rest saved up while you were away (progress.ts). */
@@ -616,6 +619,8 @@ export type ServerMsg =
   | { t: 'stone'; stone: StoneView }
   /** A new day's conditions (everyone hears them at dawn, and when the week turns). */
   | { t: 'conditions'; conditions: ConditionsView }
+  /** The season turned (everyone hears it, as the week turns): the new one, and the seconds left of it. */
+  | { t: 'season'; season: SeasonView }
   /** The notice board, read: one line per thing worth knowing. */
   | { t: 'board'; lines: string[] }
   /** You reached rank `rank` (1 to RANKS) of a feat (feats.ts), told once; `stats` is where your counts stand now. */

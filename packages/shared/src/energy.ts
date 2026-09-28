@@ -12,6 +12,7 @@
  * - something clinging to your back at night (a hitchhiker), until you reach light or a roof,
  * - a storm (sky.ts): wind and lightning, and being wet in its wind chills you more,
  * - a flash discharging where you stand: a spark (electricity) or a fire flash (heat).
+ * In winter the cold part of it is stronger (sky.ts, SEASONS: `chill`), so cold resistance matters more.
  * Far out (FAR_STEPS or more from home), a pathfinder's whole drain is gentler (feats.ts).
  *
  * The server owns the numbers; the client only shows them (and counts between updates using `rate`).
@@ -115,6 +116,12 @@ export interface Conditions {
   resist?: Partial<Resist>;
   /** How hard the whole drain is FAR_STEPS or more from home (the pathfinder's ranks, feats.ts); nearer home it is as ever. Default 1. */
   farDrain?: number;
+  /**
+   * The season's cold (sky.ts, SEASONS): `weather` more of every weather's extra drain (dry days are
+   * cold too), and being wet `wet` times worse. Cold resistance cuts both, like the rest of the cold.
+   * Default none.
+   */
+  chill?: { weather: number; wet: number };
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -128,9 +135,9 @@ export function energyRate(map: TileMap, x: number, y: number, weather: Weather,
   const steps = map.homeSteps(x, y);
   const far = steps < 0 ? 3 * DRAIN_GROWTH_STEPS : steps;
   const r = (e: keyof Resist) => clamp01(c.resist?.[e] ?? 0);
-  const cold = r('cold');
-  const weatherK = 1 + (WEATHER_DRAIN[weather] - 1) * (1 - cold);
-  const chill = c.storm ? STORM_CHILL : 1;
+  const cold = r('cold'), season = c.chill ?? { weather: 0, wet: 1 };
+  const weatherK = 1 + (WEATHER_DRAIN[weather] - 1 + season.weather) * (1 - cold);
+  const chill = (c.storm ? STORM_CHILL : 1) * season.wet;
   let k = weatherK * (1 + LOAD_DRAIN * clamp01(c.load ?? 0)) * (1 + WET_DRAIN * chill * clamp01(c.wet ?? 0) * (1 - cold));
   if (c.hitched) k *= HITCH_DRAIN;
   if (c.storm) k *= 1 + (STORM_DRAIN - 1) * (1 - (r('wind') + r('electricity')) / 2);

@@ -596,6 +596,7 @@ export function attachNet(o: NetOptions): Net {
       body: joined.body,
       stone: joined.stone,
       conditions: joined.conditions,
+      season: joined.season,
       stats: joined.stats,
       progress: joined.progress,
       ...(joined.restedAway > 0 && { restedAway: joined.restedAway }),

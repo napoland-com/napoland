@@ -9,7 +9,7 @@ import { DECOR, FRONTED, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, ha
 import { DIRS, stepTarget } from './movement';
 import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
-import { FLASH_BURST_S, FLASH_GLOW_S, NIGHT_FROM } from './sky';
+import { FLASH_BURST_S, FLASH_GLOW_S, NIGHT_FROM, SEASON_ORDER, stormAt, surgeAt, type Season } from './sky';
 import { MAX_REMARKS, MILESTONES, STORY_EVENTS, type StoryData } from './story';
 
 export interface Problem {
@@ -175,6 +175,12 @@ export function validateMap(data: MapData): Problem[] {
     if (r.offset !== undefined && !Number.isFinite(r.offset)) err('storm: offset is a number of seconds');
   }
   if (data.rain !== undefined) validateRain(data, err);
+  if (data.ice !== undefined) validateIce(data, map, err, warn);
+  // Storms come between surges in every season, the autumn's twice-as-many too (stormAt).
+  if (data.surge && data.storm && !out.some(p => p.level === 'error' && /^(surge|storm):/.test(p.message))) {
+    const clash = stormsClash(data);
+    if (clash) err(`storm: in ${clash.season} a storm (or its warning) blows while the region is restless or surging, ${clash.at} seconds into the round: move it (offset) to between the surges`);
+  }
   if (data.flashes) {
     const f = data.flashes;
     if (data.kind !== 'wilds') err('flashes happen only in the wilds');
@@ -234,6 +240,49 @@ function validateRain(data: MapData, err: (message: string) => void): void {
   for (const w of rain) if (w.from + w.length > NIGHT_FROM) err(`rain: the window from ${w.from} runs past nightfall (${NIGHT_FROM} seconds after dawn), and the night is dry`);
   const sorted = [...rain].sort((a, b) => a.from - b.from);
   for (let i = 1; i < sorted.length; i++) if (sorted[i]!.from < sorted[i - 1]!.from + sorted[i - 1]!.length) err(`rain: the windows from ${sorted[i - 1]!.from} and ${sorted[i]!.from} overlap: make them one`);
+}
+
+/**
+ * The water that freezes in winter (`ice`): each by a name people say ("the pond") and its tiles, which
+ * are water on the map, each once; only outdoors. Ice nobody can step onto from the shore would be ice
+ * nobody crosses, which is worth a warning.
+ */
+function validateIce(data: MapData, map: TileMap, err: (message: string) => void, warn: (message: string) => void): void {
+  const ice = data.ice;
+  if (!Array.isArray(ice)) return void err('ice: a list of the water that freezes in winter, each {name, tiles}');
+  if (data.kind === 'inside') err('ice: only water outdoors freezes');
+  const seen = new Set<string>();
+  for (const water of ice) {
+    const name = typeof water?.name === 'string' && water.name.trim() ? water.name : '';
+    if (!name) err('ice: each frozen water has a name people say, like "the pond"');
+    if (!Array.isArray(water?.tiles) || !water.tiles.length) { err(`ice: ${name || 'a frozen water'} has no tiles`); continue; }
+    let shore = false;
+    for (const t of water.tiles) {
+      const [x, y] = Array.isArray(t) ? t : [NaN, NaN];
+      if (!Number.isInteger(x) || !Number.isInteger(y) || !map.inside(x!, y!)) { err(`ice: ${JSON.stringify(t)} is not a tile of the map`); continue; }
+      if (map.kind(x!, y!) !== 'water') err(`ice: ${x},${y} is not water`);
+      if (seen.has(`${x},${y}`)) err(`ice: ${x},${y} is listed twice`);
+      seen.add(`${x},${y}`);
+      if (DIRS.some(d => { const n = stepTarget(x!, y!, d); return map.walkable(n.x, n.y); })) shore = true;
+    }
+    if (!shore) warn(`ice: ${name || 'a frozen water'} has no shore to step onto it from, so nobody can cross it`);
+  }
+}
+
+/**
+ * The first moment, if any, in some season, when a storm or its warning blows over a region while it is
+ * restless or surging: over whole rounds of both clocks (a day at most), a second at a time.
+ */
+function stormsClash(data: MapData): { season: Season; at: number } | undefined {
+  const surge = data.surge!, storm = data.storm!;
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  const round = Math.min(86_400, (surge.every / gcd(surge.every, storm.every)) * storm.every);
+  for (const season of SEASON_ORDER) {
+    for (let t = 0; t < round; t++) {
+      if (stormAt(storm, t * 1000, season).phase !== 'clear' && surgeAt(surge, t * 1000).phase !== 'calm') return { season, at: t };
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -587,6 +636,10 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (f.condition !== undefined) {
       if (!conditionIds.has(f.condition)) err(`${name}: grows while ${f.condition} is on, which is not a condition`);
       if (f.when !== undefined) err(`${name}: grows with a condition or at a time (when), not both`);
+    }
+    if (f.season !== undefined) {
+      if (!(SEASON_ORDER as readonly string[]).includes(f.season)) err(`${name}: grows in ${JSON.stringify(f.season)}, which is not a season (${SEASON_ORDER.join(', ')})`);
+      if (f.when !== undefined || f.condition !== undefined) err(`${name}: grows in a season, or with a condition or at a time (when): one of them`);
     }
     if (f.around) {
       const { x, y, r } = f.around;

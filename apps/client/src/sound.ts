@@ -337,6 +337,7 @@ export class Sound {
     const swish = surface === 'swish';
     this.burst(now, type, f * (0.85 + Math.random() * 0.3), len, g, swish ? 0.06 : 0, q);
     if (surface === 'floor') this.tone(now, 'sine', 110, 70, 0.08, 0.25);
+    if (surface === 'ice') this.tone(now + 0.02, 'triangle', 260 + Math.random() * 60, 180, 0.12, 0.05);
     if (swish) this.burst(now + 0.08 + Math.random() * 0.04, 'highpass', 4200, 0.14, g * 0.45, 0.02);
   }
 
@@ -374,4 +375,6 @@ const STEPS: Record<Surface, [BiquadFilterType, number, number, number, number]>
   floor: ['bandpass', 600, 3, 0.07, 0.35],
   water: ['bandpass', 1300, 2.5, 0.16, 0.4],
   swish: ['bandpass', 2600, 0.8, 0.2, 0.32],
+  // Ice: a short, hard, high tap, and a faint creak under it (step).
+  ice: ['highpass', 3200, 1.5, 0.04, 0.4],
 };

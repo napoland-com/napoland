@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DAY_S, DEFAULT_RAIN, ENERGY_MAX, NIGHT_FROM, RESIST_MAX, TileMap, dayAt, effectResist, effectsAfter, energyRate, itemIndex, rainAhead, rainOf, resistOf, validateItems, validateMap,
+  DAY_S, DEFAULT_RAIN, ENERGY_MAX, NIGHT_FROM, RESIST_MAX, TileMap, dayAt, effectResist, effectsAfter, energyRate, itemIndex, rainAhead, rainOf, resistOf, seasonAt, validateItems, validateMap,
   weatherAt, type ItemsData, type MapData, type RainWindow,
 } from '../src';
 import itemsJson from '../../../content/items.json';
@@ -9,8 +9,15 @@ import southRoad from '../../../content/maps/south-road.json';
 import stonebrook from '../../../content/maps/stonebrook.json';
 
 const DAY_MS = DAY_S * 1000;
-/** A dawn well past the epoch (its night is a plain one), and a minute of that day. */
-const DAWN = 20_001 * DAY_MS;
+/**
+ * A dawn well past the epoch in an autumn week (autumn changes neither the rain nor the dusk: seasons have
+ * tests of their own) whose night is a plain one, and a minute of that day.
+ */
+const DAWN = (() => {
+  let d = 20_000;
+  while (seasonAt(d * DAY_MS) !== 'autumn' || dayAt(d * DAY_MS).aurora) d++;
+  return d * DAY_MS;
+})();
 const at = (minutes: number) => DAWN + minutes * 60_000;
 const MIN = 60;
 

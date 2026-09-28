@@ -4,14 +4,15 @@
  * trees shade it, a touch different from tile to tile; roads, paths and mud vary the same way. Low tufts
  * grow on grass tiles, and on tall grass (shared hidden()) knee-high blades that sway, and part around
  * whoever wades in. Everything follows from the map's id and the tiles' positions, so a place looks the
- * same on every visit.
+ * same on every visit; and the season grades it all a little (spring greener, summer warmer, autumn
+ * rust, winter a light frost), in the colors themselves, so a map built in a season costs nothing more.
  *
  * The colors and where each clump grows are plain logic, tested without a page. world.ts puts the
  * clumps into its blocks of tiles: in each block, one instanced mesh for its tufts and one for its
  * tall grass, all with the one material that sways them.
  */
 import * as THREE from 'three';
-import { hidden, type TileKind, type TileMap, type Weather } from '@napoland/shared';
+import { hidden, type Season, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { ownToon } from './toon';
 
 /** The same number for the same map id (FNV-1a): each map has its own ground, the same on every visit. */
@@ -58,6 +59,35 @@ const FLOOR = color('#6b4a31'), WALL = color('#1d1510');
 const TUFT = color('#5f7e44'), TUFT_LUSH = color('#4a7845'), TUFT_DRY = color('#8f8a4c'), TUFT_SHADE = color('#3a4d2e');
 /** Tall grass: pale sage and straw, so a patch stands out from the grass around it, day and night. */
 const TALL = color('#8e9b5b'), TALL_DRY = color('#b3a867'), TALL_GREEN = color('#6d8a4d');
+/** Ice, winter's on the water that freezes: pale and bluish, clouded here and there. */
+const ICE = color('#c4dae2'), ICE_CLOUD = color('#9dbcc8');
+
+/**
+ * What a season does to the colors: toward `tint`, the open ground that far, the plants (tufts, tall grass,
+ * ferns) that far, and roads and lots only in a frost. Kept gentle: the same place, another time of year.
+ */
+export interface Grade {
+  tint: THREE.Color;
+  ground: number;
+  plants: number;
+  paved: number;
+}
+export const GRADES: Readonly<Record<Season, Grade>> = {
+  spring: { tint: color('#4f8a3c'), ground: 0.16, plants: 0.2, paved: 0 },
+  summer: { tint: color('#8d8446'), ground: 0.14, plants: 0.16, paved: 0 },
+  autumn: { tint: color('#8a5a2c'), ground: 0.24, plants: 0.34, paved: 0 },
+  winter: { tint: color('#cbd6db'), ground: 0.5, plants: 0.42, paved: 0.3 },
+};
+
+/** How far a season takes a kind of ground toward its tint: the forest floor and mud less than grass, paved ground only a frost, never water, floors or walls. */
+function gradeOf(g: Grade, kind: TileKind): number {
+  switch (kind) {
+    case 'road': case 'lot': return g.paved;
+    case 'mud': case 'forest': return g.ground * 0.6;
+    case 'water': case 'floor': case 'wall': return 0;
+    default: return g.ground;
+  }
+}
 
 /**
  * A map's ground colors. Worked out once per map: how much the trees shade the ground and how damp it
@@ -73,10 +103,13 @@ export class Ground {
   private readonly wet: Float32Array;
   /** What fields() last read, so reading costs nothing. */
   private readonly f = { shade: 0, damp: 0, dry: 0 };
+  /** The season's grade on every color (none: the colors as they are). */
+  private readonly grade: Grade | undefined;
 
-  constructor(map: TileMap) {
+  constructor(map: TileMap, season?: Season) {
     const W = (this.W = map.width), H = (this.H = map.height);
     this.seed = mapSeed(map.data.id);
+    this.grade = season && GRADES[season];
     // What shades the ground: the forest (past the map's edge too, where the woods go on) and the lone
     // trees; what makes it damp: water, and a little the mud of the banks.
     const shadeOf = new Float32Array(W * H), wetOf = new Float32Array(W * H);
@@ -167,21 +200,35 @@ export class Ground {
         out.copy(WALL);
         break;
     }
+    const k = this.grade ? gradeOf(this.grade, kind) : 0;
+    if (k) out.lerp(this.grade!.tint, k);
     return out.multiplyScalar(light);
+  }
+
+  /** Ice at a corner of a frozen tile: pale, clouded where the noise says, a touch different from tile to tile. */
+  iceColor(cx: number, cy: number, tx: number, ty: number, out: THREE.Color): THREE.Color {
+    const s = this.seed;
+    out.copy(ICE).lerp(ICE_CLOUD, smooth(0.45, 0.8, noise(cx, cy, 2.4, s + 40)) * 0.7);
+    return out.multiplyScalar(1 + (hash(tx, ty, s + 41) - 0.5) * 0.05);
+  }
+
+  /** A plant's color (a fern, a tuft) as the season has it. */
+  plant(out: THREE.Color): THREE.Color {
+    return this.grade ? out.lerp(this.grade.tint, this.grade.plants) : out;
   }
 
   /** A tuft growing at x, y: greener where it is damp, straw where it is dry, darker under the trees; `r` (0 to 1) varies it. */
   tuftColor(x: number, y: number, r: number, out: THREE.Color): THREE.Color {
     const { shade, damp, dry } = this.fields(x, y);
     out.copy(TUFT).lerp(TUFT_LUSH, damp * 0.6).lerp(TUFT_DRY, Math.min(1, dry * 0.75 + r * 0.25)).lerp(TUFT_SHADE, shade * 0.6);
-    return out.multiplyScalar(0.9 + r * 0.2);
+    return this.plant(out).multiplyScalar(0.9 + r * 0.2);
   }
 
   /** A clump of tall grass at x, y, from sage to straw; `r` and `g` (0 to 1) vary it. */
   tallColor(x: number, y: number, r: number, g: number, out: THREE.Color): THREE.Color {
     const { shade, dry } = this.fields(x, y);
     out.copy(TALL).lerp(TALL_DRY, Math.min(1, dry * 0.5 + r * 0.35)).lerp(TALL_GREEN, g * 0.4).lerp(SHADE, shade * 0.35);
-    return out.multiplyScalar(0.9 + g * 0.2);
+    return this.plant(out).multiplyScalar(0.9 + g * 0.2);
   }
 }
 

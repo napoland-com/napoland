@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DAY_S, ENERGY_MAX, RESIST_MAX, TileMap, WET_SECONDS, energyRate, type Dir, type ItemsData, type ServerMsg } from '@napoland/shared';
+import { DAY_S, ENERGY_MAX, RESIST_MAX, TileMap, WET_SECONDS, dayAt, energyRate, seasonAt, type Dir, type ItemsData, type ServerMsg } from '@napoland/shared';
 import { loadMaps } from '../src/content';
 import type { PlayerRecord } from '../src/storage';
 import { World, colorFor, type Outgoing } from '../src/world';
@@ -16,8 +16,12 @@ import { fixtureMaps, itemsData, woodsData } from './fixtures';
 const content = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData;
 const { maps } = loadMaps(resolve(import.meta.dirname, '../../../content/maps'), 'stonebrook');
 const DAY_MS = DAY_S * 1000;
-/** A dawn whose night is a plain one, and the wall time `m` minutes after it. */
-const DAWN = 20_001 * DAY_MS;
+/** A dawn in an autumn week (it changes neither the rain nor the cold: seasons.test.ts) whose night is a plain one, and the wall time `m` minutes after it. */
+const DAWN = (() => {
+  let d = 20_000;
+  while (seasonAt(d * DAY_MS) !== 'autumn' || dayAt(d * DAY_MS).aurora) d++;
+  return d * DAY_MS;
+})();
 const at = (m: number) => DAWN + m * 60_000;
 
 const rec = (id: string, map: string, x: number, y: number, dir: Dir = 'down', more: Partial<PlayerRecord> = {}): PlayerRecord => ({
