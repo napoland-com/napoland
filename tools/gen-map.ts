@@ -6,7 +6,7 @@
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { MapData, MapExit, MapObject } from '../packages/shared/src';
+import { objectTiles, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
 
 const N = 44;
@@ -32,8 +32,7 @@ const paint = (c: string) => (x: number, y: number) => { tile[y]![x] = c; };
 const block = (x: number, y: number) => { blocked[y]![x] = true; };
 function place(o: MapObject) {
   objects.push(o);
-  const w = o.kind === 'house' || o.kind === 'car' ? o.w : 1, h = o.kind === 'house' ? o.h : 1;
-  if (o.kind !== 'shrooms') for (let dy = 0; dy < h; dy++) for (let dx = 0; dx < w; dx++) block(o.x + dx, o.y + dy);
+  if (o.kind !== 'shrooms') for (const [x, y] of objectTiles(o)) block(x, y);
 }
 
 // Terrain: a raised plateau in the north-west, roads, the gravel lot, the pond and the fern patches.
@@ -183,8 +182,104 @@ function round(v: number) { return Math.round(v * 1000) / 1000; }
   });
 }
 
+// ---- What the town left (roadmap/richer-places.md) ----
+// Added after everything above, and without rnd(), so nothing placed before moves: the brook the town
+// is named for, running out of the woods into the pond; the houses of four families who left, dark
+// behind their curtains; the old sawmill by the brook, with its logs and its truck; and the verge by
+// the south road where the town waited its turn to leave, with what would not fit in the cars. All of
+// it stands on open grass, off the roads, the lot and the tiles in front of doors and of what you
+// read, and nothing may cut anyone off from the rest of the town.
+const leftBehind: MapObject[] = [];
+{
+  const SPAWN = { x: 8, y: 21 };
+  /** Tiles that stay open: in front of every door and of everything you read or talk to. */
+  const fronts = new Set<string>();
+  for (const o of objects) {
+    if (o.kind === 'house') fronts.add(`${o.x + Math.floor(o.w / 2)},${o.y + o.h}`);
+    if (o.kind === 'sign' || o.kind === 'board' || o.kind === 'npc') fronts.add(`${o.x},${o.y + 1}`);
+  }
+  const walk = (x: number, y: number) => x >= 0 && y >= 0 && x < N && y < N && !blocked[y]![x] && tile[y]![x] !== 'w' && !level[y]![x];
+  /** How many tiles someone could stand on can no longer be reached from the spawn. */
+  const cutOff = () => {
+    const seen = new Set([`${SPAWN.x},${SPAWN.y}`]), queue: Array<[number, number]> = [[SPAWN.x, SPAWN.y]];
+    for (let h = 0; h < queue.length; h++) {
+      const [x, y] = queue[h]!;
+      for (const [nx, ny] of [[x, y - 1], [x + 1, y], [x, y + 1], [x - 1, y]] as const) {
+        if (walk(nx, ny) && !seen.has(`${nx},${ny}`)) { seen.add(`${nx},${ny}`); queue.push([nx, ny]); }
+      }
+    }
+    let cut = 0;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (walk(x, y) && !seen.has(`${x},${y}`)) cut++;
+    return cut;
+  };
+  /** Places a new thing on open grass, or stops: the layout needs a look. */
+  const add = (o: MapObject) => {
+    for (const [x, y] of objectTiles(o)) {
+      if (tile[y]![x] !== 'g' || blocked[y]![x] || level[y]![x] || shroomTile.has(`${x},${y}`) || fronts.has(`${x},${y}`) || exitTile(x, y)) {
+        throw new Error(`the ${o.kind} at ${o.x},${o.y} needs open grass at ${x},${y}`);
+      }
+    }
+    place(o);
+    leftBehind.push(o);
+    if (o.kind === 'house') fronts.add(`${o.x + Math.floor(o.w / 2)},${o.y + o.h}`);
+    if (o.kind === 'sign') fronts.add(`${o.x},${o.y + 1}`);
+    const cut = cutOff();
+    if (cut) throw new Error(`the ${o.kind} at ${o.x},${o.y} cuts ${cut} tiles off from the rest of the town`);
+  };
+
+  // The brook: out of the woods east of the pond and into it, just below where the mill stands. Its
+  // banks are mud. Only open ground turns to water (the pond's own muddy rim among it).
+  for (let x = 34; x <= 39; x++) {
+    if (blocked[30]![x] || (tile[30]![x] !== 'g' && tile[30]![x] !== 'm')) throw new Error(`the brook needs open ground at ${x},30`);
+    tile[30]![x] = 'w';
+  }
+  for (const [x, y] of [[34, 29], [35, 29], [36, 29], [37, 29], [38, 29], [37, 31], [38, 31], [39, 31]] as const) {
+    if (tile[y]![x] === 'g' && !blocked[y]![x]) tile[y]![x] = 'm';
+  }
+
+  // The houses of four families who left, each with its room (gen-interiors.ts) and the family's name
+  // on the mailbox by its door: two on the main street across from home (the Hales' under the street
+  // light that still comes on), two on the old road to the mill. Their curtains are drawn and their
+  // windows never light.
+  const FAMILIES = [
+    { x: 4, y: 14, box: [6, 16], roof: '#4f5b62', inside: 'stonebrook-okada-house', mailbox: ['OKADA, in neat black letters.', 'Empty. The mail stopped coming a long time ago.'] },
+    { x: 18, y: 14, box: [21, 15], roof: '#6a4638', inside: 'stonebrook-hale-house', mailbox: ['THE HALES, in stick-on letters, one of them gone.'] },
+    { x: 20, y: 26, box: [22, 28], roof: '#55603f', inside: 'stonebrook-dahl-house', mailbox: ['DAHL, painted in white.', 'The little flag is still up. Nobody came for the letter.'] },
+    { x: 24, y: 26, box: [26, 28], roof: '#5d4a3b', inside: 'stonebrook-lindqvist-house', mailbox: ['LINDQVIST, in brass letters.', 'Stuffed with NAPO notices, all of them the same one.'] },
+  ] as const;
+  for (const f of FAMILIES) {
+    const house = { kind: 'house', x: f.x, y: f.y, w: 3, h: 2, roof: f.roof, lit: 0, curtains: true } as const;
+    add(house);
+    doors.push(doorInto(f.inside, 'stonebrook', house));
+    add({ kind: 'sign', x: f.box[0], y: f.box[1], style: 'mailbox', text: [...f.mailbox] });
+  }
+
+  // The old sawmill from the logging days, on the brook where it runs into the pond (the mill pond): a
+  // long, low timber building you can walk into (gen-interiors.ts), the last logs stacked beside it,
+  // the truck that brought them, and its sign where the old road ends.
+  const mill = { kind: 'house', x: 33, y: 26, w: 6, h: 3, roof: '#7a4a2e', lit: 0, style: 'mill' } as const;
+  add(mill);
+  doors.push(doorInto('stonebrook-sawmill', 'stonebrook', mill));
+  add({ kind: 'logs', x: 29, y: 26, w: 3, h: 1 });
+  add({ kind: 'truck', x: 28, y: 28, w: 3, h: 1, dir: 'right' });
+  add({ kind: 'sign', x: 31, y: 28, text: ['Stonebrook Timber Co.', 'Closed for the winter. Back to work in the spring.', 'Under it, in pencil: "Which spring?"'] });
+
+  // The verge by the south road, beside NAPO's notice: where the town waited its turn to leave, and left
+  // what would not fit in the cars. A cardboard sign propped against the piano asks that it all be left alone.
+  add({ kind: 'luggage', x: 13, y: 36 });
+  add({ kind: 'boxes', x: 14, y: 36 });
+  add({ kind: 'piano', x: 16, y: 36 });
+  add({ kind: 'sign', x: 16, y: 37, style: 'cardboard', text: ['In marker, on a flap of cardboard propped against the piano:', '"PLEASE LEAVE THESE. WE ARE COMING BACK FOR THEM."', 'The rain has run the ink.'] });
+  add({ kind: 'rocker', x: 19, y: 36 });
+  add({ kind: 'bike', x: 19, y: 37 });
+  add({ kind: 'birdcage', x: 20, y: 37 });
+  add({ kind: 'luggage', x: 21, y: 36 });
+  add({ kind: 'luggage', x: 10, y: 36 });
+  add({ kind: 'boxes', x: 9, y: 36 });
+}
+
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 9, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 10, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
@@ -196,11 +291,15 @@ const map: MapData = {
     ...doors,
   ],
   objects,
-  // What the town calls these spots, for its paper map (Home, the lodge and the roads out are named by their doors and exits).
+  // What the town calls these spots, for its paper map (Home, the lodge, the houses and the roads out
+  // are named by their doors and exits). The newer names come after, so the paper map writes the older
+  // ones where it always did.
   places: [
     { name: 'the Old Stone', x: STONE.x, y: STONE.y },
     { name: 'the notice board', x: 12, y: 23 },
     { name: 'the pond', x: Math.floor(POND.x), y: Math.floor(POND.y) },
+    { name: 'the sawmill', x: 36, y: 27 },
+    { name: 'the verge', x: 17, y: 37 },
   ],
 };
 
@@ -223,3 +322,4 @@ const out = resolve(import.meta.dirname, '../content/maps/stonebrook.json');
 writeFileSync(out, json);
 const count = (k: string) => objects.filter(o => o.kind === k).length;
 console.log(`wrote ${out}: ${N}x${N} tiles, ${objects.length} objects (${count('tree')} trees, ${count('rock')} rocks, ${count('house')} houses)`);
+console.log(`left behind: ${leftBehind.map(o => `${o.kind === 'sign' && o.style ? o.style : o.kind} ${o.x},${o.y}`).join(', ')}`);
