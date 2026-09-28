@@ -16,7 +16,7 @@ import type { FriendsView } from './friends';
 import { CALL_GLYPHS, NOTEBOOK_ICON } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import { fieldNotesHtml, notesHtml, type FieldNotesView, type JournalView, type NotesView } from './journal';
-import { DOOR_SETTING, VISITS_SETTING } from './said';
+import { DOOR_SETTING, VISITS_SETTING, firstStepsView } from './said';
 import type { SoundSetting } from './sound';
 import type { OfferRow, TradePanel } from './trade';
 import { uneaseLook } from './unease';
@@ -419,7 +419,8 @@ export class Hud {
         <div class="cling" data-el="cling" hidden role="status">${ICON.cling}<span>Something clings to you</span></div>
         <div class="tug" data-el="tug" hidden role="status"><i aria-hidden="true">✦</i><span data-el="tugName"></span></div>
         <div class="surge-pill" data-el="surge" hidden role="status" aria-live="polite"></div>
-        <div class="sub"><span class="conn" data-el="conn" data-state="connecting"><i></i><span data-el="connText">Connecting</span></span><span data-el="ping"></span></div></div>
+        <div class="sub"><span class="conn" data-el="conn" data-state="connecting"><i></i><span data-el="connText">Connecting</span></span><span data-el="ping"></span></div>
+        <div class="steps" data-el="steps" hidden role="status" aria-live="polite"><b data-el="stepsTitle"></b><span data-el="stepsText"></span></div></div>
       <div class="surge-glow" data-el="surgeGlow"></div>
       <button type="button" class="menu-btn" data-el="menuBtn" aria-label="Menu" aria-expanded="false">${ICON.menu}</button>
       <button type="button" class="menu-btn chat-btn" data-el="chatBtn" aria-label="Chat" aria-expanded="false">${ICON.chat}</button>
@@ -1774,6 +1775,15 @@ export class Hud {
       el.animate([{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'scale(1.04)', offset: 0.25 }, { opacity: 1, transform: 'scale(1)', offset: 0.7 }, { opacity: 0, transform: 'scale(1)' }], { duration: TUG_MS, easing: 'ease-out' });
     }
     this.tugTimer = setTimeout(() => { el.hidden = true; }, TUG_MS);
+  }
+
+  /** A new player's first step to take now, at the foot of the status panel; nothing when there is none. */
+  setFirstSteps(step: number | null) {
+    const v = firstStepsView(step);
+    this.el.steps!.hidden = !v;
+    if (!v) return;
+    this.el.stepsTitle!.textContent = v.title;
+    this.el.stepsText!.textContent = v.text;
   }
 
   /** The surge clock (hidden while calm) and the violet edges while the front is over you. */

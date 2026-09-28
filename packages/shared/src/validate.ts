@@ -508,14 +508,14 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   }
 
   // NAPO's teleports: the one in every cabin (a home of one's own) sets you down in front of its twin in
-  // the home town, the only town that has one.
+  // the home town, the only town that has one, and that one sets you down at home, in front of the cabin's.
   const teleporting = [...byId.values()].filter(m => m.data.objects.some(o => o.kind === 'teleport'));
   for (const m of teleporting) {
     if (m.data.kind === 'town' && m.data.id !== homeId) out.push({ level: 'error', map: m.data.id, message: `teleport: NAPO's teleport in town stands in the home town (${homeId})` });
   }
-  if (teleporting.some(m => m.data.private) && !home.data.objects.some(o => o.kind === 'teleport')) {
-    out.push({ level: 'error', map: homeId, message: 'teleport: the one in the cabin has its twin in the home town, where it sets you down' });
-  }
+  const inTown = home.data.objects.some(o => o.kind === 'teleport'), inCabin = teleporting.some(m => m.data.private);
+  if (inCabin && !inTown) out.push({ level: 'error', map: homeId, message: 'teleport: the one in the cabin has its twin in the home town, where it sets you down' });
+  if (inTown && !inCabin) out.push({ level: 'error', map: homeId, message: 'teleport: the one in the home town has its twin in the cabin, where it sets you down at home' });
 
   // Where new players start and collapsed ones wake up: one home, off the home town or off the street
   // there (every player's own cabin), so it is never in doubt.

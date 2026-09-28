@@ -605,7 +605,7 @@ describe('validateWorld', () => {
     const second = { ...lane(), id: 'lane-2', exits: lane().exits.map(e => (e.to === 'home' ? e : { ...e })) };
     expect(errors([town(), lane(), second, home(), tinyHouse(), woodsMap()])).toContain('lane-2: street: lane and lane-2 are both streets, but every player\'s cabin stands on the one');
   });
-  it("puts NAPO's teleports in every home of one's own and one in the home town, which the one in the cabin sets you down in front of", () => {
+  it("puts NAPO's teleports in every home of one's own and one in the home town, each setting you down in front of the other", () => {
     const teleport = (x: number, y: number): MapObject => ({ kind: 'teleport', x, y });
     const town = (...more: MapObject[]): MapData => ({ ...townWithExit(), objects: [...townWithExit().objects, ...more] });
     const home = (...more: MapObject[]): MapData => ({
@@ -624,8 +624,9 @@ describe('validateWorld', () => {
     // One a map, and never one that would set you down on a way out.
     expect(mapErrors(town(teleport(0, 3), teleport(2, 3)))).toContain('teleport at 0,3: a map has one teleport');
     expect(mapErrors(home(teleport(2, 3)))).toContain('teleport at 2,3: it sets you down on the tile in front of it (2,4), which is an exit');
-    // The one in the cabin has its twin in the home town, and the home town is the only town with one.
+    // The one in the cabin has its twin in the home town, and the other way round; the home town is the only town with one.
     expect(errors([townWithExit(), woodsMap(), home(teleport(1, 1))])).toEqual(['tiny: teleport: the one in the cabin has its twin in the home town, where it sets you down']);
+    expect(errors([town(teleport(0, 3)), woodsMap(), home()])).toEqual(['tiny: teleport: the one in the home town has its twin in the cabin, where it sets you down at home']);
     const other: MapData = { ...town(teleport(0, 3)), id: 'other' };
     expect(errors([town(teleport(0, 3)), woodsMap(), home(teleport(1, 1)), other])).toContain("other: teleport: NAPO's teleport in town stands in the home town (tiny)");
   });

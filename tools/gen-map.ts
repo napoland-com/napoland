@@ -288,7 +288,8 @@ const brook: Array<[number, number]> = [];
 // Residents' Lane (gen-street.ts), like the roads out to the regions: the way onto your street is a road,
 // no longer that house's door. Last, and without rnd(), so nothing placed before moves: it only paints open
 // ground and fells the trees on it. A signpost stands at its start, and NAPO's teleport, the twin of the
-// one in every cabin, on the lot by the notice board, where it sets you down (teleportArrival).
+// one in every cabin, on the lot by the notice board, where it sets you down (teleportArrival) and which
+// takes you home.
 {
   const ROAD = { x0: TOWN_ROAD.x, x1: 10, y0: TOWN_ROAD.y, y1: TOWN_ROAD.y + TOWN_ROAD.h - 1 };
   const onRoad = (x: number, y: number) => x >= ROAD.x0 && x <= ROAD.x1 && y >= ROAD.y0 && y <= ROAD.y1;

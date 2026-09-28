@@ -11,7 +11,7 @@ Residents' Lane gets a road. Today the way onto your street is the door of the h
 
 Your neighbors' cabins can be visited. Walk in through a neighbor's door, whether they are home or not, and see how they made it theirs: the furniture they made ([cabin-comfort](cabin-comfort.md)) and the charms and anomalous gear on their trophy shelf. A visit is for looking: their chest and workbench are theirs, and only your own fire makes you cozy. If they are home, they read "Bo came in." A setting beside the one for your door ([streets](streets.md)), on until you turn it off, lets your neighbors in; with it off, or with your name kept off your door, only friends come in, and someone you block never does.
 
-A NAPO teleport stands in every cabin: A at it and you are in town, on NAPO's teleport by the notice board. It is a second way out, to start a trip at once; the way home is the road.
+A NAPO teleport stands in every cabin: A at it and you are in town, on NAPO's teleport by the notice board. It is a second way out, to start a trip at once; the way home is the road. (Since [first-steps](first-steps.md) it goes both ways, and asks first.)
 
 Why: every other way in the world is one you walk (one fixed world you learn), and the way home should be one too. A street you can visit makes your neighbors' cabins something to see and yours something to show, so making it cozy is worth more than its comfort, and a lit window becomes a place to drop in on (together you go farther). The teleport keeps the start of a trip short, now that home is a walk from town.
 

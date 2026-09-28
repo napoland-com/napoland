@@ -1,20 +1,21 @@
 /**
  * Visits and NAPO's teleport, as the client shows them (roadmap/street-visits.md): a neighbor's cabin drawn
  * with their furniture and trophy shelf, never yours, and named by whose it is; their chest and workbench
- * saying whose they are; the owner reading who came in; the setting under Friends; A at the teleport, and
- * its hum; the road onto your street on the paper map. On the real maps and items, since players read
+ * saying whose they are; the owner reading who came in; the setting under Friends; A at the teleport, which
+ * asks first, both ways, and its hum; the road onto your street on the paper map. On the real maps and items, since players read
  * their words there.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { TileMap, teleportArrival, type ClientMsg, type ItemsData, type MapData, type MapObject, type PlayerView } from '@napoland/shared';
+import { BEAM_IN_S, BEAM_OUT_S } from '../src/beam';
 import { friendsView } from '../src/friends';
 import { Game } from '../src/game';
 import { Items } from '../src/items';
 import { Maps } from '../src/maps';
 import { sketchOf } from '../src/papermap';
-import { TELEPORT, TELEPORT_TOWN, VISITS_SETTING, comfortLines, visitedText } from '../src/said';
+import { TELEPORT, VISITS_SETTING, comfortLines, teleportQuestion, visitedText } from '../src/said';
 import { soundscape, type Scene } from '../src/soundscape';
 import { FULL, welcome, zone } from './fixtures';
 
@@ -31,6 +32,11 @@ const BOS = { furniture: ['bed', 'trophy-shelf'], visit: { name: 'Bo', trophies:
 
 let sent: ClientMsg[];
 let g: Game;
+let now = 3000;
+/** Runs the game for `ms`, sixty frames a second: long enough for the teleport's trip (beam.ts) to send it. */
+function run(ms: number) {
+  for (let t = 0; t < ms; t += 1000 / 60) { now += 1000 / 60; g.update(1 / 60, now); }
+}
 /** In a cabin, in front of tile x,y and facing it: your own (with your stove, and a warm pebble in your stash), or Bo's. */
 function standBefore(o: { x: number; y: number }, bos = false) {
   const at = me(o.x, o.y + 1);
@@ -126,21 +132,37 @@ describe('who comes into your cabin', () => {
 });
 
 describe('NAPO\'s teleport', () => {
-  it('goes to town with A, from your own cabin or a neighbor\'s', () => {
+  it('asks first with A, and goes to town on YES, from your own cabin or a neighbor\'s; NO stays', () => {
     g.pressA();
+    expect(g.askView()).toMatchObject({ who: TELEPORT, text: 'Go to town? It sets you down by the notice board.' });
+    expect(sent).toEqual([]);
+    g.answer('no');
+    expect([g.question, sent]).toEqual([null, []]);
+    g.pressA();
+    g.answer('yes');
+    // Sent once the trip on your screen has taken you (beam.ts).
+    run(BEAM_OUT_S * 1000 + 50);
     expect(sent).toEqual([{ t: 'teleport', x: teleport.x, y: teleport.y }]);
+    // Into Bo's cabin, in front of its teleport: to the game that is where the trip set you down, so it plays out first.
     standBefore(teleport, true);
+    run(BEAM_IN_S * 1000 + 50);
     g.pressA();
+    expect(g.askView()).toMatchObject({ text: teleportQuestion(false) });
+    g.answer('yes');
+    run(BEAM_OUT_S * 1000 + 50);
     expect(sent).toEqual([{ t: 'teleport', x: teleport.x, y: teleport.y }]);
   });
 
-  it('in town only brings people here: A there says the way home is the road', () => {
+  it('in town asks first, and takes you home on YES', () => {
     const at = teleportArrival(twin);
     g.handle(zone(stonebrook, at.x, at.y, [me(at.x, at.y)]), 2000);
     sent.length = 0;
     g.pressA();
+    expect(g.askView()).toMatchObject({ who: TELEPORT, text: 'Go home? It sets you down in your cabin.' });
     expect(sent).toEqual([]);
-    expect(g.note).toMatchObject({ who: TELEPORT, text: TELEPORT_TOWN });
+    g.answer('yes');
+    run(BEAM_OUT_S * 1000 + 50);
+    expect(sent).toEqual([{ t: 'teleport', x: twin.x, y: twin.y }]);
   });
 
   it('hums close by, softly, and not from across the room', () => {

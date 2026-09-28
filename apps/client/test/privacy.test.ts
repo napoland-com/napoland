@@ -47,4 +47,9 @@ describe('the privacy policy', () => {
     expect(words).toContain('you read the character name of whoever comes in; that is not kept');
     expect(words).not.toContain('nobody else ever is');
   });
+
+  it('says that a new character\'s first steps are kept until it took the last', () => {
+    expect(words).toContain('while it is new which of its first steps it is on');
+    expect(words).toContain('forgotten once it took the last');
+  });
 });

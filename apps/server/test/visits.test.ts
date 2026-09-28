@@ -3,10 +3,11 @@
  * they let their neighbors in, or you are friends, and never with a block either way; inside, you see what
  * they made of it (their furniture, and what their trophy shelf shows), whether they are home or not, while
  * their chest and workbench stay theirs, and so does being cozy by their fire. A at NAPO's teleport in any
- * cabin sets you down in town, in front of its twin. World rules first, then over real WebSockets.
+ * cabin sets you down in town, in front of its twin; A at that one sets you down at home, in front of the one
+ * in your own cabin. World rules first, then over real WebSockets.
  *
- * The fixture world: the town with its road onto the lane of three lots (fixtures.ts), NAPO's teleport in
- * town at 8,5; and a cabin roomier than streets.test.ts's:
+ * The fixture world: the town with its road onto the lane of three lots (fixtures.ts), with NAPO's teleport
+ * at 8,5 (it sets you down at 8,6, facing down); and a cabin roomier than streets.test.ts's:
  *
  *   home (7x5, private)
  *     0123456
@@ -43,7 +44,13 @@ function home(): MapData {
   };
 }
 
-const maps = () => [new TileMap(streetTownData()), new TileMap(laneData()), new TileMap(home()), new TileMap(woodsData())];
+/** The town of the street, with NAPO's teleport by its road, at 8,5. */
+function town(): MapData {
+  const t = streetTownData();
+  return { ...t, objects: [...t.objects, { kind: 'teleport', x: 8, y: 5 }] };
+}
+
+const maps = () => [new TileMap(town()), new TileMap(laneData()), new TileMap(home()), new TileMap(woodsData())];
 
 /** The fixture items, with a stove, a trophy shelf and a drying rack to make, and a charm and a piece of anomalous gear to show on the shelf. */
 function items(): ItemsData {
@@ -115,8 +122,8 @@ function tryDoor(lots: LotRecord[], n: number, o: { friends?: Record<string, str
 
 describe('the fixtures', () => {
   it('follow the content rules: a cabin with a teleport, and its twin in town', () => {
-    for (const m of [streetTownData(), laneData(), home()]) expect(validateMap(m).filter(p => p.level === 'error'), m.id).toEqual([]);
-    expect(validateWorld([streetTownData(), laneData(), home(), woodsData()], 'town').filter(p => p.level === 'error')).toEqual([]);
+    for (const m of [town(), laneData(), home()]) expect(validateMap(m).filter(p => p.level === 'error'), m.id).toEqual([]);
+    expect(validateWorld([town(), laneData(), home(), woodsData()], 'town').filter(p => p.level === 'error')).toEqual([]);
   });
 });
 
@@ -335,18 +342,57 @@ describe('NAPO\'s teleport', () => {
     expect(w.get('c')).toMatchObject({ map: 'town', x: 8, y: 6, dir: 'down' });
   });
 
-  it('works only from the tile in front of one in a cabin: not from farther, not at the chest, and the one in town only receives', () => {
+  it('works only from a tile next to one: not from farther, not across a corner, not at the chest', () => {
     const w = world([lot('a', 0)]);
     atHome(w, 'a', 3, 2);
-    w.join(rec('t', 'town', 8, 6, 'up'), 0);
+    w.join(rec('t', 'town', 7, 6, 'up'), 0);
     w.drain();
     w.teleport('a', 4, 1, 1000);
     w.teleport('a', 3, 1, 1000);
     w.teleport('t', 8, 5, 1000);
+    w.teleport('t', 7, 5, 1000);
     const out = w.drain();
-    expect(to(out, 'a')).toEqual([{ t: 'refused', action: 'teleport', reason: 'too_far' }, { t: 'refused', action: 'teleport', reason: 'too_far' }]);
-    expect(to(out, 't')).toEqual([{ t: 'refused', action: 'teleport', reason: 'too_far' }]);
+    const tooFar = { t: 'refused', action: 'teleport', reason: 'too_far' };
+    expect(to(out, 'a')).toEqual([tooFar, tooFar]);
+    expect(to(out, 't')).toEqual([tooFar, tooFar]);
     expect([w.zoneOf('a'), w.zoneOf('t')]).toEqual([zoneKey('house', 'a'), zoneKey('town', '')]);
+  });
+
+  it('in town, sets you down at home: in front of the one in your own cabin, never a neighbor\'s, and you are home', () => {
+    const w = world([lot('a', 0), lot('b', 1)]);
+    atHome(w, 'b', 4, 2);
+    w.join(rec('a', 'town', 8, 6, 'up'), 0);
+    w.returned('a', 0);
+    w.drain();
+    w.teleport('a', 8, 5, 1000);
+    expect(w.zoneOf('a')).toBe(zoneKey('house', 'a'));
+    expect(w.get('a')).toMatchObject({ map: 'house', x: 4, y: 2, dir: 'down' });
+    const heard = to(w.drain(), 'a');
+    expect(of(heard, 'zone')[0]).toMatchObject({ map: { id: 'house' }, x: 4, y: 2, dir: 'down', reason: 'exit' });
+    // Home as through its door: the first time since streets came, the letter about the street waits there.
+    expect(of(heard, 'streetLetter')).toEqual([{ t: 'streetLetter', doorOff: false }]);
+    // Back to town and home again: the same way both times.
+    w.teleport('a', 4, 1, 2000);
+    expect(w.get('a')).toMatchObject({ map: 'town', x: 8, y: 6, dir: 'down' });
+    w.teleport('a', 8, 5, 3000);
+    expect(w.zoneOf('a')).toBe(zoneKey('house', 'a'));
+  });
+
+  it('ends a trip in the wilds at home, as walking in does', () => {
+    const w = world([lot('a', 0)]);
+    w.join(rec('a', 'woods', 3, 6, 'up'), 0);
+    w.returned('a', 0);
+    // Up the woods and back (TRIP_MIN_STEPS), for as long as a trip takes (TRIP_MIN_MS), then out to town and to the teleport.
+    let at = walk(w, 'a', ['right', 'right', 'right', 'up', 'up', 'up', 'down', 'down', 'down', 'left', 'left', 'left'], 1000);
+    at = walk(w, 'a', ['down'], at + 30_000);
+    expect(w.get('a')).toMatchObject({ map: 'town', x: 4, y: 1 });
+    at = walk(w, 'a', ['down', 'down', 'down', 'down', 'down', 'right', 'right', 'right', 'right'], at);
+    expect(w.get('a')).toMatchObject({ map: 'town', x: 8, y: 6 });
+    w.drain();
+    w.teleport('a', 8, 5, at);
+    // The step out of the woods counts; the ones in town do not.
+    const [trip] = of(to(w.drain(), 'a'), 'trip');
+    expect(trip?.trip).toMatchObject({ steps: 13, fell: null });
   });
 
   it('goes into the copy of town walking in would: where your friends are, if it has room', () => {
@@ -381,7 +427,7 @@ describe('NAPO\'s teleport', () => {
 });
 
 describe('visits over the network', () => {
-  it('turn a neighbor away, then let them in, tell the owner, keep the chest theirs, send a blocked visitor out, and the teleport takes you to town', async () => {
+  it('turn a neighbor away, then let them in, tell the owner, keep the chest theirs, send a blocked visitor out, and the teleport takes you to town and home again', async () => {
     setLogLevel('silent');
     let now = 1_000_000;
     const storage = new MemoryStorage();
@@ -457,6 +503,10 @@ describe('visits over the network', () => {
       await go(ann.c, ['up', 'right', 'right']);
       ann.c.send({ t: 'teleport', x: 4, y: 1 });
       expect(await ann.c.next('zone', m => m.map.id === 'town')).toMatchObject({ x: 8, y: 6, dir: 'down' });
+      // And back by the one in town: at home, in front of the one in her own cabin.
+      ann.c.send({ t: 'teleport', x: 8, y: 5 });
+      expect(await ann.c.next('zone', m => m.map.id === 'house')).toMatchObject({ x: 4, y: 2, dir: 'down' });
+      expect(server.world.zoneOf(ann.id)).toBe(zoneKey('house', ann.id));
     } finally {
       for (const c of clients) c.ws.terminate();
       await server.stop();

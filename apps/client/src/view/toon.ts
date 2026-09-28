@@ -204,6 +204,22 @@ export function softTexture(inner: number): THREE.CanvasTexture {
   return t;
 }
 
+/** Bright at the foot, gone at the top: the texture of a column of light (an open cylinder's). */
+export function riseTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 4;
+  c.height = 64;
+  const g = c.getContext('2d')!, gr = g.createLinearGradient(0, 0, 0, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,0)');
+  gr.addColorStop(0.5, 'rgba(255,255,255,.35)');
+  gr.addColorStop(1, 'rgba(255,255,255,1)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, 4, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 export function mulberry32(a: number): () => number {
   return () => {
     a |= 0; a = (a + 0x6d2b79f5) | 0;

@@ -19,7 +19,7 @@
  */
 import * as THREE from 'three';
 import {
-  DIR_VEC, hidden, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Season, type TileKind, type TileMap,
+  DIR_VEC, dirToward, hidden, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Season, type TileKind, type TileMap,
   type Weather,
 } from '@napoland/shared';
 import { comfortModel, comfortShadow, lampLight } from './cabin';
@@ -34,10 +34,11 @@ import {
   type QuadFn, type WallShape,
 } from './interior';
 import { bridgeModel, bridgeRails, cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
-import { SNOW, ambience, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
+import { SNOW, ambience, assignBeams, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
-import { HUM, napoBuilding, napoProp, napoSign, towerModel } from './napo';
-import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
+import { HUM, TELEPORT_RINGS, TELEPORT_ROCK_Y, napoBuilding, napoProp, napoSign, teleportCore, towerModel, type TeleportCore } from './napo';
+import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, riseTexture, softTexture, toon } from './toon';
+import { beamPose, type BeamPose } from '../beam';
 
 export interface Avatar {
   id: string;
@@ -59,6 +60,30 @@ export interface Avatar {
   afterglow?: boolean;
   /** What they wear (characters.ts). */
   look?: Look;
+  /** You, while NAPO's teleport takes you (beam.ts): going or coming, how many seconds into it, and its pad. */
+  beam?: { phase: 'out' | 'in'; t: number; pad: { x: number; y: number } };
+}
+
+/** A player as drawn: their model, what it was built in, and while a teleport takes you, the materials it had (clipRig). */
+interface RigEntry {
+  rig: Rig;
+  color: string;
+  look: string;
+  shadow: THREE.Mesh;
+  hitch?: THREE.Group;
+  crouch: number;
+  clipped?: Map<THREE.Mesh, THREE.Material | THREE.Material[]>;
+}
+
+/** A flashlight someone holds at night: where the light is, and where on the ground it points (world units). */
+interface Held {
+  id: string;
+  x: number;
+  y: number;
+  z: number;
+  tx: number;
+  ty: number;
+  tz: number;
 }
 
 /** A creature as the game draws it: a watcher or a skulker, and whom it chases (if anyone). */
@@ -90,6 +115,14 @@ const CHUNK = 8;
 const LIGHTS = 4;
 /** Seconds a light takes to come on when its lamp or fire becomes one of the nearest. */
 const LIGHT_FADE_S = 0.35;
+/**
+ * How many other players' flashlights light the night around them, the nearest ones: real spotlights like your
+ * own, so walking together lights more of the woods. Like the lamps' lights they are always in the scene, off by
+ * day, so their number never changes and nothing recompiles; anyone farther walks unlit.
+ */
+const OTHER_FLASHLIGHTS = 3;
+/** Seconds a pop at a teleport lasts (WorldView.pop). */
+const POP_S = 0.6;
 const LAMP_COLOR = 0xff9a3c;
 const LAMP_REACH = 7;
 /** A fire's light is redder than a lamp's, and as strong whatever the weather: it is always burning. */
@@ -260,7 +293,7 @@ export class WorldView {
   private amb: Ambience;
   private readonly pitch = THREE.MathUtils.degToRad(62);
   /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass. */
-  private rigs = new Map<string, { rig: Rig; color: string; look: string; shadow: THREE.Mesh; hitch?: THREE.Group; crouch: number }>();
+  private rigs = new Map<string, RigEntry>();
   /** The ground's colors (grass.ts), and the grass's material: null where no grass grows. */
   private ground!: Ground;
   private grass: GrassMaterial | null = null;
@@ -273,6 +306,8 @@ export class WorldView {
   private sun = new THREE.DirectionalLight(0xc9d4d8, 0.36 * L);
   private flash = new THREE.SpotLight(0xfff0d0, 0, 10, 0.5, 0.6, 1.3);
   private flashTarget = new THREE.Object3D();
+  /** The other players' flashlights (OTHER_FLASHLIGHTS): whose each follows ('' for nobody) and how far it has come on. */
+  private beams = Array.from({ length: OTHER_FLASHLIGHTS }, () => ({ light: new THREE.SpotLight(0xfff0d0, 0, 10, 0.5, 0.6, 1.3), target: new THREE.Object3D(), id: '', on: 0 }));
   /** Lamps and fires: what may carry one of the real lights; the map's own, and a lamp made in your cabin besides. */
   private sources: LightSource[] = [];
   private baseSources: LightSource[] = [];
@@ -299,6 +334,18 @@ export class WorldView {
   private headLight = new THREE.SpotLight(0xfff1c4, 0, 11, 0.5, 0.55, 1.4);
   /** The light on top of the Tower (and any mast like it): it blinks red, day and night. */
   private beaconMat = ownToon('#4a1410', { emissive: 0x000000 });
+  /** The glow of NAPO's teleports (napo.ts, teleportCore): soft violet on the plate and in the arch, pulsing; and the ring that spreads over the plate. */
+  private teleportGlow = new THREE.MeshBasicMaterial({ map: softTexture(0.3), color: 0xa98cff, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  private teleportRipple = new THREE.MeshBasicMaterial({ color: 0xc9b6ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  /** A trip's rings of light and sparks (each ring a copy, to fade on its own), and its column of light, bright at the foot. */
+  private teleportLight = new THREE.MeshBasicMaterial({ color: 0xd8ccff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  private teleportColumn = new THREE.MeshBasicMaterial({ map: riseTexture(), color: 0xc9b6ff, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  /** The teleports on this map, what moves on each (teleportCore). */
+  private teleports: TeleportCore[] = [];
+  /** Cuts you away from your feet up, or gives you back from your head down, while a teleport takes you (clipRig). */
+  private beamPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 1e3);
+  /** Violet pops where someone else vanished or appeared at a teleport (pop), how far along each is. */
+  private pops: Array<{ group: THREE.Group; mat: THREE.MeshBasicMaterial; t: number }> = [];
   private hasCar = false;
   private stoneLight = new THREE.PointLight(0xa66cff, 0, 7, 2);
   private hasStone = false;
@@ -369,6 +416,8 @@ export class WorldView {
     private readonly renderer: THREE.WebGLRenderer, readonly map: TileMap, private readonly peek: (id: string) => MapData | undefined = () => undefined, readonly season: Season = 'spring',
   ) {
     this.outdoors = map.data.kind !== 'inside';
+    // Only your model while a teleport takes you has a plane that cuts it (clipRig); nothing else pays for it.
+    renderer.localClippingEnabled = true;
     this.warmRoom = !this.outdoors && hasFire(map.data);
     this.amb = ambience(map.data.kind, this.weather, this.warmRoom, season);
     this.scene.background = new THREE.Color('#4c5961');
@@ -379,6 +428,10 @@ export class WorldView {
     this.creatures = new Creatures(this.shadowGeo, this.shadowMat);
     for (const s of this.slots) this.scene.add(s.light);
     this.flash.target = this.flashTarget;
+    for (const b of this.beams) {
+      b.light.target = b.target;
+      this.scene.add(b.light, b.target);
+    }
     if (this.outdoors) this.findOpenings();
     // What never moves or changes is built from hundreds of little boxes; it is drawn as a few meshes (see bake).
     const still: THREE.Object3D[] = [];
@@ -936,6 +989,23 @@ export class WorldView {
         : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
       if (m) still.push(m);
     }
+    // NAPO's teleports: the rock over each arch floats, turning slowly, over a glow that breathes, and a ring of
+    // light spreads from the middle of the plate to its rim, fading, every two seconds.
+    const cores = (this.teleports = this.objects('teleport').map(o =>
+      teleportCore(o, { rock: HUM, glow: this.teleportGlow, ripple: this.teleportRipple, light: this.teleportLight, column: this.teleportColumn })));
+    for (const c of cores) this.scene.add(c.root);
+    if (cores.length) {
+      this.animate.push(t => {
+        const k = (t * 0.5) % 1;
+        cores.forEach((c, i) => {
+          c.rock.position.y = TELEPORT_ROCK_Y + Math.sin(t * 1.6 + i) * 0.035;
+          c.rock.rotation.y = t * 0.7;
+          c.ripple.scale.setScalar(0.2 + 0.8 * k);
+        });
+        this.teleportGlow.opacity = 0.42 + 0.14 * Math.sin(t * 2.1);
+        this.teleportRipple.opacity = 0.6 * (1 - k) * Math.min(1, k * 6);
+      });
+    }
     const fireplaces = this.objects('fireplace');
     if (fireplaces.length) {
       const embers = new THREE.MeshBasicMaterial({ color: 0xff7a2a });
@@ -1351,6 +1421,8 @@ export class WorldView {
   /** The players as the game has them now: their models, crouched in tall grass, and the nearest to (fx, fz) parting the grass. */
   private syncAvatars(avatars: Avatar[], meId: string | null, fx: number, fz: number, dt: number) {
     const seen = new Set<string>();
+    const held: Held[] = [];
+    let beam: { pose: BeamPose; pad: { x: number; y: number }; t: number } | null = null;
     this.partD.fill(Infinity);
     for (const a of avatars) {
       seen.add(a.id);
@@ -1379,21 +1451,145 @@ export class WorldView {
       rig.legL.rotation.x = sw; rig.legR.rotation.x = -sw;
       // The arms come forward as if pushing the grass aside.
       rig.armL.rotation.x = -sw * 0.7 - c * 0.55; rig.armR.rotation.x = sw * 0.7 - c * 0.55;
+      // You, while NAPO's teleport takes you (beam.ts): onto the pad and round, then gone from your feet up; or
+      // back from your head down on the pad and off it onto your tile. Only your own screen has it.
+      const pose = a.beam ? beamPose(a.beam.phase, a.beam.t) : null;
+      this.clipRig(e, !!pose);
+      rig.root.visible = e.shadow.visible = !pose || pose.gone < 1;
+      if (pose && a.beam) {
+        const pad = a.beam.pad, px = pad.x + 0.5, pz = pad.y + 0.5;
+        const bx = x + (px - x) * pose.onPad, bz = z + (pz - z) * pose.onPad, by = this.groundAt(bx, bz) + 0.1 * pose.onPad;
+        rig.root.position.set(bx, by, bz);
+        rig.root.rotation.set(0, FACE[dirToward(pad.x - Math.round(a.x), pad.y - Math.round(a.y))] + Math.PI * pose.turn, 0);
+        const step = pose.walking ? Math.sin(a.beam.t * 30) * 0.95 : 0;
+        rig.legL.rotation.x = step; rig.legR.rotation.x = -step;
+        rig.armL.rotation.x = -step * 0.7; rig.armR.rotation.x = step * 0.7;
+        this.beamPlane.constant = -(by - 0.02 + pose.gone);
+        e.shadow.position.set(bx, by + BLOB_Y, bz);
+        beam = { pose, pad, t: a.beam.t };
+      }
       if (a.moving) this.rustleAt(x, z);
       this.parter(x, z, (x - fx) ** 2 + (z - fz) ** 2);
       // Whatever clings to your back rides along.
       if (a.hitched && !e.hitch) e.rig.root.add((e.hitch = hitchhikerModel()));
       if (e.hitch) e.hitch.visible = !!a.hitched;
-      if (a.id === meId && this.amb.flashlight) {
+      if (this.amb.flashlight) {
         const [dx, dy] = DIR_VEC[a.dir];
         // Held where the hands are: lower while crouched, or it would light the top of your own cap.
-        this.flash.position.set(x + dx * 0.2, gy + 0.75 - CROUCH_DROP * c, z + dy * 0.2);
-        this.flashTarget.position.set(x + dx * 4, gy, z + dy * 4);
-        this.flashTarget.updateMatrixWorld();
+        const h = { id: a.id, x: x + dx * 0.2, y: gy + 0.75 - CROUCH_DROP * c, z: z + dy * 0.2, tx: x + dx * 4, ty: gy, tz: z + dy * 4 };
+        if (a.id !== meId) held.push(h);
+        else {
+          this.flash.position.set(h.x, h.y, h.z);
+          this.flashTarget.position.set(h.tx, h.ty, h.tz);
+          this.flashTarget.updateMatrixWorld();
+        }
       }
     }
+    this.lightBeams(held, fx, fz, dt);
+    this.driveBeam(beam);
+    this.popsOn(dt);
     for (const [id, e] of this.rigs) if (!seen.has(id)) { this.dropRig(e); this.rigs.delete(id); }
     if (this.grass) for (let i = 0; i < PARTERS; i++) this.grass.part(i, this.partX[i]!, this.partZ[i]!, this.partD[i]! < Infinity ? 1 : 0);
+  }
+
+  /**
+   * Your model while a teleport takes you (beam.ts): its meshes drawn with copies of their materials that
+   * beamPlane cuts, so you go from your feet up and come back from your head down; the materials are put back
+   * after. Everyone else's model, and yours the rest of the time, keeps the materials all of them share.
+   */
+  private clipRig(e: RigEntry, on: boolean) {
+    if (on === !!e.clipped) return;
+    if (on) {
+      const clipped = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+      const cut = (m: THREE.Material) => {
+        const c = m.clone();
+        c.clippingPlanes = [this.beamPlane];
+        return c;
+      };
+      e.rig.root.traverse(o => {
+        if (!(o instanceof THREE.Mesh)) return;
+        clipped.set(o, o.material);
+        o.material = Array.isArray(o.material) ? o.material.map(cut) : cut(o.material);
+      });
+      e.clipped = clipped;
+      return;
+    }
+    for (const [mesh, had] of e.clipped!) {
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) m.dispose();
+      mesh.material = had;
+    }
+    e.clipped = undefined;
+  }
+
+  /** The rings, column and sparks of the teleport taking you, `t` seconds into the trip (beam.ts); none without one. */
+  private driveBeam(b: { pose: BeamPose; pad: { x: number; y: number }; t: number } | null) {
+    const { low, high } = TELEPORT_RINGS, lerp = THREE.MathUtils.lerp;
+    for (const c of this.teleports) {
+      const p = b && c.root.position.x === b.pad.x + 0.5 && c.root.position.z === b.pad.y + 0.5 ? b.pose : null, t = b?.t ?? 0;
+      c.column.visible = !!p && p.column + p.flash > 0.01;
+      c.rings.forEach((r, i) => {
+        const f = (t * 0.9 + i / c.rings.length) % 1;
+        r.visible = !!p && p.rings > 0.01;
+        r.position.y = p && !p.rising ? lerp(high, low, f) : lerp(low, high, f);
+        ((r as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = (p?.rings ?? 0) * Math.sin(Math.PI * f) * 0.9;
+      });
+      c.sparks.forEach((s, i) => {
+        s.visible = !!p && p.sparks > 0.01;
+        if (!p || !s.visible) return;
+        const a = hash2(i, 3) * Math.PI * 2, r = 0.05 + hash2(i, 11) * 0.28, f = (hash2(i, 17) + t * (0.5 + hash2(i, 29) * 0.6)) % 1;
+        s.position.set(Math.cos(a + t * 2) * r, p.rising ? lerp(0.12, 1.2, f) : lerp(1.2, 0.12, f), Math.sin(a + t * 2) * r);
+        s.rotation.set(t * 3 + a, t * 2, 0);
+      });
+      if (!p) continue;
+      this.teleportColumn.opacity = Math.min(1, p.column * 0.45 + p.flash * 0.8);
+      this.teleportLight.opacity = p.sparks;
+      this.teleportGlow.opacity = Math.min(1, this.teleportGlow.opacity + p.flash * 0.6);
+    }
+  }
+
+  /** Someone else vanished from beside a teleport, or appeared in front of one (beam.ts, popAt): a small violet pop there. */
+  pop(x: number, y: number) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xc9a8ff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const group = new THREE.Group(), geo = new THREE.BoxGeometry(0.05, 0.05, 0.05);
+    group.position.set(x + 0.5, this.groundAt(x + 0.5, y + 0.5) + 0.45, y + 0.5);
+    for (let i = 0; i < 12; i++) {
+      const speck = new THREE.Mesh(geo, mat), a = (i / 12) * Math.PI * 2;
+      speck.userData.dir = new THREE.Vector3(Math.cos(a), (hash2(i, 7) - 0.3) * 1.2, Math.sin(a)).normalize();
+      group.add(speck);
+    }
+    this.scene.add(group);
+    this.pops.push({ group, mat, t: 0 });
+  }
+
+  /** The pops fly apart and fade in POP_S, then go. */
+  private popsOn(dt: number) {
+    for (const p of this.pops) {
+      p.t += dt;
+      const k = Math.min(1, p.t / POP_S);
+      p.mat.opacity = 1 - k;
+      for (const s of p.group.children) s.position.copy(s.userData.dir as THREE.Vector3).multiplyScalar(0.1 + (1 - (1 - k) ** 2) * 0.55);
+      if (k >= 1) { this.scene.remove(p.group); disposeTree(p.group); }
+    }
+    this.pops = this.pops.filter(p => p.t < POP_S);
+  }
+
+  /** Puts the other players' flashlights on those nearest you who hold one (assignBeams), each coming on as it is handed over. */
+  private lightBeams(held: Held[], fx: number, fz: number, dt: number) {
+    const next = assignBeams(this.beams.map(b => b.id), held, fx, fz);
+    this.beams.forEach((b, k) => {
+      const h = held.find(o => o.id === next[k]);
+      if (!h) {
+        b.id = ''; b.on = 0; b.light.intensity = 0;
+        return;
+      }
+      if (h.id !== b.id) { b.id = h.id; b.on = 0; }
+      b.on = Math.min(1, b.on + dt / LIGHT_FADE_S);
+      b.light.position.set(h.x, h.y, h.z);
+      b.target.position.set(h.tx, h.ty, h.tz);
+      b.target.updateMatrixWorld();
+      // As strong as your own (applyAmbience): together you light as much as each of you.
+      b.light.intensity = 1.6 * L * b.on;
+    });
   }
 
   /** Someone at x, z, `d` (squared) from you: kept among the parters if they are among the nearest. */

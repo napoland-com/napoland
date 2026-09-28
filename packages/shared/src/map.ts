@@ -205,8 +205,9 @@ export type MapObject =
   | { kind: 'comfort'; x: number; y: number; what: Comfort }
   /**
    * One of NAPO's teleports: one in every cabin (a home of one's own) and its twin in the home town.
-   * A at the cabin's takes you to town, onto the tile in front of the town's (teleportArrival); the
-   * town's only receives. Faced like a desk, from the tile in front of it.
+   * A at the cabin's takes you to town, onto the tile in front of the town's (teleportArrival); A at the
+   * town's takes you home, onto the tile in front of the one in your own cabin. Faced like a desk, from
+   * the tile in front of it.
    */
   | { kind: 'teleport'; x: number; y: number }
   /**
