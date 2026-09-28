@@ -2399,7 +2399,8 @@ export class World {
     const days = daysThisWeek(p.rec.parcels, day), sunday = WEEKDAYS[last];
     if (days === WHOLE_WEEK) return [...lines, `You came back every day this week${extra ? `, and ${sunday}'s parcel held ${extra}` : ''}.`];
     const came = WEEKDAYS.flatMap((_, i) => (days & (1 << i) ? [short(i)] : []));
-    const you = came.length ? `You came back ${came.join(', ')}.` : '';
+    // Today alone, on the first day they play this week or on their very first (the welcome parcel's): not "You came back Wed.".
+    const you = days === 1 << today ? 'You came home today.' : came.length ? `You came back ${came.join(', ')}.` : '';
     const next = !extra ? '' : everyDaySoFar(days, day)
       ? `Play every day this week and ${sunday}'s parcel holds ${extra}.`
       : `A new week starts fresh on Monday: play every day and ${sunday}'s parcel holds ${extra}.`;
