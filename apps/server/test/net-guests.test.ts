@@ -233,6 +233,26 @@ describe('guests who stay away', () => {
     }
   });
 
+  it(`count a character made on a server without sign-in, and never claimed, as a guest: deleted after ${GUEST_DAYS} days away once the rule is as old (privacy.html)`, async () => {
+    setLogLevel('silent');
+    const storage = new MemoryStorage();
+    const legacy = await startServer({ ...serverDefaults(), storage, items: itemsData() });
+    let made: string;
+    try {
+      const c = await Client.open(legacy.port);
+      c.send({ t: 'hello', v: PROTOCOL_VERSION, name: newName() });
+      made = (await c.next('welcome')).you;
+      c.ws.terminate();
+    } finally {
+      await legacy.stop();
+    }
+    await storage.save({ ...storage.get(made)!, lastSeenAt: Date.now() - (GUEST_DAYS + 1) * DAY_MS });
+    await storage.guestsSince(Date.now() - (GUEST_DAYS + 1) * DAY_MS);
+    const signIn = await startServer({ ...serverDefaults(), storage, items: itemsData(), auth: devAuth() });
+    await signIn.stop();
+    expect(storage.get(made)).toBeUndefined();
+  });
+
   it('never take a guest who plays: one who comes back is seen at once', async () => {
     setLogLevel('silent');
     const storage = new MemoryStorage();
