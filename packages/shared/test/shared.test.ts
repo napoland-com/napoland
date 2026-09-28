@@ -266,6 +266,10 @@ describe('validateMap', () => {
     expect(validateMap(woodsMap())).toEqual([]);
     expect(validateMap(townWithExit()).filter(p => p.level === 'error')).toEqual([]);
   });
+  it('wants a map id of lowercase words joined by hyphens, which the copies of a map are told apart by', () => {
+    for (const id of ['near-woods', 'room2']) expect(validateMap({ ...tinyMap(), id }).filter(p => p.level === 'error'), id).toEqual([]);
+    for (const id of ['Near Woods', 'woods:2', '', 'woods-']) expect(validateMap({ ...tinyMap(), id }).map(p => p.message).join('\n'), id).toMatch(/its id is lowercase words joined by hyphens/);
+  });
   it('catches bad kinds, depths and exits', () => {
     const noHome = woodsMap();
     noHome.exits[0]!.home = undefined;

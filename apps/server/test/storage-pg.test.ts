@@ -12,7 +12,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DROP_LIFETIME_MS, utcDay } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
-import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
+import { PgStorage, type CacheItemRecord, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
 import {
   forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsParcels, keepsToolsParcelsAndOutfit, keepsWholeRow, outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn,
   restartKeepsBagsAndPiles, signInAndClaim,
@@ -61,7 +61,7 @@ describe.skipIf(!url)('PgStorage', () => {
   it('applies each migration once', async () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
-      '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql', '016_caches.sql',
+      '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql', '016_caches.sql', '017_zones.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -173,6 +173,42 @@ describe.skipIf(!url)('PgStorage', () => {
     await storage.removeDrop(owner.id);
     expect(await mine()).toEqual([]);
     await storage.removeDrop(owner.id); // already gone: nothing happens
+  });
+
+  it('keeps the copy of its map a player is in, and the copy a pile, a mark and a thing in a crate lie in; the main copy reads as none', async () => {
+    const rec = { ...player('Pg Copier'), map: 'field', zone: 'copy-1' };
+    expect(await storage.create(rec)).toBe(true);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(rec);
+    // Back in the main copy: every save says where they are.
+    const { zone: _zone, ...back } = { ...rec, map: 'stonebrook', lastSeenAt: 1_800_000_000_003 };
+    await storage.save(back);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(back);
+    await storage.save({ ...back, map: 'field', zone: 'copy-2' });
+    expect((await storage.findByTokenHash(rec.tokenHash))!.zone).toBe('copy-2');
+    // The release before zones saves without the column: after a rollback, it leaves the copy as it was (the World follows it only where it still makes sense).
+    await admin.query(`UPDATE ${schema}.players SET map = $2, x = $3, y = $4, last_seen_at = $5 WHERE id = $1`, [rec.id, 'stonebrook', 8, 21, new Date(rec.lastSeenAt)]);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toMatchObject({ map: 'stonebrook', zone: 'copy-2' });
+
+    const now = Date.now();
+    const pile: DropRecord = { owner: rec.id, name: rec.name, map: 'field', zone: 'copy-2', x: 4, y: 10, items: [{ item: 'glowcap', count: 1 }], droppedAt: now - 1000, trail: [] };
+    const mine = async () => (await storage.loadDrops(now - DROP_LIFETIME_MS)).filter(d => d.owner === rec.id);
+    await storage.saveDrop(pile);
+    expect(await mine()).toEqual([pile]);
+    const { zone: _copy, ...inMain } = pile;
+    await storage.saveDrop(inMain);
+    expect(await mine()).toEqual([inMain]);
+    const row = await admin.query(`SELECT zone FROM ${schema}.drops WHERE owner = $1`, [rec.id]);
+    expect(row.rows).toEqual([{ zone: '' }]);
+    const mark: MarkRecord = { id: 71, owner: rec.id, name: rec.name, color: rec.color, map: 'field', zone: 'copy-2', x: 4, y: 9, dir: 'up', placedAt: now - 1000 };
+    await storage.saveMark(mark);
+    expect((await storage.loadMarks(now, 86_400_000)).filter(m => m.owner === rec.id)).toEqual([mark]);
+    const thing: CacheItemRecord = { id: 7101, map: 'near-woods-old-cabin', zone: 'copy-2', x: 1, y: 1, item: 'resin', owner: rec.id, name: rec.name, at: now - 1000 };
+    const crated = async () => (await storage.loadCacheItems()).filter(c => c.owner === rec.id);
+    await storage.saveCacheItem(thing);
+    expect(await crated()).toEqual([thing]);
+    const { zone: _crate, ...inMainCrate } = thing;
+    await storage.saveCacheItem(inMainCrate);
+    expect(await crated()).toEqual([inMainCrate]);
   });
 
   it('refuses a pile of a player who does not exist', async () => {
