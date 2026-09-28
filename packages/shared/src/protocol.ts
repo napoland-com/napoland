@@ -549,7 +549,9 @@ export type Refusal =
   /** You are down (rescue.ts): you cannot walk or act until someone gets you up, or you collapse. */
   | 'down'
   /** Getting someone up takes more energy than you have: more than RESCUE_ENERGY. */
-  | 'too_tired';
+  | 'too_tired'
+  /** A padlocked door (MapExit.lock): it takes a tool you do not have. */
+  | 'padlocked';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -997,6 +999,8 @@ export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
   | 'checkout'
   | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue'
+  | 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
+  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 

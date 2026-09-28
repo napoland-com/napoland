@@ -12,7 +12,7 @@
  * every variation comes from its tile, so a place looks the same on every visit.
  */
 import * as THREE from 'three';
-import type { Dir, MapObject } from '@napoland/shared';
+import { DIRS, DIR_VEC, type Dir, type MapObject, type TileMap } from '@napoland/shared';
 import { box, flat, hash2, part, pivot, toon } from './toon';
 
 type House = Extract<MapObject, { kind: 'house' }>;
@@ -455,6 +455,112 @@ export function millBuilding(h: House, doorX: number, door: { w: number; h: numb
     g.add(box(0.42, 0.34, 0.03, '#2a221b', wx, 0.78, front + 0.02, false), box(0.34, 0.26, 0.035, '#1c1f24', wx, 0.78, front + 0.03, false));
     if (k === 1) { const p = box(0.44, 0.07, 0.02, '#6b5a44', wx, 0.8, front + 0.06, false); p.rotation.z = 0.3; g.add(p); }
   });
+  return g;
+}
+
+/** How tall a shed's front wall stands (a cabin's are 1.15); its lean-to roof rises from there to the back. */
+export const SHED_WALL_H = 0.98;
+const SHED_RISE = 0.34;
+
+/** A lean-to's gable ends: a wedge, w wide and d deep, as high as `rise` at the back (-z) and nothing at the front. */
+function wedgeGeometry(w: number, d: number, rise: number): THREE.BufferGeometry {
+  const x0 = -w / 2, x1 = w / 2, zb = -d / 2, zf = d / 2;
+  const A = [x0, 0, zf], B = [x1, 0, zf], C = [x0, 0, zb], D = [x1, 0, zb], E = [x0, rise, zb], F = [x1, rise, zb];
+  const g = new THREE.BufferGeometry();
+  // The slope, the back, and the two ends (the bottom rests on the walls, never seen).
+  g.setAttribute('position', new THREE.Float32BufferAttribute([A, B, F, A, F, E, C, E, F, C, F, D, A, E, C, B, D, F].flat(), 3));
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * A board shed (house style 'shed'), 2 by 2: grey boards with battens over the joints, a lean-to roof
+ * rising to the back, and its plank door shut, braced, with a hasp and a padlock gone orange with rust
+ * (the lock on its exit is what keeps anyone out; nothing about the shed changes when someone walks in).
+ */
+/** Black iron, for what is pulled at: the handles of NAPO's gates (napo.ts) and of the ranger's shed door. */
+const HANDLE = '#1a1b1c';
+
+/**
+ * A pull handle upright on the face of a gate or a door, its middle at x, y, z, `s` times the size of a
+ * NAPO gate's: what someone pulls at, drawn the same wherever a way stays shut until it gives.
+ */
+export function pullHandle(x: number, y: number, z: number, s = 1): THREE.Mesh[] {
+  return [box(0.05 * s, 0.3 * s, 0.05 * s, HANDLE, x, y, z, false), ...[1, -1].map(k => box(0.05 * s, 0.05 * s, 0.1 * s, HANDLE, x, y + k * 0.16 * s, z - 0.04 * s, false))];
+}
+
+export function shedBuilding(h: House, doorX: number, door: { w: number; h: number }): THREE.Group {
+  const cx = h.x + h.w / 2, cz = h.y + h.h / 2;
+  const g = pivot(cx, 0, cz);
+  const wall = '#5d564c', batten = '#423c34', H = SHED_WALL_H;
+  const W = h.w - 0.26, D = h.h - 0.34, front = D / 2, back = -D / 2;
+  g.add(box(W, H, D, wall, 0, H / 2, 0));
+  g.add(part(wedgeGeometry(W, D, SHED_RISE), toon(wall), 0, H, 0, 0.02));
+  const dx = doorX + 0.5 - cx;
+  // Battens on the front (none behind the door) and down both ends.
+  for (let x = -W / 2 + 0.14; x < W / 2 - 0.08; x += 0.28) {
+    if (Math.abs(x - dx) < door.w / 2 + 0.04) continue;
+    g.add(box(0.035, H - 0.04, 0.02, batten, x, H / 2, front + 0.01, false));
+  }
+  for (const s of [-1, 1]) for (let z = back + 0.14; z < front - 0.08; z += 0.28) g.add(box(0.02, H - 0.04, 0.035, batten, s * (W / 2 + 0.01), H / 2, z, false));
+  // The roof: tarred boards laid down the slope, overhanging on every side, and a strip of moss at the eave.
+  const depth = D + 0.3, slope = Math.hypot(depth, SHED_RISE), tilt = Math.atan2(SHED_RISE, depth);
+  const roof = box(W + 0.26, 0.06, slope, h.roof, 0, H + SHED_RISE / 2 + 0.03, 0, 0.02);
+  roof.rotation.x = tilt;
+  g.add(roof);
+  const moss = box(W + 0.26, 0.02, 0.16, '#4f6a3a', 0, H + 0.07, front + 0.1, false);
+  moss.rotation.x = tilt;
+  g.add(moss);
+  // The door, shut: planks, a Z brace, strap hinges; its pull handle, as on NAPO's gates; the hasp, and
+  // the padlock hanging on it.
+  const dz = front + 0.03;
+  g.add(box(door.w, door.h, 0.05, '#4a3c2e', dx, door.h / 2, dz, 0.015));
+  for (let k = -1; k <= 1; k += 2) g.add(box(0.012, door.h - 0.04, 0.012, '#2f261d', dx + k * door.w / 6, door.h / 2, dz + 0.03, false));
+  for (const y of [0.16, door.h - 0.16]) g.add(box(door.w - 0.06, 0.05, 0.02, '#3d3126', dx, y, dz + 0.035, false));
+  const brace = box(0.05, Math.hypot(door.w - 0.12, door.h - 0.36), 0.02, '#3d3126', dx, door.h / 2, dz + 0.035, false);
+  brace.rotation.z = -Math.atan2(door.w - 0.12, door.h - 0.36);
+  g.add(brace);
+  for (const y of [0.16, door.h - 0.16]) g.add(box(0.2, 0.035, 0.015, '#23262a', dx - door.w / 2 + 0.1, y, dz + 0.05, false));
+  const lx = dx + door.w / 2 - 0.05, ly = door.h * 0.52;
+  g.add(box(0.16, 0.05, 0.02, '#23262a', lx - 0.02, ly, dz + 0.05, false));
+  g.add(box(0.1, 0.09, 0.05, '#8a4a24', lx, ly - 0.09, dz + 0.08, 0.012));
+  for (const s of [-1, 1]) g.add(box(0.014, 0.06, 0.014, '#6d7780', lx + s * 0.03, ly - 0.02, dz + 0.08, false));
+  g.add(box(0.074, 0.014, 0.014, '#6d7780', lx, ly + 0.01, dz + 0.08, false));
+  g.add(...pullHandle(lx - 0.15, ly - 0.05, dz + 0.075, 0.75));
+  return g;
+}
+
+/**
+ * Where the flooded culvert the loggers dug opens onto ground anyone walks, and which way it faces
+ * there: out of the culvert, away from the rest of it. Its two ends, in the Near Woods.
+ */
+export function culvertMouths(map: TileMap): Array<{ x: number; y: number; dir: Dir }> {
+  const out: Array<{ x: number; y: number; dir: Dir }> = [];
+  const culvert = (x: number, y: number) => map.kind(x, y) === 'culvert';
+  for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) {
+    if (!culvert(x, y) || !DIRS.some(d => { const [dx, dy] = DIR_VEC[d]; return map.walkable(x + dx, y + dy); })) continue;
+    // Away from where the culvert goes on.
+    const on = DIRS.find(d => { const [dx, dy] = DIR_VEC[d]; return culvert(x + dx, y + dy); });
+    const dir = on ? DIRS.find(d => DIR_VEC[d][0] === -DIR_VEC[on][0] && DIR_VEC[d][1] === -DIR_VEC[on][1])! : 'down';
+    out.push({ x, y, dir });
+  }
+  return out;
+}
+
+/** A culvert's mouth on its tile, facing `dir`: a rusted steel pipe half under the water, in a headwall of grey stone. */
+export function culvertMouthModel(x: number, y: number, dir: Dir): THREE.Group {
+  const g = pivot(x + 0.5, 0, y + 0.5);
+  g.rotation.y = TURN[dir];
+  const rust = '#6e4326', stone = '#6a675f';
+  // The pipe runs back into the culvert from its mouth at the tile's edge, its lower half under the water.
+  const pipe = part(new THREE.CylinderGeometry(0.4, 0.4, 0.8, 14, 1, true), toon(rust, { side: THREE.DoubleSide }), 0, -0.12, 0.1, false);
+  pipe.rotation.x = Math.PI / 2;
+  g.add(pipe);
+  const lip = part(new THREE.TorusGeometry(0.4, 0.06, 6, 16), rust, 0, -0.12, 0.5, 0.015);
+  g.add(lip);
+  // The headwall: a lintel of stone over the pipe, and a pier each side, as tall as the bank it holds.
+  g.add(box(1.02, 0.16, 0.2, stone, 0, 0.3, 0.42, 0.02));
+  for (const s of [-1, 1]) g.add(box(0.2, 0.62, 0.2, stone, s * 0.52, 0.0, 0.42, 0.02));
   return g;
 }
 

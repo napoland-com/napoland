@@ -37,8 +37,8 @@ interface Room {
   door: readonly [number, number];
   rows: readonly string[];
   things: readonly MapObject[];
-  /** One of NAPO's rooms (concrete), or the mill's floor (boards): its house outside must be of the same style. */
-  style?: 'napo' | 'mill';
+  /** One of NAPO's rooms (concrete), the mill's floor or a shed's (boards): its house outside must be of the same style. */
+  style?: 'napo' | 'mill' | 'shed';
   /** A home of one's own (a room with the chest): each player who walks in is in a copy of it of their own. */
   private?: true;
   /** Where you wake up in it, by the fire: as a new player, and after a collapse. */
@@ -742,6 +742,33 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 9, y: 4 },
       { kind: 'crate', x: 9, y: 5 },
       { kind: 'sawdust', x: 3, y: 5 },
+    ],
+  },
+  {
+    // The ranger's shed, behind the hut in the Near Woods, padlocked (gen-woods.ts puts the lock on its
+    // door: bolt cutters open it). Inside, the ranger's tools on a shelf, a crate, and the bench where
+    // something that was not there the day before turns up again and again (a strange object, every half
+    // hour: content/items.json), with the ranger's note about it. No fire: dark and cold.
+    id: 'near-woods-shed', name: 'The ranger\'s shed', version: 1, outside: 'near-woods', door: [32, 3], style: 'shed',
+    rows: [
+      'xxxxx',
+      'xpppx',
+      'xpppx',
+      'xpppx',
+      'xxpxx',
+    ],
+    things: [
+      { kind: 'shelf', x: 1, y: 1 },
+      {
+        kind: 'paper', x: 2, y: 1, look: 'note', name: 'Note on the bench',
+        text: [
+          'In pencil, on a page torn out of the ranger\'s log:',
+          'Every morning there is something on this bench that was not here the night before.',
+          'I put a padlock on the door. It still turns up.',
+          'Take it to town and look at it in the light, if you must. Another one comes.',
+        ],
+      },
+      { kind: 'crate', x: 3, y: 1 },
     ],
   },
 ];

@@ -76,7 +76,8 @@ export function stepSurface(kind: TileKind | undefined, ice = false): Surface {
   switch (kind) {
     case 'road': return 'road';
     case 'mud': return 'mud';
-    case 'water': return 'water';
+    // Wading the culvert: water to the waist.
+    case 'water': case 'culvert': return 'water';
     // Wading through tall grass: the blades brush past your legs.
     case 'tallgrass': return 'swish';
     case 'floor': case 'wall': return 'floor';
