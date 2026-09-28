@@ -17,6 +17,9 @@
  *   what you read; it says when a chapter is reached;
  * - the bag and the chest say what gear you could make next (nextGear), from your stash as the server
  *   last told it;
+ * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
+ *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
+ *   said in the text box anywhere else, and come in a letter when you walk in at home;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
  *   it tells us, we show them; so is what everyone wears, gear and outfits (you choose yours at the chest);
  * - a call (calls.ts) goes to the server, which says who heard it: each one heard, yours too, is sung
@@ -26,8 +29,8 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, CALL_EVERY_MS, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe,
-  nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, DIR_VEC, type NextGear,
+  BUBBLE_S, CALL_EVERY_MS, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, charmsIn, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, markLifetime,
+  mendCost, modsOf, nearestRecipe, nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, DIR_VEC, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
@@ -43,6 +46,7 @@ import {
   shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import type { Maps } from './maps';
+import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
 import type { Avatar } from './view/world';
 
 interface Mover {
@@ -169,7 +173,7 @@ export const CHAT_LOG = 100;
 /** What a `refused` can answer among friends: the friends panel says why. */
 const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank']);
 
 export class Game {
   meId: string | null = null;
@@ -199,8 +203,8 @@ export class Game {
   bag: BagSlot[] = [];
   /** When the bag was told (`now`): a live find's age counts on from there. */
   bagAt = 0;
-  /** The fires on this map by "x,y": fuel left as told, and when (null: tended, it never goes out). */
-  fires = new Map<string, { left: number | null; at: number }>();
+  /** The fires on this map by "x,y": fuel left as told, and when (null: tended, it never goes out), and who fed it last. */
+  fires = new Map<string, { left: number | null; at: number; fed: PersonView[] }>();
   /** Marks painted on this map, by id; `markChanges` counts changes, like lootChanges. */
   marks = new Map<number, MarkView>();
   markChanges = 0;
@@ -312,6 +316,15 @@ export class Game {
   private benchCard: DetailRef | null = null;
   /** When the server last emptied a bag that held something. */
   private emptiedAt = -Infinity;
+  /** When to offer thanks (thanks.ts), whom you thanked today (UTC day `thankedDay`), and the thanks asked for, for the words of the answer. */
+  private readonly offers = new Offers();
+  private thankedToday = new Set<string>();
+  private thankedDay = -1;
+  private thanking: { id: string; name: string } | null = null;
+  /** The server's wall clock at our `now` (the welcome says it): the UTC day turns by it. */
+  private wall = { now: 0, ms: 0 };
+  /** A letter from home (thanks while you were away), until the text box is free to show it. */
+  private letter: string[] | null = null;
 
   constructor(private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY) {
     this.current = maps.home();
@@ -414,6 +427,9 @@ export class Game {
         this.tools = msg.tools;
         this.chapter = msg.story.chapter;
         this.storyChanges++;
+        this.wall = { now, ms: msg.serverTime };
+        this.thankedDay = utcDay(msg.serverTime);
+        this.thankedToday = new Set(msg.thanked ?? []);
         break;
       }
       case 'zone': {
@@ -438,7 +454,7 @@ export class Game {
         this.body = { view: msg.body, at: now };
         break;
       case 'fire':
-        this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now });
+        this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now, fed: msg.fire.fed ?? [] });
         break;
       case 'mark':
         this.marks.set(msg.mark.id, msg.mark);
@@ -552,9 +568,21 @@ export class Game {
         break;
       }
       case 'did':
+        if (msg.did.kind === 'thanked') this.thankedToday.add(msg.did.who);
         // It takes the place of the question just said yes to, which waited for it in the box.
         this.inform(didWho(msg.did, this.items), didText(msg.did, this.items));
         break;
+      case 'thanked': {
+        // Out in the wilds, over your head; anywhere else the text box says what it was for.
+        if (msg.line) this.inform('Thanks', thankedLine(msg.name, thanksFor(msg.what, id => this.maps.find(id))));
+        else this.floatOverMe(thankedFloat(msg.name, msg.energy), GAIN);
+        break;
+      }
+      case 'letter': {
+        const lines = letterLines(msg.thanks, id => this.maps.find(id));
+        if (lines.length) this.letter = lines;
+        break;
+      }
       case 'progress':
         if (msg.gained > 0) this.floatOverMe(`+${msg.gained} XP`, GAIN);
         if (msg.progress.level > this.progress.level) this.news.push({ kind: 'level', progress: msg.progress, from: this.progress.level });
@@ -674,6 +702,12 @@ export class Game {
         if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
         if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
         if (msg.action === 'call') { this.murmur(refusalText(msg.reason, msg.action)); break; }
+        // A thanks is answered with the helper's name: the one asked about.
+        if (msg.action === 'thank' && this.thanking) {
+          if (msg.reason === 'thanked') this.thankedToday.add(this.thanking.id);
+          this.inform(this.note?.waiting ? this.note.who : '', thankRefusal(msg.reason, this.thanking.name));
+          break;
+        }
         // What was asked first is answered in the same box; the rest (picking up, the chest) over your head.
         if (ASKED_FIRST.has(msg.action)) {
           this.inform(this.note?.waiting ? this.note.who : '', sentence(refusalText(msg.reason, msg.action)));
@@ -696,6 +730,7 @@ export class Game {
     // Answers to what we asked went with the connection, and what was being asked may no longer hold.
     this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.benchCard = null;
     this.clearBox();
+    this.offers.reset();
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
     if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
@@ -712,6 +747,7 @@ export class Game {
       this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.benchCard = null;
       this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
       this.clearBox();
+      this.offers.reset();
     }
     this.players.clear();
     for (const p of players) this.players.set(p.id, this.mover(p));
@@ -745,7 +781,7 @@ export class Game {
     msg: { fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: Array<{ x: number; y: number; left: number }>; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null },
     now: number,
   ) {
-    this.fires = new Map(msg.fires.map(f => [`${f.x},${f.y}`, { left: f.left, at: now }]));
+    this.fires = new Map(msg.fires.map(f => [`${f.x},${f.y}`, { left: f.left, at: now, fed: f.fed ?? [] }]));
     this.marks = new Map(msg.marks.map(m => [m.id, m]));
     this.markChanges++;
     this.creatures = new Map(msg.creatures.map(c => [c.id, this.creatureMover(c)]));
@@ -1231,7 +1267,8 @@ export class Game {
     if (!s || !this.online) return;
     const def = this.items.get(s.item), why = this.whyNotUse(slot, def);
     if (why) return this.inform(def.name, why);
-    const text = useQuestion(def, this.energy(this.clock));
+    // An arrow shows as long as your feats and charms say (Good neighbor), the server's rule.
+    const text = useQuestion(def, this.energy(this.clock), markLifetime(modsOf(this.stats, charmsIn(this.bag, this.items.byId))) / 1000);
     this.ask({ who: def.name, text, yes: () => { done?.(); this.actOn(slot, def.id, def.name, text, i => ({ t: 'use', slot: i })); } });
   }
 
@@ -1360,6 +1397,45 @@ export class Game {
     this.note = null;
     this.boxChanges++;
     this.sayLater();
+  }
+
+  // ---------- thanks, and the letter home ----------
+
+  /**
+   * What the game brings up by itself when nothing else holds the box: the letter home, then an offer to
+   * thank someone (thanks.ts). Call it every frame after update(); `covered`: a panel, the menu or the
+   * dark between maps is up, and nothing new may show.
+   */
+  idle(now: number, covered: boolean) {
+    // The UTC day turns: whom you thanked yesterday may be thanked again.
+    const day = utcDay(this.wall.ms + (now - this.wall.now));
+    if (day !== this.thankedDay) { this.thankedDay = day; this.thankedToday.clear(); }
+    const free = this.online && !covered && !this.held && !this.question && !this.note && !this.dialog;
+    if (free && this.letter) {
+      this.openDialog({ x: 0, y: 0, who: 'Letter', lines: this.letter, kind: 'talk' });
+      this.letter = null;
+      return;
+    }
+    const me = this.online ? this.me : undefined, blocked = new Set((this.friends?.blocked ?? []).map(p => p.id));
+    const offer = this.offers.due({
+      now, map: this.current.data.id, marks: this.marks, free,
+      me: me ? { id: me.id, x: me.tx, y: me.ty, moving: !!me.anim || !!this.pad.dir || this.path.length > 0 || !!this.goal } : null,
+      fires: [...this.fires].map(([k, f]) => { const [x, y] = k.split(',').map(Number) as [number, number]; return { x, y, left: this.fireLeft(x, y, now) ?? null, fed: f.fed }; }),
+      skip: id => this.thankedToday.has(id) || blocked.has(id),
+    });
+    if (offer) this.offerThanks(offer);
+  }
+
+  /** "Ana fed this fire. Thank Ana?" YES sends the thanks; NO means never again for that fire or arrow this session. */
+  private offerThanks(o: Offer) {
+    const who = o.kind === 'fire' ? 'Fire' : 'Arrow', name = o.helper.name;
+    const text = o.kind === 'fire' ? fireThanksQuestion(name) : markThanksQuestion(name);
+    const what = o.kind === 'fire' ? { kind: 'fire' as const, x: o.x, y: o.y } : { kind: 'mark' as const, id: o.id };
+    this.ask({
+      who, text,
+      yes: () => { this.thanking = { id: o.helper.id, name }; this.act(who, text, { t: 'thank', who: o.helper.id, what }); },
+      no: () => this.offers.decline(o.key),
+    });
   }
 
   /** Says what waited for the box, once the box is free. */
@@ -1540,6 +1616,8 @@ export class Game {
       return;
     }
     if (this.path.length) this.path.shift();
+    // Stepping off an arrow the way it points follows it (thanks.ts).
+    this.offers.stepped(me.tx, me.ty, dir, to, this.marks);
     const seq = ++this.seq;
     this.pending.push({ seq, x: to.x, y: to.y });
     this.walk(me, to.x, to.y, dir, now);

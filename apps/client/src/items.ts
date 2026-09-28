@@ -108,6 +108,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'top_level': return 'It goes no higher';
     case 'sealed_stays': return 'It stays in the chest: open it there';
     case 'locked': return 'Your level has not reached it yet';
+    case 'thanked': return 'Thanks go once a day to each person';
   }
 }
 

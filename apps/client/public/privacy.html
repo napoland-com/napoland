@@ -40,7 +40,7 @@
 <li>You can play without signing in, as a guest. Nothing then says who you are, and a guest who does not play for 30 days is deleted.</li>
 <li>Your email address (and, if you sign in with Google or Apple, your name) is used only to sign you in. Other players never see it.</li>
 <li>Other players see your character's name.</li>
-<li>Private messages to a friend are kept only until they read them. Chat is not kept at all.</li>
+<li>Private messages to a friend are kept only until they read them. Chat is not kept at all. Who thanked whom in the game is kept for 7 days.</li>
 <li>Our servers never store your IP address.</li>
 <li>You can ask us to delete everything, at any time.</li>
 </ul>
@@ -58,10 +58,13 @@
 <p>If you sign in with Google or Apple, you do it on Google's or Apple's own page, and that company then tells Supabase your email address and your name as your account gives it (Google also sends your profile picture). Apple can give a private relay address instead of your real one, which forwards to it. Supabase keeps these with your account; our game server still keeps only Supabase's random id for it. Google or Apple also learns that you signed in to napoland, and their own privacy policies cover what happens on their pages.</p>
 
 <h3>Playing as a guest</h3>
-<p>You can play without signing in, as a guest. Your character is then kept on our server like anyone's (everything under "Your character" below), and your browser keeps a login token for it in its local storage; our server keeps only a scrambled copy of that token. Nothing about a guest says who you are: no email address and no account. A guest cannot chat or have friends, and other players can still block or report a guest. If your browser's data is cleared, the token goes with it, and so does the way back to your character. A guest who does not play for 30 days is deleted, with its pile and arrows. Signing in keeps your character: from then on it belongs to your account.</p>
+<p>You can play without signing in, as a guest. Your character is then kept on our server like anyone's (everything under "Your character" below), and your browser keeps a login token for it in its local storage; our server keeps only a scrambled copy of that token. Nothing about a guest says who you are: no email address and no account. A guest cannot chat or have friends, and other players can still block or report a guest. If your browser's data is cleared, the token goes with it, and so does the way back to your character. A guest who does not play for 30 days is deleted, with its pile, arrows and thanks. Signing in keeps your character: from then on it belongs to your account.</p>
 
 <h3>Your character</h3>
-<p>Its name and color, where it is in the world, its energy, how wet it is, what it wears (and how worn each piece is), the outfit it wears over it, if any, what is in its bag and in its stash at home (and what it took out of the stash), the tools it owns (for now, its paper maps), its XP, what counts toward its feats, how many pieces of gear it made and how often it collapsed or was caught by a surge (and which of the townspeople's words about those it heard), how far it is in the story (the latest chapter it reached), for the daily parcels (signed in only) whether it had its welcome parcel, the day of its last parcel and which days of that week it played, the arrows it paints on the ground, the pile of things it leaves when it collapses (with the last steps it walked before, which others see as a pale figure walking back to the pile), and when it was created and last played. The game cannot run without these. Other players on the same map see your character's name and color, what it wears (its gear, or the outfit over it), where it walks, and whose pile or arrow is whose.</p>
+<p>Its name and color, where it is in the world, its energy, how wet it is, what it wears (and how worn each piece is), the outfit it wears over it, if any, what is in its bag and in its stash at home (and what it took out of the stash), the tools it owns (for now, its paper maps), its XP, what counts toward its feats (among them how many thanks it received), how many pieces of gear it made and how often it collapsed or was caught by a surge (and which of the townspeople's words about those it heard), how far it is in the story (the latest chapter it reached), for the daily parcels (signed in only) whether it had its welcome parcel, the day of its last parcel and which days of that week it played, the arrows it paints on the ground, the pile of things it leaves when it collapses (with the last steps it walked before, which others see as a pale figure walking back to the pile), and when it was created and last played. The game cannot run without these. Other players on the same map see your character's name and color, what it wears (its gear, or the outfit over it), where it walks, whose pile or arrow is whose, and who fed a fire last.</p>
+
+<h3>Thanks</h3>
+<p>You can thank another player for a fire they fed or an arrow they painted. A thanks carries no words. We keep who thanked whom, when, and for what (which fire or arrow), for 7 days: so that each player thanks each other player at most once a day, and so that the player you thanked can read who thanked them, and for what, when they next come home in the game. After 7 days it is deleted. A fire remembers the names of the last three players who fed it only in the server's memory, until the server restarts; players on its map see them, as they see whose arrow is whose. If you block someone, their thanks never reach you.</p>
 
 <h3>Friends and private messages</h3>
 <p>Who your friends are, the friend requests you sent and received, who you block, and whether you take friend requests at all. Your friends see when you are online and on which map. A private message you send a friend is kept on our server, with when you sent it, only until they read it: reading it deletes it. The conversation you see stays in your browser only until you close the game.</p>
@@ -99,14 +102,15 @@
 <h2>How long we keep it</h2>
 <ul>
 <li>Your character, and your sign-in account at Supabase with its record of your sign-ins: until you ask us to delete them.</li>
-<li>A guest's character: until it has not been played for 30 days, when it is deleted with its pile and arrows. Signing in keeps it, as above.</li>
-<li>A pile, with the last steps before the collapse: an hour. An arrow you paint: a day.</li>
+<li>A guest's character: until it has not been played for 30 days, when it is deleted with its pile, arrows and thanks. Signing in keeps it, as above.</li>
+<li>A pile, with the last steps before the collapse: an hour. An arrow you paint: a day (up to a week, with the Good neighbor feat).</li>
+<li>Who thanked whom, when and for what: 7 days.</li>
 <li>A private message: until your friend reads it. Friends, requests and blocks: until you remove them.</li>
 <li>A report: until we have dealt with it.</li>
 <li>Server logs: 30 days.</li>
 <li>Nightly database backups: 30 days. Server disk snapshots: 7 days.</li>
 </ul>
-<p>When you ask us to delete your data, we delete your character, its pile and arrows, its friends, requests, blocks and unread messages (to and from you), your sign-in account and its record of sign-ins. The copies inside backups disappear by themselves within 30 days after that.</p>
+<p>When you ask us to delete your data, we delete your character, its pile and arrows, the thanks it gave and received, its friends, requests, blocks and unread messages (to and from you), your sign-in account and its record of sign-ins. The copies inside backups disappear by themselves within 30 days after that.</p>
 
 <h2>Your rights</h2>
 <p>You can ask us to show you your data, correct it, delete it, limit what we do with it, or give it to you in a form you can take elsewhere, and you can object to how we use it. Write to <a href="mailto:support@neuramare.com">support@neuramare.com</a> from the email address you sign in with, so that we know it is you (as a guest, sign in first: nothing else tells us a character is yours). If Apple hides your email from us, tell us the relay address it gave napoland: we answer there. We answer within 30 days.</p>

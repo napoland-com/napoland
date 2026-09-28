@@ -4,7 +4,9 @@
  * concrete, and every number from the data (content/items.json: nouns, fuel, uses, recipes, what
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
-import { aOf, amount, countable, fireFull, nounOf, pluralOf, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type NextGear, type Recipe, type StoneView, type Upgrade } from '@napoland/shared';
+import {
+  MARK_LIFETIME_MS, aOf, amount, countable, fireFull, nounOf, pluralOf, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type NextGear, type Recipe, type StoneView, type Upgrade,
+} from '@napoland/shared';
 import { oddsText, pieceName, type Items } from './items';
 
 // ---------- naming things in a sentence ----------
@@ -71,8 +73,11 @@ export function stoneQuestion(def: ItemDef, n: number): string {
   return `Give the Old Stone ${amount(def, n)}?`;
 }
 
-/** Use, in the bag: what it does, and a word when the bar has little room for what a drink gives. */
-export function useQuestion(def: ItemDef, energy: EnergyView | null): string {
+/**
+ * Use, in the bag: what it does, and a word when the bar has little room for what a drink gives. An
+ * arrow shows `markS` seconds (a day, longer for a good neighbor: markLifetime).
+ */
+export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000): string {
   const u = def.use ?? {}, n = nounOf(def);
   if (u.identify) return `Look closely at the ${n}? It will be used up.`;
   if (u.energy) {
@@ -82,7 +87,7 @@ export function useQuestion(def: ItemDef, energy: EnergyView | null): string {
     return `Drink the ${n}? ${signed(u.energy)} energy.`;
   }
   if (u.flare) return `Light ${aOf(def)}? It burns ${howLong(u.flare)}.`;
-  if (u.mark) return `Crush ${aOf(def)} to paint an arrow where you face?`;
+  if (u.mark) return `Crush ${aOf(def)} to paint an arrow where you face? Everyone sees it for ${howLong(markS)}.`;
   return `Use the ${n}? It will be used up.`;
 }
 
@@ -213,11 +218,14 @@ export function didWho(did: Did, items: Items): string {
     case 'made': case 'mended': case 'upgraded': return 'Workbench';
     case 'used': case 'opened': return items.get(did.item).name;
     case 'thrown': return pieceName(items.get(did.item), did.level);
+    case 'thanked': return did.what === 'fire' ? 'Fire' : 'Arrow';
   }
 }
 
 /** What something did, in words, from the server's answer. */
 export function didText(did: Did, items: Items): string {
+  // Thanks carry no item: the helper, by name (never a pronoun).
+  if (did.kind === 'thanked') return did.what === 'fire' ? `You thank ${did.name} for feeding the fire.` : `You thank ${did.name} for the arrow.`;
   const def = items.get(did.item);
   switch (did.kind) {
     case 'fire': {

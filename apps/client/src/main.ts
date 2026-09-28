@@ -725,6 +725,8 @@ function frame(now: number) {
   arrival.update(dt);
   game.held = arrival.leaving;
   game.update(dt, now);
+  // The letter home, and offers to thank someone, wait for the panels (and any card open in one), the menu, the fan of calls and the fade.
+  game.idle(now, panelOpen() || hud.cardOpen || hud.menuOpen || callB.open || arrival.dark > 0);
   const me = game.me;
   if (game.lootChanges !== lootShown.changes || view !== lootShown.view) {
     lootShown = { changes: game.lootChanges, view };

@@ -6,7 +6,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import pg from 'pg';
-import type { BagSlot, Dir, Gear, ParcelState, Piece, ReportReason, Stash, Stats, Worn } from '@napoland/shared';
+import type { BagSlot, Dir, Gear, ParcelState, Piece, ReportReason, Stash, Stats, ThanksFor, Worn } from '@napoland/shared';
 import { log } from './log';
 
 export interface PlayerRecord {
@@ -36,7 +36,11 @@ export interface PlayerRecord {
   bag: BagSlot[];
   /** 0 dry to 1 soaked through. None: dry. */
   wet?: number;
-  /** What counts toward feats (feats.ts). None: nothing yet. */
+  /**
+   * What counts toward feats (feats.ts). None: nothing yet. `thanked` (thanks received) is kept apart
+   * from the rest: others add to it, often while its owner is offline (creditThanks), so a save of the
+   * whole player never writes it, and so never undoes one.
+   */
   stats?: Stats;
   /** XP in all (progress.ts): the level follows from it. None: 0. */
   xp?: number;
@@ -85,7 +89,7 @@ export interface DropRecord {
   trail?: Array<[number, number]>;
 }
 
-/** An arrow someone painted on the ground. Each player has a few; they fade a day after. */
+/** An arrow someone painted on the ground. Each player has a few; they fade a day after, or longer for a good neighbor. */
 export interface MarkRecord {
   id: number;
   owner: string;
@@ -98,6 +102,25 @@ export interface MarkRecord {
   dir: Dir;
   /** ms since the epoch. */
   placedAt: number;
+  /** When it fades, ms since the epoch. None: a day after placedAt (painted by a release that kept no such time). */
+  until?: number;
+}
+
+/**
+ * Someone thanked someone (thanks.ts): the giver, the helper, the UTC day (one thanks from a giver to a
+ * helper each day), when, for what, and whether the helper was told (in their text box, or in the
+ * letter when they came home). Kept THANKS_KEPT_DAYS.
+ */
+export interface ThanksRecord {
+  giver: string;
+  helper: string;
+  day: number;
+  /** ms since the epoch. */
+  at: number;
+  what: ThanksFor;
+  told: boolean;
+  /** The giver's name, for the letter. Not stored with it: it comes from the player. */
+  name: string;
 }
 
 /** The Old Stone: shards in it, whether it is awake, and when (ms since the epoch) that charge was so. */
@@ -182,10 +205,21 @@ export interface Storage {
   /** Stores a player's pile, in place of the one they had. */
   saveDrop(drop: DropRecord): Promise<void>;
   removeDrop(owner: string): Promise<void>;
-  /** Every mark placed after `after` (ms since the epoch); older ones have faded and are forgotten. */
-  loadMarks(after: number): Promise<MarkRecord[]>;
+  /**
+   * Every mark that has not faded by `now` (ms since the epoch); the others are forgotten. A mark saved
+   * without its time to fade fades `lifetimeMs` after it was placed.
+   */
+  loadMarks(now: number, lifetimeMs: number): Promise<MarkRecord[]>;
   saveMark(mark: MarkRecord): Promise<void>;
   removeMark(id: number): Promise<void>;
+  /** Every thanks given after `after` (ms since the epoch), oldest first; older ones are forgotten. */
+  loadThanks(after: number): Promise<ThanksRecord[]>;
+  /** Stores a thanks, or what changed about it (told): one per giver, helper and day. */
+  saveThanks(t: ThanksRecord): Promise<void>;
+  /** Forgets every thanks given before `before` (ms since the epoch). Returns how many went. */
+  forgetThanks(before: number): Promise<number>;
+  /** One more thanks received by `helper`, online or not: their `thanked` count grows by one, on its own. */
+  creditThanks(helper: string): Promise<void>;
   /** The Old Stone as it was last saved, or null. */
   loadStone(): Promise<StoneRecord | null>;
   saveStone(stone: StoneRecord): Promise<void>;
@@ -222,6 +256,12 @@ const stored = (rec: PlayerRecord): PlayerRecord => {
   if (!out.outfit) delete out.outfit;
   return out;
 };
+/** The counts a save writes: all but the thanks received, which only creditThanks adds to. */
+const savedStats = (stats: Stats | undefined): Stats => {
+  const { thanked: _thanked, ...rest } = stats ?? {};
+  return rest;
+};
+const thanksKey = (t: Pick<ThanksRecord, 'giver' | 'helper' | 'day'>) => `${t.giver} ${t.helper} ${t.day}`;
 
 export class MemoryStorage implements Storage {
   private readonly byId = new Map<string, PlayerRecord>();
@@ -230,6 +270,7 @@ export class MemoryStorage implements Storage {
   private readonly idByName = new Map<string, string>();
   private readonly drops = new Map<string, Omit<DropRecord, 'name'>>();
   private readonly marks = new Map<number, Omit<MarkRecord, 'name' | 'color'>>();
+  private readonly thanks = new Map<string, Omit<ThanksRecord, 'name'>>();
   private stone: StoneRecord | null = null;
   private since: number | undefined;
   private readonly off = new Set<string>();
@@ -267,7 +308,8 @@ export class MemoryStorage implements Storage {
     // Like the database's unique columns (nulls never collide).
     const taken = (key: string | null, index: Map<string, string>) => key !== null && index.has(key);
     if (this.byId.has(rec.id) || taken(rec.tokenHash, this.idByToken) || taken(rec.authSub, this.idBySub) || this.idByName.has(name)) return false;
-    this.byId.set(rec.id, stored(rec));
+    const thanked = Math.max(0, Math.floor(rec.stats?.thanked ?? 0));
+    this.byId.set(rec.id, { ...stored(rec), stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) } });
     if (rec.tokenHash !== null) this.idByToken.set(rec.tokenHash, rec.id);
     if (rec.authSub !== null) this.idBySub.set(rec.authSub, rec.id);
     this.idByName.set(name, rec.id);
@@ -277,8 +319,11 @@ export class MemoryStorage implements Storage {
   async save(rec: PlayerRecord): Promise<void> {
     const cur = this.byId.get(rec.id);
     if (cur) {
+      // Like the database: the thanks received are only ever added to (creditThanks), never saved over.
+      const thanked = cur.stats?.thanked;
       Object.assign(cur, {
-        map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(rec.bag), wet: rec.wet ?? 0, stats: { ...rec.stats },
+        map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(rec.bag), wet: rec.wet ?? 0,
+        stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) },
         xp: rec.xp ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
         ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), lastSeenAt: rec.lastSeenAt,
@@ -307,6 +352,7 @@ export class MemoryStorage implements Storage {
       this.idByName.delete(rec.name.toLowerCase());
       this.drops.delete(rec.id);
       for (const [id, m] of this.marks) if (m.owner === rec.id) this.marks.delete(id);
+      for (const [key, t] of this.thanks) if (t.giver === rec.id || t.helper === rec.id) this.thanks.delete(key);
       this.off.delete(rec.id);
       this.links = this.links.filter(l => l.from !== rec.id && l.to !== rec.id);
       this.tells = this.tells.filter(t => t.from !== rec.id && t.to !== rec.id);
@@ -342,11 +388,11 @@ export class MemoryStorage implements Storage {
     this.drops.delete(owner);
   }
 
-  async loadMarks(after: number): Promise<MarkRecord[]> {
+  async loadMarks(now: number, lifetimeMs: number): Promise<MarkRecord[]> {
     const out: MarkRecord[] = [];
     for (const [id, m] of this.marks) {
       const owner = this.byId.get(m.owner);
-      if (m.placedAt <= after || !owner) this.marks.delete(id);
+      if ((m.until ?? m.placedAt + lifetimeMs) <= now || !owner) this.marks.delete(id);
       else out.push({ ...m, name: owner.name, color: owner.color });
     }
     return out.sort((a, b) => a.placedAt - b.placedAt);
@@ -360,6 +406,38 @@ export class MemoryStorage implements Storage {
 
   async removeMark(id: number): Promise<void> {
     this.marks.delete(id);
+  }
+
+  async loadThanks(after: number): Promise<ThanksRecord[]> {
+    await this.forgetThanks(after + 1);
+    return [...this.thanks.values()].map(t => ({ ...t, what: { ...t.what }, name: this.byId.get(t.giver)!.name })).sort((a, b) => a.at - b.at);
+  }
+
+  async saveThanks(t: ThanksRecord): Promise<void> {
+    // Like the database's foreign keys: both are players who exist.
+    if (!this.byId.has(t.giver) || !this.byId.has(t.helper)) throw new Error('a thanks joins two players who exist');
+    const { name: _name, ...stored } = t;
+    this.thanks.set(thanksKey(t), { ...stored, what: { ...t.what } });
+  }
+
+  async forgetThanks(before: number): Promise<number> {
+    let gone = 0;
+    for (const [key, t] of this.thanks) {
+      if (t.at >= before) continue;
+      this.thanks.delete(key);
+      gone++;
+    }
+    return gone;
+  }
+
+  async creditThanks(helper: string): Promise<void> {
+    const rec = this.byId.get(helper);
+    if (rec) rec.stats = { ...rec.stats, thanked: (rec.stats?.thanked ?? 0) + 1 };
+  }
+
+  /** The stored thanks, for tests. */
+  storedThanks(): Array<Omit<ThanksRecord, 'name'>> {
+    return [...this.thanks.values()].map(t => ({ ...t, what: { ...t.what } }));
   }
 
   async loadStone(): Promise<StoneRecord | null> {
@@ -456,6 +534,8 @@ interface PlayerRow {
   parcel_days: number;
   /** Null for a player who wears no outfit (014_outfits.sql). */
   outfit: string | null;
+  /** Thanks received (migration 015): only creditThanks adds to it. */
+  thanked: number;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -481,6 +561,18 @@ interface MarkRow {
   y: number;
   dir: Dir;
   placed_at: Date;
+  /** Null for a mark painted by a release before 015: it fades a day after it was placed. */
+  fades_at: Date | null;
+}
+
+interface ThanksRow {
+  giver: string;
+  helper: string;
+  day: number;
+  at: Date;
+  what: unknown;
+  told: boolean;
+  name: string;
 }
 
 /** A jsonb list of slots as the server wrote it; anything else reads as empty (the World checks each slot again). */
@@ -510,7 +602,8 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   energy: r.energy,
   bag: slots(r.bag),
   wet: r.wet,
-  stats: stats(r.stats),
+  // The thanks received live in a column of their own; one among the other counts (it never is) is left out.
+  stats: { ...savedStats(stats(r.stats)), ...(Number.isInteger(r.thanked) && r.thanked > 0 ? { thanked: r.thanked } : {}) },
   xp: r.xp,
   stash: stash(r.stash),
   ...(r.gear && typeof r.gear === 'object' && !Array.isArray(r.gear) ? { gear: r.gear as Gear } : {}),
@@ -526,6 +619,13 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
+
+/** A jsonb thanks' `what` as the server wrote it, or null for anything else (such a thanks is left out). */
+const thanksFor = (json: unknown): ThanksFor | null => {
+  const w = (typeof json === 'object' && json !== null ? json : {}) as Partial<Record<string, unknown>>;
+  if ((w.kind !== 'fire' && w.kind !== 'mark') || typeof w.map !== 'string' || !Number.isInteger(w.x) || !Number.isInteger(w.y)) return null;
+  return { kind: w.kind, map: w.map, x: w.x as number, y: w.y as number };
+};
 
 /** Held while migrating, so two servers starting together do not both apply the same file. */
 const MIGRATION_LOCK = 4_815_162_342;
@@ -575,13 +675,14 @@ export class PgStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
-         parcel_welcome, parcel_day, parcel_days, outfit)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23)
+         parcel_welcome, parcel_day, parcel_days, outfit, thanked)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24)
        ON CONFLICT DO NOTHING`,
       [
-        rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}),
+        rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
         rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.outfit ?? null,
+        Math.max(0, Math.floor(rec.stats?.thanked ?? 0)),
       ],
     );
     return r.rowCount === 1;
@@ -597,7 +698,7 @@ export class PgStorage implements Storage {
        parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
        parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, last_seen_at = $13 WHERE id = $1`,
       [
-        rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}), rec.xp ?? 0,
+        rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
         rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
         rec.outfit !== undefined, rec.outfit ?? null,
@@ -611,8 +712,8 @@ export class PgStorage implements Storage {
   }
 
   async forgetGuests(seenBefore: number): Promise<number> {
-    // Their pile, marks, links and unread messages go with the row (ON DELETE CASCADE); a report
-    // about them stays, without them (ON DELETE SET NULL). An index covers exactly these rows (011).
+    // Their pile, marks, links, unread messages and thanks go with the row (ON DELETE CASCADE); a
+    // report about them stays, without them (ON DELETE SET NULL). An index covers exactly these rows (011).
     const r = await this.pool.query('DELETE FROM players WHERE auth_sub IS NULL AND last_seen_at < $1', [new Date(seenBefore)]);
     return r.rowCount ?? 0;
   }
@@ -651,26 +752,61 @@ export class PgStorage implements Storage {
     await this.pool.query('DELETE FROM drops WHERE owner = $1', [owner]);
   }
 
-  async loadMarks(after: number): Promise<MarkRecord[]> {
-    await this.pool.query('DELETE FROM marks WHERE placed_at <= $1', [new Date(after)]);
+  async loadMarks(now: number, lifetimeMs: number): Promise<MarkRecord[]> {
+    await this.pool.query(`DELETE FROM marks WHERE COALESCE(fades_at, placed_at + $2 * interval '1 millisecond') <= $1`, [new Date(now), lifetimeMs]);
     const r = await this.pool.query<MarkRow>(
-      `SELECT m.id, m.owner, p.name, p.color, m.map, m.x, m.y, m.dir, m.placed_at
+      `SELECT m.id, m.owner, p.name, p.color, m.map, m.x, m.y, m.dir, m.placed_at, m.fades_at
        FROM marks m JOIN players p ON p.id = m.owner
        ORDER BY m.placed_at`,
     );
-    return r.rows.map(m => ({ id: Number(m.id), owner: m.owner, name: m.name, color: m.color, map: m.map, x: m.x, y: m.y, dir: m.dir, placedAt: m.placed_at.getTime() }));
+    return r.rows.map(m => ({
+      id: Number(m.id), owner: m.owner, name: m.name, color: m.color, map: m.map, x: m.x, y: m.y, dir: m.dir, placedAt: m.placed_at.getTime(),
+      ...(m.fades_at ? { until: m.fades_at.getTime() } : {}),
+    }));
   }
 
   async saveMark(m: MarkRecord): Promise<void> {
     await this.pool.query(
-      `INSERT INTO marks (id, owner, map, x, y, dir, placed_at) VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (id) DO UPDATE SET owner = EXCLUDED.owner, map = EXCLUDED.map, x = EXCLUDED.x, y = EXCLUDED.y, dir = EXCLUDED.dir, placed_at = EXCLUDED.placed_at`,
-      [m.id, m.owner, m.map, m.x, m.y, m.dir, new Date(m.placedAt)],
+      `INSERT INTO marks (id, owner, map, x, y, dir, placed_at, fades_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (id) DO UPDATE SET owner = EXCLUDED.owner, map = EXCLUDED.map, x = EXCLUDED.x, y = EXCLUDED.y, dir = EXCLUDED.dir, placed_at = EXCLUDED.placed_at,
+       fades_at = EXCLUDED.fades_at`,
+      [m.id, m.owner, m.map, m.x, m.y, m.dir, new Date(m.placedAt), m.until === undefined ? null : new Date(m.until)],
     );
   }
 
   async removeMark(id: number): Promise<void> {
     await this.pool.query('DELETE FROM marks WHERE id = $1', [id]);
+  }
+
+  async loadThanks(after: number): Promise<ThanksRecord[]> {
+    await this.forgetThanks(after + 1);
+    const r = await this.pool.query<ThanksRow>(
+      `SELECT t.giver, t.helper, t.day, t.at, t.what, t.told, p.name
+       FROM thanks t JOIN players p ON p.id = t.giver
+       ORDER BY t.at`,
+    );
+    return r.rows.flatMap(t => {
+      const what = thanksFor(t.what);
+      return what ? [{ giver: t.giver, helper: t.helper, day: t.day, at: t.at.getTime(), what, told: t.told, name: t.name }] : [];
+    });
+  }
+
+  async saveThanks(t: ThanksRecord): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO thanks (giver, helper, day, at, what, told) VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+       ON CONFLICT (giver, helper, day) DO UPDATE SET told = EXCLUDED.told`,
+      [t.giver, t.helper, t.day, new Date(t.at), JSON.stringify(t.what), t.told],
+    );
+  }
+
+  async forgetThanks(before: number): Promise<number> {
+    const r = await this.pool.query('DELETE FROM thanks WHERE at < $1', [new Date(before)]);
+    return r.rowCount ?? 0;
+  }
+
+  async creditThanks(helper: string): Promise<void> {
+    // One statement, on its own column: whatever else changes the player meanwhile, no thanks is lost.
+    await this.pool.query('UPDATE players SET thanked = thanked + 1 WHERE id = $1', [helper]);
   }
 
   async loadStone(): Promise<StoneRecord | null> {

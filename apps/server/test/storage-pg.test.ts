@@ -10,16 +10,17 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DROP_LIFETIME_MS } from '@napoland/shared';
+import { DROP_LIFETIME_MS, utcDay } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
-import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord } from '../src/storage';
+import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
 import {
-  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsParcels, keepsToolsParcelsAndOutfit, outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn,
+  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsParcels, keepsToolsParcelsAndOutfit, keepsWholeRow, outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn,
   restartKeepsBagsAndPiles, signInAndClaim,
 } from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
+const DAY = 86_400_000;
 
 describe.skipIf(!url)('PgStorage', () => {
   const schemas: string[] = [];
@@ -60,7 +61,7 @@ describe.skipIf(!url)('PgStorage', () => {
   it('applies each migration once', async () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
-      '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql',
+      '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -334,6 +335,20 @@ describe.skipIf(!url)('PgStorage', () => {
     }
   });
 
+  it('keeps a whole player in one row: tools, parcels, the outfit and the thanks received together, every column round trips, and no save writes the thanks received', async () => {
+    const { sub, kept } = await keepsWholeRow(storage);
+    const row = await admin.query(
+      `SELECT map, x, y, dir, energy, bag, wet, stats, xp, stash, gear, worn, story, tools, parcel_welcome, parcel_day, parcel_days, outfit, thanked FROM ${schema}.players WHERE auth_sub = $1`,
+      [sub],
+    );
+    // The thanks received live in their own column, never among the counts a save writes.
+    const { thanked: _thanked, ...counts } = kept.stats!;
+    expect(row.rows).toEqual([{
+      map: kept.map, x: kept.x, y: kept.y, dir: kept.dir, energy: kept.energy, bag: kept.bag, wet: kept.wet, stats: counts, xp: kept.xp, stash: kept.stash, gear: kept.gear,
+      worn: kept.worn, story: kept.story, tools: kept.tools, parcel_welcome: true, parcel_day: 20_725, parcel_days: 0b11, outfit: 'rain-cape', thanked: 8,
+    }]);
+  });
+
   it('keeps XP and the stash, with what was taken out of it', async () => {
     const rec = { ...player('Pg Hoarder'), xp: 340, stash: { items: { shard: 7, glowcap: 40 }, out: { thermos: 1 } } };
     expect(await storage.create(rec)).toBe(true);
@@ -358,24 +373,78 @@ describe.skipIf(!url)('PgStorage', () => {
     expect((await storage.findByTokenHash(rec.tokenHash))!.stats).toEqual({});
   });
 
-  it('keeps marks with their painter\'s name and color, and forgets the ones older than asked', async () => {
+  it('keeps marks with their painter\'s name and color and when each fades, and forgets the ones that faded', async () => {
     const painter = player('Pg Painter');
     await storage.create(painter);
     const now = Date.now();
-    const mark: MarkRecord = { id: 7, owner: painter.id, name: 'ignored', color: 'ignored', map: 'near-woods', x: 30, y: 60, dir: 'up', placedAt: now - 1000 };
+    // A good neighbor's arrow, for two days; and one for a day.
+    const mark: MarkRecord = { id: 7, owner: painter.id, name: 'ignored', color: 'ignored', map: 'near-woods', x: 30, y: 60, dir: 'up', placedAt: now - 1000, until: now - 1000 + 2 * DAY };
     await storage.saveMark(mark);
-    await storage.saveMark({ ...mark, id: 8, x: 31, placedAt: now - 10_000 });
-    const mine = async (after: number) => (await storage.loadMarks(after)).filter(m => m.owner === painter.id);
-    expect(await mine(now - 60_000)).toEqual([
-      { ...mark, id: 8, x: 31, placedAt: now - 10_000, name: painter.name, color: painter.color },
+    await storage.saveMark({ ...mark, id: 8, x: 31, placedAt: now - 10_000, until: now - 10_000 + DAY });
+    const mine = async (at: number) => (await storage.loadMarks(at, DAY)).filter(m => m.owner === painter.id);
+    expect(await mine(now)).toEqual([
+      { ...mark, id: 8, x: 31, placedAt: now - 10_000, until: now - 10_000 + DAY, name: painter.name, color: painter.color },
       { ...mark, name: painter.name, color: painter.color },
     ]);
-    // Older than asked: not loaded, and gone from the table.
-    expect((await mine(now - 5000)).map(m => m.id)).toEqual([7]);
-    expect((await mine(now - 60_000)).map(m => m.id)).toEqual([7]);
+    // Faded by then: not loaded, and gone from the table. The two days' one stays.
+    expect((await mine(now - 10_000 + DAY)).map(m => m.id)).toEqual([7]);
+    expect((await mine(now)).map(m => m.id)).toEqual([7]);
     await storage.removeMark(7);
     expect(await mine(0)).toEqual([]);
     await expect(storage.saveMark({ ...mark, id: 9, owner: randomUUID() })).rejects.toThrow(/foreign key/);
+  });
+
+  it('fades the marks of the release before 015, which keep no time to fade, a day after they were painted', async () => {
+    const painter = player('Pg Old Painter');
+    await storage.create(painter);
+    const now = Date.now();
+    const insert = `INSERT INTO ${schema}.marks (id, owner, map, x, y, dir, placed_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`;
+    await admin.query(insert, [11, painter.id, 'near-woods', 3, 4, 'left', new Date(now - 1000)]);
+    await admin.query(insert, [12, painter.id, 'near-woods', 5, 4, 'left', new Date(now - DAY - 1000)]);
+    expect((await storage.loadMarks(now, DAY)).filter(m => m.owner === painter.id)).toEqual([
+      { id: 11, owner: painter.id, name: painter.name, color: painter.color, map: 'near-woods', x: 3, y: 4, dir: 'left', placedAt: now - 1000 },
+    ]);
+  });
+
+  it('keeps who thanked whom, once a day each, and whether the helper was told, and forgets thanks older than asked', async () => {
+    const giver = player('Pg Giver'), helper = player('Pg Helper');
+    await storage.create(giver);
+    await storage.create(helper);
+    const now = Date.now(), day = utcDay(now);
+    const t: ThanksRecord = { giver: giver.id, helper: helper.id, day, at: now - 1000, what: { kind: 'fire', map: 'near-woods-ranger-hut', x: 3, y: 1 }, told: false, name: 'ignored' };
+    await storage.saveThanks(t);
+    // One a day: the same day again only says whether the helper was told.
+    await storage.saveThanks({ ...t, at: now, what: { kind: 'mark', map: 'near-woods', x: 1, y: 1 }, told: true });
+    const mine = async (after: number) => (await storage.loadThanks(after)).filter(x => x.giver === giver.id);
+    expect(await mine(now - 60_000)).toEqual([{ ...t, told: true, name: giver.name }]);
+    await storage.saveThanks({ ...t, day: day - 8, at: now - 8 * DAY });
+    expect((await mine(now - 9 * DAY)).map(x => x.day)).toEqual([day - 8, day]);
+    // Older than asked: not loaded, and gone from the table.
+    expect((await mine(now - 7 * DAY)).map(x => x.day)).toEqual([day]);
+    const left = async () => (await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${schema}.thanks WHERE giver = $1`, [giver.id])).rows[0]!.n;
+    expect(await left()).toBe(1);
+    expect(await storage.forgetThanks(now + 1)).toBeGreaterThanOrEqual(1);
+    expect(await left()).toBe(0);
+    await expect(storage.saveThanks({ ...t, helper: randomUUID() })).rejects.toThrow(/foreign key/);
+  });
+
+  it('counts the thanks a player received on their own: a save of the player never undoes one', async () => {
+    const rec = { ...player('Pg Neighbor'), stats: { fed: 3, thanked: 24 } };
+    expect(await storage.create(rec)).toBe(true);
+    expect((await storage.findByTokenHash(rec.tokenHash))!.stats).toEqual({ fed: 3, thanked: 24 });
+    await storage.creditThanks(rec.id);
+    // A save of what the player was before the thanks came (they were online meanwhile) leaves it as it is.
+    await storage.save({ ...rec, stats: { fed: 4, thanked: 24 } });
+    expect((await storage.findByTokenHash(rec.tokenHash))!.stats).toEqual({ fed: 4, thanked: 25 });
+    const row = await admin.query(`SELECT stats, thanked FROM ${schema}.players WHERE id = $1`, [rec.id]);
+    expect(row.rows[0]).toEqual({ stats: { fed: 4 }, thanked: 25 });
+    // A player of the release before 015 has received none.
+    const old = player('Pg Before Thanks');
+    await admin.query(
+      `INSERT INTO ${schema}.players (id, name, token_hash, x, y, dir, color, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [old.id, old.name, old.tokenHash, old.x, old.y, old.dir, old.color, new Date(old.createdAt), new Date(old.lastSeenAt)],
+    );
+    expect((await storage.findByTokenHash(old.tokenHash))!.stats).toEqual({});
   });
 
   it('keeps the Old Stone', async () => {

@@ -12,9 +12,10 @@ import type { BagSlot } from './items';
 import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
+import type { ThanksFor, ThanksGroup } from './thanks';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 22;
+export const PROTOCOL_VERSION = 23;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -183,6 +184,17 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('stats') }),
   /** Say something to everyone online (world) or to whoever is near you (local). Only signed-in players can. */
   z.object({ t: z.literal('say'), to: z.enum(['world', 'local']), text: z.string().trim().min(1).max(MAX_SAY_CHARS) }),
+  /**
+   * Thank `who` (thanks.ts), who fed the fire on tile x,y of your map (you warm at it) or painted the
+   * arrow `id` (you stand where it points). Once a UTC day for each helper; guests too: it carries no words.
+   */
+  z.object({
+    t: z.literal('thank'), who: z.uuid(),
+    what: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('fire'), x: z.number().int(), y: z.number().int() }),
+      z.object({ kind: z.literal('mark'), id: z.number().int().nonnegative() }),
+    ]),
+  }),
   /** Sing a call (calls.ts): everyone on your map within CALL_REACH hears it, you too. Anyone may, guests included. */
   z.object({ t: z.literal('call'), kind: z.enum(CALL_KINDS) }),
 ]);
@@ -209,20 +221,28 @@ export interface DropView {
   trail: Array<[number, number]>;
 }
 
-/** A fire on your map. `left`: seconds of fuel when sent (it counts down), or null for a tended fire that never goes out. */
+/**
+ * A fire on your map. `left`: seconds of fuel when sent (it counts down), or null for a tended fire that
+ * never goes out. `fed`: the last players who fed it, the most recent first (none until someone has).
+ */
 export interface FireView {
   x: number;
   y: number;
   left: number | null;
+  fed?: PersonView[];
 }
 
-/** An arrow someone painted on the ground, pointing `dir`, in their jacket color; it fades at `until` (ms since the epoch). */
+/**
+ * An arrow someone painted on the ground, pointing `dir`, in their jacket color; it fades at `until` (ms
+ * since the epoch). `owner` and `name`: who painted it.
+ */
 export interface MarkView {
   id: number;
   x: number;
   y: number;
   dir: Dir;
   color: string;
+  owner: string;
   name: string;
   until: number;
 }
@@ -261,8 +281,8 @@ export interface StoneView {
 /**
  * What something you asked for did, once the server carried it out: the client says it in the text box,
  * in its own words, from these facts (never guessed). One of these follows every feed, use, discard,
- * craft, mend, upgrade and open that went through (an upgrade that did not take went through: its
- * materials are spent), after everything else the action changed; a refusal is `refused`.
+ * craft, mend, upgrade, open and thanks that went through (an upgrade that did not take went through:
+ * its materials are spent), after everything else the action changed; a refusal is `refused`.
  */
 export type Did =
   /** A fire took `count` of `item`, and has `left` seconds of fuel now; `lit`: it was out. */
@@ -287,7 +307,9 @@ export type Did =
   /** You threw away `count` of `item` (a piece at `level`, when upgraded). */
   | { kind: 'thrown'; item: string; count: number; level?: number }
   /** You opened a sealed `item` (a NAPO lockbox) at the chest: what it held (`got`) is in your stash now. */
-  | { kind: 'opened'; item: string; got: BagSlot[] };
+  | { kind: 'opened'; item: string; got: BagSlot[] }
+  /** You thanked `who` (their `name`) for feeding the fire or painting the arrow. */
+  | { kind: 'thanked'; who: string; name: string; what: 'fire' | 'mark' };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -351,7 +373,9 @@ export type Refusal =
   /** A sealed thing stays in the chest: it is opened there. */
   | 'sealed_stays'
   /** Your level has not reached that outfit yet. */
-  | 'locked';
+  | 'locked'
+  /** You thanked them today already: each helper once a UTC day. */
+  | 'thanked';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -454,6 +478,8 @@ export type ServerMsg =
       items: number;
       /** Where you are in the story. */
       story: StoryView;
+      /** Whom you thanked today (UTC), by id: nobody is thanked twice in a day, so none of them is offered again. */
+      thanked: string[];
       serverTime: number;
     }
   /**
@@ -477,8 +503,16 @@ export type ServerMsg =
    * out to be comes in `did` instead.
    */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool'; double?: true }
-  /** What a feed, use, discard, craft, mend, upgrade or open you asked for did (for the text box). */
+  /** What a feed, use, discard, craft, mend, upgrade, open or thanks you asked for did (for the text box). */
   | { t: 'did'; did: Did }
+  /**
+   * Someone (by `name`) thanked you, for `what` (thanks.ts). Out in the wilds it gave you `energy` (none:
+   * no more gifts this trip, or a full bar), a float over your head; `line`: you are not out there, so the
+   * text box says it, and it will not be in your letter.
+   */
+  | { t: 'thanked'; name: string; what: ThanksFor; energy?: number; line?: true }
+  /** You came home: who thanked you while you were away, and for what, the most thanked first. */
+  | { t: 'letter'; thanks: ThanksGroup[] }
   /** Something asked for that did not happen, and why. */
   | { t: 'refused'; action: RefusedAction; reason: Refusal }
   /** Someone said something you can hear: to everyone online, or near them on your map (a bubble over their head). You hear your own too. */
@@ -564,7 +598,7 @@ export type ServerMsg =
 
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
-  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'say' | 'call'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'say' | 'call' | 'thank'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
 
 /**
