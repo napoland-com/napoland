@@ -210,8 +210,9 @@ export function attachNet(o: NetOptions): Net {
     blocks: id => social.blocks(id),
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
   });
-  // Someone who blocks a player hears no thanks from them either.
+  // Someone who blocks a player hears no thanks from them either, nor a knock at their door; and a friend's street is one to move to.
   world.blocks = id => social.blocks(id);
+  world.friends = id => social.friends(id);
   /** Each player's social actions, one after another: each reads what the one before wrote. */
   const socialQueue = new Map<string, Promise<void>>();
 
@@ -377,6 +378,17 @@ export function attachNet(o: NetOptions): Net {
         return flush();
       case 'cacheTake':
         world.cacheTake(s.id, msg.x, msg.y, msg.id, now);
+        return flush();
+      case 'knock':
+        // Guests too: a knock carries no words.
+        world.knock(s.id, msg.x, msg.y, now);
+        return flush();
+      case 'move':
+        world.moveNextTo(s.id, msg.to, now);
+        return flush();
+      case 'doorOff':
+        // Guests too: a guest's name is on a door as well.
+        world.doorOff(s.id, msg.off, now);
         return flush();
       case 'befriend':
       case 'answer':
@@ -658,6 +670,9 @@ export function attachNet(o: NetOptions): Net {
       notes: joined.notes,
       keepsakes: joined.keepsakes,
       firsts: joined.firsts,
+      ...(joined.furniture && { furniture: joined.furniture }),
+      ...(joined.street && { street: joined.street }),
+      ...(joined.doorOff && { doorOff: true }),
       serverTime: Date.now(),
     });
     flush();

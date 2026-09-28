@@ -65,6 +65,13 @@ export interface Config {
   xpMultiplier: number;
   /** Development only: the time away (ms) that fills one XP of rest (0: 20 minutes, as it should), to play-test the cup of rest without days away. */
   restedEveryMs: number;
+  /**
+   * Development only: how many players make a crowd in a copy of a town square, and of a region of the
+   * wilds (0: as many as they should, TOWN_CROWD and REGION_CROWD in world.ts), to play-test crowded
+   * copies with a few tabs.
+   */
+  townCrowd: number;
+  regionCrowd: number;
   auth: AuthSettings;
 }
 
@@ -168,6 +175,16 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
     if (get('NODE_ENV') === 'production') errors.push('RESTED_EVERY_MS fills everyone\'s rest faster than time away does, so it is refused when NODE_ENV=production');
     else restedEveryMs = int('RESTED_EVERY_MS', 0, 100, 3_600_000);
   }
+  // How many make a crowd is the same everywhere, for everyone: a live server never splits a handful of players apart.
+  const crowd = (name: string): number => {
+    if (get(name) === undefined) return 0;
+    if (get('NODE_ENV') === 'production') {
+      errors.push(`${name} splits places into copies for a few players, so it is refused when NODE_ENV=production`);
+      return 0;
+    }
+    return int(name, 0, 1, 100_000);
+  };
+  const townCrowd = crowd('TOWN_CROWD'), regionCrowd = crowd('REGION_CROWD');
 
   let auth: AuthSettings = { mode: 'legacy' };
   const authMode = oneOf('AUTH_MODE', AUTH_MODES, 'legacy');
@@ -207,7 +224,7 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
     port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, storyFile: storyFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
-    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, restedEveryMs, auth,
+    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, restedEveryMs, townCrowd, regionCrowd, auth,
   };
 }
 

@@ -539,6 +539,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
   // A note lies on something else, which shows.
   note: ' ',
+  // The furniture of your own cabin stands there alone (gen-interiors.ts).
+  comfort: 'n',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '_' };
 const objGlyph = new Map<number, string>();

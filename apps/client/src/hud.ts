@@ -16,6 +16,7 @@ import type { FriendsView } from './friends';
 import { CALL_GLYPHS, NOTEBOOK_ICON } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import { fieldNotesHtml, notesHtml, type FieldNotesView, type JournalView, type NotesView } from './journal';
+import { DOOR_SETTING } from './said';
 import type { SoundSetting } from './sound';
 import type { OfferRow, TradePanel } from './trade';
 import { BADGES_HINT, PATTERNS_HINT, WARDROBE_GATE, WARDROBE_HINT, type OutfitTile, type WardrobePart, type WardrobeView } from './wardrobe';
@@ -205,7 +206,7 @@ export interface GoalView { text: string; ready: boolean; act: boolean }
  */
 export interface RecipeView {
   id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean;
-  group?: 'mend' | 'upgrade' | 'make';
+  group?: 'mend' | 'upgrade' | 'make' | 'cabin';
 }
 /**
  * A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or
@@ -306,14 +307,19 @@ export type SocialAction =
   | { a: 'tell'; id: string; text: string }
   | { a: 'requests'; off: boolean }
   | { a: 'tradeRequests'; off: boolean }
+  /** Your door's setting (anyone's, guests' too): your name off it and your window dark (`off`), or both shown. */
+  | { a: 'door'; off: boolean }
   /** Their card's Trade: ask them to trade (greyed out when they are not near: the game says why). */
   | { a: 'trade'; id: string; name: string };
 
 /** What the trade panel asks the game to do: give (or take back) a bag slot, one fewer or one more on a row of your side, Ready, Trade, or call it off. */
 export type TradeAction = { a: 'give'; slot: number } | { a: 'step'; i: number; by: -1 | 1 } | { a: 'ready' } | { a: 'confirm' } | { a: 'cancel' };
 
-/** A name over someone's head (with the drawing of their badge, merits.ts, when they wear one), or over a pile while you are near it. */
-export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; badge?: string }
+/**
+ * A name over someone's head (with the drawing of their badge, merits.ts, when they wear one), over a pile
+ * while you are near it (`pile`), or on the plate by a cabin's door on your street (`plate`).
+ */
+export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; plate?: boolean; badge?: string }
 /** `row` stacks words said at once, 0 at the bottom. */
 export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number; row: number }
 /** The fan of calls over B: the call the finger is on (null: off the fan), and whether the words show under the notes. */
@@ -533,6 +539,7 @@ export class Hud {
           <label class="setting"><input type="checkbox" data-el="requestsOn"> Let people ask me to be friends</label>
           <label class="setting"><input type="checkbox" data-el="tradesOn"> Let friends ask me to trade</label>
         </div>
+        <label class="setting" data-el="doorSetting"><input type="checkbox" data-el="doorOn"> ${DOOR_SETTING}</label>
         <div class="person" data-el="personView" hidden>
           <p class="where" data-el="personWhere"></p>
           <div class="acts" data-el="personActs"></div>
@@ -702,6 +709,7 @@ export class Hud {
     });
     this.el.requestsOn!.addEventListener('change', e => this.h.social?.({ a: 'requests', off: !(e.target as HTMLInputElement).checked }));
     this.el.tradesOn!.addEventListener('change', e => this.h.social?.({ a: 'tradeRequests', off: !(e.target as HTMLInputElement).checked }));
+    this.el.doorOn!.addEventListener('change', e => this.h.social?.({ a: 'door', off: !(e.target as HTMLInputElement).checked }));
     // The trade panel: its X calls the trade off, as any way of closing it does.
     this.el.tradeClose!.addEventListener('click', () => this.toggleTrade(false));
     this.el.tradeReady!.addEventListener('click', () => this.h.trade?.({ a: 'ready' }));
@@ -883,6 +891,9 @@ export class Hud {
     if (rows !== this.shown.friends) { this.shown.friends = rows; this.el.friendsRows!.innerHTML = rows; }
     (this.el.requestsOn as HTMLInputElement).checked = !v.requestsOff;
     (this.el.tradesOn as HTMLInputElement).checked = !v.tradesOff;
+    (this.el.doorOn as HTMLInputElement).checked = !v.doorOff;
+    // Anyone's, guests' too (a guest's name is on a door as well): below the list, or below the card a guest finds.
+    this.el.doorSetting!.hidden = !!p && !this.guest;
     this.el.friendsTitle!.textContent = p ? p.name : 'Friends';
     // A guest has no friends yet: one card says what signing in opens, whoever's name tag brought them here.
     this.el.friendsGate!.hidden = !this.guest;
@@ -1851,7 +1862,7 @@ export class Hud {
     more!.setAttribute('aria-disabled', String(c.n >= c.max));
   }
 
-  /** Name tags above other players and near piles, positioned in screen pixels. */
+  /** Name tags above other players, near piles and on the name plates of your street, positioned in screen pixels. */
   setTags(tags: TagView[]) {
     const seen = new Set<string>();
     for (const t of tags) {
@@ -1859,9 +1870,9 @@ export class Hud {
       let el = this.tagEls.get(t.id);
       if (!el) {
         el = document.createElement('div');
-        el.className = t.pile ? 'tag pile' : 'tag';
+        el.className = t.pile ? 'tag pile' : t.plate ? 'tag plate' : 'tag';
         // A player's tag can be tapped: their card, to ask them to be friends (or block or report them).
-        if (!t.pile) el.dataset.player = t.id;
+        if (!t.pile && !t.plate) el.dataset.player = t.id;
         this.el.labels!.appendChild(el);
         this.tagEls.set(t.id, el);
       }
@@ -1963,11 +1974,12 @@ export function offerHtml(rows: readonly OfferRow[], side: 'mine' | 'theirs'): s
 }
 
 /** The headings of the workbench's list, over the rows of each kind. */
-const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> = { mend: 'Mend', upgrade: 'Upgrade', make: 'Make' };
+const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> = { mend: 'Mend', upgrade: 'Upgrade', make: 'Make', cabin: 'For your cabin' };
 
 /**
- * The workbench's list: its rows in the order given (mending, upgrades, then what it makes), each kind
- * under its heading. A row shows what it is, what it needs against the stash, and Ready when it can be done.
+ * The workbench's list: its rows in the order given (mending, upgrades, what it makes, then furniture for
+ * your cabin), each kind under its heading. A row shows what it is, what it needs against the stash, and
+ * Ready when it can be done.
  */
 export function benchHtml(rows: readonly RecipeView[]): string {
   let group: RecipeView['group'];

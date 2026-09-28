@@ -156,6 +156,15 @@ describe('loadConfig: signing in', () => {
     expect(problem({ RESTED_EVERY_MS: 'a second' })).toMatch(/RESTED_EVERY_MS must be a whole number/);
   });
 
+  it('makes a crowd of a few players for a play-test of copies, never in production', () => {
+    expect(loadConfig({}, REPO)).toMatchObject({ townCrowd: 0, regionCrowd: 0 });
+    expect(loadConfig({ TOWN_CROWD: '2', REGION_CROWD: '3' }, REPO)).toMatchObject({ townCrowd: 2, regionCrowd: 3 });
+    expect(problem({ TOWN_CROWD: '2', NODE_ENV: 'production' })).toMatch(/TOWN_CROWD splits places into copies for a few players, so it is refused when NODE_ENV=production/);
+    expect(problem({ REGION_CROWD: '2', NODE_ENV: 'production' })).toMatch(/REGION_CROWD .* refused when NODE_ENV=production/);
+    expect(problem({ REGION_CROWD: '0' })).toMatch(/REGION_CROWD must be a whole number from 1/);
+    expect(problem({ TOWN_CROWD: 'a few' })).toMatch(/TOWN_CROWD must be a whole number/);
+  });
+
   it('takes a Supabase project: its address (as an origin) and its publishable key', () => {
     expect(loadConfig(supabase, REPO).auth).toEqual({ mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: PUBLISHABLE, jwtSecret: undefined, providers: [] });
     expect(loadConfig({ ...supabase, SUPABASE_URL: 'https://abcd.supabase.co/' }, REPO).auth).toMatchObject({ url: 'https://abcd.supabase.co' });

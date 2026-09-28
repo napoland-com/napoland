@@ -4,7 +4,7 @@
  * any size. An item without its own drawing gets a sack. And the calls' notes, on the fan over B and
  * over the head of whoever calls.
  */
-import type { CallKind, ItemDef, Slot, ToolIcon } from '@napoland/shared';
+import type { CallKind, Comfort, ItemDef, Slot, ToolIcon } from '@napoland/shared';
 
 const CREAM = '#e8dfc8';
 
@@ -178,6 +178,45 @@ const GEAR: Record<Slot, (c: string) => string> = {
   bag: c => icon(`<path d="M8 11c0-3.6 3.6-6.5 8-6.5s8 2.9 8 6.5v15.5c0 .8-.7 1.5-1.5 1.5h-13c-.8 0-1.5-.7-1.5-1.5z" fill="${c}"/><path d="M8 13h16v4H8zM11.5 20h9v5h-9z" /><path d="M13 4.8c.8-1.3 2-2 3-2s2.2.7 3 2" />`),
 };
 
+/** Furniture for the cabin (comfort.ts), by the place it goes into: one drawing per place, whatever the piece is called. */
+const FURNITURE: Record<Comfort, string> = {
+  // An iron stove on its legs, its grate glowing, a pipe up and a kettle on top.
+  stove: icon(`${halo(16, 20, 10, '#ff8a3a')}
+    <path d="M19.5 3h3.2v8.4h-3.2z" fill="#3d4448"/>
+    <rect x="6.5" y="11" width="19" height="15" rx="1.6" fill="#2f3438"/>
+    <rect x="10" y="16" width="12" height="6" rx="1" fill="#ff8a3a"/><path d="M10 19h12" stroke="#ffd08a" stroke-width="1"/>
+    <path d="M8.5 26v2.6M23.5 26v2.6"/>
+    <path d="M8.6 11c0-2.3 1.7-3.8 3.9-3.8s3.9 1.5 3.9 3.8z" fill="#7d8b92"/><path d="M16.2 8.8l2.2-1.5"/>`),
+  // A made bed: its frame, a mattress, a red blanket and a pillow.
+  bed: icon(`<path d="M3.5 12v15.5M28.5 17v10.5" stroke-width="1.8"/>
+    <rect x="3.5" y="19.5" width="25" height="4.6" fill="#5a3d2a"/>
+    <rect x="4.6" y="15.6" width="22.8" height="4.2" rx="1" fill="#d6cdb9"/>
+    <path d="M12.4 15.6h15v4.2h-15z" fill="#7a3b35"/>
+    <rect x="5.4" y="12.6" width="6.2" height="3.6" rx="1.6" fill="#ece5d4"/>`),
+  // A braided rag rug, ring on ring.
+  rug: icon(`<ellipse cx="16" cy="17" rx="13" ry="8" fill="#6b2f2a"/>
+    <ellipse cx="16" cy="17" rx="9.6" ry="5.6" fill="#b08a58" stroke="none"/>
+    <ellipse cx="16" cy="17" rx="6.2" ry="3.5" fill="#3d4e5c" stroke="none"/>
+    <ellipse cx="16" cy="17" rx="2.6" ry="1.4" fill="#c2a36a" stroke="none"/>`),
+  // An oil lamp lit: a brass foot, a glass chimney and its flame.
+  lamp: icon(`${halo(16, 14, 11, '#ffcf6a')}
+    <path d="M10.5 27h11l-1.8-4.6h-7.4z" fill="#b8943e"/>
+    <path d="M12.8 22.4c-1.9-1.5-2.7-3.5-2.7-5.7 0-3.5 2.5-6.2 5.9-6.2s5.9 2.7 5.9 6.2c0 2.2-.8 4.2-2.7 5.7z" fill="#f7e6b0"/>
+    <path d="M16 13.2c1.3 1.4 1.8 2.8 1.8 3.9 0 1.2-.8 2.1-1.8 2.1s-1.8-.9-1.8-2.1c0-1.1.5-2.5 1.8-3.9z" fill="#ffb347" stroke="none"/>
+    <path d="M13.6 5.5h4.8v5h-4.8z" fill="#b8943e"/>`),
+  // A drying rack, its rails hung with a shirt and a sock.
+  rack: icon(`<g stroke-width="3.6"><path d="M6.5 28L11.5 5.5M25.5 28l-5-22.5M8.8 18.5h14.4M10.4 11.5h11.2"/></g>
+    <g stroke="#8a6a44" stroke-width="1.8"><path d="M6.5 28L11.5 5.5M25.5 28l-5-22.5M8.8 18.5h14.4M10.4 11.5h11.2"/></g>
+    <path d="M11.8 11.5l3.4 1.4 3.4-1.4 2.4 2.8-1.4 1.2v4.2h-8.8v-4.2l-1.4-1.2z" fill="#3d6a8a"/>
+    <path d="M20.2 18.5v5.2l2.6 1 .8-1.6-1.4-.8v-3.8z" fill="#c9c2b0"/>`),
+  // A shelf of odd treasures: a warm pebble, a glass bead and a feather up top, a shard-lined cap and a shard below.
+  shelf: icon(`<rect x="3.5" y="10" width="25" height="2.6" fill="#5a3d2a"/><rect x="3.5" y="20.4" width="25" height="2.6" fill="#5a3d2a"/>
+    <path d="M6 12.6v15M26 12.6v15"/>
+    <ellipse cx="9.2" cy="8.2" rx="3.2" ry="1.8" fill="#2c2623"/><circle cx="15.6" cy="7.4" r="2.3" fill="#7ff3e6"/>
+    <path d="M19.5 9.6c.6-3.2 3.2-5.6 7.2-5.9-.6 3.5-3.1 5.9-7.2 5.9z" fill="#a9a6a0"/>
+    <path d="M8.2 20.4c0-3.1 2.1-5.2 4.8-5.2s4.8 2.1 4.8 5.2z" fill="#9a6cf0"/><path d="M21.6 20.4l1.8-5.6 1.8 5.6z" fill="#c9adff"/>`),
+};
+
 /** A paper map, folded in three, with a road and a pond on it: every map a tool charts, and the map button in the bag. */
 export const MAP_ICON = icon(`<path d="M4 8l8-2.5 8 2.5 8-2.5v19L20 27l-8-2.5L4 27z" fill="#d8c9a3"/>
   <path d="M12 5.5v19M20 8v19" stroke="#8a7650"/>
@@ -300,11 +339,15 @@ export const NO_OUTFIT_ICON = icon(`<path d="M16 12.6v-1.7c0-1 .6-1.5 1.5-2 .9-.
 /** The drawing on each tool's button in the bag's header, by the icon its item names (TOOL_ICONS: every one is drawn). */
 export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON, radio: RADIO_ICON };
 
-/** The drawing for an item: its own, or its slot's in its color for gear, a tool's by its icon (a paper map for one that charts), or a sack. */
+/**
+ * The drawing for an item: its own, or its slot's in its color for gear, a tool's by its icon (a paper map
+ * for one that charts), furniture's by the place it goes into, or a sack.
+ */
 export function iconFor(def: ItemDef): string {
   if (ICONS[def.id]) return ICONS[def.id]!;
   if (def.kind === 'tool') return (def.icon && TOOL_DRAWINGS[def.icon]) || (def.chart ? MAP_ICON : SACK);
   if (def.kind === 'gear' && def.slot) return GEAR[def.slot](def.color ?? '#a58a5f');
+  if (def.kind === 'furniture' && def.furnishes && FURNITURE[def.furnishes]) return FURNITURE[def.furnishes];
   return SACK;
 }
 

@@ -12,7 +12,8 @@
  * - something clinging to your back at night (a hitchhiker), until you reach light or a roof,
  * - a storm (sky.ts): wind and lightning, and being wet in its wind chills you more,
  * - a flash discharging where you stand: a spark (electricity) or a fire flash (heat).
- * Far out (FAR_STEPS or more from home), a pathfinder's whole drain is gentler (feats.ts).
+ * Far out (FAR_STEPS or more from home), a pathfinder's whole drain is gentler (feats.ts), and anywhere
+ * out here, cozy from your own cabin's fire, so is everyone's (comfort.ts).
  *
  * The server owns the numbers; the client only shows them (and counts between updates using `rate`).
  * Tuning targets: standing at the woods' edge in the rain, dry and light, empties a full bar in about
@@ -115,6 +116,8 @@ export interface Conditions {
   resist?: Partial<Resist>;
   /** How hard the whole drain is FAR_STEPS or more from home (the pathfinder's ranks, feats.ts); nearer home it is as ever. Default 1. */
   farDrain?: number;
+  /** How hard the whole drain is anywhere out here (cozy after your own fire: comfort.ts, COZY_DRAIN). Default 1. */
+  drain?: number;
 }
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -141,6 +144,7 @@ export function energyRate(map: TileMap, x: number, y: number, weather: Weather,
     k *= 1 + ((c.surgeDrain ?? SURGE_DRAIN) - 1) * (1 - shield);
   }
   if (far >= FAR_STEPS) k *= c.farDrain ?? 1;
+  k *= c.drain ?? 1;
   return -DRAIN_PER_SECOND * Math.max(1, map.data.depth) * (1 + far / DRAIN_GROWTH_STEPS) * k;
 }
 

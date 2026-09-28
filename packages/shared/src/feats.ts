@@ -39,11 +39,13 @@ export interface Mods {
   marks: number;
   /** Energy back each time you crush a glowcap to paint a mark. */
   markEnergy: number;
+  /** How hard the whole drain is out in the wilds (cozy, comfort.ts: you tire slower after warming at your own fire). */
+  drain: number;
 }
 
-export const NO_MODS: Readonly<Mods> = { wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0, marks: 1, markEnergy: 0 };
+export const NO_MODS: Readonly<Mods> = { wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0, marks: 1, markEnergy: 0, drain: 1 };
 /** Every value in Mods; the chances among them add up as separate tries, the amounts add up, the rest multiply. */
-export const MODS: readonly (keyof Mods)[] = ['wetting', 'load', 'hitch', 'warmth', 'wear', 'farDrain', 'double', 'marks', 'markEnergy'];
+export const MODS: readonly (keyof Mods)[] = ['wetting', 'load', 'hitch', 'warmth', 'wear', 'farDrain', 'double', 'marks', 'markEnergy', 'drain'];
 export const CHANCES: readonly (keyof Mods)[] = ['double'];
 export const AMOUNTS: readonly (keyof Mods)[] = ['markEnergy'];
 
@@ -175,7 +177,7 @@ function put(out: Mods, k: keyof Mods, v: number): void {
   else out[k] = CHANCES.includes(k) ? 1 - (1 - out[k]) * (1 - Math.min(1, Math.max(0, v))) : out[k] * v;
 }
 
-/** Every rank reached and every charm carried, in one set of Mods. */
+/** Every rank reached and every charm carried (and anything else that changes them the same way: being cozy), in one set of Mods. */
 export function modsOf(stats: Stats, charms: ReadonlyArray<Partial<Mods>> = []): Mods {
   const out: Mods = { ...NO_MODS };
   for (const f of FEATS) {

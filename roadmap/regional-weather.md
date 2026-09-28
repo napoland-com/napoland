@@ -2,7 +2,7 @@
 id: regional-weather
 title: Weather per region, hand warmers and rad tablets
 status: done
-order: 480
+order: 520
 area: gameplay
 depends: [hazards-anomalies]
 ---

@@ -1,7 +1,7 @@
 {
   "id": "stonebrook",
   "name": "Stonebrook",
-  "version": 11,
+  "version": 12,
   "kind": "town",
   "depth": 0,
   "width": 44,
@@ -102,7 +102,7 @@
   "exits": [
     {"x":29,"y":0,"w":2,"h":1,"to":"near-woods","tx":31,"ty":78,"dir":"up"},
     {"x":11,"y":43,"w":2,"h":1,"to":"south-road","tx":35,"ty":1,"dir":"down"},
-    {"x":8,"y":20,"w":1,"h":1,"to":"stonebrook-home","tx":4,"ty":5,"dir":"up"},
+    {"x":8,"y":20,"w":1,"h":1,"to":"residents-lane","tx":2,"ty":23,"dir":"up"},
     {"x":15,"y":20,"w":1,"h":1,"to":"stonebrook-empty-house","tx":4,"ty":5,"dir":"up"},
     {"x":8,"y":31,"w":1,"h":1,"to":"stonebrook-lodge","tx":5,"ty":6,"dir":"up"},
     {"x":5,"y":15,"w":1,"h":1,"to":"stonebrook-okada-house","tx":4,"ty":4,"dir":"up"},

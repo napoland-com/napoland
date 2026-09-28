@@ -20,6 +20,12 @@
  *   last told it;
  * - a crate for whoever comes next (A, facing it) opens a panel like the chest's: take one thing out
  *   (it asks nothing, and thanks whoever left it) and leave one (it asks first), once each a visit;
+ * - in your own cabin, what stands in each place for furniture (comfort.ts) reads with A: spoiled until
+ *   you make it at the workbench, which sets it there at once; standing by your own fire makes you cozy,
+ *   which the status panel counts down once you leave it;
+ * - on your street (the server says whose each lot is and who is home: their window is lit), A at a
+ *   neighbor's door knocks, and the box says whether they are home; their door is never walked into. A at
+ *   your own door offers, friend by friend, to move your cabin next to theirs, where their street has room;
  * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
  *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
  *   said in the text box anywhere else, and come in a letter when you walk in at home;
@@ -36,14 +42,14 @@
  * - the weather is your region's: the server says it as you arrive (welcome, zone) and when it turns.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook,
-  energyAfter, findPath, fireTakes, firstBanner, flashHits, inSurge, isKeepsake, journal, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines,
-  notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank, type CacheItemView, type FirstView,
-  type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter,
+  emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf,
+  nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
+  type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type CallKind, type ChatTo, type ConditionsView, type EffectView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView, type TradeEnd,
-  type TradeView, type Weather,
+  type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView,
+  type StreetView, type TradeEnd, type TradeView, type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -52,10 +58,12 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, LEFT_ONE, MARKED, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, buyQuestion, didText, didWho, feedQuestion, fullFire, haveTool, leaveQuestion, makeQuestion,
-  mendQuestion, noMerit, noShard, nothingToBurn, openQuestion, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MOVES, NO_ROOM, RESIDENT, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, buyQuestion,
+  cabinWho, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn,
+  openQuestion, placedAlready, sentence, shortOf, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
+import { trophiesIn } from './view/cabin';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
 import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
@@ -83,10 +91,14 @@ interface Mover {
  * the story (`story`): talking to one, or reading one, may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
+  /** A place for furniture in your cabin (comfort.ts): which one, read as what stands there now. */
+  what?: Comfort;
+  /** A door on your street: whose lot it is, by number (StreetView.lots). */
+  lot?: number;
   /** A note someone left (notes.ts): what it shows depends on the time, so its lines are read out when you read it. */
   note?: MapNote;
 };
@@ -124,6 +136,8 @@ const ANSWER_WAIT_MS = 2500;
 const JUST_NOW_MS = 1000;
 /** Piles show whose they are while you are this close (tiles, center to center). */
 export const PILE_TAG_TILES = 3.5;
+/** A cabin's name plate shows whose it is while you are this close to the tile in front of its door: its neighbors' show as you pass between them. */
+export const PLATE_TAG_TILES = 3.5;
 /** Float colors: something gained, a gentle no, nothing there, something eerie. */
 const GAIN = '#ffe3a1';
 const NO = '#ffae98';
@@ -154,6 +168,8 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
     if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
+    // Furniture in your cabin reads from any side of it; the rug is walked over, not faced.
+    if (o.kind === 'comfort' && o.what !== 'rug') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: '', lines: [], kind: 'comfort', what: o.what }));
     return [];
   });
 }
@@ -196,6 +212,8 @@ export type News =
   | { kind: 'first'; text: string }
   /** A parcel came into your chest; the welcome parcel also names the outfits signing in gave you (their ids). */
   | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] }
+  /** You stood by your own fire long enough: cozy, for this many minutes once you leave it (comfort.ts). */
+  | { kind: 'cozy'; minutes: number }
   /** Your lodestone tugs (lodestone.ts): a shard lies near. It never says where. */
   | { kind: 'tug' };
 
@@ -212,7 +230,7 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move']);
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
 const WARDROBE = new Set<RefusedAction>(['outfit', 'pattern', 'badge']);
 
@@ -272,6 +290,26 @@ export class Game {
   conditions: ConditionsView = { today: [], week: null, next: null };
   /** Your tools (item ids), in the order you got them: as the welcome said, then whole again whenever you get one. Replaced, never changed in place. */
   tools: string[] = [];
+  /**
+   * The furniture you made for your cabin (comfort.ts), as its room last told it (item ids): told only in
+   * there, so the workbench and the room know what stands in its places. `furnitureChanges` counts changes.
+   */
+  furniture: string[] = [];
+  furnitureChanges = 0;
+  /**
+   * Your street, while you are on it (the welcome or zone said): whose each lot is and whether they are
+   * home, and which lot is yours; null anywhere else. `streetChanges` counts changes, for the lit windows.
+   */
+  street: StreetView | null = null;
+  streetChanges = 0;
+  /** The doors of the street's lots, lot by lot (lotDoors); none off it. */
+  private lotDoor: Array<{ x: number; y: number }> = [];
+  /**
+   * You keep your name off your door and your window dark to your street (the setting beside friend and
+   * trade requests), as the server last said: in the welcome, and whenever you change it. It counts in
+   * socialChanges, as the friends panel shows it.
+   */
+  doorOff = false;
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The id of the chapter of the story you are in, as the server said ('' until its welcome). */
@@ -404,8 +442,8 @@ export class Game {
   private thanking: { id: string; name: string } | null = null;
   /** The server's wall clock at our `now` (the welcome says it): the UTC day turns by it. */
   private wall = { now: 0, ms: 0 };
-  /** A letter from home (thanks while you were away), until the text box is free to show it. */
-  private letter: string[] | null = null;
+  /** Letters from home (who thanked you while you were away, the one about your street), in the order they came, each until the text box is free to show it. */
+  private letters: string[][] = [];
   /** Whom you last asked to trade: a refusal names them (the trade is the server's to make). */
   private tradeWith: PersonView | null = null;
   /** You called off the trade with this player: what the server says of it until it has heard you is old news. */
@@ -438,11 +476,38 @@ export class Game {
     return { value: energyAfter(e.view, Math.max(0, now - e.at) / 1000), max: e.view.max, rate: e.view.rate };
   }
 
-  /** Your body right now: wetness counted forward at its rate. */
+  /**
+   * Your body right now: wetness counted forward at its rate; time by your own fire counted up, and cozy
+   * counted down, but for while it holds in full by the fire (comfort.ts).
+   */
   bodyNow(now: number): BodyView {
     const b = this.body.view;
     if (!this.online) return b;
-    return { ...b, wet: Math.min(1, Math.max(0, b.wet + (b.wetRate * Math.max(0, now - this.body.at)) / 1000)) };
+    const dt = Math.max(0, now - this.body.at) / 1000, held = (b.fireside ?? 0) >= COZY_AFTER_S;
+    const cozy = b.cozy === undefined ? undefined : held ? b.cozy : b.cozy - dt;
+    return {
+      ...b, wet: Math.min(1, Math.max(0, b.wet + b.wetRate * dt)),
+      cozy: cozy !== undefined && cozy > 0 ? cozy : undefined, fireside: b.fireside === undefined ? undefined : b.fireside + dt,
+    };
+  }
+
+  /** Where you are now says whether you are on your street, and how it stands. */
+  private setStreet(street: StreetView | undefined) {
+    this.street = street ? { mine: street.mine, lots: [...street.lots] } : null;
+    this.lotDoor = street ? lotDoors(this.current.data) : [];
+    this.streetChanges++;
+  }
+
+  /** What stands in your cabin now, as its room told it. */
+  private setFurniture(furniture: readonly string[]) {
+    if (furniture.join() === this.furniture.join()) return;
+    this.furniture = [...furniture];
+    this.furnitureChanges++;
+  }
+
+  /** The charms and anomalous gear your stash holds, one of each: what stands on the trophy shelf. */
+  trophies() {
+    return trophiesIn(this.stash ?? [], id => this.items.get(id));
   }
 
   /** The effects working on you right now (a hand warmer), counted down from the server's last report; none offline. */
@@ -515,6 +580,9 @@ export class Game {
         this.guest = msg.guest === true;
         this.stepMs = msg.stepMs;
         this.enter(map, msg.players, msg.finds, msg.drops, someoneElse);
+        this.setStreet(msg.street);
+        this.doorOff = msg.doorOff === true;
+        this.socialChanges++;
         this.scene(msg, now);
         this.weather = msg.weather;
         this.bag = msg.bag;
@@ -533,6 +601,7 @@ export class Game {
         this.tools = msg.tools;
         this.chapter = msg.story.chapter;
         this.storyChanges++;
+        if (msg.furniture) this.setFurniture(msg.furniture);
         this.wall = { now, ms: msg.serverTime };
         this.thankedDay = utcDay(msg.serverTime);
         this.thankedToday = new Set(msg.thanked ?? []);
@@ -549,11 +618,13 @@ export class Game {
         if (!map) { this.disconnected(now); break; }
         const old = this.me;
         this.enter(map, msg.players, msg.finds, msg.drops);
+        this.setStreet(msg.street);
         this.scene(msg, now);
         // The weather over the new map: its region's own rain (a room, the map outside its door).
         this.weather = msg.weather;
         this.stats = msg.stats;
         this.statsChanges++;
+        if (msg.furniture) this.setFurniture(msg.furniture);
         this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
         // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
         const me = this.me ?? (old ? { ...old } : undefined);
@@ -563,16 +634,46 @@ export class Game {
         }
         break;
       }
-      case 'energy':
+      case 'energy': {
+        // Cozy just now (it was not, as last told): the news says for how long. Worn off away from your fire: a word over your head.
+        const was = this.body.view.cozy ?? 0, is = msg.body.cozy ?? 0;
+        if (!was && is > 0) this.news.push({ kind: 'cozy', minutes: Math.round(is / 60) });
+        else if (was > 0 && !is && msg.body.fireside === undefined) this.murmur('The warmth of home wears off');
         this.lastEnergy = { view: msg.energy, at: now };
         this.body = { view: msg.body, at: now };
         break;
+      }
       case 'weather':
         if (msg.weather === 'aurora' && this.weather !== 'aurora') this.news.push({ kind: 'aurora' });
         this.weather = msg.weather;
         break;
       case 'fire':
         this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now, fed: msg.fire.fed ?? [] });
+        break;
+      case 'lot': {
+        // Someone moved in or away, came home or left it: their window lights or goes dark.
+        const s = this.street;
+        if (s && msg.lot >= 0 && msg.lot < s.lots.length) {
+          s.lots[msg.lot] = msg.view;
+          this.streetChanges++;
+        }
+        break;
+      }
+      case 'door':
+        this.inform(cabinWho(msg.lot), doorText(msg.lot));
+        break;
+      case 'doorOff':
+        this.doorOff = msg.off;
+        this.socialChanges++;
+        break;
+      case 'streetLetter':
+        this.letters.push(streetLetterLines(msg.doorOff));
+        break;
+      case 'doorstep':
+        this.offerMoves(msg.moves);
+        break;
+      case 'knocked':
+        this.inform('Door', knockedText(msg.name));
         break;
       case 'mark':
         this.marks.set(msg.mark.id, msg.mark);
@@ -756,7 +857,7 @@ export class Game {
       }
       case 'letter': {
         const lines = letterLines(msg.thanks, id => this.maps.find(id), this.items);
-        if (lines.length) this.letter = lines;
+        if (lines.length) this.letters.push(lines);
         break;
       }
       case 'progress':
@@ -847,6 +948,9 @@ export class Game {
       }
       case 'tools':
         this.tools = msg.tools;
+        break;
+      case 'furniture':
+        this.setFurniture(msg.furniture);
         break;
       case 'got': {
         this.picking = null;
@@ -1087,7 +1191,44 @@ export class Game {
       this.send({ t: 'cache', x: t.x, y: t.y });
       return;
     }
+    if (t.kind === 'door' && t.lot !== undefined) return this.atDoor(t.lot, t.x, t.y);
+    if (t.kind === 'comfort' && t.what) {
+      // What stands there: spoiled, and where to make it again, or what you made.
+      const def = furnitureFor(t.what, this.items.byId.values());
+      const said = comfortLines(t.what, def, !!def && this.furniture.includes(def.id), this.trophies());
+      this.openDialog({ ...t, who: said.who, lines: said.lines, kind: 'talk' });
+      return;
+    }
     return this.offer(t.x, t.y);
+  }
+
+  /**
+   * A at a door on your street: your own offers to move your cabin next to a friend (the server says whose
+   * street has a lot free); a neighbor's you knock at, and the box says whether they are home.
+   */
+  private atDoor(lot: number, x: number, y: number) {
+    const s = this.street;
+    if (!s || !this.online) return;
+    if (lot === s.mine) return this.send({ t: 'knock', x, y });
+    const owner = s.lots[lot];
+    if (!owner) return this.inform(cabinWho(null), NOBODY_LIVES);
+    this.act(cabinWho(owner), KNOCKING, { t: 'knock', x, y });
+  }
+
+  /** The setting beside friend and trade requests: keep your name off your door and your window dark (`off`), or show both. The server says back how it stands. */
+  setDoorOff(off: boolean) {
+    if (this.online) this.send({ t: 'doorOff', off });
+  }
+
+  /** At your own door: each friend whose street has a lot free, asked about in turn (NO asks about the next); none, and the box says how it works. */
+  private offerMoves(moves: readonly PersonView[], i = 0) {
+    const f = moves[i];
+    if (!f) {
+      if (i === 0) this.inform(YOUR_CABIN, NO_MOVES);
+      return;
+    }
+    const text = moveQuestion(f.name);
+    this.ask({ who: YOUR_CABIN, text, yes: () => this.act(YOUR_CABIN, text, { t: 'move', to: f.id }), no: () => this.offerMoves(moves, i + 1) });
   }
 
   /** Put bag slot `slot` (or everything, left out) into the open chest. */
@@ -1416,6 +1557,7 @@ export class Game {
     if (!b || !this.online || !r) return;
     const made = this.items.get(r.make);
     if (made.kind === 'tool' && this.tools.includes(r.make)) return this.inform('Workbench', haveTool(made));
+    if (made.kind === 'furniture' && this.furniture.includes(r.make)) return this.inform('Workbench', placedAlready(made));
     const short = shortOf(r.needs, b.stash);
     if (short.length) return this.inform('Workbench', stashShort(short, this.items, { make: this.items.get(r.make) }));
     const text = makeQuestion(r, this.items);
@@ -1633,7 +1775,9 @@ export class Game {
     }
     // People and signs are tall: a tap on the head lands on the tile behind them.
     const talker = this.talkerAt(x, y) ?? this.talkerAt(x, y + 1);
-    if (talker) {
+    // Your own door is walked into, as any house's; a neighbor's is walked up to, and knocked at.
+    if (talker?.kind === 'door' && talker.lot === this.street?.mine) ({ x, y } = talker);
+    else if (talker) {
       this.goal = { talk: talker };
       this.path = findPath(this.map, from.x, from.y, talker.x, talker.y, true);
       const end = this.path.at(-1) ?? from;
@@ -1647,7 +1791,20 @@ export class Game {
   }
 
   private talkerAt(x: number, y: number): Talker | undefined {
-    return this.talkers.find(t => t.x === x && t.y === y);
+    return this.talkers.find(t => t.x === x && t.y === y) ?? this.doorAt(x, y);
+  }
+
+  /** A lot's door on your street, to press A at. */
+  private doorAt(x: number, y: number): Talker | undefined {
+    const s = this.street, lot = this.lotDoor.findIndex(d => d.x === x && d.y === y);
+    if (!s || lot < 0) return undefined;
+    return { x, y, who: lot === s.mine ? YOUR_CABIN : cabinWho(s.lots[lot] ?? null), lines: [], kind: 'door', lot };
+  }
+
+  /** A neighbor's door: knocked at, never walked into (the server keeps you out as well). */
+  private barred(x: number, y: number): boolean {
+    const lot = this.lotDoor.findIndex(d => d.x === x && d.y === y);
+    return lot >= 0 && lot !== this.street?.mine;
   }
 
   /** Asks the server for what lies on tile x,y. One pick at a time: the answer is on its way. */
@@ -1824,9 +1981,9 @@ export class Game {
     const day = utcDay(this.wall.ms + (now - this.wall.now));
     if (day !== this.thankedDay) { this.thankedDay = day; this.thankedToday.clear(); }
     const free = this.online && !covered && !this.held && !this.question && !this.note && !this.dialog;
-    if (free && this.letter) {
-      this.openDialog({ x: 0, y: 0, who: 'Letter', lines: this.letter, kind: 'talk' });
-      this.letter = null;
+    const letter = free && this.letters.shift();
+    if (letter) {
+      this.openDialog({ x: 0, y: 0, who: 'Letter', lines: letter, kind: 'talk' });
       return;
     }
     const me = this.online ? this.me : undefined, blocked = new Set((this.friends?.blocked ?? []).map(p => p.id));
@@ -1887,6 +2044,21 @@ export class Game {
   /** The chapters of the story you reached, first to latest: what the journal keeps. */
   reached(): Chapter[] {
     return journal(this.story, this.chapter);
+  }
+
+  /** The name plates near you on your street, over the doors of cabins someone lives in: whose each one is (a resident's, kept to themselves). */
+  platesNear(): Array<{ lot: number; name: string; x: number; y: number }> {
+    const me = this.me, s = this.street;
+    if (!me || !s) return [];
+    return this.lotDoor.flatMap((d, lot) => {
+      const l = s.lots[lot];
+      return l && Math.hypot(d.x - me.x, d.y + 1 - me.y) <= PLATE_TAG_TILES ? [{ lot, name: l.name ?? RESIDENT, x: d.x, y: d.y }] : [];
+    });
+  }
+
+  /** The lots on your street whose owner is home: their windows are lit. */
+  litLots(): Set<number> {
+    return new Set((this.street?.lots ?? []).flatMap((l, i) => (l?.home ? [i] : [])));
   }
 
   /** The field notes were looked at: the pages opened since are no longer new. */
@@ -2051,7 +2223,7 @@ export class Game {
     if (!dir) return;
     if (this.pending.length >= MAX_UNCONFIRMED) return; // wait for the server to catch up
     const to = stepTarget(me.tx, me.ty, dir);
-    if (!this.map.walkable(to.x, to.y)) {
+    if (!this.map.walkable(to.x, to.y) || this.barred(to.x, to.y)) {
       if (me.dir !== dir) { me.dir = dir; this.send({ t: 'face', dir }); }
       this.path = [];
       return;
