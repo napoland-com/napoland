@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, STEP_MS, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, findTiles, weatherAt,
+  DAY_S, conditionsAt, seeded, ENERGY_MAX, FEATS, FLASH_BURST_S, FLASH_GLOW_S, REFILL_PER_SECOND, STEP_MS, SURGE_DRAIN, TileMap, WET_SECONDS, energyRate, findTiles, hidden, weatherAt,
   type ConditionDef, type ConditionsData, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather,
 } from '@napoland/shared';
 import { loadMaps } from '../src/content';
@@ -19,7 +19,7 @@ import { EMBERS, FIRE_LOW_S, FIRE_MAX_S } from '../src/fires';
 import type { MarkRecord, PlayerRecord } from '../src/storage';
 import {
   HITCH_STEPS, MARKS_PER_PLAYER, MARK_LIFETIME_MS, SKULKER_CATCH, SKULKER_CHASE_MS, SKULKER_STEP_MS, STONE_NEED, STONE_SHARD_S, TRAIL_STEPS, WATCHER_HUNT, WATCHER_HUNT_LIVE, WATCHER_STEP_MS, WATCHER_TOUCH, World, colorFor, faces,
-  type Outgoing, type WorldOptions,
+  pathStep, type Outgoing, type WorldOptions,
 } from '../src/world';
 import { fixtureMaps, houseData, townData } from './fixtures';
 
@@ -34,6 +34,11 @@ function fieldData(h = 12, more: Partial<MapData> = {}): MapData {
     objects: [],
     ...more,
   };
+}
+
+/** The map with tall grass on the tiles `at`. */
+function tallAt(d: MapData, at: Array<[number, number]>): MapData {
+  return { ...d, tiles: d.tiles.map((r, y) => [...r].map((c, x) => (at.some(([tx, ty]) => tx === x && ty === y) ? 'h' : c)).join('')) };
 }
 
 /** The fixture town, with the Old Stone at 3,3 and a notice board at 0,4. */
@@ -367,6 +372,38 @@ describe('watchers', () => {
     expect(lit).toContainEqual({ t: 'creatureGone', id: 1 });
   });
 
+  it('never come for someone crouched in tall grass, however long their back is turned; out of it, they come', () => {
+    const w = world(tallAt(data(), [[3, 6], [4, 6]]), 'overcast', {}, rec('a', 'field', 4, 6, 'down'));
+    w.tick(0);
+    expect(onMap(w.drain(), 'field')).toContainEqual({ t: 'creature', creature: { id: 1, kind: 'watcher', x: 1, y: 1, dir: 'down' } });
+    for (let t = 1; t < 20; t++) w.tick(t * WATCHER_STEP_MS);
+    expect(of(onMap(w.drain(), 'field'), 'creature')).toEqual([]);
+    // 5,6 is grass: a is out in the open again, back still turned.
+    w.step('a', 'right', 1, 20 * WATCHER_STEP_MS);
+    w.tick(21 * WATCHER_STEP_MS);
+    expect(of(onMap(w.drain(), 'field'), 'creature')).toHaveLength(1);
+  });
+
+  it('never step into tall grass: they go round a band of it by its gap, and find no way where it closes the way', () => {
+    // Tall grass across row 4 but for its right end, 8,4. The watcher wakes at 1,1, above it; a stands below it.
+    const d = tallAt(data(), [1, 2, 3, 4, 5, 6, 7].map((x): [number, number] => [x, 4])), map = new TileMap(d);
+    const w = world(d, 'overcast', {}, rec('a', 'field', 4, 6, 'down', { bag: [{ item: 'rock', count: 1 }] }));
+    const seen: Array<{ x: number; y: number }> = [];
+    let touched = false;
+    for (let t = 0; t < 60 && !touched; t++) {
+      w.tick(t * WATCHER_STEP_MS);
+      const out = w.drain();
+      seen.push(...of(onMap(out, 'field'), 'creature').map(m => m.creature));
+      touched = of(to(out, 'a'), 'touched').length > 0;
+    }
+    expect(touched).toBe(true);
+    expect(seen).toContainEqual(expect.objectContaining({ x: 8, y: 4 }));
+    expect(seen.filter(c => hidden(map, c.x, c.y))).toEqual([]);
+    const closed = new TileMap(tallAt(d, [[8, 4]]));
+    expect(pathStep(closed, 1, 1, 4, 6, (x, y) => closed.creatureMayStand(x, y))).toBeNull();
+    expect(pathStep(map, 1, 1, 4, 6, (x, y) => map.creatureMayStand(x, y))).not.toBeNull();
+  });
+
   it('look where you face: anything on that side of you', () => {
     expect(faces(5, 5, 'up', 9, 4)).toBe(true);
     expect(faces(5, 5, 'up', 5, 5)).toBe(false);
@@ -552,6 +589,7 @@ describe('skulkers', () => {
   it.each([
     ['a street light', 13, { objects: [{ kind: 'lamp', x: 4, y: 14 }] as MapObject[] }],
     ['a burning fire', 13, { objects: [{ kind: 'fireplace', x: 4, y: 14 }] as MapObject[] }],
+    ['tall grass', 13, { tiles: fieldData(40).tiles.map((r, y) => (y === 13 ? 'thhhhhhhht' : r)) }],
     ['the end of its range', 36, {}],
   ])('give up when you reach %s, and never follow you there', (_, stop, more) => {
     const d = data(40, more), map = new TileMap(d);
@@ -562,7 +600,33 @@ describe('skulkers', () => {
     const seen = creatures(out);
     expect(seen[0]).toMatchObject({ chasing: 'a' });
     expect(seen.find(c => !c.chasing)).toBeDefined();
-    for (const c of seen) expect(map.lit(c.x, c.y) || map.warm(c.x, c.y) || map.homeSteps(c.x, c.y) < 8).toBe(false);
+    // Never in the light, by a fire, in tall grass or on an exit, and never out of its range.
+    for (const c of seen) expect(!map.creatureMayStand(c.x, c.y) || map.homeSteps(c.x, c.y) < 8).toBe(false);
+  });
+
+  it('never notice someone in tall grass, standing near their ferns or walking by', () => {
+    const d = data(40, { tiles: fieldData(40).tiles.map((r, y) => (y === 6 || y === 9 || y === 10 ? 'thhhhhhhht' : r)) });
+    // Standing 3 away would be seen, and walking 6 away heard, were it not for the grass.
+    expect(creatures(run(night(rec('a', 'field', 4, 6), d), 50, 3000))).toEqual([]);
+    const w = night(rec('a', 'field', 3, 9), d);
+    expect(creatures(run(w, 50, 3000, t => (t === 800 ? 'right' : t === 1000 ? 'down' : undefined)))).toEqual([]);
+    expect(w.get('a')).toMatchObject({ x: 4, y: 10 });
+  });
+
+  it('give up the moment their prey crouches in tall grass, and go back to their lair', () => {
+    const d = data(40, { tiles: fieldData(40).tiles.map((r, y) => (y === 12 ? 'thhhhhhhht' : r)) });
+    const w = night(rec('a', 'field', 3, 9), d);
+    // Heard at 800, then down into the grass: 4,12 at 1400, and still there.
+    const out = run(w, 50, 8000, noticed(() => w.get('a')!.y < 12));
+    expect(w.get('a')).toMatchObject({ x: 4, y: 12 });
+    expect(of(to(out, 'a'), 'touched')).toEqual([]);
+    const seen = creatures(out), quit = seen.findIndex(c => !c.chasing);
+    expect(seen[0]).toMatchObject({ chasing: 'a' });
+    expect(quit).toBeGreaterThan(0);
+    // It gave up within a step of its own after a reached the grass, then turned back uphill, to 4,3.
+    expect(quit).toBeLessThanOrEqual(3);
+    expect(seen.slice(quit + 1).every(c => c.dir === 'up')).toBe(true);
+    expect(seen.at(-1)).toMatchObject({ x: 4, y: 3 });
   });
 
   it(`give up after ${SKULKER_CHASE_MS / 1000} seconds of chasing, and go back to its lair`, () => {
@@ -598,6 +662,29 @@ describe('skulkers', () => {
     w.use('a', 0, 950);
     expect(onMap(w.drain(), 'field')).toContainEqual({ t: 'creatureGone', id: 1 });
     expect(creatures(run(w, 1000, 20_000))).toEqual([]);
+  });
+});
+
+describe('tall grass', () => {
+  it('hides you from creatures only: you tire and get wet in it as anywhere, a hitchhiker still clings, a flash still finds you', () => {
+    // Deep enough for a hitchhiker: tall grass up the column x = 3, a in it and b on the grass as far from home.
+    const h = HITCH_STEPS + 4;
+    const d = tallAt(fieldData(h, { flashes: { every: 30, steps: [3, 999] } }), Array.from({ length: h - 2 }, (_, k): [number, number] => [3, k + 1]));
+    const w = world(d, 'rain', {}, rec('a', 'field', 3, 1), rec('b', 'field', 5, 1));
+    for (let t = 0; t <= 20_000; t += 1000) w.tick(t);
+    const a = w.get('a')!, b = w.get('b')!;
+    expect(a.energy).toBeLessThan(ENERGY_MAX);
+    expect(a.energy).toBeCloseTo(b.energy, 6);
+    expect(a.wet).toBeGreaterThan(0);
+    expect(a.wet).toBeCloseTo(b.wet!, 6);
+    w.drain();
+    w.setWeather('night', 21_000);
+    w.tick(22_000);
+    expect(of(to(w.drain(), 'a'), 'hitch')).toEqual([{ t: 'hitch', on: true }]);
+    // The first flash starts near whoever is out there: with these dice, a, in the grass.
+    w.tick(31_000);
+    const [flash] = of(onMap(w.drain(), 'field'), 'flash');
+    expect(Math.max(Math.abs(flash!.flash.x - 3), Math.abs(flash!.flash.y - 1))).toBeLessThanOrEqual(2);
   });
 });
 

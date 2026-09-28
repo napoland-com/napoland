@@ -17,7 +17,9 @@
  * nobody on the map looks their way, and one that reaches you takes energy and something you carry.
  * Skulkers lie in the deep ferns at night and in storms: one that hears or sees you chases you, a
  * little slower than you walk, and one that catches you costs energy and a bag slot, dropped where
- * you stand. A flare keeps them all off and shakes off a hitchhiker. Anyone can paint arrows on the ground with a
+ * you stand. Tall grass hides you from them all (shared hidden()): no creature steps into it or notices
+ * anyone in it, and a chase ends there; nothing else out there cares. A flare keeps them all off and
+ * shakes off a hitchhiker. Anyone can paint arrows on the ground with a
  * glowcap; they last a day. The Old Stone in town wakes when enough shards are fed to it, and while
  * awake it calms every surge. Strange objects found deep in turn into something when looked at in
  * town. Feats, earned by what you do out there, make it a little easier for good (feats.ts).
@@ -71,6 +73,7 @@ import {
   flashHits,
   findTiles,
   gearEnergy,
+  hidden,
   halfOf,
   emptyStash,
   itemIndex,
@@ -1687,9 +1690,9 @@ export class World {
 
   // ---------- watchers ----------
 
-  /** Where a watcher may stand: open ground out of the light, away from fires and exits. */
+  /** Where a watcher may stand: what the map allows any creature (open ground out of the light, away from fires and exits, never in tall grass). */
   private watcherMayStand(map: TileMap, x: number, y: number): boolean {
-    return map.walkable(x, y) && !map.exitAt(x, y) && !map.lit(x, y) && !map.warm(x, y);
+    return map.creatureMayStand(x, y);
   }
 
   /**
@@ -1718,7 +1721,7 @@ export class World {
         // Anyone who faces it holds it still, prey or not: a friend can keep watch.
         if (here.some(p => manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_SEE && faces(p.rec.x, p.rec.y, p.rec.dir, w.x, w.y))) continue;
         const prey = here
-          .filter(p => p.rec.energy > 0 && this.exposed(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
+          .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
           .sort((a, b) => manhattan(a.rec.x, a.rec.y, w.x, w.y) - manhattan(b.rec.x, b.rec.y, w.x, w.y))[0];
         if (!prey) continue;
         const next = pathStep(map, w.x, w.y, prey.rec.x, prey.rec.y, (x, y) => this.watcherMayStand(map, x, y) && !this.nearFlare(mapId, x, y, now) && !this.creatureAt(mapId, x, y));
@@ -1733,11 +1736,16 @@ export class World {
     }
   }
 
-  /** Out in the open: not by a burning fire, not in a street light, not near a flare. */
+  /** Out in the open: not by a burning fire, not in a street light, not near a flare. A flash still finds you in tall grass. */
   private exposed(p: Online, now: number): boolean {
     const { x, y } = p.rec;
     if (p.map.lit(x, y) || this.nearFlare(p.map.data.id, x, y, now)) return false;
     return !(p.map.warm(x, y) && this.fires.warmth(p.map, x, y, now) > 0);
+  }
+
+  /** Whom creatures notice and go after: someone out in the open, and not hidden in tall grass. */
+  private noticeable(p: Online, now: number): boolean {
+    return this.exposed(p, now) && !hidden(p.map, p.rec.x, p.rec.y);
   }
 
   private wake(w: Watcher, here: Online[], now: number): void {
@@ -1801,8 +1809,8 @@ export class World {
   /**
    * Each skulker that may step: out of its time it sinks into the ferns; awake, it lies still in its
    * lair until it hears someone walking or sees someone standing near, out in the open; then it chases
-   * them until it catches them or gives up (the time is over, they reached light or a fire, or its
-   * range ends), and goes back to its lair.
+   * them until it catches them or gives up (the time is over, they reached light, a fire or tall grass,
+   * or its range ends), and goes back to its lair.
    */
   private walkSkulkers(now: number): void {
     for (const [mapId, list] of this.skulkers) {
@@ -1827,13 +1835,13 @@ export class World {
         }
         const may = (x: number, y: number) => this.skulkerMayStand(map, s.rule, x, y) && !this.nearFlare(mapId, x, y, now) && !this.creatureAt(mapId, x, y);
         let prey = s.chasing === undefined ? undefined : here.find(p => p.rec.id === s.chasing);
-        if (s.chasing !== undefined && (!prey || prey.rec.energy <= 0 || now >= s.chaseUntil || !this.exposed(prey, now))) {
+        if (s.chasing !== undefined && (!prey || prey.rec.energy <= 0 || now >= s.chaseUntil || !this.noticeable(prey, now))) {
           this.giveUp(s, now);
           prey = undefined;
         }
         if (s.chasing === undefined && now >= s.calmUntil) {
           prey = here
-            .filter(p => p.rec.energy > 0 && this.exposed(p, now) && manhattan(p.rec.x, p.rec.y, s.x, s.y) <= (now - p.readyAt < SKULKER_HEAR_MS ? SKULKER_HEAR : SKULKER_SEE))
+            .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && manhattan(p.rec.x, p.rec.y, s.x, s.y) <= (now - p.readyAt < SKULKER_HEAR_MS ? SKULKER_HEAR : SKULKER_SEE))
             .sort((a, b) => manhattan(a.rec.x, a.rec.y, s.x, s.y) - manhattan(b.rec.x, b.rec.y, s.x, s.y))[0];
         }
         if (prey) {

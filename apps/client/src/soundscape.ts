@@ -15,7 +15,7 @@ const SKULKER_HEARD = 8;
 /** A flash crackles and pops this close to you. */
 const FLASH_HEARD = 6;
 
-export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water';
+export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water' | 'swish';
 export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'skulker' | 'shimmer';
 export type Shot = { kind: 'step'; surface: Surface } | { kind: 'thunder' | 'crackle' | 'pop' | 'bell' | 'rise' | 'cry' | 'dawn' };
 
@@ -56,6 +56,8 @@ export function stepSurface(kind: TileKind | undefined): Surface {
     case 'road': return 'road';
     case 'mud': return 'mud';
     case 'water': return 'water';
+    // Wading through tall grass: the blades brush past your legs.
+    case 'tallgrass': return 'swish';
     case 'floor': case 'wall': return 'floor';
     default: return 'soft';
   }

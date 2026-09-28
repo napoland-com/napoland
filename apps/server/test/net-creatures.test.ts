@@ -21,8 +21,13 @@ function gladeData(): MapData {
   };
 }
 
+/** The same glade with tall grass on two of the three tiles below the ferns: 1,2 and 2,2. */
+function tallGladeData(): MapData {
+  return { ...gladeData(), id: 'tall-glade', name: 'Tall glade', tiles: ['ttttt', 'tffft', 'thhgt', 'tgggt', 'tgggt', 'ttgtt'] };
+}
+
 describe('skulkers', () => {
-  const maps = [new TileMap(townData()), new TileMap(houseData()), new TileMap(woodsData()), new TileMap(gladeData())];
+  const maps = [new TileMap(townData()), new TileMap(houseData()), new TileMap(woodsData()), new TileMap(gladeData()), new TileMap(tallGladeData())];
   const { ctx, enter } = setup({ weather: 'night', maps, items: itemsData() });
 
   it('are in the welcome, chase whoever stands near, and make them drop a bag slot as their pile', async () => {
@@ -41,5 +46,16 @@ describe('skulkers', () => {
     // It is theirs to pick up again.
     a.c.send({ t: 'pick', x: 2, y: 3 });
     expect(await a.c.next('got')).toEqual({ t: 'got', items: [{ item: 'nail', count: 3 }], from: 'drop' });
+  });
+
+  it('let whoever crouches in tall grass be, and go after them once they step out of it', async () => {
+    await waitFor(() => ctx.server.world.scene('tall-glade', 0).creatures.length > 0, 'the skulker to wake');
+    // Right below the ferns, in the grass: close enough to be seen, were it not for it.
+    const a = await enter({ map: 'tall-glade', x: 2, y: 2 });
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    expect((await a.c.settle()).filter(m => m.t === 'creature' && m.creature.chasing !== undefined)).toEqual([]);
+    // One step down, onto plain grass: it comes, round the grass by 3,2.
+    a.c.send({ t: 'step', dir: 'down', seq: 1 });
+    expect(await a.c.next('creature', m => m.creature.chasing === a.id)).toMatchObject({ creature: { kind: 'skulker' } });
   });
 });
