@@ -161,6 +161,17 @@ describe('pieces: wear, mending and quirks', () => {
     expect(out.energy.rate).toBe(Math.round(energyRate(woods, 3, 5, 'overcast', { resist: { cold: 0, wind: 0 } }) * 1000) / 1000);
   });
 
+  it('wear 5% more slowly for each level they are upgraded, and mend for the same at any level, keeping it', () => {
+    const w = pieces(rec('a', 'woods', 3, 5, { energy: 100, gear: COAT, worn: { shirt: { cond: 1, level: 4 } } }));
+    // 60 s out: a sturdy coat lasts 100 s, and 120 s at +4.
+    w.tick(60_000);
+    expect(w.get('a')!.worn!.shirt).toEqual({ cond: expect.closeTo(0.5, 5), level: 4 });
+    const home = pieces(rec('b', 'house', 1, 2, { gear: COAT, worn: { shirt: { cond: 0.3, level: 8 } }, stash: { items: { cloth: 2 }, out: {} } }));
+    home.mend('b', 1, 1, 'shirt', 1000);
+    expect(to(home.drain(), 'b').at(-1)).toEqual({ t: 'did', did: { kind: 'mended', item: 'coat', level: 8 } });
+    expect(home.get('b')).toMatchObject({ worn: { shirt: { cond: 1, level: 8 } }, stash: { items: {} } });
+  });
+
   it('are mended at the workbench from the stash, whole again', () => {
     const w = pieces(rec('a', 'house', 1, 2, { gear: COAT, worn: { shirt: { cond: 0.3 } }, stash: { items: { cloth: 3 }, out: {} } }));
     w.mend('a', 1, 1, 'shirt', 1000);

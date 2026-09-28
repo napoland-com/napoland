@@ -215,6 +215,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
   -webkit-mask: radial-gradient(closest-side, transparent 84%, #000 86%); mask: radial-gradient(closest-side, transparent 84%, #000 86%); }
 .slot .ring[data-fading] { background: conic-gradient(#b48cff calc(var(--left) * 360deg), rgba(255, 255, 255, .08) 0); }
 .slot .n { position: absolute; right: 8%; bottom: 5%; font-size: calc(var(--u) * 1.1); font-weight: 700; line-height: 1; color: #f1ece0; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; font-variant-numeric: tabular-nums; }
+/* A piece's level, in gold at its slot's top left: the bottom holds how much is left, the top right its quirk. */
+.slot .n.up { top: 6%; left: 9%; right: auto; bottom: auto; color: #ffcf5a; }
+.hud .slot .lbl b { font-weight: 700; color: #ffcf5a; }
 /* Under the slots: what the chosen one holds and what can be done with it, or a hint. */
 .sheet .detail { flex: none; min-height: var(--detail-h); display: flex; flex-direction: column; gap: calc(var(--u) * .7); }
 .sheet .hint { margin: 0; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.2); line-height: 1.35; color: #b9b2a2; }
@@ -238,6 +241,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 /* The workbench: a row for each mend and recipe, what it makes, what it needs; a tap opens its card. */
 .bench-sheet .hint, .bench-sheet .recipes { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .recipes { display: grid; gap: calc(var(--u) * .6); }
+.bench-sheet .bench-title { margin: calc(var(--u) * .4) 0 0; font-weight: 600; font-size: calc(var(--u) * 1.1); color: #ffcf5a; }
+.bench-sheet .bench-title:first-child { margin-top: 0; }
 .hud .recipe { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; place-items: center stretch; gap: calc(var(--u) * .7); width: 100%; padding: .5em .6em; border: 0; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; text-align: left; }
 .hud .recipe[data-picked] { background: #1d2430; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
 .recipe .big { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); display: grid; place-items: center; border-radius: 8px; background: #1c222c; }
@@ -289,6 +294,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .detail .stats li[data-kind="energy"] { --dot: #ffcf5a; color: #ffe3a1; }
 .detail .stats li[data-kind="none"] { --dot: #4a5468; color: #b9b2a2; }
 .detail .stats s { color: #8a8474; }
+/* On an upgrade's card: what the next level gives, after what it gives now; and how long it lasts out there. */
+.detail .stats .next { font-weight: 600; color: #ffe3a1; }
+.detail .stats li[data-kind="wear"] { --dot: #cfe9c3; }
 .detail .condition { display: flex; align-items: center; gap: .55em; margin-top: .5em; font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.05); line-height: 1.3; color: #cfe9c3; }
 .detail .condition[data-low="true"] { color: #ffae98; }
 .detail .cbar { position: relative; flex: none; width: calc(var(--u) * 6.5); height: max(5px, calc(var(--u) * .5)); border-radius: 99px; overflow: hidden; background: #1c222c; box-shadow: inset 0 0 0 1px #0c0f15, 0 0 0 1px #3e4658; }

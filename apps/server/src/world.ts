@@ -25,7 +25,8 @@
  * town. Feats, earned rank by rank by what you do out there, make it a little easier for good (feats.ts).
  *
  * Gear is kept piece by piece (gear.ts): what a player wears wears down while they are out in the
- * wilds, protects less and less when nearly worn out, and is mended at the workbench; anomalous
+ * wilds, protects less and less when nearly worn out, and is mended at the workbench, where a piece
+ * worn or in the stash can also be upgraded a level at a time (from +7 by the dice); anomalous
  * pieces have a quirk, which everyone on the map knows (some show in the world). A piece can travel
  * in the bag, one to a slot, and keeps its piece wherever it goes (the bag, a pile, someone else's
  * half of it); it goes on and comes off at the chest, and anywhere from and into the bag. The bag
@@ -84,8 +85,12 @@ import {
   gift,
   mendCost,
   newPiece,
+  nextUpgrade,
   takePiece,
+  upgradable,
+  upgradeChance,
   wearSeconds,
+  UPGRADE_MAX,
   flashHits,
   findTiles,
   gearEnergy,
@@ -154,6 +159,7 @@ import {
   type Mods,
   type ParcelState,
   type ParcelsData,
+  type PieceAt,
   type PlayerView,
   type ProgressView,
   type Recipe,
@@ -484,11 +490,14 @@ const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
 });
-/** A saved piece as the server writes them: a condition from 0 to 1, and a quirk the game knows (or none). */
+/** A saved piece as the server writes them: a condition from 0 to 1, a quirk the game knows (or none), a level up to UPGRADE_MAX (or none). */
 const isPiece = (p: unknown): p is Piece => {
-  const { cond, quirk } = (typeof p === 'object' && p !== null ? p : {}) as Partial<Piece>;
-  return typeof cond === 'number' && cond >= 0 && cond <= 1 && (quirk === undefined || QUIRKS.includes(quirk));
+  const { cond, quirk, level } = (typeof p === 'object' && p !== null ? p : {}) as Partial<Piece>;
+  return typeof cond === 'number' && cond >= 0 && cond <= 1 && (quirk === undefined || QUIRKS.includes(quirk))
+    && (level === undefined || (Number.isInteger(level) && level >= 0 && level <= UPGRADE_MAX));
 };
+/** A saved piece with only what a piece holds: its condition, and its quirk and level when it has them. */
+const cleanPiece = (p: Piece): Piece => ({ cond: p.cond, ...(p.quirk !== undefined ? { quirk: p.quirk } : {}), ...(p.level ? { level: p.level } : {}) });
 /**
  * A bag slot as the server writes them; saved data is checked with this before it is trusted. Its
  * piece is checked apart (World.pieced): a bad piece is replaced, the slot kept.
@@ -525,7 +534,7 @@ const cleanStash = (s: unknown, items: Map<string, ItemDef>): Stash => {
     for (const [id, n] of Object.entries(part)) if (items.has(id) && Number.isInteger(n) && (n as number) > 0) out[k][id] = n as number;
   }
   const pieces = (typeof raw.pieces === 'object' && raw.pieces !== null ? raw.pieces : {}) as Record<string, unknown>;
-  for (const [id, list] of Object.entries(pieces)) if (Array.isArray(list)) (out.pieces ??= {})[id] = list.filter(isPiece).map(p => ({ ...p }));
+  for (const [id, list] of Object.entries(pieces)) if (Array.isArray(list)) (out.pieces ??= {})[id] = list.filter(isPiece).map(cleanPiece);
   return out;
 };
 const manhattan = (ax: number, ay: number, bx: number, by: number) => Math.abs(ax - bx) + Math.abs(ay - by);
@@ -557,9 +566,10 @@ export class World {
   private readonly itemOrder: ItemDef[];
   /** What the workbench makes, by recipe id. */
   private readonly recipes: Map<string, Recipe>;
-  /** How gear wears out, and what mending it costs (content/items.json). */
+  /** How gear wears out, and what mending and upgrading it cost (content/items.json). */
   private readonly wearTimes: ItemsData['wear'];
   private readonly mendCosts: ItemsData['mend'];
+  private readonly upgrades: ItemsData['upgrades'];
   private readonly rng: () => number;
   private readonly epochOffset: number;
   private readonly rules: Rule[] = [];
@@ -658,6 +668,7 @@ export class World {
     this.recipes = new Map((items.recipes ?? []).map(rc => [rc.id, rc]));
     this.wearTimes = items.wear;
     this.mendCosts = items.mend;
+    this.upgrades = items.upgrades;
     this.itemsVersion = items.version;
     this.parcels = items.parcels;
     this.calendar = options.calendar ?? UTC_CALENDAR;
@@ -968,7 +979,7 @@ export class World {
     p.rec.bag = takeFromBag(p.rec.bag, slot, n);
     this.sendBag(p, now);
     this.rerate(p, now);
-    this.did(p, { kind: 'thrown', item: thrown.item, count: n });
+    this.did(p, { kind: 'thrown', item: thrown.item, count: n, ...(thrown.piece?.level ? { level: thrown.piece.level } : {}) });
   }
 
   /**
@@ -1217,12 +1228,7 @@ export class World {
     if (!item || !cost || !piece || piece.cond >= 1) return this.refuse(p, 'mend', 'whole');
     const stash = p.rec.stash ?? emptyStash();
     if (!canMake({ id: 'mend', make: item, needs: cost }, stash.items)) return this.refuse(p, 'mend', 'missing');
-    const items = { ...stash.items };
-    for (const n of cost) {
-      items[n.item] = items[n.item]! - n.count;
-      if (!items[n.item]) delete items[n.item];
-    }
-    p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
+    p.rec.stash = fitPieces(payFrom(stash, cost), this.items, this.rng);
     p.rec.worn = { ...p.rec.worn, [slot]: { ...piece, cond: 1 } };
     this.saveNow.set(id, p.rec);
     // Once for every piece mended, toward the mender's ranks.
@@ -1231,7 +1237,47 @@ export class World {
     this.refresh(p, now);
     this.tell(p, now);
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
-    this.did(p, { kind: 'mended', item });
+    this.did(p, { kind: 'mended', item, ...(piece.level ? { level: piece.level } : {}) });
+  }
+
+  /**
+   * Upgrades a piece the player wears, or keeps in the stash, one level, at the workbench on tile x,y
+   * next to them, paying from their stash (`upgrades`, gear.ts). From +7 it may not take: the dice are
+   * the World's (`rng`), the materials are spent either way, and the piece keeps its level; it never
+   * breaks and never goes down. Nothing else about it changes: its condition, its quirk, what mending it costs.
+   */
+  upgrade(id: string, x: number, y: number, of: PieceAt, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    this.advance(p, now);
+    if (!this.benchNextTo(p, x, y)) return this.refuse(p, 'upgrade', 'too_far');
+    const stash = p.rec.stash ?? emptyStash();
+    const item = of.from === 'worn' ? p.rec.gear?.[of.slot] : of.item;
+    const piece = of.from === 'worn' ? p.rec.worn?.[of.slot] : stash.pieces?.[of.item]?.[of.n];
+    const def = item ? this.items.get(item) : undefined;
+    if (!item || !def || !piece) return this.refuse(p, 'upgrade', 'gone');
+    if (!upgradable(def)) return this.refuse(p, 'upgrade', 'not_upgradable');
+    const level = piece.level ?? 0, step = nextUpgrade(level, this.upgrades);
+    if (!step) return this.refuse(p, 'upgrade', 'top_level');
+    if (!canMake({ id: 'upgrade', make: item, needs: step.needs }, stash.items)) return this.refuse(p, 'upgrade', 'missing');
+    // Rolled only where it can fail: what always works never draws on the dice.
+    const chance = upgradeChance(step), took = chance >= 1 || this.rng() < chance;
+    const paid = payFrom(stash, step.needs);
+    if (took) {
+      const up = { ...piece, level: level + 1 };
+      if (of.from === 'worn') p.rec.worn = { ...p.rec.worn, [of.slot]: up };
+      else paid.pieces = { ...paid.pieces, [of.item]: paid.pieces![of.item]!.map((q, i) => (i === of.n ? up : q)) };
+    }
+    p.rec.stash = fitPieces(paid, this.items, this.rng);
+    this.saveNow.set(id, p.rec);
+    // A piece worn resists more now: its rates and its level (in the body) first, so the bench redraws on them.
+    if (took && of.from === 'worn') {
+      this.refresh(p, now);
+      this.tell(p, now);
+    }
+    this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
+    this.did(p, { kind: 'upgraded', item, level: took ? level + 1 : level, ...(took ? {} : { failed: true as const }) });
   }
 
   /**
@@ -1654,7 +1700,7 @@ export class World {
     const worn = p.rec.worn;
     if (!worn) return;
     for (const slot of SLOTS) {
-      const piece = worn[slot], s = wearSeconds(p.rec.gear?.[slot] ? this.items.get(p.rec.gear[slot]!) : undefined, this.wearTimes);
+      const piece = worn[slot], s = wearSeconds(p.rec.gear?.[slot] ? this.items.get(p.rec.gear[slot]!) : undefined, this.wearTimes, piece?.level);
       if (piece && s && piece.cond > 0) piece.cond = Math.max(0, piece.cond - (dt * p.mods.wear) / s);
     }
   }
@@ -2086,10 +2132,11 @@ export class World {
   private touch(w: Watcher, p: Online, now: number): void {
     this.sendAway(w, now);
     const units = p.rec.bag.flatMap((s, slot) => Array.from({ length: s.count }, () => slot));
-    let lost: string | null = null;
+    let lost: string | null = null, level = 0;
     if (units.length) {
       const slot = units[this.roll(units.length)]!;
       lost = p.rec.bag[slot]!.item;
+      level = p.rec.bag[slot]!.piece?.level ?? 0;
       p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
       p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), lost, 1);
       this.sendBag(p, now);
@@ -2097,7 +2144,7 @@ export class World {
     }
     this.advance(p, now);
     p.rec.energy = Math.max(0, p.rec.energy - WATCHER_TOUCH);
-    this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'watcher', lost } });
+    this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'watcher', lost, ...(level ? { level } : {}) } });
     if (p.rec.energy <= 0) return this.collapse(p, now);
     this.refresh(p, now);
     this.tell(p, now);
@@ -2217,13 +2264,14 @@ export class World {
       this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'skulker', lost: null } });
       return this.collapse(p, now);
     }
-    let lost: string | null = null;
+    let lost: string | null = null, level = 0;
     if (p.rec.bag.length) {
       const slot = this.roll(p.rec.bag.length);
       lost = p.rec.bag[slot]!.item;
+      level = p.rec.bag[slot]!.piece?.level ?? 0;
       this.dropBag(p, now, slot);
     }
-    this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'skulker', lost } });
+    this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'skulker', lost, ...(level ? { level } : {}) } });
     this.refresh(p, now);
     this.tell(p, now);
   }
@@ -2362,8 +2410,7 @@ export class World {
 
   /** A saved piece of `def` if it is one (an anomalous piece has its quirk), with only what a piece holds; else a new one. */
   private pieceOf(def: ItemDef, saved: unknown): Piece {
-    if (!isPiece(saved) || (saved.quirk === undefined && def.tier === 'anomalous')) return newPiece(def, this.rng);
-    return { cond: saved.cond, ...(saved.quirk !== undefined ? { quirk: saved.quirk } : {}) };
+    return isPiece(saved) && (saved.quirk !== undefined || def.tier !== 'anomalous') ? cleanPiece(saved) : newPiece(def, this.rng);
   }
 
   /** Puts `count` new ones of `def` into a bag: gear a piece to a slot, each new (an anomalous one with its quirk). */
@@ -2687,7 +2734,7 @@ export class World {
     this.saveNow.set(p.rec.id, p.rec);
   }
 
-  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'open', reason: Refusal): void {
+  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
   }
 
@@ -2700,6 +2747,16 @@ export class World {
   private toMap(map: string, msg: ServerMsg, except?: string): void {
     this.outbox.push(except === undefined ? { to: '*', map, msg } : { to: '*', map, except, msg });
   }
+}
+
+/** The stash with `needs` paid out of it at the workbench (the stash can pay: canMake). Used up at home, it pays nothing off `out`; its pieces stay as they are. */
+function payFrom(s: Stash, needs: readonly BagSlot[]): Stash {
+  const items = { ...s.items };
+  for (const n of needs) {
+    items[n.item] = (items[n.item] ?? 0) - n.count;
+    if (items[n.item]! <= 0) delete items[n.item];
+  }
+  return { items, out: { ...s.out }, ...(s.pieces ? { pieces: s.pieces } : {}) };
 }
 
 function toSpawn(r: PlayerRecord, map: TileMap): void {

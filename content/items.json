@@ -1,5 +1,5 @@
 {
-  "version": 17,
+  "version": 18,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -115,6 +115,17 @@
     "expedition": [{"item":"cloth","count":4},{"item":"scrap","count":3}],
     "anomalous": [{"item":"scrap","count":2},{"item":"shard","count":1}]
   },
+  "upgrades": [
+    {"needs":[{"item":"scrap","count":2},{"item":"cloth","count":2}]},
+    {"needs":[{"item":"scrap","count":3},{"item":"cloth","count":2},{"item":"wire","count":1}]},
+    {"needs":[{"item":"scrap","count":4},{"item":"cloth","count":3},{"item":"wire","count":2}]},
+    {"needs":[{"item":"scrap","count":4},{"item":"wire","count":2},{"item":"shard","count":1}]},
+    {"needs":[{"item":"scrap","count":5},{"item":"wire","count":3},{"item":"shard","count":2}]},
+    {"needs":[{"item":"scrap","count":6},{"item":"wire","count":4},{"item":"shard","count":3}]},
+    {"needs":[{"item":"shard","count":4},{"item":"strange","count":1}],"chance":0.7},
+    {"needs":[{"item":"shard","count":5},{"item":"strange","count":2}],"chance":0.5},
+    {"needs":[{"item":"shard","count":6},{"item":"strange","count":3}],"chance":0.3}
+  ],
   "quirks": [
     {"id":"footprints","name":"Glowing steps","text":"Out there, your steps glow where you walk for a while. Everyone can follow them."},
     {"id":"flicker","name":"Restless light","text":"Street lights flicker as you pass under them. Everyone sees it."},

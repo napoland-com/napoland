@@ -10,10 +10,15 @@
  * Plain logic with no page in it, so it can be tested: main.ts builds a card from the game
  * (detailView), hud.ts draws it and sends what its buttons do.
  */
-import { WEAR_FADES, bagSlotsOf, mendCost, pieceFactor, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type Piece, type Slot, type Tier, type Worn } from '@napoland/shared';
+import {
+  RESIST_MAX, WEAR_FADES, bagSlotsOf, mendCost, nextUpgrade, pieceFactor, upgradable, upgradeFactor, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type Piece, type PieceAt,
+  type Slot, type Tier, type Worn,
+} from '@napoland/shared';
 import { iconFor } from './icons';
-import { ELEMENT_WORDS, conditionText, countOf, factsOf, slotName, useLabel, type Items } from './items';
+import { ELEMENT_WORDS, conditionText, countOf, factsOf, oddsText, pieceName, slotName, useLabel, type Items } from './items';
 import { holdsText } from './said';
+
+export { pieceName };
 
 /** A second tap on the same thing within this many milliseconds does what its card's button does. */
 export const DOUBLE_TAP_MS = 350;
@@ -60,9 +65,10 @@ export type DetailRef =
   | { from: 'stash'; item: string; n?: number }
   /** What you wear in a slot. */
   | { from: 'worn'; slot: Slot }
-  /** A recipe at the workbench, and the mending of what you wear in a slot. */
+  /** A recipe at the workbench, the mending of what you wear in a slot, and upgrading a piece you wear or keep in the stash. */
   | { from: 'recipe'; id: string }
-  | { from: 'mend'; slot: Slot };
+  | { from: 'mend'; slot: Slot }
+  | { from: 'upgrade'; of: PieceAt };
 
 /** Names what a card is about, for the double tap and to keep it open while the game changes around it. */
 export function refKey(r: DetailRef): string {
@@ -72,6 +78,7 @@ export function refKey(r: DetailRef): string {
     case 'worn': return `worn:${r.slot}`;
     case 'recipe': return `recipe:${r.id}`;
     case 'mend': return `mend:${r.slot}`;
+    case 'upgrade': return r.of.from === 'worn' ? `upgrade:worn:${r.of.slot}` : `upgrade:stash:${r.of.item}:${r.of.n}`;
   }
 }
 
@@ -91,15 +98,18 @@ export type DetailAct =
   /** At the workbench. */
   | { kind: 'make'; recipe: string }
   | { kind: 'mend'; slot: Slot }
+  | { kind: 'upgrade'; of: PieceAt }
   | { kind: 'open'; item: string };
 
 /** Something a piece gives: "Wind 14%" (the element's color), "+5 energy", "Holds 12 things". */
 export interface StatView {
-  kind: Element | 'energy' | 'bag' | 'none';
+  kind: Element | 'energy' | 'bag' | 'none' | 'wear';
   /** What it gives now. */
   text: string;
   /** What it gives when whole ("35%", "+5"), when wear has cut it down. */
   whole?: string;
+  /** What it will give at the next level, on an upgrade's card ("37%"), when that is more. */
+  next?: string;
 }
 
 /** One thing a recipe or a mend takes from the stash, against what the stash holds. */
@@ -153,14 +163,6 @@ export interface DetailState {
   panel?: 'home' | 'bag';
 }
 
-/**
- * A piece's name as the game shows it. Upgrades (roadmap/gear-upgrades.md) put the level after it,
- * "Raincoat +3", everywhere a piece is named.
- */
-export function pieceName(def: ItemDef, level = 0): string {
-  return level > 0 ? `${def.name} +${level}` : def.name;
-}
-
 /** "Sturdy". */
 export function tierName(tier: Tier): string {
   return capital(tier);
@@ -170,17 +172,17 @@ export function tierName(tier: Tier): string {
 const PAIRS: ReadonlySet<Slot> = new Set(['gloves', 'pants', 'shoes']);
 
 /**
- * What a piece resists and the energy it adds, as worn down as it is (a piece below a quarter left
- * protects less, and nothing at all worn out), with what it gives whole beside what wear cut. A bag
- * says first how many things it holds.
+ * What a piece resists and the energy it adds, as worn down and as upgraded as it is (a piece below a
+ * quarter left protects less, and nothing at all worn out; each level adds to what it resists), with
+ * what it gives whole beside what wear cut. A bag says first how many things it holds.
  */
-export function pieceStats(def: ItemDef, cond = 1): StatView[] {
+export function pieceStats(def: ItemDef, cond = 1, level = 0): StatView[] {
   const k = pieceFactor(cond), out: StatView[] = [], resist = Object.entries(def.resist ?? {}) as Array<[Element, number]>;
   if (def.bag) out.push({ kind: 'bag', text: `Holds ${def.bag} things` });
   else if (!resist.length) out.push({ kind: 'none', text: 'Resists nothing' });
   for (const [e, v] of resist) {
-    const now = Math.round(v * k * 100), full = Math.round(v * 100);
-    out.push({ kind: e, text: `${ELEMENT_WORDS[e]} ${now}%`, ...(now < full ? { whole: `${full}%` } : {}) });
+    const whole = resistPct(v, level), now = pct(Math.min(RESIST_MAX, v * upgradeFactor(level)) * k);
+    out.push({ kind: e, text: `${ELEMENT_WORDS[e]} ${now}%`, ...(now < whole ? { whole: `${whole}%` } : {}) });
   }
   if (def.bonus) {
     const now = Math.round(def.bonus * k);
@@ -189,8 +191,37 @@ export function pieceStats(def: ItemDef, cond = 1): StatView[] {
   return out;
 }
 
-/** A stat in plain words: "Wind 14% (35% when mended)". */
+/** A resistance of `v` at `level`, as a whole percent: never past RESIST_MAX, the most that any gear keeps out. */
+function resistPct(v: number, level: number): number {
+  return pct(Math.min(RESIST_MAX, v * upgradeFactor(level)));
+}
+
+/**
+ * A share as a whole percent, rounded the way resistOf rounds (to a thousandth first), so a card and the
+ * status panel say the same: 0.35 × 1.3 is 0.45499999... in floating point, and 46%, not 45%.
+ */
+const pct = (share: number) => Math.round(Math.round(share * 1000) / 10);
+
+/**
+ * What going up a level changes on a piece of `def` at `level`, whole: each thing it resists now and at
+ * the next level ("Wind 35% → 37%"), and how long it lasts out there before it wears out.
+ */
+export function upgradeStats(def: ItemDef, level: number, wear: Items['wear']): StatView[] {
+  const out: StatView[] = [];
+  for (const [e, v] of Object.entries(def.resist ?? {}) as Array<[Element, number]>) {
+    const now = resistPct(v, level), next = resistPct(v, level + 1);
+    out.push({ kind: e, text: `${ELEMENT_WORDS[e]} ${now}%`, ...(next > now ? { next: `${next}%` } : {}) });
+  }
+  const lasts = wearSeconds(def, wear, level), then = wearSeconds(def, wear, level + 1);
+  // To the second first: 5400 × 1.15 is 6209.999... in floating point.
+  const min = (s: number) => Math.round(Math.round(s) / 60);
+  if (lasts && then) out.push({ kind: 'wear', text: `Lasts ${min(lasts)} min`, next: `${min(then)} min` });
+  return out;
+}
+
+/** A stat in plain words: "Wind 14% (35% when mended)", "Wind 35% → 37%". */
 export function statText(s: StatView): string {
+  if (s.next) return `${s.text} → ${s.next}`;
   return s.whole ? `${s.text} (${s.whole} when mended)` : s.text;
 }
 
@@ -210,7 +241,7 @@ export function cardPress(v: DetailView): { does?: DetailAct; close: boolean; sh
   const act = v.act;
   if (!act) return { close: false, shake: false };
   if (act.enabled) return { does: act.does, close: act.does.kind !== 'use', shake: false };
-  const asks = act.does.kind === 'make' || act.does.kind === 'mend';
+  const asks = act.does.kind === 'make' || act.does.kind === 'mend' || act.does.kind === 'upgrade';
   return { ...(asks ? { does: act.does } : {}), close: false, shake: true };
 }
 
@@ -323,14 +354,36 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       short(card, needs);
       return { ...card, act: { label: 'Mend', enabled: needs.every(n => n.have >= n.need), does: { kind: 'mend', slot: ref.slot } } };
     }
+    case 'upgrade': {
+      const at = pieceAt(ref.of, s);
+      if (!at || !upgradable(at.def)) return null;
+      const level = at.piece.level ?? 0, next = nextUpgrade(level, items.upgrades);
+      if (!next) return null;
+      // What the next level changes, whole: the piece's wear shows beside it, and mending costs the same at any level.
+      const card = { ...gearCard(at.def, at.piece, s), stats: upgradeStats(at.def, level, items.wear) }, needs = needViews(next.needs, s);
+      card.costs = { title: `To +${level + 1} it takes`, needs };
+      card.notes.push({ text: next.chance === undefined || next.chance >= 1 ? oddsText(next) : `${oddsText(next)} If it does not take, the materials are gone, and it stays +${level}.`, tone: 'plain' });
+      short(card, needs);
+      return { ...card, act: { label: `Upgrade to +${level + 1}`, enabled: needs.every(n => n.have >= n.need), does: { kind: 'upgrade', of: ref.of } } };
+    }
   }
+}
+
+/** The piece a workbench's upgrade is about: one you wear, or the `n`th of an item in the stash, with what it is. */
+export function pieceAt(of: PieceAt, s: DetailState): { def: ItemDef; piece: Piece } | null {
+  if (of.from === 'worn') {
+    const id = s.gear[of.slot], piece = s.worn[of.slot];
+    return id && piece ? { def: s.items.get(id), piece } : null;
+  }
+  const piece = s.stash.filter(b => b.item === of.item)[of.n]?.piece;
+  return piece ? { def: s.items.get(of.item), piece } : null;
 }
 
 /** A piece of gear (or what a recipe makes: no piece yet, so no wear to show). */
 function gearCard(def: ItemDef, piece: Piece | undefined, s: DetailState): DetailView {
   const wears = wearSeconds(def, s.items.wear) !== undefined, cond = piece?.cond ?? 1;
   return {
-    icon: iconFor(def), name: pieceName(def), text: def.text, stats: pieceStats(def, cond), facts: [], notes: [],
+    icon: iconFor(def), name: pieceName(def, piece?.level), text: def.text, stats: pieceStats(def, cond, piece?.level), facts: [], notes: [],
     ...(def.tier ? { tier: { id: def.tier, name: tierName(def.tier) } } : {}),
     ...(def.slot ? { slot: slotName(def.slot) } : {}),
     ...(piece ? { cond: { share: Math.min(1, Math.max(0, cond)), words: conditionText(cond, wears), low: wears && cond < WEAR_FADES, bar: wears } } : {}),
@@ -347,7 +400,7 @@ function itemCard(def: ItemDef, count: number): DetailView {
 function goesTo(s: DetailState, slot: Slot, where: string): { then?: string } {
   const id = s.gear[slot];
   if (!id) return {};
-  return { then: `your ${lowerFirst(pieceName(s.items.get(id)))} ${PAIRS.has(slot) ? 'go' : 'goes'} into ${where}` };
+  return { then: `your ${lowerFirst(pieceName(s.items.get(id), s.worn[slot]?.level))} ${PAIRS.has(slot) ? 'go' : 'goes'} into ${where}` };
 }
 
 /** A bag slot is free: a piece of gear takes one of its own. */

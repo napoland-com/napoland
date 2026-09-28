@@ -281,6 +281,9 @@ export function attachNet(o: NetOptions): Net {
       case 'mend':
         world.mend(s.id, msg.x, msg.y, msg.slot, now);
         return flush();
+      case 'upgrade':
+        world.upgrade(s.id, msg.x, msg.y, msg.of, now);
+        return flush();
       case 'unequip':
         world.unequip(s.id, msg.x, msg.y, msg.slot, now);
         return flush();

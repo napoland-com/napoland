@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { TileMap, doorOf, findPath, findTiles, hidden, type ItemsData, type MapData, type StoryData } from '@napoland/shared';
+import { TileMap, UPGRADE_MAX, doorOf, findPath, findTiles, hidden, upgradable, upgradeChance, validateItems, type ItemsData, type MapData, type StoryData } from '@napoland/shared';
 
 /** The content as it ships: content/items.json and every map. */
 const content = resolve(import.meta.dirname, '../../content');
@@ -169,5 +169,30 @@ describe('tall grass in the Near Woods (roadmap/richer-places.md)', () => {
     const lairs = map.lairs(map.data.watchers!.steps);
     expect(lairs.length).toBeGreaterThan(200);
     for (const i of lairs) expect(hidden(map, i % W, Math.floor(i / W))).toBe(false);
+  });
+});
+
+describe('gear upgrades (roadmap/gear-upgrades.md)', () => {
+  it('cost what the design sets, level by level: scrap, cloth and wire first, shards from +4, strange objects for the last three, which may not take', () => {
+    const table = items.upgrades!.map(u => [Object.fromEntries(u.needs.map(n => [n.item, n.count])), upgradeChance(u)]);
+    expect(table).toEqual([
+      [{ scrap: 2, cloth: 2 }, 1],
+      [{ scrap: 3, cloth: 2, wire: 1 }, 1],
+      [{ scrap: 4, cloth: 3, wire: 2 }, 1],
+      [{ scrap: 4, wire: 2, shard: 1 }, 1],
+      [{ scrap: 5, wire: 3, shard: 2 }, 1],
+      [{ scrap: 6, wire: 4, shard: 3 }, 1],
+      [{ shard: 4, strange: 1 }, 0.7],
+      [{ shard: 5, strange: 2 }, 0.5],
+      [{ shard: 6, strange: 3 }, 0.3],
+    ]);
+    expect(items.upgrades).toHaveLength(UPGRADE_MAX);
+    expect(validateItems(items, [...maps.values()].map(m => m.data)).filter(p => p.level === 'error')).toEqual([]);
+  });
+
+  it('are for every piece but worn clothes and bags, anomalous gear too', () => {
+    const gear = items.items.filter(i => i.kind === 'gear');
+    expect(gear.filter(upgradable).map(i => i.tier).sort()).toEqual(expect.arrayContaining(['anomalous', 'expedition', 'rugged', 'sturdy']));
+    for (const i of gear) expect(upgradable(i), i.id).toBe(i.tier !== 'worn' && i.slot !== 'bag');
   });
 });
