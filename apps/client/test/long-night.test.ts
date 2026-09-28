@@ -7,12 +7,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TALK_TURN, type BagSlot, type ClientMsg, type ItemsData, type LongNightView, type MapData, type MapObject, type PlayerView } from '@napoland/shared';
+import { boardPanel } from '../src/board';
 import { Game } from '../src/game';
 import { Items } from '../src/items';
 import { Maps } from '../src/maps';
 import { TENDED, waltOnTheLongNight } from '../src/said';
 import { newsBanner } from '../src/status';
-import { FULL, welcome } from './fixtures';
+import { FULL, boardView, welcome } from './fixtures';
 
 const content = (path: string): unknown => JSON.parse(readFileSync(resolve(import.meta.dirname, `../../../content/${path}`), 'utf8'));
 const ITEMS = new Items(content('items.json') as ItemsData);
@@ -64,15 +65,12 @@ describe('the Long Night\'s banners', () => {
 });
 
 describe('the notice board and Walt', () => {
-  it('shows the notice board as the server writes it', () => {
-    const { g } = game(ON, 1080);
-    const lines = [
-      'The Long Night: no rain anywhere. Dawn in about 30 minutes.',
-      'Tonight wire and strange objects grow back twice as fast, and the watchers are restless.',
-      'The lodge\'s fire needs feeding tonight: 18 minutes left. If it lasts until dawn, next week\'s Long Night keeps its bonus.',
-    ];
-    g.handle({ t: 'board', lines }, 2000);
-    expect(g.dialog).toMatchObject({ who: 'Notice board', lines });
+  it('shows the Long Night on the notice board: in its sky, and in the week what it does and how the lodge\'s fire stands', () => {
+    const panel = boardPanel(boardView({ sky: { kind: 'night', night: 'long', dawn: 1800 }, longNight: { on: true, bonus: true, fire: { out: false, left: 18 * 60 } } }), ITEMS.board);
+    expect(panel.sky).toContain('The Long Night · dawn in 30 min');
+    expect(panel.sky).toContain('The Long Night is on');
+    expect(panel.week).toContain('Tonight wire and strange objects grow back twice as fast, and the watchers are restless.');
+    expect(panel.week).toContain('The lodge\'s fire needs feeding tonight: 18 minutes left. If it lasts until dawn, next week\'s Long Night keeps its bonus.');
   });
 
   it('has Walt ask for fuel first on the Long Night, with how long his fire has, and say it when it went out; any other night, what he always says', () => {

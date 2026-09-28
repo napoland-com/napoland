@@ -1,3 +1,4 @@
+export * from './board';
 export * from './caches';
 export * from './calls';
 export * from './chat';

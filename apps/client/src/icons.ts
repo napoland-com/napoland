@@ -430,6 +430,55 @@ export function badgeIcon(id: string): string | undefined {
   return BADGE_ICONS[id];
 }
 
+/** A cloud, grey: the sky over a region, with or without what falls from it. */
+const CLOUD = '<path d="M9.2 21h13.6a5 5 0 0 0 .7-9.95A7 7 0 0 0 10.4 12a4.5 4.5 0 0 0-1.2 9z" fill="#8a96a8"/>';
+
+/**
+ * The notice board's drawings (board.ts): the sky, the clocks of each region, what stands out there and
+ * the town's news, in the look of the rest (flat colors, cream outlines), some of them the badges'.
+ */
+export const BOARD_ICONS = {
+  sun: icon(`${halo(16, 16, 13, '#ffd36a')}<circle cx="16" cy="16" r="5.5" fill="#ffcf5a"/>
+    <path d="M16 4.5v3.2M16 24.3v3.2M4.5 16h3.2M24.3 16h3.2M7.9 7.9l2.2 2.2M21.9 21.9l2.2 2.2M7.9 24.1l2.2-2.2M21.9 10.1l2.2-2.2" stroke-width="1.8"/>`),
+  moon: icon(`${halo(16, 16, 13, '#b9c6ff')}<path d="M19.5 5a11 11 0 1 0 8 16.5A9 9 0 0 1 19.5 5z" fill="#e3e6f5"/>`),
+  aurora: icon(`${halo(16, 14, 13, '#7ff0a8')}<path d="M4 19c4-8 8-10 12-6s8 2 12-6" stroke="#7ff0a8" stroke-width="2.4"/><path d="M4 24c4-6 8-8 12-4s8 2 12-4" stroke="#6ad0ff" stroke-width="1.6"/>
+    <circle cx="9" cy="8" r="1" fill="${CREAM}" stroke="none"/><circle cx="24" cy="21" r="1" fill="${CREAM}" stroke="none"/>`),
+  cloud: icon(CLOUD),
+  rain: icon(`${CLOUD}<path d="M11.5 24l-1.2 3.2M16.5 24l-1.2 3.2M21.5 24l-1.2 3.2" stroke="#8cc8ff" stroke-width="1.8"/>`),
+  snow: BADGE_ICONS.snowflake!,
+  // A surge: a violet wave rolling in.
+  surge: icon(`${halo(16, 16, 13, '#a77dff')}<path d="M3 18c3-6.5 6-6.5 9 0s6 6.5 9 0 5-6.5 8 0" stroke="#c9adff" stroke-width="2.4"/><path d="M6 24c2.5-3 5-3 7.5 0s5 3 7.5 0" stroke="#8a6cd0" stroke-width="1.6"/>`),
+  storm: icon(`<path d="M9.2 17h13.6a5 5 0 0 0 .7-9.95A7 7 0 0 0 10.4 8a4.5 4.5 0 0 0-1.2 9z" fill="#5d6778"/><path d="M17.4 15.5l-3.9 6.3h3.1l-2.2 6 5.9-8h-3.1l2.2-4.3z" fill="#ffcf5a" stroke="none"/>`),
+  flame: BADGE_ICONS.flame!,
+  // The fire lookout: a timber tower, its lamp alight under the roof.
+  lookout: icon(`${halo(16, 11, 7, '#ffcf6a')}<path d="M11.2 28.5l2.4-15h4.8l2.4 15" stroke-width="1.6"/><path d="M12.3 23h7.4M12.9 18.5h6.2" stroke-width="1.3"/>
+    <path d="M10.5 13.5h11V10h-11z" fill="#8a6440"/><path d="M9 10l7-4.5 7 4.5z" fill="#6b4a31"/><circle cx="16" cy="11.8" r="1.2" fill="#ffcf6a" stroke="none"/>`),
+  // A footbridge: its planks between two rails, the creek under it.
+  footbridge: icon(`<path d="M6.5 12.5v8M10.5 12.5v8M14.5 12.5v8M18.5 12.5v8M22.5 12.5v8M26.5 12.5v8" stroke="#a9825a" stroke-width="2.6"/><path d="M3.5 12.5h25M3.5 20.5h25" stroke-width="1.6"/>
+    <path d="M3 26c2.5-1.4 4.5-1.4 7 0s4.5 1.4 7 0 4.5-1.4 7 0 3.5 1 5 0" stroke="#5aa0d8" stroke-width="1.5"/>`),
+  light: BADGE_ICONS.lamp!,
+  // The slab in the ring of stones, glowing.
+  slab: icon(`${halo(16, 18, 12, '#b39bff')}<path d="M4.5 21l4-6h15l4 6-4 3.5h-15z" fill="#8a8f96"/><path d="M11 18.8h10" stroke="#d9ccff" stroke-width="1.5"/>`),
+  stone: BADGE_ICONS['old-stone']!,
+  // Someone back in town.
+  person: icon(`<circle cx="16" cy="10.5" r="4.6" fill="#d9cfb8"/><path d="M7.5 27.5c0-5.2 3.8-8.7 8.5-8.7s8.5 3.5 8.5 8.7z" fill="#8a7a5c"/>`),
+  // Someone down: collapsed out there.
+  down: icon(`<path d="M4.5 23h23" stroke-width="1.4"/><circle cx="8.5" cy="18.3" r="2.9" fill="#d9cfb8"/><path d="M12.2 20h11.6a2.1 2.1 0 0 0 0-4.2H12.2z" fill="#8a7a5c"/>`),
+  // The first to find a secret.
+  star: icon(`<path d="M16 4.5l3.3 7 7.7.9-5.7 5.2 1.5 7.6-6.8-3.8-6.8 3.8 1.5-7.6-5.7-5.2 7.7-.9z" fill="#ffcf5a"/>`),
+  // The town's ledger at the lodge.
+  ledger: icon(`<path d="M7 6h15a3 3 0 0 1 3 3v17.5H10a3 3 0 0 1-3-3z" fill="#8a6440"/><path d="M10 26.5a3 3 0 0 1-3-3 3 3 0 0 1 3-3h15" stroke-width="1.5"/><path d="M11 10.5h9M11 14h6.5" stroke-width="1.3"/>`),
+  // A day's parcel from the town's stores, tied with twine.
+  parcel: icon(`<path d="M5.5 12.5h21v14h-21z" fill="#a9825a"/><path d="M4.5 8.5h23v4h-23z" fill="#c69a64"/><path d="M16 8.5v18" stroke-width="2"/><path d="M16 8.5c-2.5-3.5-6-3.5-6-1.5s3.5 1.5 6 1.5c2.5 0 6 .5 6-1.5s-3.5-2-6 1.5z" stroke-width="1.4"/>`),
+  // The season: a leaf.
+  season: icon(`<path d="M6.5 25.5C6.5 13.5 13.5 7 26 6c-1 12.5-7.5 19.5-19.5 19.5z" fill="#6bab4f"/><path d="M6.5 25.5L19 13" stroke-width="1.5"/>`),
+  // What the woods are like today or this week: a notice pinned up.
+  notice: icon(`<path d="M7 7.5h18v19H7z" fill="#e8dfc8"/><path d="M11 13h10M11 17h10M11 21h6" stroke="#6b5a40" stroke-width="1.5"/><circle cx="16" cy="7.5" r="1.8" fill="#d23c30" stroke="none"/>`),
+  check: icon(`<path d="M7.5 16.5l5.2 5.2L24.5 9.5" stroke="#8fd98a" stroke-width="3"/>`),
+  chevron: icon(`<path d="M10 13l6 6 6-6" stroke-width="2.2"/>`),
+} as const;
+export type BoardIcon = keyof typeof BOARD_ICONS;
+
 /** No badge: an empty name tag. */
 export const NO_BADGE_ICON = icon(`<rect x="4.5" y="11" width="23" height="10" rx="5" stroke-width="1.8"/><path d="M10 16h12" stroke-width="1.4" stroke-dasharray="1.6 2"/>`);
 

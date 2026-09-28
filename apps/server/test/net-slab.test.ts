@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import { SLAB_PAIR_MS, TileMap, type BagSlot, type Dir, type ItemsData, type MapData } from '@napoland/shared';
 import { houseData, townData, woodsData } from './fixtures';
-import { setup, type Client } from './helpers';
+import { boardText, setup, type Client } from './helpers';
 
 const EVERY = 100;
 /** A clock that starts a second into a calm, whenever the test runs: restless 70 s in, the surge 90 s in. */
@@ -143,9 +143,9 @@ describe('the slab in the ring of stones, over the network', () => {
     const reader = await enter({ map: 'town', x: 2, y: 6, dir: 'up' });
     await at(72, reader.c);
     reader.c.send({ t: 'board', x: 2, y: 5 });
-    expect((await reader.c.next('board')).lines).toContain('The slab in the woods is glowing.');
+    expect(boardText(await reader.c.next('board'), items())).toContain('The slab in the woods is glowing.');
     await at(20, reader.c);
     reader.c.send({ t: 'board', x: 2, y: 5 });
-    expect((await reader.c.next('board')).lines.some(l => l.includes('slab'))).toBe(false);
+    expect(boardText(await reader.c.next('board'), items()).some(l => l.includes('slab'))).toBe(false);
   });
 });

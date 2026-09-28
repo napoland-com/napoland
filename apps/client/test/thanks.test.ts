@@ -203,7 +203,7 @@ describe('offering to thank someone who fed a fire', () => {
     // Another fire, another time: lines to read, then gone from its warmth before they are done.
     g = new Game(maps, m => sent.push(m), ITEMS);
     enter([4, 2], { fires: [fire(['bo'])] });
-    g.handle({ t: 'board', lines: ['Rain.'] }, now);
+    g.read('Sign', ['Rain.']);
     run(THANK_AFTER_MS * 2);
     expect(g.question).toBeNull();
     g.pressA();

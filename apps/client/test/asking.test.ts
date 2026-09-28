@@ -181,7 +181,7 @@ describe('what the box says by itself', () => {
     g.pressB();
     expect(g.note?.text).toBe('You throw away 1 resin.');
     g.pressA();
-    g.handle({ t: 'board', lines: ['Rain.'] }, now);
+    g.read('Sign', ['Rain.']);
     g.handle({ t: 'did', did: { kind: 'thrown', item: 'resin', count: 2 } }, now);
     expect(g.note).toBeNull();
     g.pressA();

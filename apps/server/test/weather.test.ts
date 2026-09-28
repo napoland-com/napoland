@@ -12,6 +12,7 @@ import { loadMaps } from '../src/content';
 import type { PlayerRecord } from '../src/storage';
 import { World, colorFor, type Outgoing } from '../src/world';
 import { fixtureMaps, itemsData, woodsData } from './fixtures';
+import { boardText } from './helpers';
 
 const content = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData;
 const { maps } = loadMaps(resolve(import.meta.dirname, '../../../content/maps'), 'stonebrook');
@@ -119,7 +120,7 @@ describe('rain, region by region', () => {
       w.join(rec('r', 'stonebrook', 12, 24, 'up'), 0);
       w.drain();
       w.board('r', 12, 23, 0);
-      return of(to(w.drain(), 'r'), 'board')[0]!.lines.slice(0, 4);
+      return boardText(of(to(w.drain(), 'r'), 'board')[0]!, content).slice(0, 4);
     };
     // The regions nearest town first; the Far Woods, the wettest, rain at dawn and again from 24 minutes.
     expect(board(14)).toEqual([
@@ -131,6 +132,22 @@ describe('rain, region by region', () => {
     ]);
     expect(board(4)).toContain('The Far Woods: rain for about 4 minutes more.');
     expect(board(40)[0]).toBe('Night: no rain anywhere. Dawn in about 8 minutes.');
+  });
+
+  it('puts each fire, lamp and place mended together on the board under the region it is in, a shelter\'s under the one its door opens onto', () => {
+    const w = realWorld(at(14));
+    w.join(rec('r', 'stonebrook', 12, 24, 'up'), 0);
+    w.drain();
+    // Hours after anyone fed them, every fire out there has gone out.
+    w.board('r', 12, 23, 3 * 3_600_000);
+    const { board } = of(to(w.drain(), 'r'), 'board')[0]!, regions = board.regions.map(r => r.id);
+    expect(regions[0]).toBe('near-woods');
+    expect(board.fires.out.length).toBeGreaterThan(1);
+    expect(board.fires.out.filter(f => !regions.includes(f.map))).toEqual([]);
+    expect(board.fires.out).toContainEqual({ name: 'the ranger\'s hut', map: 'near-woods' });
+    expect(board.fires.out).toContainEqual({ name: 'the trapper\'s cabin', map: 'far-woods' });
+    expect(board.works.map(v => [v.id, v.map])).toEqual([['pond-footbridge', 'near-woods'], ['pond-light', 'near-woods']]);
+    expect(board.lamps.map(l => [l.map, l.left])).toEqual([['near-woods', 0]]);
   });
 });
 

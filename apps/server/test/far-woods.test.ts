@@ -12,7 +12,7 @@ import { loadItems, loadMaps, loadStory } from '../src/content';
 import type { PlayerRecord } from '../src/storage';
 import { SKULKER_STEP_MS, WATCHER_STEP_MS, World, colorFor, type Outgoing } from '../src/world';
 import { fixtureMaps } from './fixtures';
-import { setup, waitFor, type Client } from './helpers';
+import { boardText, setup, waitFor, type Client } from './helpers';
 
 /** A field `h` tiles tall (8 wide inside the forest), its way home at (4, h - 1), with one fern tile at 4,3. */
 function fieldData(h: number, more: Partial<MapData> = {}): MapData {
@@ -139,7 +139,7 @@ describe('the Far Woods over WebSockets, as the content ships', () => {
     const board = maps.get('stonebrook')!.data.objects.find(o => o.kind === 'board')!;
     const a = await enter({ map: 'stonebrook', x: board.x, y: board.y + 1, dir: 'up' });
     a.c.send({ t: 'board', x: board.x, y: board.y });
-    const { lines } = await a.c.next('board');
+    const lines = boardText(await a.c.next('board'), items);
     const at = (start: string) => lines.findIndex(l => l.startsWith(start));
     for (const clock of [/next surge|restless|a surge is on/, /next storm|a storm is/]) {
       const nearLine = lines.findIndex(l => l.startsWith('The Near Woods:') && clock.test(l)), farLine = lines.findIndex(l => l.startsWith('The Far Woods:') && clock.test(l));

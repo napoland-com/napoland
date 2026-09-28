@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { TileMap, type ClientMsg, type MapData, type PlayerView } from '@napoland/shared';
+import { boardPanel } from '../src/board';
 import { Game } from '../src/game';
 import { Maps } from '../src/maps';
 import { FROZEN, sketchOf } from '../src/papermap';
@@ -14,7 +15,7 @@ import { drainText, newsBanner, seasonText, statusView } from '../src/status';
 import { soundscape, stepSurface, type Scene } from '../src/soundscape';
 import { GRADES, Ground } from '../src/view/grass';
 import { SNOW, ambience } from '../src/view/lighting';
-import { DRY, FULL, ITEMS, welcome } from './fixtures';
+import { DRY, FULL, ITEMS, boardView, welcome } from './fixtures';
 
 const load = (name: string) => JSON.parse(readFileSync(resolve(import.meta.dirname, `../../../content/maps/${name}.json`), 'utf8')) as MapData;
 const stonebrook = load('stonebrook'), nearWoods = load('near-woods');
@@ -84,11 +85,16 @@ describe('the season the server says', () => {
     expect(newsBanner({ kind: 'season', season: 'autumn', frozen: [] }, 'Stonebrook')).toEqual({ title: 'Autumn', sub: 'More resin out there, and storms twice as often.' });
   });
 
-  it('shows the notice board as the server writes it, the season among the lines', () => {
-    const { g } = game('winter');
-    const lines = ['Night falls in about 18 minutes.', 'The Near Woods: snow for about 10 minutes more.', 'Winter, for about 3 days more: colder out there, and snow instead of rain. Spring comes next.'];
-    g.handle({ t: 'board', lines }, 2000);
-    expect(g.dialog).toMatchObject({ who: 'Notice board', lines });
+  it('says the season on the notice board, in its sky and in the week, and snow for rain in winter', () => {
+    const board = boardView({
+      season: { season: 'winter', left: 3 * 86_400, next: 'spring', frozen: ['the pond in the Near Woods'] },
+      regions: [{ id: 'near-woods', name: 'The Near Woods', rain: { raining: true, left: 600 }, glowing: [] }],
+    });
+    const panel = boardPanel(board, ITEMS.board);
+    expect(panel.sky).toContain('Winter · 3 days left');
+    expect(panel.out).toContain('Snow · 10 min more');
+    expect(panel.out).toContain('The Near Woods: snow for about 10 minutes more.');
+    expect(panel.week).toContain('For about 3 days more: colder out there, and snow instead of rain, and the pond in the Near Woods frozen hard enough to cross. Spring comes next.');
   });
 });
 

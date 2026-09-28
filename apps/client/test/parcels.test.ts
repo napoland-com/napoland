@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ClientMsg, ItemsData, MapData, ParcelView, PlayerView } from '@napoland/shared';
+import { boardPanel } from '../src/board';
 import { cardPress, detailView } from '../src/details';
 import { Game } from '../src/game';
 import { cardHtml } from '../src/hud';
@@ -9,7 +10,7 @@ import { Items } from '../src/items';
 import { Maps } from '../src/maps';
 import { parcelBanner, parcelList, parcelNote, untold } from '../src/parcels';
 import { newsBanner } from '../src/status';
-import { FULL, tinyTown, welcome } from './fixtures';
+import { FULL, boardView, tinyTown, welcome } from './fixtures';
 
 /** What players read comes from the real items and the real calendar, so it is tested with them. */
 const content = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/items.json'), 'utf8')) as ItemsData;
@@ -132,20 +133,16 @@ describe('the game, when a parcel comes and a lockbox is opened', () => {
     expect(sent.filter(m => m.t === 'open')).toEqual([]);
   });
 
-  it('reads the calendar on the notice board page by page, as the server wrote it (net-parcels.test.ts)', () => {
-    const lines = [
-      "Parcels this week, from the town's stores. Mon: 3 resin, 2 cloth. Tue (today): a thermos, 2 scrap. Wed: 2 road flares, 2 cloth. Thu: 3 resin, 2 wire.",
-      'Fri: a thermos, 3 cloth. Sat: 2 scrap, 2 wire, a road flare. Sun: 4 resin, a thermos, and a NAPO lockbox for whoever came back on all seven days.',
-      'Sign in to get the parcels.',
-    ];
-    g.handle({ t: 'board', lines }, now);
-    expect(g.dialog).toMatchObject({ who: 'Notice board', lines });
-    const pages: string[] = [];
-    while (g.dialog) {
-      g.dialog.shown = Infinity;
-      pages.push(g.dialog.lines[g.dialog.i]!);
-      g.advanceDialog();
-    }
-    expect(pages).toEqual(lines);
+  it('shows this week\'s calendar on the notice board a day at a time, today first; to a guest, that signing in brings them (net-parcels.test.ts)', () => {
+    const week = boardPanel(boardView({ parcels: { today: 1 } }), items.board).week;
+    expect(week).toContain('Tuesday (today): a thermos, 2 scrap.');
+    expect(week).toContain('Sunday: 4 resin, a thermos, and a NAPO lockbox for whoever came back on all seven days.');
+    // Only the day picked shows what it holds (hud.ts), today until another is.
+    expect(week.match(/data-dayline="\d">/g)).toEqual(['data-dayline="1">']);
+    expect(week).toContain('Sign in to get the parcels.');
+    const signedIn = boardPanel(boardView({ parcels: { today: 1, days: 0b11, soFar: true } }), items.board).week;
+    expect(signedIn).toContain('You came back Mon, Tue. Play every day this week and Sunday\'s parcel holds a NAPO lockbox.');
+    expect(signedIn).not.toContain('Sign in');
+    expect(signedIn.match(/class="came"/g)).toHaveLength(2);
   });
 });
