@@ -13,7 +13,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DROP_LIFETIME_MS, utcDay } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
-import { forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, playFirstThenSignIn, restartKeepsBagsAndPiles, signInAndClaim } from './helpers';
+import {
+  forgetsGuestsWhoStayedAway, keepsFriendsAndMessages, keepsParcels, keepsToolsAndParcels, parcelsThroughRestarts, playFirstThenSignIn, restartKeepsBagsAndPiles, signInAndClaim,
+} from './helpers';
 
 const url = process.env.DATABASE_URL_TEST;
 const MIGRATIONS = fileURLToPath(new URL('../migrations', import.meta.url));
@@ -58,7 +60,7 @@ describe.skipIf(!url)('PgStorage', () => {
   it('applies each migration once', async () => {
     const all = [
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
-      '011_guests.sql', '012_tools.sql', '015_thanks.sql',
+      '011_guests.sql', '012_tools.sql', '013_parcels.sql', '015_thanks.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -253,6 +255,41 @@ describe.skipIf(!url)('PgStorage', () => {
       old.id, 'stonebrook', 8, 21, 90, '[]', '{"items": {}, "out": {}}', new Date(old.lastSeenAt),
     ]);
     expect((await storage.findByTokenHash(old.tokenHash))!.tools).toEqual(['radio']);
+  });
+
+  it('keeps the daily parcels: whether the welcome came, the day of the last one and the days of its week, never lost to a save without them', async () => {
+    await keepsParcels(storage);
+    // What the columns hold, as the migration made them.
+    const sub = `dev:${randomUUID()}@example.test`;
+    const rec = { ...player('Pg Parcels'), tokenHash: null, authSub: sub, parcels: { welcome: true, day: 20_724, days: 0b1011 } };
+    expect(await storage.create(rec)).toBe(true);
+    const row = await admin.query(`SELECT parcel_welcome, parcel_day, parcel_days FROM ${schema}.players WHERE id = $1`, [rec.id]);
+    expect(row.rows).toEqual([{ parcel_welcome: true, parcel_day: 20_724, parcel_days: 0b1011 }]);
+    expect(await storage.findByAuthSub(sub)).toEqual(rec);
+  });
+
+  it('gives the parcels through restarts of the server, on the database', async () => {
+    const fresh = await freshSchema();
+    const pgStorage = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await pgStorage.init();
+      await parcelsThroughRestarts(pgStorage);
+    } finally {
+      await pgStorage.close();
+    }
+  });
+
+  it('keeps tools and parcels side by side in one row: made with both, saved with both, and a save with neither loses neither', async () => {
+    const { sub, kept } = await keepsToolsAndParcels(storage);
+    const row = await admin.query(`SELECT tools, parcel_welcome, parcel_day, parcel_days FROM ${schema}.players WHERE auth_sub = $1`, [sub]);
+    expect(row.rows).toEqual([{ tools: ['stonebrook-map', 'radio', 'near-woods-map'], parcel_welcome: true, parcel_day: 20_725, parcel_days: 0b11 }]);
+    // The release before parcels saves with the statement it knows (tools, no parcel columns): after a rollback, the parcels stay.
+    await admin.query(
+      `UPDATE ${schema}.players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
+       gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools), last_seen_at = $13 WHERE id = $1`,
+      [kept.id, 'stonebrook', 8, 21, 'down', kept.color, 90, '[]', 0, '{}', 0, '{"items": {}, "out": {}}', new Date(kept.lastSeenAt), null, null, null, null],
+    );
+    expect(await storage.findByAuthSub(sub)).toMatchObject({ tools: kept.tools, parcels: kept.parcels });
   });
 
   it('keeps XP and the stash, with what was taken out of it', async () => {

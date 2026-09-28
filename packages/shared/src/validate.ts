@@ -3,13 +3,14 @@
  * validateMap checks one map on its own; validateWorld checks how the maps fit together.
  */
 import { MODS, modChanges, type Mods } from './feats';
-import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
-import { STARTER_TOOLS, TOOL_ICONS, findTiles, type ItemsData } from './items';
+import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
+import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
 import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
+import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
 import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
-import { STORY_EVENTS, type StoryData } from './story';
+import { MAX_REMARKS, MILESTONES, STORY_EVENTS, type StoryData } from './story';
 
 export interface Problem {
   level: 'error' | 'warning';
@@ -294,7 +295,12 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     for (const [field, v] of [['noun', i.noun], ['plural', i.plural], ['about', i.about]] as const) {
       if (v !== undefined && !(typeof v === 'string' && v.trim())) err(`${name}: ${field}, when given, says something`);
     }
-    if (!['resource', 'consumable', 'charm', 'gear', 'tool'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear or tool`);
+    if (!['resource', 'consumable', 'charm', 'gear', 'tool', 'sealed'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear, tool or sealed`);
+    if (i.kind === 'sealed') {
+      if (!i.holds?.length) err(`${name}: a sealed thing holds something`);
+      if (i.use || i.xp || i.fuel || i.charge || i.reveals) err(`${name}: a sealed thing is only opened, at the chest, and earns no XP`);
+    } else if (i.holds || i.seal !== undefined) err(`${name}: only a sealed thing holds something`);
+    if (i.seal !== undefined && !(typeof i.seal === 'string' && i.seal.trim())) err(`${name}: seal, when given, says something`);
     if (i.kind === 'tool') {
       if (i.stack !== 1) err(`${name}: a tool stacks one to a slot`);
       if (i.use || i.weight || i.xp || i.fuel || i.charge || i.live) err(`${name}: a tool is never used up, weighs nothing and earns no XP`);
@@ -365,6 +371,18 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`mend: each need is a whole number from 1`);
     }
   }
+  if (data.upgrades !== undefined && !Array.isArray(data.upgrades)) err('upgrades: a list, what each level costs, +1 first');
+  else if ((data.upgrades?.length ?? 0) > UPGRADE_MAX) err(`upgrades: at most ${UPGRADE_MAX} levels`);
+  (Array.isArray(data.upgrades) ? data.upgrades : []).forEach((u, i) => {
+    const name = `upgrades: +${i + 1}`;
+    if (!u?.needs?.length) err(`${name} costs nothing`);
+    for (const n of u?.needs ?? []) {
+      if (!ids.has(n.item)) err(`${name} needs ${n.item}, which is not an item`);
+      else if (tools.has(n.item)) err(`${name} needs ${n.item}, a tool: tools are never used up`);
+      if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
+    }
+    if (u?.chance !== undefined && !(typeof u.chance === 'number' && u.chance > 0 && u.chance <= 1)) err(`${name}: chance is a share above 0, at most 1`);
+  });
   for (const q of data.quirks ?? []) {
     if (!QUIRKS.includes(q.id)) err(`quirk ${q.id}: the game knows ${QUIRKS.join(', ')}`);
     if (!q.name?.trim() || !q.text?.trim()) err(`quirk ${q.id} needs a name and a text`);
@@ -395,6 +413,39 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     // Looking closely says what it turned out to be and what that is good for: the `about` line.
     const into = data.items.find(d => d.id === r.item);
     if (into && !into.about?.trim()) warn(`item ${JSON.stringify(r.item)}: ${i.id} may turn out to be it, but it has no about line to say what it is good for`);
+  }
+  // What goes into the stash from a lockbox or a parcel: things that lie in a stash (not tools), and never another sealed thing inside a sealed one.
+  const stashable = (id: string, where: string, sealed = false) => {
+    const def = data.items.find(d => d.id === id);
+    if (!def) return err(`${where}: ${id} is not an item`);
+    if (def.kind === 'tool') err(`${where}: ${id} is a tool, which never lies in a stash`);
+    if (sealed && def.kind === 'sealed') err(`${where}: ${id} is sealed too`);
+  };
+  const slotsOf = (list: unknown, where: string, sealed = false) => {
+    if (!Array.isArray(list) || !list.length) return err(`${where}: a list of items and counts, not empty`);
+    for (const s of list as BagSlot[]) {
+      stashable(s?.item, where, sealed);
+      if (!(Number.isInteger(s?.count) && s.count >= 1)) err(`${where}: each count is a whole number from 1`);
+    }
+  };
+  for (const i of data.items) i.holds?.forEach((h, n) => {
+    const where = `item ${JSON.stringify(i.id)}: holding ${n + 1}`;
+    if (!(typeof h.weight === 'number' && h.weight > 0)) err(`${where}: its weight is above 0`);
+    if ((h.items === undefined) === (h.any === undefined)) return err(`${where}: it is some items, or any one of a kind`);
+    if (h.items !== undefined) {
+      slotsOf(h.items, where, true);
+      // Opening one says what was inside and, when it is one thing, what that is good for.
+      const one = h.items.length === 1 ? data.items.find(d => d.id === h.items![0]!.item) : undefined;
+      if (one && !one.about?.trim()) warn(`item ${JSON.stringify(one.id)}: ${i.id} may hold it, but it has no about line to say what it is good for`);
+    } else if (!(['resource', 'consumable', 'charm'] as const).includes(h.any as never)) err(`${where}: any is resource, consumable or charm`);
+    else if (!data.items.some(d => d.kind === h.any)) err(`${where}: any ${h.any}, but there is none`);
+  });
+  const p = data.parcels;
+  if (p) {
+    slotsOf(p.welcome, 'parcels: the welcome parcel');
+    if (!Array.isArray(p.week) || p.week.length !== WEEKDAYS.length) err(`parcels: week is a parcel for each of the ${WEEKDAYS.length} days, Monday first`);
+    else p.week.forEach((day, n) => slotsOf(day, `parcels: ${WEEKDAYS[n]}'s parcel`));
+    if (p.allWeek !== undefined) slotsOf(p.allWeek, 'parcels: allWeek');
   }
   const byId = new Map(maps.map(m => [m.id, m]));
   const conditionIds = validateConditions(data, byId, err);
@@ -476,6 +527,19 @@ export function validateStory(story: StoryData, maps: MapData[], items?: ItemsDa
       else if (typeof line !== 'string' || !line.trim()) err(`${name}: ${who}'s hint says nothing`);
     }
   });
+  // What people say once after something done for the first time: which were said is kept a bit each, in this order.
+  const remarkIds = new Set<string>(), remarks = story.remarks ?? [];
+  if (!Array.isArray(remarks)) err('remarks is a list');
+  else remarks.forEach((r, i) => {
+    const name = `remark ${i + 1} (${JSON.stringify(r?.id)})`;
+    if (!ID.test(r?.id ?? '')) err(`${name}: an id is lowercase words joined by hyphens`);
+    if (remarkIds.has(r.id)) err(`${name} is there twice`);
+    remarkIds.add(r.id);
+    if (!people.has(r.who)) err(`${name}: nobody has the id ${String(r.who)}`);
+    if (!MILESTONES.includes(r.after)) err(`${name}: after is one of ${MILESTONES.join(', ')}`);
+    if (typeof r.line !== 'string' || !r.line.trim()) err(`${name} says nothing`);
+  });
+  if (Array.isArray(remarks) && remarks.length > MAX_REMARKS) err(`there are ${remarks.length} remarks, and which were said is kept for at most ${MAX_REMARKS}`);
   return out;
 }
 

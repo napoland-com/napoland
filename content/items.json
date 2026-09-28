@@ -1,5 +1,5 @@
 {
-  "version": 14,
+  "version": 18,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -10,11 +10,13 @@
     {"id":"live-shard","name":"Live shard","kind":"resource","stack":1,"xp":12,"weight":0.3,"charge":1,"live":{"xp":40,"fresh":240,"fade":5,"into":"shard"},"text":"A shard that broke loose while the woods grew restless, still humming with it. Stash it soon: it is worth much more while it glows, and everyone can see you carry it."},
     {"id":"thermos","name":"Thermos","plural":"thermoses","kind":"consumable","stack":2,"xp":3,"weight":0.6,"text":"Hot coffee someone left by the fire for whoever comes next. Drink it to get some energy back.","about":"Hot coffee: drink one for 30 energy when you run low.","use":{"energy":30}},
     {"id":"flare","name":"Road flare","kind":"consumable","stack":3,"xp":3,"weight":0.3,"text":"A red road flare from a glovebox. Light it and nothing comes near you while it burns, and whatever clings to your back lets go.","about":"Light one and nothing comes near you for 45 seconds, and whatever clings to your back lets go.","use":{"flare":45}},
-    {"id":"strange","name":"Strange object","kind":"resource","stack":1,"xp":15,"weight":0.8,"text":"Something that was not here yesterday. It is too dark out here to tell what it is: look at it in town, in the light.","use":{"identify":true},
+    {"id":"strange","name":"Strange object","kind":"resource","stack":1,"xp":15,"weight":0.8,"text":"Something that was not here yesterday. It is too dark out here to tell what it is: look at it in town, in the light.","about":"Look at it closely in town, in the light, to see what it turns out to be.","use":{"identify":true},
       "reveals":[{"item":"shard","count":2,"weight":4},{"item":"thermos","count":1,"weight":2},{"item":"flare","count":2,"weight":2},{"item":"warm-pebble","count":1,"weight":1},{"item":"hollow-feather","count":1,"weight":1},{"item":"humming-bead","count":1,"weight":1},{"item":"shard-cap","count":1,"weight":1}]},
     {"id":"warm-pebble","name":"Warm pebble","kind":"charm","stack":1,"xp":25,"weight":0.1,"charm":{"wetting":0.6},"text":"A smooth black pebble that never cools. While it is in your bag, rain soaks you much slower.","about":"While it is in your bag, rain soaks you much slower."},
     {"id":"hollow-feather","name":"Hollow feather","kind":"charm","stack":1,"xp":25,"weight":0.05,"charm":{"load":0.75},"text":"A long grey feather, light as nothing. While it is in your bag, what you carry feels lighter.","about":"While it is in your bag, what you carry feels lighter."},
     {"id":"humming-bead","name":"Humming bead","kind":"charm","stack":1,"xp":25,"weight":0.05,"charm":{"hitch":0.4},"text":"A glass bead that hums when something is near. While it is in your bag, what wants to cling to you in the dark thinks twice.","about":"While it is in your bag, what wants to cling to you in the dark thinks twice."},
+    {"id":"lockbox","name":"NAPO lockbox","noun":"NAPO lockbox","plural":"NAPO lockboxes","kind":"sealed","stack":1,"text":"A grey steel box with NAPO stencilled on the lid, sealed since the evacuation. The residents keep one for whoever comes back on every day of a week. Open it at the chest.","seal":"It has been sealed since the evacuation.",
+      "holds":[{"weight":3,"items":[{"item":"shard","count":3}]},{"weight":2,"items":[{"item":"strange","count":1}]},{"weight":2,"any":"charm"},{"weight":3,"items":[{"item":"cloth","count":6},{"item":"wire","count":4}]}]},
     {"id":"stonebrook-map","name":"Map of Stonebrook","kind":"tool","stack":1,"chart":"stonebrook","icon":"map","text":"Stonebrook, drawn by hand by someone who stayed: the lodge, the Old Stone, the pond and the two roads out of town. It never tells you where you are: find the lodge, the Old Stone and the street lights around you, and work it out."},
     {"id":"near-woods-map","name":"Map of the Near Woods","kind":"tool","stack":1,"chart":"near-woods","icon":"map","text":"An old paper map, drawn by hand by someone who walked the woods. It never tells you where you are: find the road, the pond, the poles and the cabins around you, and work it out."},
     {"id":"south-road-map","name":"Map of the South Road","kind":"tool","stack":1,"chart":"south-road","icon":"map","text":"A map of NAPO's old grounds, traced by hand from one of NAPO's own. It never tells you where you are: find the road, the station's fence, the masts and the checkpoint around you, and work it out."},
@@ -36,13 +38,15 @@
     {"id":"insulated-gloves","name":"Insulated gloves","kind":"gear","stack":1,"slot":"gloves","tier":"rugged","color":"#3a3a3a","weight":0.3,"resist":{"electricity":0.35,"cold":0.1},"text":"Lineman’s gloves wrapped in copper-threaded cloth. Electricity stings a third less."},
     {"id":"expedition-pack","name":"Expedition pack","kind":"gear","stack":1,"slot":"bag","tier":"expedition","color":"#8a3a2a","weight":1.6,"bag":16,"bonus":5,"text":"A frame pack for long trips. Sixteen things fit, and it carries so well you have 5 more energy."},
     {"id":"expedition-boots","name":"Expedition boots","kind":"gear","stack":1,"slot":"shoes","tier":"expedition","color":"#5a3a22","weight":1.2,"resist":{"electricity":0.25,"cold":0.15,"wind":0.1},"text":"Heavy boots with rubber soles and wool inside. Good against cold, wet and electricity alike."},
-    {"id":"shard-cap","name":"Shard-lined cap","kind":"gear","stack":1,"xp":40,"slot":"cap","tier":"anomalous","color":"#9a6cf0","weight":0.4,"resist":{"radiation":0.5,"electricity":0.2},"bonus":10,"text":"A cap lined with slivers of glass that hum against your skull. Half the glow of the anomalies never reaches you, and you have 10 more energy.","about":"Stash it at home and put it on at the chest: half the glow of the anomalies never reaches you."}
+    {"id":"shard-cap","name":"Shard-lined cap","kind":"gear","stack":1,"xp":40,"slot":"cap","tier":"anomalous","color":"#9a6cf0","weight":0.4,"resist":{"radiation":0.5,"electricity":0.2},"bonus":10,"text":"A cap lined with slivers of glass that hum against your skull. Half the glow of the anomalies never reaches you, and you have 10 more energy.","about":"Put it on from your bag: half the glow of the anomalies never reaches you."}
   ],
   "finds": [
     {"item":"glowcap","map":"near-woods","on":["mud","ferns"],"steps":[15,50],"count":4,"respawn":[90,240]},
     {"item":"glowcap","map":"near-woods","on":["mud","ferns"],"steps":[51,90],"count":8,"respawn":[90,240]},
     {"item":"resin","map":"near-woods","on":["grass"],"steps":[35,95],"count":6,"respawn":[150,360]},
     {"item":"resin","map":"near-woods","on":["grass"],"steps":[8,34],"count":2,"respawn":[300,600]},
+    {"item":"resin","map":"near-woods","on":["grass"],"steps":[3,40],"count":3,"respawn":[120,300]},
+    {"item":"glowcap","map":"near-woods","on":["mud","ferns"],"steps":[3,40],"count":4,"respawn":[90,200]},
     {"item":"scrap","map":"near-woods","near":{"kinds":["car","barrel","house"],"radius":3},"count":4,"respawn":[480,900]},
     {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"steps":[20,999],"count":3,"respawn":[600,1200]},
     {"item":"wire","map":"near-woods","near":{"kinds":["pole"],"radius":2.5},"count":4,"respawn":[120,300],"when":"aurora"},
@@ -111,6 +115,17 @@
     "expedition": [{"item":"cloth","count":4},{"item":"scrap","count":3}],
     "anomalous": [{"item":"scrap","count":2},{"item":"shard","count":1}]
   },
+  "upgrades": [
+    {"needs":[{"item":"scrap","count":2},{"item":"cloth","count":2}]},
+    {"needs":[{"item":"scrap","count":3},{"item":"cloth","count":2},{"item":"wire","count":1}]},
+    {"needs":[{"item":"scrap","count":4},{"item":"cloth","count":3},{"item":"wire","count":2}]},
+    {"needs":[{"item":"scrap","count":4},{"item":"wire","count":2},{"item":"shard","count":1}]},
+    {"needs":[{"item":"scrap","count":5},{"item":"wire","count":3},{"item":"shard","count":2}]},
+    {"needs":[{"item":"scrap","count":6},{"item":"wire","count":4},{"item":"shard","count":3}]},
+    {"needs":[{"item":"shard","count":4},{"item":"strange","count":1}],"chance":0.7},
+    {"needs":[{"item":"shard","count":5},{"item":"strange","count":2}],"chance":0.5},
+    {"needs":[{"item":"shard","count":6},{"item":"strange","count":3}],"chance":0.3}
+  ],
   "quirks": [
     {"id":"footprints","name":"Glowing steps","text":"Out there, your steps glow where you walk for a while. Everyone can follow them."},
     {"id":"flicker","name":"Restless light","text":"Street lights flicker as you pass under them. Everyone sees it."},
@@ -137,5 +152,18 @@
       {"id":"copper-week","name":"Copper week","text":"Wire by every pole in the Near Woods, all week.","map":"near-woods"},
       {"id":"quiet-woods","name":"Quiet woods","text":"The watchers sleep all week.","map":"near-woods","watchers":{"asleep":true}}
     ]
+  },
+  "parcels": {
+    "welcome": [{"item":"resin","count":5},{"item":"cloth","count":4},{"item":"thermos","count":1},{"item":"flare","count":2}],
+    "week": [
+      [{"item":"resin","count":3},{"item":"cloth","count":2}],
+      [{"item":"thermos","count":1},{"item":"scrap","count":2}],
+      [{"item":"flare","count":2},{"item":"cloth","count":2}],
+      [{"item":"resin","count":3},{"item":"wire","count":2}],
+      [{"item":"thermos","count":1},{"item":"cloth","count":3}],
+      [{"item":"scrap","count":2},{"item":"wire","count":2},{"item":"flare","count":1}],
+      [{"item":"resin","count":4},{"item":"thermos","count":1}]
+    ],
+    "allWeek": [{"item":"lockbox","count":1}]
   }
 }

@@ -287,8 +287,17 @@ export function attachNet(o: NetOptions): Net {
       case 'mend':
         world.mend(s.id, msg.x, msg.y, msg.slot, now);
         return flush();
+      case 'upgrade':
+        world.upgrade(s.id, msg.x, msg.y, msg.of, now);
+        return flush();
       case 'unequip':
         world.unequip(s.id, msg.x, msg.y, msg.slot, now);
+        return flush();
+      case 'wear':
+        world.wear(s.id, msg.slot, now);
+        return flush();
+      case 'doff':
+        world.doff(s.id, msg.slot, now);
         return flush();
       case 'bench':
         world.bench(s.id, msg.x, msg.y);
@@ -297,7 +306,10 @@ export function attachNet(o: NetOptions): Net {
         world.craft(s.id, msg.x, msg.y, msg.recipe, now);
         return flush();
       case 'take':
-        world.take(s.id, msg.x, msg.y, msg.item, msg.count, now);
+        world.take(s.id, msg.x, msg.y, msg.item, msg.count, now, msg.n);
+        return flush();
+      case 'open':
+        world.open(s.id, msg.x, msg.y, msg.item, now);
         return flush();
       case 'talk':
         world.talk(s.id, msg.x, msg.y, now);
@@ -534,6 +546,7 @@ export function attachNet(o: NetOptions): Net {
       weather: world.weather,
       energy: joined.energy,
       bag: joined.bag,
+      stash: joined.stash,
       fires: joined.fires,
       marks: joined.marks,
       creatures: joined.creatures,

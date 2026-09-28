@@ -243,10 +243,11 @@ describe('World: turning, joining and leaving', () => {
       players: [joined.player],
       // A town without a fireplace: energy holds.
       energy: { value: ENERGY_MAX, max: ENERGY_MAX, rate: 0 },
-      // No items in this world: nothing lies around, and the bag is empty.
+      // No items in this world: nothing lies around, and the bag and the stash are empty.
       finds: [],
       drops: [],
       bag: [],
+      stash: [],
       // No fires, marks, creatures or flares here, and a town never surges. Rain soaks you in town too.
       fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null,
       body: { wet: 0, wetRate: Math.round((1 / WET_SECONDS) * 1e5) / 1e5, load: 0, hitched: false, worn: {} },

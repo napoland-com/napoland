@@ -10,7 +10,12 @@
  * story is the id of the latest chapter they reached, and it has to keep meaning the same. So an id
  * the story does not have comes from a newer one (a release rolled back): that player is past every
  * chapter written here, and keeps their id for when the newer story is back.
+ *
+ * People also say something once about what you did for the first time (`remarks`: Mira after your
+ * first collapse). Which remarks were said is kept in the player's counts (`told`, a bit for each in
+ * the order of `remarks`), so remarks too are only ever added, at the end.
  */
+import type { Stats } from './feats';
 
 /** One thing a player did that can move the story on. */
 export type StoryEvent =
@@ -42,10 +47,27 @@ export interface Chapter {
   hints?: Record<string, string>;
 }
 
+/** Something done for the first time that a person may say something about: a count in the player's stats (feats.ts) reaching 1. */
+export type Milestone = 'collapsed' | 'surged' | 'made';
+export const MILESTONES: readonly Milestone[] = ['collapsed', 'surged', 'made'];
+/** Remarks fit in `told`, a bit each. */
+export const MAX_REMARKS = 30;
+
+/** What a person (an npc's id) says once, the first time you talk to them after the first time you did something. */
+export interface Remark {
+  /** Lowercase words joined by hyphens. */
+  id: string;
+  who: string;
+  after: Milestone;
+  line: string;
+}
+
 export interface StoryData {
   /** Bump when the story changes; a client with another version reloads. */
   version: number;
   chapters: Chapter[];
+  /** Only ever added, at the end: a player's `told` counts them by their place. */
+  remarks?: Remark[];
 }
 
 /**
@@ -84,14 +106,28 @@ export function journal(story: StoryData, id: string | undefined): Chapter[] {
   return at ? story.chapters.slice(0, story.chapters.indexOf(at) + 1) : [];
 }
 
+/** The remarks a person has for a player now, in order: after something they did for the first time, and not said yet. */
+export function remarksDue(story: StoryData, npc: string, stats: Stats): Remark[] {
+  const told = stats.told ?? 0;
+  return (story.remarks ?? []).filter((r, i) => r.who === npc && (stats[r.after] ?? 0) >= 1 && !(told & (1 << i)));
+}
+
+/** `told` once the player has talked to `npc`: every remark of theirs that was due is said. */
+export function toldAfter(story: StoryData, npc: string, stats: Stats): number {
+  const due = new Set(remarksDue(story, npc, stats));
+  return (story.remarks ?? []).reduce((told, r, i) => (due.has(r) ? told | (1 << i) : told), stats.told ?? 0);
+}
+
 /**
- * What a person says, story included. When talking to them reaches the next chapter, that chapter's
- * hint for them comes after what they always say (they tell you, then point the way); otherwise the
- * hint of the chapter you are in, if they have one, comes first.
+ * What a person says, in one order: the hint of the chapter you are in, if they have one; what they say
+ * once about something you did for the first time (`stats`: remarksDue); then what they always say.
+ * When talking to them reaches the next chapter, that chapter's hint for them comes last instead (they
+ * tell you, then point the way).
  */
-export function storyLines(story: StoryData, id: string | undefined, npc: string, lines: readonly string[]): string[] {
+export function storyLines(story: StoryData, id: string | undefined, npc: string, lines: readonly string[], stats: Stats = {}): string[] {
+  const said = [...remarksDue(story, npc, stats).map(r => r.line), ...lines];
   const reached = reachedBy(story, id, { talk: npc });
-  if (reached) return reached.hints?.[npc] ? [...lines, reached.hints[npc]] : [...lines];
+  if (reached) return reached.hints?.[npc] ? [...said, reached.hints[npc]] : said;
   const hint = chapterOf(story, id)?.hints?.[npc];
-  return hint ? [hint, ...lines] : [...lines];
+  return hint ? [hint, ...said] : said;
 }

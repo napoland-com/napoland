@@ -1,16 +1,24 @@
 /**
- * A tap looks, an action is a second step. In the chest and at the workbench a tap on anything opens
- * its card: what a piece of gear is (tier, what it resists and the energy it adds as worn down as it
- * is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a mend takes, or
- * what something in your bag or stash is. The card's one button does the one thing that can be done
- * with it; so do A and a second tap on the same thing (DoubleTap).
+ * A tap looks, an action is a second step. In the chest, at the workbench and in the bag a tap on
+ * anything opens its card: what a piece of gear is (tier, what it resists and the energy it adds as
+ * worn down as it is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a
+ * mend takes, what a lockbox may hold, or what something in your bag or stash is. The card's button
+ * does the one thing that can be done with it; so do A and a second tap on the same thing (DoubleTap).
+ * A card may offer a second thing beside it (throwing away what you carry, taking a piece out of the
+ * stash), which only its own button does.
  *
  * Plain logic with no page in it, so it can be tested: main.ts builds a card from the game
- * (detailView), hud.ts draws it and sends what its button does.
+ * (detailView), hud.ts draws it and sends what its buttons do.
  */
-import { WEAR_FADES, mendCost, pieceFactor, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type Piece, type Slot, type Tier, type Worn } from '@napoland/shared';
+import {
+  RESIST_MAX, WEAR_FADES, bagSlotsOf, mendCost, nextUpgrade, pieceFactor, upgradable, upgradeFactor, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type Piece, type PieceAt,
+  type Slot, type Tier, type Worn,
+} from '@napoland/shared';
 import { iconFor } from './icons';
-import { ELEMENT_WORDS, conditionText, countOf, factsOf, slotName, type Items } from './items';
+import { ELEMENT_WORDS, conditionText, countOf, factsOf, oddsText, pieceName, slotName, useLabel, type Items } from './items';
+import { holdsText } from './said';
+
+export { pieceName };
 
 /** A second tap on the same thing within this many milliseconds does what its card's button does. */
 export const DOUBLE_TAP_MS = 350;
@@ -49,17 +57,18 @@ export class DoubleTap {
   }
 }
 
-/** What a tap in the chest or at the workbench is on. */
+/** What a tap in the chest, at the workbench or in the bag is on. */
 export type DetailRef =
-  /** A slot of your bag, in the chest (and what it held when tapped). */
+  /** A slot of your bag, in the chest's bag row or in the bag (and what it held when tapped). */
   | { from: 'bag'; slot: number; item: string }
   /** Something in your stash: gear piece by piece (the `n`th of its item, in the stash's order). */
   | { from: 'stash'; item: string; n?: number }
   /** What you wear in a slot. */
   | { from: 'worn'; slot: Slot }
-  /** A recipe at the workbench, and the mending of what you wear in a slot. */
+  /** A recipe at the workbench, the mending of what you wear in a slot, and upgrading a piece you wear or keep in the stash. */
   | { from: 'recipe'; id: string }
-  | { from: 'mend'; slot: Slot };
+  | { from: 'mend'; slot: Slot }
+  | { from: 'upgrade'; of: PieceAt };
 
 /** Names what a card is about, for the double tap and to keep it open while the game changes around it. */
 export function refKey(r: DetailRef): string {
@@ -69,25 +78,38 @@ export function refKey(r: DetailRef): string {
     case 'worn': return `worn:${r.slot}`;
     case 'recipe': return `recipe:${r.id}`;
     case 'mend': return `mend:${r.slot}`;
+    case 'upgrade': return r.of.from === 'worn' ? `upgrade:worn:${r.of.slot}` : `upgrade:stash:${r.of.item}:${r.of.n}`;
   }
 }
 
 /** What a card's button does. */
 export type DetailAct =
+  /** At the chest: put a bag slot away; take something out (gear: its `n`th piece); wear a piece from the stash; take off into the stash. */
   | { kind: 'store'; slot: number }
-  | { kind: 'take'; item: string }
+  | { kind: 'take'; item: string; n?: number }
   | { kind: 'wear'; item: string; n: number }
   | { kind: 'off'; slot: Slot }
+  /** In the bag, anywhere: put on the piece in bag slot `slot`, or take off what a slot wears into the bag. */
+  | { kind: 'don'; slot: number }
+  | { kind: 'doff'; slot: Slot }
+  /** In the bag: use what a slot holds, or throw some of it away. Both ask first. */
+  | { kind: 'use'; slot: number }
+  | { kind: 'toss'; slot: number }
+  /** At the workbench. */
   | { kind: 'make'; recipe: string }
-  | { kind: 'mend'; slot: Slot };
+  | { kind: 'mend'; slot: Slot }
+  | { kind: 'upgrade'; of: PieceAt }
+  | { kind: 'open'; item: string };
 
 /** Something a piece gives: "Wind 14%" (the element's color), "+5 energy", "Holds 12 things". */
 export interface StatView {
-  kind: Element | 'energy' | 'bag' | 'none';
+  kind: Element | 'energy' | 'bag' | 'none' | 'wear';
   /** What it gives now. */
   text: string;
   /** What it gives when whole ("35%", "+5"), when wear has cut it down. */
   whole?: string;
+  /** What it will give at the next level, on an upgrade's card ("37%"), when that is more. */
+  next?: string;
 }
 
 /** One thing a recipe or a mend takes from the stash, against what the stash holds. */
@@ -116,8 +138,13 @@ export interface DetailView {
   quirk?: { name: string; text: string };
   costs?: { title: string; needs: NeedView[] };
   notes: Array<{ text: string; tone: 'plain' | 'bad' }>;
-  /** The one thing to do with it (none: nothing can be done here), and why not when it cannot. */
+  /** The one thing to do with it, which A and a double tap do too (none: nothing can be done here), and why not when it cannot. */
   act?: { label: string; then?: string; enabled: boolean; does: DetailAct };
+  /**
+   * A second thing it offers, beside the first: throwing away what you carry, taking a piece out of the
+   * stash. Only its own button does it, never A or a double tap.
+   */
+  more?: { label: string; enabled: boolean; tone: 'plain' | 'toss'; does: DetailAct };
 }
 
 /** What the card and the rest of the game know: your bag, what the open chest or workbench says your stash holds, what you wear. */
@@ -129,14 +156,11 @@ export interface DetailState {
   worn: Worn;
   /** The tools you own: a recipe for one of them cannot be made again. None known: none. */
   tools?: readonly string[];
-}
-
-/**
- * A piece's name as the game shows it. Upgrades (roadmap/gear-upgrades.md) put the level after it,
- * "Raincoat +3", everywhere a piece is named.
- */
-export function pieceName(def: ItemDef, level = 0): string {
-  return level > 0 ? `${def.name} +${level}` : def.name;
+  /**
+   * Where the card opens: at home (in the chest or at the workbench), where gear goes on from and off
+   * into the stash, or in the bag, anywhere, where it goes on from and off into the bag. Home if left out.
+   */
+  panel?: 'home' | 'bag';
 }
 
 /** "Sturdy". */
@@ -148,17 +172,17 @@ export function tierName(tier: Tier): string {
 const PAIRS: ReadonlySet<Slot> = new Set(['gloves', 'pants', 'shoes']);
 
 /**
- * What a piece resists and the energy it adds, as worn down as it is (a piece below a quarter left
- * protects less, and nothing at all worn out), with what it gives whole beside what wear cut. A bag
- * says first how many things it holds.
+ * What a piece resists and the energy it adds, as worn down and as upgraded as it is (a piece below a
+ * quarter left protects less, and nothing at all worn out; each level adds to what it resists), with
+ * what it gives whole beside what wear cut. A bag says first how many things it holds.
  */
-export function pieceStats(def: ItemDef, cond = 1): StatView[] {
+export function pieceStats(def: ItemDef, cond = 1, level = 0): StatView[] {
   const k = pieceFactor(cond), out: StatView[] = [], resist = Object.entries(def.resist ?? {}) as Array<[Element, number]>;
   if (def.bag) out.push({ kind: 'bag', text: `Holds ${def.bag} things` });
   else if (!resist.length) out.push({ kind: 'none', text: 'Resists nothing' });
   for (const [e, v] of resist) {
-    const now = Math.round(v * k * 100), full = Math.round(v * 100);
-    out.push({ kind: e, text: `${ELEMENT_WORDS[e]} ${now}%`, ...(now < full ? { whole: `${full}%` } : {}) });
+    const whole = resistPct(v, level), now = pct(Math.min(RESIST_MAX, v * upgradeFactor(level)) * k);
+    out.push({ kind: e, text: `${ELEMENT_WORDS[e]} ${now}%`, ...(now < whole ? { whole: `${whole}%` } : {}) });
   }
   if (def.bonus) {
     const now = Math.round(def.bonus * k);
@@ -167,8 +191,37 @@ export function pieceStats(def: ItemDef, cond = 1): StatView[] {
   return out;
 }
 
-/** A stat in plain words: "Wind 14% (35% when mended)". */
+/** A resistance of `v` at `level`, as a whole percent: never past RESIST_MAX, the most that any gear keeps out. */
+function resistPct(v: number, level: number): number {
+  return pct(Math.min(RESIST_MAX, v * upgradeFactor(level)));
+}
+
+/**
+ * A share as a whole percent, rounded the way resistOf rounds (to a thousandth first), so a card and the
+ * status panel say the same: 0.35 × 1.3 is 0.45499999... in floating point, and 46%, not 45%.
+ */
+const pct = (share: number) => Math.round(Math.round(share * 1000) / 10);
+
+/**
+ * What going up a level changes on a piece of `def` at `level`, whole: each thing it resists now and at
+ * the next level ("Wind 35% → 37%"), and how long it lasts out there before it wears out.
+ */
+export function upgradeStats(def: ItemDef, level: number, wear: Items['wear']): StatView[] {
+  const out: StatView[] = [];
+  for (const [e, v] of Object.entries(def.resist ?? {}) as Array<[Element, number]>) {
+    const now = resistPct(v, level), next = resistPct(v, level + 1);
+    out.push({ kind: e, text: `${ELEMENT_WORDS[e]} ${now}%`, ...(next > now ? { next: `${next}%` } : {}) });
+  }
+  const lasts = wearSeconds(def, wear, level), then = wearSeconds(def, wear, level + 1);
+  // To the second first: 5400 × 1.15 is 6209.999... in floating point.
+  const min = (s: number) => Math.round(Math.round(s) / 60);
+  if (lasts && then) out.push({ kind: 'wear', text: `Lasts ${min(lasts)} min`, next: `${min(then)} min` });
+  return out;
+}
+
+/** A stat in plain words: "Wind 14% (35% when mended)", "Wind 35% → 37%". */
 export function statText(s: StatView): string {
+  if (s.next) return `${s.text} → ${s.next}`;
   return s.whole ? `${s.text} (${s.whole} when mended)` : s.text;
 }
 
@@ -179,33 +232,66 @@ export function actText(act: NonNullable<DetailView['act']>): string {
 
 /**
  * What pressing a card's button does (so do A on it and a double tap): what it can do is done, and the
- * card closes. Greyed out, the button shakes and the card stays to say why; making and mending still
- * go to the game then, which says in the text box what the stash lacks, and sends nothing (ask-first:
- * everything that uses something up goes through one place, which asks first or says why not).
+ * card closes, but for using something, which asks first with the card still open, as the bag always
+ * did. Greyed out, the button shakes and the card stays to say why; making and mending still go to the
+ * game then, which says in the text box what the stash lacks, and sends nothing (ask-first: everything
+ * that uses something up goes through one place, which asks first or says why not).
  */
 export function cardPress(v: DetailView): { does?: DetailAct; close: boolean; shake: boolean } {
   const act = v.act;
   if (!act) return { close: false, shake: false };
-  if (act.enabled) return { does: act.does, close: true, shake: false };
-  const asks = act.does.kind === 'make' || act.does.kind === 'mend';
+  if (act.enabled) return { does: act.does, close: act.does.kind !== 'use', shake: false };
+  const asks = act.does.kind === 'make' || act.does.kind === 'mend' || act.does.kind === 'upgrade';
   return { ...(asks ? { does: act.does } : {}), close: false, shake: true };
 }
 
+/**
+ * What pressing a card's second button does: taking a piece out closes the card (the piece is in the
+ * bag now); throwing away asks first, with the card still open. Greyed out, it shakes.
+ */
+export function morePress(v: DetailView): { does?: DetailAct; close: boolean; shake: boolean } {
+  const more = v.more;
+  if (!more) return { close: false, shake: false };
+  if (!more.enabled) return { close: false, shake: true };
+  return { does: more.does, close: more.does.kind !== 'toss', shake: false };
+}
+
+/** The bag you wear changes only at home: what a carried bag and the bag you wear say about it, in the bag. */
+export const BAG_AT_HOME = 'The bag you wear changes only at home. Put this one away in the chest, then wear it from the stash.';
+export const KEEP_BAG_OUT = 'You always carry a bag, and it changes only at home: wear another one from the stash at the chest.';
+/** A worn piece in the bag, when the bag has no slot free for it. */
+export const NO_ROOM_TO_TAKE_OFF = 'Your bag is full. Make room in it first.';
+/** A piece in the stash, when the bag has no slot free for it. */
+export const NO_ROOM_TO_TAKE_OUT = 'Your bag is full, so it cannot be taken out.';
+
 /** The card for what a tap is on, as the game stands; null when it is gone (it was worn, stashed, made or mended). */
 export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
-  const { items } = s;
+  const { items } = s, road = s.panel === 'bag';
   switch (ref.from) {
     case 'bag': {
       const slot = s.bag[ref.slot];
       if (!slot || slot.item !== ref.item) return null;
-      const def = items.get(slot.item);
-      const act = { label: 'Put away', enabled: true, does: { kind: 'store', slot: ref.slot } } as const;
-      // Gear from a strange object is not a piece yet: it becomes one in the stash, and is worn from there.
-      if (def.kind === 'gear') return { ...gearCard(def, undefined, s), notes: [{ text: 'Put it away, then wear it from the stash.', tone: 'plain' }], act };
-      return { ...itemCard(def, slot.count), act };
+      const def = items.get(slot.item), gear = def.kind === 'gear';
+      const card = gear ? gearCard(def, slot.piece ?? { cond: 1 }, s) : itemCard(def, slot.count);
+      if (!road) return { ...card, act: { label: 'Put away', enabled: true, does: { kind: 'store', slot: ref.slot } } };
+      const more = { label: 'Throw away', enabled: true, tone: 'toss', does: { kind: 'toss', slot: ref.slot } } as const;
+      if (!gear) return { ...card, ...(def.use ? { act: { label: useLabel(def), enabled: true, does: { kind: 'use', slot: ref.slot } } } : {}), more };
+      if (def.slot === 'bag') {
+        card.notes.push({ text: BAG_AT_HOME, tone: 'plain' });
+        return { ...card, more };
+      }
+      if (low(def, slot.piece ?? { cond: 1 }, items)) card.notes.push({ text: 'Wear it, and it can be mended at the workbench at home.', tone: 'plain' });
+      // What it replaces takes its slot in the bag, so there is always room.
+      return { ...card, act: { label: 'Wear', ...goesTo(s, def.slot!, 'your bag'), enabled: true, does: { kind: 'don', slot: ref.slot } }, more };
     }
     case 'stash': {
       const def = items.get(ref.item);
+      if (def.kind === 'sealed') {
+        const have = countOf(s.stash, ref.item);
+        if (!have) return null;
+        // It never leaves the chest: its one button opens it (which asks first), one at a time.
+        return { ...itemCard(def, have), notes: [{ text: holdsText(def, items), tone: 'plain' }], act: { label: have > 1 ? 'Open one' : 'Open', enabled: true, does: { kind: 'open', item: ref.item } } };
+      }
       if (def.kind !== 'gear') {
         const have = countOf(s.stash, ref.item);
         if (!have) return null;
@@ -215,29 +301,32 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       const n = ref.n ?? 0, entry = s.stash.filter(b => b.item === ref.item)[n];
       if (!entry) return null;
       const piece = entry.piece ?? { cond: 1 }, card = gearCard(def, piece, s);
-      const slot = def.slot!, now = s.gear[slot] ? items.get(s.gear[slot]!) : undefined;
-      const act: NonNullable<DetailView['act']> = {
-        label: 'Wear', enabled: true, does: { kind: 'wear', item: ref.item, n },
-        ...(now ? { then: `your ${lowerFirst(pieceName(now))} ${PAIRS.has(slot) ? 'go' : 'goes'} into the stash` } : {}),
-      };
+      const act: NonNullable<DetailView['act']> = { label: 'Wear', ...goesTo(s, def.slot!, 'the stash'), enabled: true, does: { kind: 'wear', item: ref.item, n } };
       // The server keeps what you carry: a smaller bag has to hold all of it.
       if (def.bag && s.bag.length > def.bag) {
         act.enabled = false;
         card.notes.push({ text: `It holds ${def.bag} things, and you carry ${s.bag.length}. Put ${s.bag.length - def.bag} away first.`, tone: 'bad' });
       }
       if (low(def, piece, items)) card.notes.push({ text: 'Wear it, and it can be mended at the workbench beside the chest.', tone: 'plain' });
-      return { ...card, act };
+      // A piece travels in the bag as it is, in a slot of its own.
+      const room = hasRoom(s);
+      if (!room) card.notes.push({ text: NO_ROOM_TO_TAKE_OUT, tone: 'plain' });
+      return { ...card, act, more: { label: 'Take it out', enabled: room, tone: 'plain', does: { kind: 'take', item: ref.item, n } } };
     }
     case 'worn': {
       const id = s.gear[ref.slot];
       if (!id) return null;
       const def = items.get(id), piece = s.worn[ref.slot] ?? { cond: 1 }, card = gearCard(def, piece, s);
       if (ref.slot === 'bag') {
-        card.notes.push({ text: 'You always carry a bag, so it cannot be taken off. To change it, wear another one from the stash.', tone: 'plain' });
+        card.notes.push({ text: road ? KEEP_BAG_OUT : 'You always carry a bag, so it cannot be taken off. To change it, wear another one from the stash.', tone: 'plain' });
         return card;
       }
-      if (low(def, piece, items)) card.notes.push({ text: 'It can be mended at the workbench beside the chest.', tone: 'plain' });
-      return { ...card, act: { label: 'Take off', then: `${PAIRS.has(ref.slot) ? 'they go' : 'it goes'} into the stash`, enabled: true, does: { kind: 'off', slot: ref.slot } } };
+      if (low(def, piece, items)) card.notes.push({ text: `It can be mended at the workbench ${road ? 'at home' : 'beside the chest'}.`, tone: 'plain' });
+      const then = `${PAIRS.has(ref.slot) ? 'they go' : 'it goes'} into ${road ? 'your bag' : 'the stash'}`;
+      if (!road) return { ...card, act: { label: 'Take off', then, enabled: true, does: { kind: 'off', slot: ref.slot } } };
+      const room = hasRoom(s);
+      if (!room) card.notes.push({ text: NO_ROOM_TO_TAKE_OFF, tone: 'bad' });
+      return { ...card, act: { label: 'Take off', then, enabled: room, does: { kind: 'doff', slot: ref.slot } } };
     }
     case 'recipe': {
       const recipe = items.recipes.find(r => r.id === ref.id);
@@ -265,14 +354,36 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       short(card, needs);
       return { ...card, act: { label: 'Mend', enabled: needs.every(n => n.have >= n.need), does: { kind: 'mend', slot: ref.slot } } };
     }
+    case 'upgrade': {
+      const at = pieceAt(ref.of, s);
+      if (!at || !upgradable(at.def)) return null;
+      const level = at.piece.level ?? 0, next = nextUpgrade(level, items.upgrades);
+      if (!next) return null;
+      // What the next level changes, whole: the piece's wear shows beside it, and mending costs the same at any level.
+      const card = { ...gearCard(at.def, at.piece, s), stats: upgradeStats(at.def, level, items.wear) }, needs = needViews(next.needs, s);
+      card.costs = { title: `To +${level + 1} it takes`, needs };
+      card.notes.push({ text: next.chance === undefined || next.chance >= 1 ? oddsText(next) : `${oddsText(next)} If it does not take, the materials are gone, and it stays +${level}.`, tone: 'plain' });
+      short(card, needs);
+      return { ...card, act: { label: `Upgrade to +${level + 1}`, enabled: needs.every(n => n.have >= n.need), does: { kind: 'upgrade', of: ref.of } } };
+    }
   }
+}
+
+/** The piece a workbench's upgrade is about: one you wear, or the `n`th of an item in the stash, with what it is. */
+export function pieceAt(of: PieceAt, s: DetailState): { def: ItemDef; piece: Piece } | null {
+  if (of.from === 'worn') {
+    const id = s.gear[of.slot], piece = s.worn[of.slot];
+    return id && piece ? { def: s.items.get(id), piece } : null;
+  }
+  const piece = s.stash.filter(b => b.item === of.item)[of.n]?.piece;
+  return piece ? { def: s.items.get(of.item), piece } : null;
 }
 
 /** A piece of gear (or what a recipe makes: no piece yet, so no wear to show). */
 function gearCard(def: ItemDef, piece: Piece | undefined, s: DetailState): DetailView {
   const wears = wearSeconds(def, s.items.wear) !== undefined, cond = piece?.cond ?? 1;
   return {
-    icon: iconFor(def), name: pieceName(def), text: def.text, stats: pieceStats(def, cond), facts: [], notes: [],
+    icon: iconFor(def), name: pieceName(def, piece?.level), text: def.text, stats: pieceStats(def, cond, piece?.level), facts: [], notes: [],
     ...(def.tier ? { tier: { id: def.tier, name: tierName(def.tier) } } : {}),
     ...(def.slot ? { slot: slotName(def.slot) } : {}),
     ...(piece ? { cond: { share: Math.min(1, Math.max(0, cond)), words: conditionText(cond, wears), low: wears && cond < WEAR_FADES, bar: wears } } : {}),
@@ -283,6 +394,18 @@ function gearCard(def: ItemDef, piece: Piece | undefined, s: DetailState): Detai
 /** Anything else: what it is and how many, and the facts the bag shows. */
 function itemCard(def: ItemDef, count: number): DetailView {
   return { icon: iconFor(def), name: def.name, count, text: def.text, stats: [], facts: factsOf(def), notes: [] };
+}
+
+/** "your worn cap goes into your bag", "your fingerless gloves go into the stash": what wearing a piece in `slot` puts where. Nothing, when nothing is worn there. */
+function goesTo(s: DetailState, slot: Slot, where: string): { then?: string } {
+  const id = s.gear[slot];
+  if (!id) return {};
+  return { then: `your ${lowerFirst(pieceName(s.items.get(id), s.worn[slot]?.level))} ${PAIRS.has(slot) ? 'go' : 'goes'} into ${where}` };
+}
+
+/** A bag slot is free: a piece of gear takes one of its own. */
+function hasRoom(s: DetailState): boolean {
+  return s.bag.length < bagSlotsOf(s.gear, s.items.byId);
 }
 
 /** Worn down far enough to protect less, and mendable: worth saying where to mend it. */
