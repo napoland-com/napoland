@@ -492,6 +492,8 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   await storage.addReport({ reporter: signed.id, reported: away.id, reason: 'spam', quote: null, at: now - 1000 });
   // Coming back counts: seen now, it stays.
   expect(await storage.seen(back.id, now)).toBe(true);
+  // Only a guest is seen so: someone signed in with is no guest (a guest's hello by token loses to the claim).
+  expect(await storage.seen(signed.id, now)).toBe(false);
 
   expect(await storage.forgetGuests(cutoff)).toBe(1);
   expect(await storage.findByTokenHash(hashToken(away.token))).toBeNull();

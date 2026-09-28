@@ -64,6 +64,7 @@ const VERSION_TEXT = `This server speaks protocol version ${PROTOCOL_VERSION}; r
 const NAME_TEXT = 'Names are 2 to 16 letters, digits, spaces, - or _';
 const TOO_MANY_NEW_TEXT = 'Too many new players from your network. Try again later.';
 const FULL_TEXT = 'The server is full, try again soon';
+const CLAIMED_TEXT = 'This character belongs to an account: sign in to play it';
 
 export interface NetOptions {
   server: Server;
@@ -411,19 +412,23 @@ export function attachNet(o: NetOptions): Net {
   async function hello(s: Session, msg: Hello): Promise<void> {
     const entry = auth.mode === 'legacy' ? await legacyHello(s, msg) : msg.auth === undefined ? await guestHello(s, msg) : await signedInHello(s, msg);
     if (!entry || s.state !== 'auth') return;
+    const old = playing.get(entry.rec.id), left = leftWith.get(entry.rec.id);
+    // Someone signed in with this character since this hello read it (a claim in another tab, playing
+    // now or a moment ago): a guest's hello, by its token alone, plays it no more, and the account's
+    // session stays where it is.
+    const signedIn = old ? world.get(entry.rec.id)?.authSub ?? null : left?.authSub ?? null;
+    if (guests && entry.rec.authSub === null && signedIn !== null) return fail(s, 'sign_in_required', CLAIMED_TEXT);
     // Signed in again while still online (another tab, or a reconnect before the old socket
     // timed out): the old connection goes, and the freshest position comes with the player. Whose
-    // character it is comes from storage: a guest may have been claimed just now.
-    const old = playing.get(entry.rec.id);
+    // character it is is the newer word of storage (a guest claimed just now) and the World: never back to nobody's.
     if (old) {
       send(old, { t: 'error', code: 'replaced', message: 'You are playing somewhere else' });
       const live = disconnect(old, CLOSE_CODES.replaced, 'replaced', false);
-      if (live) entry.rec = { ...live, authSub: entry.rec.authSub };
-    } else {
+      if (live) entry.rec = { ...live, authSub: entry.rec.authSub ?? live.authSub };
+    } else if (left) {
       // Back before the saves of their last visit were all written: they come back as they left. Only
       // whose character it is and the thanks received (others add to them) are storage's to say.
-      const left = leftWith.get(entry.rec.id);
-      if (left) entry.rec = fresher(left, entry.rec);
+      entry.rec = fresher(left, entry.rec);
     }
     enter(s, entry);
   }
@@ -450,11 +455,17 @@ export function attachNet(o: NetOptions): Net {
       const rec = await storage.findByTokenHash(hashToken(msg.token));
       if (s.state !== 'auth') return undefined;
       if (!rec) return void fail(s, 'unknown_token', 'Unknown token: choose a name');
-      if (rec.authSub !== null) return void fail(s, 'sign_in_required', 'This character belongs to an account: sign in to play it');
-      // Seen before it plays: the cleanup of guests who stayed away, should it run meanwhile, spares it (or had taken it).
+      if (rec.authSub !== null) return void fail(s, 'sign_in_required', CLAIMED_TEXT);
+      // Seen before it plays: the cleanup of guests who stayed away, should it run meanwhile, spares it
+      // (or had taken it). Only a guest is seen so: one someone signed in with meanwhile is not.
       const here = await storage.seen(rec.id, Date.now());
       if (s.state !== 'auth') return undefined;
-      if (!here) return void fail(s, 'unknown_token', 'Unknown token: choose a name');
+      if (!here) {
+        const now = await storage.findByTokenHash(hashToken(msg.token));
+        if (s.state !== 'auth') return undefined;
+        if (now && now.authSub !== null) return void fail(s, 'sign_in_required', CLAIMED_TEXT);
+        return void fail(s, 'unknown_token', 'Unknown token: choose a name');
+      }
       return room(s, rec) ? { rec, token: msg.token } : undefined;
     }
     if (msg.name !== undefined) return newPlayer(s, msg.name, null);
@@ -883,7 +894,7 @@ export function attachNet(o: NetOptions): Net {
  */
 function fresher(left: PlayerRecord, read: PlayerRecord): PlayerRecord {
   const thanked = Math.max(left.stats?.thanked ?? 0, read.stats?.thanked ?? 0);
-  return { ...left, authSub: read.authSub, stats: { ...left.stats, ...(thanked ? { thanked } : {}) } };
+  return { ...left, authSub: read.authSub ?? left.authSub, stats: { ...left.stats, ...(thanked ? { thanked } : {}) } };
 }
 
 function text(data: RawData): string {

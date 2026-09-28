@@ -243,7 +243,10 @@ export interface Storage {
   create(rec: PlayerRecord): Promise<boolean>;
   /** Stores what changes while playing: map and the copy of it, position, direction, energy, bag, color and lastSeenAt. */
   save(rec: PlayerRecord): Promise<void>;
-  /** The player is back (lastSeenAt is `at`, ms since the epoch). False if they no longer exist. */
+  /**
+   * A guest is back (lastSeenAt is `at`, ms since the epoch). False, and nothing written, if they no
+   * longer exist or someone signed in with them since (they are no guest any more).
+   */
   seen(id: string, at: number): Promise<boolean>;
   /**
    * Deletes every character nobody signed in with (authSub null: a guest, on a server with sign-in)
@@ -424,7 +427,7 @@ export class MemoryStorage implements Storage {
 
   async seen(id: string, at: number): Promise<boolean> {
     const rec = this.byId.get(id);
-    if (!rec) return false;
+    if (!rec || rec.authSub !== null) return false;
     rec.lastSeenAt = at;
     return true;
   }
@@ -852,7 +855,7 @@ export class PgStorage implements Storage {
   }
 
   async seen(id: string, at: number): Promise<boolean> {
-    const r = await this.pool.query('UPDATE players SET last_seen_at = $2 WHERE id = $1', [id, new Date(at)]);
+    const r = await this.pool.query('UPDATE players SET last_seen_at = $2 WHERE id = $1 AND auth_sub IS NULL', [id, new Date(at)]);
     return r.rowCount === 1;
   }
 

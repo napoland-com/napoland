@@ -273,3 +273,72 @@ describe('guests who stay away', () => {
     }
   });
 });
+
+/**
+ * A guest's hello by its token alone, while the same browser (or whoever has the token) signs in with
+ * it in another tab: the claim may land at any moment of that hello. Whenever it does, the token plays
+ * the character no more (sign_in_required), and the account's own session stays where it is.
+ */
+describe('a guest\'s hello racing the claim of its character', () => {
+  /** Storage whose seen() waits for the test: before it writes (`before`), or after it wrote (`after`). */
+  class HeldSeen extends MemoryStorage {
+    at: 'before' | 'after' | null = null;
+    reached: () => void = () => {};
+    private release: () => void = () => {};
+    private gate: Promise<void> = Promise.resolve();
+    hold(at: 'before' | 'after'): Promise<void> {
+      this.at = at;
+      this.gate = new Promise(resolve => { this.release = resolve; });
+      return new Promise(resolve => { this.reached = resolve; });
+    }
+    letGo(): void {
+      this.at = null;
+      this.release();
+    }
+    override async seen(id: string, at: number): Promise<boolean> {
+      const when = this.at;
+      if (when === 'before') { this.reached(); await this.gate; }
+      const here = await super.seen(id, at);
+      if (when === 'after') { this.reached(); await this.gate; }
+      return here;
+    }
+  }
+
+  for (const when of ['before', 'after'] as const) {
+    it(`refuses the token and keeps the account playing when the claim lands ${when} the guest is seen`, async () => {
+      setLogLevel('silent');
+      const storage = new HeldSeen();
+      const server = await startServer({ ...serverDefaults(), storage, items: itemsData(), auth: devAuth() });
+      const clients: Client[] = [];
+      const open = async () => { const c = await Client.open(server.port); clients.push(c); return c; };
+      try {
+        const first = await open();
+        first.send(hello({ name: newName() }));
+        const guest = await first.next('welcome');
+        first.ws.close();
+        await waitFor(() => !server.world.has(guest.you), 'the guest to leave');
+
+        const seen = storage.hold(when);
+        const byToken = await open();
+        byToken.send(hello({ token: guest.token! }));
+        await seen;
+        const account = await open();
+        account.send(hello({ auth: 'owner@example.test', token: guest.token! }));
+        expect(await account.next('welcome')).toMatchObject({ you: guest.you, claimed: true, guest: false });
+        storage.letGo();
+
+        expect(await byToken.next('error')).toMatchObject({ code: 'sign_in_required' });
+        expect(server.world.get(guest.you)!.authSub).toBe('dev:owner@example.test');
+        // The account was not thrown out.
+        account.send({ t: 'ping', at: 1 });
+        await account.next('pong');
+        expect(account.inbox.some(m => m.t === 'error')).toBe(false);
+        expect(storage.get(guest.you)!.authSub).toBe('dev:owner@example.test');
+      } finally {
+        storage.letGo();
+        for (const c of clients) c.ws.terminate();
+        await server.stop();
+      }
+    });
+  }
+});
