@@ -551,7 +551,7 @@ const GLYPH: Record<MapObject['kind'], string> = {
   logs: '#', stump: 'x', skid: '_', stake: '!', jeep: 'J', truck: 'C', luggage: 'b', boxes: 'c', rocker: 'n', piano: 'n', bike: 'n', birdcage: 'n', pump: 'i', cage: 'c',
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
   // The lost and found box stands in the lodge (gen-interiors.ts), the slab in the Near Woods' ring of stones (gen-woods.ts).
-  lostfound: 'c', slab: '=', lookout: 'Y',
+  lostfound: 'c', slab: '=', lookout: 'Y', footbridge: '=',
   // What the loggers left at their camp and over the creek, and the trapper's things (in the cabin's room).
   ruin: 'R', yarder: 'Y', spool: 'o', bridge: '=', traps: 'L', gate: 'G',
   // A note lies on something else, which shows.

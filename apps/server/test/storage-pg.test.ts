@@ -772,6 +772,30 @@ describe.skipIf(!url)('PgStorage', () => {
     }
   });
 
+  it('keeps the places mended together, each giver by the id of their character only: named as it is now, and left out once it is gone', async () => {
+    const fresh = await freshSchema();
+    const s = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await s.init();
+      expect(await s.loadWorks()).toEqual({});
+      const ann = player('Pg Works Ann');
+      expect(await s.create(ann)).toBe(true);
+      await s.saveWorks({
+        'pond-footbridge': { standing: true, held: 12, day: 20_500, givers: [{ id: ann.id, name: 'Not her name', count: 30 }, { id: randomUUID(), name: 'Gone', count: 2 }] },
+        'pond-light': { standing: false, held: 0, day: 0, givers: [] },
+      });
+      expect(await s.loadWorks()).toEqual({
+        'pond-footbridge': { standing: true, held: 12, day: 20_500, givers: [{ id: ann.id, name: 'Pg Works Ann', count: 30 }] },
+        'pond-light': { standing: false, held: 0, day: 0, givers: [] },
+      });
+      // No name is written down with it.
+      const raw = await admin.query<{ value: unknown }>(`SELECT value FROM ${fresh.schema}.world_state WHERE key = 'works'`);
+      expect(JSON.stringify(raw.rows[0]!.value)).not.toMatch(/Not her name|Gone/);
+    } finally {
+      await s.close();
+    }
+  });
+
   it('finds a character by who signed in with it, and lets each be claimed once, by an identity without one', async () => {
     const old = player('Pg Before Sign-in');
     const other = player('Pg Also Before');

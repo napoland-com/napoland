@@ -78,6 +78,11 @@ export interface Sketch {
   things: Array<{ at: Pt; kind: Thing }>;
   /** Flooded culverts, each the middles of its tiles from one mouth to the other: a dashed line, and "flooded" beside it. */
   culverts: Pt[][];
+  /**
+   * Footbridges (works.ts), from bank to bank: two lines across the water, with the planks' ends between.
+   * Drawn whole or broken alike: the paper map was drawn once, and the bridge was always there.
+   */
+  footbridges: Array<[Pt, Pt]>;
   labels: Array<{ x: number; y: number; text: string }>;
 }
 
@@ -118,7 +123,7 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
   const { width: W, height: H } = map;
   const s: Sketch = {
     title: map.data.name, width: W, height: H, forest: [], trees: [], ground: [], grass: [], water: [], roads: [], houses: [], poles: [], wires: [], masts: [], fences: [], cars: [], signs: [],
-    logs: [], stumps: [], stakes: [], skids: [], ruins: [], bridges: [], things: [], culverts: [], labels: [],
+    logs: [], stumps: [], stakes: [], skids: [], ruins: [], bridges: [], things: [], culverts: [], footbridges: [], labels: [],
   };
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const kind = map.kind(x, y), r = hash(x, y, 1);
@@ -155,6 +160,8 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
       if (o.dir === 'v') s.bridges.push([[o.x + 0.1, o.y], [o.x + 0.1, o.y + 1]], [[o.x + 0.9, o.y], [o.x + 0.9, o.y + 1]]);
       else s.bridges.push([[o.x, o.y + 0.1], [o.x + 1, o.y + 0.1]], [[o.x, o.y + 0.9], [o.x + 1, o.y + 0.9]]);
     }
+    // A footbridge, from bank to bank along the way it runs, a little onto each.
+    else if (o.kind === 'footbridge') s.footbridges.push(o.w >= o.h ? [[o.x - 0.2, o.y + 0.5], [o.x + o.w + 0.2, o.y + 0.5]] : [[o.x + 0.5, o.y - 0.2], [o.x + 0.5, o.y + o.h + 0.2]]);
     // The loggers' fire lookout, a landmark to steer by: drawn standing over the middle of its tiles, not a little off.
     else if (o.kind === 'lookout') s.things.push({ at: [o.x + 1, o.y + 1], kind: 'lookout' });
     else if (THINGS.has(o.kind)) s.things.push({ at: o.kind === 'piano' || o.kind === 'yarder' ? [o.x + 1, o.y + (o.kind === 'yarder' ? 1 : 0.5)] : drift(o.x, o.y, 19), kind: o.kind as Thing });
@@ -481,6 +488,17 @@ function draw(s: Sketch): HTMLCanvasElement {
   for (const [x, y] of s.stakes) { g.moveTo(X(x), Y(y) + 4); g.lineTo(X(x), Y(y) - 5); g.lineTo(X(x) + 5, Y(y) - 3); g.lineTo(X(x), Y(y) - 1); }
   g.stroke();
   for (const t of s.things) thing(g, t.kind, X(t.at[0]), Y(t.at[1]));
+  // Footbridges: two lines from bank to bank, and the planks across between them.
+  g.beginPath();
+  for (const [a, b] of s.footbridges) {
+    const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy), nx = (-dy / len) * 0.32, ny = (dx / len) * 0.32;
+    for (const k of [-1, 1]) { g.moveTo(X(a[0] + nx * k), Y(a[1] + ny * k)); g.lineTo(X(b[0] + nx * k), Y(b[1] + ny * k)); }
+    for (let i = 1; i < len * 3; i++) {
+      const t = i / (len * 3), px = a[0] + dx * t, py = a[1] + dy * t;
+      g.moveTo(X(px - nx), Y(py - ny)); g.lineTo(X(px + nx), Y(py + ny));
+    }
+  }
+  g.stroke();
   g.lineWidth = 1.6;
 
   // Words in handwriting, each a little tilted.

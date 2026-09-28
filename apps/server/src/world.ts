@@ -256,6 +256,7 @@ import {
   openInStash,
   openSealed,
   outfitOf,
+  pluralOf,
   progressOf,
   rankOf,
   reachedBy,
@@ -293,6 +294,7 @@ import {
   weekdayOf,
   wetRate,
   whyNotBuy,
+  worksDays,
   keptOffer,
   offerFrom,
   swapOffers,
@@ -394,10 +396,13 @@ import {
   type TileMap,
   type VisitView,
   type Weather,
+  type WorksDef,
+  type WorksView,
 } from '@napoland/shared';
 import { FIRE_LOW_S, FIRE_MAX_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, ReturnRecord, StoneRecord, ThanksRecord, TownRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, ReturnRecord, StoneRecord, ThanksRecord, TownRecord, WorksRecords } from './storage';
 import { Lamps, type Lamp, type Lookout } from './lookout';
+import { Works } from './works';
 
 // How often creatures step is their region's (map.ts, watcherStepMs, skulkerStepMs); these are the paces a rule leaves out.
 export { AURORA_WATCHER_STEP_MS, MARK_LIFETIME_MS, SKULKER_STEP_MS, WATCHER_STEP_MS, faces };
@@ -600,6 +605,8 @@ export interface Joined extends Scene {
   visitsOff?: true;
   /** A new player's first step to take now (first steps). */
   firstSteps?: number;
+  /** Every place mended together (works.ts), in the whole world: none where there is none. */
+  works?: WorksView[];
 }
 
 /** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
@@ -626,6 +633,8 @@ export interface Writes {
   town?: TownRecord;
   /** The Long Night, if it changed: it began, the lodge's fire was fed or went out, or dawn came. */
   longNight?: LongNightRecord;
+  /** The places mended together, all of them as they are now, when any changed. */
+  works?: WorksRecords;
 }
 
 export interface WorldOptions {
@@ -663,6 +672,8 @@ export interface WorldOptions {
   townDone?: string[];
   /** The Long Night as it was saved (storage.ts, cleanLongNight). */
   longNight?: LongNightRecord | null;
+  /** The places mended together as they were saved (works.ts). */
+  works?: WorksRecords;
   /**
    * Add to `now` for ms since the epoch. Piles and marks fade by the wall clock, which clients and the
    * database see, and the weather and the surges follow it, while `now` is game time, which must never
@@ -1397,6 +1408,10 @@ export class World {
   /** The fire lookouts' lamps, each zone's own (lookout.ts), and the game time they were last looked at, for the ones that go out. */
   private readonly lamps = new Lamps();
   private lampsAt = 0;
+  /** The places mended together (works.ts): one state for the whole world. The UTC day their wear was last counted, and whether storage must hear of them. */
+  private readonly works: Works;
+  private worksDay: number | undefined;
+  private worksWrite = false;
 
   /** `maps` must fit together (validateWorld) and `items` must fit the maps (validateItems); `homeId` is a town. */
   constructor(maps: Iterable<TileMap>, homeId: string, weather: Weather, options: WorldOptions = {}) {
@@ -1482,6 +1497,7 @@ export class World {
     this.upgrades = items.upgrades;
     this.itemsVersion = items.version;
     this.parcels = items.parcels;
+    this.works = new Works(items.works ?? [], options.works);
     this.calendar = options.calendar ?? UTC_CALENDAR;
     this.story = options.story ?? { version: 0, chapters: [] };
     this.notebook = notebookIndex(options.notebook ?? { version: 0, pages: [] });
@@ -1724,7 +1740,7 @@ export class World {
     // saved tile may be inside something new or part of an exit now (start at that map's spawn). Never
     // start inside a wall, or on an exit that would move you the moment you step. Whoever left while
     // wading the culvert comes back in it: what they own opens it for them as it did.
-    const pass = new Set(toolsOf(r.tools, this.items));
+    const pass = this.passOf(r);
     let map = this.maps.get(r.map), copy: string;
     if (!map) {
       ({ map, x: r.x, y: r.y, dir: r.dir } = this.wakeUp);
@@ -1811,7 +1827,17 @@ export class World {
       ...(r.doorOff && { doorOff: true as const }),
       ...(r.visitsOff && { visitsOff: true as const }),
       ...(r.firstSteps && { firstSteps: r.firstSteps }),
+      ...(this.works.defs.size ? { works: this.works.views() } : {}),
     };
+  }
+
+  /**
+   * What opens the tiles that open only for some, for this player (TileMap.walkable): the tools they own,
+   * and every place mended together that stands now (a footbridge is walked, and a street light shines,
+   * for everyone alike while it stands).
+   */
+  private passOf(r: PlayerRecord): Set<string> {
+    return new Set([...toolsOf(r.tools, this.items), ...this.works.standing]);
   }
 
   /**
@@ -2197,6 +2223,81 @@ export class World {
   /** Is tile x,y of the player's zone under a lookout's beam right now? It shelters from a surge and a hitchhiker, and holds a watcher still. */
   private beamed(zone: Zone, x: number, y: number, now: number): boolean {
     return this.lamps.beamOver(zone.key, zone.map, x, y, now, now + this.epochOffset);
+  }
+
+  /**
+   * Gives up to `count` of what is in bag slot `slot` to the place being mended on tile x,y, next to the
+   * player (works.ts: a footbridge's tile, or its street light): from that slot first, then from others
+   * holding the same, as many as it has room for. The whole world hears how it stands (one state for
+   * every copy of its map), storage keeps it, and the giver hears what it did; standing again, it opens
+   * its footbridge (or lights its lamp) for everyone at once.
+   */
+  bring(id: string, x: number, y: number, slot: number, now: number, count = 1): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'bring', 'too_far');
+    }
+    const def = this.worksAt(p.map, x, y);
+    if (!def || p.up || manhattan(x, y, p.rec.x, p.rec.y) > 1) return this.refuse(p, 'bring', 'too_far');
+    const s = p.rec.bag[slot];
+    if (!s) return this.refuse(p, 'bring', 'empty_slot');
+    if (s.item !== def.item) return this.refuse(p, 'bring', 'not_wanted');
+    const have = p.rec.bag.reduce((n, b) => n + (b.item === s.item ? b.count : 0), 0);
+    // A guest's gift counts, but a guest's name goes on no plaque: it would outlive them (guests are forgotten).
+    const r = this.works.give(def.id, this.guest(p.rec) ? null : { id, name: p.rec.name }, Math.min(count, have), utcDay(now + this.epochOffset));
+    if (!r.took) return this.refuse(p, 'bring', 'works_full');
+    p.rec.bag = takeItem(p.rec.bag, slot, r.took).bag;
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), s.item, r.took);
+    this.sendBag(p, now);
+    // Saved at once, as the place is: what went into it is gone from the bag, restart or not.
+    this.saveNow.set(id, p.rec);
+    this.worksWrite = true;
+    const view = this.works.view(def.id);
+    this.outbox.push({ to: 'all', msg: { t: 'works', works: view } });
+    if (r.built) this.worksStood(now);
+    else this.rerate(p, now);
+    this.did(p, { kind: 'brought', works: def.id, item: s.item, count: r.took, view, ...(r.built ? { built: true as const } : {}) });
+  }
+
+  /** The place being mended whose footbridge covers tile x,y of `map`, or whose street light stands there. */
+  private worksAt(map: TileMap, x: number, y: number): WorksDef | undefined {
+    for (const o of map.data.objects) {
+      const id = o.kind === 'footbridge' && x >= o.x && x < o.x + o.w && y >= o.y && y < o.y + o.h ? o.id
+        : o.kind === 'lamp' && o.works && o.x === x && o.y === y ? o.works : undefined;
+      if (id) return this.works.defs.get(id);
+    }
+    return undefined;
+  }
+
+  /**
+   * Each midnight (UTC), whatever stands pays its day's wear from what was put by (works.ts), and breaks
+   * when that runs short; the first tick after a restart counts every midnight since. Everyone hears of
+   * each place that changed; one that broke closes its footbridge (or puts out its lamp) for everyone.
+   */
+  private wearWorks(now: number): void {
+    const today = utcDay(now + this.epochOffset);
+    if (today === this.worksDay) return;
+    this.worksDay = today;
+    const { changed, broke } = this.works.wear(today);
+    if (!changed.length) return;
+    this.worksWrite = true;
+    for (const id of changed) this.outbox.push({ to: 'all', msg: { t: 'works', works: this.works.view(id) } });
+    if (broke.length) this.worksStood(now);
+  }
+
+  /**
+   * A place stood again or broke: every pass is made again (a footbridge's tiles open, or close, from the
+   * next step on), and every rate, since a street light shelters whoever stands in it from a surge.
+   */
+  private worksStood(now: number): void {
+    for (const q of this.players.values()) {
+      q.pass = this.passOf(q.rec);
+      if (this.advance(q, now) <= 0) this.collapse(q, now);
+      else this.rerate(q, now);
+    }
   }
 
   /**
@@ -2722,7 +2823,7 @@ export class World {
     // The first of their own writes down the starter tools they carried until now.
     p.rec.tools = [...(p.rec.tools ?? STARTER_TOOLS), item];
     // Waders open the culvert, bolt cutters the shed's door: from their very next step.
-    p.pass = new Set(toolsOf(p.rec.tools, this.items));
+    p.pass = this.passOf(p.rec);
     this.saveNow.set(id, p.rec);
     this.outbox.push({ to: id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items) } });
     // Another of it lying where they are is someone else's to find from now on: it goes from their sight.
@@ -3500,6 +3601,7 @@ export class World {
     this.startFlashes(now);
     this.afterglows(now);
     this.lookouts(now);
+    this.wearWorks(now);
     const wasAwake = this.stoneAwake;
     this.burnStone(now);
     if (wasAwake && !this.stoneAwake) this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
@@ -3614,11 +3716,13 @@ export class World {
       returns: [...this.returnWrites.values()].map(r => ({ ...r, items: copyBag(r.items) })),
  ...(this.townWrite ? { town: this.townWrite } : {}),
       ...(this.nightWrite ? { longNight: { ...this.nightWrite } } : {}),
+      ...(this.worksWrite ? { works: this.works.records() } : {}),
     };
     this.firstWrites = [];
     this.returnWrites.clear();
  this.townWrite = undefined;
     this.nightWrite = undefined;
+    this.worksWrite = false;
     this.pileWrites.clear();
     this.saveNow.clear();
     this.markWrites.clear();
@@ -4098,7 +4202,8 @@ export class World {
       // In winter the cold bites harder (sky.ts, SEASONS).
       chill: { weather: SEASONS[this.season].chill, wet: SEASONS[this.season].wet },
       drain: p.mods.drain,
-      lit: this.beamed(p.zone, x, y, now),
+      // A lookout's beam as it passes, or a street light mended together while it stands.
+      lit: this.beamed(p.zone, x, y, now) || p.map.lit(x, y, p.pass),
     });
     // Down at 0, nothing drains them further (a surge or a storm neither) and nothing refills them: only a rescuer's energy gets them up.
     if (p.slump) p.rate = 0;
@@ -4591,8 +4696,8 @@ export class World {
    * them): counted once for each surge, for what Mira says after the first (story.ts, remarks).
    */
   private surged(p: Online, now: number): void {
-    const round = this.surgeRound(p.map, now);
-    if (!round || !inSurge(p.map, p.rec.x, p.rec.y, this.frontOf(p.map, now), this.beamed(p.zone, p.rec.x, p.rec.y, now))) return;
+    const round = this.surgeRound(p.map, now), { x, y } = p.rec;
+    if (!round || !inSurge(p.map, x, y, this.frontOf(p.map, now), this.beamed(p.zone, x, y, now) || p.map.lit(x, y, p.pass))) return;
     if (p.surgedIn === round) return;
     p.surgedIn = round;
     if (p.trip) p.trip.surges++;
@@ -4966,7 +5071,7 @@ export class World {
       const near: Array<[number, number]> = [];
       for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
         const x = who.rec.x + dx, y = who.rec.y + dy;
-        if (map.walkable(x, y) && !map.lit(x, y) && !map.warm(x, y) && map.homeSteps(x, y) >= 0) near.push([x, y]);
+        if (map.walkable(x, y) && !map.lit(x, y, this.works.standing) && !map.warm(x, y) && map.homeSteps(x, y) >= 0) near.push([x, y]);
       }
       const [x, y] = near[Math.floor(this.rng() * near.length)] ?? [who.rec.x, who.rec.y];
       const flash: Flash = { x, y, kind: this.rng() < 0.5 ? 'spark' : 'fire', until: now + (FLASH_GLOW_S + FLASH_BURST_S) * 1000 };
@@ -5070,7 +5175,7 @@ export class World {
     p.hitchAt = now;
     const { x, y } = p.rec;
     // Up a lookout, under a roof; or in a lookout's beam as it passes, as in a street light.
-    const safe = !!p.up || p.map.data.kind !== 'wilds' || p.map.lit(x, y) || this.beamed(p.zone, x, y, now) || (p.map.warm(x, y) && p.zone.fires.warmth(x, y, now) > 0);
+    const safe = !!p.up || p.map.data.kind !== 'wilds' || p.map.lit(x, y, p.pass) || this.beamed(p.zone, x, y, now) || (p.map.warm(x, y) && p.zone.fires.warmth(x, y, now) > 0);
     if (p.hitched) {
       if (safe || this.nearFlare(p.zone, x, y, now)) this.unhitch(p);
       return;
@@ -5268,7 +5373,7 @@ export class World {
 
   /** Where a watcher may stand: what the map allows any creature (open ground out of the light, away from fires and exits, never in tall grass). */
   private watcherMayStand(map: TileMap, x: number, y: number): boolean {
-    return map.creatureMayStand(x, y);
+    return map.creatureMayStand(x, y, this.works.standing);
   }
 
   /**
@@ -5356,7 +5461,7 @@ export class World {
     // Up a lookout nothing out there reaches you, and no flash starts under you.
     if (p.up) return false;
     const { x, y } = p.rec;
-    if (p.map.lit(x, y) || this.nearFlare(p.zone, x, y, now)) return false;
+    if (p.map.lit(x, y, p.pass) || this.nearFlare(p.zone, x, y, now)) return false;
     return !(p.map.warm(x, y) && p.zone.fires.warmth(x, y, now) > 0);
   }
 
@@ -5589,6 +5694,8 @@ export class World {
         ? `The fire lookout in ${where}: its lamp burns for ${about(left, true)} more, and its beam sweeps the woods.`
         : `The fire lookout in ${where}: its lamp is out. It burns resin: feed it at the foot of the ladder.`);
     }
+    // The places mended together: whether each stands and for how long, or how far it is from standing again.
+    for (const def of this.works.defs.values()) lines.push(worksLine(def, this.works.view(def.id), this.items.get(def.item)));
     // The fires of the world everyone shares: each map's main copy. The lodge's, on the Long Night, has a line of its own.
     const low: string[] = [], out: string[] = [], fires = [...this.maps.values()].map(m => this.main(m).fires), lodge = this.lodge()?.fire;
     const burnsDown = (f: Fire) => !f.tended && f !== lodge;
@@ -6422,7 +6529,7 @@ export class World {
   private refuse(
     p: Online,
     action: 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'climb' | LookKind | 'checkout'
-      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab' | 'swap' | 'give',
+      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab' | 'swap' | 'give' | 'bring',
     reason: Refusal,
   ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
@@ -6637,6 +6744,25 @@ const SEASON_WORDS: Record<Season, string> = {
 };
 const lower = (s: string) => s[0]!.toLowerCase() + s.slice(1);
 const capital = (s: string) => s[0]!.toUpperCase() + s.slice(1);
+
+/**
+ * A place mended together, on the notice board (works.ts): "The footbridge by the pond, in the Near Woods:
+ * broken. 12 of 30 scrap given, 18 more and it stands again. Ana gave the most."
+ */
+function worksLine(def: WorksDef, v: WorksView, item: ItemDef | undefined): string {
+  const what = `${def.name.charAt(0).toUpperCase()}${def.name.slice(1)} ${def.where}`, noun = item ? pluralOf(item) : def.item, light = def.build === 'light';
+  const top = v.top ? ` ${v.top} gave the most.` : ' Nobody has given anything yet.';
+  if (!v.standing) {
+    const down = light ? 'dark' : 'broken', again = light ? 'lights up again' : 'stands again';
+    return v.held > 0
+      ? `${what}: ${down}. ${v.held} of ${def.need} ${noun} given, ${def.need - v.held} more and it ${again}.${top}`
+      : `${what}: ${down}. It ${again} with ${def.need} ${noun}.${top}`;
+  }
+  const days = worksDays(def, v.held), up = light ? 'lit' : 'standing';
+  return days > 0
+    ? `${what}: ${up}. ${v.held} ${noun} put by, enough for ${days} more day${days === 1 ? '' : 's'} (it takes ${def.wear} a day).${top}`
+    : `${what}: ${up}, but not past today. It takes ${def.wear} ${noun} a day, and ${v.held ? `only ${v.held} ${v.held === 1 ? 'is' : 'are'}` : 'none is'} put by.${top}`;
+}
 
 /** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours", "about 3 days"). */
 function about(seconds: number, plain = false): string {

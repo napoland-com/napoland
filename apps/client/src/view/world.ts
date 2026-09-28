@@ -19,7 +19,7 @@
  */
 import * as THREE from 'three';
 import {
-  BEAM_HALF, BEAM_REACH, DIR_VEC, beamAngle, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Season, type TileKind,
+  BEAM_HALF, BEAM_REACH, DIR_VEC, beamAngle, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
   type TileMap, type Weather,
 } from '@napoland/shared';
 import { comfortModel, comfortShadow, lampLight } from './cabin';
@@ -34,7 +34,7 @@ import {
   type QuadFn, type WallShape,
 } from './interior';
 import {
-  LOOKOUT_DECK, LOOKOUT_LAMP_Y, LOOKOUT_STAND_Z, bridgeModel, bridgeRails, cardboardModel, carModel, culvertMouthModel, culvertMouths, curtainColor, curtainPanels, headlightCar, leftModel, lookoutModel, mailboxModel, millBuilding, porchModel, shedBuilding,
+  LOOKOUT_DECK, LOOKOUT_LAMP_Y, LOOKOUT_STAND_Z, bridgeModel, bridgeRails, cardboardModel, carModel, culvertMouthModel, culvertMouths, curtainColor, curtainPanels, footbridgeModel, headlightCar, leftModel, lookoutModel, mailboxModel, millBuilding, porchModel, shedBuilding,
 } from './left';
 import { SNOW, ambience, assignBeams, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
@@ -456,6 +456,14 @@ export class WorldView {
   private climbAt = new THREE.Vector3();
   /** The flares burning on this map, as last told (setFlares): up a lookout their red light goes up over the trees. */
   private flareList: Array<{ x: number; y: number; left: number }> = [];
+  /**
+   * The places mended together on this map (works.ts): each footbridge whole and broken (one shows), and
+   * each street light of the works with its head's own material (it glows only while it stands); and the
+   * ids of those that stand, as the game last said (setWorks).
+   */
+  private bridges: Array<{ id: string; whole: THREE.Group; broken: THREE.Group }> = [];
+  private worksLamps: Array<{ id: string; mat: THREE.MeshToonMaterial; on: boolean }> = [];
+  private standing: Pass | null = null;
   /** The fires of this map: their tiles in the order Fires draws them, how big each burns, and where the game says so. */
   private fireTiles: Array<[number, number]> = [];
   private fireLevels: number[] = [];
@@ -1104,8 +1112,16 @@ export class WorldView {
       g.position.set(l.x + 0.5, 0, l.y + 0.5);
       g.add(part(flat(new THREE.CylinderGeometry(0.045, 0.06, 1.3, 6)), '#2f343c', 0, 0.65, 0, 0.02));
       // The head keeps its own glowing material: all the lamp heads become one mesh of their own. One the
-      // town has not mended yet (town.ts) stands dark, its glass broken grey.
-      g.add(box(0.42, 0.05, 0.08, '#2f343c', 0.18, 1.3, 0), part(new THREE.BoxGeometry(0.2, 0.1, 0.16), l.dark ? '#3a3f45' : this.lampMat, 0.34, 1.24, 0, 0.02));
+      // town has not mended yet (town.ts) stands dark, its glass broken grey. A lamp mended together has one
+      // of its own, dark until it stands, and its plaque on the post.
+      let head: THREE.Material | string = l.dark ? '#3a3f45' : this.lampMat;
+      if (l.works) {
+        const mat = ownToon('#ffcf8a', { emissive: 0x000000 });
+        this.worksLamps.push({ id: l.works, mat, on: false });
+        head = mat;
+        g.add(box(0.14, 0.1, 0.02, '#8a7a52', 0, 0.86, 0.07, 0.01));
+      }
+      g.add(box(0.42, 0.05, 0.08, '#2f343c', 0.18, 1.3, 0), part(new THREE.BoxGeometry(0.2, 0.1, 0.16), head, 0.34, 1.24, 0, 0.02));
       still.push(g);
     }
     // A roof on posts the town built (town.ts): over the notice board, where the rain keeps off. Its roof
@@ -1115,6 +1131,17 @@ export class WorldView {
       still.push(posts);
       this.scene.add(roof);
       this.porches.push({ roof, x0: p.x, y0: p.y, x1: p.x + p.w, y1: p.y + p.h, k: 1 });
+    }
+    // The footbridges mended together: their sills always, the bridge whole or broken as it stands (setWorks),
+    // each baked into its own few meshes so that showing one or the other is only a switch.
+    for (const b of this.objects('footbridge')) {
+      const m = footbridgeModel(b), whole = new THREE.Group(), broken = new THREE.Group();
+      still.push(m.sills);
+      for (const mesh of bake([m.whole])) whole.add(mesh);
+      for (const mesh of bake([m.broken])) broken.add(mesh);
+      whole.visible = false;
+      this.scene.add(whole, broken);
+      this.bridges.push({ id: b.id, whole, broken });
     }
     // Utility poles with sagging wires, in the order the map lists them.
     const poles = this.objects('pole');
@@ -1363,6 +1390,7 @@ export class WorldView {
     (this.scene.background as THREE.Color).set(a.sky);
     (this.scene.fog as THREE.Fog).color.set(a.sky);
     this.lampMat.emissive.set(a.lampGlow);
+    for (const l of this.worksLamps) if (l.on) l.mat.emissive.set(a.lampGlow);
     this.warm.emissive.set(a.warmGlow);
     this.doorGlow.emissive.set(a.warmGlow);
     this.flash.intensity = a.flashlight ? 1.6 * L : 0;
@@ -1473,6 +1501,26 @@ export class WorldView {
       if (burning) { l.beam.rotation.y = -angle; lit = true; }
     }
     this.beamLampMat.emissive.setHex(lit ? 0xffe2a0 : 0x000000);
+  }
+
+  /**
+   * The places mended together, every frame (works.ts): `standing` holds the ids of those that stand (the
+   * game's pass does). A footbridge shows whole or broken, and a street light of the works glows, and
+   * carries a real light, only while it stands. Only what shows and colors change: nothing is compiled.
+   */
+  setWorks(standing: Pass) {
+    this.standing = standing;
+    for (const b of this.bridges) {
+      const on = standing.has(b.id);
+      b.whole.visible = on;
+      b.broken.visible = !on;
+    }
+    for (const l of this.worksLamps) {
+      const on = standing.has(l.id);
+      if (on === l.on) continue;
+      l.on = on;
+      l.mat.emissive.set(on ? this.amb.lampGlow : 0x000000);
+    }
   }
 
   /** How far the view is pulled back, every frame (1 on the ground, LOOKOUT_ZOOM up a lookout): the camera's radius, the fog, the far look and the distant lights follow it. */
@@ -1696,6 +1744,8 @@ export class WorldView {
       if (!src) { s.light.intensity = 0; continue; }
       s.on = Math.min(1, s.on + dt / LIGHT_FADE_S);
       if (src.kind === 'fire') { s.light.intensity = FIRE_LIGHT * L * flicker(t, src.ph) * s.on * Math.min(1, this.fireLevel(src.tx, src.ty)); continue; }
+      // A street light mended together shines only while it stands.
+      if (src.works && !this.standing?.has(src.works)) { s.light.intensity = 0; continue; }
       // Some lamps flicker now and then; any lamp flickers hard while someone with a flickering quirk passes under it.
       const restless = this.flickerAt.some(p => (p.x + 0.5 - src.x) ** 2 + (p.y + 0.5 - src.z) ** 2 < 9);
       const off = (src.flicker && (Math.sin(t * 13 + src.ph) > 0.92 || Math.sin(t * 2.3 + src.ph) > 0.97)) || (restless && Math.sin(t * 29 + src.ph) * Math.sin(t * 7.3) > 0.1) ? 0.15 : 1;
@@ -1720,6 +1770,7 @@ export class WorldView {
     let ns = 0, nb = 0;
     for (let i = 0; i < this.farList.length; i++) {
       const l = this.farList[i]!;
+      if (l.works && !this.standing?.has(l.works)) continue;
       placeFar(l, fx, fz, reach, at);
       const glow = farGlow(l.kind, t);
       if (l.size > 2 || at.far) { if (nb < FAR_LIGHTS) putPoint(big, nb++, at, rgb[i * 3]!, rgb[i * 3 + 1]!, rgb[i * 3 + 2]!, glow * (at.far ? 0.7 : 1)); }

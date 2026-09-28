@@ -2,7 +2,7 @@
 id: lookout-tower
 title: The fire lookout
 status: done
-order: 460
+order: 700
 area: world
 depends: [buildings-fireplaces-shelters, hazards-anomalies]
 ---

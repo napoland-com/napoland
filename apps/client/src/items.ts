@@ -7,7 +7,7 @@
 import {
   BAG_SLOTS, SLOTS, WEAR_FADES, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, shopLookOf, upgradable, upgradeChance,
   wearSeconds, type BagSlot, type EffectView, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction,
-  type ShopData, type Slot, type Upgrade, type Worn, slotKg,
+  type ShopData, type Slot, type Upgrade, type Worn, type WorksDef, slotKg,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
 import type { Look } from './view/characters';
@@ -35,6 +35,8 @@ export class Items {
   readonly swaps: NonNullable<ItemsData['swaps']>;
   /** What the Long Night's bonus does, in words ("wire and strange objects grow back twice as fast"); empty without one. */
   readonly longNight: string;
+  /** The places everyone mends together, by id (works.ts): what each takes, and how fast it wears. */
+  readonly works: Map<string, WorksDef>;
   private readonly quirks: Map<Quirk, { name: string; text: string }>;
 
   constructor(data: ItemsData | undefined) {
@@ -50,6 +52,7 @@ export class Items {
     this.town = data?.town;
     this.swaps = data?.swaps ?? [];
     this.longNight = longNightWords(data?.longNight, this.byId);
+    this.works = new Map((data?.works ?? []).map(w => [w.id, w]));
     this.quirks = new Map((data?.quirks ?? []).map(q => [q.id, { name: q.name, text: q.text }]));
   }
 
@@ -164,6 +167,8 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'two_meals': return 'You ate two meals this trip already';
     case 'lamp_full': return 'The lamp holds as much as it can';
     case 'up': return 'Climb down first';
+    case 'not_wanted': return 'It takes something else';
+    case 'works_full': return 'It has all it can keep for now';
   }
 }
 

@@ -16,6 +16,7 @@ import type { ConditionsData, Season } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap, type TownGate } from './map';
 import type { KeepsakesData } from './notes';
 import type { SwapDef, TownData } from './town';
+import type { WorksDef } from './works';
 
 /**
  * A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn
@@ -217,6 +218,8 @@ export interface ItemsData {
   swaps?: SwapDef[];
   /** The town's milestones and the works of its ledger (town.ts). None: the town never changes. */
   town?: TownData;
+  /** The places in the woods everyone mends together, what each takes and how fast it wears (works.ts). None: nothing to mend. */
+  works?: WorksDef[];
   /** What grows back faster on a Long Night that has its bonus (sky.ts, world.ts). None: nothing does. */
   longNight?: LongNightData;
 }

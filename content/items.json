@@ -1,5 +1,5 @@
 {
-  "version": 30,
+  "version": 31,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -300,5 +300,9 @@
       {"id":"mill-roof","name":"The sawmill's roof","needs":[{"item":"scrap","count":24},{"item":"resin","count":8}],"perk":"The mill's floor stays dry: more scrap turns up in there.","title":"The sawmill's roof is mended","text":"Its floor stays dry now,\nand more scrap turns up in there."}
     ]
   },
+  "works": [
+    {"id":"pond-footbridge","build":"footbridge","name":"the footbridge","where":"by the pond, in the Near Woods","item":"scrap","need":30,"wear":5,"hold":35},
+    {"id":"pond-light","build":"light","name":"the street light","where":"in the pond clearing, in the Near Woods","item":"wire","need":12,"wear":2,"hold":14}
+  ],
   "longNight": { "items": ["wire", "strange"], "regrow": 2 }
 }

@@ -22,6 +22,7 @@ import type { ConditionsView, FlashView, SeasonView, StormView, SurgeView } from
 import type { ThanksFor, ThanksGroup } from './thanks';
 import type { TownView } from './town';
 import { OFFER_MAX } from './trade';
+import type { WorksView } from './works';
 
 /**
  * Bump when a change breaks older clients; they reload to get the new version. 30: the weather is each
@@ -36,7 +37,8 @@ import { OFFER_MAX } from './trade';
  * 37: the lost and found, whose bundles, questions and letters an older page could not show.
  * 38: the slab that needs two, which an older page could not put its hands to.
  * 39: the town waking up: its milestones and ledger (`town`), townspeople's scenes, swaps and gifts, which an older page could not show.
- * 40: the fire lookout: climbing it and feeding its lamp (`climb`, `lamp`, `up`), which an older page could not do.
+ * 40: the fire lookout: climbing it and feeding its lamp (`climb`, `lamp`, `up`), and in the same release the woods mended
+ *     together, the footbridge and the street light by the pond (`bring`, `works`), which an older page could not show or do.
  */
 export const PROTOCOL_VERSION = 40;
 
@@ -276,6 +278,12 @@ export const ClientMsg = z.discriminatedUnion('t', [
    */
   z.object({ t: z.literal('climb'), x: z.number().int(), y: z.number().int() }),
   z.object({ t: z.literal('climbDown') }),
+  /**
+   * Give `count` (1 unless said) of what is in bag slot `slot` to the place being mended on tile x,y, next
+   * to you (works.ts: a footbridge's tile, or its street light): from that slot first, then from others
+   * holding the same, as many as it takes.
+   */
+  z.object({ t: z.literal('bring'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63), count: z.number().int().positive().max(FEED_MAX).optional() }),
   /** Open the crate on tile x,y, next to you (caches.ts): the server answers with what is in it. */
   z.object({ t: z.literal('cache'), x: z.number().int(), y: z.number().int() }),
   /** Leave one of what is in bag slot `slot` in the crate on tile x,y: once a visit, never gear. */
@@ -450,6 +458,8 @@ export type Did =
   | { kind: 'fire'; item: string; count: number; left: number; lit?: true }
   /** A fire lookout's lamp took `count` of `item`, and burns `left` seconds now; `lit`: it was out. */
   | { kind: 'lamp'; item: string; count: number; left: number; lit?: true }
+  /** A place being mended (works.ts) took `count` of `item`, and stands so now; `built`: this made it stand again. */
+  | { kind: 'brought'; works: string; item: string; count: number; view: WorksView; built?: true }
   /** The Old Stone took `count` of `item`, and stands so now; `woke`: this woke it. */
   | { kind: 'stone'; item: string; count: number; stone: StoneView; woke?: true }
   /**
@@ -649,7 +659,11 @@ export type Refusal =
   /** The lookout's lamp holds as much as it can. */
   | 'lamp_full'
   /** You are up the lookout: come down first. */
-  | 'up';
+  | 'up'
+  /** A place being mended takes something else. */
+  | 'not_wanted'
+  /** A place being mended has all it keeps put by for now. */
+  | 'works_full';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -833,6 +847,8 @@ export type ServerMsg =
       flashes: FlashView[];
       surge: SurgeView | null;
       storm: StormView | null;
+      /** Every place being mended in the world (works.ts), on any map: one state for everyone. None where nothing is. */
+      works?: WorksView[];
       body: BodyView;
       stone: StoneView;
       /** What the woods are like today, this week and next week (sky.ts, conditionsAt). */
@@ -989,6 +1005,8 @@ export type ServerMsg =
   | { t: 'fire'; fire: FireView }
   /** On your map: a fire lookout's lamp was fed (or lit again), or went out. */
   | { t: 'lamp'; lamp: LampView }
+  /** Anywhere: a place being mended (works.ts) was given something, stood again, wore down at midnight or broke. */
+  | { t: 'works'; works: WorksView }
   /**
    * On your map: someone climbed the fire lookout at whose ladder they stand (on), or came down. To the one
    * who climbed, `left`: the seconds they may stay up there.
@@ -1121,18 +1139,9 @@ export type ServerMsg =
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
-  | 'checkout'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue'
-  | 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab'
-  | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge'
-  | 'say' | 'call' | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
-  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'swap' | 'give'
-  | 'climb' | 'climbDown'
-  | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
-  | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
+  | 'checkout' | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'step' | 'carry' | 'handIn' | 'slab' | 'cook' | 'swap' | 'give' | 'climb' | 'climbDown' | 'bring'
+  | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends' | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm'
+  | 'tradeCancel';
 
 /**
  * need_name: signed in, but there is no character yet; say hello again with a name.

@@ -32,3 +32,4 @@ export * from './town';
 export * from './trade';
 export * from './unease';
 export * from './validate';
+export * from './works';

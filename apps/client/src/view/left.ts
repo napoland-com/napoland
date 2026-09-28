@@ -807,3 +807,50 @@ export function leftModel(o: MapObject): THREE.Object3D | null {
     default: return null;
   }
 }
+
+/** How high the planks of a footbridge are, their tops (world units): whoever crosses it stands on them. */
+export const DECK_Y = 0.03;
+
+/**
+ * A footbridge mended together (works.ts) over `w` by `h` tiles of water, from bank to bank: the timber
+ * sills it rests on at each end (always there), the bridge whole (planks across two stringers, a post at
+ * each end and in the middle, a handrail each side and a small plaque on the first post), and what is
+ * left of it broken (the stringers' ends on the sills, a plank down in the water, a post leaning out and
+ * its rail hanging from it). World.ts shows whole or broken as the server says it stands; the map, and
+ * the creek under it, stay as they are either way.
+ */
+export function footbridgeModel(o: { x: number; y: number; w: number; h: number }): { sills: THREE.Group; whole: THREE.Group; broken: THREE.Group } {
+  const along = o.w >= o.h, L = along ? o.w : o.h;
+  const at = () => {
+    const g = pivot(o.x + o.w / 2, 0, o.y + o.h / 2);
+    // Built along +x; a bridge that runs north to south is turned.
+    if (!along) g.rotation.y = Math.PI / 2;
+    return g;
+  };
+  const wood = '#6b5334', dark = '#4a3a2c', worn = ['#7a6246', '#6f5a40', '#83694a'], half = L / 2, span = L + 0.5;
+  const sills = at(), whole = at(), broken = at();
+  for (const s of [-1, 1]) sills.add(box(0.3, 0.14, 1.06, dark, s * (half + 0.12), -0.04, 0, 0.02));
+  // Whole: two stringers, planks across them, posts and rails, and the plaque.
+  for (const z of [-0.3, 0.3]) whole.add(box(span, 0.1, 0.1, dark, 0, DECK_Y - 0.1, z, 0.015));
+  const planks = Math.round(span / 0.22);
+  for (let i = 0; i < planks; i++) {
+    const x = -span / 2 + 0.11 + i * (span / planks);
+    whole.add(box(0.19, 0.05, 0.84, worn[Math.floor(hash2(o.x * 5 + i, o.y * 3) * worn.length) % worn.length]!, x, DECK_Y - 0.025, 0, 0.012));
+  }
+  for (const x of [-half - 0.1, 0, half + 0.1]) for (const z of [-0.44, 0.44]) whole.add(box(0.07, 0.52, 0.07, wood, x, DECK_Y + 0.24, z, 0.015));
+  for (const z of [-0.44, 0.44]) whole.add(box(span + 0.1, 0.05, 0.05, wood, 0, DECK_Y + 0.48, z, 0.015));
+  whole.add(box(0.18, 0.12, 0.02, '#8a7a52', -half - 0.1, DECK_Y + 0.34, 0.48, 0.01));
+  // Broken: the stringers' ends still on the sills, one plank in the water, a post leaning out with its rail hanging.
+  for (const s of [-1, 1]) for (const z of [-0.3, 0.3]) broken.add(box(0.34, 0.1, 0.1, dark, s * (half - 0.05), DECK_Y - 0.1, z, 0.015));
+  const plank = box(0.19, 0.05, 0.84, worn[0]!, 0.1, -0.14, 0.05, 0.012);
+  plank.rotation.set(0.25, 0.5, 0.35);
+  broken.add(plank);
+  const post = box(0.07, 0.52, 0.07, wood, -half - 0.1, DECK_Y + 0.22, 0.44, 0.015);
+  post.rotation.z = -0.35;
+  broken.add(post);
+  const rail = box(half + 0.2, 0.05, 0.05, wood, -half / 2 + 0.05, DECK_Y + 0.12, 0.46, 0.015);
+  rail.rotation.z = -0.5;
+  broken.add(rail);
+  broken.add(box(0.18, 0.12, 0.02, '#8a7a52', -half - 0.18, DECK_Y + 0.3, 0.49, 0.01));
+  return { sills, whole, broken };
+}

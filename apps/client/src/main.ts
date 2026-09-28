@@ -914,6 +914,8 @@ function frame(now: number) {
   lampsAt = now;
   view.setLamps(lampLeft, game.wallNow(now));
   view.setZoom(game.zoom);
+  // The places mended together: a footbridge whole or broken, a street light lit or dark, as they stand.
+  view.setWorks(game.pass);
   const surge = game.surgeNow(now), caught = game.caught(now);
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
   hud.setSurge(surge, caught);
@@ -1096,7 +1098,8 @@ function frame(now: number) {
   const map = game.map, rule = map.data.surge;
   const scene: Scene = {
     map: map.data.id, kind: map.data.kind, up: !!game.up, weather: game.weather, snow: SEASONS[game.season.view.season].snow, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
-    me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty), ice: map.frozenAt(me.tx, me.ty) } : null,
+    // On a footbridge that stands, the planks under your feet, not the creek.
+    me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.needs(me.tx, me.ty) !== undefined && map.kind(me.tx, me.ty) === 'water' ? 'floor' : map.kind(me.tx, me.ty), ice: map.frozenAt(me.tx, me.ty) } : null,
     fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),
     poles: map.data.objects.filter(o => o.kind === 'pole'),
     teleports: map.data.objects.filter(o => o.kind === 'teleport'),
