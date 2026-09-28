@@ -143,6 +143,14 @@ export type MapObject =
   /** One of NAPO's desks with a screen, a radio or a log on it: you read it like a sign, under its `name`. `id` names it for the story. */
   | { kind: 'console'; x: number; y: number; id: string; name: string; text: string[] }
   /**
+   * One of NAPO's gates, w tiles wide (east to west) in a fence, too heavy for one: you read its plate like a
+   * sign, from the tile below it, and pulling at it there (A) counts. When GATE_PULLERS people pull within
+   * GATE_WINDOW_MS of each other, it swings open long enough for them to slip through, and it takes each of
+   * them to map `to`, the one at the gate's first tile arriving at tx, ty and the others keeping their offset,
+   * like an exit. The way back needs nobody: it opens from the far side (that map's home exit).
+   */
+  | { kind: 'gate'; x: number; y: number; w: number; to: string; tx: number; ty: number; dir: Dir; text: string[] }
+  /**
    * Stand on a tile next to it to recover energy while it burns. In town it is always tended; out in
    * the wilds (and in their shelters) it burns down unless someone feeds it, or `tended` says someone
    * out there keeps it going. `name`: what people call a fire in the open (the notice board says it),
@@ -195,6 +203,13 @@ export type MapObject =
    * theirs alone). `what` says which: a bed two tiles long, the rug three by two (walked over), the rest one.
    */
   | { kind: 'comfort'; x: number; y: number; what: Comfort }
+  /**
+   * One of NAPO's teleports: one in every cabin (a home of one's own) and its twin in the home town.
+   * A at the cabin's takes you to town, onto the tile in front of the town's (teleportArrival); A at the
+   * town's takes you home, onto the tile in front of the one in your own cabin. Faced like a desk, from
+   * the tile in front of it.
+   */
+  | { kind: 'teleport'; x: number; y: number }
   /**
    * A handwritten note someone left (notes.ts): on a table, a shelf, a crate or a bed, in a car, on the
    * luggage, nailed to a pole. It lies on the tile of what it is on, so it blocks nothing itself, and you
@@ -264,8 +279,9 @@ export interface MapData {
    */
   style?: 'napo' | 'mill';
   /**
-   * A room with a chest only: a home that is each player's own. Whoever walks in through its door is in a
-   * copy of the room of their own (their cabin, the server's zones), where nobody else ever is.
+   * A room with a chest only: a home that is each player's own. Whoever walks in through their own door is
+   * in a copy of the room of their own (their cabin, the server's zones), where only the neighbors they let
+   * in join them, to look round (world.ts, visits).
    */
   private?: true;
   /**
@@ -285,10 +301,11 @@ export interface MapData {
   skulkers?: SkulkerRule;
   /**
    * The wilds only: how the forest grows. 'old': old growth, as deep in as the Far Woods, the firs older
-   * and taller with cedars among them, the ferns deep and the light under them dimmer. Left out: the
+   * and taller with cedars among them, the ferns deep and the light under them dimmer. 'burnt': a forest
+   * the answer burned (the Burn), its firs standing black and bare over grey ground. Left out: the
    * younger woods nearer town.
    */
-  forest?: 'old';
+  forest?: 'old' | 'burnt';
   /**
    * Outdoors only: the water that freezes in winter (sky.ts, SEASONS: `frozen`), each by what people call
    * it and its tiles as [x, y]: while it is frozen it is ice, walked on like ground (TileMap.freeze). The
@@ -359,9 +376,13 @@ const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
-  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache',
-  'ruin', 'yarder', 'spool', 'traps',
+  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport',
+  'ruin', 'yarder', 'spool', 'traps', 'gate',
 ]);
+
+/** How many must pull at one of NAPO's gates at once (MapObject 'gate'), and how close together their pulls count as at once. */
+export const GATE_PULLERS = 2;
+export const GATE_WINDOW_MS = 5000;
 /**
  * Objects that are only drawn: you walk over or through them. A note is drawn on what it lies on,
  * which blocks the way itself.
@@ -381,20 +402,35 @@ export function underfoot(o: MapObject): boolean {
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
  */
-export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache']);
+export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache', 'teleport']);
+
+/** Where a teleport sets you down: on the tile in front of it (below), facing away from it. */
+export function teleportArrival(t: { x: number; y: number }): { x: number; y: number; dir: Dir } {
+  return { x: t.x, y: t.y + 1, dir: 'down' };
+}
 
 /** How many tiles an object covers, across and down: houses, vehicles, log decks, beds, rugs and a few more are bigger than one. */
 export function footprint(o: MapObject): [number, number] {
   switch (o.kind) {
     case 'house': case 'rug': case 'truck': case 'jeep': case 'logs': case 'ruin': return [o.w, o.h];
     case 'car': return [o.w, o.h ?? 1];
-    case 'carriage': return [o.w, 1];
+    case 'carriage': case 'gate': return [o.w, 1];
     case 'bed': return [1, 2];
     case 'piano': return [2, 1];
     case 'yarder': return [2, 2];
     case 'comfort': return comfortSize(o.what);
     default: return [1, 1];
   }
+}
+
+type Gate = Extract<MapObject, { kind: 'gate' }>;
+/** The gate covering tile x, y, if one does. */
+export function gateAt(data: MapData, x: number, y: number): Gate | undefined {
+  return data.objects.find((o): o is Gate => o.kind === 'gate' && y === o.y && x >= o.x && x < o.x + o.w);
+}
+/** Where pulling at a gate from below its tile x takes you, like an exit: its first tile to tx, ty, the others keeping their offset. */
+export function gateArrival(g: Gate, x: number): Arrival {
+  return { to: g.to, x: g.tx + Math.min(g.w - 1, Math.max(0, x - g.x)), y: g.ty, dir: g.dir };
 }
 
 /** Tiles covered by an object (houses, cars, beds and rugs are bigger than one tile). */

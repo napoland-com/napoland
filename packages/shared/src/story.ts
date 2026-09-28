@@ -118,6 +118,20 @@ export function toldAfter(story: StoryData, npc: string, stats: Stats): number {
   return (story.remarks ?? []).reduce((told, r, i) => (due.has(r) ? told | (1 << i) : told), stats.told ?? 0);
 }
 
+/** How many of what someone always says one talk says: the rest waits for the next talks, in order. */
+export const TALK_TURN = 3;
+
+/**
+ * The part of what someone always says (`lines`) that one talk says: TALK_TURN of them from `from`, up to
+ * the last, so every talk is short and a few talks say it all in order, then it starts over. `next`: where
+ * the next talk starts. Someone with little more to say than that says all of it every time.
+ */
+export function linesInTurn(lines: readonly string[], from: number): { lines: string[]; next: number } {
+  if (lines.length <= TALK_TURN + 1) return { lines: [...lines], next: 0 };
+  const start = from >= 0 && from < lines.length ? from : 0, end = Math.min(lines.length, start + TALK_TURN);
+  return { lines: lines.slice(start, end), next: end < lines.length ? end : 0 };
+}
+
 /**
  * What a person says, in one order: the hint of the chapter you are in, if they have one; what they say
  * once about something you did for the first time (`stats`: remarksDue); what they have to say about

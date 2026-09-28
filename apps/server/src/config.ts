@@ -72,6 +72,11 @@ export interface Config {
    */
   townCrowd: number;
   regionCrowd: number;
+  /**
+   * Development only: whoever is alone out in the wilds glimpses someone's walk this often (ms; 0: every
+   * minute or two, as it should), to play-test glimpses without the wait.
+   */
+  glimpseEveryMs: number;
   auth: AuthSettings;
 }
 
@@ -185,6 +190,12 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
     return int(name, 0, 1, 100_000);
   };
   const townCrowd = crowd('TOWN_CROWD'), regionCrowd = crowd('REGION_CROWD');
+  let glimpseEveryMs = 0;
+  if (get('GLIMPSE_EVERY_MS') !== undefined) {
+    // How often people's steps show is the same for everyone: a live server never hurries them.
+    if (get('NODE_ENV') === 'production') errors.push('GLIMPSE_EVERY_MS shows people\'s steps more often than it should, so it is refused when NODE_ENV=production');
+    else glimpseEveryMs = int('GLIMPSE_EVERY_MS', 0, 1000, 3_600_000);
+  }
 
   let auth: AuthSettings = { mode: 'legacy' };
   const authMode = oneOf('AUTH_MODE', AUTH_MODES, 'legacy');
@@ -224,7 +235,7 @@ export function loadConfig(env: Env = process.env, cwd = process.cwd()): Config 
   if (errors.length) throw new Error(`Invalid configuration:\n  ${errors.join('\n  ')}`);
   return {
     port, host, databaseUrl, mapsDir: mapsDir!, itemsFile: itemsFile!, storyFile: storyFile!, homeMap, migrationsDir, clientDir, weather, maxPlayers, tickMs, saveEveryMs,
-    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, restedEveryMs, townCrowd, regionCrowd, auth,
+    logLevel, trustProxy, maxConnectionsPerIp, newPlayersPerIpPerHour, version, clockShiftMs, parcelDayMs, xpMultiplier, restedEveryMs, townCrowd, regionCrowd, glimpseEveryMs, auth,
   };
 }
 

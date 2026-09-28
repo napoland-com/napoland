@@ -54,7 +54,7 @@ const stepsTo = (name: string) => {
 describe('the Far Woods, where they are', () => {
   it('are the first region at depth 2: old growth, 80 by 100 tiles, in the wilds', () => {
     expect(far.data).toMatchObject({ name: 'The Far Woods', kind: 'wilds', depth: 2, forest: 'old', width: 80, height: 100 });
-    expect([...maps.values()].filter(m => m.data.depth >= 2).map(m => m.data.id)).toEqual(['far-woods']);
+    expect([...maps.values()].filter(m => m.data.depth === 2).map(m => m.data.id)).toEqual(['far-woods']);
   });
 
   it('are reached up the trappers\' trail from beside the cabin at the end of the Near Woods, and left down it: both ways onto open ground', () => {
@@ -168,8 +168,8 @@ describe('the Far Woods, what they cost', () => {
     const edge = tileAt(far, 1), heart = tileAt(far, far.deepest);
     expect(Math.round(lasts(far, ...edge, 'rain'))).toBe(164);
     expect(Math.round(lasts(far, ...edge, 'rain', 8))).toBe(221);
-    expect(Math.round(lasts(far, ...heart, 'rain'))).toBe(46);
-    expect(Math.round(lasts(far, ...heart, 'rain', 8))).toBe(62);
+    expect(Math.round(lasts(far, ...heart, 'rain'))).toBe(45);
+    expect(Math.round(lasts(far, ...heart, 'rain', 8))).toBe(61);
     expect(ENERGY_MAX).toBe(100);
   });
 
@@ -276,11 +276,11 @@ describe('the Far Woods, what they give', () => {
     const rule = items.finds.find(f => f.item === 'far-woods-map')!;
     expect(rule.map).toBe('far-woods-trapper-cabin');
     expect(rule.respawn[1]).toBeLessThanOrEqual(180);
-    // Every other area there is outdoors has a map everyone starts with; this one alone is found. (A
-    // street is no area of its own: it is on the map of the town its end leads back to, areaOf.)
+    // Every other area there is outdoors has a map everyone starts with; this one and the Burn beyond it are
+    // found. (A street is no area of its own: it is on the map of the town its end leads back to, areaOf.)
     const charted = new Set([...STARTER_TOOLS].map(t => byId.get(t)!.chart));
     const outdoors = [...maps.values()].filter(m => m.data.kind !== 'inside' && !m.data.street).map(m => m.data.id);
-    expect(outdoors.filter(id => !charted.has(id))).toEqual(['far-woods']);
+    expect(outdoors.filter(id => !charted.has(id)).sort()).toEqual(['burn', 'far-woods']);
   });
 });
 

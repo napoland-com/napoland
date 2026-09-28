@@ -66,8 +66,12 @@ const ROOMS: readonly Room[] = [
     // Years of damp spoiled the rest (comfort.ts): an iron stove in the corner, a shelf, a drying rack
     // by the fire, the bed, the rug and the lamp on the table stand spoiled in their places until you
     // make each again at the workbench, which sets it there at once.
-    // Its door is every cabin's on Residents' Lane (gen-street.ts): the server lets each player in through their own.
-    id: 'stonebrook-home', name: 'Home', version: 6, outside: 'residents-lane', door: [6, 20], lots: true, private: true, wake: { x: 4, y: 2, dir: 'down' },
+    // Its door is every cabin's on Residents' Lane (gen-street.ts): the server lets each player in through
+    // their own, and a neighbor through theirs when they let neighbors visit. In the corner by the bed,
+    // a step off the way from the door to the fire, stands NAPO's teleport, the same in every cabin: A at
+    // it and you are in town, in front of its twin by the notice board (roadmap/street-visits.md), and A at
+    // that one brings you home, in front of this one (roadmap/first-steps.md).
+    id: 'stonebrook-home', name: 'Home', version: 7, outside: 'residents-lane', door: [6, 20], lots: true, private: true, wake: { x: 4, y: 2, dir: 'down' },
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -87,6 +91,7 @@ const ROOMS: readonly Room[] = [
       { kind: 'comfort', x: 7, y: 1, what: 'bed' },
       { kind: 'comfort', x: 3, y: 2, what: 'rug' },
       { kind: 'comfort', x: 2, y: 4, what: 'lamp' },
+      { kind: 'teleport', x: 7, y: 4 },
     ],
   },
   {
@@ -113,6 +118,33 @@ const ROOMS: readonly Room[] = [
       // The Barlows slept here one night on their way out (notes-left.ts).
       noteAt('barlow-tins', 1, 4),
       noteAt('barlow-next-door', 2, 1),
+    ],
+  },
+  {
+    // The house that was Home before streets. Everyone who stayed has a cabin of their own on Residents'
+    // Lane now, where the main street runs on west out of town (roadmap/street-visits.md), and what they had
+    // here went with them: a cold hearth, the boxes nobody came back for, and a note on the table that says
+    // where they went, for whoever still walks in here out of habit. Dark, like the houses the leavers left.
+    id: 'stonebrook-old-home', name: 'The old home', version: 1, outside: 'stonebrook', door: [8, 20],
+    rows: [
+      'xxxxxxx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xxxpxxx',
+    ],
+    things: [
+      { kind: 'hearth', x: 3, y: 1 },
+      { kind: 'boxes', x: 1, y: 1 },
+      { kind: 'boxes', x: 5, y: 1 },
+      {
+        kind: 'paper', x: 1, y: 3, look: 'note', name: 'A note on the table',
+        text: [
+          'In Mira\'s round hand: "We carried everything down to Residents\' Lane. Everyone who stayed has a cabin there now, and so do you."',
+          '"Out of the door, then west along the main street, out past the end of town. Your fire is lit."',
+        ],
+      },
     ],
   },
   {
@@ -274,6 +306,44 @@ const ROOMS: readonly Room[] = [
       },
       { kind: 'crate', x: 7, y: 4 },
       { kind: 'cache', x: 2, y: 1, name: 'the trapper\'s crate' },
+    ],
+  },
+  {
+    // The one shelter of the Burn (gen-burn.ts): the trapper's line cabin, which the fire went round. His
+    // bunk, a shelf, the wood he left, the line book on the table with its last page, and a fire nobody keeps:
+    // it burns down unless whoever passes feeds it. His map of the line, redrawn after the fire, lies by the
+    // book for whoever has none (a find: content/items.json). A crate for whoever comes next, last in the list.
+    id: 'burn-line-cabin', name: 'The line cabin', version: 1, outside: 'burn', door: [13, 49],
+    rows: [
+      'xxxxxxx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xxxpxxx',
+    ],
+    things: [
+      { kind: 'fireplace', x: 3, y: 1 },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'shelf', x: 5, y: 3 },
+      { kind: 'woodpile', x: 5, y: 4 },
+      {
+        kind: 'paper', x: 1, y: 3, look: 'note', name: 'The line book',
+        text: [
+          'The trapper\'s line book, its last page in pencil, the hand not steady.',
+          '"Green over the ridge, then white, like a town lit where no town is. Every needle swung north and stayed."',
+          '"By morning the fire came down the hill. It went round the cabin the way water goes round a stone."',
+          '"The rocks where it came up ring when you touch them, and they are warm. Going down. Nobody works this line alone."',
+        ],
+      },
+      {
+        kind: 'paper', x: 4, y: 0, look: 'calendar', name: 'Calendar on the wall',
+        text: [
+          'A feed-store calendar, the days crossed off in charcoal a week past the night of the answer, then not.',
+          'On the last page crossed off, in charcoal: "Rocks still warm. Needles still north. Traps come back empty, and clean."',
+        ],
+      },
+      { kind: 'cache', x: 5, y: 1, name: 'the line cabin\'s crate' },
     ],
   },
   {
@@ -761,7 +831,7 @@ function json(map: MapData): string {
 const GLYPH: Partial<Record<MapObject['kind'], string>> = {
   fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@',
   hearth: 'f', sheeted: 's', boxes: 'n', crib: 'C', clock: 'k', paper: '?', saw: 'S', carriage: '=', sawdust: ':', logs: 'l', luggage: 'u', cache: 'X',
-  traps: 't',
+  traps: 't', teleport: 'N',
 };
 /** The places for furniture in a home (comfort.ts), in lower case: what stands there, spoiled until it is made. */
 const COMFORT_GLYPH: Record<Comfort, string> = { stove: 'o', bed: 'b', rug: '_', lamp: 'i', rack: 'r', shelf: 't' };
@@ -800,7 +870,7 @@ if (import.meta.main) {
   // The other direction of doorInto: the door on the outside map must lead to the room's way in. It is
   // written by the outside map's generator, so after changing a room's size, run that one again too.
   const GENERATOR: Record<string, string> = {
-    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', 'residents-lane': 'npm run gen:street',
+    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', burn: 'npm run gen:burn', 'residents-lane': 'npm run gen:street',
   };
   for (const room of ROOMS) {
     const outside = JSON.parse(readFileSync(resolve(import.meta.dirname, `../content/maps/${room.outside}.json`), 'utf8')) as MapData;

@@ -613,6 +613,24 @@ export async function keepsNotes(storage: Storage): Promise<void> {
   expect(await storage.findByAuthSub(other)).toMatchObject({ notes: ['walt-truck'], keepsakes: ['tin-whistle'] });
 }
 
+/** The best trips (world.ts, endTrip), in `storage`: kept, grown, and never lost to a save without them. */
+export async function keepsBests(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: sub });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect(rec.bests).toBeUndefined();
+  const bests = { deepest: { map: 'near-woods', depth: 1, steps: 96 }, longestS: 660, xp: 47 };
+  const kept = { ...rec, bests, lastSeenAt: rec.lastSeenAt + 1000 };
+  await storage.save(kept);
+  expect((await load()).bests).toEqual(bests);
+  const { bests: _bests, ...without } = kept;
+  await storage.save(without);
+  expect((await load()).bests).toEqual(bests);
+  await storage.save({ ...kept, bests: { ...bests, longestS: 900 } });
+  expect((await load()).bests).toEqual({ ...bests, longestS: 900 });
+}
+
 /**
  * What a newer release saved that this one does not know, through the World and `storage` (in memory,
  * or a real database), as after a rollback to this release: items it has no definition of (in the bag,
@@ -707,7 +725,7 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
     xp: 120, stash: { items: { moss: 9, coat: 1 }, out: { moss: 2 }, pieces: { coat: [{ cond: 1, level: 1 }] } },
     gear: { shirt: 'coat' }, worn: { shirt: { cond: 0.75, level: 2 } }, story: 'the-lineman', tools: ['stonebrook-map', 'radio'],
     parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', notebook: { pages: ['glowcaps', 'watchers'], blanks: [] }, furniture: ['iron-stove'], cozy: 1_700_000_300_000,
-    street: 2, lot: 7, doorOff: true, meals: ['stew'],
+    street: 2, lot: 7, doorOff: true, visitsOff: true, firstSteps: 2, meals: ['stew'],
     createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   };
   expect(await storage.create(rec)).toBe(true);
@@ -718,13 +736,13 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
   expect(await load()).toEqual(rec);
   // Thanked meanwhile, by someone else: a save from the copy online before it leaves the count as it is.
   await storage.creditThanks(id);
-  // Later: their door shown again, and the letter about their street read.
-  const { doorOff: _door, ...shown } = rec;
+  // Later: their door shown again, their neighbors let in again, and the letter about their street read.
+  const { doorOff: _door, visitsOff: _visits, ...shown } = rec;
   const later: PlayerRecord = {
     ...shown, streetTold: true, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
     stash: { items: { moss: 11, coat: 1 }, out: {}, pieces: { coat: [{ cond: 1, level: 1 }] } }, worn: { shirt: { cond: 1, level: 2 } }, tools: [...rec.tools!, 'near-woods-map'],
     parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', notebook: { pages: ['glowcaps', 'watchers'], blanks: ['watcher-stops'] }, furniture: ['iron-stove', 'bed'],
-    cozy: 1_700_000_400_000, street: 3, lot: 0, meals: ['stew', 'tea'], lastSeenAt: rec.lastSeenAt + 1000,
+    cozy: 1_700_000_400_000, street: 3, lot: 0, firstSteps: 3, meals: ['stew', 'tea'], lastSeenAt: rec.lastSeenAt + 1000,
   };
   await storage.save(later);
   expect(await load()).toEqual({ ...later, stats: { ...later.stats, thanked: 8 } });
@@ -739,15 +757,23 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
   await storage.save({ ...cold, lastSeenAt: kept.lastSeenAt + 1000 });
   expect((await load()).cozy).toBeUndefined();
   expect((await load()).meals).toBeUndefined();
-  // The letter about their street, once read, stays read, even by a save without it; the door's setting is said by every save.
+  // And which of the first steps is theirs to take: one without it, and they took them all.
+  const { firstSteps: _first, ...past } = kept;
+  await storage.save({ ...past, lastSeenAt: kept.lastSeenAt + 1100 });
+  expect((await load()).firstSteps).toBeUndefined();
+  // The letter about their street, once read, stays read, even by a save without it; the door's setting and
+  // who may come in are said by every save.
   const { streetTold: _told, ...untold } = kept;
-  await storage.save({ ...untold, doorOff: true, lastSeenAt: kept.lastSeenAt + 1200 });
-  expect(await load()).toMatchObject({ streetTold: true, doorOff: true });
-  expect((await storage.loadLots()).find(l => l.id === id)).toEqual({ id, name: rec.name, street: 3, lot: 0, off: true });
+  await storage.save({ ...untold, doorOff: true, visitsOff: true, lastSeenAt: kept.lastSeenAt + 1200 });
+  expect(await load()).toMatchObject({ streetTold: true, doorOff: true, visitsOff: true });
+  // Their lot says both, and what their cabin shows a neighbor who walks in while they are away: the furniture and the stash.
+  const shows = { furniture: kept.furniture, stash: kept.stash };
+  expect((await storage.loadLots()).find(l => l.id === id)).toEqual({ id, name: rec.name, street: 3, lot: 0, off: true, closed: true, ...shows });
   await storage.save({ ...kept, lastSeenAt: kept.lastSeenAt + 1300 });
-  expect((await load()).doorOff).toBeUndefined();
+  expect(await load()).not.toHaveProperty('doorOff');
+  expect(await load()).not.toHaveProperty('visitsOff');
   // And where their cabin stands, which everyone's lots are read from: one without it, and it stands on none.
-  expect(await storage.loadLots()).toContainEqual({ id, name: rec.name, street: 3, lot: 0 });
+  expect(await storage.loadLots()).toContainEqual({ id, name: rec.name, street: 3, lot: 0, ...shows });
   const { street: _street, lot: _lot, ...unhoused } = kept;
   await storage.save({ ...unhoused, lastSeenAt: kept.lastSeenAt + 1500 });
   expect(await load()).not.toHaveProperty('street');

@@ -5,9 +5,9 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, COZY_AFTER_S, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, bagShort, comfortMax, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands,
-  toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type Mods, type NextGear, type Recipe, type StoneView,
-  type Upgrade,
+  CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, bagShort, comfortMax, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf,
+  thousands, toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type Mods, type NextGear, type Recipe,
+  type StoneView, type Upgrade,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, oddsText, pieceName, type Items } from './items';
 
@@ -313,12 +313,13 @@ export const SPOILED_NAMES: Readonly<Record<Comfort, string>> = {
  * A at a place in your cabin: what stands there spoiled and where to make it again, or, made, what it is;
  * the trophy shelf says what stands on it (`trophies`: the charms and anomalous gear in your stash).
  */
-export function comfortLines(what: Comfort, def: ItemDef | undefined, placed: boolean, trophies: readonly ItemDef[] = []): { who: string; lines: string[] } {
+export function comfortLines(what: Comfort, def: ItemDef | undefined, placed: boolean, trophies: readonly ItemDef[] = [], visiting = false): { who: string; lines: string[] } {
   if (!def) return { who: SPOILED_NAMES[what], lines: ['Years of damp spoiled it.'] };
-  if (!placed) return { who: SPOILED_NAMES[what], lines: [def.spoiled ?? 'Years of damp spoiled it.', `Make ${aOf(def)} at the workbench beside the chest: it goes straight into its place.`] };
+  // In a neighbor's cabin it is theirs to make: only what stands there.
+  if (!placed) return { who: SPOILED_NAMES[what], lines: visiting ? [def.spoiled ?? 'Years of damp spoiled it.'] : [def.spoiled ?? 'Years of damp spoiled it.', `Make ${aOf(def)} at the workbench beside the chest: it goes straight into its place.`] };
   if (what !== 'shelf') return { who: def.name, lines: [def.text] };
-  const on = trophies.length ? `On it: ${listOf(trophies.map(aOf))}.` : 'Nothing on it yet. The charms and anomalous gear you keep in your stash will stand here.';
-  return { who: def.name, lines: [def.text, on] };
+  const empty = visiting ? 'Nothing on it yet.' : 'Nothing on it yet. The charms and anomalous gear you keep in your stash will stand here.';
+  return { who: def.name, lines: [def.text, trophies.length ? `On it: ${listOf(trophies.map(aOf))}.` : empty] };
 }
 
 /**
@@ -556,6 +557,60 @@ export const FIRST_WAKE = 'Mira, by the notice board in town, knows where things
 
 /** The setting beside friend and trade requests: whether your street sees your name on your door, and your window lit while you are home. */
 export const DOOR_SETTING = 'Show my name on my door and when I am home';
+
+/** The setting below it: whether your neighbors may walk into your cabin (off: only friends). */
+export const VISITS_SETTING = 'Let my neighbors come into my cabin';
+
+/**
+ * A neighbor's door that stayed shut when you walked into it: nobody lives there, or its owner lets only
+ * friends in (or keeps you out). By name, never a pronoun.
+ */
+export function shutText(lot: LotView | null): string {
+  if (!lot) return NOBODY_LIVES;
+  return lot.name ? `The door stays shut: ${lot.name} lets only friends in.` : 'The door stays shut: only friends come in here.';
+}
+
+/** At home, when a neighbor walks into your cabin. */
+export function visitedText(name: string): string {
+  return `${name} came in.`;
+}
+
+/** Whose cabin you walked into: over the box in there, and on the banner as you come in. */
+export function visitWho(name: string): string {
+  return `${name}'s cabin`;
+}
+
+/** A neighbor's chest and workbench are theirs alone: A at one says so (the server refuses them too). */
+export function notYours(name: string, what: 'chest' | 'bench'): { who: string; text: string } {
+  return what === 'chest' ? { who: `${name}'s chest`, text: `Only ${name} opens it.` } : { who: `${name}'s workbench`, text: `Only ${name} works at it.` };
+}
+
+/** Over the box at NAPO's teleport, in a cabin or in town. */
+export const TELEPORT = 'NAPO teleport';
+
+/** A at NAPO's teleport asks first: the one in a cabin goes to town, the one in town home (`home`). */
+export function teleportQuestion(home: boolean): string {
+  return home ? 'Go home? It sets you down in your cabin.' : 'Go to town? It sets you down by the notice board.';
+}
+
+/** Over a new player's first steps (roadmap/first-steps.md), with which one it is. */
+export const FIRST_STEPS_TITLE = 'First steps';
+
+/** What each first step asks, in order: to town by the teleport, out to pick something up, home to the chest. */
+export const FIRST_STEP_LINES: readonly string[] = [
+  'Walk to NAPO\'s teleport in the corner and press A: it takes you to town.',
+  'Go out of town up the north road, and pick up something you find in the woods.',
+  'Take the teleport by the notice board home, and put what you found in the chest.',
+];
+
+/** The first steps are done: the text box says so, once. */
+export const FIRST_STEPS_DONE = 'That is the basics: go out, pick up what you find, and bring it home to the chest.';
+
+/** The first step to take now (`step`, 1 to FIRST_STEPS) as the status panel shows it: which one, and what it asks. Nothing for none. */
+export function firstStepsView(step: number | null): { title: string; text: string } | null {
+  const text = step === null ? undefined : FIRST_STEP_LINES[step - 1];
+  return text === undefined ? null : { title: `${FIRST_STEPS_TITLE} · ${step} of ${FIRST_STEPS}`, text };
+}
 
 /**
  * The letter the first time you come home since streets came: what your street sees of you, and where to

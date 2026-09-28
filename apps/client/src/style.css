@@ -33,6 +33,11 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .status .sub { display: flex; justify-content: space-between; gap: .8em; font-size: calc(var(--u) * .92); color: #d3ccbb; white-space: nowrap; font-variant-numeric: tabular-nums; }
 /* A tap on the status panel opens the Status tab. */
 .status { pointer-events: auto; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+/* A new player's first steps (roadmap/first-steps.md): at the foot of the panel, which one, and what to do now. */
+.status .steps { display: grid; gap: .15em; max-width: calc(var(--u) * 15); margin-top: calc(var(--u) * .15); padding-top: calc(var(--u) * .45); border-top: 1px solid rgba(217, 207, 184, .25); white-space: normal; }
+.status .steps[hidden] { display: none; }
+.status .steps b { font-size: calc(var(--u) * .82); font-weight: 600; letter-spacing: .02em; color: #ffcf5a; }
+.status .steps span { font-size: calc(var(--u) * .95); line-height: 1.25; }
 /* A guest: a small label under the name, and Sign in, a target of its own. The row stays for the whole
    session, so nothing under it moves while playing, and it is no wider than the panel already is. */
 .status .guest { display: flex; align-items: center; justify-content: space-between; gap: .6em; }
@@ -91,6 +96,17 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 @keyframes energy-pulse { 50% { opacity: .4; } }
 @keyframes energy-glint { 50% { opacity: .3; } }
 
+/* Unease closes the edges in: colder than low energy's, and slow, since a feeling creeps in and lifts
+   again (the level says how far: hud.ts). Its visibility waits for the fade out. Full, the edges breathe. */
+.unease { position: absolute; inset: 0; pointer-events: none; visibility: hidden; opacity: 0; transform: scale(1.4); will-change: opacity, transform;
+  transition: opacity 2.5s ease, transform 2.5s ease, visibility 0s linear 2.5s; }
+.unease[data-on] { visibility: visible; transition: opacity 2.5s ease, transform 2.5s ease, visibility 0s; }
+.unease i { position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 42%, rgba(8, 10, 18, 0) 36%, rgba(8, 10, 18, .5) 62%, rgba(3, 4, 10, .9) 86%, rgba(1, 2, 5, .97) 100%); }
+@media (prefers-reduced-motion: no-preference) {
+  .unease[data-breathe] i { animation: unease-breathe 5.5s ease-in-out infinite; }
+}
+@keyframes unease-breathe { 50% { transform: scale(1.07); } }
 /* Low energy darkens the screen edges. Under the panels and controls, and never in the way of a touch. */
 .vignette { position: absolute; inset: 0; pointer-events: none; visibility: hidden; opacity: 0; will-change: opacity, transform;
   background: radial-gradient(ellipse at 50% 45%, rgba(4, 3, 6, 0) 32%, rgba(4, 3, 6, .7) 60%, rgba(2, 1, 3, .97) 90%); }
@@ -176,6 +192,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 
 .dialog { position: absolute; left: calc(var(--pad) + var(--safe-l)); right: calc(var(--pad) + var(--safe-r)); bottom: calc(var(--pad) * 3.2 + var(--dp) + var(--pad) + var(--safe-b)); min-height: calc(var(--u) * 7.4); padding: calc(var(--u) * 1.2) calc(var(--u) * 1.5) calc(var(--u) * 1.4); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.35); line-height: 1.4; pointer-events: auto; cursor: pointer; display: none; }
 .hud.talking .dialog { display: block; }
+/* A card of several lines (how the trip went) keeps its line breaks. */
+.dialog .line { white-space: pre-line; }
 .dialog .who { position: absolute; left: calc(var(--u) * 1); top: calc(var(--u) * -1.55); padding: .15em .7em; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.05); color: #ffcf5a; }
 .dialog .more { position: absolute; right: calc(var(--u) * 1.1); bottom: calc(var(--u) * .45); color: #e0873a; font-size: calc(var(--u) * 1); }
 @media (prefers-reduced-motion: no-preference) { .dialog .more { animation: bob .9s steps(2, jump-none) infinite; } }

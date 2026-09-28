@@ -1,8 +1,8 @@
 /**
  * Your street, as the client shows it: whose each lot is and who is home (their window lit), the name
- * plates near you, knocking at a neighbor's door and what it says back, never walking into one, and at
- * your own door the offer to move next to a friend. On Residents' Lane as it ships, since players read
- * its words there.
+ * plates near you, knocking at a neighbor's door and what it says back, walking into one (visits.test.ts
+ * for what is inside) or being told why it stayed shut, and at your own door the offer to move next to a
+ * friend. On Residents' Lane as it ships, since players read its words there.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -12,7 +12,7 @@ import { Game } from '../src/game';
 import { refusalText } from '../src/items';
 import { Maps } from '../src/maps';
 import { areaOf, mapFor } from '../src/papermap';
-import { DOOR_SETTING, NO_MOVES, cabinWho, didText, doorText, knockedText, moveQuestion, streetLetterLines } from '../src/said';
+import { DOOR_SETTING, NOBODY_LIVES, NO_MOVES, cabinWho, didText, doorText, knockedText, moveQuestion, shutText, streetLetterLines } from '../src/said';
 import { friendsView } from '../src/friends';
 import { ITEMS, tinyTown, welcome, zone } from './fixtures';
 
@@ -103,8 +103,30 @@ describe('a neighbor\'s door', () => {
     expect(g.note).toMatchObject({ who: 'Empty cabin', text: 'Nobody lives here yet.' });
   });
 
-  it('is never walked into; your own is', () => {
+  it('is walked into, as your own is: the server lets you in, or sends the step back and says why; one that stayed shut is not tried again', () => {
     standAt(doorstep(1));
+    g.padChange('up', now);
+    run(20);
+    const [step] = sent.filter(m => m.t === 'step');
+    expect(step).toEqual({ t: 'step', dir: 'up', seq: expect.any(Number) });
+    // Bo lets only friends in: the step comes back, and the door says so.
+    g.handle({ t: 'reject', seq: (step as { seq: number }).seq, ...doorstep(1), dir: 'up' }, now);
+    g.handle({ t: 'door', ...doors[1]!, lot: { name: 'Bo', home: true }, closed: true }, now);
+    expect(g.note).toMatchObject({ who: 'Bo\'s cabin', text: shutText({ name: 'Bo', home: true }) });
+    expect(g.note!.text).toBe('The door stays shut: Bo lets only friends in.');
+    // Pushing on toward it, you only face it now, as long as you are on the street.
+    sent.length = 0;
+    g.note = null;
+    run(600);
+    expect(sent.filter(m => m.t === 'step')).toEqual([]);
+    // Until the lot changes: Bo left, or came home.
+    g.handle({ t: 'lot', lot: 1, view: { name: 'Bo' } }, now);
+    run(20);
+    expect(sent.filter(m => m.t === 'step')).toHaveLength(1);
+    // A door kept to oneself says nobody's name; a lot nobody lives on is never walked into at all.
+    expect(shutText({})).toBe('The door stays shut: only friends come in here.');
+    expect(shutText(null)).toBe(NOBODY_LIVES);
+    standAt(doorstep(2));
     g.padChange('up', now);
     run(400);
     expect(sent.filter(m => m.t === 'step')).toEqual([]);
@@ -114,7 +136,7 @@ describe('a neighbor\'s door', () => {
     expect(sent.filter(m => m.t === 'step')).toEqual([{ t: 'step', dir: 'up', seq: expect.any(Number) }]);
   });
 
-  it('tapped, is walked up to and knocked at; your own, tapped, is walked into', () => {
+  it('tapped, is walked into, as your own is; an empty lot\'s, or one that stayed shut, is walked up to and knocked at', () => {
     standAt({ x: doors[1]!.x - 1, y: doors[1]!.y + 1 }, 'left');
     g.tapTile(doors[1]!.x, doors[1]!.y);
     run(20);
@@ -122,8 +144,24 @@ describe('a neighbor\'s door', () => {
     expect(step).toMatchObject({ dir: 'right' });
     g.handle({ t: 'step', id: 'me', x: doors[1]!.x, y: doors[1]!.y + 1, dir: 'right', seq: (step as { seq: number }).seq }, now);
     run(400);
-    expect(sent).toContainEqual({ t: 'knock', ...doors[1]! });
-    g.handle({ t: 'door', ...doors[1]!, lot: { name: 'Bo', home: true } }, now);
+    expect(sent.filter(m => m.t === 'step').at(-1)).toMatchObject({ dir: 'up' });
+    expect(sent.filter(m => m.t === 'knock')).toEqual([]);
+    // It stayed shut: tapped again, it is knocked at.
+    const up = sent.filter(m => m.t === 'step').at(-1) as { seq: number };
+    g.handle({ t: 'reject', seq: up.seq, ...doorstep(1), dir: 'up' }, now);
+    g.handle({ t: 'door', ...doors[1]!, lot: { name: 'Bo', home: true }, closed: true }, now);
+    g.note = null;
+    sent.length = 0;
+    g.tapTile(doors[1]!.x, doors[1]!.y);
+    run(400);
+    expect(sent).toEqual([{ t: 'knock', ...doors[1]! }]);
+    g.note = null;
+    // The empty lot's.
+    standAt({ x: doors[2]!.x, y: doors[2]!.y + 2 }, 'down');
+    g.tapTile(doors[2]!.x, doors[2]!.y);
+    run(400);
+    expect(sent.filter(m => m.t === 'knock')).toEqual([]);
+    expect(g.note).toMatchObject({ who: 'Empty cabin', text: NOBODY_LIVES });
     g.note = null;
     standAt({ x: doors[0]!.x, y: doors[0]!.y + 2 }, 'down');
     g.tapTile(doors[0]!.x, doors[0]!.y);

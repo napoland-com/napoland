@@ -1,0 +1,35 @@
+{
+  "id": "stonebrook-old-home",
+  "name": "The old home",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 7,
+  "height": 6,
+  "tiles": [
+    "xxxxxxx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xxxpxxx"
+  ],
+  "levels": [
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000"
+  ],
+  "spawn": {"x":3,"y":4,"dir":"up"},
+  "exits": [
+    {"x":3,"y":5,"w":1,"h":1,"to":"stonebrook","tx":8,"ty":21,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"hearth","x":3,"y":1},
+    {"kind":"boxes","x":1,"y":1},
+    {"kind":"boxes","x":5,"y":1},
+    {"kind":"paper","x":1,"y":3,"look":"note","name":"A note on the table","text":["In Mira's round hand: \"We carried everything down to Residents' Lane. Everyone who stayed has a cabin there now, and so do you.\"","\"Out of the door, then west along the main street, out past the end of town. Your fire is lit.\""]}
+  ]
+}

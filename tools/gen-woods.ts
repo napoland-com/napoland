@@ -689,11 +689,13 @@ const GLYPH: Record<MapObject['kind'], string> = {
   truck: 'C', luggage: 'b', boxes: 'c', rocker: 'n', piano: 'n', bike: 'n', birdcage: 'n', pump: 'i', cage: 'c',
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
   // The loggers' camp, the gorge's bridge and the trapper's things are the Far Woods' (gen-far-woods.ts).
-  ruin: 'H', yarder: '#', spool: 'o', bridge: '=', traps: 'L',
+  ruin: 'H', yarder: '#', spool: 'o', bridge: '=', traps: 'L', gate: 'G',
   // A note lies on something else, which shows.
   note: ' ',
   // The furniture of your own cabin stands there alone (gen-interiors.ts).
   comfort: 'n',
+  // NAPO's teleport stands in every cabin and by the notice board in town (gen-interiors.ts, gen-map.ts).
+  teleport: 'N',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', h: ';', m: '.', g: '.', l: '.' };
 const objGlyph = new Map<number, string>();

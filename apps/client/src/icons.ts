@@ -159,6 +159,12 @@ const ICONS: Record<string, string> = {
     <path d="M16 4.5c-2.8 5.2-8 9.6-8 15 0 4.6 3.6 8 8 8s8-3.4 8-8c0-5.4-5.2-9.8-8-15z" fill="#f2a53c"/>
     <path d="M14.5 17.2c1.4-1.8 3.8-1.6 4.4.4.6 2.2-1.4 4.4-3.4 3.8-1.8-.6-2.2-2.6-1-4.2z" fill="#6b4020"/>
     <path d="M12.4 14.2c.6-1.4 1.4-2.6 2.2-3.4" stroke="#ffe3a8" stroke-width="1.3"/>`),
+  // A lump of green glass from the scar, bubbled, with a bright edge where it broke.
+  'fused-glass': icon(`${halo(16, 17, 12, '#8fe0b4')}
+    <path d="M5.5 19.5l4.5-8 7.5-3 8 4.5 1.5 7.5-6 5.5-9.5-.5z" fill="#4f9a78"/>
+    <path d="M10 11.5l5 5.5 10.5-4.5M15 17l1.5 9" stroke="#2c5c47" stroke-width="1.2"/>
+    <circle cx="11" cy="20" r="1.3" fill="#bff0d6" stroke="none"/><circle cx="20.5" cy="19" r="1" fill="#bff0d6" stroke="none"/>
+    <path d="M11.5 12.5l4-1.6" stroke="#dcfff0" stroke-width="1.3"/>`),
   // NAPO's grey steel lockbox: a lid, a band of NAPO yellow and a padlock that has not been opened since the evacuation.
   lockbox: icon(`<path d="M4.5 13h23v13.5c0 .8-.7 1.5-1.5 1.5H6c-.8 0-1.5-.7-1.5-1.5z" fill="#7d8b92"/>
     <path d="M4 9.8c0-1 .8-1.8 1.8-1.8h20.4c1 0 1.8.8 1.8 1.8V13H4z" fill="#aebbc1"/>

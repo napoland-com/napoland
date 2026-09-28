@@ -62,6 +62,12 @@ const TALL = color('#8e9b5b'), TALL_DRY = color('#b3a867'), TALL_GREEN = color('
 /** Ice, winter's on the water that freezes: pale and bluish, clouded here and there. */
 const ICE = color('#c4dae2'), ICE_CLOUD = color('#9dbcc8');
 
+/** Ash over a burnt forest's ground (MapData.forest 'burnt'), and the scar's bare ground fused to glass. */
+const ASH = color('#6b6763'), GLASSED = color('#4d5f58');
+/** How far ash greys each kind of ground there, and the plants that came back through it. */
+const ASHEN: Partial<Record<TileKind, number>> = { grass: 0.55, tallgrass: 0.25, ferns: 0.3, forest: 0.7, mud: 0.35 };
+const ASHEN_PLANTS = 0.3;
+
 /**
  * What a season does to the colors: toward `tint`, the open ground that far, the plants (tufts, tall grass,
  * ferns) that far, and roads and lots only in a frost. Kept gentle: the same place, another time of year.
@@ -105,11 +111,14 @@ export class Ground {
   private readonly f = { shade: 0, damp: 0, dry: 0 };
   /** The season's grade on every color (none: the colors as they are). */
   private readonly grade: Grade | undefined;
+  /** A burnt forest: its ground greyed with ash, and its bare ground fused to glass. */
+  private readonly ash: boolean;
 
   constructor(map: TileMap, season?: Season) {
     const W = (this.W = map.width), H = (this.H = map.height);
     this.seed = mapSeed(map.data.id);
     this.grade = season && GRADES[season];
+    this.ash = map.data.forest === 'burnt';
     // What shades the ground: the forest (past the map's edge too, where the woods go on) and the lone
     // trees; what makes it damp: water, and a little the mud of the banks.
     const shadeOf = new Float32Array(W * H), wetOf = new Float32Array(W * H);
@@ -202,6 +211,7 @@ export class Ground {
     }
     const k = this.grade ? gradeOf(this.grade, kind) : 0;
     if (k) out.lerp(this.grade!.tint, k);
+    if (this.ash) out.lerp(kind === 'lot' ? GLASSED : ASH, kind === 'lot' ? 0.6 : ASHEN[kind] ?? 0);
     return out.multiplyScalar(light);
   }
 
@@ -214,7 +224,8 @@ export class Ground {
 
   /** A plant's color (a fern, a tuft) as the season has it. */
   plant(out: THREE.Color): THREE.Color {
-    return this.grade ? out.lerp(this.grade.tint, this.grade.plants) : out;
+    if (this.grade) out.lerp(this.grade.tint, this.grade.plants);
+    return this.ash ? out.lerp(ASH, ASHEN_PLANTS) : out;
   }
 
   /** A tuft growing at x, y: greener where it is damp, straw where it is dry, darker under the trees; `r` (0 to 1) varies it. */

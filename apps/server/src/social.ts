@@ -58,6 +58,11 @@ export interface SocialOptions {
   isGuest?: (id: string) => boolean;
   /** Two players are friends no more (unfriended, or one blocked the other): a trade between them is off (trade.ts). */
   unlinked?: (a: string, b: string) => void;
+  /**
+   * How two players stand changed (friends or not, a block either way), and what is kept at hand says so now:
+   * whoever that keeps out of either one's cabin walks out of it (world.ts, visits).
+   */
+  changed?: (a: string, b: string) => void;
 }
 
 const has = (links: LinkRecord[], from: string, to: string, kind: LinkRecord['kind']) => links.some(l => l.from === from && l.to === to && l.kind === kind);
@@ -69,6 +74,8 @@ export class Social {
   private readonly reportLimit: RollingLimit;
   /** Who each player online blocks, kept at hand: chat asks it for every message (chat.ts). */
   private readonly blocking = new Map<string, Set<string>>();
+  /** Who blocks each player online, the other way round: the World keeps them out of a cabin whose owner blocks them. */
+  private readonly blockers = new Map<string, Set<string>>();
   /** Who each player online is friends with, kept at hand the same way. */
   private readonly befriended = new Map<string, Set<string>>();
 
@@ -82,6 +89,11 @@ export class Social {
     return this.blocking.get(id) ?? new Set();
   }
 
+  /** Who blocks `id`, while they are online (nobody before joined() has run). */
+  blockedBy(id: string): ReadonlySet<string> {
+    return this.blockers.get(id) ?? NOBODY;
+  }
+
   /** Who `id` is friends with, while they are online (nobody before joined() has run, and nobody for a guest). */
   friends(id: string): ReadonlySet<string> {
     return this.befriended.get(id) ?? NOBODY;
@@ -90,6 +102,7 @@ export class Social {
   /** A player left: nothing of theirs is kept at hand. */
   left(id: string): void {
     this.blocking.delete(id);
+    this.blockers.delete(id);
     this.befriended.delete(id);
   }
 
@@ -101,6 +114,7 @@ export class Social {
     if (guest) {
       const links = await this.o.storage.linksOf(id);
       this.blocking.set(id, new Set(links.filter(l => l.from === id && l.kind === 'block').map(l => l.to)));
+      this.blockers.set(id, new Set(links.filter(l => l.to === id && l.kind === 'block').map(l => l.from)));
       return;
     }
     await this.list(id);
@@ -139,6 +153,11 @@ export class Social {
         await s.setLink(me, msg.id, 'block', msg.on);
         if (msg.on) this.blocking.set(me, new Set([...this.blocks(me), msg.id]));
         else this.blocking.get(me)?.delete(msg.id);
+        // The one blocked, if online, knows it the other way round too (a guest as well: they walk into cabins).
+        if (this.blockers.has(msg.id)) {
+          if (msg.on) this.blockers.get(msg.id)!.add(me);
+          else this.blockers.get(msg.id)!.delete(me);
+        }
         return this.lists(me, msg.id);
       case 'tell':
         return this.tell(me, msg.to, msg.text);
@@ -223,6 +242,7 @@ export class Social {
     await this.list(a);
     // (Someone blocking a guest changes nothing a guest could see.)
     if (this.o.where(b) !== undefined && !this.o.isGuest?.(b)) await this.list(b);
+    this.o.changed?.(a, b);
   }
 
   /** A player's friends list, whole, if they are online. */
@@ -231,8 +251,9 @@ export class Social {
     const s = this.o.storage;
     const [links, me] = [await s.linksOf(id), await s.findPerson({ id })];
     const out = (kind: LinkRecord['kind']): PersonView[] => links.filter(l => l.from === id && l.kind === kind).map(l => ({ id: l.to, name: l.toName }));
-    // The list is read whole here anyway: the blocks and friends at hand follow it.
+    // The list is read whole here anyway: the blocks and friends at hand follow it, and who blocks them.
     this.blocking.set(id, new Set(out('block').map(p => p.id)));
+    this.blockers.set(id, new Set(links.filter(l => l.to === id && l.kind === 'block').map(l => l.from)));
     this.befriended.set(id, new Set(out('friend').map(p => p.id)));
     this.o.send(id, {
       t: 'friends',

@@ -10,7 +10,7 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, SEASONS, bagSlotsOf, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, SEASONS, bagSlotsOf, inTheDark, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData,
   type MapRef, type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
@@ -33,6 +33,7 @@ import { parcelNote, untold } from './parcels';
 import { goalText } from './said';
 import { Sound, type SoundSetting } from './sound';
 import { reachText, tradePanel } from './trade';
+import { Apparition } from './unease';
 import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { Resolution } from './quality';
@@ -240,6 +241,7 @@ const hud = new Hud(screen, {
       case 'requests': return game.social({ t: 'requests', off: a.off });
       case 'tradeRequests': return game.social({ t: 'tradeRequests', off: a.off });
       case 'door': return game.setDoorOff(a.off);
+      case 'visits': return game.setVisitsOff(a.off);
       // Face to face only: from farther away, the card says so (the server checks it again).
       case 'trade': {
         const reach = game.tradeReach(a.id);
@@ -344,7 +346,7 @@ const arrival = new Arrival(held => {
   if (view.map !== game.map || view.season !== game.season.view.season) buildView();
   if (collapsed) hud.showBanner('You collapsed from exhaustion', leftPile ? 'You woke up at home.\nWhat you carried lies where you fell. It fades in an hour.' : 'You woke up at home');
   else if (signedInNews) hud.showBanner(signedInNews.title, signedInNews.sub);
-  else hud.showBanner(game.map.data.name);
+  else hud.showBanner(game.placeName());
   signedInNews = null;
 });
 
@@ -762,6 +764,7 @@ const radioScenes: [RadioScene, RadioScene] = [{ on: false, senses: { loud: 0, f
 let radioTurn = 0;
 let progressShown: typeof game.progress | null = null;
 let storyShown = -1;
+let firstStepsShown = -1;
 let notebookShown = -1;
 let notesShown = -1;
 /** A map's name, for the field notes' headings. */
@@ -775,6 +778,9 @@ const mapName = (id: string) => maps.find(id)?.name;
 const toSay: News[] = [];
 /** The scene sound was mixed for last frame: what changed since is what makes a one-shot. */
 let heard: Scene | undefined;
+/** What may stand at the edge of the fog while you are uneasy (unease.ts), and where the view sees a tile on the screen. */
+const apparition = new Apparition();
+const edgeOf = (x: number, y: number) => view.edgeOf(x, y);
 /** The question and what the box says by itself, as last drawn (Game.boxChanges). */
 let boxShown = -1;
 /** The fan of calls over B as last drawn: '' while closed. */
@@ -810,7 +816,7 @@ function frame(now: number) {
   // Your cabin's places: spoiled until made, and the trophy shelf with what your stash holds.
   if (game.furnitureChanges !== comfortShown.changes || game.stash !== comfortShown.stash || view !== comfortShown.view) {
     comfortShown = { changes: game.furnitureChanges, stash: game.stash, view };
-    view.setComfort(madePlaces(game.furniture, id => items.get(id)), game.trophies());
+    view.setComfort(madePlaces(game.roomFurniture(), id => items.get(id)), game.trophies());
   }
   // On your street, the windows of the neighbors who are home are lit.
   if (game.streetChanges !== lotsShown.changes || view !== lotsShown.view) {
@@ -900,6 +906,10 @@ function frame(now: number) {
   if (game.storyChanges !== storyShown) {
     storyShown = game.storyChanges;
     hud.setJournal(journalView(game.reached()));
+  }
+  if (game.firstStepsChanges !== firstStepsShown) {
+    firstStepsShown = game.firstStepsChanges;
+    hud.setFirstSteps(game.firstSteps);
   }
   if (game.notebookChanges !== notebookShown) {
     notebookShown = game.notebookChanges;
@@ -998,7 +1008,16 @@ function frame(now: number) {
   // The first goal, in the bag and the chest; at the workbench, a tap on it opens its card (the Hud writes it only when it changed).
   const next = game.nextGear();
   hud.setGoal(next && { text: goalText(next, items), ready: next.ready, act: !!game.benchBeside() });
+  // Uneasy, the screen's edges close in; where watchers roam, something may stand at the edge of the fog.
+  hud.setUnease(game.unease);
+  const figure = me && game.online ? apparition.update(now, game.map, game.unease, inTheDark(game.weather), me.tx, me.ty, me.dir, edgeOf) : 0;
+  view.setApparition(apparition.x, apparition.y, figure);
+  // Alone out in the wilds, someone's steps now and then: gone once anyone else is here, or you come near.
+  const passing = game.passing, glimpsed = me && passing.active ? passing.update(now, me.x, me.y, game.players.size <= 1 && game.map.data.kind === 'wilds') : 0;
+  view.setGlimpse(passing.x, passing.y, passing.heading, passing.walking, passing.color, glimpsed);
   const t = (now - start) / 1000;
+  // Someone else vanished or appeared at a teleport: a pop there (the trip itself is theirs alone).
+  for (const p of game.takePops()) view.pop(p.x, p.y);
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;
   const scene: Scene = {
@@ -1006,6 +1025,7 @@ function frame(now: number) {
     me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.kind(me.tx, me.ty), ice: map.frozenAt(me.tx, me.ty) } : null,
     fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),
     poles: map.data.objects.filter(o => o.kind === 'pole'),
+    teleports: map.data.objects.filter(o => o.kind === 'teleport'),
     // How far the front still has to come to reach your tile, as a share of its sweep.
     surge: surge && { phase: surge.phase, gap: rule && me && map.deepest ? ((surgeFront(rule, map.deepest, surge) ?? map.deepest) - map.homeSteps(me.tx, me.ty)) / map.deepest : 1 },
     caught, creatures: game.creatureViews(), flashes: game.flashesNow(now), live: !!game.meId && game.live.has(game.meId), news: worldNews,

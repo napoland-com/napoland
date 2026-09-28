@@ -16,6 +16,9 @@ const WATCHER_HEARD = 9;
 const SKULKER_HEARD = 8;
 /** A flash crackles and pops this close to you. */
 const FLASH_HEARD = 6;
+/** NAPO's teleport hums this close to you: the rock in it, in the Old Stone's voice, softer than the radio hears it. */
+const TELEPORT_HEARD = 3;
+const TELEPORT_HUM = 0.5;
 
 export type Surface = 'road' | 'soft' | 'mud' | 'floor' | 'water' | 'swish' | 'ice';
 export type Loop = 'rain' | 'wind' | 'fire' | 'wires' | 'surge' | 'watcher' | 'skulker' | 'shimmer' | 'radio' | 'hum';
@@ -26,7 +29,9 @@ export type Shot =
   /** The radio: the Tower's pulse (a burst of static), turned on (a click and a sweep of static) and off (a click). */
   | { kind: 'pulse' | 'tune' | 'click' }
   /** A lodestone tugs (lodestone.ts): a shard lies near, and it does not say where. */
-  | { kind: 'tug' };
+  | { kind: 'tug' }
+  /** Steps that are not yours (unease.ts): `steps` of them, on `surface`, behind you, and never from a side. */
+  | { kind: 'stalk'; surface: Surface; steps: number };
 
 export interface Mix {
   /** How loud each loop should play, 0 to 1. */
@@ -49,6 +54,8 @@ export interface Scene {
   /** The fireplaces on this map, with the fuel they have left (null: tended; see Game.fireLeft). */
   fires: Array<{ x: number; y: number; left: number | null | undefined }>;
   poles: Array<{ x: number; y: number }>;
+  /** NAPO's teleports on this map (one in every cabin, its twin in town): the rock in each hums. */
+  teleports?: Array<{ x: number; y: number }>;
   /** The surge's phase here, and during one how far its front still is from you, as a share of its sweep (1 far off, 0 on you). */
   surge: { phase: SurgePhase; gap: number } | null;
   caught: boolean;
@@ -101,7 +108,8 @@ export function soundscape(s: Scene, was?: Scene): Mix {
     skulker: loudest(s.creatures.filter(c => c.chasing !== undefined), SKULKER_HEARD),
     shimmer: s.live ? 0.3 : 0,
     radio: radioCrackle(s.radio, s.kind, s.storm),
-    hum: radioHum(s.radio, s.storm),
+    // What the radio picks up everywhere, and close by a teleport's rock humming it too.
+    hum: Math.max(radioHum(s.radio, s.storm), TELEPORT_HUM * loudest(s.teleports ?? [], TELEPORT_HEARD)),
   };
 
   const shots: Shot[] = [];
@@ -126,6 +134,7 @@ export function soundscape(s: Scene, was?: Scene): Mix {
     if (n.kind === 'storm' && n.view.phase === 'coming') shots.push({ kind: 'rise' });
     if (n.kind === 'conditions' && n.names.length) shots.push({ kind: 'dawn' });
     if (n.kind === 'tug') shots.push({ kind: 'tug' });
+    if (n.kind === 'stalk') shots.push({ kind: 'stalk', surface: stepSurface(n.ground), steps: n.steps });
     // A call, from the side it comes from and as faint as it is far (calls.ts): yours too, from the middle.
     if (n.kind === 'call' && me) shots.push({ kind: 'call', ...callSound(n.call, n.id, n.x - me.x, n.y - me.y) });
   }

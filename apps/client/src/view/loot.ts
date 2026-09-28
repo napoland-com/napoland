@@ -19,7 +19,7 @@ import { OUTLINE, OUTLINE_INSTANCED, bake, box, flat, hash2, ownToon, part, pivo
 /** Items with a look of their own; any other item is drawn as a sack. */
 export const ITEM_LOOKS = [
   'glowcap', 'resin', 'scrap', 'wire', 'cloth', 'shard', 'live-shard', 'thermos', 'flare', 'strange', 'warm-pebble', 'hollow-feather', 'humming-bead', 'ember-coal', 'pale-moth',
-  'hand-warmer', 'rad-tablet', 'cedar-bark', 'battery', 'resin-tear', 'far-woods-map',
+  'hand-warmer', 'rad-tablet', 'cedar-bark', 'battery', 'resin-tear', 'far-woods-map', 'fused-glass', 'burn-map',
   // What cooks at a fire, and the meals it cooks into (meals.ts): a meal lies on the ground only where someone dropped it.
   'huckleberries', 'fiddleheads', 'fir-tips', 'chanterelles', 'fir-tip-tea', 'chanterelle-stew', 'berry-pemmican',
   // The keepsakes people left (notes.ts): each lies for one player alone, in a soft gold light.
@@ -66,6 +66,9 @@ const STYLE: Record<Look, Style> = {
   'resin-tear': { pool: '#ffb347', size: 1.3, top: 0.2, glow: { color: '#ffb347', emissive: '#a8600c' } },
   // A map found out there: pale paper, so it shows in the dark of a room.
   'far-woods-map': { pool: '#f3e6c4', size: 1.35, top: 0.1 },
+  'burn-map': { pool: '#f3e6c4', size: 1.35, top: 0.1 },
+  // Green glass from the scar, faintly warm: it catches what light there is.
+  'fused-glass': { pool: '#8fe0b4', size: 1.25, top: 0.18, glow: { color: '#6fb896', emissive: '#1f5a40' } },
   huckleberries: { pool: '#7d8cff', size: 1.2, top: 0.14, glow: { color: '#5a6ad8', emissive: '#1f2a7a' } },
   fiddleheads: { pool: '#a8e07a', size: 1.15, top: 0.3 },
   'fir-tips': { pool: '#9fe68a', size: 1.15, top: 0.1 },
@@ -385,7 +388,16 @@ export function lootModel(look: Look, glow: THREE.Material): THREE.Group {
       g.add(tear, part(new THREE.DodecahedronGeometry(0.025, 0), '#4a2e1a', 0.01, 0.075, 0.02, false));
       break;
     }
-    case 'far-woods-map': {
+    case 'fused-glass': {
+      // Lumps of sand and stone run together into green glass, bubbled, one on another.
+      const a = part(new THREE.DodecahedronGeometry(0.09, 0), glow, -0.03, 0.07, 0, 0.012);
+      a.scale.set(1.2, 0.75, 1);
+      const b = part(new THREE.IcosahedronGeometry(0.06, 0), glow, 0.08, 0.05, 0.05, 0.01);
+      b.rotation.set(0.6, 1.1, 0);
+      g.add(a, b);
+      break;
+    }
+    case 'far-woods-map': case 'burn-map': {
       // A paper map folded in four, a pencil line across it, a corner lifting.
       g.add(box(0.3, 0.012, 0.22, '#e6d6b3', 0, 0.01, 0, 0.008), box(0.29, 0.004, 0.012, '#8a7a5c', 0, 0.018, 0.02, false));
       const corner = box(0.12, 0.01, 0.1, '#d9c7a0', 0.1, 0.03, -0.07, 0.006);

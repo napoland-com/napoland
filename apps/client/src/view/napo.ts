@@ -3,7 +3,8 @@
  * with a rim of NAPO yellow), its yellow warning signs, and the Tower, a red and white mast with
  * a dish turned toward the woods and a light blinking on top; and its things out in the places: a
  * burned-out jeep, its box trucks and fuel pump in the motor pool, the sample cages at the field site
- * with a humming rock in each, and its survey stakes. Plain builders of toon boxes for world.ts, which
+ * with a humming rock in each, its survey stakes, and its teleports (one in every cabin, its twin in
+ * town), whose rock hums too. Plain builders of toon boxes for world.ts, which
  * bakes them with the other props; only the Tower's light keeps a material of its own, which world.ts
  * blinks, and the rocks in the cages share one that glows faintly, the same day and night.
  */
@@ -336,13 +337,122 @@ export function stakeModel(s: { x: number; y: number }): THREE.Group {
   return g;
 }
 
+/** The arch of a teleport (teleportModel): its radius, how high its posts stand, and how far back on the pad it stands. */
+const ARCH = { r: 0.4, posts: 0.72, z: -0.3 };
+/** How high the rock hums over the arch's crown (teleportCore), which world.ts bobs it about. */
+export const TELEPORT_ROCK_Y = ARCH.posts + ARCH.r + 0.26;
+/** Rings of light that climb round whoever the teleport takes (teleportCore): how many, and their bottom and top. */
+export const TELEPORT_RINGS = { n: 3, low: 0.12, high: 1.15 };
+
+/**
+ * One of NAPO's teleports (one in every cabin, its twin in town), as it stands: a beam pad. A round concrete pad
+ * rimmed in NAPO yellow with black ticks and a dark steel plate, where you stand to go, and at its back a steel
+ * arch on two posts, clamped in yellow, with NAPO's plate and eye at its crown. Its control box, on the right
+ * post, faces the tile in front, where you stand to use it and where it sets you down. What moves on it is
+ * teleportCore's.
+ */
+export function teleportModel(t: { x: number; y: number }): THREE.Group {
+  const g = pivot(t.x + 0.5, 0, t.y + 0.5);
+  g.add(part(flat(new THREE.CylinderGeometry(0.45, 0.47, 0.08, 16)), CONCRETE, 0, 0.04, 0, 0.015));
+  g.add(part(flat(new THREE.CylinderGeometry(0.42, 0.42, 0.02, 16)), NAPO_YELLOW, 0, 0.09, 0, false));
+  g.add(part(flat(new THREE.CylinderGeometry(0.35, 0.35, 0.025, 16)), '#2c3335', 0, 0.1, 0, false));
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2, tick = box(0.07, 0.022, 0.03, INK, Math.cos(a) * 0.385, 0.101, Math.sin(a) * 0.385, false);
+    tick.rotation.y = -a;
+    g.add(tick);
+  }
+  const { r: R, posts: P, z } = ARCH;
+  for (const x of [-R, R]) g.add(box(0.08, P - 0.1, 0.09, STEEL, x, 0.1 + (P - 0.1) / 2, z));
+  g.add(part(new THREE.TorusGeometry(R, 0.045, 6, 22, Math.PI), STEEL, 0, P, z, 0.012));
+  for (const a of [Math.PI / 5, Math.PI / 2, (4 * Math.PI) / 5]) {
+    const clamp = box(0.11, 0.05, 0.12, NAPO_YELLOW, Math.cos(a) * R, P + Math.sin(a) * R, z, false);
+    clamp.rotation.z = a;
+    g.add(clamp);
+  }
+  g.add(box(0.26, 0.12, 0.02, NAPO_YELLOW, 0, P + R - 0.14, z + 0.06, 0.008));
+  eye(g, 0, P + R - 0.14, z + 0.072, 0.07);
+  g.add(box(0.13, 0.2, 0.08, '#2c3335', R, 0.48, z + 0.09, 0.012));
+  g.add(box(0.045, 0.045, 0.01, NAPO_YELLOW, R, 0.52, z + 0.135, false), box(0.08, 0.03, 0.01, '#8fe0d0', R, 0.44, z + 0.135, false));
+  return g;
+}
+
+/** What moves on a teleport: the rock, the glow and its ripple always; the rings, the column and the sparks while it takes someone. */
+export interface TeleportCore {
+  root: THREE.Group;
+  rock: THREE.Object3D;
+  ripple: THREE.Object3D;
+  rings: THREE.Object3D[];
+  column: THREE.Object3D;
+  sparks: THREE.Object3D[];
+}
+
+/**
+ * What moves on a teleport (world.ts makes it live): the rock from deep in the woods humming over the arch's
+ * crown, like the ones in NAPO's sample cages (`rock`, the humming material); the soft glow (`glow`) on its
+ * plate, and a ring of light (`ripple`) that spreads over it to the rim, which is what the camera, looking down,
+ * sees best. For a trip (beam.ts): TELEPORT_RINGS rings of light that climb round you (`light`), a column of
+ * light over the plate (`column`, a texture bright at its foot) and sparks (`light`), all hidden until then.
+ * teleportModel's stand around them.
+ */
+export function teleportCore(t: { x: number; y: number }, m: { rock: THREE.Material; glow: THREE.Material; ripple: THREE.Material; light: THREE.Material; column: THREE.Material }): TeleportCore {
+  const root = pivot(t.x + 0.5, 0, t.y + 0.5);
+  const rock = part(new THREE.DodecahedronGeometry(0.12, 0), m.rock, 0, TELEPORT_ROCK_Y, ARCH.z, 0.012);
+  rock.rotation.set(hash2(t.x, t.y) * 3, 0, hash2(t.y, t.x) * 3);
+  rock.scale.set(1, 1.2, 0.9);
+  const plate = new THREE.Mesh(new THREE.CircleGeometry(0.34, 24), m.glow);
+  plate.rotation.x = -Math.PI / 2;
+  plate.position.y = 0.117;
+  const ripple = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.34, 32), m.ripple);
+  ripple.rotation.x = -Math.PI / 2;
+  ripple.position.y = 0.12;
+  // Each ring fades on its own, on a copy of the light.
+  const rings = Array.from({ length: TELEPORT_RINGS.n }, () => {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.33, 0.018, 6, 36), m.light.clone());
+    ring.rotation.x = Math.PI / 2;
+    ring.visible = false;
+    return ring;
+  });
+  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.34, 1.3, 24, 1, true), m.column);
+  column.position.y = 0.11 + 0.65;
+  column.visible = false;
+  const sparks = Array.from({ length: 24 }, () => {
+    const spark = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.035), m.light);
+    spark.visible = false;
+    return spark;
+  });
+  root.add(rock, plate, ripple, ...rings, column, ...sparks);
+  return { root, rock, ripple, rings, column, sparks };
+}
+
+/**
+ * One of NAPO's gates, across its w tiles: a concrete post at each end, a heavy steel gate between them in
+ * a frame braced corner to corner, its top rail striped NAPO yellow and black, a pull handle on its south
+ * face over each tile (one for each who must pull), and its yellow plate in the middle.
+ */
+export function gateModel(o: { x: number; y: number; w: number }): THREE.Group {
+  const g = pivot(o.x + o.w / 2, 0, o.y + 0.5), W = o.w, H = 1.15;
+  for (const x of [-W / 2 + 0.08, W / 2 - 0.08]) g.add(box(0.2, H + 0.2, 0.26, CONCRETE, x, (H + 0.2) / 2, 0), box(0.24, 0.06, 0.3, '#5e6466', x, H + 0.23, 0, false));
+  const span = W - 0.36;
+  for (const y of [0.12, H / 2, H - 0.06]) g.add(box(span, 0.07, 0.07, STEEL, 0, y, 0));
+  for (let k = 0; k <= W * 3; k++) g.add(box(0.03, H - 0.12, 0.03, '#8e979b', -span / 2 + (span * k) / (W * 3), H / 2, 0, false));
+  const brace = box(Math.hypot(span, H - 0.18), 0.05, 0.05, STEEL, 0, H / 2, 0.02, false);
+  brace.rotation.z = Math.atan2(H - 0.18, span);
+  g.add(brace);
+  for (let k = 0; k < W * 4; k++) g.add(box(span / (W * 4), 0.09, 0.09, k % 2 ? INK : NAPO_YELLOW, -span / 2 + (span * (k + 0.5)) / (W * 4), H - 0.02, 0.01, false));
+  for (let t = 0; t < W; t++) g.add(box(0.05, 0.3, 0.05, INK, -W / 2 + t + 0.5, 0.62, 0.1, false), box(0.05, 0.05, 0.1, INK, -W / 2 + t + 0.5, 0.78, 0.06, false), box(0.05, 0.05, 0.1, INK, -W / 2 + t + 0.5, 0.46, 0.06, false));
+  g.add(box(0.36, 0.2, 0.02, NAPO_YELLOW, 0, 0.86, 0.06, 0.01), box(0.26, 0.03, 0.01, INK, 0, 0.9, 0.075, false), box(0.2, 0.03, 0.01, INK, 0, 0.83, 0.075, false));
+  return g;
+}
+
 /** NAPO's things that stand on a tile (its signs and buildings aside): null for anything else. */
 export function napoProp(o: MapObject): THREE.Object3D | null {
   switch (o.kind) {
     case 'jeep': return jeepModel(o);
     case 'pump': return pumpModel(o);
     case 'cage': return cageModel(o, HUM);
+    case 'teleport': return teleportModel(o);
     case 'stake': return stakeModel(o);
+    case 'gate': return gateModel(o);
     case 'truck': return o.style === 'napo' ? napoTruck(o) : null;
     default: return null;
   }

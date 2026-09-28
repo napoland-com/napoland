@@ -1,0 +1,38 @@
+{
+  "id": "burn-line-cabin",
+  "name": "The line cabin",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 7,
+  "height": 6,
+  "tiles": [
+    "xxxxxxx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xxxpxxx"
+  ],
+  "levels": [
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000"
+  ],
+  "spawn": {"x":3,"y":4,"dir":"up"},
+  "exits": [
+    {"x":3,"y":5,"w":1,"h":1,"to":"burn","tx":13,"ty":50,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"fireplace","x":3,"y":1},
+    {"kind":"bed","x":1,"y":1},
+    {"kind":"shelf","x":5,"y":3},
+    {"kind":"woodpile","x":5,"y":4},
+    {"kind":"paper","x":1,"y":3,"look":"note","name":"The line book","text":["The trapper's line book, its last page in pencil, the hand not steady.","\"Green over the ridge, then white, like a town lit where no town is. Every needle swung north and stayed.\"","\"By morning the fire came down the hill. It went round the cabin the way water goes round a stone.\"","\"The rocks where it came up ring when you touch them, and they are warm. Going down. Nobody works this line alone.\""]},
+    {"kind":"paper","x":4,"y":0,"look":"calendar","name":"Calendar on the wall","text":["A feed-store calendar, the days crossed off in charcoal a week past the night of the answer, then not.","On the last page crossed off, in charcoal: \"Rocks still warm. Needles still north. Traps come back empty, and clean.\""]},
+    {"kind":"cache","x":5,"y":1,"name":"the line cabin's crate"}
+  ]
+}

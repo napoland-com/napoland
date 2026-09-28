@@ -5,7 +5,8 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { GUEST_DAYS } from '@napoland/shared';
+import { GLIMPSE_KEPT_MS, GLIMPSE_STEPS, GUEST_DAYS } from '@napoland/shared';
+import { DOOR_SETTING, VISITS_SETTING } from '../src/said';
 
 const page = readFileSync(resolve(import.meta.dirname, '../public/privacy.html'), 'utf8');
 const words = page.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
@@ -26,5 +27,29 @@ describe('the privacy policy', () => {
     // "Your character" is kept until you ask only once you signed in with it.
     expect(kept.find(li => li.startsWith('Your character'))).toMatch(/^Your character once you signed in with it/);
     expect(words).toContain('counts as a guest');
+  });
+
+  it('says what the steps others glimpse are, and that they are kept a day at most, in memory, shown without a name', () => {
+    expect(GLIMPSE_KEPT_MS).toBe(24 * 60 * 60 * 1000);
+    expect(words).toContain(`walks at least ${GLIMPSE_STEPS[0]} steps out in the wilds`);
+    expect(words).toContain(`up to ${GLIMPSE_STEPS[1]}`);
+    expect(words).toMatch(/only in its memory, never in the database or in a log: a day at most/);
+    expect(words).toContain('no name and no id');
+    expect(listUnder('How long we keep it').find(li => li.startsWith('The last steps of a walk'))).toMatch(/a day at most, in our server's memory only/);
+  });
+
+  it('names the settings for your door and your cabin as the menu does, and says what a neighbor who walks in sees, and what is not kept', () => {
+    expect(words).toContain(`turn off "${DOOR_SETTING}"`);
+    expect(words).toContain(`turn off "${VISITS_SETTING}"`);
+    expect(words).toContain('whether you let your neighbors into its cabin');
+    expect(words).toMatch(/what stands on your trophy shelf once you made one \(each charm and each piece of anomalous gear in your stash, once/);
+    expect(words).toContain('Nothing else of your stash, your bag or your chest is shown');
+    expect(words).toContain('you read the character name of whoever comes in; that is not kept');
+    expect(words).not.toContain('nobody else ever is');
+  });
+
+  it('says that a new character\'s first steps are kept until it took the last', () => {
+    expect(words).toContain('while it is new which of its first steps it is on');
+    expect(words).toContain('forgotten once it took the last');
   });
 });

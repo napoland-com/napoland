@@ -22,6 +22,8 @@ export interface FriendsView {
   tradesOff: boolean;
   /** You keep your name off your door and your window dark (guests too: it stands beside the others, and outside the list). */
   doorOff: boolean;
+  /** Only friends may walk into your cabin (guests too, below the door's). */
+  visitsOff: boolean;
   incoming: PersonView[];
   friends: Array<PersonView & { where: string; unread: boolean }>;
   outgoing: PersonView[];
@@ -51,7 +53,7 @@ export function standingOf(f: FriendsMsg | null, id: string): Standing {
 export function friendsView(
   f: FriendsMsg | null,
   s: {
-    person: PersonView | null; talks: ReadonlyMap<string, readonly TalkLine[]>; unread: ReadonlySet<string>; guests?: ReadonlySet<string>; tradeReach?(id: string): TradeReach; doorOff?: boolean;
+    person: PersonView | null; talks: ReadonlyMap<string, readonly TalkLine[]>; unread: ReadonlySet<string>; guests?: ReadonlySet<string>; tradeReach?(id: string): TradeReach; doorOff?: boolean; visitsOff?: boolean;
   },
   nameOf: (map: string) => string | undefined,
 ): FriendsView {
@@ -66,6 +68,7 @@ export function friendsView(
     requestsOff: f?.requestsOff ?? false,
     tradesOff: f?.tradesOff ?? false,
     doorOff: s.doorOff ?? false,
+    visitsOff: s.visitsOff ?? false,
     incoming: f?.incoming ?? [],
     friends,
     outgoing: f?.outgoing ?? [],

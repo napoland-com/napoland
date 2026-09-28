@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "pages": [
     {
       "id": "pop-23",
@@ -333,6 +333,62 @@
       "title": "Resin tears",
       "when": { "find": "resin-tear" },
       "text": "A drop of old resin gone hard and clear, with a seed caught inside. Only the oldest cedars weep them. Carried deep in, one makes the going a little easier."
+    },
+    {
+      "id": "gate-n-1",
+      "area": "burn",
+      "title": "Gate N-1",
+      "when": { "read": { "map": "far-woods", "x": 51, "y": 3 } },
+      "text": "The farthest thing NAPO built, and it never went through it. A steel gate too heavy for one: it moves only when two pull together. From the far side it opens for anyone, so nobody is shut in."
+    },
+    {
+      "id": "the-burn",
+      "area": "burn",
+      "title": "The Burn",
+      "when": { "read": { "map": "burn", "x": 27, "y": 60 } },
+      "text": "A forest the answer burned. The firs still stand, black and bare, over ground grey with ash. Out here I tire three times as fast as in the Near Woods. It never rains, and there is one fire."
+    },
+    {
+      "id": "the-line-book",
+      "area": "burn",
+      "title": "The line book",
+      "when": { "read": { "map": "burn-line-cabin", "x": 1, "y": 3 } },
+      "text": "The trapper was up here the night of the answer. Green light over the ridge, then white, and every needle swung the same way and stayed. The fire came down in the night and went round his cabin."
+    },
+    {
+      "id": "the-line-cabin",
+      "area": "burn",
+      "title": "The line cabin",
+      "when": { "read": { "map": "burn-line-cabin", "x": 4, "y": 0 } },
+      "text": "He stayed a week after, crossing off the days. The rocks stayed warm, the needles stayed turned, and his traps came back empty, and clean. Then the crossing off stops."
+    },
+    {
+      "id": "the-black-creek",
+      "area": "burn",
+      "title": "The black creek",
+      "when": { "read": { "map": "burn", "x": 31, "y": 42 } },
+      "text": "The creek runs dark with the ash in its bed. The ferns came back beside it first, and whatever lies in ferns came with them."
+    },
+    {
+      "id": "the-windfall",
+      "area": "burn",
+      "title": "The windfall",
+      "when": { "read": { "map": "burn", "x": 17, "y": 31 } },
+      "text": "Where the burned firs came down across each other, the old trap line is under them. The trapper cut his way round and kept going."
+    },
+    {
+      "id": "the-scar",
+      "area": "burn",
+      "title": "The scar",
+      "when": { "read": { "map": "burn", "x": 32, "y": 13 } },
+      "text": "A long trench of bare ground run together into glass, where the light came up out of it. The rocks along it ring, warm to the touch. Nobody should come here alone, the plate says, and nobody should sleep here."
+    },
+    {
+      "id": "fused-glass",
+      "area": "burn",
+      "title": "Fused glass",
+      "when": { "find": "fused-glass" },
+      "text": "Sand and stone melted green and cooled with bubbles in it. Still warm. Two lumps ring when they touch. Nothing I can make takes it yet, but it is worth the carry."
     },
     {
       "id": "glowcaps",

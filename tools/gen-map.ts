@@ -8,7 +8,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { objectTiles, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
-import { ontoStreet } from './gen-street';
+import { TOWN_ROAD, ontoStreet } from './gen-street';
 
 const N = 44;
 function mulberry32(a: number) {
@@ -48,11 +48,11 @@ rect(0, 0, N - 1, N - 1, (x, y) => {
 });
 for (const [x0, y0, x1, y1] of [[21, 4, 27, 10], [32, 5, 39, 11], [33, 19, 40, 25]] as const) rect(x0, y0, x1, y1, (x, y) => { if (tile[y]![x] === 'g' && !level[y]![x]) tile[y]![x] = 'f'; });
 
-// Town. Every house can be entered: the house that was home, whose door is the way onto your street
-// (Residents' Lane, gen-street.ts, where your own cabin stands; the spawn is at its door), the empty
-// house next door, and the lodge, where the town sits by the fire.
+// Town. Every house can be entered: the house that was Home (the spawn is at its door), dark since
+// everyone who stayed moved to a cabin of their own on Residents' Lane, down the road west of it (below),
+// the empty house next door, and the lodge, where the town sits by the fire.
 const houses = [
-  { x: 7, y: 19, roof: '#6b7075', lit: 1, inside: null },
+  { x: 7, y: 19, roof: '#6b7075', lit: 0, inside: 'stonebrook-old-home' },
   { x: 14, y: 19, roof: '#7a4b33', lit: 0, inside: 'stonebrook-empty-house' },
   { x: 7, y: 30, roof: '#4a5a44', lit: 1, inside: 'stonebrook-lodge' },
 ] as const;
@@ -60,7 +60,7 @@ const doors: MapExit[] = [];
 for (const h of houses) {
   const house = { kind: 'house', x: h.x, y: h.y, w: 3, h: 2, roof: h.roof, lit: h.lit } as const;
   place(house);
-  doors.push(h.inside ? doorInto(h.inside, 'stonebrook', house) : ontoStreet(house));
+  doors.push(doorInto(h.inside, 'stonebrook', house));
 }
 place({ kind: 'car', x: 13, y: 24, w: 2 });
 for (const [x, y] of [[15, 23], [15, 27], [9, 27]] as const) place({ kind: 'barrel', x, y });
@@ -283,17 +283,51 @@ const brook: Array<[number, number]> = [];
   add({ kind: 'boxes', x: 9, y: 36 });
 }
 
+// ---- The road to your street (roadmap/street-visits.md) ----
+// The main street runs on west out of town, behind the house that was Home, off the edge of the map onto
+// Residents' Lane (gen-street.ts), like the roads out to the regions: the way onto your street is a road,
+// no longer that house's door. Last, and without rnd(), so nothing placed before moves: it only paints open
+// ground and fells the trees on it. A signpost stands at its start, and NAPO's teleport, the twin of the
+// one in every cabin, on the lot by the notice board, where it sets you down (teleportArrival) and which
+// takes you home.
+{
+  const ROAD = { x0: TOWN_ROAD.x, x1: 10, y0: TOWN_ROAD.y, y1: TOWN_ROAD.y + TOWN_ROAD.h - 1 };
+  const onRoad = (x: number, y: number) => x >= ROAD.x0 && x <= ROAD.x1 && y >= ROAD.y0 && y <= ROAD.y1;
+  for (let i = objects.length - 1; i >= 0; i--) {
+    const o = objects[i]!;
+    if (!objectTiles(o).some(([x, y]) => onRoad(x, y))) continue;
+    if (o.kind !== 'tree') throw new Error(`the road to the lane runs over the ${o.kind} at ${o.x},${o.y}`);
+    objects.splice(i, 1);
+  }
+  rect(ROAD.x0, ROAD.y0, ROAD.x1, ROAD.y1, (x, y) => {
+    if (tile[y]![x] !== 'g' || level[y]![x]) throw new Error(`the road to the lane needs open ground at ${x},${y}`);
+    tile[y]![x] = 'r';
+    blocked[y]![x] = false;
+  });
+  if (tile[ROAD.y0]![ROAD.x1 + 1] !== 'r') throw new Error('the road to the lane must join the main street');
+  const SIGN = { x: 9, y: 16 };
+  if (blocked[SIGN.y]![SIGN.x] || tile[SIGN.y]![SIGN.x] !== 'g') throw new Error(`the lane's signpost needs open grass at ${SIGN.x},${SIGN.y}`);
+  place({ kind: 'sign', ...SIGN, text: ['West: Residents\' Lane', 'The cabins of the people who stayed, yours among them.'] });
+  const TELEPORT = { x: 12, y: 26 };
+  for (const [x, y] of [[TELEPORT.x, TELEPORT.y], [TELEPORT.x, TELEPORT.y + 1]] as const) {
+    if (blocked[y]![x] || tile[y]![x] !== 'l') throw new Error(`NAPO's teleport needs the open lot at ${x},${y}`);
+  }
+  place({ kind: 'teleport', ...TELEPORT });
+}
+
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 13, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 14, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
   // The north road leads into the Near Woods (its road enters at x 31-32 on the bottom row), the south
-  // road down the South Road (its road enters at x 35-36 on the top row).
+  // road down the South Road (its road enters at x 35-36 on the top row), and the main street, run on west,
+  // onto Residents' Lane (last, after the doors, which came first).
   exits: [
     { x: 29, y: 0, w: 2, h: 1, to: 'near-woods', tx: 31, ty: 78, dir: 'up' },
     { x: 11, y: 43, w: 2, h: 1, to: 'south-road', tx: 35, ty: 1, dir: 'down' },
     ...doors,
+    ontoStreet(),
   ],
   objects,
   // The town's rain, the same as the Near Woods' up its north road: from 12 minutes after dawn, for 12.

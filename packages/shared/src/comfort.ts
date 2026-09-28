@@ -68,3 +68,25 @@ export function cozySeconds(comfort: number): number {
 export function dries(furniture: readonly string[] | undefined, items: Map<string, ItemDef>): boolean {
   return (furniture ?? []).some(id => { const def = items.get(id); return def?.kind === 'furniture' && def.dries === true; });
 }
+
+/**
+ * What a trophy shelf shows: the charms and anomalous gear a stash holds, each once, in the order the
+ * chest lists them (item ids). The owner's page draws it from their own stash; a neighbor who walks in
+ * hears it from the server (visits), so both see the same shelf.
+ */
+export function trophies(stash: ReadonlyArray<{ item: string }>, get: (id: string) => ItemDef | undefined): string[] {
+  const seen = new Set<string>(), out: string[] = [];
+  for (const s of stash) {
+    if (seen.has(s.item)) continue;
+    const def = get(s.item);
+    if (!def || (def.kind !== 'charm' && !(def.kind === 'gear' && def.tier === 'anomalous'))) continue;
+    seen.add(s.item);
+    out.push(s.item);
+  }
+  return out;
+}
+
+/** Whether a set of furniture has its trophy shelf made: only then does it show anything. */
+export function shelfMade(furniture: readonly string[] | undefined, items: Map<string, ItemDef>): boolean {
+  return (furniture ?? []).some(id => { const def = items.get(id); return def?.kind === 'furniture' && def.furnishes === 'shelf'; });
+}

@@ -94,6 +94,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'not_usable': return 'That cannot be used';
     case 'empty_slot': return 'That slot is empty';
     case 'not_here': return 'Not here';
+    case 'not_yours': return 'That is not yours';
     case 'not_fuel': return 'That will not burn';
     case 'fire_full': return 'The fire is as big as it gets';
     case 'tended': return 'Someone keeps this fire going';

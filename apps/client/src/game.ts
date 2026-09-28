@@ -24,11 +24,15 @@
  *   you make it at the workbench, which sets it there at once; standing by your own fire makes you cozy,
  *   which the status panel counts down once you leave it;
  * - on your street (the server says whose each lot is and who is home: their window is lit), A at a
- *   neighbor's door knocks, and the box says whether they are home; their door is never walked into. A at
- *   your own door offers, friend by friend, to move your cabin next to theirs, where their street has room;
+ *   neighbor's door knocks, and the box says whether they are home; walking into it you look round their
+ *   cabin, drawn with their furniture and shelf, if it lets you in (else the box says why). A at your own
+ *   door offers, friend by friend, to move your cabin next to theirs, where their street has room; A at
+ *   NAPO's teleport in a cabin takes you to town;
  * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
  *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
  *   said in the text box anywhere else, and come in a letter when you walk in at home;
+ * - alone out in the wilds, now and then someone's steps from the last day walk past as a see-through
+ *   figure in their color (glimpses.ts): the server sends only the color and the tiles, never who;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
  *   it tells us, we show them; so is what everyone wears, gear and outfits (you choose yours at the chest);
  * - a call (calls.ts) goes to the server, which says who heard it: each one heard, yours too, is sung
@@ -43,34 +47,38 @@
  * - the Long Night is the server's too (`longNight`): its banners, and what Walt says while it is on.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, SEASONS, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, carriesFood, charmsIn, cookable,
-  cooks, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost,
-  meritLookOf, meritsLeft, meritsOf, modsOf, nearestCooking, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront,
-  takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotEat, DIR_VEC, type Blank,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, carriesFood,
+  charmsIn, cookable, cooks, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors,
+  markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestCooking, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget,
+  linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotEat, DIR_VEC, type Blank,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Recipe, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView,
   type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type LongNightView, type MapNote, type OfferPick, type ParcelView, type RefusedAction,
-  type Season, type SeasonView, type StormView, type StreetView, type TradeEnd, type TradeView, type Weather,
+  type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type VisitView, type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
+import { BEAM_IN_S, BEAM_OUT_S, padFor, popAt } from './beam';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
 import { pieceAt, type DetailRef } from './details';
 import type { FriendsMsg, TalkLine } from './friends';
+import { Passing } from './glimpses';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, FIRE_CHOICE, FIRE_OPTIONS, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TENDED, TOOK_ONE,
-  TOO_DARK, TWO_MEALS, WHAT_TO_COOK, YOUR_CABIN, ateAlready, buyQuestion, cabinWho, comfortLines, cookQuestion, cookShort, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText,
-  leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn, openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, stashShort, stoneQuestion,
-  streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, waltOnTheLongNight,
+  CRATE_FULL, CRATE_NO_GEAR, FIRE_CHOICE, FIRE_OPTIONS, FIRST_STEPS_DONE, FIRST_STEPS_TITLE, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES,
+  NO_ROOM, RESIDENT, TELEPORT, TENDED, TOOK_ONE, TOO_DARK, TWO_MEALS, WHAT_TO_COOK, YOUR_CABIN, ateAlready, buyQuestion, cabinWho, comfortLines, cookQuestion, cookShort, didText, didWho,
+  doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, notYours, nothingToBurn, teleportQuestion, openQuestion,
+  FIRST_WAKE, placedAlready, sentence, shortOf, shutText, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, visitedText, visitWho, waltOnTheLongNight,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { trophiesIn } from './view/cabin';
 import type { Maps } from './maps';
 import { Offers, fireThanksQuestion, letterLines, markThanksQuestion, thankRefusal, thankedFloat, thankedLine, thanksFor, type Offer } from './thanks';
 import { offerOf, stepRow, tapSlot, tradeOverText, tradeQuestion, tradeReach, tradeRefusal, type TradeReach } from './trade';
+import { tripCard } from './trip';
+import { Stalker } from './unease';
 import type { Avatar } from './view/world';
 
 interface Mover {
@@ -95,7 +103,7 @@ interface Mover {
  * the story (`story`): talking to one, or reading one, may move it on.
  */
 export type Talker = {
-  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door';
+  x: number; y: number; who: string; lines: string[]; kind: 'talk' | 'board' | 'fire' | 'stone' | 'chest' | 'bench' | 'cache' | 'comfort' | 'door' | 'teleport';
   /** A person's id (the map's npc id). */
   id?: string;
   story?: { talk: string } | { read: string };
@@ -153,6 +161,9 @@ const CREATURE_STEP_MS: Record<CreatureView['kind'], number> = { watcher: 420, s
 /** A creature as the game animates it: like a player, and what kind it is and whom it chases. */
 type Creature = Mover & { kind: CreatureView['kind']; chasing: string | undefined };
 
+/** What pulling at one of NAPO's gates alone feels like, before its plate. */
+export const GATE_PULLED = 'You pull at the gate. It gives a little, and no more: it will not move for one.';
+
 /** What a sign is called in the text box, by its style. */
 const SIGN_WHO = { plain: 'Sign', napo: 'NAPO sign', cardboard: 'Cardboard sign', mailbox: 'Mailbox' } as const;
 
@@ -166,12 +177,16 @@ function talkersOf(map: TileMap): Talker[] {
     if (o.kind === 'note') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', note: o }];
     // A jeep is bigger than one tile: its stencil reads from whichever end you face.
     if (o.kind === 'jeep') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO jeep', lines: o.text, kind: 'talk' }));
+    // A gate is pulled at from any of its tiles, and its plate read there: the server counts the pull, and
+    // when enough pull at once it takes them all through.
+    if (o.kind === 'gate') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO gate', lines: [GATE_PULLED, ...o.text], kind: 'talk' }));
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];
     if (o.kind === 'chest') return [{ x: o.x, y: o.y, who: 'Your stash', lines: [], kind: 'chest' }];
     if (o.kind === 'workbench') return [{ x: o.x, y: o.y, who: 'Workbench', lines: [], kind: 'bench' }];
     if (o.kind === 'cache') return [{ x: o.x, y: o.y, who: 'Crate', lines: [], kind: 'cache' }];
+    if (o.kind === 'teleport') return [{ x: o.x, y: o.y, who: TELEPORT, lines: [], kind: 'teleport' }];
     // Furniture in your cabin reads from any side of it; the rug is walked over, not faced.
     if (o.kind === 'comfort' && o.what !== 'rug') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: '', lines: [], kind: 'comfort', what: o.what }));
     return [];
@@ -226,7 +241,9 @@ export type News =
   /** You stood by your own fire long enough: cozy, for this many minutes once you leave it (comfort.ts). */
   | { kind: 'cozy'; minutes: number }
   /** Your lodestone tugs (lodestone.ts): a shard lies near. It never says where. */
-  | { kind: 'tug' };
+  | { kind: 'tug' }
+  /** Steps that are not yours, behind you (unease.ts): how many, and on what ground. For the ears alone. */
+  | { kind: 'stalk'; steps: number; ground: TileKind | undefined };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -241,7 +258,9 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'cook', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'cook', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport']);
+/** If the server has not moved you this long after the teleport was sent, the trip is off: you are shown where you stand. */
+const BEAM_WAIT_MS = 4000;
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
 const WARDROBE = new Set<RefusedAction>(['outfit', 'pattern', 'badge']);
 
@@ -296,6 +315,13 @@ export class Game {
   flashes: Array<{ x: number; y: number; kind: FlashKind; until: number }> = [];
   /** How wet you are, your load and whether something clings to you, as told and when. */
   body: { view: BodyView; at: number } = { view: { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} }, at: 0 };
+  /**
+   * How uneasy you are, as the server last told it (unease.ts): 0 to UNEASE_LEVELS. No bar shows it: the
+   * screen's edges, steps that are not yours and, where watchers roam, something at the edge of the fog.
+   */
+  unease = 0;
+  /** Someone's steps, glimpsed while you are alone out in the wilds (glimpses.ts): the walk under way, if any. */
+  readonly passing = new Passing();
   /** The Old Stone in town, and your counts toward feats (each feat's rank follows from its count). */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
@@ -312,6 +338,12 @@ export class Game {
   furniture: string[] = [];
   furnitureChanges = 0;
   /**
+   * In a neighbor's cabin (the welcome or zone said, `visit`): whose it is, the furniture they made and what
+   * their trophy shelf shows; null anywhere else. The room is drawn from it instead of your own cabin's.
+   * Its changes count in furnitureChanges too.
+   */
+  visit: { name: string; furniture: string[]; trophies: string[] } | null = null;
+  /**
    * Your street, while you are on it (the welcome or zone said): whose each lot is and whether they are
    * home, and which lot is yours; null anywhere else. `streetChanges` counts changes, for the lit windows.
    */
@@ -320,11 +352,33 @@ export class Game {
   /** The doors of the street's lots, lot by lot (lotDoors); none off it. */
   private lotDoor: Array<{ x: number; y: number }> = [];
   /**
+   * The lots whose doors stayed shut when you walked into them (the server said why): walked into no more,
+   * so a held stick does not bump into one again and again, until the lot changes or you come onto the street again.
+   */
+  private readonly shut = new Set<number>();
+  /**
    * You keep your name off your door and your window dark to your street (the setting beside friend and
    * trade requests), as the server last said: in the welcome, and whenever you change it. It counts in
    * socialChanges, as the friends panel shows it.
    */
   doorOff = false;
+  /** Only friends may walk into your cabin (the setting below the door's), as the server last said. It counts in socialChanges too. */
+  visitsOff = false;
+  /**
+   * A new player's first step to take now (1 to FIRST_STEPS: roadmap/first-steps.md), as the server said, on
+   * the status panel; null when there is none. `firstStepsChanges` counts changes.
+   */
+  firstSteps: number | null = null;
+  firstStepsChanges = 0;
+  /**
+   * NAPO's teleport using you (beam.ts): going, from YES until the server moves you ('out', `sent` once the
+   * teleport is asked for), then arriving by its twin ('in', `pad` the one you arrive at). `t` is seconds into
+   * it, counted in frames (a frame that took long, building the new map, skips none of it). Nobody walks
+   * meanwhile. Null the rest of the time.
+   */
+  beam: { phase: 'out' | 'in'; t: number; pad: { x: number; y: number }; sent?: number } | null = null;
+  /** Where others vanished or appeared at a teleport, for the view to pop (takePops). */
+  private pops: Array<{ x: number; y: number }> = [];
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The id of the chapter of the story you are in, as the server said ('' until its welcome). */
@@ -366,6 +420,8 @@ export class Game {
   friends: FriendsMsg | null = null;
   /** Private messages this session, by the other player's id, oldest first; replaced whole on every change. */
   talks = new Map<string, TalkLine[]>();
+  /** Where the next talk with each person takes up what they always say (linesInTurn), by their id: this session's. */
+  private heard = new Map<string, number>();
   /** Friends whose messages you have not opened yet. */
   unread = new Set<string>();
   /** Whose card is open in the friends panel: their messages count as read while it is. */
@@ -468,6 +524,8 @@ export class Game {
   private tradeAsk: PersonView | null = null;
   /** A lodestone you wear (a quirk): when it tugs. */
   private readonly lodestone = new Lodestone();
+  /** Uneasy out in the wilds: when steps that are not yours sound behind you. */
+  private readonly stalker = new Stalker();
 
   constructor(
     private readonly maps: Maps, private readonly send: (msg: ClientMsg) => void, readonly items: Items, readonly story: StoryData = NO_STORY, readonly notebook: NotebookData = NO_NOTEBOOK,
@@ -511,6 +569,7 @@ export class Game {
   private setStreet(street: StreetView | undefined) {
     this.street = street ? { mine: street.mine, lots: [...street.lots] } : null;
     this.lotDoor = street ? lotDoors(this.current.data) : [];
+    this.shut.clear();
     this.streetChanges++;
   }
 
@@ -521,9 +580,34 @@ export class Game {
     this.furnitureChanges++;
   }
 
-  /** The charms and anomalous gear your stash holds, one of each: what stands on the trophy shelf. */
+  /** The cabin you are in, as the welcome or a zone told it: your own (its furniture), a neighbor's (`visit`), or none. */
+  private setRoom(furniture: readonly string[] | undefined, visit: VisitView | undefined) {
+    if (visit) {
+      this.visit = { name: visit.name, furniture: [...furniture ?? []], trophies: [...visit.trophies] };
+      this.furnitureChanges++;
+      return;
+    }
+    if (this.visit) {
+      this.visit = null;
+      this.furnitureChanges++;
+    }
+    if (furniture) this.setFurniture(furniture);
+  }
+
+  /** What stands in the places of the cabin you are in: a neighbor's while you visit, else your own. */
+  roomFurniture(): readonly string[] {
+    return this.visit?.furniture ?? this.furniture;
+  }
+
+  /** What stands on the trophy shelf of the cabin you are in: the neighbor's (the server said), or what your own stash holds, one of each. */
   trophies() {
+    if (this.visit) return this.visit.trophies.filter(id => this.items.byId.has(id)).map(id => this.items.get(id));
     return trophiesIn(this.stash ?? [], id => this.items.get(id));
+  }
+
+  /** What the place you are in is called, for the banner as you arrive: a neighbor's cabin by whose it is. */
+  placeName(): string {
+    return this.visit ? visitWho(this.visit.name) : this.current.data.name;
   }
 
   /** The season right now, its time left counted down from the server's last word. */
@@ -612,7 +696,10 @@ export class Game {
         this.enter(map, msg.players, msg.finds, msg.drops, someoneElse);
         this.setStreet(msg.street);
         this.doorOff = msg.doorOff === true;
+        this.visitsOff = msg.visitsOff === true;
         this.socialChanges++;
+        this.firstSteps = msg.firstSteps ?? null;
+        this.firstStepsChanges++;
         this.scene(msg, now);
         this.weather = msg.weather;
         this.setSeason(msg.season, now, false);
@@ -622,6 +709,8 @@ export class Game {
         this.stash = msg.stash ?? null;
         this.lastEnergy = { view: msg.energy, at: now };
         this.body = { view: msg.body, at: now };
+        // Nobody comes into the game uneasy: the server starts everyone at none.
+        this.unease = 0;
         this.stone = msg.stone;
         this.conditions = msg.conditions;
         this.stats = msg.stats;
@@ -633,7 +722,7 @@ export class Game {
         this.tools = msg.tools;
         this.chapter = msg.story.chapter;
         this.storyChanges++;
-        if (msg.furniture) this.setFurniture(msg.furniture);
+        this.setRoom(msg.furniture, msg.visit);
         this.wall = { now, ms: msg.serverTime };
         this.thankedDay = utcDay(msg.serverTime);
         this.thankedToday = new Set(msg.thanked ?? []);
@@ -656,7 +745,7 @@ export class Game {
         this.weather = msg.weather;
         this.stats = msg.stats;
         this.statsChanges++;
-        if (msg.furniture) this.setFurniture(msg.furniture);
+        this.setRoom(msg.furniture, msg.visit);
         this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
         // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
         const me = this.me ?? (old ? { ...old } : undefined);
@@ -664,6 +753,9 @@ export class Game {
           me.tx = me.x = msg.x; me.ty = me.y = msg.y; me.dir = msg.dir; me.anim = null; me.turnT = 0;
           this.players.set(me.id, me);
         }
+        // Moved by the teleport we asked for: we arrive at its twin, in front of which the server put us.
+        const pad = this.beam?.phase === 'out' && this.beam.sent !== undefined ? padFor(map.data.objects, msg.x, msg.y) : undefined;
+        this.beam = pad ? { phase: 'in', t: 0, pad } : null;
         break;
       }
       case 'energy': {
@@ -697,20 +789,48 @@ export class Game {
         const s = this.street;
         if (s && msg.lot >= 0 && msg.lot < s.lots.length) {
           s.lots[msg.lot] = msg.view;
+          this.shut.delete(msg.lot);
           this.streetChanges++;
         }
         break;
       }
       case 'door':
-        this.inform(cabinWho(msg.lot), doorText(msg.lot));
+        if (msg.closed) {
+          // Tried no more: walking into it again only knocks.
+          const lot = this.lotDoor.findIndex(d => d.x === msg.x && d.y === msg.y);
+          if (lot >= 0) this.shut.add(lot);
+        }
+        this.inform(cabinWho(msg.lot), msg.closed ? shutText(msg.lot) : doorText(msg.lot));
         break;
       case 'doorOff':
         this.doorOff = msg.off;
         this.socialChanges++;
         break;
+      case 'visitsOff':
+        this.visitsOff = msg.off;
+        this.socialChanges++;
+        break;
+      case 'visited':
+        this.inform(YOUR_CABIN, visitedText(msg.name));
+        break;
+      case 'firstSteps':
+        // The last one taken: the text box says the basics are done, once.
+        if (msg.step === null && this.firstSteps !== null) this.inform(FIRST_STEPS_TITLE, FIRST_STEPS_DONE);
+        this.firstSteps = msg.step;
+        this.firstStepsChanges++;
+        break;
       case 'streetLetter':
         this.letters.push({ who: 'Letter', lines: streetLetterLines(msg.doorOff) });
         break;
+      case 'trip': {
+        // How the trip went comes first, before any letter home: one page, once the box is free (idle).
+        const card = tripCard(msg.trip, id => {
+          const d = this.maps.find(id);
+          return d && this.maps.get({ id, version: d.version });
+        });
+        this.letters.unshift({ who: card.title, lines: [card.lines.join('\n')] });
+        break;
+      }
       case 'doorstep':
         this.offerMoves(msg.moves);
         break;
@@ -754,6 +874,12 @@ export class Game {
       }
       case 'hitch':
         this.floatOverMe(msg.on ? 'Something clings to you. Find a light' : 'It let go of you', msg.on ? EERIE : GAIN);
+        break;
+      case 'unease':
+        this.unease = Math.min(UNEASE_LEVELS, Math.max(0, Math.round(msg.level) || 0));
+        break;
+      case 'glimpse':
+        this.passing.begin(msg.glimpse, now);
         break;
       case 'flare':
         this.flares.push({ x: msg.flare.x, y: msg.flare.y, until: now + msg.flare.left * 1000 });
@@ -911,7 +1037,10 @@ export class Game {
         }
         this.progress = msg.progress;
         break;
-      case 'join':
+      case 'join': {
+        // Come in front of a teleport: a pop there, as they leave one by the other.
+        const pop = msg.player.id !== this.meId && popAt(this.current.data.objects, 'join', msg.player.x, msg.player.y);
+        if (pop) this.pops.push(pop);
         this.players.set(msg.player.id, this.mover(msg.player));
         this.gear.set(msg.player.id, msg.player.gear ?? {});
         this.quirks.set(msg.player.id, msg.player.quirks ?? []);
@@ -930,6 +1059,7 @@ export class Game {
         else this.guests.delete(msg.player.id);
         this.socialChanges++;
         break;
+      }
       case 'glow':
         if (msg.on) this.live.add(msg.id);
         else this.live.delete(msg.id);
@@ -938,11 +1068,15 @@ export class Game {
         if (msg.left > 0) this.afterglows.set(msg.id, now + msg.left * 1000);
         else this.afterglows.delete(msg.id);
         break;
-      case 'leave':
+      case 'leave': {
+        // Gone from beside a teleport: everyone else sees a pop where they stood (the trip is theirs alone).
+        const was = this.players.get(msg.id), pop = was && msg.id !== this.meId && popAt(this.current.data.objects, 'leave', was.tx, was.ty);
+        if (pop) this.pops.push(pop);
         this.players.delete(msg.id);
         this.live.delete(msg.id);
         this.afterglows.delete(msg.id);
         break;
+      }
       case 'step': {
         const p = this.players.get(msg.id);
         if (!p) break;
@@ -992,7 +1126,11 @@ export class Game {
         this.tools = msg.tools;
         break;
       case 'furniture':
-        this.setFurniture(msg.furniture);
+        // Made in the cabin you are in: its owner's, when you visit (your own furniture is only ever made at home).
+        if (this.visit) {
+          this.visit = { ...this.visit, furniture: [...msg.furniture] };
+          this.furnitureChanges++;
+        } else this.setFurniture(msg.furniture);
         break;
       case 'got': {
         this.picking = null;
@@ -1042,6 +1180,8 @@ export class Game {
         this.socialChanges++;
         break;
       case 'refused':
+        // The teleport said no (someone moved, or it is gone): the trip is off, and you are shown where you stand.
+        if (msg.action === 'teleport') this.beam = null;
         if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
         if (TRADE_ACTIONS.has(msg.action)) { this.inform('Trade', tradeRefusal(msg.reason, this.trade?.with.name ?? this.tradeWith?.name ?? 'them')); break; }
         if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
@@ -1073,6 +1213,8 @@ export class Game {
   disconnected(now: number) {
     this.online = false;
     this.pending = []; this.path = []; this.goal = null;
+    // A trip half done is off: the next welcome says where you are.
+    this.beam = null;
     // Answers to what we asked went with the connection, and what was being asked may no longer hold.
     this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.benchCard = null; this.caching = null; this.cache = null;
     // A trade lasts only while both are online: the server calls it off.
@@ -1080,6 +1222,7 @@ export class Game {
     this.trade = null; this.tradeMine = []; this.tradeAsk = null; this.callingOff = null;
     this.clearBox();
     this.offers.reset();
+    this.passing.end();
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
     if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
@@ -1091,6 +1234,8 @@ export class Game {
    * or for another player (`someoneElse`: a welcome for another character, on the same map).
    */
   private enter(map: TileMap, players: PlayerView[], finds: FindView[], drops: DropView[], someoneElse = false) {
+    // A glimpse was of the place you were in, among the people there.
+    this.passing.end();
     if (map !== this.current || someoneElse) {
       this.current = map;
       this.talkers = talkersOf(map);
@@ -1180,6 +1325,7 @@ export class Game {
     // A press that closes what the box says does nothing else.
     if (this.note) return this.closeNote();
     if (this.dialog) return this.advanceDialog();
+    if (this.beam) return;
     const me = this.me;
     if (!me || me.anim) return;
     const act = this.action();
@@ -1200,9 +1346,12 @@ export class Game {
       // What people say comes in one order (storyLines, story.ts): the chapter's hint, what they say once
       // about what you did for the first time, what they have heard (Mira: what the woods are like today),
       // then what they always say. The server hears who you talked to, or what you read.
+      // What they always say comes a few lines a talk (linesInTurn), taken up where the last talk left off.
       const word = t.id === 'mira' ? this.miraWord() : t.id === 'walt' ? this.waltWord() : null, today = word ? [word] : [];
-      const person = t.story && 'talk' in t.story ? t.story.talk : undefined;
-      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, t.lines, this.stats, today) : [...today, ...t.lines] });
+      const person = t.story && 'talk' in t.story ? t.story.talk : undefined, key = t.id ?? `${t.x},${t.y}`;
+      const turn = linesInTurn(t.lines, this.heard.get(key) ?? 0);
+      this.heard.set(key, turn.next);
+      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, turn.lines, this.stats, today) : [...today, ...turn.lines] });
       // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
       const told = person ? toldAfter(this.story, person, this.stats) : undefined;
       if (told !== undefined && told !== (this.stats.told ?? 0)) { this.stats = { ...this.stats, told }; this.statsChanges++; }
@@ -1215,6 +1364,15 @@ export class Game {
       return;
     }
     if (t.kind === 'fire') return this.tend(t.x, t.y);
+    // A neighbor's chest and workbench are theirs alone.
+    if ((t.kind === 'chest' || t.kind === 'bench') && this.visit) {
+      const said = notYours(this.visit.name, t.kind);
+      return this.inform(said.who, said.text);
+    }
+    if (t.kind === 'teleport') {
+      // It takes you somewhere else, so it asks first: the one in a cabin (anyone's) to town, the one in town home.
+      return this.ask({ who: TELEPORT, text: teleportQuestion(!this.current.data.private), yes: () => this.beamOut(t) });
+    }
     if (t.kind === 'chest') {
       if (!this.online) return;
       this.opening = { x: t.x, y: t.y, at: this.clock };
@@ -1237,7 +1395,7 @@ export class Game {
     if (t.kind === 'comfort' && t.what) {
       // What stands there: spoiled, and where to make it again, or what you made.
       const def = furnitureFor(t.what, this.items.byId.values());
-      const said = comfortLines(t.what, def, !!def && this.furniture.includes(def.id), this.trophies());
+      const said = comfortLines(t.what, def, !!def && this.roomFurniture().includes(def.id), this.trophies(), !!this.visit);
       this.openDialog({ ...t, who: said.who, lines: said.lines, kind: 'talk' });
       return;
     }
@@ -1260,6 +1418,11 @@ export class Game {
   /** The setting beside friend and trade requests: keep your name off your door and your window dark (`off`), or show both. The server says back how it stands. */
   setDoorOff(off: boolean) {
     if (this.online) this.send({ t: 'doorOff', off });
+  }
+
+  /** The setting below it: let only friends walk into your cabin (`off`), or your neighbors too. The server says back how it stands. */
+  setVisitsOff(off: boolean) {
+    if (this.online) this.send({ t: 'visitsOff', off });
   }
 
   /** At your own door: each friend whose street has a lot free, asked about in turn (NO asks about the next); none, and the box says how it works. */
@@ -1838,6 +2001,7 @@ export class Game {
     if (this.question) return this.answer('no');
     if (this.note) return this.closeNote();
     if (this.dialog) return this.advanceDialog();
+    if (this.beam) return;
     const me = this.me;
     if (!me) return;
     const from = { x: me.tx, y: me.ty };
@@ -1851,8 +2015,9 @@ export class Game {
     }
     // People and signs are tall: a tap on the head lands on the tile behind them.
     const talker = this.talkerAt(x, y) ?? this.talkerAt(x, y + 1);
-    // Your own door is walked into, as any house's; a neighbor's is walked up to, and knocked at.
-    if (talker?.kind === 'door' && talker.lot === this.street?.mine) ({ x, y } = talker);
+    // A door on your street is walked into, as any house's: your own, and a neighbor's (the server lets you in,
+    // or says why not). One nobody lives behind, or that stayed shut, is walked up to, and knocked at.
+    if (talker?.kind === 'door' && !this.barred(talker.x, talker.y)) ({ x, y } = talker);
     else if (talker) {
       this.goal = { talk: talker };
       this.path = findPath(this.map, from.x, from.y, talker.x, talker.y, true);
@@ -1877,10 +2042,14 @@ export class Game {
     return { x, y, who: lot === s.mine ? YOUR_CABIN : cabinWho(s.lots[lot] ?? null), lines: [], kind: 'door', lot };
   }
 
-  /** A neighbor's door: knocked at, never walked into (the server keeps you out as well). */
+  /**
+   * The door of a lot nobody lives on: knocked at, never walked into. A neighbor's is tried: the server lets
+   * you in, or sends the step back and says why the door stayed shut (only friends, a block), which only it
+   * knows; one that stayed shut is not tried again (`shut`).
+   */
   private barred(x: number, y: number): boolean {
     const lot = this.lotDoor.findIndex(d => d.x === x && d.y === y);
-    return lot >= 0 && lot !== this.street?.mine;
+    return lot >= 0 && lot !== this.street?.mine && (!this.street?.lots[lot] || this.shut.has(lot));
   }
 
   /** Asks the server for what lies on tile x,y. One pick at a time: the answer is on its way. */
@@ -2262,6 +2431,7 @@ export class Game {
 
   update(dt: number, now: number) {
     this.clock = now;
+    this.beamOn(dt, now);
     for (const f of this.floats) f.t += dt;
     this.floats = this.floats.filter(f => f.t < 1.3);
     if (this.calls.length && now - this.calls[0]!.at >= CALL_NOTE_S * 1000) this.calls = this.calls.filter(c => now - c.at < CALL_NOTE_S * 1000);
@@ -2299,12 +2469,21 @@ export class Game {
     const me = this.me;
     const near = !!me && Object.values(this.myWorn).some(p => p?.quirk === 'lodestone') && shardNear(this.finds.values(), this.items, me.tx, me.ty);
     if (this.lodestone.update(near, now)) this.news.push({ kind: 'tug' });
+    // Uneasy out in the wilds: now and then steps that are not yours, on the ground behind you.
+    const steps = this.stalker.update(now, this.online ? this.unease : 0, this.current.data.kind === 'wilds', !!me?.anim);
+    if (steps && me) this.news.push({ kind: 'stalk', steps, ground: this.behind(me) });
+  }
+
+  /** The ground behind you (your own, where there is none to walk on): what steps that are not yours sound like. */
+  private behind(me: Mover): TileKind | undefined {
+    const [dx, dy] = DIR_VEC[me.dir], x = me.tx - dx, y = me.ty - dy;
+    return this.current.walkable(x, y) ? this.current.kind(x, y) : this.current.kind(me.tx, me.ty);
   }
 
   /** Decide the local player's next step once they stand on a tile. */
   private driveMe(now: number) {
     const me = this.me;
-    if (!me || me.anim || this.dialog || this.question || !this.online || this.held) { this.justStepped = false; return; }
+    if (!me || me.anim || this.dialog || this.question || !this.online || this.held || this.beam) { this.justStepped = false; return; }
     // On an exit the server is about to move us to another map, and steps planned on this one would be refused.
     if (this.map.exitAt(me.tx, me.ty)) {
       this.exitSince ??= now;
@@ -2364,12 +2543,44 @@ export class Game {
   }
 
   avatars(): Avatar[] {
-    const hitched = this.body.view.hitched;
+    const hitched = this.body.view.hitched, b = this.beam;
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
       afterglow: (this.afterglows.get(p.id) ?? 0) > this.clock,
       look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id)),
+      ...(b && p.id === this.meId && { beam: { phase: b.phase, t: b.t, pad: b.pad } }),
     }));
+  }
+
+  /** Where others vanished or appeared at a teleport since the last call: the view pops each once. */
+  takePops(): Array<{ x: number; y: number }> {
+    const out = this.pops;
+    this.pops = [];
+    return out;
+  }
+
+  /** YES at NAPO's teleport: the trip starts on your screen (beam.ts); the server is asked once you are gone. */
+  private beamOut(pad: { x: number; y: number }) {
+    if (!this.online || !this.me) return;
+    this.path = []; this.goal = null;
+    this.beam = { phase: 'out', t: 0, pad: { x: pad.x, y: pad.y } };
+  }
+
+  /** The trip's clock: gone at BEAM_OUT_S, so the teleport is sent; arrived at BEAM_IN_S; off if the server never moved us. */
+  private beamOn(dt: number, now: number) {
+    const b = this.beam;
+    if (!b) return;
+    b.t += dt;
+    if (b.phase === 'in') {
+      if (b.t >= BEAM_IN_S) this.beam = null;
+    } else if (b.sent !== undefined) {
+      // The screen going dark for the new map (held) holds the server's answer: that is no time to give up.
+      if (this.held) b.sent = now;
+      else if (now - b.sent > BEAM_WAIT_MS) this.beam = null;
+    } else if (b.t >= BEAM_OUT_S) {
+      b.sent = now;
+      if (this.online) this.send({ t: 'teleport', x: b.pad.x, y: b.pad.y });
+    }
   }
 
   /** The creatures on this map, where they are drawn now, and whom they chase. */

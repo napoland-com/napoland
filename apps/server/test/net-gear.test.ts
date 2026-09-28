@@ -142,7 +142,8 @@ describe('gear on the road, over the network', () => {
       expect((await a.c.closed).code).toBe(1008);
     }
     // 20 brought wear and doff; outfits (21), calls (22) and thanks (23) came after them, then the rest saved up while away (24), merits (25), trades (26), the cozy cabin (27), streets (28) and a door kept to oneself (29),
-    // each region's own weather and effects that run for a while (30), seasons, whose ice is walked on (31), and the Long Night (32).
-    expect(PROTOCOL_VERSION).toBe(32);
+    // each region's own weather and effects that run for a while (30), seasons, whose ice is walked on (31), the Long Night (32), how the trip went (33),
+    // visits, the road to your street and NAPO's teleport (34), and the teleport home with a new player's first steps (35).
+    expect(PROTOCOL_VERSION).toBe(35);
   });
 });
