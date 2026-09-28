@@ -352,9 +352,11 @@ export function dayIndex(wallMs: number): number {
 
 /**
  * The day of the night of the answer (dayIndex): those who stayed count the Zone's days from it, a day for
- * each turn of the sky, as Vera's card does ("Day 3,041"). Late in September 2026 it is past day 3,050.
+ * each turn of the sky, as Vera's card does ("Day 3,041"). Late in September 2026 it is past day 3,200. It
+ * was a Long Night's day (the one dawning on Saturday 13 June 2026 at 19:12 UTC): the Long Night comes on the
+ * night of the week NAPO answered, so every Long Night falls on a day the count reaches in steps of 210.
  */
-export const ANSWER_DAY = 618_683;
+export const ANSWER_DAY = 618_534;
 
 /** The Zone's day at a wall time: how many turns of the sky since the night of the answer. */
 export function zoneDay(wallMs: number): number {
