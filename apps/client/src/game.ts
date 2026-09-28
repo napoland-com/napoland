@@ -37,18 +37,19 @@
  *   in the text box, your side runs ahead of the server's answer while you change it, and how it ended
  *   is said in the box;
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
- * - energy, wetness, fires and the surge clock are counted forward between the server's reports, so
- *   everything moves smoothly.
+ * - energy, wetness, fires, the surge clock and the effects working on you (a hand warmer) are counted
+ *   forward between the server's reports, so everything moves smoothly;
+ * - the weather is your region's: the server says it as you arrive (welcome, zone) and when it turns.
  */
 import {
-  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, emptyNotebook,
-  energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe,
-  nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
+  BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter,
+  emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf,
+  nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type CallKind, type ChatTo, type Comfort, type ConditionsView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView, type StreetView,
-  type TradeEnd, type TradeView, type Weather,
+  type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type MapNote, type OfferPick, type ParcelView, type RefusedAction, type StormView,
+  type StreetView, type TradeEnd, type TradeView, type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
@@ -190,6 +191,8 @@ export function xpFloat(gained: number, fromRest = 0): string {
 /** News from the world for the interface to announce (status.ts, newsBanner). A feat's is the rank just reached. */
 export type News =
   | { kind: 'feat'; id: string; rank: number } | { kind: 'live'; fresh: number } | { kind: 'surge'; view: SurgeView } | { kind: 'storm'; view: StormView } | { kind: 'stone'; view: StoneView }
+  /** The night over your map turned into an aurora: lights in the sky. */
+  | { kind: 'aurora' }
   /** A new level: where it stands now, and the level before (one stash can climb several). */
   | { kind: 'level'; progress: ProgressView; from: number }
   /** You arrive rested: time away filled the cup, which holds `xp` of doubled stashing now. */
@@ -272,6 +275,8 @@ export class Game {
   surge: { view: SurgeView; at: number } | null = null;
   /** This map's storm clock as told, and when (null: it never storms). */
   storm: { view: StormView; at: number } | null = null;
+  /** The weather over your map, as the server last said it: your region's (a room, the map outside its door). Some notes need it to be read. */
+  weather: Weather = 'rain';
   /** Flashes on this map, until when they are over (our clock). */
   flashes: Array<{ x: number; y: number; kind: FlashKind; until: number }> = [];
   /** How wet you are, your load and whether something clings to you, as told and when. */
@@ -317,8 +322,6 @@ export class Game {
   freshPages = new Set<string>();
   /** Counts every change to the field notes (and to which pages are fresh), so they are redrawn only then. */
   notebookChanges = 0;
-  /** The weather everywhere, as the server said (main.ts sets it as it comes): what some notes need to be read. */
-  weather: Weather = 'rain';
   /** The notes people left that you read (notes.ts), by id, in the order you read them. Replaced whole on every change. */
   notesRead: string[] = [];
   /** Notes read since the journal's notes were last looked at: it marks them. */
@@ -507,6 +510,11 @@ export class Game {
     return trophiesIn(this.stash ?? [], id => this.items.get(id));
   }
 
+  /** The effects working on you right now (a hand warmer), counted down from the server's last report; none offline. */
+  effectsNow(now: number): EffectView[] {
+    return this.online ? effectsAfter(this.body.view.effects, Math.max(0, now - this.body.at) / 1000) : [];
+  }
+
   /** Seconds of fuel the fire on tile x,y has left now; null for a tended fire, undefined where there is none. */
   fireLeft(x: number, y: number, now: number): number | null | undefined {
     const f = this.fires.get(`${x},${y}`);
@@ -576,6 +584,7 @@ export class Game {
         this.doorOff = msg.doorOff === true;
         this.socialChanges++;
         this.scene(msg, now);
+        this.weather = msg.weather;
         this.bag = msg.bag;
         this.bagAt = now;
         this.stash = msg.stash ?? null;
@@ -598,7 +607,6 @@ export class Game {
         this.thankedToday = new Set(msg.thanked ?? []);
         this.fieldNotes = { pages: [...msg.notebook?.pages ?? []], blanks: [...msg.notebook?.blanks ?? []] };
         this.notebookChanges++;
-        this.weather = msg.weather;
         this.notesRead = [...msg.notes ?? []];
         this.keepsakesHome = [...msg.keepsakes ?? []];
         this.firsts = new Map((msg.firsts ?? []).map(f => [f.secret, f]));
@@ -612,6 +620,8 @@ export class Game {
         this.enter(map, msg.players, msg.finds, msg.drops);
         this.setStreet(msg.street);
         this.scene(msg, now);
+        // The weather over the new map: its region's own rain (a room, the map outside its door).
+        this.weather = msg.weather;
         this.stats = msg.stats;
         this.statsChanges++;
         if (msg.furniture) this.setFurniture(msg.furniture);
@@ -633,6 +643,10 @@ export class Game {
         this.body = { view: msg.body, at: now };
         break;
       }
+      case 'weather':
+        if (msg.weather === 'aurora' && this.weather !== 'aurora') this.news.push({ kind: 'aurora' });
+        this.weather = msg.weather;
+        break;
       case 'fire':
         this.fires.set(`${msg.fire.x},${msg.fire.y}`, { left: msg.fire.left, at: now, fed: msg.fire.fed ?? [] });
         break;
@@ -1810,8 +1824,10 @@ export class Game {
     const def = this.items.get(s.item), why = this.whyNotUse(slot, def);
     if (why) return this.inform(def.name, why);
     // An arrow shows as long as your feats and charms say (Good neighbor), and a pale moth gives energy back: the server's rules.
+    // An effect still working says so, since a second one only starts its time again.
     const mods = modsOf(this.stats, charmsIn(this.bag, this.items.byId));
-    const text = useQuestion(def, this.energy(this.clock), markLifetime(mods) / 1000, def.use?.mark ? this.markLift(mods) : undefined);
+    const running = def.use?.lasts ? this.effectsNow(this.clock).find(f => f.item === def.id)?.left : undefined;
+    const text = useQuestion(def, this.energy(this.clock), markLifetime(mods) / 1000, def.use?.mark ? this.markLift(mods) : undefined, running);
     this.ask({ who: def.name, text, yes: () => { done?.(); this.actOn(slot, def.id, def.name, text, i => ({ t: 'use', slot: i })); } });
   }
 

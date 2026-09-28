@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { CacheItemView } from './caches';
 import { CALL_KINDS, type CallKind } from './calls';
 import { MAX_SAY_CHARS, type ChatTo } from './chat';
+import type { EffectView } from './effects';
 import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { FirstView } from './firsts';
@@ -19,8 +20,11 @@ import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
 import { OFFER_MAX } from './trade';
 
-/** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 29;
+/**
+ * Bump when a change breaks older clients; they reload to get the new version. 30: the weather is each
+ * region's (a `zone` says the new map's), and effects run for a while (BodyView.effects).
+ */
+export const PROTOCOL_VERSION = 30;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -347,11 +351,15 @@ export type Did =
   /**
    * One `item` from your bag was used up: the energy it gave you (as much as your bar had room for), the
    * seconds a flare burns, the arrow painted (which way it points, and for how many seconds everyone sees
-   * it), what a strange object turned out to be (a piece of gear with its piece: its quirk is rolled), and
-   * the energy a charm in your bag gave on top (`lift`: which charm, and how much; a pale moth, as a
-   * glowcap is crushed).
+   * it), what a strange object turned out to be (a piece of gear with its piece: its quirk is rolled), the
+   * energy a charm in your bag gave on top (`lift`: which charm, and how much; a pale moth, as a glowcap is
+   * crushed), and the effect it started for `lasts` seconds (effects.ts; `again`: one of the same still
+   * worked, and its time started over instead of adding up).
    */
-  | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number } }
+  | {
+      kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number };
+      effect?: { lasts: number; again?: true };
+    }
   /**
    * The workbench made `count` of `item`, into your stash. A tool (its kind says so) went to your tools
    * instead, yours for good: your tools came before this in a `tools` message. Furniture went into its
@@ -388,6 +396,8 @@ export interface BodyView {
   hitched: boolean;
   /** What you wear, piece by piece: its condition (it wears down out in the wilds) and quirk. */
   worn: Worn;
+  /** Effects working on you (effects.ts), with the seconds left of each as sent; none: nothing works on you. */
+  effects?: EffectView[];
   /**
    * Cozy (comfort.ts): seconds of it left, as of this message. None: you are not. It holds while you stand
    * by your own fire long enough, and counts down from when you leave it.
@@ -605,6 +615,7 @@ export type ServerMsg =
       finds: FindView[];
       drops: DropView[];
       stepMs: number;
+      /** The weather over your map now (each region has its own rain; a room, the one of the map outside its door). */
       weather: Weather;
       energy: EnergyView;
       bag: BagSlot[];
@@ -662,11 +673,13 @@ export type ServerMsg =
     }
   /**
    * You are on another map now, at x,y: you walked through an exit, or you collapsed and woke up at
-   * home. Forget the old map's players, finds, piles and pending steps; the lists are the new map's.
+   * home. Forget the old map's players, finds, piles and pending steps; the lists are the new map's, and
+   * so is the weather (each region has its own rain; a room, the one of the map outside its door).
    */
   | {
       t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; finds: FindView[]; drops: DropView[]; reason: 'exit' | 'collapse';
       fires: FireView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
+      weather: Weather;
       /** In your own cabin: the furniture you made and set in its places (item ids). Nobody else is told. */
       furniture?: string[];
       /** On your street: its lots, and which is yours. */
@@ -824,6 +837,7 @@ export type ServerMsg =
   | { t: 'face'; id: string; dir: Dir }
   /** The server refused step seq; the player is really at x,y facing dir. */
   | { t: 'reject'; seq: number; x: number; y: number; dir: Dir }
+  /** The weather over your map turned (the night comes everywhere at once; rain, region by region). */
   | { t: 'weather'; weather: Weather }
   | { t: 'pong'; at: number; serverTime: number }
   /** The hello (or the game here) ended; `name` comes with has_character: the account's own character. */

@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "pages": [
     {
       "id": "pop-23",
@@ -388,6 +388,13 @@
       "title": "Road flares",
       "when": { "find": "flare" },
       "text": "Red road flares from the gloveboxes. Lit, one burns for most of a minute, and nothing comes near while it does."
+    },
+    {
+      "id": "first-aid",
+      "area": "anywhere",
+      "title": "NAPO's first aid",
+      "when": [{ "find": "hand-warmer" }, { "find": "rad-tablet" }],
+      "text": "Hand warmers and rad tablets, still sealed, from NAPO's first-aid stores. One keeps the cold off me for a while, the other the glow. A second one does not add up: it only starts the time again."
     },
     {
       "id": "charms",

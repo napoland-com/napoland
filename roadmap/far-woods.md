@@ -11,6 +11,6 @@ A trail climbs north from the cabin at the end of the Near Woods into **the Far 
 
 Why: the Near Woods' deepest tile is 25 seconds' walk from the edge, so a new player reaches everything on the first trip, and levels and gear had nowhere to take you. Solo players still progress, just more slowly.
 
-**Built:** see [World structure](../docs/DESIGN.md#world-structure) and the story's chapter The field post. Still to come with other items: its own rain ([regional-weather](regional-weather.md)), a use for the old batteries at the workbench, and the regions beyond it ([deeper-regions](deeper-regions.md)).
+**Built:** see [World structure](../docs/DESIGN.md#world-structure) and the story's chapter The field post. Its own rain came with [regional-weather](regional-weather.md): the wettest region, two showers a day. Still to come with other items: a use for the old batteries at the workbench, and the regions beyond it ([deeper-regions](deeper-regions.md)).
 
 More: [World structure](../docs/DESIGN.md#world-structure), [deeper-regions](deeper-regions.md).

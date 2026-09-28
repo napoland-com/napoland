@@ -1,7 +1,7 @@
 import {
   PROTOCOL_VERSION, STEP_MS, type BagSlot, type BodyView, type CreatureView, type DropView, type EnergyView, type FindView, type FireView, type FlareView, type FlashView, type StormView, type ItemsData,
   type MapData, type MarkView, type MeritsView, type NotebookView, type PlayerView, type ProgressView, type ServerMsg, type StoneView, type StoryData, type StoryView, type SurgeView,
-  type ConditionsView,
+  type ConditionsView, type Weather,
 } from '@napoland/shared';
 import { Items } from '../src/items';
 
@@ -152,9 +152,14 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
   };
 }
 
-export function zone(map: MapData, x: number, y: number, players: PlayerView[], reason: 'exit' | 'collapse' = 'exit', extras: Pick<Extras, 'finds' | 'drops' | 'fires' | 'marks' | 'creatures' | 'flares' | 'flashes' | 'surge' | 'storm'> = {}): Extract<ServerMsg, { t: 'zone' }> {
+export function zone(
+  map: MapData, x: number, y: number, players: PlayerView[], reason: 'exit' | 'collapse' = 'exit',
+  extras: Pick<Extras, 'finds' | 'drops' | 'fires' | 'marks' | 'creatures' | 'flares' | 'flashes' | 'surge' | 'storm'> & { weather?: Weather } = {},
+): Extract<ServerMsg, { t: 'zone' }> {
   return {
     t: 'zone', map: ref(map), x, y, dir: 'up', players, finds: extras.finds ?? [], drops: extras.drops ?? [], reason,
     fires: extras.fires ?? [], marks: extras.marks ?? [], creatures: extras.creatures ?? [], flares: extras.flares ?? [], flashes: extras.flashes ?? [], surge: extras.surge ?? null, storm: extras.storm ?? null, stats: {},
+    // The new map's own weather: rain, as the welcome's, unless a test says otherwise.
+    weather: extras.weather ?? 'rain',
   };
 }

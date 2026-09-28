@@ -1,7 +1,7 @@
 {
   "id": "far-woods",
   "name": "The Far Woods",
-  "version": 1,
+  "version": 2,
   "kind": "wilds",
   "depth": 2,
   "width": 80,
@@ -353,6 +353,7 @@
     {"kind":"stump","x":62,"y":33,"s":1.208,"v":0.764},
     {"kind":"stump","x":68,"y":34,"s":1.123,"v":0.605}
   ],
+  "rain": [{"from":0,"length":480},{"from":1440,"length":480}],
   "surge": {"every":2400,"unstable":300,"surge":150,"sweep":120,"offset":1650},
   "storm": {"every":2400,"warn":60,"length":240,"offset":660},
   "flashes": {"every":60,"steps":[20,999]},

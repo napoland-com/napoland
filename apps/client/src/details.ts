@@ -360,8 +360,8 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       const recipe = items.recipes.find(r => r.id === ref.id);
       if (!recipe) return null;
       if (items.get(recipe.make).kind === 'furniture') return furnitureCard(recipe.id, items.get(recipe.make), needViews(recipe.needs, s), s);
-      // A tool is not worn and resists nothing: its card says what it is, like anything else's.
-      const def = items.get(recipe.make), count = recipe.count ?? 1, card = def.kind === 'tool' ? itemCard(def, count) : gearCard(def, undefined, s);
+      // Only gear is worn: a tool or a consumable (a hand warmer) has a card that says what it is, like anything else's.
+      const def = items.get(recipe.make), count = recipe.count ?? 1, card = def.kind === 'gear' ? gearCard(def, undefined, s) : itemCard(def, count);
       const needs = needViews(recipe.needs, s);
       if (count > 1) card.count = count;
       card.costs = { title: 'It takes', needs };

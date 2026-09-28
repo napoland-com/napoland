@@ -281,7 +281,7 @@ const leftBehind: MapObject[] = [];
 }
 
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 11, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 12, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
@@ -293,6 +293,8 @@ const map: MapData = {
     ...doors,
   ],
   objects,
+  // The town's rain, the same as the Near Woods' up its north road: from 12 minutes after dawn, for 12.
+  rain: [{ from: 12 * 60, length: 12 * 60 }],
   // What the town calls these spots, for its paper map (Home, the lodge, the houses and the roads out
   // are named by their doors and exits). The newer names come after, so the paper map writes the older
   // ones where it always did.
@@ -316,6 +318,7 @@ const json = [
   `  "spawn": ${JSON.stringify(map.spawn)},`,
   '  "exits": [', map.exits.map(e => `    ${JSON.stringify(e)}`).join(',\n'), '  ],',
   '  "objects": [', map.objects.map(o => `    ${JSON.stringify(o)}`).join(',\n'), '  ],',
+  `  "rain": ${JSON.stringify(map.rain)},`,
   '  "places": [', map.places!.map(p => `    ${JSON.stringify(p)}`).join(',\n'), '  ]',
   '}',
   '',

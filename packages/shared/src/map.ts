@@ -10,7 +10,7 @@
 import { comfortSize, underfootComfort, type Comfort } from './comfort';
 import { STEP_MS } from './movement';
 import type { Dir } from './protocol';
-import type { FlashRule, StormRule, SurgeRule } from './sky';
+import type { FlashRule, RainWindow, StormRule, SurgeRule } from './sky';
 
 /** One character per tile in MapData.tiles. */
 export const TILE_CHARS = {
@@ -242,6 +242,12 @@ export interface MapData {
   spawn: { x: number; y: number; dir: Dir };
   exits: MapExit[];
   objects: MapObject[];
+  /**
+   * Outdoors only (a town or the wilds): when it rains over this region, windows counted from dawn
+   * (sky.ts). None: the usual rain (DEFAULT_RAIN); an empty list: it never rains. A room hears the rain
+   * of the map its door opens onto.
+   */
+  rain?: RainWindow[];
   /** The wilds only: how this region surges (sky.ts). None: it never does. */
   surge?: SurgeRule;
   /** The wilds only: how often a storm rolls over this region (sky.ts). None: it never storms. */

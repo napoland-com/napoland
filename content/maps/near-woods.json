@@ -1,7 +1,7 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 11,
+  "version": 12,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
@@ -323,6 +323,7 @@
     {"kind":"note","x":33,"y":60,"id":"walt-truck","by":"walt","name":"In the glove box","text":["Truck log, the night of the answer. Up N-16 at eleven, after the hum. Tower sent at 11:40. Wire jumped in my hands.","Woods lit up to the north like a town. Truck dead where I left it. Don't remember the walk home. W.P."]},
     {"kind":"note","x":32,"y":60,"id":"barlow-wiper","by":"barlows","name":"Under the wiper","text":["In the rain, white crayon shows on the wet paper, pale on grey:","WE WALKED OUT TODAY, ALL THREE OF US. NOBODY SAW US GO. SECRET. W."],"when":"rain","faint":"The paper looks blank, and feels waxy. Wet, it might show something."}
   ],
+  "rain": [{"from":720,"length":720}],
   "surge": {"every":2400,"unstable":360,"surge":150,"sweep":90},
   "storm": {"every":2400,"warn":60,"length":180,"offset":1200},
   "flashes": {"every":75,"steps":[30,999]},
