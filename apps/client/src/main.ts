@@ -40,7 +40,7 @@ import { heardFinds, nearest, radioOf, type RadioScene } from './radio';
 import { levelText, newsBanner, restedLine, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
-import { WorldView, createRenderer, lightningAt } from './view/world';
+import { WorldView, createRenderer, lightningAt, nextView } from './view/world';
 import { wardrobeView, type WardrobeState } from './wardrobe';
 import { guardZoom } from './zoom';
 
@@ -325,8 +325,7 @@ const arrival = new Arrival(held => {
   }
   hud.setOnline(game.players.size);
   if (view.map !== game.map) {
-    view.dispose();
-    view = new WorldView(renderer, game.map, peek);
+    view = nextView(renderer, view, game.map, peek);
     view.pixelScale = resolution.scale;
     view.setWeather(weather);
     watchFires(view);
@@ -391,6 +390,12 @@ overlay.innerHTML = `
     <button type="button" data-el="accountPlay"></button>
     <div class="links center"><button type="button" class="link" data-el="accountBack">Keep playing as a guest</button></div>
   </div>
+  <div class="card panel" data-el="keepCard" hidden>
+    <h1>napoland</h1>
+    <p data-el="keepAsk"></p>
+    <button type="button" data-el="keepPlay">Keep it</button>
+    <div class="links center"><button type="button" class="link" data-el="keepBack">Play as a guest instead</button></div>
+  </div>
   <div class="card panel" data-el="msg">
     <h1>napoland</h1>
     <p data-el="msgText">Loading...</p>
@@ -431,6 +436,7 @@ function render(s: Screen) {
   // The play card is the name card, with the pitch kept on short screens and sign-in beside it.
   card('nameCard').hidden = s.kind !== 'name' && s.kind !== 'play';
   text('accountCard').hidden = s.kind !== 'account';
+  text('keepCard').hidden = s.kind !== 'keep';
   text('msg').hidden = s.kind !== 'message';
   if (s.kind === 'message') {
     text('msgText').textContent = s.text;
@@ -503,6 +509,8 @@ function render(s: Screen) {
     text('accountName').textContent = s.name;
     text('accountAsk').textContent = `Play as ${s.name}? Your guest character stays in this browser.`;
     button('accountPlay').textContent = `Play as ${s.name}`;
+  } else if (s.kind === 'keep') {
+    text('keepAsk').textContent = s.who ? `Sign in as ${s.who} and keep this guest character?` : 'Sign in with this account and keep this guest character?';
   }
 }
 
@@ -537,6 +545,8 @@ window.addEventListener('pageshow', e => { if (e.persisted) void signin?.resumed
 button('emailBack').addEventListener('click', () => signin?.back());
 button('accountPlay').addEventListener('click', () => signin?.playAccount());
 button('accountBack').addEventListener('click', () => void signin?.keepGuest());
+button('keepPlay').addEventListener('click', () => signin?.keepGuestCharacter());
+button('keepBack').addEventListener('click', () => void signin?.keepGuest());
 // Typed, pasted ("123 456") or filled in from the email by the phone: digits only, and in it goes once whole.
 codeInput.addEventListener('input', () => {
   const d = digits(codeInput.value);
@@ -647,7 +657,7 @@ async function boot() {
     }
   }
   let backend: AuthBackend | undefined;
-  if (config.mode === 'supabase') backend = (await import('./supabase')).supabaseBackend(config.url, config.publishableKey, (config.providers ?? []).length > 0);
+  if (config.mode === 'supabase') backend = (await import('./supabase')).supabaseBackend(config.url, config.publishableKey);
   signin = new SignIn({
     // Google and Apple send the player back to this game's address (it lives at the root of it).
     config, backend, store, tab: tabStore, now: () => Date.now(), returnTo: location.origin,

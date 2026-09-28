@@ -124,13 +124,19 @@ export function stashList(s: Stash, order: readonly ItemDef[]): BagSlot[] {
 /**
  * The stash with one piece for every unit of gear it counts: pieces it had are kept (as many as it
  * counts, in order), missing ones come new (anomalous ones with a quirk), and pieces of anything
- * that is not gear, or no longer lies there, are dropped.
+ * that is not gear, or no longer lies there, are dropped. The pieces of an item these items do not
+ * know (a newer release's) stay as they are, with it.
  */
 export function fitPieces(s: Stash, items: Map<string, ItemDef>, rng: () => number): Stash {
   const pieces: Record<string, Piece[]> = {};
   for (const [id, n] of Object.entries(s.items)) {
     const def = items.get(id);
-    if (def?.kind !== 'gear') continue;
+    if (!def) {
+      const kept = s.pieces?.[id];
+      if (kept) pieces[id] = kept.map(p => ({ ...p }));
+      continue;
+    }
+    if (def.kind !== 'gear') continue;
     const had = (s.pieces?.[id] ?? []).slice(0, n).map(p => ({ ...p }));
     while (had.length < n) had.push(newPiece(def, rng));
     pieces[id] = had;

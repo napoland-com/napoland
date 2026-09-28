@@ -460,11 +460,13 @@ export class Game {
         // A map we do not have, or other items or another story than the server's: this client is
         // out of date and about to reload, so it must not play.
         if (!map || msg.items !== this.items.version || msg.story.version !== this.story.version) { this.disconnected(now); break; }
+        // Someone else now (the account's own character after its guest, say): nothing of theirs stays open.
+        const someoneElse = msg.you !== this.meId;
         this.meId = msg.you;
         this.online = true;
         this.guest = msg.guest === true;
         this.stepMs = msg.stepMs;
-        this.enter(map, msg.players, msg.finds, msg.drops);
+        this.enter(map, msg.players, msg.finds, msg.drops, someoneElse);
         this.scene(msg, now);
         this.bag = msg.bag;
         this.bagAt = now;
@@ -838,10 +840,11 @@ export class Game {
 
   /**
    * Arrive on a map: its players, finds and piles replace the old ones, and plans made for the old
-   * map are dropped.
+   * map are dropped; so is whatever was open (the chest, the workbench, the text box) on another map,
+   * or for another player (`someoneElse`: a welcome for another character, on the same map).
    */
-  private enter(map: TileMap, players: PlayerView[], finds: FindView[], drops: DropView[]) {
-    if (map !== this.current) {
+  private enter(map: TileMap, players: PlayerView[], finds: FindView[], drops: DropView[], someoneElse = false) {
+    if (map !== this.current || someoneElse) {
       this.current = map;
       this.talkers = talkersOf(map);
       this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.benchCard = null; this.cache = null; this.caching = null;

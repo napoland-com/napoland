@@ -443,8 +443,11 @@ interface Online {
   /** When the current step is over and the next one may start. */
   readyAt: number;
   queue: Array<{ dir: Dir; seq: number }>;
-  /** A talk, or a look at the notice board, that came in while steps sent before it still waited in the queue: done once they are walked (talk, board). */
-  after?: { t: 'talk' | 'board'; x: number; y: number };
+  /**
+   * A talk, or a look at the notice board, the chest, the workbench or a crate, that came in while steps
+   * sent before it still waited in the queue: done once they are walked (talk, board, chest, bench, openCache).
+   */
+  after?: { t: 'talk' | 'board' | 'chest' | 'bench' | 'cache'; x: number; y: number };
   /** Energy and wetness per second on the player's tile. rec.energy and rec.wet are up to date as of energyAt. */
   rate: number;
   wetRate: number;
@@ -655,7 +658,7 @@ const copyStash = (s: Stash): Stash => ({
   items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: Object.fromEntries(Object.entries(s.pieces).map(([id, l]) => [id, l.map(p => ({ ...p }))])) } : {}),
 });
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
-  ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
+  ...r, bag: copyBag(r.bag), ...(r.kept ? { kept: { bag: structuredClone(r.kept.bag) } } : {}), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
   ...(r.looks ? { looks: [...r.looks] } : {}),
 });
@@ -677,11 +680,18 @@ const isSlot = (s: unknown): s is BagSlot => {
 };
 /** Saved tools: item ids, each once, in the order they came. Anything but a list was never set (the starter tools). */
 const cleanTools = (t: unknown): string[] | undefined => (Array.isArray(t) ? [...new Set(t.filter((id): id is string => typeof id === 'string' && id !== ''))] : undefined);
-/** Saved counts, trusted only where they are whole numbers from 0. */
+/**
+ * Saved counts, trusted only where they are whole numbers from 0. One this release does not count (a
+ * newer release's) is kept as saved, like its tools: a save writes it back, and the newer release,
+ * back after a rollback to this one, finds it as it left it.
+ */
 const cleanStats = (s: unknown): Stats => {
   const out: Stats = {};
-  const raw = (typeof s === 'object' && s !== null ? s : {}) as Record<string, unknown>;
-  for (const k of STATS) if (Number.isInteger(raw[k]) && (raw[k] as number) > 0) out[k] = raw[k] as number;
+  const raw = (typeof s === 'object' && s !== null && !Array.isArray(s) ? s : {}) as Record<string, unknown>;
+  for (const [k, v] of Object.entries(raw)) {
+    if (!(STATS as readonly string[]).includes(k)) (out as Record<string, unknown>)[k] = structuredClone(v);
+    else if (Number.isInteger(v) && (v as number) > 0) out[k as (typeof STATS)[number]] = v as number;
+  }
   return out;
 };
 /** Saved parcels as the server writes them: anything else counts as none given. */
@@ -694,16 +704,22 @@ const cleanParcels = (s: unknown): ParcelState | undefined => {
     days: Number.isInteger(days) && (days as number) > 0 ? (days as number) & WHOLE_WEEK : 0,
   };
 };
-/** A saved stash as today's items fit it: counts that are whole numbers above 0, of items that still exist. */
+/**
+ * A saved stash as today's items fit it: counts that are whole numbers above 0. An item this release
+ * does not know (a newer release's, rolled back) is kept as saved, its pieces as they were, like the
+ * tools: never listed or used here, and written back with every save, so the newer release finds it.
+ */
 const cleanStash = (s: unknown, items: Map<string, ItemDef>): Stash => {
   const out = emptyStash();
   const raw = (typeof s === 'object' && s !== null ? s : {}) as Partial<Record<keyof Stash, unknown>>;
   for (const k of ['items', 'out'] as const) {
     const part = (typeof raw[k] === 'object' && raw[k] !== null ? raw[k] : {}) as Record<string, unknown>;
-    for (const [id, n] of Object.entries(part)) if (items.has(id) && Number.isInteger(n) && (n as number) > 0) out[k][id] = n as number;
+    for (const [id, n] of Object.entries(part)) if (Number.isInteger(n) && (n as number) > 0) out[k][id] = n as number;
   }
   const pieces = (typeof raw.pieces === 'object' && raw.pieces !== null ? raw.pieces : {}) as Record<string, unknown>;
-  for (const [id, list] of Object.entries(pieces)) if (Array.isArray(list)) (out.pieces ??= {})[id] = list.filter(isPiece).map(cleanPiece);
+  for (const [id, list] of Object.entries(pieces)) {
+    if (Array.isArray(list)) (out.pieces ??= {})[id] = items.has(id) ? list.filter(isPiece).map(cleanPiece) : structuredClone(list);
+  }
   return out;
 };
 const manhattan = (ax: number, ay: number, bx: number, by: number) => Math.abs(ax - bx) + Math.abs(ay - by);
@@ -1026,8 +1042,11 @@ export class World {
     const gear = this.cleanGear(rec.gear);
     // Time away since they were last seen fills the cup of rest (progress.ts), a guest's too.
     const away = now + this.epochOffset - rec.lastSeenAt;
+    // Slots of items this release does not know (a newer one's): set aside as saved, and written back with every save.
+    const kept = [...(rec.kept?.bag ?? []), ...(Array.isArray(rec.bag) ? rec.bag : []).filter(s => isSlot(s) && !this.items.has(s.item))];
     const r: PlayerRecord = {
       ...rec, gear, worn: this.cleanWorn(rec.worn, gear), bag: this.fitBag(rec.bag, bagSlotsOf(gear, this.items)), stats: cleanStats(rec.stats),
+      kept: kept.length ? { bag: structuredClone(kept) } : undefined,
       // Gear counted in the stash gets its pieces (all of it, for a stash saved before pieces existed).
       stash: fitPieces(cleanStash(rec.stash, this.items), this.items, this.rng),
       xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
@@ -1054,6 +1073,18 @@ export class World {
     r.map = map.data.id;
     if (zone.copy) r.zone = zone.copy;
     else delete r.zone;
+    // What they wear counts as taken out of the stash (equip), which the releases before gear went on the
+    // road never counted: counted now, once, so a piece put on back then (stashed first, for its XP) earns
+    // nothing again when it comes off at the chest. Only what earns XP: for the rest, out never matters.
+    if (!r.wornOut) {
+      const stash = r.stash ?? emptyStash(), out = { ...stash.out };
+      for (const slot of SLOTS) {
+        const item = r.gear?.[slot];
+        if (item && (this.items.get(item)?.xp ?? 0) > 0) out[item] = (out[item] ?? 0) + 1;
+      }
+      r.stash = { ...stash, out };
+      r.wornOut = true;
+    }
     // An outfit shows only while they may wear it (signed in, the level reached). One they may not (it
     // is from a newer release, or they play as a guest now) shows as none, and stays saved for when they may.
     if (r.outfit && !mayWear(r.outfit, levelOf(r.xp ?? 0), !this.guest(r))) delete r.outfit;
@@ -1306,11 +1337,21 @@ export class World {
     this.did(p, { kind: 'fire', item: def.id, count: fed, left: burning.left ?? 0, ...(lit ? { lit: true as const } : {}) });
   }
 
-  /** Opens the chest on tile x,y (next to the player): they hear what is in their stash. */
-  chest(id: string, x: number, y: number): void {
+  /**
+   * Opens the chest on tile x,y (next to the player): they hear what is in their stash. Like a talk, it
+   * can come in while the steps sent before it still wait in the queue (a slow network bunched them up):
+   * then it opens once they are walked, from where they took the player.
+   */
+  chest(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
-    if (!p || !this.chestNextTo(p, x, y)) return;
-    this.sendStash(p);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (p.queue.length) p.after = { t: 'chest', x, y };
+    else this.openChest(p, x, y);
+  }
+
+  private openChest(p: Online, x: number, y: number): void {
+    if (this.chestNextTo(p, x, y)) this.sendStash(p);
   }
 
   /**
@@ -1531,11 +1572,17 @@ export class World {
     return { spent: r.meritsSpent ?? 0, owned: (r.looks ?? []).filter(l => meritLookOf(l)) };
   }
 
-  /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. */
-  bench(id: string, x: number, y: number): void {
+  /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. Behind steps still waiting, like the chest. */
+  bench(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
-    if (!p || !this.benchNextTo(p, x, y)) return;
-    this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder) } });
+    if (!p) return;
+    this.runQueue(p, now);
+    if (p.queue.length) p.after = { t: 'bench', x, y };
+    else this.openBench(p, x, y);
+  }
+
+  private openBench(p: Online, x: number, y: number): void {
+    if (this.benchNextTo(p, x, y)) this.outbox.push({ to: p.rec.id, msg: { t: 'bench', stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder) } });
   }
 
   /** Makes recipe `recipeId` at the workbench on tile x,y next to the player, from their stash, into their stash. */
@@ -1888,11 +1935,16 @@ export class World {
     this.thanksForgetAt = next;
   }
 
-  /** Opens the crate on tile x,y (next to the player): they hear what is in it, and what they did at it this visit. */
+  /** Opens the crate on tile x,y (next to the player): they hear what is in it, and what they did at it this visit. Behind steps still waiting, like the chest. */
   openCache(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
+    if (p.queue.length) p.after = { t: 'cache', x, y };
+    else this.lookInCrate(p, x, y, now);
+  }
+
+  private lookInCrate(p: Online, x: number, y: number, now: number): void {
     const c = this.crateNextTo(p, x, y);
     if (c) this.sendCache(p, c, now);
   }
@@ -2126,7 +2178,10 @@ export class World {
       const { t, x, y } = p.after;
       p.after = undefined;
       if (t === 'talk') this.heard(p, x, y);
-      else this.readBoard(p, x, y, now);
+      else if (t === 'board') this.readBoard(p, x, y, now);
+      else if (t === 'chest') this.openChest(p, x, y);
+      else if (t === 'bench') this.openBench(p, x, y);
+      else this.lookInCrate(p, x, y, now);
     }
   }
 
