@@ -57,6 +57,7 @@ const ITEMS: ItemsData = {
     { id: 'shard', name: 'Shard', kind: 'resource', stack: 5, text: 'Warm.', charge: 1 },
     { id: 'odd', name: 'Strange object', kind: 'resource', stack: 1, text: 'What is it?', use: { identify: true }, reveals: [{ item: 'feather', count: 1, weight: 1 }] },
     { id: 'feather', name: 'Feather', kind: 'charm', stack: 1, text: 'Light.', charm: { load: 0.5 } },
+    { id: 'coat', name: 'Coat', kind: 'gear', stack: 1, text: 'Warm.', slot: 'shirt', tier: 'sturdy', weight: 1 },
   ],
   finds: [],
 };
@@ -401,6 +402,18 @@ describe('watchers', () => {
     expect(w.scene('field', t * WATCHER_STEP_MS).creatures).toEqual([]);
   });
 
+  it('may take a piece of gear you carry: it is gone, like anything a watcher takes', () => {
+    const w = world(data(), 'overcast', {}, rec('a', 'field', 4, 6, 'down', { bag: [{ item: 'coat', count: 1, piece: { cond: 0.5 } }] }));
+    let touched: Extract<ServerMsg, { t: 'touched' }> | undefined;
+    for (let t = 0; t < 40 && !touched; t++) {
+      w.tick(t * WATCHER_STEP_MS);
+      touched = of(to(w.drain(), 'a'), 'touched')[0];
+    }
+    expect(touched).toEqual({ t: 'touched', by: 'watcher', lost: 'coat' });
+    expect(w.get('a')).toMatchObject({ bag: [], gear: {} });
+    expect(w.takeWrites().drops).toEqual([]);
+  });
+
   it('keep off a flare and slink away from one lit near them; a friend facing it holds it too', () => {
     // It wakes at 1,1: 8 steps from a, 11 from b, who faces up toward it.
     const w = world(data(), 'overcast', {}, rec('a', 'field', 4, 6, 'down', { bag: [{ item: 'flare', count: 1 }] }), rec('b', 'field', 5, 8, 'up'));
@@ -632,6 +645,16 @@ describe('skulkers', () => {
     expect(w.get('a')!.bag).toEqual([{ item: 'twig', count: 1 }, { item: 'rock', count: 2 }]);
     // Away for a minute at least, however near you stand.
     expect(creatures(run(w, 1650, 50_000))).toEqual([]);
+  });
+
+  it('knock a piece of gear you carry into your pile as it is, to pick up again so', () => {
+    const piece = { cond: 0.4, quirk: 'hum' as const };
+    const w = night(rec('a', 'field', 4, 6, 'up', { bag: [{ item: 'coat', count: 1, piece }] }));
+    const out = run(w, 50, 1500);
+    expect(of(to(out, 'a'), 'touched')).toEqual([{ t: 'touched', by: 'skulker', lost: 'coat' }]);
+    expect(w.takeWrites().drops).toMatchObject([{ owner: 'a', drop: { items: [{ item: 'coat', count: 1, piece }] } }]);
+    w.pick('a', 4, 6, 1600);
+    expect(w.get('a')!.bag).toEqual([{ item: 'coat', count: 1, piece }]);
   });
 
   it.each([

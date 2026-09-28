@@ -210,9 +210,11 @@ export function didText(did: Did, items: Items): string {
     case 'used': {
       const n = nounOf(def), said: string[] = [];
       if (did.into) {
-        const into = items.get(did.into.item);
+        const into = items.get(did.into.item), quirk = did.into.piece?.quirk;
         said.push(`It turns out to be ${amount(into, did.into.count)}.`);
         if (into.about) said.push(into.about);
+        // Its quirk is rolled as it lands in the bag: the card in the bag says what it does.
+        if (quirk) said.push(`It has a quirk: ${items.quirk(quirk).name.toLowerCase()}.`);
       }
       if (did.energy !== undefined) {
         said.push(did.energy === 0 ? `You drink the ${n}, but your energy was full already.` : `You drink the ${n}: ${signed(did.energy)} energy.`);

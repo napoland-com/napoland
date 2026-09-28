@@ -140,10 +140,12 @@ const hud = new Hud(screen, {
   // Steps count toward feats without the server telling each one: the panel asks for the counts as they are.
   status: () => { game.askStats(); showStatus(); },
   store: slot => game.store(slot),
-  take: item => game.take(item),
+  take: (item, n) => game.take(item, n),
   stashClosed: () => game.closeChest(),
   equip: (item, n) => game.equip(item, n),
   unequip: slot => game.unequip(slot),
+  wear: slot => game.wear(slot),
+  doff: slot => game.doff(slot),
   open: item => game.openSealed(item),
   // At the workbench, the first goal opens the card of what to make (once the workbench has answered).
   goal: () => {
@@ -155,8 +157,10 @@ const hud = new Hud(screen, {
   // The workbench's rows are recipes, and mending ("mend:" and the slot).
   craft: recipe => (recipe.startsWith('mend:') ? game.mend(recipe.slice(5) as Slot) : game.craft(recipe)),
   benchClosed: () => game.closeBench(),
-  // What a tap in the chest or at the workbench shows, from what the open one says your stash holds.
-  details: ref => detailView(ref, { items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools }),
+  // What a tap in the chest, at the workbench or in the bag shows, from what the open chest or workbench says your stash holds.
+  details: (ref, where) => detailView(ref, {
+    items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools, panel: where === 'bag' ? 'bag' : 'home',
+  }),
   chat: a => {
     if (a.a === 'tab') chatTab = a.to;
     else if (a.a === 'say') game.say(a.to, a.text);

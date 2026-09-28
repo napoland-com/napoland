@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { BagSlot, Gear, ItemsData, Worn } from '@napoland/shared';
 import {
-  DOUBLE_TAP_MS, DOUBLE_TAP_SLOP, DoubleTap, actText, cardPress, detailView, listWords, pieceName, pieceStats, refKey, statText, tierName, type DetailRef, type DetailState, type DetailView,
+  BAG_AT_HOME, DOUBLE_TAP_MS, DOUBLE_TAP_SLOP, DoubleTap, KEEP_BAG_OUT, NO_ROOM_TO_TAKE_OFF, NO_ROOM_TO_TAKE_OUT, actText, cardPress, detailView, listWords, morePress, pieceName, pieceStats, refKey,
+  statText, tierName, type DetailRef, type DetailState, type DetailView,
 } from '../src/details';
 import { cardHtml } from '../src/hud';
 import { Items, conditionText, slotName } from '../src/items';
@@ -12,6 +13,7 @@ const items = new Items({
     { id: 'cloth', name: 'Cloth scraps', kind: 'resource', stack: 10, xp: 2, weight: 0.1, fuel: 90, text: 'Dry.' },
     { id: 'resin', name: 'Fir resin', kind: 'resource', stack: 20, text: 'Sticky.' },
     { id: 'scrap', name: 'Scrap metal', kind: 'resource', stack: 10, text: 'Heavy.' },
+    { id: 'thermos', name: 'Thermos', kind: 'consumable', stack: 2, text: 'Hot tea.', use: { energy: 30 } },
     { id: 'worn-cap', name: 'Worn cap', kind: 'gear', stack: 1, slot: 'cap', tier: 'worn', color: '#d63b33', text: 'Faded.' },
     { id: 'worn-gloves', name: 'Fingerless gloves', kind: 'gear', stack: 1, slot: 'gloves', tier: 'worn', text: 'Knitted.' },
     { id: 'wool-cap', name: 'Wool cap', kind: 'gear', stack: 1, slot: 'cap', tier: 'sturdy', resist: { cold: 0.15 }, text: 'Thick.' },
@@ -177,6 +179,80 @@ describe('the card of a piece in the stash', () => {
     expect(detailView({ from: 'stash', item: 'raincoat', n: 2 }, state({ stash }))).toBeNull();
     expect(detailView({ from: 'stash', item: 'resin' }, state({ stash }))).toBeNull();
   });
+
+  it('takes a piece out into the bag as it is, beside wearing it, when the bag has a slot free', () => {
+    const v = view({ from: 'stash', item: 'raincoat', n: 1 }, { stash });
+    expect(v.more).toEqual({ label: 'Take it out', enabled: true, tone: 'plain', does: { kind: 'take', item: 'raincoat', n: 1 } });
+    expect(morePress(v)).toEqual({ does: { kind: 'take', item: 'raincoat', n: 1 }, close: true, shake: false });
+    // Eight things in the backpack: no room, and the card says so.
+    const full = view({ from: 'stash', item: 'raincoat', n: 1 }, { stash, bag: Array.from({ length: 8 }, (): BagSlot => ({ item: 'cloth', count: 1 })) });
+    expect(full.more!.enabled).toBe(false);
+    expect(full.notes.map(n => n.text)).toContain(NO_ROOM_TO_TAKE_OUT);
+    expect(morePress(full)).toEqual({ close: false, shake: true });
+    // Wearing it is still the card's own thing: A and a double tap.
+    expect(cardPress(full).does).toEqual({ kind: 'wear', item: 'raincoat', n: 1 });
+  });
+});
+
+describe('the cards in the bag, anywhere', () => {
+  const bag = (...slots: BagSlot[]) => ({ bag: slots, panel: 'bag' as const });
+  const coat: BagSlot = { item: 'storm-coat', count: 1, piece: { cond: 0.7 } };
+
+  it('wear a carried piece, saying what goes into the bag in its place, or just wear it when nothing is worn there', () => {
+    const v = view({ from: 'bag', slot: 0, item: 'wool-cap' }, bag({ item: 'wool-cap', count: 1, piece: { cond: 1 } }));
+    expect(actText(v.act!)).toBe('Wear (your worn cap goes into your bag)');
+    expect(v.act!.does).toEqual({ kind: 'don', slot: 0 });
+    expect(actText(view({ from: 'bag', slot: 0, item: 'rubber-gloves' }, bag({ item: 'rubber-gloves', count: 1, piece: { cond: 1 } })).act!)).toBe('Wear (your fingerless gloves go into your bag)');
+    expect(actText(view({ from: 'bag', slot: 1, item: 'storm-coat' }, { ...bag({ item: 'cloth', count: 1 }, coat), gear: { cap: 'worn-cap', bag: 'backpack' } }).act!)).toBe('Wear');
+    // It always has room: what it replaces takes its slot. A double tap and A wear it, and the card closes.
+    expect(cardPress(v)).toEqual({ does: { kind: 'don', slot: 0 }, close: true, shake: false });
+  });
+
+  it('show a carried piece as it is, and throw it away beside, asking first', () => {
+    const v = view({ from: 'bag', slot: 1, item: 'storm-coat' }, bag({ item: 'cloth', count: 1 }, coat));
+    expect(v).toMatchObject({ name: 'Storm coat', tier: { name: 'Rugged' }, cond: { words: 'Worn: 70% left' } });
+    expect(v.more).toEqual({ label: 'Throw away', enabled: true, tone: 'toss', does: { kind: 'toss', slot: 1 } });
+    // Asked first in the text box, with the card still open behind it.
+    expect(morePress(v)).toEqual({ does: { kind: 'toss', slot: 1 }, close: false, shake: false });
+    expect(view({ from: 'bag', slot: 0, item: 'storm-coat' }, bag({ item: 'storm-coat', count: 1, piece: { cond: 0.1 } })).notes.map(n => n.text))
+      .toEqual(['Wear it, and it can be mended at the workbench at home.']);
+  });
+
+  it('never put on a carried bag: the bag you wear changes only at home', () => {
+    const v = view({ from: 'bag', slot: 0, item: 'hiking-pack' }, bag({ item: 'hiking-pack', count: 1, piece: { cond: 1 } }));
+    expect(v.act).toBeUndefined();
+    expect(v.notes.map(n => n.text)).toEqual([BAG_AT_HOME]);
+    expect(v.more?.label).toBe('Throw away');
+  });
+
+  it('use what can be used, asking first with the card open, and throw away anything', () => {
+    const tea = view({ from: 'bag', slot: 0, item: 'thermos' }, bag({ item: 'thermos', count: 2 }));
+    expect(tea).toMatchObject({ name: 'Thermos', count: 2, act: { label: 'Drink', enabled: true, does: { kind: 'use', slot: 0 } }, more: { label: 'Throw away' } });
+    expect(cardPress(tea)).toEqual({ does: { kind: 'use', slot: 0 }, close: false, shake: false });
+    const cloth = view({ from: 'bag', slot: 0, item: 'cloth' }, bag({ item: 'cloth', count: 3 }));
+    expect(cloth.act).toBeUndefined();
+    expect(cloth.facts).toEqual(['2 XP at home', '100 g', 'Burns 2 min']);
+    expect(cardPress(cloth)).toEqual({ close: false, shake: false });
+  });
+
+  it('take off what you wear into the bag when it has a slot free, and say so when it has none', () => {
+    const v = view({ from: 'worn', slot: 'shirt' }, { panel: 'bag' });
+    expect(actText(v.act!)).toBe('Take off (it goes into your bag)');
+    expect(v.act).toMatchObject({ enabled: true, does: { kind: 'doff', slot: 'shirt' } });
+    expect(actText(view({ from: 'worn', slot: 'gloves' }, { panel: 'bag' }).act!)).toBe('Take off (they go into your bag)');
+    const full = view({ from: 'worn', slot: 'shirt' }, { panel: 'bag', bag: Array.from({ length: 8 }, (): BagSlot => ({ item: 'cloth', count: 1 })) });
+    expect(full.act).toMatchObject({ label: 'Take off', enabled: false });
+    expect(full.notes).toEqual([{ text: NO_ROOM_TO_TAKE_OFF, tone: 'bad' }]);
+    expect(cardPress(full)).toEqual({ close: false, shake: true });
+    // Worn down: mended at home.
+    expect(view({ from: 'worn', slot: 'shirt' }, { panel: 'bag', worn: { shirt: { cond: 0.1 } } }).notes.map(n => n.text)).toEqual(['It can be mended at the workbench at home.']);
+  });
+
+  it('say the bag you wear changes only at home', () => {
+    const v = view({ from: 'worn', slot: 'bag' }, { panel: 'bag' });
+    expect(v.act).toBeUndefined();
+    expect(v.notes.map(n => n.text)).toEqual([KEEP_BAG_OUT]);
+  });
 });
 
 describe('the card of what you wear', () => {
@@ -213,11 +289,14 @@ describe('the card of a slot of your bag, in the chest', () => {
     expect(v).toMatchObject({ name: 'Fir resin', count: 5, act: { label: 'Put away', enabled: true, does: { kind: 'store', slot: 1 } } });
   });
 
-  it('shows gear from a strange object as gear, to wear once it is in the stash', () => {
-    const v = view({ from: 'bag', slot: 0, item: 'shard-cap' }, { bag: [{ item: 'shard-cap', count: 1 }] });
+  it('shows a carried piece as it is, to put away with its condition and quirk', () => {
+    const v = view({ from: 'bag', slot: 0, item: 'shard-cap' }, { bag: [{ item: 'shard-cap', count: 1, piece: { cond: 0.5, quirk: 'hum' } }] });
     expect(v.stats.map(statText)).toEqual(['Radiation 50%', '+10 energy']);
-    expect(v.cond).toBeUndefined();
-    expect(v.notes.map(n => n.text)).toEqual(['Put it away, then wear it from the stash.']);
+    expect(v.cond).toMatchObject({ words: 'Worn: 50% left' });
+    expect(v.quirk?.name).toBe('Humming');
+    expect(v.notes).toEqual([]);
+    expect(v.act).toMatchObject({ label: 'Put away', does: { kind: 'store', slot: 0 } });
+    expect(v.more).toBeUndefined();
   });
 
   it('closes when the slot holds something else now', () => {
@@ -292,6 +371,17 @@ describe('a card on the page', () => {
     expect(html).toContain('<span class="cbar" aria-hidden="true"><i style="transform:scaleX(0.100)"></i></span>');
     expect(cardHtml(view({ from: 'worn', slot: 'bag' }))).not.toContain('cbar');
     expect(cardHtml(view({ from: 'worn', slot: 'bag' }))).not.toContain('data-card-act');
+  });
+
+  it('draws a second button beside the first, the colour of a toss to throw away, greyed out when it cannot', () => {
+    const cap: BagSlot = { item: 'wool-cap', count: 1, piece: { cond: 1 } };
+    expect(cardHtml(view({ from: 'bag', slot: 0, item: 'wool-cap' }, { bag: [cap], panel: 'bag' }))).toContain(
+      '<div class="acts"><button type="button" class="act go" data-card-act>Wear <span class="then">(your worn cap goes into your bag)</span></button><button type="button" class="act toss" data-card-more>Throw away</button></div>',
+    );
+    const full = cardHtml(view({ from: 'stash', item: 'wool-cap', n: 0 }, { stash: [cap], bag: Array.from({ length: 8 }, (): BagSlot => ({ item: 'cloth', count: 1 })) }));
+    expect(full).toContain('<button type="button" class="act" data-card-more aria-disabled="true">Take it out</button>');
+    // Nothing to use: the second button alone.
+    expect(cardHtml(view({ from: 'bag', slot: 0, item: 'cloth' }, { bag: [{ item: 'cloth', count: 3 }], panel: 'bag' }))).toContain('<div class="acts"><button type="button" class="act toss" data-card-more>Throw away</button></div>');
   });
 
   it('keeps what content says from becoming markup', () => {

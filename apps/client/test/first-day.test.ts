@@ -66,9 +66,15 @@ describe('the game, on the first day', () => {
     expect(g.nextGear()).toMatchObject({ recipe: { id: 'wool-cap' }, missing: [{ item: 'cloth', count: 4 }, { item: 'resin', count: 1 }] });
   });
 
-  it('leaves out what you wear, and says nothing once everything is made', () => {
+  it('leaves out what you wear and what you carry, and says nothing once everything is made', () => {
     g.handle(welcome(home(), [me(2, 2, { gear: { gloves: 'rubber-gloves' } })], FULL, { items: items.version, stash: WELCOME_PARCEL }), now);
     expect(g.nextGear()?.recipe.id).not.toBe('rubber-gloves');
+    // Taken off out there, a piece travels in the bag: it is still yours, not the next thing to make.
+    g.handle({ t: 'gear', id: 'me', gear: {}, quirks: [] }, now);
+    g.handle({ t: 'bag', bag: [{ item: 'rubber-gloves', count: 1, piece: { cond: 0.5 } }] }, now);
+    expect(g.nextGear()?.recipe.id).not.toBe('rubber-gloves');
+    g.handle({ t: 'bag', bag: [] }, now);
+    expect(g.nextGear()?.recipe.id).toBe('rubber-gloves');
     const everything = items.recipes.map(r => ({ item: r.make, count: 1, piece: { cond: 1 } }));
     g.handle({ t: 'chest', stash: everything }, now);
     expect(g.nextGear()).toBeNull();

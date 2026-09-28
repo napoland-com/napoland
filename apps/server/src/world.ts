@@ -26,7 +26,10 @@
  *
  * Gear is kept piece by piece (gear.ts): what a player wears wears down while they are out in the
  * wilds, protects less and less when nearly worn out, and is mended at the workbench; anomalous
- * pieces have a quirk, which everyone on the map knows (some show in the world).
+ * pieces have a quirk, which everyone on the map knows (some show in the world). A piece can travel
+ * in the bag, one to a slot, and keeps its piece wherever it goes (the bag, a pile, someone else's
+ * half of it); it goes on and comes off at the chest, and anywhere from and into the bag. The bag
+ * you wear changes only at the chest.
  *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
  * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). On a server
@@ -77,9 +80,11 @@ import {
   energyRate,
   featOf,
   fitPieces,
+  gather,
   gift,
   mendCost,
   newPiece,
+  takePiece,
   wearSeconds,
   flashHits,
   findTiles,
@@ -465,10 +470,13 @@ const dropView = (d: DropRecord): DropView => ({
 });
 const markView = (m: MarkRecord): MarkView => ({ id: m.id, x: m.x, y: m.y, dir: m.dir, color: m.color, name: m.name, until: m.placedAt + MARK_LIFETIME_MS });
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: w.kind, x: w.x, y: w.y, dir: w.dir, ...(w.chasing !== undefined && { chasing: w.chasing }) });
-const copyBag = (bag: readonly BagSlot[]): BagSlot[] => bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}) }));
-/** The bag as its owner hears it: a live item's `since` (the server's wall clock) as its age in seconds. */
+const copyBag = (bag: readonly BagSlot[]): BagSlot[] =>
+  bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}), ...(s.piece ? { piece: { ...s.piece } } : {}) }));
+/** The bag as its owner hears it: a live item's `since` (the server's wall clock) as its age in seconds, and each carried piece of gear as it is. */
 const bagView = (bag: readonly BagSlot[], wall: number): BagSlot[] =>
-  bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { age: round(Math.max(0, wall - s.since) / 1000, 1) } : {}) }));
+  bag.map(s => ({
+    item: s.item, count: s.count, ...(s.since !== undefined ? { age: round(Math.max(0, wall - s.since) / 1000, 1) } : {}), ...(s.piece ? { piece: { ...s.piece, cond: round(s.piece.cond, 3) } } : {}),
+  }));
 const copyStash = (s: Stash): Stash => ({
   items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: Object.fromEntries(Object.entries(s.pieces).map(([id, l]) => [id, l.map(p => ({ ...p }))])) } : {}),
 });
@@ -481,7 +489,10 @@ const isPiece = (p: unknown): p is Piece => {
   const { cond, quirk } = (typeof p === 'object' && p !== null ? p : {}) as Partial<Piece>;
   return typeof cond === 'number' && cond >= 0 && cond <= 1 && (quirk === undefined || QUIRKS.includes(quirk));
 };
-/** A bag slot as the server writes them; saved data is checked with this before it is trusted. */
+/**
+ * A bag slot as the server writes them; saved data is checked with this before it is trusted. Its
+ * piece is checked apart (World.pieced): a bad piece is replaced, the slot kept.
+ */
 const isSlot = (s: unknown): s is BagSlot => {
   const { item, count, since } = (typeof s === 'object' && s !== null ? s : {}) as Partial<BagSlot>;
   return typeof item === 'string' && Number.isInteger(count) && count! > 0 && (since === undefined || Number.isFinite(since));
@@ -547,7 +558,7 @@ export class World {
   /** What the workbench makes, by recipe id. */
   private readonly recipes: Map<string, Recipe>;
   /** How gear wears out, and what mending it costs (content/items.json). */
-  private readonly wear: ItemsData['wear'];
+  private readonly wearTimes: ItemsData['wear'];
   private readonly mendCosts: ItemsData['mend'];
   private readonly rng: () => number;
   private readonly epochOffset: number;
@@ -645,7 +656,7 @@ export class World {
     this.items = itemIndex(items);
     this.itemOrder = items.items;
     this.recipes = new Map((items.recipes ?? []).map(rc => [rc.id, rc]));
-    this.wear = items.wear;
+    this.wearTimes = items.wear;
     this.mendCosts = items.mend;
     this.itemsVersion = items.version;
     this.parcels = items.parcels;
@@ -908,10 +919,12 @@ export class World {
       const r = reveal(def.reveals ?? [], this.rng);
       const it = r && this.items.get(r.item);
       if (it) {
-        const put = addToBag(bag, it, r.count, p.slots);
+        // Gear is a piece the moment it lands in the bag: its quirk is rolled now, and it can be worn at once.
+        const put = this.addNew(bag, it, r.count, p.slots);
         if (put.left) return this.refuse(p, 'use', 'bag_full');
         bag = put.bag;
-        into = { item: it.id, count: r.count };
+        const piece = it.kind === 'gear' && r.count === 1 ? bag.at(-1)?.piece : undefined;
+        into = { item: it.id, count: r.count, ...(piece ? { piece: { ...piece } } : {}) };
       }
     }
     p.rec.bag = bag;
@@ -1032,9 +1045,9 @@ export class World {
     if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'store', 'too_far');
     const going = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
     if (!going.length) return this.refuse(p, 'store', 'empty_slot');
-    // Live finds apart: merge would forget when each was picked, and each is worth what its age says.
+    // Live finds apart: gathering them would forget when each was picked, and each is worth what its age says.
     const wall = now + this.epochOffset;
-    const r = store(p.rec.stash ?? emptyStash(), merge(going.filter(s => !this.items.get(s.item)?.live)), this.items);
+    const r = store(p.rec.stash ?? emptyStash(), gather(going.filter(s => !this.items.get(s.item)?.live)), this.items);
     for (const s of going) {
       const l = this.liveNow(s, wall);
       if (!l?.into) continue;
@@ -1042,7 +1055,7 @@ export class World {
       r.stash = lr.stash;
       r.xp += lr.xp;
     }
-    // Gear brought home (an identified strange object) gets its piece, and its quirk if anomalous.
+    // Carried gear goes in as it is, piece by piece; fitPieces keeps the stash's pieces and its counts one.
     p.rec.stash = fitPieces(r.stash, this.items, this.rng);
     p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
     const before = levelOf(p.rec.xp ?? 0);
@@ -1061,6 +1074,10 @@ export class World {
    * Puts on a piece of gear from the player's stash, at the chest on tile x,y next to them: what they
    * wore in its slot goes into the stash. A smaller bag has to hold what they carry. Everyone on the
    * map sees the change; the player hears their new bar (gear can add energy) and rates.
+   *
+   * What you wear counts as taken out of the stash (progress.ts): a piece could go on here, come off
+   * into the bag out there and be stored again, and it must not earn its XP twice. What comes back in
+   * pays that off first, like anything stored, and earns XP only beyond it (a piece that never was home).
    */
   equip(id: string, x: number, y: number, item: string, now: number, n = 0): void {
     const p = this.players.get(id);
@@ -1073,16 +1090,19 @@ export class World {
     if (def.kind !== 'gear' || !def.slot) return this.refuse(p, 'equip', 'not_gear');
     if (def.slot === 'bag' && p.rec.bag.length > (def.bag ?? 0)) return this.refuse(p, 'equip', 'bag_too_full');
     const gear = { ...p.rec.gear }, old = gear[def.slot], worn = { ...p.rec.worn };
-    const pieces = { ...stash.pieces, [item]: [...(stash.pieces?.[item] ?? [])] };
-    const [piece] = pieces[item]!.splice(Math.min(n, Math.max(0, pieces[item]!.length - 1)), 1);
-    if (old) pieces[old] = [...(pieces[old] ?? []), worn[def.slot] ?? { cond: 1 }];
+    const took = takePiece(stash, item, n);
+    const back = old ? store(took.stash, [{ item: old, count: 1, piece: worn[def.slot] ?? { cond: 1 } }], this.items) : { stash: took.stash, xp: 0 };
     gear[def.slot] = item;
-    worn[def.slot] = piece ?? newPiece(def, this.rng);
-    p.rec.stash = fitPieces({ ...moveStash(stash, item, -1, old), pieces }, this.items, this.rng);
+    worn[def.slot] = took.piece ?? newPiece(def, this.rng);
+    p.rec.stash = fitPieces(back.stash, this.items, this.rng);
+    this.earn(p, back.xp);
     this.wearGear(p, gear, worn, now);
   }
 
-  /** Takes off what the player wears in `slot`, at the chest on tile x,y next to them: it goes into the stash. Not the bag. */
+  /**
+   * Takes off what the player wears in `slot`, at the chest on tile x,y next to them: it goes into the
+   * stash, as stored (equip says why). Not the bag.
+   */
   unequip(id: string, x: number, y: number, slot: Slot, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
@@ -1090,13 +1110,63 @@ export class World {
     this.advance(p, now);
     if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'unequip', 'too_far');
     if (slot === 'bag') return this.refuse(p, 'unequip', 'keep_bag');
-    const gear = { ...p.rec.gear }, old = gear[slot], worn = { ...p.rec.worn }, stash = p.rec.stash ?? emptyStash();
+    const gear = { ...p.rec.gear }, old = gear[slot], worn = { ...p.rec.worn };
     if (!old) return this.refuse(p, 'unequip', 'empty_slot');
-    const pieces = { ...stash.pieces, [old]: [...(stash.pieces?.[old] ?? []), worn[slot] ?? { cond: 1 }] };
+    const back = store(p.rec.stash ?? emptyStash(), [{ item: old, count: 1, piece: worn[slot] ?? { cond: 1 } }], this.items);
     delete gear[slot];
     delete worn[slot];
-    p.rec.stash = fitPieces({ ...moveStash(stash, undefined, 0, old), pieces }, this.items, this.rng);
+    p.rec.stash = fitPieces(back.stash, this.items, this.rng);
+    this.earn(p, back.xp);
     this.wearGear(p, gear, worn, now);
+  }
+
+  /**
+   * Puts on the piece of gear in bag slot `slot`, anywhere: what the player wore in its slot takes its
+   * place in the bag, so there is always room. Never a bag: the bag you wear changes only at the chest,
+   * where what you carry can be checked against it. Nothing is used up, so nothing asks first.
+   */
+  wear(id: string, slot: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'wear', 'empty_slot');
+    }
+    const s = p.rec.bag[slot], def = s && this.items.get(s.item);
+    if (!s || !def) return this.refuse(p, 'wear', 'empty_slot');
+    if (def.kind !== 'gear' || !def.slot) return this.refuse(p, 'wear', 'not_gear');
+    if (def.slot === 'bag') return this.refuse(p, 'wear', 'bag_at_home');
+    const gear = { ...p.rec.gear }, worn = { ...p.rec.worn }, old = gear[def.slot];
+    const bag = copyBag(p.rec.bag);
+    if (old) bag[slot] = { item: old, count: 1, piece: { ...(worn[def.slot] ?? { cond: 1 }) } };
+    else bag.splice(slot, 1);
+    gear[def.slot] = def.id;
+    worn[def.slot] = s.piece ? { ...s.piece } : newPiece(def, this.rng);
+    p.rec.bag = bag;
+    this.sendBag(p, now);
+    this.wearGear(p, gear, worn, now, false);
+  }
+
+  /** Takes off what the player wears in `slot`, anywhere: it goes into the bag, if there is a slot free. Not the bag itself. */
+  doff(id: string, slot: Slot, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'doff', 'empty_slot');
+    }
+    if (slot === 'bag') return this.refuse(p, 'doff', 'keep_bag');
+    const gear = { ...p.rec.gear }, worn = { ...p.rec.worn }, old = gear[slot];
+    if (!old) return this.refuse(p, 'doff', 'empty_slot');
+    // A piece takes a slot of its own.
+    if (p.rec.bag.length >= p.slots) return this.refuse(p, 'doff', 'bag_full');
+    p.rec.bag = [...copyBag(p.rec.bag), { item: old, count: 1, piece: { ...(worn[slot] ?? { cond: 1 }) } }];
+    delete gear[slot];
+    delete worn[slot];
+    this.sendBag(p, now);
+    this.wearGear(p, gear, worn, now, false);
   }
 
   /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. */
@@ -1164,24 +1234,33 @@ export class World {
     this.did(p, { kind: 'mended', item });
   }
 
-  /** Takes up to `count` of an item out of the player's stash, in the chest on tile x,y, as much as fits in the bag. */
-  take(id: string, x: number, y: number, item: string, count: number, now: number): void {
+  /**
+   * Takes up to `count` of an item out of the player's stash, in the chest on tile x,y, as much as fits
+   * in the bag. Gear comes out one piece at a time, the `n`th of its kind, as it is (condition, quirk,
+   * level), into a slot of its own.
+   */
+  take(id: string, x: number, y: number, item: string, count: number, now: number, n = 0): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
     if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'take', 'too_far');
     const stash = p.rec.stash ?? emptyStash(), have = stash.items[item] ?? 0, def = this.items.get(item);
     if (!def || !have) return this.refuse(p, 'take', 'not_stashed');
-    // A piece in the bag would forget how worn it is: gear is put on from the chest instead.
-    if (def.kind === 'gear') return this.refuse(p, 'take', 'gear_stays');
     // A lockbox is opened at the chest, and never leaves it: it is never lost in a pile or carried off.
     if (def.kind === 'sealed') return this.refuse(p, 'take', 'sealed_stays');
-    const want = Math.min(have, count);
-    const r = addToBag(p.rec.bag, def, want, p.slots);
-    const taken = want - r.left;
-    if (!taken) return this.refuse(p, 'take', 'bag_full');
-    p.rec.bag = r.bag;
-    p.rec.stash = takeOut(stash, item, taken).stash;
+    if (def.kind === 'gear') {
+      if (p.rec.bag.length >= p.slots) return this.refuse(p, 'take', 'bag_full');
+      const took = takePiece(stash, item, n);
+      p.rec.bag = [...copyBag(p.rec.bag), { item, count: 1, piece: took.piece ?? newPiece(def, this.rng) }];
+      p.rec.stash = fitPieces(took.stash, this.items, this.rng);
+    } else {
+      const want = Math.min(have, count);
+      const r = addToBag(p.rec.bag, def, want, p.slots);
+      const taken = want - r.left;
+      if (!taken) return this.refuse(p, 'take', 'bag_full');
+      p.rec.bag = r.bag;
+      p.rec.stash = takeOut(stash, item, taken).stash;
+    }
     this.saveNow.set(id, p.rec);
     this.sendBag(p, now);
     this.sendStash(p);
@@ -1468,8 +1547,11 @@ export class World {
     if (!bag.length) return;
     const trail = p.map.data.kind === 'wilds' && slot === undefined ? p.trail.map(([tx, ty]) => [tx, ty] as [number, number]) : [];
     const falls = slot === undefined ? bag : [bag[slot]!];
-    // Put down, a live find goes dim for good.
-    const items = merge(falls.map(s => ({ item: this.items.get(s.item)?.live?.into ?? s.item, count: s.count })));
+    // Put down, a live find goes dim for good. A carried piece of gear falls in as it is.
+    const items = gather(falls.map(s => {
+      const into = this.items.get(s.item)?.live?.into;
+      return into ? { item: into, count: s.count } : s;
+    }));
     const pile: DropRecord = { owner: id, name, map, x, y, items, droppedAt: Math.floor(now + this.epochOffset), trail };
     this.addPile(pile);
     this.pileWrites.set(id, pile);
@@ -1572,7 +1654,7 @@ export class World {
     const worn = p.rec.worn;
     if (!worn) return;
     for (const slot of SLOTS) {
-      const piece = worn[slot], s = wearSeconds(p.rec.gear?.[slot] ? this.items.get(p.rec.gear[slot]!) : undefined, this.wear);
+      const piece = worn[slot], s = wearSeconds(p.rec.gear?.[slot] ? this.items.get(p.rec.gear[slot]!) : undefined, this.wearTimes);
       if (piece && s && piece.cond > 0) piece.cond = Math.max(0, piece.cond - (dt * p.mods.wear) / s);
     }
   }
@@ -2251,15 +2333,44 @@ export class World {
   // ---------- bags, piles and finds ----------
 
   /**
-   * A saved bag as it fits today's items: items that no longer exist are gone, and a bag that no
-   * longer fits (a stack size went down) is packed again; whatever does not fit then is lost.
+   * A saved bag as it fits today's items: items that no longer exist are gone, gear is a piece to a slot
+   * (gear saved before pieces travelled, a strange object's, gets a new one), and a bag that no longer
+   * fits (a stack size went down) is packed again; whatever does not fit then is lost.
    */
   private fitBag(bag: unknown, slots: number): BagSlot[] {
     // Only a live item keeps when it was picked.
-    const known = (Array.isArray(bag) ? bag : []).filter((s): s is BagSlot => isSlot(s) && this.items.has(s.item))
-      .map(s => (s.since === undefined || this.items.get(s.item)!.live ? s : { item: s.item, count: s.count }));
+    const known = this.pieced((Array.isArray(bag) ? bag : []).filter((s): s is BagSlot => isSlot(s) && this.items.has(s.item))
+      .map(s => (s.since === undefined || this.items.get(s.item)!.live ? s : { item: s.item, count: s.count, ...(s.piece ? { piece: s.piece } : {}) })));
     const fine = known.length <= slots && known.every(s => s.count <= this.items.get(s.item)!.stack);
     return fine ? copyBag(known) : addAllToBag([], known, this.items, slots).bag;
+  }
+
+  /**
+   * Slots as today's items fit them: each unit of gear in a slot of its own with its piece (kept when it
+   * is one, else new, an anomalous one with its quirk), and no piece on anything that is not gear.
+   */
+  private pieced(slots: readonly BagSlot[]): BagSlot[] {
+    return slots.flatMap(s => {
+      const def = this.items.get(s.item);
+      if (def?.kind !== 'gear') {
+        const { piece: _piece, ...rest } = s;
+        return [rest];
+      }
+      return Array.from({ length: s.count }, (_, i) => ({ item: s.item, count: 1, piece: this.pieceOf(def, i === 0 ? s.piece : undefined) }));
+    });
+  }
+
+  /** A saved piece of `def` if it is one (an anomalous piece has its quirk), with only what a piece holds; else a new one. */
+  private pieceOf(def: ItemDef, saved: unknown): Piece {
+    if (!isPiece(saved) || (saved.quirk === undefined && def.tier === 'anomalous')) return newPiece(def, this.rng);
+    return { cond: saved.cond, ...(saved.quirk !== undefined ? { quirk: saved.quirk } : {}) };
+  }
+
+  /** Puts `count` new ones of `def` into a bag: gear a piece to a slot, each new (an anomalous one with its quirk). */
+  private addNew(bag: readonly BagSlot[], def: ItemDef, count: number, slots: number): { bag: BagSlot[]; left: number } {
+    if (def.kind !== 'gear') return addToBag(bag, def, count, slots);
+    const room = Math.max(0, Math.min(count, slots - bag.length));
+    return { bag: [...copyBag(bag), ...Array.from({ length: room }, () => ({ item: def.id, count: 1, piece: newPiece(def, this.rng) }))], left: count - room };
   }
 
   /** Can one more of `item` go in this bag? */
@@ -2275,13 +2386,13 @@ export class World {
   private pickFind(p: Online, find: Find, now: number): void {
     const { rule } = find;
     if (rule.item.kind === 'tool') return this.pickTool(p, find, now);
-    const r = addToBag(p.rec.bag, rule.item, 1, p.slots);
+    const r = this.addNew(p.rec.bag, rule.item, 1, p.slots);
     if (r.left) return this.refuse(p, 'pick', 'bag_full');
     // A live find starts fading now: it stacks one to a slot, so the new one is the last slot.
     if (rule.item.live) r.bag.at(-1)!.since = Math.floor(now + this.epochOffset);
     // Never a live find: those are few on purpose, the prize of a restless region. The second goes in only if it fits.
     const wild = this.wild(p.map);
-    const again = wild && !rule.item.live && p.mods.double > 0 && this.rng() < p.mods.double ? addToBag(r.bag, rule.item, 1, p.slots) : undefined;
+    const again = wild && !rule.item.live && p.mods.double > 0 && this.rng() < p.mods.double ? this.addNew(r.bag, rule.item, 1, p.slots) : undefined;
     const double = again !== undefined && again.left === 0;
     p.rec.bag = again && double ? again.bag : r.bag;
     this.finds.get(rule.map.data.id)!.delete(find.tile);
@@ -2317,7 +2428,7 @@ export class World {
    * The owner gets all of their pile that fits in the bag, and the rest stays; anyone else gets a
    * random half as far as it fits, and the rest is lost with the pile. When nothing of the pile would
    * fit, it stays as it is: the half is only drawn once the picker can carry something of it, so
-   * asking again and again never draws a better half.
+   * asking again and again never draws a better half. A piece of gear comes out as it went in.
    */
   private pickPile(p: Online, d: DropRecord, now: number): void {
     if (!d.items.some(s => this.fits(p.rec.bag, s.item, p.slots))) return this.refuse(p, 'pick', 'bag_full');
@@ -2328,7 +2439,7 @@ export class World {
     this.saveNow.set(p.rec.id, p.rec);
     this.got(p, less(offered, r.left), 'drop', now);
     if (mine && r.left.length) {
-      d.items = merge(r.left);
+      d.items = gather(r.left);
       this.pileWrites.set(d.owner, d);
       this.toMap(d.map, { t: 'drop', drop: dropView(d) });
     } else {
@@ -2344,10 +2455,13 @@ export class World {
     return here?.find(d => d.owner === picker) ?? here?.[0];
   }
 
-  /** A pile saved before a restart. Items that no longer exist are gone; so is a pile with nothing left or on a map that is gone. */
+  /**
+   * A pile saved before a restart. Items that no longer exist are gone; so is a pile with nothing left or
+   * on a map that is gone. Gear in it is a piece each (gear that fell before pieces travelled gets a new one).
+   */
   private restore(d: DropRecord): void {
     const map = this.maps.get(d.map);
-    const items = merge((Array.isArray(d.items) ? d.items : []).filter(s => isSlot(s) && this.items.has(s.item)));
+    const items = gather(this.pieced((Array.isArray(d.items) ? d.items : []).filter(s => isSlot(s) && this.items.has(s.item))));
     if (!map || !map.inside(d.x, d.y) || !items.length || this.piles.has(d.owner)) return;
     const trail = (Array.isArray(d.trail) ? d.trail : []).filter(([x, y]) => map.inside(x, y)).slice(-TRAIL_STEPS);
     this.addPile({ ...d, items, trail });
@@ -2465,17 +2579,27 @@ export class World {
     this.sendBag(p, now);
   }
 
-  /** The player wears `gear` (piece by piece: `worn`) now: saved, everyone on the map sees it, and the player hears their bar and stash. */
-  private wearGear(p: Online, gear: Gear, worn: Worn, now: number): void {
+  /**
+   * The player wears `gear` (piece by piece: `worn`) now: saved, everyone on the map sees it, and the
+   * player hears their bar, rates and load, and their stash when it changed too (at the chest).
+   */
+  private wearGear(p: Online, gear: Gear, worn: Worn, now: number, stash = true): void {
     p.rec.gear = gear;
     p.rec.worn = worn;
     this.saveNow.set(p.rec.id, p.rec);
     this.toMap(p.map.data.id, { t: 'gear', id: p.rec.id, gear: { ...gear }, quirks: quirksOf(worn) });
-    this.sendStash(p);
+    if (stash) this.sendStash(p);
     this.refresh(p, now);
     // A bar that shrank (a piece with extra energy came off) cannot hold more than it can.
     p.rec.energy = Math.min(p.rec.energy, p.max);
     this.tell(p, now);
+  }
+
+  /** XP earned by a piece coming home off the player's back (the first time it ever does): they hear it. The bar follows on the next refresh. */
+  private earn(p: Online, xp: number): void {
+    if (xp <= 0) return;
+    p.rec.xp = (p.rec.xp ?? 0) + xp;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp), gained: xp } });
   }
 
   /** A full bar: the level's, plus what the gear worn gives. */
@@ -2506,9 +2630,7 @@ export class World {
     const out: Worn = {};
     for (const slot of SLOTS) {
       const def = gear[slot] ? this.items.get(gear[slot]!) : undefined;
-      if (!def) continue;
-      const had = raw[slot];
-      out[slot] = isPiece(had) && (had.quirk !== undefined || def.tier !== 'anomalous') ? { ...had } : newPiece(def, this.rng);
+      if (def) out[slot] = this.pieceOf(def, raw[slot]);
     }
     return out;
   }
@@ -2565,7 +2687,7 @@ export class World {
     this.saveNow.set(p.rec.id, p.rec);
   }
 
-  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'open', reason: Refusal): void {
+  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'open', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
   }
 
@@ -2578,20 +2700,6 @@ export class World {
   private toMap(map: string, msg: ServerMsg, except?: string): void {
     this.outbox.push(except === undefined ? { to: '*', map, msg } : { to: '*', map, except, msg });
   }
-}
-
-/**
- * The stash with `delta` of `item` (none: nothing taken) and one `back` returned (gear taken off).
- * Wearing and taking off is neither bringing home nor using up: it touches neither XP nor `out`.
- */
-function moveStash(s: Stash, item: string | undefined, delta: number, back: string | undefined): Stash {
-  const items = { ...s.items };
-  if (item) {
-    items[item] = (items[item] ?? 0) + delta;
-    if (items[item]! <= 0) delete items[item];
-  }
-  if (back) items[back] = (items[back] ?? 0) + 1;
-  return { items, out: { ...s.out } };
 }
 
 function toSpawn(r: PlayerRecord, map: TileMap): void {

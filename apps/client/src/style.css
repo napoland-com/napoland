@@ -263,7 +263,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .sheet .dock .detail { flex: 1 1 auto; min-height: 0; width: 100%; max-width: var(--col); margin-inline: auto; gap: calc(var(--u) * .6); }
 .dock .about { min-height: 0; overflow: hidden auto; overscroll-behavior: contain; }
 .dock .acts { flex: none; }
-.hud .dock .act { width: 100%; text-align: center; }
+/* The card's button fills the row; a second one (throw away, take out) sits beside it, never pressed by A. */
+.hud .dock .act { flex: 1 1 auto; min-width: 0; text-align: center; }
+.hud .dock .act.go { flex-basis: 62%; }
 .hud .act .then { font-weight: 500; }
 @media (prefers-reduced-motion: no-preference) { .dock:not([hidden]) { animation: dock-in .18s ease-out; } }
 @keyframes dock-in { from { opacity: 0; transform: translateY(calc(var(--u) * 1.2)); } }
@@ -303,10 +305,11 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .detail .cost i { font-style: normal; font-variant-numeric: tabular-nums; }
 .detail .words p.note { font-size: calc(var(--u) * 1.1); color: #d3ccbb; }
 .detail .words p.note[data-tone="bad"] { color: #ffae98; }
-/* The stash (the chest at home): your bag above, to put things away; the stash below, to take them out. */
+/* The stash (the chest at home): your bag above, to put things away; the stash below, to take them out.
+   The bag: what you carry, then what you wear. */
 .hud .slot[hidden] { display: none; }
-.stash-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
-.stash-sheet .hint, .stash-sheet .acts { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.stash-sheet .stash-title, .bag-sheet .stash-title { margin: 0; font-weight: 600; font-size: calc(var(--u) * 1.2); color: #ffcf5a; flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
+.stash-sheet .hint, .stash-sheet .acts, .bag-sheet .hint { flex: none; width: 100%; max-width: var(--col); margin-inline: auto; }
 .stash-sheet .hint[hidden] { display: none; }
 /* What came in the parcels since the chest last opened, said once, at the top of the stash. */
 .stash-sheet .parcel-note { flex: none; display: grid; gap: .25em; width: 100%; max-width: var(--col); margin-inline: auto; padding: calc(var(--u) * .6) calc(var(--u) * .9);

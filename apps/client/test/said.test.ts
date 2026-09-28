@@ -133,6 +133,9 @@ describe('what it did, from the server\'s answer', () => {
     expect(didText({ kind: 'used', item: 'glowcap', mark: { dir: 'left', left: 86_400 } }, items)).toBe('You crush the glowcap. An arrow glows where you stand, pointing west. Everyone sees it for a day.');
     expect(said({ kind: 'used', item: 'strange', into: { item: 'hollow-feather', count: 1 } })).toEqual(['Strange object', 'It turns out to be a hollow feather. While it is in your bag, what you carry feels lighter.']);
     expect(didText({ kind: 'used', item: 'strange', into: { item: 'shard', count: 2 } }, items)).toBe('It turns out to be 2 shards. The Old Stone in town wants shards back: enough of them wake it.');
+    // Gear is a piece the moment it lands in the bag, its quirk rolled: it can be worn at once.
+    expect(didText({ kind: 'used', item: 'strange', into: { item: 'shard-cap', count: 1, piece: { cond: 1, quirk: 'flicker' } } }, items))
+      .toBe('It turns out to be a shard-lined cap. Put it on from your bag: half the glow of the anomalies never reaches you. It has a quirk: restless light.');
     expect(didText({ kind: 'used', item: 'thermos' }, items)).toBe('You use the thermos.');
   });
 
