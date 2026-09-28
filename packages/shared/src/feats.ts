@@ -16,7 +16,8 @@ import type { Weather } from './protocol';
 
 /**
  * What wears you down, and what helps, as one set of values. Most are factors (1 changes nothing,
- * below 1 makes it gentler, above 1 stronger); `double` is a chance (0 never).
+ * below 1 makes it gentler, above 1 stronger); `double` is a chance (0 never); `markEnergy` an amount
+ * (0 none).
  */
 export interface Mods {
   /** How fast rain soaks you. */
@@ -33,16 +34,20 @@ export interface Mods {
   farDrain: number;
   /** The chance that a find out in the wilds comes up double. */
   double: number;
+  /** Energy back each time you crush a glowcap to paint a mark. */
+  markEnergy: number;
 }
 
-export const NO_MODS: Readonly<Mods> = { wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0 };
-/** Every value in Mods; the chances among them add up as separate tries, the rest multiply. */
-export const MODS: readonly (keyof Mods)[] = ['wetting', 'load', 'hitch', 'warmth', 'wear', 'farDrain', 'double'];
+export const NO_MODS: Readonly<Mods> = { wetting: 1, load: 1, hitch: 1, warmth: 1, wear: 1, farDrain: 1, double: 0, markEnergy: 0 };
+/** Every value in Mods; the chances among them add up as separate tries, the amounts add up, the rest multiply. */
+export const MODS: readonly (keyof Mods)[] = ['wetting', 'load', 'hitch', 'warmth', 'wear', 'farDrain', 'double', 'markEnergy'];
 export const CHANCES: readonly (keyof Mods)[] = ['double'];
+export const AMOUNTS: readonly (keyof Mods)[] = ['markEnergy'];
 
 /** Does value `v` of Mods key `k` change anything (a charm that does not is a mistake in the content)? */
 export function modChanges(k: keyof Mods, v: unknown): boolean {
   if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return false;
+  if (AMOUNTS.includes(k)) return true;
   return CHANCES.includes(k) ? v <= 1 : v !== 1;
 }
 
@@ -149,10 +154,11 @@ export function rankText(feat: Feat, rank: number): string {
   return feat.does.replace('{n}', `${Math.round(by * 1000) / 10}%`);
 }
 
-/** Puts one value into Mods: a chance adds up with the ones there as a separate try, a factor multiplies. */
+/** Puts one value into Mods: a chance adds up with the ones there as a separate try, an amount adds, a factor multiplies. */
 function put(out: Mods, k: keyof Mods, v: number): void {
   if (!Number.isFinite(v)) return;
-  out[k] = CHANCES.includes(k) ? 1 - (1 - out[k]) * (1 - Math.min(1, Math.max(0, v))) : out[k] * v;
+  if (AMOUNTS.includes(k)) out[k] += Math.max(0, v);
+  else out[k] = CHANCES.includes(k) ? 1 - (1 - out[k]) * (1 - Math.min(1, Math.max(0, v))) : out[k] * v;
 }
 
 /** Every rank reached and every charm carried, in one set of Mods. */

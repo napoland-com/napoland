@@ -45,6 +45,8 @@ const VIGNETTE_FROM = 0.2;
 /** How long the name of a place stays up after you arrive; longer news stays longer, to be read. */
 const BANNER_MS = 2500;
 const BANNER_MS_PER_CHAR = 45;
+/** A lodestone's tug shows on the status panel this long. */
+const TUG_MS = 1600;
 
 /**
  * What a key does in the chat's line, as in Metin2: Enter with words in it sends them (the form does,
@@ -317,6 +319,7 @@ export class Hud {
   private load = 0;
   private capacity = BAG_SLOTS;
   private bannerTimer: ReturnType<typeof setTimeout> | undefined;
+  private tugTimer: ReturnType<typeof setTimeout> | undefined;
   private slotEls: HTMLButtonElement[] = [];
   /** The bag as shown, and the slot whose details are open (and the item in it). */
   private bag: SlotView[] = [];
@@ -369,6 +372,7 @@ export class Hud {
         <div class="energy" data-el="energy" hidden>${ICON.bolt}<div class="bar" data-el="energyBar" role="meter" aria-label="Energy" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="energyFill"></div></div></div>
         <div class="wet" data-el="wet" hidden>${ICON.drop}<div class="bar" data-el="wetBar" role="meter" aria-label="Wet" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="wetFill"></div></div></div>
         <div class="cling" data-el="cling" hidden role="status">${ICON.cling}<span>Something clings to you</span></div>
+        <div class="tug" data-el="tug" hidden role="status"><i aria-hidden="true">✦</i><span data-el="tugName"></span></div>
         <div class="surge-pill" data-el="surge" hidden role="status" aria-live="polite"></div>
         <div class="sub"><span class="conn" data-el="conn" data-state="connecting"><i></i><span data-el="connText">Connecting</span></span><span data-el="ping"></span></div></div>
       <div class="surge-glow" data-el="surgeGlow"></div>
@@ -1502,6 +1506,22 @@ export class Hud {
     }
     const hitched = !!b?.hitched;
     if (hitched !== s.hitched) this.el.cling!.hidden = !(s.hitched = hitched);
+  }
+
+  /**
+   * A lodestone tugs (lodestone.ts): the quirk's name shows on the status panel for a moment, in a short
+   * soft pulse, then goes. It never says which way.
+   */
+  tug(name: string) {
+    const el = this.el.tug!;
+    this.el.tugName!.textContent = `${name} tugs`;
+    el.hidden = false;
+    for (const a of el.getAnimations()) a.cancel();
+    clearTimeout(this.tugTimer);
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      el.animate([{ opacity: 0, transform: 'scale(.94)' }, { opacity: 1, transform: 'scale(1.04)', offset: 0.25 }, { opacity: 1, transform: 'scale(1)', offset: 0.7 }, { opacity: 0, transform: 'scale(1)' }], { duration: TUG_MS, easing: 'ease-out' });
+    }
+    this.tugTimer = setTimeout(() => { el.hidden = true; }, TUG_MS);
   }
 
   /** The surge clock (hidden while calm) and the violet edges while the front is over you. */

@@ -69,12 +69,22 @@ export const pieceFactor = (cond: number): number => Math.min(1, Math.max(0, con
  * Quirks of anomalous gear, the rules they change (content/items.json names and describes them):
  * - footprints: your steps glow a while where you walk out there, for everyone to see;
  * - flicker: street lights flicker as you pass, for everyone to see;
- * - hum: it hums a minute before your region grows restless, before anyone is told.
+ * - hum: it hums a minute before your region grows restless, before anyone is told;
+ * - hush: skulkers hear you walking from fewer steps (the server's skulkers: SKULKER_HEAR_HUSHED);
+ * - lodestone: while a shard lies within LODESTONE_TILES of you, it tugs now and then, a soft pulse and a
+ *   faint sound, and never says which way (your own game, from the finds it knows);
+ * - afterglow: a flash that discharges within AFTERGLOW_NEAR tiles of you leaves you glowing faintly for
+ *   AFTERGLOW_S, for everyone to see, and watchers keep off you while you do.
  */
-export type Quirk = 'footprints' | 'flicker' | 'hum';
-export const QUIRKS: readonly Quirk[] = ['footprints', 'flicker', 'hum'];
+export type Quirk = 'footprints' | 'flicker' | 'hum' | 'hush' | 'lodestone' | 'afterglow';
+export const QUIRKS: readonly Quirk[] = ['footprints', 'flicker', 'hum', 'hush', 'lodestone', 'afterglow'];
 /** The hum comes this many seconds before a region grows restless. */
 export const HUM_BEFORE_S = 60;
+/** A lodestone tugs while a shard (anything the Old Stone takes) lies this close: tiles, center to center. */
+export const LODESTONE_TILES = 5;
+/** Afterglow: a flash discharging this close (tiles, center to center, from its middle) leaves you glowing this long (seconds). */
+export const AFTERGLOW_NEAR = 4;
+export const AFTERGLOW_S = 30;
 
 /** A new piece of `def`: whole, and with a quirk if it is anomalous. */
 export function newPiece(def: ItemDef, rng: () => number): Piece {

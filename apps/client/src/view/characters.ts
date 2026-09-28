@@ -314,3 +314,43 @@ export class LiveGlows {
     this.footMat.dispose();
   }
 }
+
+/** Afterglows drawn at once, at most: a few players who all stood by a flash. */
+const AFTERGLOWS = 6;
+
+/**
+ * An afterglow (a quirk, gear.ts): a faint warm light around whoever a flash left glowing, breathing
+ * slowly, seen by everyone on the map. A few soft sprites, built once and always in the scene; each frame
+ * shows as many as there are glowing players, nearest first, so nothing recompiles.
+ */
+export class Afterglows {
+  readonly root = new THREE.Group();
+  private readonly tex = softTexture(0.45);
+  private readonly mat = new THREE.SpriteMaterial({ map: this.tex, color: 0xfff0c2, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false, opacity: 0.4 });
+  private readonly sprites: THREE.Sprite[] = [];
+
+  constructor() {
+    for (let i = 0; i < AFTERGLOWS; i++) {
+      const s = new THREE.Sprite(this.mat);
+      s.scale.set(1.5, 1.9, 1);
+      s.visible = false;
+      this.sprites.push(s);
+      this.root.add(s);
+    }
+  }
+
+  /** Where the glowing players stand now (world units, feet on the ground), nearest first; `t` makes them breathe. */
+  set(list: ReadonlyArray<{ x: number; y: number; z: number }>, t: number) {
+    this.mat.opacity = 0.3 + 0.1 * Math.sin(t * 1.7);
+    this.sprites.forEach((s, i) => {
+      const at = list[i];
+      s.visible = !!at;
+      if (at) s.position.set(at.x, at.y + 0.72, at.z);
+    });
+  }
+
+  dispose() {
+    this.tex.dispose();
+    this.mat.dispose();
+  }
+}
