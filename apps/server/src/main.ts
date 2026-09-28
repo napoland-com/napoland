@@ -70,11 +70,13 @@ async function main(): Promise<void> {
     parcelDayMs: cfg.parcelDayMs,
     xpMultiplier: cfg.xpMultiplier,
     restedEveryMs: cfg.restedEveryMs,
+    ...(cfg.townCrowd || cfg.regionCrowd ? { crowd: { ...(cfg.townCrowd && { town: cfg.townCrowd }), ...(cfg.regionCrowd && { region: cfg.regionCrowd }) } } : {}),
     auth,
   });
   // Only ever in development (the configuration refuses it in production): nobody should wonder later why levels came so fast.
   if (cfg.xpMultiplier !== 1) log.warn('XP_MULTIPLIER: stashing earns more XP than it should (play-tests only)', { times: cfg.xpMultiplier });
   if (cfg.restedEveryMs) log.warn('RESTED_EVERY_MS: time away fills the cup of rest faster than it should (play-tests only)', { everyMs: cfg.restedEveryMs });
+  if (cfg.townCrowd || cfg.regionCrowd) log.warn('TOWN_CROWD, REGION_CROWD: places split into copies for fewer players than they should (play-tests only)', { town: cfg.townCrowd, region: cfg.regionCrowd });
   log.info('server started', {
     version: cfg.version,
     port: server.port,
