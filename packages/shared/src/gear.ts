@@ -125,3 +125,37 @@ export function mendCost(def: ItemDef | undefined, mend: ItemsData['mend']): Bag
 export function canMake(recipe: Recipe, stash: Record<string, number>): boolean {
   return recipe.needs.every(n => (stash[n.item] ?? 0) >= n.count);
 }
+
+/** The nearest piece of gear someone could make, and what it still lacks. */
+export interface NextGear {
+  recipe: Recipe;
+  /** What the stash and the bag together still lack for it, need by need (none: they hold enough). */
+  missing: BagSlot[];
+  /** The stash alone pays for it: it can be made at the workbench now. */
+  ready: boolean;
+}
+
+/**
+ * A first goal (the first day): the nearest piece of gear someone could make, among the recipes whose
+ * result they own none of yet (`owned`: what they wear, and gear in their stash). One the stash can pay
+ * for now comes first; otherwise the one that lacks the fewest units, counting what the stash and the bag
+ * hold (a find carried home counts before it is put away). The first of equals, in the recipes' order.
+ * Null when they own everything a recipe makes.
+ */
+export function nearestRecipe(recipes: readonly Recipe[], owned: ReadonlySet<string>, stash: Readonly<Record<string, number>>, bag: Readonly<Record<string, number>>): NextGear | null {
+  let best: NextGear | null = null, bestShort = Infinity;
+  for (const recipe of recipes) {
+    if (owned.has(recipe.make)) continue;
+    const ready = canMake(recipe, stash);
+    const missing = recipe.needs.flatMap(n => {
+      const short = n.count - (stash[n.item] ?? 0) - (bag[n.item] ?? 0);
+      return short > 0 ? [{ item: n.item, count: short }] : [];
+    });
+    const short = ready ? -1 : missing.reduce((sum, m) => sum + m.count, 0);
+    if (short < bestShort) {
+      best = { recipe, missing, ready };
+      bestShort = short;
+    }
+  }
+  return best;
+}

@@ -136,7 +136,7 @@ describe('outfits in plain words', () => {
       'Your energy bar grows to 120.\nYou can go a little farther now.\nNew in your wardrobe: the lineman\'s jacket.',
     );
     expect(newsBanner({ kind: 'level', progress: at(12), from: 3 }, 'Home')!.sub).toMatch(/\nNew in your wardrobe: the lineman's jacket and the survey rain cape\.$/);
-    expect(newsBanner({ kind: 'level', progress: at(15), from: 14 }, 'Home', true)!.sub).toMatch(/\nSign in to wear the ranger's coat\.$/);
+    expect(newsBanner({ kind: 'level', progress: at(15), from: 14 }, 'Home', items, true)!.sub).toMatch(/\nSign in to wear the ranger's coat\.$/);
     expect(newsBanner({ kind: 'level', progress: at(7), from: 6 }, 'Home')!.sub).toBe('Your energy bar grows to 130.\nYou can go a little farther now.');
   });
 });

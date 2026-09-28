@@ -61,6 +61,7 @@ async function main(): Promise<void> {
     maxConnectionsPerIp: cfg.maxConnectionsPerIp,
     newPlayersPerIpPerHour: cfg.newPlayersPerIpPerHour,
     clockShiftMs: cfg.clockShiftMs,
+    parcelDayMs: cfg.parcelDayMs,
     xpMultiplier: cfg.xpMultiplier,
     auth,
   });
@@ -84,6 +85,8 @@ async function main(): Promise<void> {
     // The mode and, with Supabase, the project's address (both public); never a key.
     signIn: cfg.auth.mode,
     supabase: cfg.auth.mode === 'supabase' ? cfg.auth.url : undefined,
+    // The buttons the sign-in card shows besides the email (AUTH_PROVIDERS).
+    providers: cfg.auth.mode === 'legacy' ? undefined : cfg.auth.providers,
   });
 
   let stopping = false;

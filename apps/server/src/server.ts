@@ -4,7 +4,7 @@
  * away. main.ts builds it from the environment; tests start it directly.
  */
 import type { AddressInfo } from 'node:net';
-import { DROP_LIFETIME_MS, GUEST_DAYS, weatherAt, type ItemsData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
+import { DROP_LIFETIME_MS, GUEST_DAYS, quickCalendar, weatherAt, type ItemsData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
 import { legacyAuth, type Auth } from './auth';
 import { createHttpServer } from './http';
 import { log } from './log';
@@ -51,6 +51,8 @@ export interface ServerOptions {
   auth?: Auth;
   /** Development only (CLOCK_SHIFT_MS): the sky, the surges and the conditions run this many ms ahead of the wall clock. */
   clockShiftMs?: number;
+  /** Development only (PARCEL_DAY_MS): the parcels' days last this long, the first a Monday that starts now, so a week of them passes in minutes. */
+  parcelDayMs?: number;
   /** Development only (XP_MULTIPLIER): stashing earns this many times the XP. 1 unless set. */
   xpMultiplier?: number;
   /** With sign-in, how often guests who stayed away GUEST_DAYS are looked for (after start-up); default once a day. */
@@ -118,6 +120,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     // Game time never goes backwards; piles keep wall clock time, which is this far ahead of it.
     epochOffset: Date.now() + shift - clock(),
     guests,
+    ...(o.parcelDayMs ? { calendar: quickCalendar(o.parcelDayMs, Date.now() + shift) } : {}),
     xpTimes: o.xpMultiplier,
   });
   const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version, auth: auth.config });

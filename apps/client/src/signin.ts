@@ -9,12 +9,17 @@
  *   - dev: "Your email (development: no code)", then play.
  *   - supabase: "Your email" and "Send me a code", then the 6-digit code from the email, then play.
  *     Supabase keeps the session in this browser and refreshes it (supabase.ts).
+ *   Above the email, the email card offers the providers the server lists (Google, Apple): the page
+ *   leaves for the provider's own sign-in and a new one comes back signed in, which start() plays
+ *   like any session kept here. In dev mode their buttons only say they need a Supabase project.
  * Signed in, the guest's token (or one kept from before sign-in) goes with the hello: its character
  * becomes yours if nobody has claimed it yet. An account that has a character already is asked which
  * to play first (the account card); the guest stays in this browser. Someone without a character is
  * asked for a name.
  */
-import { AuthConfig, NAME_RE, PROTOCOL_VERSION, type AuthMode, type ClientMsg, type ErrorCode, type ServerMsg } from '@napoland/shared';
+import {
+  AuthConfig, NAME_RE, PROTOCOL_VERSION, type AuthMode, type ClientMsg, type ErrorCode, type OAuthProvider, type ServerMsg,
+} from '@napoland/shared';
 
 /**
  * What this browser keeps: the token of a character made without sign-in (a guest's, or one from
@@ -34,6 +39,18 @@ export const DEV_EMAIL_KEY = 'napoland.devEmail';
  * mail) comes back to the code card.
  */
 export const CODE_SENT_KEY = 'napoland.codeSent';
+/**
+ * Which provider a sign-in left for, when, and from which Supabase project. The page that comes back
+ * from Google or Apple is a new one: signed in, it just plays; if not, this is how it knows that a
+ * sign-in did not finish (cancelled, refused, or its code could not be used), and says so.
+ */
+export const PROVIDER_KEY = 'napoland.signingInWith';
+/** Signing in with a provider takes a minute or two: one that left longer ago than this was dropped, and the page need not say so. */
+const PROVIDER_LIFETIME_MS = 10 * 60_000;
+/** How the cards name each provider. */
+export const PROVIDER_NAMES: Record<OAuthProvider, string> = { google: 'Google', apple: 'Apple' };
+/** What a provider's button says in dev mode, where only an email is believed. */
+export const PROVIDERS_NEED_SUPABASE = 'Google and Apple sign-in only work with a Supabase project.';
 
 export const CODE_LENGTH = 6;
 /** Supabase sends one code per address a minute; asking sooner only brings an error. */
@@ -76,6 +93,12 @@ export interface AuthBackend {
   sendCode(email: string): Promise<void>;
   /** Checks the code; afterwards session() has the new session. */
   verifyCode(email: string, code: string): Promise<void>;
+  /**
+   * Leaves this page for the provider's own sign-in, through Supabase, which sends the player back to
+   * `returnTo` (the project's Site URL without it): a new page, whose session() has the session.
+   * Resolves as the page goes; throws AuthProblem when it cannot go.
+   */
+  signInWith(provider: OAuthProvider, returnTo?: string): Promise<void>;
   /** Gets a new access token now; false when the session is gone. */
   refresh(): Promise<boolean>;
   signOut(): Promise<void>;
@@ -86,8 +109,12 @@ export type Screen =
   /** Nothing: playing. */
   | { kind: 'none' }
   | { kind: 'message'; text: string; button?: { label: string; run: () => void } }
-  /** `back`: the words of the way back (to the guest, or to the play card), or null when there is none. */
-  | { kind: 'email'; dev: boolean; email: string; error: string; busy: boolean; back: string | null }
+  /**
+   * `back`: the words of the way back (to the guest, or to the play card), or null when there is none.
+   * `providers`: the buttons above the email (Google, Apple), in order; `providerError` says under
+   * them why the last one did not sign you in.
+   */
+  | { kind: 'email'; dev: boolean; email: string; error: string; busy: boolean; back: string | null; providers: OAuthProvider[]; providerError: string }
   /** (Its way back is Change email: the email card has one.) */
   | { kind: 'code'; email: string; error: string; note: string; busy: boolean; resendAt: number }
   /** Without sign-in, the first card; with sign-in, "Choose a name for your character" (`who` is signed in). */
@@ -107,6 +134,8 @@ export interface SignInOptions {
   tab?: Store;
   /** Wall clock time in ms (Date.now): a code sent must outlive a reload. */
   now: () => number;
+  /** Where Google or Apple sends the player back once signed in: this game's address. */
+  returnTo?: string;
   /** Starts the game connection, which asks hello() what to say each time it connects. */
   connect(): void;
   disconnect(): void;
@@ -144,6 +173,8 @@ export class SignIn {
   private asGuest = false;
   /** The player chose the account's own character over this browser's guest; its welcome says so. */
   private switching = false;
+  /** The provider this page is leaving for: if the browser brings the page back as it was (resumed), it did not get there. */
+  private leaving: OAuthProvider | null = null;
 
   constructor(private readonly o: SignInOptions) {}
 
@@ -156,11 +187,18 @@ export class SignIn {
     return this.mode !== 'legacy';
   }
 
+  /** The providers the email card offers: those the server lists (only once the Supabase project has them set up). */
+  get providers(): OAuthProvider[] {
+    return this.o.config.mode === 'legacy' ? [] : this.o.config.providers;
+  }
+
   /** Plays at once with what this browser remembers, or asks. */
   async start(): Promise<void> {
     const { store } = this.o;
     if (this.mode === 'legacy') return store.get(TOKEN_KEY) ? this.play() : this.askName();
     if (this.mode === 'dev') return this.tab.get(DEV_EMAIL_KEY) || this.guestToken ? this.play() : this.showPlay();
+    // Read and forgotten at once: only the page that comes back from the provider may say how it went.
+    const leftFor = this.providerLeftFor();
     let session: Session | null;
     try {
       session = await this.backend.session();
@@ -168,10 +206,15 @@ export class SignIn {
       // There is a session to refresh, and Supabase is out of reach for now: the connection keeps trying.
       return this.play();
     }
+    // Back from Google or Apple signed in (supabase-js took the session from the address as the page
+    // started), or with a session kept from before: the hello brings the guest's token, as after a code.
     if (session) {
       this.who = session.email;
       return this.play();
     }
+    // Back from one without a session: cancelled, refused, or its code could not be used. The card
+    // again, with its way back to the guest, who has not been touched.
+    if (leftFor) return this.askEmail('', this.email, notFinished(leftFor));
     // A code on its way (say the phone dropped the page while its player read the mail): its card again.
     const sent = this.codeSent();
     if (sent) {
@@ -304,6 +347,41 @@ export class SignIn {
     this.askCode();
   }
 
+  /**
+   * "Continue with Google" or "Sign in with Apple" on the email card: the provider's own sign-in page,
+   * from which a new page comes back signed in. The guest's token already waits in this browser for
+   * its hello; what else that page needs to know (that a sign-in with this provider is under way) is
+   * written down before this one goes.
+   */
+  async signInWith(provider: OAuthProvider): Promise<void> {
+    // (A second tap while the page goes would start a second sign-in over the first.)
+    if (this.busy() || this.leaving || !this.providers.includes(provider)) return;
+    if (this.mode === 'dev') return this.askEmail('', this.email, PROVIDERS_NEED_SUPABASE);
+    // Not with a code after all: a page that comes back must not ask for one.
+    this.o.store.del(CODE_SENT_KEY);
+    this.o.store.set(PROVIDER_KEY, JSON.stringify({ provider, at: this.o.now(), project: this.project }));
+    this.leaving = provider;
+    this.show({ kind: 'message', text: `Taking you to ${PROVIDER_NAMES[provider]}...` });
+    try {
+      await this.backend.signInWith(provider, this.o.returnTo);
+    } catch {
+      this.o.store.del(PROVIDER_KEY);
+      this.leaving = null;
+      this.askEmail('', this.email, notFinished(provider));
+    }
+  }
+
+  /**
+   * The browser brought this page back from its history as it left it (the back button on the
+   * provider's page): the sign-in did not get anywhere, unless it finished in a page after this one.
+   * Either way it goes as a page coming back from the provider goes.
+   */
+  async resumed(): Promise<void> {
+    if (!this.leaving) return;
+    this.leaving = null;
+    return this.start();
+  }
+
   /** The email card's way back: to the guest this browser keeps, or to the play card. */
   back(): void {
     if (this.busy()) return;
@@ -336,7 +414,7 @@ export class SignIn {
       this.tab.set(DEV_EMAIL_KEY, email.toLowerCase());
       return this.play();
     }
-    this.show({ kind: 'email', dev: false, email, error: '', busy: true, back: this.backLabel });
+    this.show({ kind: 'email', dev: false, email, error: '', busy: true, back: this.backLabel, providers: this.providers, providerError: '' });
     try {
       await this.backend.sendCode(email);
     } catch (err) {
@@ -459,8 +537,8 @@ export class SignIn {
     }
   }
 
-  private askEmail(error = '', email = this.email): void {
-    this.show({ kind: 'email', dev: this.mode === 'dev', email, error, busy: false, back: this.backLabel });
+  private askEmail(error = '', email = this.email, providerError = ''): void {
+    this.show({ kind: 'email', dev: this.mode === 'dev', email, error, busy: false, back: this.backLabel, providers: this.providers, providerError });
   }
 
   private askCode(error = '', note = ''): void {
@@ -525,6 +603,24 @@ export class SignIn {
     return { email, at };
   }
 
+  /**
+   * The provider a sign-in from this browser left for, lately and with the same Supabase project, if
+   * any. Forgotten as it is read: only the page that comes back from it can say it did not finish.
+   */
+  private providerLeftFor(): OAuthProvider | undefined {
+    let left: unknown;
+    try {
+      left = JSON.parse(this.o.store.get(PROVIDER_KEY) ?? 'null');
+    } catch {
+      left = null;
+    }
+    this.o.store.del(PROVIDER_KEY);
+    const { provider, at, project } = (typeof left === 'object' && left !== null ? left : {}) as { provider?: unknown; at?: unknown; project?: unknown };
+    if (typeof provider !== 'string' || !this.providers.includes(provider as OAuthProvider)) return undefined;
+    if (typeof at !== 'number' || project !== this.project || Math.abs(this.o.now() - at) > PROVIDER_LIFETIME_MS) return undefined;
+    return provider as OAuthProvider;
+  }
+
   /** The Supabase project codes come from. */
   private get project(): string | undefined {
     return this.o.config.mode === 'supabase' ? this.o.config.url : undefined;
@@ -543,6 +639,11 @@ export class SignIn {
     this.screen = screen;
     this.o.show(screen);
   }
+}
+
+/** A sign-in with Google or Apple that did not sign anyone in, however it ended: the plain line under the buttons. */
+export function notFinished(provider: OAuthProvider): string {
+  return `Signing in with ${PROVIDER_NAMES[provider]} did not finish. Try again, or use your email.`;
 }
 
 /** The digits of a pasted or typed code ("123 456" and "123-456" are 123456), at most CODE_LENGTH. */

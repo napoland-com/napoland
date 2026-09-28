@@ -30,14 +30,18 @@
  * signed in may wear an outfit (outfits.ts), which changes how they look and nothing else.
  *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
- * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts).
+ * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). On a server
+ * with sign-in, whoever plays signed in finds a parcel in it the first time they play on each calendar
+ * day, a welcome parcel the very first time (parcels.ts): gifts, which earn no XP. A NAPO lockbox, which
+ * Sunday's parcel holds for whoever came back all week, is opened at the chest.
  *
  * Finds lie on the maps for everyone: whoever picks one up first gets it, and a new one of the same
  * rule grows a while later on another tile that fits the rule; some grow only while a region is
  * restless, or on aurora nights. What a player picks up goes in their bag. When they collapse, the
  * bag falls out as a pile where they fell (one per player), with the last steps they walked: its owner
  * gets it all back, anyone else a random half (the rest is lost), and it fades an hour after the
- * collapse. The rules for items and bags are in shared/items.ts.
+ * collapse. The rules for items and bags are in shared/items.ts. Tools are each player's own for good,
+ * apart from the bag (giveTool): made at the workbench or found, and never in a pile.
  */
 import {
   QUIRKS,
@@ -50,16 +54,23 @@ import {
   STEP_STATS,
   STEP_MS,
   SURGE_DRAIN,
+  UTC_CALENDAR,
+  WEEKDAYS,
+  WHOLE_WEEK,
   FLASH_BURST_S,
   FLASH_GLOW_S,
   activeConditions,
   addAllToBag,
   addToBag,
+  amount,
   bagLoad,
   bagSlotsOf,
+  calendarDay,
   canMake,
   conditionsAt,
   dayIndex,
+  daysThisWeek,
+  everyDaySoFar,
   weekIndex,
   seeded,
   charmsIn,
@@ -67,6 +78,7 @@ import {
   energyRate,
   featOf,
   fitPieces,
+  gift,
   mendCost,
   newPiece,
   wearSeconds,
@@ -75,6 +87,7 @@ import {
   gearEnergy,
   hidden,
   halfOf,
+  inSurge,
   emptyStash,
   itemIndex,
   levelOf,
@@ -84,6 +97,9 @@ import {
   merge,
   mayWear,
   modsOf,
+  nextParcel,
+  openInStash,
+  openSealed,
   outfitOf,
   progressOf,
   rankOf,
@@ -102,12 +118,16 @@ import {
   surgeFront,
   takeFromBag,
   takeItem,
+  toldAfter,
+  toolsOf,
   untilSurge,
   weatherAt,
+  weekdayOf,
   wetRate,
   type Arrival,
   type BagSlot,
   type BodyView,
+  type Calendar,
   type ConditionsData,
   type ConditionsView,
   type CreatureView,
@@ -130,6 +150,8 @@ import {
   type MapRef,
   type MarkView,
   type Mods,
+  type ParcelState,
+  type ParcelsData,
   type PlayerView,
   type ProgressView,
   type Recipe,
@@ -256,11 +278,13 @@ export interface Joined extends Scene {
   energy: EnergyView;
   body: BodyView;
   bag: BagSlot[];
+  /** What the stash holds, as the chest lists it: after the parcel the player may have found in it now. */
+  stash: BagSlot[];
   stone: StoneView;
   conditions: ConditionsView;
   stats: Stats;
   progress: ProgressView;
-  /** Every tool the player carries (for now, the starter tools that exist). */
+  /** Every tool the player owns, in the order they got them (toolsOf): the starter tools until they got one of their own. */
   tools: string[];
   story: StoryView;
 }
@@ -303,9 +327,12 @@ export interface WorldOptions {
   now?: number;
   /**
    * Players sign in on this server (dev or supabase), so one nobody signed in with (authSub null)
-   * plays as a guest, and everyone sees it (PlayerView.guest): no friends and no outfits for them until they sign in.
+   * plays as a guest, and everyone sees it (PlayerView.guest): no friends with them until they sign in,
+   * no parcels and no outfits.
    */
   guests?: boolean;
+  /** The days the parcels follow (parcels.ts): calendar days in UTC, unless a play-test shortens them (PARCEL_DAY_MS). */
+  calendar?: Calendar;
   /** Development only (XP_MULTIPLIER): stashing earns this many times the XP, to play-test the levels without the trips. 1 unless set. */
   xpTimes?: number;
 }
@@ -341,6 +368,8 @@ interface Online {
   heardAt: number;
   /** Live finds in the bag (sendBag keeps it up to date), so only their carriers are looked at for fading. */
   live: number;
+  /** The last surge that caught them out in the wilds (map and round), so each is counted once. */
+  surgedIn?: string;
 }
 
 /** A find rule of items.json, ready to use. */
@@ -450,7 +479,7 @@ const copyStash = (s: Stash): Stash => ({
 });
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
-  ...(r.worn ? { worn: copyWorn(r.worn) } : {}),
+  ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
 });
 /** A saved piece as the server writes them: a condition from 0 to 1, and a quirk the game knows (or none). */
 const isPiece = (p: unknown): p is Piece => {
@@ -462,12 +491,24 @@ const isSlot = (s: unknown): s is BagSlot => {
   const { item, count, since } = (typeof s === 'object' && s !== null ? s : {}) as Partial<BagSlot>;
   return typeof item === 'string' && Number.isInteger(count) && count! > 0 && (since === undefined || Number.isFinite(since));
 };
+/** Saved tools: item ids, each once, in the order they came. Anything but a list was never set (the starter tools). */
+const cleanTools = (t: unknown): string[] | undefined => (Array.isArray(t) ? [...new Set(t.filter((id): id is string => typeof id === 'string' && id !== ''))] : undefined);
 /** Saved counts, trusted only where they are whole numbers from 0. */
 const cleanStats = (s: unknown): Stats => {
   const out: Stats = {};
   const raw = (typeof s === 'object' && s !== null ? s : {}) as Record<string, unknown>;
   for (const k of STATS) if (Number.isInteger(raw[k]) && (raw[k] as number) > 0) out[k] = raw[k] as number;
   return out;
+};
+/** Saved parcels as the server writes them: anything else counts as none given. */
+const cleanParcels = (s: unknown): ParcelState | undefined => {
+  if (typeof s !== 'object' || s === null) return undefined;
+  const { welcome, day, days } = s as Partial<Record<keyof ParcelState, unknown>>;
+  return {
+    welcome: welcome === true,
+    day: Number.isSafeInteger(day) ? (day as number) : null,
+    days: Number.isInteger(days) && (days as number) > 0 ? (days as number) & WHOLE_WEEK : 0,
+  };
 };
 /** A saved stash as today's items fit it: counts that are whole numbers above 0, of items that still exist. */
 const cleanStash = (s: unknown, items: Map<string, ItemDef>): Stash => {
@@ -571,6 +612,11 @@ export class World {
   private readonly asleep = new Set<string>();
   /** Collapses in the last hour, for the notice board. */
   private collapses: Array<{ map: string; at: number }> = [];
+  /** The parcels (content/items.json), and the calendar whose days they follow. */
+  private readonly parcels: ParcelsData | undefined;
+  private readonly calendar: Calendar;
+  /** The calendar day as the last tick saw it: when it turns, whoever plays signed in gets the new day's parcel. */
+  private calendarAt: number | undefined;
 
   /** `maps` must fit together (validateWorld) and `items` must fit the maps (validateItems); `homeId` is a town. */
   constructor(maps: Iterable<TileMap>, homeId: string, weather: Weather, options: WorldOptions = {}) {
@@ -610,6 +656,8 @@ export class World {
     this.wear = items.wear;
     this.mendCosts = items.mend;
     this.itemsVersion = items.version;
+    this.parcels = items.parcels;
+    this.calendar = options.calendar ?? UTC_CALENDAR;
     this.story = options.story ?? { version: 0, chapters: [] };
     for (const f of items.finds) {
       // loadItems checks this and more (validateItems).
@@ -742,6 +790,9 @@ export class World {
       // Gear counted in the stash gets its pieces (all of it, for a stash saved before pieces existed).
       stash: fitPieces(cleanStash(rec.stash, this.items), this.items, this.rng),
       xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
+      // Kept as saved, ids this release does not know included (toolsOf).
+      tools: cleanTools(rec.tools),
+      ...(rec.parcels !== undefined ? { parcels: cleanParcels(rec.parcels) } : {}),
     };
     // Maps change between visits: a map may be gone (start over at home), or the saved tile may be
     // inside something new or part of an exit now (start at that map's spawn). Never start inside
@@ -754,8 +805,9 @@ export class World {
       toSpawn(r, map);
     }
     r.map = map.data.id;
-    // An outfit is theirs only while they may wear it (signed in, the level reached): anything else saved is none.
-    if (!mayWear(r.outfit, levelOf(r.xp ?? 0), !this.guest(r))) delete r.outfit;
+    // An outfit shows only while they may wear it (signed in, the level reached). One they may not (it
+    // is from a newer release, or they play as a guest now) shows as none, and stays saved for when they may.
+    if (r.outfit && !mayWear(r.outfit, levelOf(r.xp ?? 0), !this.guest(r))) delete r.outfit;
     r.energy = Number.isFinite(r.energy) ? Math.min(this.maxOf(r), Math.max(0, r.energy)) : this.maxOf(r);
     r.wet = Number.isFinite(r.wet) ? clamp01(r.wet!) : 0;
     const readyAt = this.resting.get(r.id) ?? -Infinity;
@@ -771,11 +823,13 @@ export class World {
     this.toMap(map.data.id, { t: 'join', player }, r.id);
     // The welcome has the energy too; the message after it is what a client listens to from then on.
     this.tell(p, now);
+    // Their first time today, signed in: the day's parcel waits in the chest (the welcome parcel, the very first time).
+    this.giveParcel(p, now);
     const here = map.data.id;
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
-      stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
-      tools: STARTER_TOOLS.filter(t => this.items.get(t)?.kind === 'tool'),
+      stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
+      tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
     };
@@ -1077,8 +1131,8 @@ export class World {
     if (outfit !== null && !def) return this.refuse(p, 'outfit', 'gone');
     if (def && !mayWear(def, levelOf(p.rec.xp ?? 0), true)) return this.refuse(p, 'outfit', 'locked');
     if ((p.rec.outfit ?? null) === outfit) return;
-    if (def) p.rec.outfit = def.id;
-    else delete p.rec.outfit;
+    // Taken off is null, not left out: a save without an outfit keeps the one saved.
+    p.rec.outfit = def ? def.id : null;
     this.saveNow.set(id, p.rec);
     this.toMap(p.map.data.id, { t: 'outfit', id, outfit: def?.id ?? null });
   }
@@ -1098,18 +1152,25 @@ export class World {
     if (!this.benchNextTo(p, x, y)) return this.refuse(p, 'craft', 'too_far');
     const recipe = this.recipes.get(recipeId);
     if (!recipe) return this.refuse(p, 'craft', 'gone');
+    // A tool made is the player's for good (giveTool), never the stash's: one of each, so a second is refused before anything is paid.
+    const tool = this.items.get(recipe.make)?.kind === 'tool';
+    if (tool && this.owns(p, recipe.make)) return this.refuse(p, 'craft', 'have_tool');
     const stash = p.rec.stash ?? emptyStash();
     if (!canMake(recipe, stash.items)) return this.refuse(p, 'craft', 'missing');
-    const items = { ...stash.items }, count = recipe.count ?? 1;
+    const items = { ...stash.items }, count = tool ? 1 : recipe.count ?? 1;
     for (const n of recipe.needs) {
       items[n.item] = items[n.item]! - n.count;
       if (!items[n.item]) delete items[n.item];
     }
-    items[recipe.make] = (items[recipe.make] ?? 0) + count;
+    if (!tool) items[recipe.make] = (items[recipe.make] ?? 0) + count;
     // Gear made comes new, piece by piece.
     p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
     this.saveNow.set(id, p.rec);
+    if (tool) this.giveTool(id, recipe.make);
+    // Walt has a word for the first thing someone makes (story.ts, remarks): gear, each piece; a tool is no piece of gear.
+    if (this.items.get(recipe.make)?.kind === 'gear') for (let i = 0; i < count; i++) this.count(p, 'made', now);
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
+    // The text box says where it went: a tool (its kind tells the client) is the player's for good.
     this.did(p, { kind: 'made', item: recipe.make, count });
   }
 
@@ -1151,6 +1212,8 @@ export class World {
     if (!def || !have) return this.refuse(p, 'take', 'not_stashed');
     // A piece in the bag would forget how worn it is: gear is put on from the chest instead.
     if (def.kind === 'gear') return this.refuse(p, 'take', 'gear_stays');
+    // A lockbox is opened at the chest, and never leaves it: it is never lost in a pile or carried off.
+    if (def.kind === 'sealed') return this.refuse(p, 'take', 'sealed_stays');
     const want = Math.min(have, count);
     const r = addToBag(p.rec.bag, def, want, p.slots);
     const taken = want - r.left;
@@ -1161,6 +1224,49 @@ export class World {
     this.sendBag(p, now);
     this.sendStash(p);
     this.rerate(p, now);
+  }
+
+  /**
+   * Opens a sealed thing from the player's stash (a NAPO lockbox), at the chest on tile x,y next to them:
+   * one of what it may hold, by weight, goes into the stash as a gift, which earns no XP (it came in a
+   * parcel). The player hears their stash, then what was inside.
+   */
+  open(id: string, x: number, y: number, item: string, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (!this.chestNextTo(p, x, y)) return this.refuse(p, 'open', 'too_far');
+    const def = this.items.get(item), stash = p.rec.stash ?? emptyStash();
+    if (!def || !(stash.items[item] ?? 0)) return this.refuse(p, 'open', 'not_stashed');
+    if (def.kind !== 'sealed') return this.refuse(p, 'open', 'not_usable');
+    const got = merge(openSealed(def, this.itemOrder, this.rng));
+    // Gear it held gets its piece, as anything else that lands in the stash.
+    p.rec.stash = fitPieces(openInStash(stash, item, got, this.items)!, this.items, this.rng);
+    this.saveNow.set(id, p.rec);
+    this.sendStash(p);
+    this.did(p, { kind: 'opened', item, got });
+  }
+
+  /**
+   * Gives a player who is online a tool for good: the one way a tool comes (made at the workbench,
+   * found, and later a parcel or a chapter). It joins their tools, never the bag: no slot, no weight,
+   * never in a pile, the stash or a trade, and nothing takes it away, so it is saved at once. They hear
+   * their tools; how it came is for the caller to say (a find floats with `got`, the workbench says it
+   * in the text box with `did`). False, and nothing happens, when it is no tool or theirs already.
+   */
+  giveTool(id: string, item: string): boolean {
+    const p = this.players.get(id);
+    if (!p || this.items.get(item)?.kind !== 'tool' || this.owns(p, item)) return false;
+    // The first of their own writes down the starter tools they carried until now.
+    p.rec.tools = [...(p.rec.tools ?? STARTER_TOOLS), item];
+    this.saveNow.set(id, p.rec);
+    this.outbox.push({ to: id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items) } });
+    return true;
+  }
+
+  /** Does the player own this tool? One who never got one of their own owns the starter tools. */
+  private owns(p: Online, item: string): boolean {
+    return (p.rec.tools ?? STARTER_TOOLS).includes(item);
   }
 
   /**
@@ -1182,8 +1288,22 @@ export class World {
   private heard(p: Online, x: number, y: number): void {
     if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
     const o = p.map.data.objects.find(o => o.x === x && o.y === y && (o.kind === 'npc' || o.kind === 'console'));
-    if (o?.kind === 'npc') this.moveStory(p, { talk: o.id });
-    else if (o?.kind === 'console') this.moveStory(p, { read: o.id });
+    if (o?.kind === 'npc') {
+      this.remarked(p, o.id);
+      this.moveStory(p, { talk: o.id });
+    } else if (o?.kind === 'console') this.moveStory(p, { read: o.id });
+  }
+
+  /**
+   * Talking to someone, the player heard what they had to say about something done for the first time
+   * (story.ts, remarksDue): said once, so it is kept at once. The client, which says it, keeps it too.
+   */
+  private remarked(p: Online, npc: string): void {
+    const stats = (p.rec.stats ??= {});
+    const told = toldAfter(this.story, npc, stats);
+    if (told === (stats.told ?? 0)) return;
+    stats.told = told;
+    this.saveNow.set(p.rec.id, p.rec);
   }
 
   /**
@@ -1202,7 +1322,7 @@ export class World {
   private readBoard(p: Online, x: number, y: number, now: number): void {
     const here = p.map.data.objects.some(o => o.kind === 'board' && o.x === x && o.y === y);
     if (!here || manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
-    this.outbox.push({ to: p.rec.id, msg: { t: 'board', lines: this.news(now) } });
+    this.outbox.push({ to: p.rec.id, msg: { t: 'board', lines: [...this.news(now), ...this.parcelLines(p, now)] } });
   }
 
   /** The player's counts toward feats as they are now: the status panel asks when it opens. */
@@ -1223,6 +1343,7 @@ export class World {
     this.moveSurges(now);
     this.moveStorms(now);
     this.moveConditions(now);
+    this.moveCalendar(now);
     this.startFlashes(now);
     const wasAwake = this.stoneAwake;
     this.burnStone(now);
@@ -1234,6 +1355,7 @@ export class World {
       }
       if (p.queue.length) this.runQueue(p, now);
       if (p.live) this.fadeLive(p, now);
+      this.surged(p, now);
       this.hitch(p, now);
       this.rerate(p, now);
       // The client counts on with the rates it heard; repeating the values keeps it from drifting.
@@ -1367,6 +1489,8 @@ export class World {
     p.hitched = false;
     this.collapses = this.collapses.filter(c => now - c.at < COLLAPSES_MS);
     this.collapses.push({ map, at: now });
+    // Mira has a word for the first one (story.ts, remarks); the zone that follows carries the count.
+    this.count(p, 'collapsed', now);
     this.onCollapse?.(id, { map, x, y });
   }
 
@@ -1513,16 +1637,19 @@ export class World {
   }
 
   /**
-   * One more of what counts toward a feat. A new rank is the player's for good: they hear it (once:
-   * counts only go up), and it is saved at once.
+   * One more of what counts toward a feat, or toward what people say once (a collapse, a surge, gear
+   * made). A new rank is the player's for good: they hear it (once: counts only go up), and it is saved
+   * at once.
    */
-  private count(p: Online, stat: (typeof STATS)[number], now: number): void {
+  private count(p: Online, stat: Exclude<(typeof STATS)[number], 'told'>, now: number): void {
     const stats = (p.rec.stats ??= {});
     const n = (stats[stat] ?? 0) + 1;
     stats[stat] = n;
     const feat = featOf(stat);
-    const rank = feat ? rankOf(feat, n) : 0;
-    if (!feat || rank === rankOf(feat, n - 1)) return;
+    // A count no feat has (a collapse, a surge, gear made) comes seldom, and what people say waits on it: saved at once.
+    if (!feat) return void this.saveNow.set(p.rec.id, p.rec);
+    const rank = rankOf(feat, n);
+    if (rank === rankOf(feat, n - 1)) return;
     this.outbox.push({ to: p.rec.id, msg: { t: 'feat', id: feat.id, rank, stats: { ...stats } } });
     this.saveNow.set(p.rec.id, p.rec);
     // The rank changes the rates right away, however little: the player hears them.
@@ -1544,6 +1671,19 @@ export class World {
   private frontOf(map: TileMap, now: number): number | undefined {
     const rule = map.data.kind === 'wilds' ? map.data.surge : undefined;
     return rule && surgeFront(rule, map.deepest, surgeAt(rule, now + this.epochOffset));
+  }
+
+  /**
+   * Caught by a surge out in the wilds (its front has passed their tile, and no street light shelters
+   * them): counted once for each surge, for what Mira says after the first (story.ts, remarks).
+   */
+  private surged(p: Online, now: number): void {
+    const rule = p.map.data.kind === 'wilds' ? p.map.data.surge : undefined;
+    if (!rule || !inSurge(p.map, p.rec.x, p.rec.y, this.frontOf(p.map, now))) return;
+    const round = `${p.map.data.id}:${Math.floor(((now + this.epochOffset) / 1000 + (rule.offset ?? 0)) / rule.every)}`;
+    if (p.surgedIn === round) return;
+    p.surgedIn = round;
+    this.count(p, 'surged', now);
   }
 
   /** Tells each surging map when its phase changes, and grows (or clears away) the finds of restless times. */
@@ -1626,6 +1766,44 @@ export class World {
       }
     }
     if (newDay) for (const c of on) if (c.fireOut && daily.has(c.id)) this.fireOut(c.map, day, now);
+  }
+
+  /**
+   * When the calendar day turns (midnight UTC), whoever plays signed in gets the new day's parcel at
+   * once, and hears their stash: the chest or the workbench may be open.
+   */
+  private moveCalendar(now: number): void {
+    if (!this.parcels) return;
+    const day = calendarDay(now + this.epochOffset, this.calendar);
+    if (day === this.calendarAt) return;
+    this.calendarAt = day;
+    for (const p of this.players.values()) {
+      if (!this.giveParcel(p, now)) continue;
+      this.sendStash(p);
+      this.outbox.push({ to: p.rec.id, msg: { t: 'bench', stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder) } });
+    }
+  }
+
+  /**
+   * The parcel due to a player who plays signed in, if one is (parcels.ts): into their stash, never the
+   * bag, as a gift that earns no XP (it was not brought home). Saved at once, and they hear what came.
+   * True when one did.
+   */
+  private giveParcel(p: Online, now: number): boolean {
+    if (!this.parcels || !this.signedIn(p)) return false;
+    const next = nextParcel(this.parcels, p.rec.parcels, calendarDay(now + this.epochOffset, this.calendar));
+    if (!next) return false;
+    const { parcel } = next;
+    p.rec.parcels = next.state;
+    p.rec.stash = fitPieces(gift(p.rec.stash ?? emptyStash(), [...parcel.items, ...(parcel.allWeek ?? [])], this.items), this.items, this.rng);
+    this.saveNow.set(p.rec.id, p.rec);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'parcel', parcel } });
+    return true;
+  }
+
+  /** Signed in, on a server with sign-in: the parcels are for them. A guest's wait for sign-in, and without sign-in nobody has any. */
+  private signedIn(p: Online): boolean {
+    return this.guests && p.rec.authSub !== null;
   }
 
   /** One untended fire on the map (or in its shelters) goes out, the same one for everyone that day. */
@@ -2065,6 +2243,32 @@ export class World {
     return lines;
   }
 
+  /**
+   * The notice board on the parcels: this week's calendar with today marked, then to whoever reads it the
+   * days they came back this week (to a guest, that signing in brings them). None without sign-in.
+   */
+  private parcelLines(p: Online, now: number): string[] {
+    const data = this.parcels;
+    if (!data || !this.guests) return [];
+    const day = calendarDay(now + this.epochOffset, this.calendar), today = weekdayOf(day), last = WEEKDAYS.length - 1;
+    const short = (i: number) => WEEKDAYS[i]!.slice(0, 3);
+    const list = (slots: readonly BagSlot[] | undefined) => (slots ?? []).flatMap(s => { const d = this.items.get(s.item); return d ? [amount(d, s.count)] : []; }).join(', ');
+    const extra = list(data.allWeek);
+    const entry = (i: number) =>
+      `${short(i)}${i === today ? ' (today)' : ''}: ${list(data.week[i])}${i === last && extra ? `, and ${extra} for whoever came back on all seven days` : ''}`;
+    const lines = [`Parcels this week, from the town's stores. ${[0, 1, 2, 3].map(entry).join('. ')}.`, `${[4, 5, 6].map(entry).join('. ')}.`];
+    if (!this.signedIn(p)) return [...lines, 'Sign in to get the parcels.'];
+    const days = daysThisWeek(p.rec.parcels, day), sunday = WEEKDAYS[last];
+    if (days === WHOLE_WEEK) return [...lines, `You came back every day this week${extra ? `, and ${sunday}'s parcel held ${extra}` : ''}.`];
+    const came = WEEKDAYS.flatMap((_, i) => (days & (1 << i) ? [short(i)] : []));
+    const you = came.length ? `You came back ${came.join(', ')}.` : '';
+    const next = !extra ? '' : everyDaySoFar(days, day)
+      ? `Play every day this week and ${sunday}'s parcel holds ${extra}.`
+      : `A new week starts fresh on Monday: play every day and ${sunday}'s parcel holds ${extra}.`;
+    const said = [you, next].filter(Boolean).join(' ');
+    return said ? [...lines, said] : lines;
+  }
+
   /** The notice board on the conditions: "Today in the Near Woods: thick fog.", what each means, and the weeks. */
   private conditionLines(now: number): string[] {
     const data = this.conditionsData;
@@ -2108,6 +2312,7 @@ export class World {
    */
   private pickFind(p: Online, find: Find, now: number): void {
     const { rule } = find;
+    if (rule.item.kind === 'tool') return this.pickTool(p, find, now);
     const r = addToBag(p.rec.bag, rule.item, 1, p.slots);
     if (r.left) return this.refuse(p, 'pick', 'bag_full');
     // A live find starts fading now: it stacks one to a slot, so the new one is the last slot.
@@ -2124,6 +2329,25 @@ export class World {
     this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
     if (wild) this.count(p, 'found', now);
     this.rerate(p, now);
+    this.moveStory(p, { pick: rule.item.id });
+  }
+
+  /**
+   * A find that is a tool: the player's for good (giveTool), never the bag's, and never double. It is
+   * gone for everyone like any find and grows back by its rule; one they own already stays where it
+   * lies, for someone else. Picked up, it floats like any find (`got`), and it counts like any find,
+   * for the forager and the story.
+   */
+  private pickTool(p: Online, find: Find, now: number): void {
+    const { rule } = find;
+    if (this.owns(p, rule.item.id)) return this.refuse(p, 'pick', 'have_tool');
+    this.finds.get(rule.map.data.id)!.delete(find.tile);
+    const [soonest, latest] = rule.respawn;
+    this.later(rule, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'got', items: [{ item: rule.item.id, count: 1 }], from: 'tool' } });
+    this.giveTool(p.rec.id, rule.item.id);
+    this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
+    if (this.wild(p.map)) this.count(p, 'found', now);
     this.moveStory(p, { pick: rule.item.id });
   }
 
@@ -2379,7 +2603,7 @@ export class World {
     this.saveNow.set(p.rec.id, p.rec);
   }
 
-  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'outfit', reason: Refusal): void {
+  private refuse(p: Online, action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'open' | 'outfit', reason: Refusal): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
   }
 

@@ -10,15 +10,32 @@
  */
 import type { Mods } from './feats';
 import type { Element, Piece, Quirk, Recipe, Slot, Tier } from './gear';
+import type { ParcelsData } from './parcels';
 import type { ConditionsData } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap } from './map';
 
 /**
  * A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn
- * (gear.ts). A tool is yours for good: never used up, never in a pile, weighing nothing, and it takes
- * no bag slot (players carry their tools apart from the bag, like what they wear).
+ * (gear.ts). A tool is yours for good, once made at the workbench or found: never used up, never in a
+ * pile, the stash or a trade, weighing nothing, and it takes no bag slot (players keep their tools
+ * apart from the bag, like what they wear: a button each in the bag's header). A sealed thing (a NAPO
+ * lockbox) stays in the chest at home and is opened there: it holds one of its `holds`.
  */
-export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool';
+export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool' | 'sealed';
+
+/** One thing a sealed item may hold, by weight: these items, or one item of kind `any`, every one of that kind alike (any charm). */
+export interface Holding {
+  weight: number;
+  items?: BagSlot[];
+  any?: ItemKind;
+}
+
+/**
+ * The drawings a tool's button in the bag's header can show: content/items.json names one for each
+ * tool (`icon`), and the client draws each (icons.ts). A tool that needs a new drawing adds it here.
+ */
+export const TOOL_ICONS = ['map'] as const;
+export type ToolIcon = (typeof TOOL_ICONS)[number];
 
 /** What using an item does. A mark costs the item; so does everything else here. */
 export interface ItemUse {
@@ -48,7 +65,7 @@ export interface ItemDef {
    */
   noun?: string;
   plural?: string;
-  /** One plain sentence on what it is good for, said when a strange object turns out to be it. */
+  /** One plain sentence on what it is good for, said when a strange object turns out to be it, or a lockbox holds it. */
   about?: string;
   /** What using it does. Consumables must do something; a resource may (a glowcap paints a mark). */
   use?: ItemUse;
@@ -62,6 +79,10 @@ export interface ItemDef {
   charge?: number;
   /** What it may turn out to be when identified: the chance of each is its weight over the sum. */
   reveals?: Array<{ item: string; count: number; weight: number }>;
+  /** Sealed: what it may hold when opened, one of these by weight (openSealed). */
+  holds?: Holding[];
+  /** Sealed: one plain sentence said with the question before it is opened ("It has been sealed since the evacuation."). */
+  seal?: string;
   /** What a charm does while it is in your bag, as factors (feats.ts). */
   charm?: Partial<Mods>;
   /** Gear only: the slot it is worn in, its tier, what it resists (0.3: 30% of the loss) and extra energy it gives. */
@@ -75,6 +96,8 @@ export interface ItemDef {
   color?: string;
   /** A paper map (a tool): the id of the map it is a drawing of. */
   chart?: string;
+  /** A tool: the drawing on its button in the bag's header. Every tool has one; nothing else does. */
+  icon?: ToolIcon;
   /**
    * Live: worth `xp` if stashed within `fresh` seconds of being picked, then `fade` XP less every
    * minute until it is worth no more than `into` (a plain item), which it then becomes (liveXp, liveEnds).
@@ -125,6 +148,8 @@ export interface ItemsData {
   quirks?: Array<{ id: Quirk; name: string; text: string }>;
   /** What the woods are like today and this week (sky.ts). None: nothing changes from day to day. */
   conditions?: ConditionsData;
+  /** The welcome parcel and the week's calendar of parcels (parcels.ts). None: no parcels. */
+  parcels?: ParcelsData;
 }
 
 /** One bag slot: an item and how many of it (at most its stack). In a stash's list, a piece of gear comes with its condition and quirk. */
@@ -139,10 +164,21 @@ export interface BagSlot {
 }
 
 /**
- * The tools everyone carries: for now a paper map of every area there is (the town, the Near Woods, the
- * South Road). Later some areas will have none until one is found out there.
+ * The tools of a player who never got one of their own (their saved tools are null): a paper map of
+ * every area there is (the town, the Near Woods, the South Road). Later some areas will have none until
+ * one is found out there. The first tool a player gets writes these down with it, so a tool added here
+ * later reaches only the players who never got one: give it to the others too (World.giveTool).
  */
 export const STARTER_TOOLS: readonly string[] = ['stonebrook-map', 'near-woods-map', 'south-road-map'];
+
+/**
+ * The tools a player owns, as today's items know them, in the order they got them: their saved list
+ * (none: the starter tools), without the ids that are not tools here. Such an id comes from a newer
+ * release (one rolled back): it stays in the save, for when that release is back.
+ */
+export function toolsOf(saved: readonly string[] | undefined, items: Map<string, ItemDef>): string[] {
+  return (saved ?? STARTER_TOOLS).filter(t => items.get(t)?.kind === 'tool');
+}
 
 /** Slots in the bag until the bag becomes equipment (a tote 6, a backpack 8, a hiking pack 12...). */
 export const BAG_SLOTS = 8;
@@ -170,16 +206,66 @@ export function charmsIn(bag: readonly BagSlot[], items: Map<string, ItemDef>): 
   return out;
 }
 
-/** One of `reveals`, by weight; undefined for an empty list. */
-export function reveal(list: NonNullable<ItemDef['reveals']>, rng: () => number): { item: string; count: number } | undefined {
+/** One of a list, by weight: the chance of each is its weight over the sum. Undefined for an empty list. */
+export function byWeight<T extends { weight: number }>(list: readonly T[], rng: () => number): T | undefined {
   const total = list.reduce((n, r) => n + Math.max(0, r.weight), 0);
   let roll = rng() * total;
   for (const r of list) {
     roll -= Math.max(0, r.weight);
-    if (roll < 0) return { item: r.item, count: r.count };
+    if (roll < 0) return r;
   }
-  const last = list.at(-1);
-  return last && { item: last.item, count: last.count };
+  return list.at(-1);
+}
+
+/** One of `reveals`, by weight; undefined for an empty list. */
+export function reveal(list: NonNullable<ItemDef['reveals']>, rng: () => number): { item: string; count: number } | undefined {
+  const r = byWeight(list, rng);
+  return r && { item: r.item, count: r.count };
+}
+
+/**
+ * What a sealed item turns out to hold when opened: one of its `holds`, by weight; for one of a kind
+ * (`any`), one of every item of that kind in `all`, each as likely. Nothing for an empty one.
+ */
+export function openSealed(def: ItemDef, all: readonly ItemDef[], rng: () => number): BagSlot[] {
+  const h = byWeight(def.holds ?? [], rng);
+  if (!h) return [];
+  if (h.any !== undefined) {
+    const pool = all.filter(d => d.kind === h.any);
+    const one = pool[Math.min(pool.length - 1, Math.floor(rng() * pool.length))];
+    return one ? [{ item: one.id, count: 1 }] : [];
+  }
+  return (h.items ?? []).map(s => ({ item: s.item, count: s.count }));
+}
+
+// ---------- naming things in a sentence (the text box, the notice board) ----------
+
+/** One of an item in a sentence: its `noun`, or its name as a word ("Road flare": "road flare"). */
+export function nounOf(def: ItemDef): string {
+  return def.noun ?? def.name.charAt(0).toLowerCase() + def.name.slice(1);
+}
+
+/** Several: its `plural`, or the noun with an s. A noun that ends in one already names a pair or a heap: "rubber gloves", "cloth scraps". */
+export function pluralOf(def: ItemDef): string {
+  const n = nounOf(def);
+  return def.plural ?? (n.endsWith('s') ? n : `${n}s`);
+}
+
+/** Counted one by one ("a shard", "2 shards"), unlike resin or rubber gloves, whose plural is the same word. */
+export function countable(def: ItemDef): boolean {
+  return pluralOf(def) !== nounOf(def);
+}
+
+/** "a raincoat", "an anomaly shard"; and without "a" what is not counted so: "resin", "rubber gloves". */
+export function aOf(def: ItemDef): string {
+  const n = nounOf(def);
+  return countable(def) ? `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n}` : n;
+}
+
+/** How many, as people say it: "a glowcap", "1 resin", "3 resin", "2 shards". */
+export function amount(def: ItemDef, n: number): string {
+  if (n !== 1) return `${n} ${pluralOf(def)}`;
+  return countable(def) ? aOf(def) : `1 ${nounOf(def)}`;
 }
 
 /** What a live item is worth `ageS` seconds after it was picked: its full XP while fresh, then less each minute, never below `into`'s. */

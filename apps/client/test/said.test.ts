@@ -4,8 +4,8 @@ import { describe, expect, it } from 'vitest';
 import type { Did, ItemsData, StoneView } from '@napoland/shared';
 import { Items } from '../src/items';
 import {
-  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, aOf, amount, counted, didText, didWho, feedQuestion, fullFire, howLong, listOf, makeQuestion, mendQuestion, noShard, nothingToBurn,
-  nounOf, pluralOf, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, useQuestion,
+  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, aOf, amount, counted, didText, didWho, feedQuestion, fullFire, holdsText, howLong, listOf, makeQuestion, mendQuestion, noShard,
+  nothingToBurn, nounOf, openQuestion, pluralOf, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, useQuestion,
 } from '../src/said';
 
 /** What players read comes from the real items, so it is tested with them. */
@@ -75,6 +75,12 @@ describe('the questions', () => {
     expect(mendQuestion(item('raincoat'), content.mend!.sturdy!, items)).toBe('Mend your raincoat? It uses 2 cloth and 1 scrap.');
     expect(mendQuestion(item('shard-cap'), content.mend!.anomalous!, items)).toBe('Mend your shard-lined cap? It uses 2 scrap and 1 shard.');
   });
+
+  it('at the chest, before a NAPO lockbox is opened, and what it may hold', () => {
+    expect(openQuestion(item('lockbox'))).toBe('Open the NAPO lockbox? It has been sealed since the evacuation.');
+    expect([aOf(item('lockbox')), amount(item('lockbox'), 2)]).toEqual(['a NAPO lockbox', '2 NAPO lockboxes']);
+    expect(holdsText(item('lockbox'), items)).toBe('Inside is one of these: 3 shards, a strange object, a charm or 6 cloth and 4 wire.');
+  });
 });
 
 describe('why it cannot happen', () => {
@@ -136,6 +142,22 @@ describe('what it did, from the server\'s answer', () => {
     expect(said({ kind: 'mended', item: 'raincoat' })).toEqual(['Workbench', 'You mend your raincoat: as good as new.']);
     expect(said({ kind: 'thrown', item: 'resin', count: 3 })).toEqual(['Fir resin', 'You throw away 3 resin.']);
     expect(didText({ kind: 'thrown', item: 'glowcap', count: 1 }, items)).toBe('You throw away a glowcap.');
+  });
+
+  it('at the chest: what the lockbox held, and what one thing inside is good for', () => {
+    expect(said({ kind: 'opened', item: 'lockbox', got: [{ item: 'humming-bead', count: 1 }] })).toEqual([
+      'NAPO lockbox', 'Inside: a humming bead. While it is in your bag, what wants to cling to you in the dark thinks twice.',
+    ]);
+    expect(didText({ kind: 'opened', item: 'lockbox', got: [{ item: 'shard', count: 3 }] }, items)).toBe('Inside: 3 shards. The Old Stone in town wants shards back: enough of them wake it.');
+    expect(didText({ kind: 'opened', item: 'lockbox', got: [{ item: 'strange', count: 1 }] }, items)).toBe('Inside: a strange object. Look at it closely in town, in the light, to see what it turns out to be.');
+    expect(didText({ kind: 'opened', item: 'lockbox', got: [{ item: 'cloth', count: 6 }, { item: 'wire', count: 4 }] }, items)).toBe('Inside: 6 cloth and 4 wire.');
+    expect(didText({ kind: 'opened', item: 'lockbox', got: [] }, items)).toBe('The NAPO lockbox is empty.');
+  });
+
+  it('says what anything a lockbox may hold alone is good for', () => {
+    const alone = content.items.flatMap(i => i.holds ?? []).flatMap(h => (h.any ? content.items.filter(d => d.kind === h.any) : h.items?.length === 1 ? [item(h.items[0]!.item)] : []));
+    expect(alone.length).toBeGreaterThan(0);
+    for (const d of alone) expect(d.about, d.id).toMatch(/^[A-Z].*\.$/);
   });
 
   it('says what anything a strange object turns into is good for, with the numbers its item has', () => {

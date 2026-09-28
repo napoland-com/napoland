@@ -1,9 +1,10 @@
 /**
  * A tap looks, an action is a second step. In the chest and at the workbench a tap on anything opens
  * its card: what a piece of gear is (tier, what it resists and the energy it adds as worn down as it
- * is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a mend takes,
- * what something in your bag or stash is, or an outfit in the wardrobe. The card's one button does the
- * one thing that can be done with it; so do A and a second tap on the same thing (DoubleTap).
+ * is, how worn, its quirk, the slot it goes in), what a recipe makes and takes, what a mend takes, what
+ * a lockbox may hold, what something in your bag or stash is, or an outfit in the wardrobe. The card's
+ * one button does the one thing that can be done with it; so do A and a second tap on the same thing
+ * (DoubleTap).
  *
  * Plain logic with no page in it, so it can be tested: main.ts builds a card from the game
  * (detailView), hud.ts draws it and sends what its button does.
@@ -11,6 +12,7 @@
 import { WEAR_FADES, mayWear, mendCost, outfitOf, pieceFactor, wearSeconds, type BagSlot, type Element, type Gear, type ItemDef, type Piece, type Slot, type Tier, type Worn } from '@napoland/shared';
 import { NO_OUTFIT_ICON, iconFor, outfitIcon } from './icons';
 import { ELEMENT_WORDS, conditionText, countOf, factsOf, slotName, type Items } from './items';
+import { holdsText } from './said';
 import { NO_OUTFIT, outfitWords, type WardrobeState } from './wardrobe';
 
 /** A second tap on the same thing within this many milliseconds does what its card's button does. */
@@ -84,6 +86,7 @@ export type DetailAct =
   | { kind: 'off'; slot: Slot }
   | { kind: 'make'; recipe: string }
   | { kind: 'mend'; slot: Slot }
+  | { kind: 'open'; item: string }
   /** Wear an outfit, or none (null). */
   | { kind: 'outfit'; id: string | null };
 
@@ -133,6 +136,8 @@ export interface DetailState {
   stash: readonly BagSlot[];
   gear: Gear;
   worn: Worn;
+  /** The tools you own: a recipe for one of them cannot be made again. None known: none. */
+  tools?: readonly string[];
   /** Your level, the outfit you wear, and whether you play as a guest; without it, no outfit has a card. */
   wardrobe?: WardrobeState;
 }
@@ -212,6 +217,12 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
     }
     case 'stash': {
       const def = items.get(ref.item);
+      if (def.kind === 'sealed') {
+        const have = countOf(s.stash, ref.item);
+        if (!have) return null;
+        // It never leaves the chest: its one button opens it (which asks first), one at a time.
+        return { ...itemCard(def, have), notes: [{ text: holdsText(def, items), tone: 'plain' }], act: { label: have > 1 ? 'Open one' : 'Open', enabled: true, does: { kind: 'open', item: ref.item } } };
+      }
       if (def.kind !== 'gear') {
         const have = countOf(s.stash, ref.item);
         if (!have) return null;
@@ -248,10 +259,16 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
     case 'recipe': {
       const recipe = items.recipes.find(r => r.id === ref.id);
       if (!recipe) return null;
-      const def = items.get(recipe.make), count = recipe.count ?? 1, card = gearCard(def, undefined, s);
+      // A tool is not worn and resists nothing: its card says what it is, like anything else's.
+      const def = items.get(recipe.make), count = recipe.count ?? 1, card = def.kind === 'tool' ? itemCard(def, count) : gearCard(def, undefined, s);
       const needs = needViews(recipe.needs, s);
       if (count > 1) card.count = count;
       card.costs = { title: 'It takes', needs };
+      // Each tool is yours once: its button stays greyed, and pressed it still says why, in the text box (Game.craft).
+      if (def.kind === 'tool' && s.tools?.includes(def.id)) {
+        card.notes.push({ text: 'It is yours for good: its button is in your bag.', tone: 'plain' });
+        return { ...card, act: { label: 'You have it', enabled: false, does: { kind: 'make', recipe: recipe.id } } };
+      }
       short(card, needs);
       return { ...card, act: { label: count > 1 ? `Make ${count}` : 'Make', enabled: needs.every(n => n.have >= n.need), does: { kind: 'make', recipe: recipe.id } } };
     }

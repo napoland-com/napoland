@@ -4,38 +4,13 @@
  * concrete, and every number from the data (content/items.json: nouns, fuel, uses, recipes, what
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
-import { fireFull, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type Recipe, type StoneView } from '@napoland/shared';
+import { aOf, amount, countable, fireFull, nounOf, pluralOf, type BagSlot, type Did, type Dir, type EnergyView, type ItemDef, type NextGear, type Recipe, type StoneView } from '@napoland/shared';
 import type { Items } from './items';
 
 // ---------- naming things in a sentence ----------
 
-/** One of an item in a sentence: its `noun`, or its name as a word ("Road flare": "road flare"). */
-export function nounOf(def: ItemDef): string {
-  return def.noun ?? def.name.charAt(0).toLowerCase() + def.name.slice(1);
-}
-
-/** Several: its `plural`, or the noun with an s. A noun that ends in one already names a pair or a heap: "rubber gloves", "cloth scraps". */
-export function pluralOf(def: ItemDef): string {
-  const n = nounOf(def);
-  return def.plural ?? (n.endsWith('s') ? n : `${n}s`);
-}
-
-/** Counted one by one ("a shard", "2 shards"), unlike resin or rubber gloves, whose plural is the same word. */
-function countable(def: ItemDef): boolean {
-  return pluralOf(def) !== nounOf(def);
-}
-
-/** "a raincoat", "an anomaly shard"; and without "a" what is not counted so: "resin", "rubber gloves". */
-export function aOf(def: ItemDef): string {
-  const n = nounOf(def);
-  return countable(def) ? `${/^[aeiou]/i.test(n) ? 'an' : 'a'} ${n}` : n;
-}
-
-/** How many, as people say it: "a glowcap", "1 resin", "3 resin", "2 shards". */
-export function amount(def: ItemDef, n: number): string {
-  if (n !== 1) return `${n} ${pluralOf(def)}`;
-  return countable(def) ? aOf(def) : `1 ${nounOf(def)}`;
-}
+// How items are named is shared: the notice board, which the server writes, names them the same way.
+export { aOf, amount, nounOf, pluralOf };
 
 /** Always with its number, for a list of what something takes: "1 scrap", "8 cloth", "2 shards". */
 export function counted(def: ItemDef, n: number): string {
@@ -123,6 +98,34 @@ export function mendQuestion(def: ItemDef, cost: readonly BagSlot[], items: Item
   return `Mend your ${nounOf(def)}? It uses ${listOf(cost.map(x => counted(items.get(x.item), x.count)))}.`;
 }
 
+/** At the chest, before a sealed thing is opened: "Open the NAPO lockbox? It has been sealed since the evacuation." */
+export function openQuestion(def: ItemDef): string {
+  return `Open the ${nounOf(def)}?${def.seal ? ` ${def.seal}` : ''}`;
+}
+
+/** What a sealed thing may hold, for its card: "Inside is one of these: 3 shards, a strange object, a charm or 6 cloth and 4 wire." */
+export function holdsText(def: ItemDef, items: Items): string {
+  const each = (def.holds ?? []).map(h => (h.any !== undefined ? `a ${h.any}` : listOf((h.items ?? []).map(s => amount(items.get(s.item), s.count)))));
+  return each.length > 1 ? `Inside is one of these: ${listOf(each, 'or')}.` : each.length ? `Inside: ${each[0]}.` : 'It is empty.';
+}
+
+// ---------- a first goal ----------
+
+/**
+ * The nearest gear you could make, as the bag and the chest say it (gear.ts, nearestRecipe): "Next: rubber
+ * gloves. 1 more resin."; when the stash can pay for it, "You can make rubber gloves at the workbench
+ * beside the chest."; and when only what you carry is missing from the stash, to put it away.
+ */
+export function goalText(g: NextGear, items: Items): string {
+  const def = items.get(g.recipe.make), n = g.recipe.count ?? 1, what = n === 1 ? aOf(def) : amount(def, n);
+  if (g.ready) return `You can make ${what} at the workbench beside the chest.`;
+  if (!g.missing.length) return `Put away what you carry, and you can make ${what} at the workbench beside the chest.`;
+  const more = g.missing.map(m => { const d = items.get(m.item); return `${m.count} more ${m.count === 1 ? nounOf(d) : pluralOf(d)}`; });
+  return `Next: ${what}. ${capital(listOf(more))}.`;
+}
+
+const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+
 // ---------- why it cannot happen ----------
 
 export const TENDED = 'Someone keeps this fire going. It needs nothing.';
@@ -162,6 +165,14 @@ export function stashShort(short: readonly BagSlot[], items: Items, what: { make
   return 'make' in what ? `Your stash is short of ${list} for ${aOf(what.make)}.` : `Your stash is short of ${list} to mend your ${nounOf(what.mend)}.`;
 }
 
+/** Where a tool is once you have it: never the stash or the bag, but a button of its own in the bag's header. */
+const YOURS = 'It is yours for good: its button is in your bag.';
+
+/** At the workbench, a tool you have already: each is yours once. */
+export function haveTool(def: ItemDef): string {
+  return `You have ${aOf(def)} already. ${YOURS}`;
+}
+
 /** What a list of needs lacks against what a stash holds, need by need (none: it can pay). */
 export function shortOf(needs: readonly BagSlot[], stash: readonly BagSlot[]): BagSlot[] {
   return needs.flatMap(n => {
@@ -178,7 +189,7 @@ export function didWho(did: Did, items: Items): string {
     case 'fire': return 'Fire';
     case 'stone': return 'The Old Stone';
     case 'made': case 'mended': return 'Workbench';
-    case 'used': case 'thrown': return items.get(did.item).name;
+    case 'used': case 'thrown': case 'opened': return items.get(did.item).name;
   }
 }
 
@@ -211,6 +222,8 @@ export function didText(did: Did, items: Items): string {
       return said.length ? said.join(' ') : `You use the ${n}.`;
     }
     case 'made': {
+      // A tool never goes into the stash: it joins your tools (World.giveTool).
+      if (def.kind === 'tool') return `You make ${aOf(def)}. ${YOURS}`;
       const pl = they(def, did.count), gear = def.kind === 'gear';
       return `You make ${did.count === 1 ? aOf(def) : amount(def, did.count)}. ${pl ? 'They wait' : 'It waits'} in your stash${gear ? `: put ${pl ? 'them' : 'it'} on at the chest` : ''}.`;
     }
@@ -218,6 +231,12 @@ export function didText(did: Did, items: Items): string {
       return `You mend your ${nounOf(def)}: as good as new.`;
     case 'thrown':
       return `You throw away ${amount(def, did.count)}.`;
+    case 'opened': {
+      // One thing inside says what it is good for, as a strange object does.
+      const about = did.got.length === 1 ? items.get(did.got[0]!.item).about : undefined;
+      if (!did.got.length) return `The ${nounOf(def)} is empty.`;
+      return `Inside: ${listOf(did.got.map(s => amount(items.get(s.item), s.count)))}.${about ? ` ${about}` : ''}`;
+    }
   }
 }
 

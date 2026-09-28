@@ -8,11 +8,12 @@ import type { EnergyView } from './energy';
 import type { Stats } from './feats';
 import type { Gear, Quirk, Worn } from './gear';
 import type { BagSlot } from './items';
+import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
 import type { ConditionsView, FlashView, StormView, SurgeView } from './sky';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 19;
+export const PROTOCOL_VERSION = 20;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -28,17 +29,32 @@ export type Weather = z.infer<typeof Weather>;
 export const NAME_RE = /^[A-Za-z0-9 _-]{2,16}$/;
 export const PlayerName = z.string().trim().regex(NAME_RE);
 
+/** The accounts a player can sign in with besides an email code, through the same Supabase sign-in. */
+export const OAUTH_PROVIDERS = ['google', 'apple'] as const;
+export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
+export const isOAuthProvider = (name: string): name is OAuthProvider => (OAUTH_PROVIDERS as readonly string[]).includes(name);
+
+/**
+ * The providers the sign-in card offers, in this order: only those the Supabase project has set up
+ * (AUTH_PROVIDERS). A name this client does not know is left out rather than refused, so a server
+ * that offers one more never stops an older page from starting.
+ */
+const Providers = z.array(z.string()).optional().transform(names => [...new Set(names ?? [])].filter(isOAuthProvider));
+
 /**
  * How the server wants players to sign in, as GET /auth-config tells the client:
  * - legacy: no sign-in. A name makes a character, and a token saved in the browser logs back in.
  * - dev: an email, believed without any code. Only for development and tests: anyone can be anyone.
- * - supabase: Supabase Auth proves who you are (an email and a 6-digit code, later Google and Apple).
- *   `url` and `publishableKey` are the project's public values the client needs to talk to it.
+ *   Its `providers` only show their buttons, which say they need a Supabase project.
+ * - supabase: Supabase Auth proves who you are: an email and a 6-digit code, or the `providers`
+ *   (Google, Apple). `url` and `publishableKey` are the project's public values the client needs to talk to it.
+ * It comes over HTTP, not the game's socket, and zod leaves out fields it does not know, so a page
+ * from before `providers` reads the answer as it always did: no new PROTOCOL_VERSION for them.
  */
 export const AuthConfig = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('legacy') }),
-  z.object({ mode: z.literal('dev') }),
-  z.object({ mode: z.literal('supabase'), url: z.url({ protocol: /^https?$/ }), publishableKey: z.string().min(1) }),
+  z.object({ mode: z.literal('dev'), providers: Providers }),
+  z.object({ mode: z.literal('supabase'), url: z.url({ protocol: /^https?$/ }), publishableKey: z.string().min(1), providers: Providers }),
 ]);
 export type AuthConfig = z.infer<typeof AuthConfig>;
 export type AuthMode = AuthConfig['mode'];
@@ -113,6 +129,8 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('mend'), x: z.number().int(), y: z.number().int(), slot: z.enum(['cap', 'shirt', 'gloves', 'pants', 'shoes', 'bag']) }),
   /** Take up to `count` of an item out of the chest on tile x,y, as much as fits in your bag. */
   z.object({ t: z.literal('take'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40), count: z.number().int().positive().max(9999) }),
+  /** Open a sealed item (a NAPO lockbox) in your stash, at the chest on tile x,y: what it holds goes into the stash. */
+  z.object({ t: z.literal('open'), x: z.number().int(), y: z.number().int(), item: z.string().min(1).max(40) }),
   /** Wear an outfit (outfits.ts) from the wardrobe at the chest on tile x,y, or none (null): your gear shows again. */
   z.object({ t: z.literal('outfit'), x: z.number().int(), y: z.number().int(), outfit: z.string().min(1).max(40).nullable() }),
   /** Ask someone to be your friend, by id (tapping their name tag) or by name. If they asked you already, you are friends. */
@@ -215,7 +233,7 @@ export interface StoneView {
 /**
  * What something you asked for did, once the server carried it out: the client says it in the text box,
  * in its own words, from these facts (never guessed). One of these follows every feed, use, discard,
- * craft and mend that went through, after everything else the action changed; a refusal is `refused`.
+ * craft, mend and open that went through, after everything else the action changed; a refusal is `refused`.
  */
 export type Did =
   /** A fire took `count` of `item`, and has `left` seconds of fuel now; `lit`: it was out. */
@@ -228,12 +246,17 @@ export type Did =
    * it), what a strange object turned out to be.
    */
   | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot }
-  /** The workbench made `count` of `item`, into your stash. */
+  /**
+   * The workbench made `count` of `item`, into your stash. A tool (its kind says so) went to your tools
+   * instead, yours for good: your tools came before this in a `tools` message.
+   */
   | { kind: 'made'; item: string; count: number }
   /** The `item` you wear is mended: whole again. */
   | { kind: 'mended'; item: string }
   /** You threw away `count` of `item`. */
-  | { kind: 'thrown'; item: string; count: number };
+  | { kind: 'thrown'; item: string; count: number }
+  /** You opened a sealed `item` (a NAPO lockbox) at the chest: what it held (`got`) is in your stash now. */
+  | { kind: 'opened'; item: string; got: BagSlot[] };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -288,6 +311,10 @@ export type Refusal =
   | 'gear_stays'
   /** That is as good as new already, or cannot be mended. */
   | 'whole'
+  /** You have that tool already: each is yours once, for good (a find of it stays for someone else). */
+  | 'have_tool'
+  /** A sealed thing stays in the chest: it is opened there. */
+  | 'sealed_stays'
   /** Your level has not reached that outfit yet. */
   | 'locked';
 
@@ -365,6 +392,11 @@ export type ServerMsg =
       weather: Weather;
       energy: EnergyView;
       bag: BagSlot[];
+      /**
+       * What your stash at home holds, as the chest lists it (after any parcel that came as you arrived):
+       * the bag says from it what gear you could make next. Every `chest` and `bench` after says it again.
+       */
+      stash: BagSlot[];
       /** Your map's fires, marks, creatures, flares, flashes, and surge and storm clocks (null: a map that never surges, or never storms). */
       fires: FireView[];
       marks: MarkView[];
@@ -381,7 +413,7 @@ export type ServerMsg =
       stats: Stats;
       /** Your XP and level (progress.ts). */
       progress: ProgressView;
-      /** Your tools (item ids, items.ts): kept for good, apart from the bag. */
+      /** Your tools (item ids, items.ts, toolsOf), in the order you got them: kept for good, apart from the bag. */
       tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
       items: number;
@@ -401,13 +433,16 @@ export type ServerMsg =
   | { t: 'energy'; energy: EnergyView; body: BodyView }
   /** Your bag, whole, after any change. A live item's slot has its `age` as of now. */
   | { t: 'bag'; bag: BagSlot[] }
+  /** Your tools, whole (item ids, in the order you got them), after you got one. */
+  | { t: 'tools'; tools: string[] }
   /**
    * You picked these up (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
+   * A find that is a `tool` is yours for good instead, and your tools follow in a `tools` message.
    * `double`: the find came up double (the forager's ranks, feats.ts). What a strange object turns
    * out to be comes in `did` instead.
    */
-  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop'; double?: true }
-  /** What a feed, use, discard, craft or mend you asked for did (for the text box). */
+  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool'; double?: true }
+  /** What a feed, use, discard, craft, mend or open you asked for did (for the text box). */
   | { t: 'did'; did: Did }
   /** Something asked for that did not happen, and why. */
   | { t: 'refused'; action: RefusedAction; reason: Refusal }
@@ -456,13 +491,15 @@ export type ServerMsg =
   | { t: 'chapter'; id: string }
   /** What is in your stash, whole, after you opened the chest or anything went in or out. */
   | { t: 'chest'; stash: BagSlot[] }
+  /** A parcel came into your chest (parcels.ts): when you arrived signed in, or at midnight UTC while you played. */
+  | { t: 'parcel'; parcel: ParcelView }
   /** Your XP and level, after stashing earned some (`gained`: how much, 0 when nothing did). */
   | { t: 'progress'; progress: ProgressView; gained: number }
   /** On your map: what someone wears now (you too, after you changed it). */
   | { t: 'gear'; id: string; gear: Gear; quirks: Quirk[] }
   /** On your map: the outfit someone wears now (you too, after you chose it); null: none, their gear shows. */
   | { t: 'outfit'; id: string; outfit: string | null }
-  /** The workbench you opened: what your stash holds, whole, after opening it, making or mending something. */
+  /** The workbench you opened: what your stash holds, whole, after opening it, making or mending something, or a parcel came. */
   | { t: 'bench'; stash: BagSlot[] }
   /** On your map: a find grew here, or someone took one / it went. */
   | { t: 'find'; find: FindView }
@@ -486,7 +523,7 @@ export type ServerMsg =
 
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
-  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'outfit' | 'say'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'craft' | 'mend' | 'open' | 'outfit' | 'say'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'friends';
 
 /**

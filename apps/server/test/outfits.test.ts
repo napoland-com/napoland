@@ -56,13 +56,16 @@ describe('wearing an outfit', () => {
     expect({ ...after, outfit: undefined }).toEqual({ ...before, outfit: undefined });
   });
 
-  it('takes it off again (none): the gear shows, and it is saved', () => {
+  it('takes it off again (none): the gear shows, and it is saved as none (null: a save without one would keep it)', () => {
     const w = world({}, rec('a', 3, 2, 1, { outfit: 'napo-suit' }));
     w.outfit('a', 3, 1, null, 1000);
     expect(onMap(w.drain(), 'house')).toEqual([{ t: 'outfit', id: 'a', outfit: null }]);
-    expect(w.get('a')!.outfit).toBeUndefined();
+    expect(w.get('a')!.outfit).toBeNull();
     expect(w.views('house')[0]!.outfit).toBeUndefined();
-    expect(w.takeWrites().players.map(p => p.outfit)).toEqual([undefined]);
+    expect(w.takeWrites().players.map(p => p.outfit)).toEqual([null]);
+    // Worn again after that, from none.
+    w.outfit('a', 3, 1, 'napo-suit', 1100);
+    expect(onMap(w.drain(), 'house')).toEqual([{ t: 'outfit', id: 'a', outfit: 'napo-suit' }]);
   });
 
   it('says nothing when it changes nothing', () => {
@@ -122,8 +125,12 @@ describe('an outfit as others see it', () => {
     expect(w.join(rec('g', 3, 2, 20, { authSub: null, tokenHash: 'hash-g', outfit: 'napo-suit' }), 0).player.outfit).toBeUndefined();
     expect(w.join(rec('low', 3, 2, 9, { outfit: 'rain-cape' }), 0).player.outfit).toBeUndefined();
     expect(w.join(rec('gone', 3, 2, 20, { outfit: 'top-hat' }), 0).player.outfit).toBeUndefined();
-    expect(w.get('low')!.outfit).toBeUndefined();
+    // Left out of the record, not null: a save keeps it for when they may wear it (signed in again, or a newer release back).
+    expect('outfit' in w.get('gone')!).toBe(false);
     expect(w.join(rec('ok', 3, 2, 20, { outfit: 'patchwork' }), 0).player.outfit).toBe('patchwork');
+    // None taken off in another tab stays none.
+    expect(w.join(rec('off', 3, 2, 20, { outfit: null }), 0).player.outfit).toBeUndefined();
+    expect(w.get('off')!.outfit).toBeNull();
   });
 
   it('follows the player to another map: the map they walk into sees it', () => {

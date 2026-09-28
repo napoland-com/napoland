@@ -10,8 +10,13 @@
  * - anything that uses up what you carry or keep asks first in the text box (ask.ts), or says why it
  *   cannot happen when that is known already; YES sends it, and the box then says what it did, from
  *   the server's answer (`did`, worded by said.ts);
+ * - a parcel that comes into your chest (signed in, the first time you play each day) is news, and the
+ *   stash says what came in it the next time it opens;
  * - people and NAPO's desks are in the story (story.ts): what someone says follows the chapter you
- *   are in, and the server hears whom you talked to or what you read; it says when a chapter is reached;
+ *   are in (and, once, what you did for the first time), and the server hears whom you talked to or
+ *   what you read; it says when a chapter is reached;
+ * - the bag and the chest say what gear you could make next (nextGear), from your stash as the server
+ *   last told it;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
  *   it tells us, we show them; so is what everyone wears, gear and outfits (you choose yours at the chest);
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
@@ -19,19 +24,19 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, stepTarget, storyLines,
-  surgeFront, takeFromBag, DIR_VEC,
+  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe, stepTarget,
+  storyLines, surgeFront, takeFromBag, toldAfter, DIR_VEC, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type RefusedAction, type StormView,
+  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, refusalText, type Items } from './items';
 import {
-  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, makeQuestion, mendQuestion, noShard, nothingToBurn, sentence, shortOf, stashShort,
-  stoneQuestion, tossQuestion, useQuestion,
+  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, makeQuestion, mendQuestion, noShard, nothingToBurn, openQuestion, sentence,
+  shortOf, stashShort, stoneQuestion, tossQuestion, useQuestion,
 } from './said';
 import type { Maps } from './maps';
 import type { Avatar } from './view/world';
@@ -138,7 +143,9 @@ export type News =
   | { kind: 'level'; progress: ProgressView; from: number }
   /** A new day's conditions, by name. */
   | { kind: 'conditions'; names: string[] }
-  | { kind: 'chapter'; chapter: Chapter };
+  | { kind: 'chapter'; chapter: Chapter }
+  /** A parcel came into your chest. */
+  | { kind: 'parcel'; parcel: ParcelView };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -149,7 +156,7 @@ export const CHAT_LOG = 100;
 /** What a `refused` can answer among friends: the friends panel says why. */
 const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend', 'tell', 'read', 'block', 'report', 'requests', 'friends']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'open']);
 
 export class Game {
   meId: string | null = null;
@@ -201,7 +208,7 @@ export class Game {
   statsChanges = 0;
   /** What the woods are like today and this week (sky.ts), as the server said. */
   conditions: ConditionsView = { today: [], week: null, next: null };
-  /** Your tools (item ids), as the welcome said: a paper map, for now. */
+  /** Your tools (item ids), in the order you got them: as the welcome said, then whole again whenever you get one. Replaced, never changed in place. */
   tools: string[] = [];
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
@@ -213,6 +220,10 @@ export class Game {
   chest: { x: number; y: number; stash: BagSlot[] } | null = null;
   /** The workbench you opened and what your stash holds, while it is open. */
   bench: { x: number; y: number; stash: BagSlot[] } | null = null;
+  /** Parcels that came since the chest was last opened: it says what came in them, once (takeParcels). */
+  parcels: ParcelView[] = [];
+  /** What your stash holds, as the server last told it (the welcome, and every chest and workbench after); null before. */
+  stash: BagSlot[] | null = null;
   /** Your friends, requests and blocks as the server last told them (null until it has). */
   friends: FriendsMsg | null = null;
   /** Private messages this session, by the other player's id, oldest first; replaced whole on every change. */
@@ -372,6 +383,7 @@ export class Game {
         this.scene(msg, now);
         this.bag = msg.bag;
         this.bagAt = now;
+        this.stash = msg.stash ?? null;
         this.lastEnergy = { view: msg.energy, at: now };
         this.body = { view: msg.body, at: now };
         this.stone = msg.stone;
@@ -490,6 +502,7 @@ export class Game {
         break;
       }
       case 'chest': {
+        this.stash = msg.stash;
         // The answer to opening one, or news of the one already open.
         const o = this.opening;
         if (o && this.clock - o.at < ANSWER_WAIT_MS) { this.chest = { x: o.x, y: o.y, stash: msg.stash }; this.opening = null; }
@@ -504,7 +517,12 @@ export class Game {
         if (msg.outfit) this.outfits.set(msg.id, msg.outfit);
         else this.outfits.delete(msg.id);
         break;
+      case 'parcel':
+        this.parcels = [...this.parcels, msg.parcel];
+        this.news.push({ kind: 'parcel', parcel: msg.parcel });
+        break;
       case 'bench': {
+        this.stash = msg.stash;
         const b = this.benching;
         if (b && this.clock - b.at < ANSWER_WAIT_MS) { this.bench = { x: b.x, y: b.y, stash: msg.stash }; this.benching = null; }
         else if (this.bench) this.bench = { ...this.bench, stash: msg.stash };
@@ -585,10 +603,13 @@ export class Game {
         this.bagAt = now;
         break;
       }
+      case 'tools':
+        this.tools = msg.tools;
+        break;
       case 'got': {
         this.picking = null;
-        // A column over your head, in the order the server listed them, first on top.
-        msg.items.forEach((s, i) => this.floatOverMe(`+${s.count} ${this.items.get(s.item).name}`, GAIN, msg.items.length - 1 - i));
+        // A column over your head, in the order the server listed them, first on top. A tool is yours once: no count.
+        msg.items.forEach((s, i) => this.floatOverMe(`+${msg.from === 'tool' ? '' : s.count} ${this.items.get(s.item).name}`, GAIN, msg.items.length - 1 - i));
         // Named, so the player knows which feat to thank.
         if (msg.double) this.floatOverMe('Forager: it came up double', GAIN, msg.items.length);
         // Someone else's pile can leave you nothing (your half did not fit, or the coin went the
@@ -630,7 +651,7 @@ export class Game {
         // The wardrobe's panel would hide anything said over your head: the box stands above it.
         if (msg.action === 'outfit') { this.inform('Wardrobe', sentence(refusalText(msg.reason, msg.action))); break; }
         if (msg.action === 'pick') this.picking = null;
-        this.floatOverMe(refusalText(msg.reason), NO);
+        this.floatOverMe(refusalText(msg.reason, msg.action), NO);
         break;
       default:
         break;
@@ -750,12 +771,15 @@ export class Game {
   /** What A does at someone or something you face: talk, read the board, feed a fire or the Old Stone. */
   private meet(t: Talker) {
     if (t.kind === 'talk') {
-      // What people say comes in one order (storyLines, story.ts): the chapter's hint, then what they have
-      // heard (Mira: what the woods are like today), then what they always say. The server hears who you
-      // talked to, or what you read.
+      // What people say comes in one order (storyLines, story.ts): the chapter's hint, what they say once
+      // about what you did for the first time, what they have heard (Mira: what the woods are like today),
+      // then what they always say. The server hears who you talked to, or what you read.
       const word = t.id === 'mira' ? this.miraWord() : null, own = word ? [word, ...t.lines] : t.lines;
       const person = t.story && 'talk' in t.story ? t.story.talk : undefined;
-      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, own) : own });
+      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, own, this.stats) : own });
+      // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
+      const told = person ? toldAfter(this.story, person, this.stats) : undefined;
+      if (told !== undefined && told !== (this.stats.told ?? 0)) { this.stats = { ...this.stats, told }; this.statsChanges++; }
       if (t.story && this.online) this.send({ t: 'talk', x: t.x, y: t.y });
       return;
     }
@@ -796,6 +820,24 @@ export class Game {
   /** Close the chest (the panel went away). */
   closeChest() {
     this.chest = null;
+  }
+
+  /** The open chest says what came in the parcels it has not told yet: they are told from now on. */
+  takeParcels(): ParcelView[] {
+    const p = this.parcels;
+    this.parcels = [];
+    return p;
+  }
+
+  /**
+   * At the open chest: open a sealed thing from the stash (a NAPO lockbox). It asks first ("Open the NAPO
+   * lockbox? It has been sealed since the evacuation."), and the box then says what was inside.
+   */
+  openSealed(item: string) {
+    const c = this.chest;
+    if (!c || !this.online) return;
+    const def = this.items.get(item), text = openQuestion(def);
+    this.ask({ who: def.name, text, yes: () => this.act(def.name, text, { t: 'open', x: c.x, y: c.y, item }) });
   }
 
   /** At the open chest: put on a piece of gear from the stash, or take off what a slot wears. */
@@ -885,10 +927,15 @@ export class Game {
     if (c && this.online) this.send({ t: 'outfit', x: c.x, y: c.y, outfit });
   }
 
-  /** At the open workbench: make a recipe. It asks first ("Make a raincoat? It uses 8 cloth and 4 resin."), or says what the stash lacks. */
+  /**
+   * At the open workbench: make a recipe. It asks first ("Make a raincoat? It uses 8 cloth and 4 resin."),
+   * or says why not: the stash lacks something, or it makes a tool you have already (each is yours once).
+   */
   craft(recipe: string) {
     const b = this.bench, r = this.items.recipes.find(x => x.id === recipe);
     if (!b || !this.online || !r) return;
+    const made = this.items.get(r.make);
+    if (made.kind === 'tool' && this.tools.includes(r.make)) return this.inform('Workbench', haveTool(made));
     const short = shortOf(r.needs, b.stash);
     if (short.length) return this.inform('Workbench', stashShort(short, this.items, { make: this.items.get(r.make) }));
     const text = makeQuestion(r, this.items);
@@ -897,6 +944,40 @@ export class Game {
 
   closeBench() {
     this.bench = null;
+  }
+
+  /**
+   * The nearest piece of gear you could make (a first goal: gear.ts, nearestRecipe), counting what your
+   * stash (as last told) and your bag hold, among what you do not own yet; null before the stash is
+   * told, or when you own everything the workbench makes.
+   */
+  nextGear(): NextGear | null {
+    const stash = this.stash;
+    if (!stash) return null;
+    const count = (list: readonly BagSlot[]) => {
+      const n: Record<string, number> = {};
+      for (const s of list) n[s.item] = (n[s.item] ?? 0) + s.count;
+      return n;
+    };
+    const owned = new Set([...Object.values(this.myGear), ...stash.filter(s => this.items.get(s.item).kind === 'gear').map(s => s.item)]);
+    // Gear only: a recipe that makes a tool (yours for good, never worn) is never the first goal.
+    const gear = this.items.recipes.filter(r => this.items.get(r.make).kind === 'gear');
+    return nearestRecipe(gear, owned, count(stash), count(this.bag));
+  }
+
+  /** The workbench right next to you, where it can be opened; null when there is none. */
+  benchBeside(): { x: number; y: number } | null {
+    const me = this.me;
+    const b = me && this.talkers.find(t => t.kind === 'bench' && Math.abs(t.x - me.tx) + Math.abs(t.y - me.ty) === 1);
+    return b ? { x: b.x, y: b.y } : null;
+  }
+
+  /** Opens the workbench next to you, as A at it does (the server answers with what the stash holds). */
+  openBench() {
+    const b = this.benchBeside();
+    if (!b || !this.online) return;
+    this.benching = { ...b, at: this.clock };
+    this.send({ t: 'bench', x: b.x, y: b.y });
   }
 
   /** What you wear. */
@@ -1217,6 +1298,11 @@ export class Game {
     this.dialog = { who: t.who, lines: t.lines, i: 0, shown: 0 };
     // Someone's lines take the box from what it said by itself.
     if (this.note && !this.note.waiting) { this.note = null; this.boxChanges++; }
+  }
+
+  /** The text box with these lines under `who`, as a sign's: what one of your tools is, tapped in the bag's header. */
+  read(who: string, lines: string[]) {
+    if (lines.length) this.openDialog({ x: 0, y: 0, who, lines, kind: 'talk' });
   }
 
   /** "Word from the woods today: thick fog, and a NAPO cache. This week: copper week." Null when nothing is going on. */
