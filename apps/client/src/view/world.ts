@@ -19,19 +19,21 @@
  */
 import * as THREE from 'three';
 import { DIR_VEC, hidden, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type Season, type TileKind, type TileMap, type Weather } from '@napoland/shared';
-import { LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
+import { Afterglows, LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
-import { CROUCH_DROP, CROUCH_LEAN, GRADES, GrassMaterial, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps } from './grass';
+import {
+  CROUCH_DROP, CROUCH_LEAN, GRADES, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial,
+} from './grass';
 import { Creatures, Echoes, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
-  doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
+  doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
 } from './interior';
 import { cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
 import { SNOW, ambience, assignLights, lightSources, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
 import { napoBuilding, napoProp, napoSign, towerModel } from './napo';
-import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
+import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
 
 export interface Avatar {
   id: string;
@@ -49,6 +51,8 @@ export interface Avatar {
   hitched?: boolean;
   /** They carry a live find: a column of light over them. */
   live?: boolean;
+  /** A flash left them glowing faintly (the afterglow quirk). */
+  afterglow?: boolean;
   /** What they wear (characters.ts). */
   look?: Look;
 }
@@ -179,6 +183,18 @@ function blocks<T extends { x: number; y: number }>(items: T[]): T[][] {
   return [...out.values()];
 }
 
+/**
+ * The view of the map someone arrives on (or the same map as the season turns, `season`), in place of
+ * `old`: the new one is built (and its shaders compiled) before the old one is freed, so every program
+ * both draw with stays compiled and only what the new map needs that the old did not is compiled, behind
+ * the black screen of the arrival.
+ */
+export function nextView(renderer: THREE.WebGLRenderer, old: WorldView, map: TileMap, peek?: (id: string) => MapData | undefined, season?: Season): WorldView {
+  const view = new WorldView(renderer, map, peek, season);
+  old.dispose();
+  return view;
+}
+
 export class WorldView {
   /** The share of the full resolution to draw at (quality.ts); applied on the next resize. */
   pixelScale = 1;
@@ -253,6 +269,7 @@ export class WorldView {
   private creatures: Creatures;
   private flares = new Flares();
   private liveGlows = new LiveGlows();
+  private afterglows = new Afterglows();
   private prints = new Prints();
   /** Where someone walks whose gear makes street lights flicker (tiles). */
   private flickerAt: Array<{ x: number; y: number }> = [];
@@ -314,7 +331,7 @@ export class WorldView {
     this.buildRoom(still);
     for (const m of bake(still)) this.scene.add(m);
     if (this.outdoors) this.buildEffects();
-    this.scene.add(this.liveGlows.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
+    this.scene.add(this.liveGlows.root, this.afterglows.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root);
     this.puffs.push(this.flares.sparks);
     this.animate.push(t => this.loot.update(t));
     this.animate.push(t => { this.marks.update(t); this.flares.update(t); this.flashes.update(t); });
@@ -331,12 +348,15 @@ export class WorldView {
 
   /** Frees everything this view put on the GPU. The renderer and the shared toon materials stay for the next map. */
   dispose() {
+    // Whatever it drew with stays compiled for the maps that come later (toon.ts, keepPrograms).
+    keepPrograms(this.renderer, this.scene);
     for (const p of this.puffs) p.dispose();
     this.loot.dispose();
     this.marks.dispose();
     this.creatures.dispose();
     this.flares.dispose();
     this.liveGlows.dispose();
+    this.afterglows.dispose();
     this.prints.dispose();
     this.flashes.dispose();
     this.echoes.dispose();
@@ -572,7 +592,7 @@ export class WorldView {
     // per block of the trees' blocks, with one material that sways and parts them on the GPU.
     const clumps = this.outdoors ? grassClumps(map, this.ground) : [];
     if (clumps.length) {
-      const grass = (this.grass = new GrassMaterial());
+      const grass = (this.grass = sessionGrass());
       for (const [blades, tall] of [[TUFT_BLADES, false], [TALL_BLADES, true]] as const) {
         const mine = clumps.filter(c => c.tall === tall);
         if (!mine.length) continue;
@@ -805,7 +825,7 @@ export class WorldView {
     // Furniture (interior.ts), what the town and the leavers left (left.ts) and NAPO's things (napo.ts):
     // wherever they stand, in a room or out of doors.
     for (const o of map.data.objects) {
-      const m = o.kind === 'hearth' ? coldHearthModel(o.x, o.y) : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
+      const m = o.kind === 'hearth' ? coldHearthModel(o.x, o.y) : o.kind === 'note' ? noteModel(o, map) : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
       if (m) still.push(m);
     }
     const fireplaces = this.objects('fireplace');
@@ -1099,6 +1119,8 @@ export class WorldView {
     this.syncAvatars(avatars, meId, fx, fz, dt);
     const carriers = avatars.filter(a => a.live).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
     this.liveGlows.set(carriers.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
+    const glowing = avatars.filter(a => a.afterglow).map(a => ({ x: a.x + 0.5, z: a.y + 0.5, d: Math.hypot(a.x - focus.x, a.y - focus.y) }));
+    this.afterglows.set(glowing.sort((a, b) => a.d - b.d).map(c => ({ x: c.x, y: this.groundAt(c.x, c.z), z: c.z })), t);
     this.creatures.sync(this.creatureList, t, (x, z) => this.groundAt(x, z));
     for (const c of this.creatureList) if (c.moving) this.rustleAt(c.x + 0.5, c.y + 0.5);
     this.echoes.update(t, (x, z) => this.groundAt(x, z));

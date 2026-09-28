@@ -1,0 +1,371 @@
+{
+  "version": 3,
+  "pages": [
+    {
+      "id": "pop-23",
+      "area": "stonebrook",
+      "title": "Pop. 23",
+      "when": { "read": { "map": "stonebrook", "x": 13, "y": 37 } },
+      "text": "Pop. 23: the ones who stayed, or came back. Nobody has changed the sign since. Most of the houses are dark, their curtains drawn."
+    },
+    {
+      "id": "old-stone",
+      "area": "stonebrook",
+      "title": "The Old Stone",
+      "when": { "read": { "map": "stonebrook", "x": 17, "y": 10 } },
+      "text": "It hums at night. A crack runs down it, and shards break off along the crack. It wants them back.",
+      "blanks": [
+        { "id": "old-stone-wakes", "ask": "Given enough shards, it... ?", "fill": "Given enough shards, it wakes, and the surges out there grow gentler while it is awake.", "when": { "saw": "woke" } }
+      ]
+    },
+    {
+      "id": "two-weeks",
+      "area": "stonebrook",
+      "title": "Two weeks",
+      "when": { "read": { "map": "stonebrook", "x": 15, "y": 38 } },
+      "text": "NAPO told the whole town to leave, a street at a time, with only what it could carry. Back in two weeks, the notice says. It has been a lot longer than two weeks."
+    },
+    {
+      "id": "the-verge",
+      "area": "stonebrook",
+      "title": "The verge",
+      "when": { "read": { "map": "stonebrook", "x": 16, "y": 37 } },
+      "text": "Where the town waited its turn to leave, what would not fit in the cars still waits: suitcases, boxes, a rocking chair, a piano under a tarp. They were coming back for it."
+    },
+    {
+      "id": "the-sawmill",
+      "area": "stonebrook",
+      "title": "The sawmill",
+      "when": { "read": { "map": "stonebrook", "x": 31, "y": 28 } },
+      "text": "Stonebrook was a logging town. The mill shut for a winter and never opened again. Somebody asked which spring, in pencil."
+    },
+    {
+      "id": "the-okadas",
+      "area": "stonebrook",
+      "title": "The Okadas",
+      "when": { "read": { "map": "stonebrook-okada-house", "x": 2, "y": 0 } },
+      "text": "An older couple, and tidy: everything under a sheet, the boxes they could not take stacked by the door. Their calendar says Home, two weeks on."
+    },
+    {
+      "id": "the-hales",
+      "area": "stonebrook",
+      "title": "The Hales",
+      "when": { "read": { "map": "stonebrook-hale-house", "x": 2, "y": 0 } },
+      "text": "Nora was seven. She drew the lights in the woods on the back of a NAPO form: Hale, D. Motor pool. Half the town worked for NAPO."
+    },
+    {
+      "id": "the-dahls",
+      "area": "stonebrook",
+      "title": "The Dahls",
+      "when": { "read": { "map": "stonebrook-dahl-house", "x": 4, "y": 3 } },
+      "text": "A young couple with a baby. Their street was called at nine, and they went that night. The crib would not fit in the car, so it stayed."
+    },
+    {
+      "id": "the-lindqvists",
+      "area": "stonebrook",
+      "title": "The Lindqvists",
+      "when": { "read": { "map": "stonebrook-lindqvist-house", "x": 5, "y": 3 } },
+      "text": "Dad filed the saws at the mill. Their list says what to take and what to leave: the piano stayed on the verge, and Mrs. Okada said let the bird go."
+    },
+    {
+      "id": "the-near-woods",
+      "area": "near-woods",
+      "title": "The Near Woods",
+      "when": { "read": { "map": "near-woods", "x": 30, "y": 74 } },
+      "text": "Out here energy drains, and the deeper in, the faster. The street lights only help to see by. Only a fire gives it back."
+    },
+    {
+      "id": "napoland-zone",
+      "area": "near-woods",
+      "title": "The Napoland Zone",
+      "when": { "read": { "map": "near-woods", "x": 33, "y": 74 } },
+      "text": "NAPO's name for everything inside its line. Stonebrook called it Napoland first. Keep to the road after dark, its sign says."
+    },
+    {
+      "id": "no-wires",
+      "area": "near-woods",
+      "title": "The lamp with no wires",
+      "when": { "read": { "map": "near-woods", "x": 27, "y": 9 } },
+      "text": "A street light with no wires running to it. It was on when someone found it. It gives light, and no warmth."
+    },
+    {
+      "id": "listening-post",
+      "area": "near-woods",
+      "title": "The listening post",
+      "when": { "read": { "map": "near-woods", "x": 9, "y": 4 } },
+      "text": "NAPO listened to the stones here. They hum back to the Old Stone, the sign says. It carried some of them off in cages, to listen closer."
+    },
+    {
+      "id": "burned-jeep",
+      "area": "near-woods",
+      "title": "The burned jeep",
+      "when": { "read": { "map": "near-woods", "x": 27, "y": 72 } },
+      "text": "NAPO field survey, unit 7. Burned out to the frame, and the firs beside it with it. The keys are still in it."
+    },
+    {
+      "id": "surges",
+      "area": "near-woods",
+      "title": "Surges",
+      "when": { "saw": "surge" },
+      "text": "The woods grow restless, and then a surge rolls in from the deep end toward home, on the same clock every time. Out in the open where it has passed, energy drains three times as fast.",
+      "blanks": [
+        { "id": "surge-light", "ask": "The drain stops... ?", "fill": "The drain stops under a street light, and under a roof.", "when": { "saw": "lit" } }
+      ]
+    },
+    {
+      "id": "storms",
+      "area": "near-woods",
+      "title": "Storms",
+      "when": { "saw": "storm" },
+      "text": "The sky darkens, the fog closes in, the lightning blinks. Out in a storm the wind and the lightning wear me down, and it soaks me through.",
+      "blanks": [
+        { "id": "storm-roof", "ask": "A roof... ?", "fill": "A roof keeps all of it off.", "when": { "saw": "roof" } }
+      ]
+    },
+    {
+      "id": "flashes",
+      "area": "near-woods",
+      "title": "Flashes",
+      "when": { "saw": "flash" },
+      "text": "A patch of ground starts to glow, faster and brighter, and then it bursts: a spark, or a burn.",
+      "blanks": [
+        { "id": "flash-burst", "ask": "Standing in it when it bursts... ?", "fill": "Standing in it when it bursts drains six times as fast. Step off while it glows.", "when": { "saw": "burst" } }
+      ]
+    },
+    {
+      "id": "watchers",
+      "area": "near-woods",
+      "title": "Watchers",
+      "when": { "saw": "watcher" },
+      "text": "Tall and pale in the trees, with a blank face. Closer every time I look back. They never stand in the light, or by a fire.",
+      "blanks": [
+        { "id": "watcher-stops", "ask": "It stops when... ?", "fill": "It stops when someone looks at it.", "when": { "saw": "froze" } }
+      ]
+    },
+    {
+      "id": "skulkers",
+      "area": "near-woods",
+      "title": "Skulkers",
+      "when": { "saw": "escaped" },
+      "text": "Something long and low lies in the ferns at night, and in storms. It came after me, a little slower than I run, and then it gave up.",
+      "blanks": [
+        { "id": "skulker-rustle", "ask": "Before it comes... ?", "fill": "Before it comes, the ferns rustle.", "when": { "saw": "rustle" } }
+      ]
+    },
+    {
+      "id": "tall-grass",
+      "area": "near-woods",
+      "title": "Tall grass",
+      "when": { "saw": "hidden" },
+      "text": "Knee-high grass to crouch in. Something hunted close by, and never noticed me. It keeps nothing else off: not the rain, not the cold.",
+      "blanks": [
+        { "id": "grass-edge", "ask": "A chase... ?", "fill": "A chase ends at its edge.", "when": { "saw": "grass" } }
+      ]
+    },
+    {
+      "id": "live-shards",
+      "area": "near-woods",
+      "title": "Live shards",
+      "when": { "find": "live-shard" },
+      "text": "A shard that broke loose while the woods were restless, still humming with it. Everyone can see the light over whoever carries one, and so can the watchers.",
+      "blanks": [
+        { "id": "live-fades", "ask": "It stays live... ?", "fill": "It stays live for a few minutes, then fades into a plain shard. Stashed fresh, it is worth the most.", "when": { "saw": "faded" } }
+      ]
+    },
+    {
+      "id": "the-south-road",
+      "area": "south-road",
+      "title": "The South Road",
+      "when": { "read": { "map": "south-road", "x": 37, "y": 5 } },
+      "text": "NAPO's old grounds. No surge reaches it, and nothing watches from its trees. Its danger is how far it goes."
+    },
+    {
+      "id": "the-observatory",
+      "area": "south-road",
+      "title": "The Observatory",
+      "when": { "read": { "map": "south-road", "x": 34, "y": 9 } },
+      "text": "The National Anomalous Phenomena Observatory came to study the hum in the radios and the compasses. Restricted grounds, staff only, its sign still says."
+    },
+    {
+      "id": "the-jam",
+      "area": "south-road",
+      "title": "The jam",
+      "when": { "read": { "map": "south-road", "x": 37, "y": 24 } },
+      "text": "Everyone left down this road. Here the line of leavers stopped and never moved again: doors open, a trunk up, the luggage still between the cars."
+    },
+    {
+      "id": "the-bunker",
+      "area": "south-road",
+      "title": "NAPO Bunker",
+      "when": { "read": { "map": "south-road", "x": 44, "y": 17 } },
+      "text": "Shelter for NAPO's staff during events. Ruth keeps its fire going for whoever comes down the road."
+    },
+    {
+      "id": "the-station",
+      "area": "south-road",
+      "title": "The research station",
+      "when": { "read": { "map": "south-road", "x": 31, "y": 43 } },
+      "text": "All visitors report to the front desk. Nobody sits at the desk now. Vera is still in the laboratory, listening."
+    },
+    {
+      "id": "the-tower",
+      "area": "south-road",
+      "title": "The Tower",
+      "when": { "read": { "map": "south-road", "x": 52, "y": 50 } },
+      "text": "Red and white, with a dish turned to the woods and a red light that blinks day and night. Danger: high voltage. Walt strung its wire."
+    },
+    {
+      "id": "motor-pool",
+      "area": "south-road",
+      "title": "The motor pool",
+      "when": { "read": { "map": "south-road", "x": 38, "y": 38 } },
+      "text": "NAPO's box trucks, parked in a row behind a fence. Vehicles sign out at the front desk. Nobody signed these out."
+    },
+    {
+      "id": "field-site",
+      "area": "south-road",
+      "title": "The field site",
+      "when": { "read": { "map": "south-road", "x": 47, "y": 69 } },
+      "text": "Scorched gravel, instruments, and a mast where NAPO listened closest. Keep out, the sign says."
+    },
+    {
+      "id": "sample-cages",
+      "area": "south-road",
+      "title": "Sample cages",
+      "when": [
+        { "read": { "map": "south-road", "x": 49, "y": 66 } },
+        { "read": { "map": "south-road", "x": 50, "y": 66 } },
+        { "read": { "map": "south-road", "x": 51, "y": 66 } },
+        { "read": { "map": "south-road", "x": 52, "y": 66 } }
+      ],
+      "text": "Rocks NAPO carried out of the woods, caged in steel mesh and tagged, to listen to. They glow a little, day and night. One tag names no place at all."
+    },
+    {
+      "id": "quarantine-line",
+      "area": "south-road",
+      "title": "The quarantine line",
+      "when": { "read": { "map": "south-road", "x": 33, "y": 86 } },
+      "text": "No one passes, in or out, by order of the Observatory. Under it someone wrote: They said two weeks. Nobody has kept the checkpoint in years."
+    },
+    {
+      "id": "the-radio",
+      "area": "south-road",
+      "title": "Vera's radio",
+      "when": { "read": "station-radio" },
+      "text": "Always on. Under the static a low hum rises and falls. The card taped to it counts the days she has been listening."
+    },
+    {
+      "id": "checkpoint-log",
+      "area": "south-road",
+      "title": "The checkpoint log",
+      "when": { "read": "checkpoint-log" },
+      "text": "The last guard wrote it day by day: the road closed, the last cars through, no relief. Then only the woods lighting up every forty minutes."
+    },
+    {
+      "id": "glowcaps",
+      "area": "anywhere",
+      "title": "Glowcaps",
+      "when": { "find": "glowcap" },
+      "text": "Glowcaps grow in the damp. Crushed, they glow for a day: good for marking a way."
+    },
+    {
+      "id": "fir-resin",
+      "area": "anywhere",
+      "title": "Fir resin",
+      "when": { "find": "resin" },
+      "text": "Amber sap from the old firs, lying in the grass. It burns slow and bright: the best thing to feed a fire."
+    },
+    {
+      "id": "cloth-scraps",
+      "area": "anywhere",
+      "title": "Cloth scraps",
+      "when": { "find": "cloth" },
+      "text": "Curtains and blankets people left, torn into strips. Dry, so it catches fast, and it burns fast. The workbench wants a lot of it."
+    },
+    {
+      "id": "scrap-metal",
+      "area": "anywhere",
+      "title": "Scrap metal",
+      "when": { "find": "scrap" },
+      "text": "Rust from the wrecks and cabins nobody came back for. Good for patching things. Carry too much and I tire faster."
+    },
+    {
+      "id": "copper-wire",
+      "area": "anywhere",
+      "title": "Copper wire",
+      "when": { "find": "wire" },
+      "text": "From where the old line came down. Now and then it still hums in the hand.",
+      "blanks": [
+        { "id": "wire-green", "ask": "More of it turns up by the poles... ?", "fill": "More of it turns up by the poles on green nights.", "when": { "find": "wire", "during": "aurora" } }
+      ]
+    },
+    {
+      "id": "shards",
+      "area": "anywhere",
+      "title": "Anomaly shards",
+      "when": { "find": "shard" },
+      "text": "Warm even in the cold, with a light of their own. They turn up far out. The Old Stone wants them back.",
+      "blanks": [
+        { "id": "shards-storm", "ask": "By the old poles they turn up... ?", "fill": "By the old poles they turn up while a storm blows.", "when": { "find": "shard", "during": "storm" } }
+      ]
+    },
+    {
+      "id": "strange-objects",
+      "area": "anywhere",
+      "title": "Strange objects",
+      "when": { "find": "strange" },
+      "text": "Something that was not there the day before. Out here it is too dark to tell what it is.",
+      "blanks": [
+        { "id": "strange-light", "ask": "It shows what it is... ?", "fill": "It shows what it is only in the light, in town.", "when": { "saw": "looked" } }
+      ]
+    },
+    {
+      "id": "thermoses",
+      "area": "anywhere",
+      "title": "Thermoses",
+      "when": { "find": "thermos" },
+      "text": "Hot coffee, left by a fire for whoever comes next. Somebody keeps leaving them."
+    },
+    {
+      "id": "road-flares",
+      "area": "anywhere",
+      "title": "Road flares",
+      "when": { "find": "flare" },
+      "text": "Red road flares from the gloveboxes. Lit, one burns for most of a minute, and nothing comes near while it does."
+    },
+    {
+      "id": "first-aid",
+      "area": "anywhere",
+      "title": "NAPO's first aid",
+      "when": [{ "find": "hand-warmer" }, { "find": "rad-tablet" }],
+      "text": "Hand warmers and rad tablets, still sealed, from NAPO's first-aid stores. One keeps the cold off me for a while, the other the glow. A second one does not add up: it only starts the time again."
+    },
+    {
+      "id": "charms",
+      "area": "anywhere",
+      "title": "Charms",
+      "when": [{ "find": "warm-pebble" }, { "find": "hollow-feather" }, { "find": "humming-bead" }, { "find": "ember-coal" }, { "find": "pale-moth" }],
+      "text": "Some strange things work while they ride in the bag. A warm pebble keeps the rain out, a hollow feather lightens the load, a humming bead keeps things from clinging."
+    },
+    {
+      "id": "hitchhikers",
+      "area": "anywhere",
+      "title": "Hitchhikers",
+      "when": { "saw": "hitched" },
+      "text": "At night, far enough out and away from the light, something climbs onto my back. I tire faster while it rides.",
+      "blanks": [
+        { "id": "hitch-lets-go", "ask": "It lets go... ?", "fill": "It lets go at a street light, a fire, a roof or a flare.", "when": { "saw": "let-go" } }
+      ]
+    },
+    {
+      "id": "aurora-nights",
+      "area": "anywhere",
+      "title": "Aurora nights",
+      "when": { "saw": "aurora" },
+      "text": "Every third night the sky goes green, and the watchers are faster under it.",
+      "blanks": [
+        { "id": "aurora-hum", "ask": "The dead power lines... ?", "fill": "The dead power lines hum and glow on green nights.", "when": { "saw": "hum" } }
+      ]
+    }
+  ]
+}

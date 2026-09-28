@@ -13,7 +13,7 @@
  */
 import * as THREE from 'three';
 import { hidden, type Season, type TileKind, type TileMap, type Weather } from '@napoland/shared';
-import { ownToon } from './toon';
+import { ownToon, share } from './toon';
 
 /** The same number for the same map id (FNV-1a): each map has its own ground, the same on every visit. */
 export function mapSeed(id: string): number {
@@ -443,6 +443,20 @@ export class GrassMaterial {
   part(i: number, x: number, z: number, k: number) {
     this.parters.value[i]!.set(x, z, k, 0);
   }
+}
+
+let sessionGrassMaterial: GrassMaterial | undefined;
+
+/**
+ * The one grass material of the session, which every view draws its grass with: kept (share), so a
+ * view that goes never frees it, and its program stays compiled from one map to the next.
+ */
+export function sessionGrass(): GrassMaterial {
+  if (!sessionGrassMaterial) {
+    sessionGrassMaterial = new GrassMaterial();
+    share(sessionGrassMaterial.material);
+  }
+  return sessionGrassMaterial;
 }
 
 /** Crouched in tall grass: how far down (world units), how far forward (radians), and how quickly it eases in and out (per second). */

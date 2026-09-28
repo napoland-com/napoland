@@ -14,6 +14,11 @@ const cache = new Map<string, THREE.MeshToonMaterial>();
 /** Materials that outlive any one map (every map uses them): disposing a map's view leaves these alone. */
 const shared = new WeakSet<THREE.Material>();
 const keep = <T extends THREE.Material>(m: T): T => (shared.add(m), m);
+/**
+ * Keeps a material of the whole session (the grass's): no view frees it, so neither is its compiled
+ * program, and the next map that draws with it compiles nothing.
+ */
+export const share = keep;
 /** Shared materials that are only a color: bake() turns them into vertex colors of one material. */
 const plain = new WeakSet<THREE.Material>();
 
@@ -33,6 +38,33 @@ export const ownToon = (color: THREE.ColorRepresentation, opts?: ToonOpts) => ne
 
 export const OUTLINE = keep(new THREE.MeshBasicMaterial({ color: 0x0d1014, side: THREE.BackSide }));
 export const OUTLINE_INSTANCED = keep(new THREE.MeshBasicMaterial({ color: 0x0d1014, side: THREE.BackSide }));
+
+/** For each renderer, the programs a material is kept for (keepPrograms), by their cache keys. */
+const keptPrograms = new WeakMap<THREE.WebGLRenderer, Set<string>>();
+
+/**
+ * Before a view is freed: for every program its materials were compiled into that no material kept
+ * so far holds, one of those materials is kept for the session instead of freed (its dispose does
+ * nothing from now on, however its owner calls it), and so is the program. A map that draws with the
+ * same program again, later, compiles nothing; there is only ever one kept material for each program.
+ */
+export function keepPrograms(renderer: THREE.WebGLRenderer, root: THREE.Object3D): void {
+  let kept = keptPrograms.get(renderer);
+  if (!kept) keptPrograms.set(renderer, (kept = new Set()));
+  const known = kept;
+  root.traverse(o => {
+    if (!('material' in o) || !o.material) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (!(m instanceof THREE.Material) || shared.has(m)) continue;
+      const programs = (renderer.properties.get(m) as { programs?: Map<string, unknown> }).programs;
+      const fresh = [...programs?.keys() ?? []].filter(key => !known.has(key));
+      if (!fresh.length) continue;
+      for (const key of fresh) known.add(key);
+      shared.add(m);
+      m.dispose = () => {};
+    }
+  });
+}
 
 /**
  * Frees the GPU memory held by everything under `root`: geometries, instance buffers, and the

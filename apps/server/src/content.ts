@@ -5,7 +5,9 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { TileMap, validateItems, validateMap, validateStory, validateWorld, type ItemsData, type MapData, type Problem, type StoryData } from '@napoland/shared';
+import {
+  TileMap, validateItems, validateMap, validateNotebook, validateStory, validateWorld, type ItemsData, type MapData, type NotebookData, type Problem, type StoryData,
+} from '@napoland/shared';
 
 /** Something odd about a map that does not stop the server, for the log. */
 export interface MapWarning {
@@ -114,6 +116,31 @@ export function loadStory(file: string, maps: Iterable<TileMap>, items?: ItemsDa
   }
   const errors = problems.filter(p => p.level === 'error').map(p => p.message);
   if (errors.length) throw new Error(`the story in ${file} is not valid:\n  ${errors.join('\n  ')}`);
+  return data;
+}
+
+/**
+ * The field notes (content/notebook.json, next to the story), checked against the maps and items its
+ * pages are about. None if the file is not there; throws with every error found if it is and is broken.
+ */
+export function loadNotebook(file: string, maps: Iterable<TileMap>, items?: ItemsData): NotebookData | undefined {
+  let raw: string;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch {
+    return undefined;
+  }
+  let data: NotebookData;
+  let problems: Problem[];
+  try {
+    data = JSON.parse(raw) as NotebookData;
+    if (typeof data !== 'object' || data === null || !Array.isArray(data.pages)) throw new Error('it needs a version and a list of pages');
+    problems = validateNotebook(data, [...maps].map(m => m.data), items);
+  } catch (err) {
+    throw new Error(`the field notes in ${file} cannot be read: ${reason(err)}`);
+  }
+  const errors = problems.filter(p => p.level === 'error').map(p => p.message);
+  if (errors.length) throw new Error(`the field notes in ${file} are not valid:\n  ${errors.join('\n  ')}`);
   return data;
 }
 

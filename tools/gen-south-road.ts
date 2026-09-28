@@ -24,6 +24,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
+import { noteAt, type NoteId } from './notes-left';
 
 const W = 72, H = 96, SEED = 20260928;
 type P = readonly [number, number];
@@ -470,10 +471,24 @@ for (const [x, text] of CAGES) onForest({ kind: 'cage', x, y: 66, text }, 'l');
 // the one forest tile this near the fire with open ground in front of it, where you open it from.
 onForest({ kind: 'cache', x: CAMP[0] - 3, y: CAMP[1] - 3, name: 'the crate at the leavers\' camp' });
 
+// Notes people left (notes-left.ts), laid last on what already stands here, so nothing moves: a note
+// blocks nothing and changes no ground. Walt's under the back wiper of the first car of the jam, where the
+// line of cars behind it would see it, Wren's on the suitcases between the cars, and Walt's on the last
+// pole of NAPO's line, by the Tower's shed.
+{
+  const lay = (id: NoteId, o: MapObject | undefined) => {
+    if (!o) throw new Error(`nothing for the note ${id} to lie on`);
+    objects.push(noteAt(id, o.x, o.y));
+  };
+  lay('walt-jam', objects.find(o => o.kind === 'car' && o.x === JAM[0]!.x && o.y === JAM[0]!.y));
+  lay('barlow-cars', objects.find(o => o.kind === 'luggage' && o.x === 32 && o.y === 30));
+  lay('walt-napo-line', objects.filter(o => o.kind === 'pole')[LINES[0]!.length - 1]);
+}
+
 // ---- Output ----
 
 const map: MapData = {
-  id: 'south-road', name: 'The South Road', version: 4, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'south-road', name: 'The South Road', version: 5, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 35, y: 2, dir: 'down' },
@@ -522,6 +537,8 @@ const GLYPH: Record<MapObject['kind'], string> = {
   // The rest stands in town, in the Near Woods and in the rooms.
   jeep: 'C', logs: '#', stump: 'o', skid: '_', stake: '!', boxes: 'c', rocker: 'n', piano: 'n', bike: 'n', birdcage: 'n',
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_',
+  // A note lies on something else, which shows.
+  note: ' ',
 };
 const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', r: '=', f: '"', m: '.', g: '.', l: '_' };
 const objGlyph = new Map<number, string>();

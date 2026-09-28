@@ -176,13 +176,22 @@ export function statusView(s: StatusInput): StatusView {
 
 /**
  * The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a
- * feat, a level, a chapter of the story, a parcel (which names what came: `items`, and with the welcome
- * parcel, the outfits signing in gave). Null: nothing to say. A level says the outfits it opens, which a
- * guest (`guest`) would wear once signed in.
+ * feat, a level, a chapter of the story, a page of the field notes or a blank filled in on one, a keepsake
+ * home, a parcel (which names what came: `items`, and with the welcome parcel, the outfits signing in
+ * gave). Null: nothing to say, as for a note just read (the text box said it all). A level says the
+ * outfits it opens, which a guest (`guest`) would wear once signed in.
  */
 export function newsBanner(n: News, place: string, items?: Items, guest = false): { title: string; sub: string } | null {
-  // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where.
-  if (n.kind === 'call') return null;
+  // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where. A
+  // lodestone's tug is a pulse on the status panel and a faint sound: a banner would make it loud.
+  if (n.kind === 'call' || n.kind === 'tug' || n.kind === 'note') return null;
+  // One line, for everyone online.
+  if (n.kind === 'first') return { title: n.text, sub: '' };
+  if (n.kind === 'keepsake') {
+    const def = items?.get(n.item), energy = items?.keepsakes?.energy ?? 0;
+    if (n.home >= n.of) return { title: 'All the keepsakes are home', sub: `${def ? `${def.name}, the last of them.\n` : ''}Your energy bar is ${energy} bigger, for good.` };
+    return { title: `Home: ${def?.name ?? 'a keepsake'}`, sub: `${def ? `${def.text}\n` : ''}${n.home} of ${n.of} keepsakes home.` };
+  }
   if (n.kind === 'parcel') return items ? parcelBanner(n.parcel, items, n.outfits) : null;
   if (n.kind === 'conditions') return n.names.length ? { title: 'A new day', sub: n.names.join('\n') } : null;
   if (n.kind === 'aurora') return { title: 'Lights in the sky', sub: 'An aurora: the old wires hum,\nand copper turns up by the poles.' };
@@ -199,6 +208,9 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
     return { title: `Level ${n.progress.level}`, sub: `Your energy bar grows to ${n.progress.maxEnergy}.\nYou can go a little farther now.${outfits}${top}` };
   }
   if (n.kind === 'chapter') return { title: `Journal: ${n.chapter.title}`, sub: 'A new chapter of the story.\nRead it in your journal, in the menu.' };
+  // Quiet and short: the field notes grow often, and the journal says the rest.
+  if (n.kind === 'page') return { title: `A new page: ${n.page.title}`, sub: '' };
+  if (n.kind === 'blank') return { title: `Filled in: ${n.page.title}`, sub: n.blank.fill };
   if (n.kind === 'rested') return { title: 'Rested', sub: `Your next ${thousands(n.xp)} XP from the chest count double.` };
   if (n.kind === 'merit') {
     const spend = guest ? 'Sign in to spend merits in the wardrobe at your chest.' : `You have ${n.left} to spend in the wardrobe at your chest.`;

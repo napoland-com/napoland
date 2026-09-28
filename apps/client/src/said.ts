@@ -5,8 +5,8 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, toNextMerit, type BagSlot, type Did, type Dir,
-  type Element, type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
+  CACHE_SIZE, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Did,
+  type Dir, type Element, type EnergyView, type ItemDef, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, oddsText, pieceName, type Items } from './items';
 
@@ -81,11 +81,12 @@ export function stoneQuestion(def: ItemDef, n: number): string {
 
 /**
  * Use, in the bag: what it does, and a word when the bar has little room for what a drink gives. An
- * arrow shows `markS` seconds (a day, longer for a good neighbor: markLifetime). An effect says what it
- * gives and for how long, or, while one of the same still works (`running` seconds more), that this one
- * only starts its time again.
+ * arrow shows `markS` seconds (a day, longer for a good neighbor: markLifetime). `lift`: a charm in the bag
+ * that gives energy back as a glowcap is crushed (a pale moth), and how much. An effect says what it gives
+ * and for how long, or, while one of the same still works (`running` seconds more), that this one only
+ * starts its time again.
  */
-export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000, running?: number): string {
+export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000, lift?: { charm: ItemDef; energy: number }, running?: number): string {
   const u = def.use ?? {}, n = nounOf(def);
   if (u.identify) return `Look closely at the ${n}? It will be used up.`;
   if (u.resist && u.lasts) {
@@ -100,7 +101,10 @@ export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MAR
     return `Drink the ${n}? ${signed(u.energy)} energy.`;
   }
   if (u.flare) return `Light ${aOf(def)}? It burns ${howLong(u.flare)}.`;
-  if (u.mark) return `Crush ${aOf(def)} to paint an arrow where you face? Everyone sees it for ${howLong(markS)}.`;
+  if (u.mark) {
+    const ask = `Crush ${aOf(def)} to paint an arrow where you face? Everyone sees it for ${howLong(markS)}.`;
+    return lift ? `${ask} Your ${nounOf(lift.charm)} gives you ${lift.energy} energy.` : ask;
+  }
   return `Use the ${n}? It will be used up.`;
 }
 
@@ -109,6 +113,8 @@ export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MAR
  * A piece is named with its level: "Throw away the raincoat +3?"
  */
 export function tossQuestion(def: ItemDef, n: number, inSlot: number, level = 0): string {
+  // One of a kind: it is not gone, it goes back where it lay, for you to find again (notes.ts).
+  if (def.kind === 'keepsake') return `Leave the ${nounOf(def)}? It goes back where you found it.`;
   const what = n === 1 && inSlot === 1 ? `the ${pieceNoun(def, level)}` : n === inSlot ? `all ${n} ${pluralOf(def)}` : amount(def, n);
   return `Throw away ${what}? ${they(def, n) ? 'They are' : 'It is'} gone for good.`;
 }
@@ -229,6 +235,8 @@ export const CRATE_EMPTY = 'Nothing in it yet. Leave something for whoever comes
 export const CRATE_FULL = `The crate is full: it holds ${CACHE_SIZE} things. Someone has to take one out first.`;
 /** Gear stays out of a crate (tools and lockboxes are never in the bag). */
 export const CRATE_NO_GEAR = 'Gear stays with you: a crate takes none.';
+/** A keepsake is yours alone until you bring it home (notes.ts): nobody else could ever find it. */
+export const KEEPSAKE_STAYS = 'A keepsake stays with you until you bring it home.';
 /** One thing left, and one taken, each visit. */
 export const LEFT_ONE = 'You left something here this time. Leave more the next time you come by.';
 export const TOOK_ONE = 'You took something here this time. Take more the next time you come by.';
@@ -255,10 +263,8 @@ export function leftBy(name: string, mine: boolean, ageS: number): string {
 
 // ---------- merits ----------
 
-/** "12,345": a count with its thousands apart, the same in every language the browser speaks. */
-export function thousands(n: number): string {
-  return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-}
+/** "12,345": a count with its thousands apart, the same in every language the browser speaks (firsts.ts). */
+export { thousands };
 
 /**
  * Past level 20, what merits there are: "3 to spend, 1,240 XP to the next" (a guest spends them once
@@ -334,7 +340,8 @@ export function didText(did: Did, items: Items): string {
       const n = nounOf(def), said: string[] = [];
       if (did.into) {
         const into = items.get(did.into.item), quirk = did.into.piece?.quirk;
-        said.push(`It turns out to be ${amount(into, did.into.count)}.`);
+        // A piece is one of its kind, a pair of boots too: "a crew hood", "crew boots".
+        said.push(`It turns out to be ${into.kind === 'gear' && did.into.count === 1 ? aOf(into) : amount(into, did.into.count)}.`);
         if (into.about) said.push(into.about);
         // Its quirk is rolled as it lands in the bag: the card in the bag says what it does.
         if (quirk) said.push(`It has a quirk: ${items.quirk(quirk).name.toLowerCase()}.`);
@@ -350,6 +357,8 @@ export function didText(did: Did, items: Items): string {
           ? `You use the ${n}. The one before still worked: the ${lasts} start again, ${effectWords(def)}.`
           : `You use the ${n}. ${capital(effectWords(def))} for ${lasts}.`);
       }
+      // A charm in your bag gave energy back as it happened (a pale moth).
+      if (did.lift) said.push(`The ${nounOf(items.get(did.lift.item))} in your bag stirs: ${signed(did.lift.energy)} energy.`);
       return said.length ? said.join(' ') : `You use the ${n}.`;
     }
     case 'made': {
@@ -368,6 +377,7 @@ export function didText(did: Did, items: Items): string {
         : `${noun} ${pl ? 'are' : 'is'} +${did.level} now.`;
     }
     case 'thrown':
+      if (def.kind === 'keepsake') return `The ${nounOf(def)} goes back where you found it.`;
       return did.level ? `You throw away the ${pieceNoun(def, did.level)}.` : `You throw away ${amount(def, did.count)}.`;
     case 'opened': {
       // One thing inside says what it is good for, as a strange object does.

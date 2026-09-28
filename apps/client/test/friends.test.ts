@@ -10,7 +10,7 @@ const A = '11111111-1111-4111-8111-111111111111', B = '22222222-2222-4222-8222-2
 const list: FriendsMsg = {
   t: 'friends',
   friends: [{ id: A, name: 'Aldo', map: null }, { id: B, name: 'Bea', map: 'woods' }],
-  incoming: [{ id: C, name: 'Cleo' }], outgoing: [], blocked: [], requestsOff: false,
+  incoming: [{ id: C, name: 'Cleo' }], outgoing: [], blocked: [], requestsOff: false, tradesOff: false,
 };
 const names = (id: string) => ({ woods: 'The Woods' })[id];
 
@@ -26,7 +26,12 @@ describe('the friends panel', () => {
   it('opens a card with where someone stands, and the conversation of this session', () => {
     const talks = new Map([[B, [{ mine: true, text: 'hi' }, { mine: false, text: 'hey there' }]]]);
     const v = friendsView(list, { person: { id: B, name: 'Bea' }, talks, unread: new Set() }, names);
-    expect(v.person).toEqual({ id: B, name: 'Bea', where: 'The Woods', standing: 'friend', lines: talks.get(B) });
+    // A friend's card says how near they are to trade with (told nothing, they are not here).
+    expect(v.person).toEqual({ id: B, name: 'Bea', where: 'The Woods', standing: 'friend', lines: talks.get(B), trade: 'away' });
+    expect(friendsView(list, { person: { id: B, name: 'Bea' }, talks, unread: new Set(), tradeReach: () => 'near' }, names).person?.trade).toBe('near');
+    // Nobody but a friend is asked to trade.
+    expect(friendsView(list, { person: { id: C, name: 'Cleo' }, talks, unread: new Set(), tradeReach: () => 'near' }, names).person?.trade).toBeUndefined();
+    expect(friendsView({ ...list, tradesOff: true }, { person: null, talks, unread: new Set() }, names).tradesOff).toBe(true);
     expect(standingOf(list, C)).toBe('asking');
     expect(standingOf({ ...list, blocked: [{ id: C, name: 'Cleo' }] }, C)).toBe('blocked');
     expect(standingOf(list, 'nobody')).toBe('none');

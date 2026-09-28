@@ -5,7 +5,7 @@
  * from the environment; tests start it directly.
  */
 import type { AddressInfo } from 'node:net';
-import { DROP_LIFETIME_MS, GUEST_DAYS, THANKS_KEPT_MS, quickCalendar, weatherAt, type ItemsData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
+import { DROP_LIFETIME_MS, GUEST_DAYS, THANKS_KEPT_MS, quickCalendar, weatherAt, type ItemsData, type NotebookData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
 import { legacyAuth, type Auth } from './auth';
 import { createHttpServer } from './http';
 import { log } from './log';
@@ -24,6 +24,8 @@ export interface ServerOptions {
   items?: ItemsData;
   /** The story's chapters; they must fit the maps and items (loadStory checks that). No story if unset. */
   story?: StoryData;
+  /** The pages of the field notes; they must fit the maps and items (loadNotebook checks that). No pages if unset. */
+  notebook?: NotebookData;
   /** Words chat masks (content/words.json). None if unset. */
   words?: string[];
   /** Where finds grow and which half of a pile others get: Math.random unless a test sets its own. */
@@ -115,6 +117,9 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // What lies in the crates stays until someone takes it.
   const cacheItems = await o.storage.loadCacheItems();
   if (cacheItems.length) log.info('crates loaded', { things: cacheItems.length });
+  // Who found each secret first is kept for good (firsts.ts).
+  const firsts = await o.storage.loadFirsts();
+  if (firsts.length) log.info('first finders loaded', { firsts: firsts.length });
   const forgetThanks = async () => {
     try {
       await o.storage.forgetThanks(Date.now() - THANKS_KEPT_MS);
@@ -131,12 +136,14 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     marks,
     thanks,
     cacheItems,
+    firsts,
     stone,
     now: clock(),
     // Where players run out tells how hard each part of the world really is.
     onCollapse: (id, where) => log.info('player collapsed', { id, ...where }),
     items: o.items,
     story: o.story,
+    notebook: o.notebook,
     rng: o.rng,
     drops,
     // Game time never goes backwards; piles keep wall clock time, which is this far ahead of it.
