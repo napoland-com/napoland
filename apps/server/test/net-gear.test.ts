@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION, STEP_MS, TileMap, type Dir, type ItemsData, type Slot } from '@napoland/shared';
 import { houseData, itemsData, townData, woodsData } from './fixtures';
-import { setup, waitFor, type Client } from './helpers';
+import { nobodyCame, setup, waitFor, type Client } from './helpers';
 
 /** A chest at 3,1 in the house (stand at 3,2), a workbench at 1,1 (stand at 1,2). */
 const maps = () => [
@@ -99,6 +99,8 @@ describe('gear on the road, over the network', () => {
     const a = await enter({ map: 'woods', x: 3, y: 6, energy: 1, bag: [{ item: 'coat', count: 1, piece: coat }, { item: 'moss', count: 2 }] });
     await Promise.all([w.c.settle(), a.c.settle()]);
     now += 5000; // 1 energy lasts about 4 s at 3,6
+    // Down first, and nobody comes (rescue.ts).
+    await nobodyCame(a.c, ms => { now += ms; });
     await w.c.next('drop', m => m.drop.owner === a.id);
     await a.c.next('zone', m => m.reason === 'collapse');
     await waitFor(() => ctx.storage.drop(a.id) !== undefined, 'the pile to be stored');
@@ -116,6 +118,7 @@ describe('gear on the road, over the network', () => {
     const c = await enter({ map: 'woods', x: 3, y: 5 });
     await c.c.settle();
     now += 5000;
+    await nobodyCame(b.c, ms => { now += ms; });
     await c.c.next('drop', m => m.drop.owner === b.id);
     c.c.send({ t: 'pick', x: 3, y: 6 });
     expect(await c.c.next('bag')).toEqual({ t: 'bag', bag: [{ item: 'coat', count: 1, piece: { cond: 0.8 } }] });
@@ -143,7 +146,8 @@ describe('gear on the road, over the network', () => {
     }
     // 20 brought wear and doff; outfits (21), calls (22) and thanks (23) came after them, then the rest saved up while away (24), merits (25), trades (26), the cozy cabin (27), streets (28) and a door kept to oneself (29),
     // each region's own weather and effects that run for a while (30), seasons, whose ice is walked on (31), the Long Night (32), how the trip went (33),
-    // visits, the road to your street and NAPO's teleport (34), and the teleport home with a new player's first steps (35).
-    expect(PROTOCOL_VERSION).toBe(35);
+    // visits, the road to your street and NAPO's teleport (34), the teleport home with a new player's first steps (35), the shop for looks with the window to be saved (36),
+    // the lost and found (37) and the slab that needs two (38).
+    expect(PROTOCOL_VERSION).toBe(38);
   });
 });

@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "looks": [
+    {
+      "id": "lighthouse-oilskin",
+      "kind": "outfit",
+      "name": "Lighthouse oilskin",
+      "noun": "the lighthouse oilskin",
+      "text": "A yellow oilskin to the knees and a sou'wester, as a lighthouse keeper wears them out in any weather.",
+      "prices": { "eur": 299, "chf": 290, "usd": 299, "gbp": 249 }
+    },
+    {
+      "id": "winter-parka",
+      "kind": "outfit",
+      "name": "Winter parka",
+      "noun": "the winter parka",
+      "text": "A long parka with its hood lined in fur, and red mittens, for the coldest nights out there.",
+      "prices": { "eur": 299, "chf": 290, "usd": 299, "gbp": 249 }
+    },
+    {
+      "id": "napo-dress-uniform",
+      "kind": "outfit",
+      "name": "NAPO dress uniform",
+      "noun": "the NAPO dress uniform",
+      "text": "NAPO's navy dress uniform, with its yellow trim, white gloves and a peaked cap.",
+      "prices": { "eur": 299, "chf": 290, "usd": 299, "gbp": 249 }
+    },
+    {
+      "id": "festival-sweater",
+      "kind": "outfit",
+      "name": "Festival sweater",
+      "noun": "the festival sweater",
+      "text": "Knitted by hand in cranberry and cream, with earmuffs to match: a sweater for a festival night.",
+      "prices": { "eur": 299, "chf": 290, "usd": 299, "gbp": 249 }
+    },
+    {
+      "id": "argyle",
+      "kind": "pattern",
+      "name": "Argyle",
+      "noun": "the argyle pattern",
+      "text": "Diamonds down the front and on the sleeves, in two shades of the cloth.",
+      "prices": { "eur": 149, "chf": 150, "usd": 149, "gbp": 129 }
+    },
+    {
+      "id": "aurora-bands",
+      "kind": "pattern",
+      "name": "Aurora bands",
+      "noun": "the aurora bands",
+      "plural": true,
+      "text": "A green band and a violet one round the body, the colors of the sky every third night.",
+      "prices": { "eur": 149, "chf": 150, "usd": 149, "gbp": 129 }
+    },
+    {
+      "id": "lightning",
+      "kind": "pattern",
+      "name": "Lightning",
+      "noun": "the lightning bolt",
+      "text": "A yellow bolt down the front, for whoever walks out into the storms.",
+      "prices": { "eur": 149, "chf": 150, "usd": 149, "gbp": 129 }
+    },
+    {
+      "id": "heart",
+      "kind": "badge",
+      "name": "Heart",
+      "noun": "the heart badge",
+      "text": "A red heart, for whoever helps keep napoland going.",
+      "prices": { "eur": 99, "chf": 100, "usd": 99, "gbp": 89 }
+    },
+    {
+      "id": "tower",
+      "kind": "badge",
+      "name": "The Tower",
+      "noun": "the Tower badge",
+      "text": "The NAPO Tower, its red light blinking over the South Road.",
+      "prices": { "eur": 99, "chf": 100, "usd": 99, "gbp": 89 }
+    },
+    {
+      "id": "snowflake",
+      "kind": "badge",
+      "name": "Snowflake",
+      "noun": "the snowflake badge",
+      "text": "A snowflake, for the coldest nights out there.",
+      "prices": { "eur": 99, "chf": 100, "usd": 99, "gbp": 89 }
+    }
+  ]
+}

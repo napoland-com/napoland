@@ -197,6 +197,25 @@ export function rainAhead(wallMs: number, rain: readonly RainWindow[] = DEFAULT_
   return null;
 }
 
+/**
+ * Seconds since it last rained over a region (its map's `rain`, as weatherAt reads it), at a wall clock
+ * time: 0 while it rains, else how long ago its rain stopped, today's or the day before's (as long as that
+ * day's season made it). Infinity when neither day rained before now (a Long Night is dry). What comes up
+ * after the rain (chanterelles) grows while this is short.
+ */
+export function sinceRain(wallMs: number, rain: readonly RainWindow[] = DEFAULT_RAIN): number {
+  const d = dayAt(wallMs);
+  let stopped = -Infinity;
+  for (const [a, b] of rainOf(rain, d)) {
+    if (d.into >= a && d.into < b) return 0;
+    if (d.into >= b) stopped = b;
+  }
+  if (stopped > -Infinity) return d.into - stopped;
+  // Before today's first rain: the day before's last one, a millisecond before today's dawn.
+  const last = rainOf(rain, dayAt(d.day * DAY_S * 1000 - 1)).at(-1);
+  return last ? d.into + DAY_S - last[1] : Infinity;
+}
+
 /** How a region surges, in seconds: one round every `every`, ending with `unstable` then `surge`. */
 export interface SurgeRule {
   every: number;

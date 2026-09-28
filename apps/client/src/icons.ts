@@ -43,6 +43,42 @@ const ICONS: Record<string, string> = {
     <path d="M5 12.6h22M5 15h22" stroke="#e9cfa4" stroke-width="1.3"/>
     <path d="M27 17v6.5h-6.5z" fill="#d7806f"/>
     <path d="M7.5 23.5v2.2M10.5 23.5v2.8M13.5 23.5v2M16.5 23.5v2.6"/></g>`),
+  // What cooks at a fire (meals.ts). A sprig of huckleberries: dark-blue berries, each with its pale crown, and two leaves.
+  huckleberries: icon(`<path d="M6 7.5c3.5 2 6 5.5 7.2 10.5M13.2 18c2-3.4 5.2-5.6 9.3-6.4" stroke-width="1.4"/>
+    <path d="M6.2 7.6c-2.8.6-3.6 3.6-2.3 5.7 2.5-.3 3.6-2.9 2.3-5.7z" fill="#5d9c4c"/><path d="M22.5 11.6c1.5 2.6.2 5.4-2.3 5.9-1-2.3.1-5.1 2.3-5.9z" fill="#5d9c4c"/>
+    <circle cx="11" cy="21.5" r="3.6" fill="#3b4a9c"/><circle cx="17.8" cy="21" r="3.3" fill="#4a5bb4"/><circle cx="14.5" cy="26" r="3.2" fill="#34438c"/>
+    <path d="M10 20.3l1 .6 1-.6M16.9 19.9l.9.6.9-.6M13.6 24.9l.9.6.9-.6" stroke="#c9d2f5" stroke-width="1"/>`),
+  // Two fiddleheads: young fern fronds, each tightly curled at the top of its stem.
+  fiddleheads: icon(`<path d="M11 28c-.5-6 .2-11 1.8-14.2" stroke-width="3.6"/><path d="M11 28c-.5-6 .2-11 1.8-14.2" stroke="#6bab4f" stroke-width="2"/>
+    <path d="M21.5 28c.4-5 0-8.6-1.2-11.5" stroke-width="3.6"/><path d="M21.5 28c.4-5 0-8.6-1.2-11.5" stroke="#6bab4f" stroke-width="2"/>
+    <circle cx="10.2" cy="10" r="5.2" fill="#7fc15a"/><path d="M10.2 10c0-1.4 1.6-1.7 2.3-.7.9 1.4-.5 3.3-2.3 3.2-2.4-.1-3.5-2.8-2.4-4.7 1.3-2.3 4.8-2.5 6.3-.3" stroke="#3f7a2f" stroke-width="1.2"/>
+    <circle cx="21.6" cy="13.2" r="4.4" fill="#8fd068"/><path d="M21.6 13.2c0-1.2 1.4-1.4 1.9-.6.7 1.2-.4 2.8-1.9 2.7-2-.1-2.9-2.3-2-3.9 1.1-1.9 4-2.1 5.3-.3" stroke="#3f7a2f" stroke-width="1.1"/>`),
+  // The end of a fir branch: a woody stem and its soft new needles, bright green.
+  'fir-tips': icon(`<path d="M5 27L25.5 6.5" stroke-width="2.4"/><path d="M5 27L25.5 6.5" stroke="#7a5a3a" stroke-width="1.1"/>
+    <path d="M9 23l-3.6-2.2M9 23l1.6 3.8M13 19l-4.2-2.4M13 19l1.8 4.4M17 15l-4.4-2.6M17 15l2 4.6M21 11l-4.2-2.6M21 11l2.2 4.2M24.2 7.8l-3.2-2.2M24.2 7.8l2 3.4" stroke="#8ee06a" stroke-width="2.4"/>
+    <path d="M25.5 6.5l1.8-2" stroke="#c9f5a8" stroke-width="2"/>`),
+  // Two chanterelles: golden funnels, their gills running down the stem.
+  chanterelles: icon(`${halo(16, 18, 12, '#ffb84a')}
+    <path d="M6 12.5c0-1.5 2.4-2.6 6-2.6s6 1.1 6 2.6c0 1.4-2.2 1.7-3.1 3.2l-1 9.3h-3.8l-1-9.3C8.2 14.2 6 13.9 6 12.5z" fill="#f0a93c"/>
+    <path d="M9.5 13.8l2 8M12 14.2v9M14.5 13.8l-2 8" stroke="#b86f1c" stroke-width="1"/>
+    <path d="M17 17.5c0-1.2 2-2.1 4.8-2.1s4.8.9 4.8 2.1c0 1.1-1.7 1.4-2.4 2.6l-.8 7.4h-3.1l-.8-7.4c-.7-1.2-2.5-1.5-2.5-2.6z" fill="#f7bf57"/>
+    <path d="M3.5 28h25"/>`),
+  // A tin cup of fir-tip tea: green, steaming, a sprig on its rim.
+  'fir-tip-tea': icon(`<path d="M11 8.5c-1-1.6 1-2.8 0-4.5M16 8c-1-1.6 1-2.8 0-4.5M21 8.5c-1-1.6 1-2.8 0-4.5" stroke-width="1.3"/>
+    <path d="M23 15h2.2c1.5 0 2.6 1.2 2.6 2.7s-1.1 2.8-2.6 2.8H23" stroke-width="1.8"/>
+    <path d="M6.5 11.5h17v13c0 2-1.6 3.5-3.5 3.5H10c-1.9 0-3.5-1.5-3.5-3.5z" fill="#a7b6be"/>
+    <ellipse cx="15" cy="11.5" rx="8.5" ry="2.2" fill="#6fae52"/>
+    <path d="M9 11.2l3.2-3.4M10.6 9.2l-2 .2M11.8 8.4l.1-2" stroke="#8ee06a" stroke-width="1.5"/>`),
+  // A tin of chanterelle stew over the coals: golden pieces, green bits, and the steam off it.
+  'chanterelle-stew': icon(`<path d="M12 9c-1-1.6 1-2.8 0-4.5M17 8.5c-1-1.6 1-2.8 0-4.5" stroke-width="1.3"/>
+    <path d="M4.5 13h23M5.5 13v8.5c0 3.6 4.7 6.5 10.5 6.5s10.5-2.9 10.5-6.5V13" fill="#6d7c85"/>
+    <ellipse cx="16" cy="13" rx="10.5" ry="3" fill="#c99a4a"/>
+    <path d="M10 12.5l2-.8M15 13.8l2.2-.6M19.5 12.2l2 .8" stroke="#f7c35a" stroke-width="2"/><path d="M12.5 14l1.4-.4M18 12l1.2.4" stroke="#6bab4f" stroke-width="1.6"/>`),
+  // Berry pemmican: two dense dark cakes, flecked with berries, on a scrap of wax paper.
+  'berry-pemmican': icon(`<path d="M3.5 22.5l10-6.5 15 5-10.5 7z" fill="#e9dfc4"/>
+    <path d="M6.5 18.5l7.5-4.6 8 3v5.4l-7.5 4.6-8-3z" fill="#5a3b33"/><path d="M6.5 18.5l7.5-4.6 8 3-7.5 4.7z" fill="#7a5044"/>
+    <path d="M12.5 12.5l6.8-4.2 7.2 2.7v4.8l-6.8 4.2-7.2-2.7z" fill="#5a3b33"/><path d="M12.5 12.5l6.8-4.2 7.2 2.7-6.8 4.3z" fill="#7a5044"/>
+    <circle cx="11" cy="18.4" r="1" fill="#6f7fd6" stroke="none"/><circle cx="15.6" cy="17.4" r="1" fill="#6f7fd6" stroke="none"/><circle cx="18.6" cy="11.4" r="1" fill="#6f7fd6" stroke="none"/><circle cx="21.8" cy="12.6" r="1" fill="#6f7fd6" stroke="none"/>`),
   // A violet crystal floating over its shadow.
   shard: icon(`${halo(16, 14, 13, '#a77dff')}
     <ellipse cx="16" cy="29.2" rx="4.6" ry="1.2" fill="#000" opacity=".4" stroke="none"/>
@@ -136,6 +172,14 @@ const ICONS: Record<string, string> = {
     <path d="M14.3 15.6v-1.9a1.7 1.7 0 0 1 3.4 0v1.9" stroke-width="1.4"/>
     <rect x="12.6" y="15.6" width="6.8" height="6.6" rx="1.2" fill="#4d5963"/>
     <circle cx="16" cy="18.4" r=".9" fill="#e8dfc8" stroke="none"/><path d="M16 19.2v1.4" stroke-width="1.1"/>`),
+  // Someone else's things, tied up in a cloth to carry to the lodge: its corners knotted on top, and a paper tag with their name.
+  bundle: icon(`<path d="M5.5 16.5c0-3 2.2-4.5 5-4.5h11c2.8 0 5 1.5 5 4.5v6.8c0 2.9-2.3 4.7-5.2 4.7H10.7c-2.9 0-5.2-1.8-5.2-4.7z" fill="#9a5b43"/>
+    <path d="M12.2 12.4c-1.6-1.8-2.6-4.3-1.6-6 .9 1.6 3 2.7 5.4 3.3 2.4-.6 4.5-1.7 5.4-3.3 1 1.7 0 4.2-1.6 6" fill="#b86f52"/>
+    <circle cx="16" cy="11.4" r="1.9" fill="#7a432f"/>
+    <path d="M6.2 19.6c3.1 1 6.4 1.5 9.8 1.5s6.7-.5 9.8-1.5" stroke="#6b3a28" stroke-width="1.2"/>
+    <path d="M20.4 20.8l2.6 3.2" stroke-width="1.1"/>
+    <rect x="21.4" y="23.2" width="6" height="4.2" rx=".8" fill="#e8dfc8" stroke="#6b5234" stroke-width="1" transform="rotate(12 24.4 25.3)"/>
+    <path d="M23 25.1h3" stroke="#6b5234" stroke-width=".9" transform="rotate(12 24.4 25.3)"/>`),
   // The keepsakes people left (notes.ts), each one of a kind, in a soft gold light that says so.
   // A photograph of the town before: a white border, the mill's roof, the street, the Old Stone whole.
   'old-photograph': icon(`${halo(16, 16, 14, '#ffd98a')}
@@ -292,6 +336,27 @@ const OUTFIT_ICONS: Record<string, string> = {
     <path d="M12 11L5.5 15.2l2.6 5 2.2-1.2z" fill="#3e7c77"/><path d="M20 11l6.5 4.2-2.6 5-2.2-1.2z" fill="#c39a3e"/><path d="M10.3 22h11.4l1.2 5.8H9.1z" fill="#4f6b95"/>
     <path d="M11.3 15.4h3.5v3.1h-3.5zM17.2 17.3h3.1v2.6h-3.1z" fill="#c39a3e" stroke="#e6d6ae" stroke-width=".8" stroke-dasharray="1 .8"/>
     ${HEAD}<path d="M12.2 7.6c0-2.8 1.7-4.6 3.8-4.6s3.8 1.8 3.8 4.6z" fill="#c39a3e"/><path d="M11.9 6.6h8.2v1.7h-8.2z" fill="#3e7c77"/><circle cx="16" cy="2.7" r="1.4" fill="#e6d6ae"/>`),
+  // From the shop (content/shop.json). A yellow oilskin to the knees with two toggles, black boots, and a sou'wester.
+  'lighthouse-oilskin': icon(`<path d="${BOOTS}" fill="#1f2326"/><path d="${COAT}" fill="#e5b53a"/>
+    <path d="M16 13.4V27.8" stroke="#b8892a" stroke-width="1.2"/><path d="M14.7 17.4h2.6M14.7 21.4h2.6" stroke="#6b4a24" stroke-width="1.3"/>
+    ${HEAD}<path d="M12.2 7.4c0-2.9 1.7-4.8 3.8-4.8s3.8 1.9 3.8 4.8z" fill="#e5b53a"/><path d="M9.4 7.2h13.2l-1.4 2.3H10.8z" fill="#e5b53a"/>`),
+  // A long navy parka with low pockets, its hood up and lined in fur round the face, and red mittens.
+  'winter-parka': icon(`<path d="${TROUSERS}" fill="#3a3a40"/><path d="M12 11l4 2.4 4-2.4 6.5 4.2-2.6 5-2.2-1.2v3l.6 4.2H10.7l.6-4.2v-3l-2.2 1.2-2.6-5z" fill="#2c4a63"/>
+    <path d="M16 13.4v11.8" stroke="#1f3547" stroke-width="1.1"/><path d="M11.4 21.6h3M16.6 21.6h3" stroke="#1f3547" stroke-width="1.3"/>
+    <circle cx="6.6" cy="18.8" r="1.6" fill="#a33b3b"/><circle cx="25.4" cy="18.8" r="1.6" fill="#a33b3b"/>
+    <path d="M10.6 11.4c0-4.9 2.4-8.2 5.4-8.2s5.4 3.3 5.4 8.2z" fill="#2c4a63"/><path d="M12.3 11.1V9.8c0-2.8 1.6-4.6 3.7-4.6s3.7 1.8 3.7 4.6v1.3z" fill="#e6d9c2" stroke="none"/>
+    <path d="M13.6 11.1v-.9c0-1.9 1-3.1 2.4-3.1s2.4 1.2 2.4 3.1v.9z" fill="#f2cda8" stroke="none"/>`),
+  // NAPO's navy dress uniform: yellow buttons and hem, boards on the shoulders, white gloves, a peaked cap.
+  'napo-dress-uniform': icon(`<path d="${TROUSERS}" fill="#1f2738"/><path d="${JACKET}" fill="#26324a"/>
+    <path d="M10.4 24.1h11.2" stroke="#d6ad2f" stroke-width="1.3"/><path d="M12.6 12.3l-2.4 1.5M19.4 12.3l2.4 1.5" stroke="#d6ad2f" stroke-width="1.7"/>
+    <path d="M14.2 16.2h.1M17.8 16.2h.1M14.2 20h.1M17.8 20h.1" stroke="#d6ad2f" stroke-width="1.6"/>
+    <circle cx="6.8" cy="18.6" r="1.4" fill="#ecebe6"/><circle cx="25.2" cy="18.6" r="1.4" fill="#ecebe6"/>
+    ${HEAD}<path d="M11.4 7c0-2.5 2-4.4 4.6-4.4s4.6 1.9 4.6 4.4z" fill="#26324a"/><path d="M11.4 5.9h9.2v1.3h-9.2z" fill="#d6ad2f" stroke="none"/><path d="M12.4 7.2h7.2l-.9 1.7h-5.4z" fill="#15181e"/>`),
+  // A cranberry sweater with a cream band of zigzags, green at the hem, jeans, and cream earmuffs on a band.
+  'festival-sweater': icon(`<path d="${TROUSERS}" fill="#3d4658"/><path d="${JACKET}" fill="#b33a4a"/>
+    <path d="M10.4 17.4h11.2v3H10.4z" fill="#e6d6ae" stroke="none"/><path d="M10.8 19.8l1.3-1.6 1.3 1.6 1.3-1.6 1.3 1.6 1.3-1.6 1.3 1.6 1.3-1.6 1.3 1.6" stroke="#b33a4a" stroke-width="1"/>
+    <path d="M10.4 24.2h11.2" stroke="#2f6b4a" stroke-width="1.7"/>
+    ${HEAD}<path d="M12.6 7.8C12.6 3.4 19.4 3.4 19.4 7.8" stroke="#7a2a36" stroke-width="1.4"/><circle cx="12.4" cy="8.6" r="1.8" fill="#e6d6ae"/><circle cx="19.6" cy="8.6" r="1.8" fill="#e6d6ae"/>`),
 };
 
 /** An outfit's drawing, for the wardrobe's tiles and cards; a sack for one this copy cannot draw. */
@@ -313,6 +378,14 @@ const PATTERN_ICONS: Record<string, string> = {
   reflective: jacketWith(`<path d="M10.3 20.4h11.4M10.3 23h11.4M7 17.3l1.6 1.9M25 17.3l-1.6 1.9" stroke="#e2e6e2" stroke-width="1.4"/>`),
   'napo-patch': jacketWith(`<path d="M17.4 19h3.4v2.6h-3.4z" fill="#d6ad2f" stroke="none"/><path d="M18 20.3h2.2" stroke="#4a3d12" stroke-width=".8"/><path d="M6.7 15.4l2-1 1.3 2.3-2 1z" fill="#d6ad2f" stroke="none"/>`),
   squares: jacketWith(`<path d="M10.8 19.3h3.8v3.6h-3.8z" fill="#c39a3e" stroke="#e6d6ae" stroke-width=".7" stroke-dasharray="1 .8"/><path d="M17.5 15.3h3.4v3.4h-3.4z" fill="#3e7c77" stroke="#e6d6ae" stroke-width=".7" stroke-dasharray="1 .8"/><path d="M15.2 22.4h2.6V25h-2.6z" fill="#4f6b95" stroke="none"/><path d="M6.7 15.4l2-1 1.3 2.3-2 1z" fill="#a8584a" stroke="none"/>`),
+  // From the shop. Diamonds in two shades of the cloth, and one on each sleeve.
+  argyle: jacketWith(`<path d="M13.1 14l1.6 2.3-1.6 2.3-1.6-2.3zM18.9 14l1.6 2.3-1.6 2.3-1.6-2.3zM16 18.8l1.6 2.3-1.6 2.3-1.6-2.3z" fill="${SHADE}" stroke="none"/>
+    <path d="M16 14l1.6 2.3-1.6 2.3-1.6-2.3zM13.1 18.8l1.6 2.3-1.6 2.3-1.6-2.3zM18.9 18.8l1.6 2.3-1.6 2.3-1.6-2.3z" fill="#8497a6" stroke="none"/>
+    <path d="M7.3 16.2l1.2 1.3-1.2 1.3-1.2-1.3zM24.7 16.2l1.2 1.3-1.2 1.3-1.2-1.3z" fill="${SHADE}" stroke="none"/>`),
+  // A green band and a violet one round the body, and green at the sleeves: the sky every third night.
+  'aurora-bands': jacketWith(`<path d="M10.3 20.2h11.4" stroke="#5fd49a" stroke-width="1.7"/><path d="M10.3 22.9h11.4" stroke="#9b7be0" stroke-width="1.7"/><path d="M7 17.3l1.6 1.9M25 17.3l-1.6 1.9" stroke="#5fd49a" stroke-width="1.4"/>`),
+  // A yellow bolt down the front, and a small one on the sleeve.
+  lightning: jacketWith(`<path d="M18.4 13.4l-4 5.2h2.7l-2.8 6 5.3-7h-2.9l2.4-4.2z" fill="#f2c94c" stroke="none"/><path d="M24.6 15.2l-1.2 1.9h1.3l-.9 1.8" stroke="#f2c94c" stroke-width="1.1"/>`),
 };
 
 /** A pattern's drawing, for the wardrobe's tiles and cards; a sack for one this copy cannot draw. */
@@ -342,6 +415,14 @@ const BADGE_ICONS: Record<string, string> = {
     <path d="M16 11.5v10.5M14.6 8.3l1.4 3.2 1.4-3.2" stroke-width="1.3"/><circle cx="9.4" cy="12.4" r="1.4" fill="#8a7a5c" stroke="none"/><circle cx="22.6" cy="12.4" r="1.4" fill="#8a7a5c" stroke="none"/>`),
   // The Old Stone, standing, its crack alight.
   'old-stone': icon(`${halo(16, 16, 13, '#b39bff')}<path d="M10.5 28.5V11.6c0-4.4 2.6-7.6 5.5-7.6s5.5 3.2 5.5 7.6v16.9z" fill="#8a8f96"/><path d="M16.6 7.5l-1.9 5.3 2.2 3.3-1.8 5.6" stroke="#d9ccff" stroke-width="1.5"/><path d="M8 28.5h16" stroke-width="1.8"/>`),
+  // From the shop. A red heart.
+  heart: icon(`${halo(16, 16, 12, '#ff6b7a')}<path d="M16 26.5C9.5 21.8 5.5 18.2 5.5 13.4c0-3.3 2.4-5.9 5.4-5.9 2.2 0 3.9 1.2 5.1 3.1 1.2-1.9 2.9-3.1 5.1-3.1 3 0 5.4 2.6 5.4 5.9 0 4.8-4 8.4-10.5 13.1z" fill="#d64556"/><path d="M9.6 12.4c.4-1.4 1.4-2.2 2.6-2.3" stroke="#ffc2c9" stroke-width="1.3"/>`),
+  // The NAPO Tower: a red and white mast, its dish turned to the woods, its red light.
+  tower: icon(`${halo(16, 5.4, 5, '#ff4a3a')}<path d="M14.2 28.5L15.2 7h1.6l1 21.5z" fill="#e8e4dc"/><path d="M14.55 21h2.9l.2 4h-3.3zM14.9 13.4h2.2l.15 3.6h-2.5z" fill="#d23c30" stroke="none"/>
+    <path d="M17.2 10.2c3.2-.6 5.4 1 5.8 3.6-2.8.8-5 .1-5.8-3.6z" fill="#b8bec4"/><circle cx="16" cy="5.4" r="1.5" fill="#ff4a3a" stroke="none"/><path d="M11 28.5h10" stroke-width="1.8"/>`),
+  // A snowflake, pale blue.
+  snowflake: icon(`${halo(16, 16, 12, '#a8d8ff')}<g stroke="#cfeaff" stroke-width="1.8"><path d="M16 4v24M5.6 10l20.8 12M5.6 22l20.8-12"/>
+    <path d="M13.4 5.8L16 8.2l2.6-2.4M13.4 26.2L16 23.8l2.6 2.4M5.9 13.6l3.4-.9-.8-3.5M26.1 18.4l-3.4.9.8 3.5M5.9 18.4l3.4.9-.8 3.5M26.1 13.6l-3.4-.9.8-3.5"/></g>`),
 };
 
 /** A badge's drawing, on a name tag and in the wardrobe; none for one this copy cannot draw. */
@@ -356,8 +437,23 @@ export const NO_BADGE_ICON = icon(`<rect x="4.5" y="11" width="23" height="10" r
 export const NO_OUTFIT_ICON = icon(`<path d="M16 12.6v-1.7c0-1 .6-1.5 1.5-2 .9-.5 1.5-1.1 1.5-2.1 0-1.3-1.2-2.3-2.9-2.3-1.6 0-2.7 1-2.7 2.3" stroke-width="1.8"/>
   <path d="M16 12.6L4.6 21.4c-.8.6-.4 1.9.6 1.9h21.6c1 0 1.4-1.3.6-1.9z" stroke-width="1.8"/>`);
 
+/** Bolt cutters: two long steel handles with red grips, crossing at the bolt, and short jaws edged with a sliver of shard. */
+export const CUTTERS_ICON = icon(`<path d="M13 14.6l12.6 12.8M14.6 13l12.8 12.6" stroke-width="4.4"/>
+  <path d="M13 14.6l12.6 12.8M14.6 13l12.8 12.6" stroke="#6d7780" stroke-width="2.3"/>
+  <path d="M20.6 22.4l5 5M22.4 20.6l5 5" stroke="#c0452f" stroke-width="2.6"/>
+  <path d="M14.8 13.2L4.6 4.4c3.2.3 6.9 2.2 9.8 5.2 1.5 1.6 1.7 2.8.4 3.6z" fill="#aebbc1"/>
+  <path d="M13.2 14.8L4.4 4.6c.3 3.2 2.2 6.9 5.2 9.8 1.6 1.5 2.8 1.7 3.6.4z" fill="#aebbc1"/>
+  <path d="M5.4 5.4l5.2 4.6" stroke="#b89cff" stroke-width="1.2"/>
+  <circle cx="14" cy="14" r="1.8" fill="#57636a"/>`);
+
+/** Chest waders: a rubber bib on its braces, the legs down into boots, a copper seam at the waist. */
+export const WADERS_ICON = icon(`<path d="M10.6 9L9.2 3.6M21.4 9l1.4-5.4" stroke-width="1.6"/>
+  <path d="M9.5 8.6h13v7.8l1.5 9.6h-5.3l-2.7-8.4-2.7 8.4H7.9l1.6-9.6z" fill="#5f6d43"/>
+  <path d="M9.5 13.2h13" stroke="#d9773a" stroke-width="1.1" stroke-dasharray="1.4 1"/>
+  <path d="M7.7 26h5.5v2.7H6.3c0-1.5.6-2.7 1.4-2.7zM18.8 26h5.5c.8 0 1.4 1.2 1.4 2.7h-6.9z" fill="#3a2f24"/>`);
+
 /** The drawing on each tool's button in the bag's header, by the icon its item names (TOOL_ICONS: every one is drawn). */
-export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON, radio: RADIO_ICON };
+export const TOOL_DRAWINGS: Readonly<Record<ToolIcon, string>> = { map: MAP_ICON, radio: RADIO_ICON, cutters: CUTTERS_ICON, waders: WADERS_ICON };
 
 /**
  * The drawing for an item: its own, or its slot's in its color for gear, a tool's by its icon (a paper map

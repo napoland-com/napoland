@@ -5,7 +5,7 @@
  * set home makes the bar bigger. World rules first, then over real WebSockets.
  */
 import { describe, expect, it } from 'vitest';
-import { NOTE_XP, TileMap, keepsakeFindId, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather } from '@napoland/shared';
+import { NOTE_XP, SLUMP_S, TileMap, keepsakeFindId, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather } from '@napoland/shared';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { World, colorFor, type Outgoing, type WorldOptions } from '../src/world';
 import { houseData, townData, woodsData } from './fixtures';
@@ -172,18 +172,22 @@ describe('keepsakes', () => {
 
   it('never fall into a pile: collapsing, you lose it to where it lay, and find it there again', () => {
     const w = world('overcast', {}, rec('a', 'woods', 5, 5, 'down', { energy: 0.01, bag: [{ item: 'compass', count: 1 }, { item: 'moss', count: 1 }] }));
+    // Down first (rescue.ts), and nobody comes.
+    const window = SLUMP_S * 1000;
     w.tick(10_000);
+    w.tick(10_000 + window);
     w.drain();
     expect(w.takeWrites().drops[0]?.drop?.items).toEqual([{ item: 'moss', count: 1 }]);
     expect(w.get('a')!.bag).toEqual([]);
     // Nothing else in the bag: no pile at all.
     const alone = world('overcast', {}, rec('b', 'woods', 5, 5, 'down', { energy: 0.01, bag: [{ item: 'compass', count: 1 }] }));
     alone.tick(10_000);
+    alone.tick(10_000 + window);
     alone.drain();
     expect(alone.takeWrites().drops).toEqual([]);
     // Back in the woods, it lies where it did.
     const back = world('overcast');
-    expect(back.join({ ...w.get('a')!, map: 'woods', x: 5, y: 5 }, 20_000).finds).toEqual([COMPASS]);
+    expect(back.join({ ...w.get('a')!, map: 'woods', x: 5, y: 5 }, 20_000 + window).finds).toEqual([COMPASS]);
   });
 
   it('go back where they lay when thrown away, and never into a crate', () => {

@@ -12,7 +12,10 @@
  * shares them, and the Old Stone is the whole world's. Which copy an exit leads into is decided in one
  * place (copyFor). Everyone online has energy, which drains in the wilds,
  * holds in town and inside buildings, and only comes back next to a burning fire (the rules and
- * numbers are in shared/energy.ts). At zero a player collapses and wakes up at home.
+ * numbers are in shared/energy.ts). At zero out in the wilds a player slumps where they stand for a
+ * while (shared/rescue.ts): everyone on the map hears where they are down, by landmark, and anyone who
+ * reaches them can give them some of their own energy to get them up; nobody comes, and they collapse
+ * and wake up at home.
  *
  * Out there more wears you down (energy.ts): a heavy bag, rain soaking you, a surge sweeping the
  * region (its clock is the wall clock's, sky.ts), a storm blowing over it (a clock like a surge's), a
@@ -39,7 +42,9 @@
  * half of it); it goes on and comes off at the chest, and anywhere from and into the bag. The bag
  * you wear changes only at the chest. Over it all, a player signed in may wear an outfit (outfits.ts),
  * which changes how they look and nothing else; past level 20, merits buy a pattern for their jacket and
- * a badge for their name tag (merits.ts), looks too.
+ * a badge for their name tag (merits.ts), looks too; and the shop sells looks of each kind that can never
+ * be earned (shop.ts), which are theirs once Stripe says they are paid (shop.ts, on the server: the World
+ * only hears which looks a player bought, and checks what is asked of the shop).
  *
  * At home, a chest is each player's stash: what they put in earns XP (once: what they took out and bring
  * back earns nothing again), and XP brings levels, each a bigger energy bar (progress.ts). Time away fills
@@ -115,6 +120,9 @@ import {
   STARTER_TOOLS,
   DROP_LIFETIME_MS,
   ENERGY_SYNC_MS,
+  RESCUE_ENERGY,
+  SLUMP_FLARE_S,
+  SLUMP_S,
   STATS,
   STEP_STATS,
   STEP_MS,
@@ -145,10 +153,18 @@ import {
   addToBag,
   amount,
   bagLoad,
+  bagShort,
   bagSlotsOf,
+  bundleWorth, bundlesIn, cleanMeals, isMeal, mealMods, payBag, sinceRain, whyNotEat,
   cacheTakes,
   calendarDay,
+  carrierShare,
+  copyBundle,
+  SLAB_PAIR_MS,
+  slabGlows,
+  surgeRound,
   canMake,
+  canRescue,
   cleanIds,
   cleanNotebook,
   cleanRested,
@@ -211,6 +227,7 @@ import {
   inTheDark,
   emptyStash,
   itemIndex,
+  landmarkOf,
   levelOf,
   liveEnds,
   liveXp,
@@ -220,9 +237,15 @@ import {
   markLifetime,
   maxEnergy,
   merge,
+  owedOf,
+  packPile,
   mayWear,
   mayWearLook,
+  mayWearShopLook,
   meritLookOf,
+  NO_SHOP,
+  shopLookOf,
+  whyNotCheckout,
   meritsLeft,
   modsOf,
   nextParcel,
@@ -276,6 +299,7 @@ import {
   type Arrival,
   type BagSlot,
   type BodyView,
+  type Bundle,
   type CacheItemView,
   type Calendar,
   type ConditionsData,
@@ -321,10 +345,13 @@ import {
   type PlayerView,
   type ProgressView,
   type Recipe,
+  type ReturnedView,
   type Refusal,
   type Resist,
   type Season,
   type SeasonView,
+  type ShopData,
+  type ShopKind,
   type Stash,
   type ServerMsg,
   type Stats,
@@ -348,11 +375,13 @@ import {
   type Weather,
 } from '@napoland/shared';
 import { FIRE_LOW_S, FIRE_MAX_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, StoneRecord, ThanksRecord } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, ReturnRecord, StoneRecord, ThanksRecord } from './storage';
 
 // How often creatures step is their region's (map.ts, watcherStepMs, skulkerStepMs); these are the paces a rule leaves out.
 export { AURORA_WATCHER_STEP_MS, MARK_LIFETIME_MS, SKULKER_STEP_MS, WATCHER_STEP_MS, faces };
 
+/** How often the things carried back to the lodge are looked at, to forget the old ones (they are few, and in no hurry). */
+const RETURNS_LOOK_MS = 60_000;
 /** A step may start this much early: messages sent at a steady pace arrive bunched up. */
 export const STEP_TOLERANCE_MS = 40;
 /** Early steps wait here, in order; one more than this is rejected. */
@@ -518,6 +547,8 @@ export interface Joined extends Scene {
   restedAway: number;
   /** What they spent of their merits, and the looks they bought (those this release has). */
   merits: MeritsView;
+  /** The looks they bought in the shop, paid and not refunded (those the catalog has). */
+  shop: string[];
   /** Every tool the player owns, in the order they got them (toolsOf): the starter tools until they got one of their own. */
   tools: string[];
   story: StoryView;
@@ -561,6 +592,8 @@ export interface Writes {
   caches: Array<{ id: number; item: CacheItemRecord | undefined }>;
   /** First finders since (firsts.ts): each kept once, for good. */
   firsts: FirstRecord[];
+  /** Things carried back to the lodge, or told since (lostfound.ts), as they are now. */
+  returns: ReturnRecord[];
   /** The Long Night, if it changed: it began, the lodge's fire was fed or went out, or dawn came. */
   longNight?: LongNightRecord;
 }
@@ -590,6 +623,8 @@ export interface WorldOptions {
   firsts?: FirstRecord[];
   /** Who lives where: every player's lot on a street, as saved (online or not). */
   lots?: LotRecord[];
+  /** What was carried back to the lodge and is not in its owner's chest yet, or came back in the last THANKS_KEPT_DAYS. */
+  returns?: ReturnRecord[];
   /** The Old Stone as it was saved. */
   stone?: StoneRecord | null;
   /** The Long Night as it was saved (storage.ts, cleanLongNight). */
@@ -614,6 +649,8 @@ export interface WorldOptions {
   calendar?: Calendar;
   /** Development only (XP_MULTIPLIER): stashing earns this many times the XP, to play-test the levels without the trips. 1 unless set. */
   xpTimes?: number;
+  /** What the shop sells (content/shop.json, checked with validateShop): the looks a player may have bought. None if unset. */
+  shop?: ShopData;
   /** Development only (RESTED_EVERY_MS): the time away that fills one XP of rest, to play-test it without the days away. RESTED_EVERY_MS unless set. */
   restedEveryMs?: number;
   /** How many make a crowd (TOWN_CROWD and REGION_CROWD unless set): tests, and play-tests with a few tabs (TOWN_CROWD, REGION_CROWD), set fewer. */
@@ -724,6 +761,11 @@ interface Online {
   heardCozy: boolean;
   /** When they last collapsed: a chase they were in then was no chase they got out of. */
   fellAt?: number;
+  /**
+   * Down out in the wilds, out of energy (rescue.ts): since when (game time), when they collapse unless
+   * someone gets them up, and whether a flare burning by them gave them the longer window.
+   */
+  slump?: { from: number; until: number; flare: boolean };
   /** Their afterglow (a quirk, gear.ts) lasts until then (game time): they glow faintly, and watchers keep off them. */
   afterglowUntil?: number;
   /** When they last knocked at a door (game time): once in KNOCK_EVERY_MS. */
@@ -739,6 +781,8 @@ interface Online {
    * then no neighbor's door lets them in, so a block keeps them out from their first step.
    */
   known: boolean;
+  /** What opens the tiles that open only for some (TileMap.walkable): the tools they own. Made again whenever they get one. */
+  pass: Set<string>;
 }
 
 /** What a cabin shows a neighbor who walks in (visits): the furniture made, and what the trophy shelf shows (item ids). */
@@ -793,6 +837,8 @@ interface Rule {
   respawn: [number, number];
   /** Only then; and whether it is now. Rules without `when` are always open. */
   when?: FindWhen;
+  /** What grows in the rain grows this many seconds more after it stops. */
+  after?: number;
   /** Only while this condition is on (sky.ts). */
   condition?: string;
   /** Only in this season (sky.ts). */
@@ -892,10 +938,10 @@ interface Flare {
 }
 
 const quirksOf = (w: Worn | undefined): Quirk[] => SLOTS.flatMap(s => (w?.[s]?.quirk ? [w[s]!.quirk!] : []));
-const view = (r: PlayerRecord, live = false, guest = false, afterglow = 0): PlayerView => ({
+const view = (r: PlayerRecord, live = false, guest = false, afterglow = 0, down = false): PlayerView => ({
   id: r.id, name: r.name, x: r.x, y: r.y, dir: r.dir, color: r.color, gear: { ...r.gear }, quirks: quirksOf(r.worn), ...(live ? { live: true as const } : {}),
   ...(guest ? { guest: true as const } : {}), ...(r.outfit ? { outfit: r.outfit } : {}), ...(r.pattern ? { pattern: r.pattern } : {}), ...(r.badge ? { badge: r.badge } : {}),
-  ...(afterglow > 0 ? { afterglow } : {}),
+  ...(afterglow > 0 ? { afterglow } : {}), ...(down ? { down: true as const } : {}),
 });
 const mapRef = (m: TileMap): MapRef => ({ id: m.data.id, version: m.data.version });
 const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
@@ -905,13 +951,14 @@ const energyView = (p: Online): EnergyView => ({ value: round(p.rec.energy, 1), 
 const copyWorn = (w: Worn | undefined): Worn => Object.fromEntries(Object.entries(w ?? {}).map(([s, p]) => [s, { ...p, cond: round(p.cond, 3) }]));
 /**
  * The player's body as they hear it, `wall` ms since the epoch: with how long they stay cozy, how long they
- * stood by their own fire, and the effects working on them.
+ * stood by their own fire, the effects working on them, and the meals in them.
  */
 const bodyView = (p: Online, wall: number, by: boolean, effects: EffectView[]): BodyView => {
   const cozy = (p.rec.cozy ?? 0) - wall;
   return {
     wet: round(p.rec.wet ?? 0, 3), wetRate: round(p.wetRate, 5), load: p.load, hitched: p.hitched, worn: copyWorn(p.rec.worn),
     ...(cozy > 0 ? { cozy: round(cozy / 1000, 1) } : {}), ...(by ? { fireside: round(p.fireside, 1) } : {}), ...(effects.length ? { effects } : {}),
+    ...(p.rec.meals?.length ? { meals: [...p.rec.meals] } : {}),
   };
 };
 /**
@@ -946,24 +993,42 @@ function tilesOf<T>(index: Map<string, Map<number, T>>, key: string): Map<number
   if (!tiles) index.set(key, (tiles = new Map()));
   return tiles;
 }
+/** Who opened a slab (by map, whatever copy of it, and tile), for the once-each rule: the map first, so a map's are forgotten together. */
+const slabKey = (id: string, map: TileMap, o: { x: number; y: number }) => `${map.data.id} ${o.x},${o.y} ${id}`;
 const creatureView = (w: Watcher): CreatureView => ({ id: w.id, kind: w.kind, x: w.x, y: w.y, dir: w.dir, ...(w.chasing !== undefined && { chasing: w.chasing }) });
 const copyBag = (bag: readonly BagSlot[]): BagSlot[] =>
-  bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}), ...(s.piece ? { piece: { ...s.piece } } : {}) }));
-/** The bag as its owner hears it: a live item's `since` (the server's wall clock) as its age in seconds, and each carried piece of gear as it is. */
+  bag.map(s => ({ item: s.item, count: s.count, ...(s.since !== undefined ? { since: s.since } : {}), ...(s.piece ? { piece: { ...s.piece } } : {}), ...(s.bundle ? { bundle: copyBundle(s.bundle) } : {}) }));
+/**
+ * The bag as its owner hears it: a live item's `since` (the server's wall clock) as its age in seconds, each
+ * carried piece of gear as it is, and a bundle's owner, where it was lost and what it holds (for its weight),
+ * but not what its owner owed their stash: that is the server's.
+ */
 const bagView = (bag: readonly BagSlot[], wall: number): BagSlot[] =>
   bag.map(s => ({
     item: s.item, count: s.count, ...(s.since !== undefined ? { age: round(Math.max(0, wall - s.since) / 1000, 1) } : {}), ...(s.piece ? { piece: { ...s.piece, cond: round(s.piece.cond, 3) } } : {}),
+    ...(s.bundle ? { bundle: bundleView(s.bundle) } : {}),
   }));
+/** A bundle as its carrier hears it: whose, where it was lost, and what it holds; never what was owed. */
+const bundleView = (b: Bundle): Bundle => {
+  const { owed: _owed, ...seen } = copyBundle(b);
+  return seen;
+};
+/** A saved bundle as the server writes them: whose, where it was lost, what it holds; anything else is no bundle. */
+const isBundle = (b: unknown): b is Bundle => {
+  const o = (typeof b === 'object' && b !== null ? b : {}) as Partial<Bundle>;
+  return typeof o.id === 'string' && typeof o.owner === 'string' && typeof o.name === 'string' && typeof o.map === 'string' && Number.isInteger(o.x) && Number.isInteger(o.y)
+    && Array.isArray(o.items) && o.items.every(isSlot) && (o.owed === undefined || (typeof o.owed === 'object' && o.owed !== null));
+};
 const copyStash = (s: Stash): Stash => ({
   items: { ...s.items }, out: { ...s.out }, ...(s.pieces ? { pieces: Object.fromEntries(Object.entries(s.pieces).map(([id, l]) => [id, l.map(p => ({ ...p }))])) } : {}),
 });
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), ...(r.kept ? { kept: { bag: structuredClone(r.kept.bag) } } : {}), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
-  ...(r.looks ? { looks: [...r.looks] } : {}),
+  ...(r.looks ? { looks: [...r.looks] } : {}), ...(r.shop ? { shop: [...r.shop] } : {}),
   ...(r.notebook ? { notebook: { pages: [...r.notebook.pages], blanks: [...r.notebook.blanks] } } : {}),
   ...(r.notes ? { notes: [...r.notes] } : {}), ...(r.keepsakes ? { keepsakes: [...r.keepsakes] } : {}),
-  ...(r.furniture ? { furniture: [...r.furniture] } : {}),
+  ...(r.furniture ? { furniture: [...r.furniture] } : {}), ...(r.meals ? { meals: [...r.meals] } : {}),
 });
 /** A first finder as everyone sees them: the secret, their name, the Zone's day. */
 const firstView = (f: FirstRecord): FirstView => ({ secret: f.secret, name: f.name, day: f.day });
@@ -1104,6 +1169,8 @@ export class World {
   private readonly guests: boolean;
   /** Stashing earns this many times an item's XP: 1, but for play-tests (WorldOptions.xpTimes). */
   private readonly xpTimes: number;
+  /** The looks the shop sells (shop.ts), whether it is open or not: whoever bought one wears it. */
+  private readonly shop: ShopData;
   /** The time away that fills one XP of rest (WorldOptions.restedEveryMs). */
   private readonly restedEvery: number | undefined;
   private readonly onCollapse: WorldOptions['onCollapse'];
@@ -1112,6 +1179,13 @@ export class World {
   private readonly itemOrder: ItemDef[];
   /** What the workbench makes, by recipe id. */
   private readonly recipes: Map<string, Recipe>;
+  /** What cooks at a fire (meals.ts), by recipe id. */
+  private readonly cooking: Map<string, Recipe>;
+  /**
+   * When the rain last fell over each map with something that grows in the rain (game time), by the map's
+   * own sky (a region's rain windows): it grows a while after (a rule's `after`).
+   */
+  private readonly rainedAt = new Map<string, number>();
   /** How gear wears out, and what mending and upgrading it cost (content/items.json). */
   private readonly wearTimes: ItemsData['wear'];
   private readonly mendCosts: ItemsData['mend'];
@@ -1215,6 +1289,23 @@ export class World {
   /** The first finder of each secret found so far, by its key (firsts.ts), and those to write. */
   private readonly firsts = new Map<string, FirstRecord>();
   private firstWrites: FirstRecord[] = [];
+  /**
+   * What was carried back to the lodge (lostfound.ts), by id: until it is in its owner's chest and they
+   * were told, and THANKS_KEPT_DAYS after it came back. The bundles that came back, so none comes back twice.
+   */
+  private readonly returns = new Map<number, ReturnRecord>();
+  private readonly returnedBundles = new Set<string>();
+  private readonly returnWrites = new Map<number, ReturnRecord>();
+  /** The last id handed out: ids go up in the order things come back, restart or not. */
+  private lastReturnId = 0;
+  /** The game time the old ones are next looked at: they go at their own pace, no tick needs to. */
+  private returnsForgetAt = 0;
+  /**
+   * Hands put to a slab (slab.ts) that nobody joined yet, by the slab's zone and tile: whose, and when
+   * (game time). And who opened which slab in which restless phase (slabKey: once each), in memory.
+   */
+  private readonly slabPresses = new Map<string, { id: string; at: number }>();
+  private readonly slabOpened = new Map<string, number>();
   /** The game time of the last tick: what everyone sees of an afterglow is counted from it. */
   private tickAt = 0;
   /** The walks kept for glimpses, by map id, oldest first: GLIMPSES_PER_MAP at most, a day at most, in memory only. */
@@ -1291,6 +1382,7 @@ export class World {
     this.cycle = options.cycle ?? false;
     this.guests = options.guests ?? false;
     this.xpTimes = options.xpTimes ?? 1;
+    this.shop = options.shop ?? NO_SHOP;
     this.restedEvery = options.restedEveryMs;
     this.glimpseEvery = Number.isFinite(options.glimpseEveryMs) && options.glimpseEveryMs! > 0 ? options.glimpseEveryMs : undefined;
     this.stepMs = options.stepMs ?? STEP_MS;
@@ -1310,6 +1402,7 @@ export class World {
     this.items = itemIndex(items);
     this.itemOrder = items.items;
     this.recipes = new Map((items.recipes ?? []).map(rc => [rc.id, rc]));
+    this.cooking = new Map((items.cooking ?? []).map(rc => [rc.id, rc]));
     this.wearTimes = items.wear;
     this.mendCosts = items.mend;
     this.upgrades = items.upgrades;
@@ -1336,7 +1429,8 @@ export class World {
       const tiles = findTiles(map, f).map(t => t.y * map.width + t.x);
       // Finds that only grow at certain times wait for the first tick to tell whether it is one; a season's grow in it from the start.
       this.rules.push({
-        item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, condition: f.condition, season: f.season, open: !f.when && !f.condition && (!f.season || f.season === this.season),
+        item, map, tiles, count: f.count, respawn: f.respawn, when: f.when, after: f.after, condition: f.condition, season: f.season,
+        open: !f.when && !f.condition && (!f.season || f.season === this.season),
       });
     }
     // The piles first: finds never grow on a tile that has one.
@@ -1349,6 +1443,11 @@ export class World {
     }
     for (const m of this.maps.values()) this.cratesIn(m, '');
     for (const c of options.cacheItems ?? []) this.restoreCacheItem(c);
+    for (const r of options.returns ?? []) {
+      this.returns.set(r.id, { ...r, items: copyBag(r.items) });
+      this.returnedBundles.add(r.bundle);
+      this.lastReturnId = Math.max(this.lastReturnId, r.id);
+    }
     this.notesById = notesOf([...this.maps.values()].map(m => m.data));
     for (const f of options.firsts ?? []) if (!this.firsts.has(f.secret)) this.firsts.set(f.secret, { ...f });
     // Who lives where: a lot saved twice (it should not happen) is the first one's; the other is given a new one when they next come home.
@@ -1446,7 +1545,7 @@ export class World {
   /** A player as everyone sees them (an afterglow's seconds left as of the last tick). */
   private viewOf(p: Online): PlayerView {
     const glow = p.afterglowUntil === undefined ? 0 : round(Math.max(0, p.afterglowUntil - this.tickAt) / 1000, 1);
-    return view(p.rec, p.live > 0, this.guest(p.rec), glow);
+    return view(p.rec, p.live > 0, this.guest(p.rec), glow, !!p.slump);
   }
 
   /** Nobody signed in with this character, on a server with sign-in: no friends and no outfits until someone does. */
@@ -1515,6 +1614,8 @@ export class World {
       // Merits spent stay spent, and every look bought stays theirs, a newer release's too (a list of ids, as the tools are).
       meritsSpent: Number.isInteger(rec.meritsSpent) && rec.meritsSpent! > 0 ? rec.meritsSpent : 0,
       looks: cleanTools(rec.looks) ?? [],
+      // What they bought in the shop, as the purchases say: a look the catalog no longer has stays theirs, unshown.
+      shop: cleanTools(rec.shop) ?? [],
       ...(rec.parcels !== undefined ? { parcels: cleanParcels(rec.parcels) } : {}),
       // Pages and blanks a newer notebook wrote stay too: the client shows the ones it knows.
       ...(rec.notebook !== undefined ? { notebook: cleanNotebook(rec.notebook) } : {}),
@@ -1527,6 +1628,10 @@ export class World {
     const furniture = cleanFurniture(rec.furniture);
     if (furniture) r.furniture = furniture;
     else delete r.furniture;
+    // A meal eaten lasts the trip: across a reconnect, or a restart, until they come home.
+    const meals = cleanMeals(rec.meals, this.items);
+    if (meals.length) r.meals = meals;
+    else delete r.meals;
     // Where their cabin stands is what the World keeps of it (it may have been given to someone else meanwhile, or never saved).
     this.recordLot(r);
     if (r.doorOff !== true) delete r.doorOff;
@@ -1540,7 +1645,9 @@ export class World {
     if (!(Number.isFinite(r.cozy) && r.cozy! > now + this.epochOffset)) delete r.cozy;
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
     // saved tile may be inside something new or part of an exit now (start at that map's spawn). Never
-    // start inside a wall, or on an exit that would move you the moment you step.
+    // start inside a wall, or on an exit that would move you the moment you step. Whoever left while
+    // wading the culvert comes back in it: what they own opens it for them as it did.
+    const pass = new Set(toolsOf(r.tools, this.items));
     let map = this.maps.get(r.map), copy: string;
     if (!map) {
       ({ map, x: r.x, y: r.y, dir: r.dir } = this.wakeUp);
@@ -1552,8 +1659,8 @@ export class World {
       copy = this.copyFor(r, map);
     } else {
       // Saved on ice that has thawed since: ashore, where they would have stepped.
-      if (!map.walkable(r.x, r.y) && map.iceAt(r.x, r.y)) Object.assign(r, ashore(map, r.x, r.y));
-      if (!map.walkable(r.x, r.y) || map.exitAt(r.x, r.y)) toSpawn(r, map);
+      if (!map.walkable(r.x, r.y, pass) && map.iceAt(r.x, r.y)) Object.assign(r, ashore(map, r.x, r.y));
+      if (!map.walkable(r.x, r.y, pass) || map.exitAt(r.x, r.y)) toSpawn(r, map);
       copy = this.rejoin(r, map);
     }
     const zone = this.zoneFor(map, copy, now);
@@ -1572,18 +1679,23 @@ export class World {
       r.stash = { ...stash, out };
       r.wornOut = true;
     }
-    // An outfit shows only while they may wear it (signed in, the level reached). One they may not (it
-    // is from a newer release, or they play as a guest now) shows as none, and stays saved for when they may.
-    if (r.outfit && !mayWear(r.outfit, levelOf(r.xp ?? 0), !this.guest(r))) delete r.outfit;
+    // An outfit shows only while they may wear it (signed in, the level reached, or bought in the shop). One
+    // they may not (it is from a newer release, refunded, or they play as a guest now) shows as none, and
+    // stays saved for when they may.
+    if (r.outfit && !this.mayWearAs(r, r.outfit, 'outfit')) delete r.outfit;
     // A pattern and a badge likewise: only one of theirs, only signed in.
-    for (const kind of ['pattern', 'badge'] as const) if (r[kind] && !mayWearLook(r[kind], kind, r.looks!, !this.guest(r))) delete r[kind];
+    for (const kind of ['pattern', 'badge'] as const) if (r[kind] && !this.mayWearAs(r, r[kind], kind)) delete r[kind];
+    // What was carried back to the lodge for them while they were away is in the chest now (lostfound.ts); the letter says who.
+    r.returned = Number.isInteger(r.returned) && r.returned! > 0 ? r.returned : 0;
+    // Saved at once: the chest and `returned` land together.
+    if (this.takeReturns(r)) this.saveNow.set(r.id, r);
     r.energy = Number.isFinite(r.energy) ? Math.min(this.maxOf(r), Math.max(0, r.energy)) : this.maxOf(r);
     r.wet = Number.isFinite(r.wet) ? clamp01(r.wet!) : 0;
     const readyAt = this.resting.get(r.id) ?? -Infinity;
     this.resting.delete(r.id);
     const p: Online = {
       rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
-      hitchAt: now, unease: 0, uneaseAt: now, uneaseLevel: 0, trail: [], walked: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
+      hitchAt: now, unease: 0, uneaseAt: now, uneaseLevel: 0, trail: [], walked: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null, pass,
       fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity, doorAt: -Infinity, visitsAt: -Infinity,
       known: false,
     };
@@ -1605,7 +1717,7 @@ export class World {
       bag: bagView(r.bag, now + this.epochOffset),
       stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), season: this.seasonNow(now),
       longNight: this.longNightView(now), stats: { ...r.stats },
-      progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), tools: toolsOf(r.tools, this.items),
+      progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), shop: this.shopOwned(r), tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
       thanked: [...this.thanks.values()].filter(t => t.giver === r.id && t.day === today).map(t => t.helper),
@@ -1667,6 +1779,8 @@ export class World {
   step(id: string, dir: Dir, seq: number, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
+    // Down, nobody walks: the client stands where the server has them.
+    if (p.slump) return this.reject(p, seq);
     this.runQueue(p, now);
     if (p.queue.length === 0 && this.ready(p, now)) this.move(p, dir, seq, now);
     else if (p.queue.length < STEP_QUEUE_MAX) p.queue.push({ dir, seq });
@@ -1676,7 +1790,7 @@ export class World {
   /** Turn in place. Only a real change is worth telling the others about. */
   face(id: string, dir: Dir): void {
     const p = this.players.get(id);
-    if (!p || p.rec.dir === dir) return;
+    if (!p || p.rec.dir === dir || p.slump) return;
     p.rec.dir = dir;
     this.toZone(p.zone.key, { t: 'face', id, dir }, id);
   }
@@ -1691,11 +1805,8 @@ export class World {
     if (!p) return;
     // Steps whose time has come first: the player reaches from where they really are.
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      // Out of energy before reaching for it: the player collapses, far away from it now.
-      this.collapse(p, now);
-      return this.refuse(p, 'pick', 'too_far');
-    }
+    // Out of energy before reaching for it: down where they stand, or collapsed and far away from it now.
+    if (this.spent(p, now)) return this.refuse(p, 'pick', p.slump ? 'down' : 'too_far');
     if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return this.refuse(p, 'pick', 'too_far');
     const pile = this.pileAt(p.zone, x, y, id);
     if (pile) return this.pickPile(p, pile, now);
@@ -1714,16 +1825,14 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      // Too late: the player collapses, and the bag falls out.
-      this.collapse(p, now);
-      return this.refuse(p, 'use', 'empty_slot');
-    }
+    // Too late: down, or collapsed and the bag fell out.
+    if (this.spent(p, now)) return this.refuse(p, 'use', p.slump ? 'down' : 'empty_slot');
     const s = p.rec.bag[slot];
     if (!s) return this.refuse(p, 'use', 'empty_slot');
     const def = this.items.get(s.item);
     const use = def?.use;
     if (!def || !use) return this.refuse(p, 'use', 'not_usable');
+    if (isMeal(def)) return this.eat(p, slot, def, now);
     const { x, y } = p.rec;
     // Everything that can fail is checked before the item is spent.
     if (use.mark && (p.map.data.kind === 'inside' || p.map.exitAt(x, y))) return this.refuse(p, 'use', 'not_here');
@@ -1780,20 +1889,86 @@ export class World {
       this.note(p, { find: into.item });
     }
     // Something that takes energy could empty the bar.
-    if (p.rec.energy <= 0) this.collapse(p, now);
+    if (p.rec.energy <= 0) this.exhausted(p, now);
+  }
+
+  /**
+   * Eats (or drinks) the meal in bag slot `slot` (meals.ts): it works until the player comes home into their
+   * cabin, or collapses. Two at a time, never the same one twice; saved at once, as it outlasts a reconnect.
+   * A meal that adds to the bar fills it by as much as it adds: a bigger bar left as full would look emptier.
+   */
+  private eat(p: Online, slot: number, def: ItemDef, now: number): void {
+    const why = whyNotEat(def.id, p.rec.meals ?? []);
+    if (why) return this.refuse(p, 'use', why);
+    p.rec.bag = takeFromBag(p.rec.bag, slot, 1);
+    p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), def.id, 1);
+    p.rec.meals = [...(p.rec.meals ?? []), def.id];
+    this.saveNow.set(p.rec.id, p.rec);
+    const before = p.rec.energy;
+    this.refresh(p, now);
+    p.rec.energy = Math.min(p.max, p.rec.energy + Math.max(0, def.eaten?.energy ?? 0));
+    this.tell(p, now);
+    this.sendBag(p, now);
+    const gave = Math.round(p.rec.energy - before);
+    this.saw(p, 'ate');
+    this.did(p, { kind: 'ate', item: def.id, ...(gave > 0 ? { energy: gave } : {}) });
+  }
+
+  /**
+   * The meals the player ate this trip are over: they came home into their cabin (or collapsed, fall). The
+   * bar shrinks back by what they added, and what it held over that is gone; they hear their bar and body
+   * without them.
+   */
+  private endMeals(p: Online, now: number): void {
+    if (!p.rec.meals) return;
+    delete p.rec.meals;
+    this.saveNow.set(p.rec.id, p.rec);
+    this.refresh(p, now);
+    p.rec.energy = Math.min(p.rec.energy, p.max);
+    this.tell(p, now);
+  }
+
+  /**
+   * Cooks recipe `recipeId` (meals.ts) at the fire on tile x,y next to the player (diagonals too, as it
+   * warms them), while it burns: tended (at home, in town, the shelters kept going) or with fuel left, never
+   * a dead one. What it needs comes out of the bag, and the meal goes into it, if there is room once they are out.
+   */
+  cook(id: string, x: number, y: number, recipeId: string, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.advance(p, now) <= 0) {
+      this.collapse(p, now);
+      return this.refuse(p, 'cook', 'too_far');
+    }
+    if (Math.max(Math.abs(x - p.rec.x), Math.abs(y - p.rec.y)) > 1) return this.refuse(p, 'cook', 'too_far');
+    const fires = p.zone.fires, fire = fires.at(x, y);
+    if (!fire) return this.refuse(p, 'cook', 'gone');
+    if (fires.heat(fire, now) <= 0) return this.refuse(p, 'cook', 'fire_out');
+    const recipe = this.cooking.get(recipeId), meal = recipe && this.items.get(recipe.make);
+    if (!recipe || !meal) return this.refuse(p, 'cook', 'gone');
+    if (bagShort(recipe, p.rec.bag).length) return this.refuse(p, 'cook', 'missing');
+    const count = recipe.count ?? 1;
+    const r = addToBag(payBag(p.rec.bag, recipe.needs), meal, count, p.slots);
+    if (r.left) return this.refuse(p, 'cook', 'bag_full');
+    p.rec.bag = r.bag;
+    // Cooked, what went in never goes back: taken out of the stash, it no longer counts as out.
+    for (const n of recipe.needs) p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), n.item, n.count);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    this.did(p, { kind: 'cooked', item: meal.id, count });
   }
 
   /** Throws away `count` of what is in bag slot `slot`, or all of it. */
   discard(id: string, slot: number, now: number, count = Infinity): void {
     const p = this.players.get(id);
     if (!p) return;
-    if (this.advance(p, now) <= 0) {
-      // Too late: the player collapses, and the bag falls out.
-      this.collapse(p, now);
-      return this.refuse(p, 'discard', 'empty_slot');
-    }
+    // Too late: down, or collapsed and the bag fell out.
+    if (this.spent(p, now)) return this.refuse(p, 'discard', p.slump ? 'down' : 'empty_slot');
     const thrown = p.rec.bag[slot];
     if (!thrown) return this.refuse(p, 'discard', 'empty_slot');
+    // Someone else's things are theirs to lose, not the carrier's to throw away (lostfound.ts).
+    if (thrown.bundle) return this.refuse(p, 'discard', 'not_yours');
     const n = Math.min(thrown.count, Math.max(1, Math.floor(count)));
     p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), thrown.item, n);
     p.rec.bag = takeFromBag(p.rec.bag, slot, n);
@@ -1814,10 +1989,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'feed', 'too_far');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'feed', p.slump ? 'down' : 'too_far');
     if (Math.max(Math.abs(x - p.rec.x), Math.abs(y - p.rec.y)) > 1) return this.refuse(p, 'feed', 'too_far');
     const s = p.rec.bag[slot];
     if (!s) return this.refuse(p, 'feed', 'empty_slot');
@@ -1922,14 +2094,17 @@ export class World {
     this.advance(p, now);
     const why = this.chestRefusal(p, x, y);
     if (why) return this.refuse(p, 'store', why);
-    const all = slot === undefined ? p.rec.bag : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
+    // Someone else's things go to the lodge, never into the carrier's chest (lostfound.ts): all of the bag
+    // but them, or a bundle's slot refused.
+    if (slot !== undefined && p.rec.bag[slot]?.bundle) return this.refuse(p, 'store', 'not_yours');
+    const all = slot === undefined ? p.rec.bag.filter(s => !s.bundle) : p.rec.bag[slot] ? [p.rec.bag[slot]!] : [];
     if (!all.length) return this.refuse(p, 'store', 'empty_slot');
     const setBefore = keepsakeEnergy(this.keepsakes, p.rec.keepsakes);
     const { came, ...r } = this.stashing(p, all, now);
     if (came.length) p.rec.keepsakes = [...(p.rec.keepsakes ?? []), ...came];
     // Carried gear goes in as it is, piece by piece; fitPieces keeps the stash's pieces and its counts one.
     p.rec.stash = fitPieces(r.stash, this.items, this.rng);
-    p.rec.bag = slot === undefined ? [] : takeFromBag(p.rec.bag, slot);
+    p.rec.bag = slot === undefined ? p.rec.bag.filter(s => s.bundle) : takeFromBag(p.rec.bag, slot);
     const before = levelOf(p.rec.xp ?? 0);
     this.saveNow.set(id, p.rec);
     this.sendBag(p, now);
@@ -2005,10 +2180,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'wear', 'empty_slot');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'wear', p.slump ? 'down' : 'empty_slot');
     const s = p.rec.bag[slot], def = s && this.items.get(s.item);
     if (!s || !def) return this.refuse(p, 'wear', 'empty_slot');
     if (def.kind !== 'gear' || !def.slot) return this.refuse(p, 'wear', 'not_gear');
@@ -2029,10 +2201,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'doff', 'empty_slot');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'doff', p.slump ? 'down' : 'empty_slot');
     if (slot === 'bag') return this.refuse(p, 'doff', 'keep_bag');
     const gear = { ...p.rec.gear }, worn = { ...p.rec.worn }, old = gear[slot];
     if (!old) return this.refuse(p, 'doff', 'empty_slot');
@@ -2058,13 +2227,17 @@ export class World {
     const why = this.chestRefusal(p, x, y);
     if (why) return this.refuse(p, 'outfit', why);
     const def = outfit === null ? undefined : outfitOf(outfit);
-    if (outfit !== null && !def) return this.refuse(p, 'outfit', 'gone');
+    // An outfit the shop sells is worn once it is bought, at any level.
+    const sold = outfit === null || def ? undefined : shopLookOf(this.shop, outfit, 'outfit');
+    if (outfit !== null && !def && !sold) return this.refuse(p, 'outfit', 'gone');
     if (def && !mayWear(def, levelOf(p.rec.xp ?? 0), true)) return this.refuse(p, 'outfit', 'locked');
+    if (sold && !(p.rec.shop ?? []).includes(sold.id)) return this.refuse(p, 'outfit', 'not_owned');
     if ((p.rec.outfit ?? null) === outfit) return;
     // Taken off is null, not left out: a save without an outfit keeps the one saved.
-    p.rec.outfit = def ? def.id : null;
+    const wears = def?.id ?? sold?.id ?? null;
+    p.rec.outfit = wears;
     this.saveNow.set(id, p.rec);
-    this.toZone(p.zone.key, { t: 'outfit', id, outfit: def?.id ?? null });
+    this.toZone(p.zone.key, { t: 'outfit', id, outfit: wears });
   }
 
   /**
@@ -2115,9 +2288,12 @@ export class World {
     const why = this.chestRefusal(p, x, y);
     if (why) return this.refuse(p, kind, why);
     const look = lookId === null ? undefined : meritLookOf(lookId, kind);
-    if (lookId !== null && !look) return this.refuse(p, kind, 'gone');
+    // Or one of the shop's, bought.
+    const sold = lookId === null || look ? undefined : shopLookOf(this.shop, lookId, kind);
+    if (lookId !== null && !look && !sold) return this.refuse(p, kind, 'gone');
     if (look && !(p.rec.looks ?? []).includes(look.id)) return this.refuse(p, kind, 'not_owned');
-    const wears = look?.id ?? null;
+    if (sold && !(p.rec.shop ?? []).includes(sold.id)) return this.refuse(p, kind, 'not_owned');
+    const wears = look?.id ?? sold?.id ?? null;
     if ((p.rec[kind] ?? null) === wears) return;
     // Taken off is null, not left out: a save without one keeps the one saved.
     p.rec[kind] = wears;
@@ -2128,6 +2304,68 @@ export class World {
   /** What the player hears of their merits: what they spent, and the looks they bought that this release has. */
   private meritsOf(r: PlayerRecord): MeritsView {
     return { spent: r.meritsSpent ?? 0, owned: (r.looks ?? []).filter(l => meritLookOf(l)) };
+  }
+
+  /** What the player hears of what they bought in the shop: the looks the catalog has, in the order they bought them. */
+  private shopOwned(r: PlayerRecord): string[] {
+    return (r.shop ?? []).filter(l => shopLookOf(this.shop, l));
+  }
+
+  /**
+   * May the player of `r` wear `id` as their `kind` (an outfit, a pattern, a badge)? One the level opened,
+   * one merits bought, or one bought in the shop; and only signed in.
+   */
+  private mayWearAs(r: PlayerRecord, id: string, kind: ShopKind): boolean {
+    const signedIn = !this.guest(r);
+    if (mayWearShopLook(this.shop, id, kind, r.shop ?? [], signedIn)) return true;
+    return kind === 'outfit' ? mayWear(id, levelOf(r.xp ?? 0), signedIn) : mayWearLook(id, kind, r.looks ?? [], signedIn);
+  }
+
+  /**
+   * Why the player may not buy `lookId` in the shop now (null: they may), checked before the shop asks
+   * Stripe for a payment: only signed in (on a server with sign-in: a purchase belongs to an account),
+   * next to the chest on tile x,y (the shop is in the wardrobe), a look the shop sells, and not bought yet.
+   * Like everything at the chest, it waits for the steps sent before it.
+   */
+  mayCheckout(id: string, x: number, y: number, lookId: string, now: number): Refusal | null {
+    const p = this.players.get(id);
+    if (!p) return 'gone';
+    this.runQueue(p, now);
+    if (!this.signedIn(p)) return 'sign_in_first';
+    if (!this.chestNextTo(p, x, y)) return 'too_far';
+    const look = shopLookOf(this.shop, lookId);
+    if (!look) return 'gone';
+    return whyNotCheckout(look, p.rec.shop ?? [], true, true);
+  }
+
+  /**
+   * Stripe said a look of the player's is paid, or refunded: what they bought, whole, as storage says it now
+   * (`owned`). They hear it; a look no longer theirs that they wear comes off, for everyone who sees them,
+   * and is saved at once. False when they are not online (they hear it all the next time they join).
+   */
+  setShop(id: string, owned: readonly string[]): boolean {
+    const p = this.players.get(id);
+    if (!p) return false;
+    p.rec.shop = [...owned];
+    this.outbox.push({ to: id, msg: { t: 'shop', owned: this.shopOwned(p.rec) } });
+    const off = (kind: ShopKind) => {
+      const worn = p.rec[kind];
+      return !!worn && !!shopLookOf(this.shop, worn, kind) && !owned.includes(worn);
+    };
+    if (off('outfit')) {
+      p.rec.outfit = null;
+      this.toZone(p.zone.key, { t: 'outfit', id, outfit: null });
+    }
+    if (off('pattern')) {
+      p.rec.pattern = null;
+      this.toZone(p.zone.key, { t: 'pattern', id, pattern: null });
+    }
+    if (off('badge')) {
+      p.rec.badge = null;
+      this.toZone(p.zone.key, { t: 'badge', id, badge: null });
+    }
+    this.saveNow.set(id, p.rec);
+    return true;
   }
 
   /** Opens the workbench on tile x,y (next to the player): they hear what their stash holds. Behind steps still waiting, like the chest. */
@@ -2318,6 +2556,8 @@ export class World {
     if (!p || this.items.get(item)?.kind !== 'tool' || this.owns(p, item)) return false;
     // The first of their own writes down the starter tools they carried until now.
     p.rec.tools = [...(p.rec.tools ?? STARTER_TOOLS), item];
+    // Waders open the culvert, bolt cutters the shed's door: from their very next step.
+    p.pass = new Set(toolsOf(p.rec.tools, this.items));
     this.saveNow.set(id, p.rec);
     this.outbox.push({ to: id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items) } });
     // Another of it lying where they are is someone else's to find from now on: it goes from their sight.
@@ -2428,15 +2668,12 @@ export class World {
     if (!p) return;
     // Steps whose time has come first: the thanks comes from where the player really is.
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'thank', 'too_far');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'thank', p.slump ? 'down' : 'too_far');
     const found = who === id ? undefined : this.thankable(p, who, what);
     if (!found) return this.refuse(p, 'thank', 'gone');
     const [nx, ny] = found.near;
     if (Math.max(Math.abs(nx - p.rec.x), Math.abs(ny - p.rec.y)) > THANKS_REACH) return this.refuse(p, 'thank', 'too_far');
-    if (!this.giveThanks(p, found.helper, found.what, now)) return this.refuse(p, 'thank', 'thanked');
+    if (!this.giveThanks(this.person(p), found.helper, found.what, now)) return this.refuse(p, 'thank', 'thanked');
     this.did(p, { kind: 'thanked', who, name: found.helper.name, what: found.what.kind });
   }
 
@@ -2455,19 +2692,24 @@ export class World {
     return { helper: { id: m.owner, name: m.name }, what: { kind: 'mark', map, x: m.x, y: m.y }, near: [m.x + dx, m.y + dy] };
   }
 
+  /** A player online as a thanks names them: their id and name. */
+  private person(p: Online): PersonView {
+    return { id: p.rec.id, name: p.rec.name };
+  }
+
   /**
    * Records `from`'s thanks to `helper` for `what`, and tells the helper if they are online (deliver);
    * otherwise it waits for their letter home. It counts toward their Good neighbor wherever they are.
    * False, and nothing happens, for oneself or a helper `from` thanked today already.
    */
-  private giveThanks(from: Online, helper: PersonView, what: ThanksFor, now: number): boolean {
-    const wall = now + this.epochOffset, day = utcDay(wall), key = thanksDay(from.rec.id, helper.id, day);
-    if (helper.id === from.rec.id || this.thanks.has(key)) return false;
+  private giveThanks(from: PersonView, helper: PersonView, what: ThanksFor, now: number): boolean {
+    const wall = now + this.epochOffset, day = utcDay(wall), key = thanksDay(from.id, helper.id, day);
+    if (helper.id === from.id || this.thanks.has(key)) return false;
     const h = this.players.get(helper.id);
     // Someone who blocks the giver hears nothing from them, thanks included, and the giver is not told
     // (nobody learns who blocks them). Blocks are known for players online; the letter leaves out the rest.
-    if (h && this.blocks(helper.id).has(from.rec.id)) return true;
-    const t: ThanksRecord = { giver: from.rec.id, helper: helper.id, day, at: Math.floor(wall), what: { ...what }, told: false, name: from.rec.name };
+    if (h && this.blocks(helper.id).has(from.id)) return true;
+    const t: ThanksRecord = { giver: from.id, helper: helper.id, day, at: Math.floor(wall), what: { ...what }, told: false, name: from.name };
     if (h) this.deliver(h, t, now);
     this.thanks.set(key, t);
     this.thanksWrites.set(key, t);
@@ -2505,17 +2747,28 @@ export class World {
    */
   private homecoming(p: Online, now: number): void {
     p.gifts = 0;
-    // The first time home since streets came (a new player's too): a letter says what the street sees of
-    // them and where to hide it, once, before any thanks.
-    if (this.street && !p.rec.streetTold) {
+    // The first time home since streets came: a letter says what the street sees of them and where to hide
+    // it, once, before any thanks. A new player reads it once their first steps are done, not on waking up
+    // for the first time: one thing at a time (DESIGN.md, the first moments).
+    if (this.street && !p.rec.streetTold && !p.rec.firstSteps) {
       p.rec.streetTold = true;
       this.saveNow.set(p.rec.id, p.rec);
       this.outbox.push({ to: p.rec.id, msg: { t: 'streetLetter', doorOff: p.rec.doorOff === true } });
     }
+    // What came back to the chest while they were away (lostfound.ts), the latest first; told once.
+    const back = [...this.returns.values()].filter(r => r.owner === p.rec.id && !r.told && r.id <= (p.rec.returned ?? 0)).sort((a, b) => b.id - a.id);
+    for (const r of back) {
+      r.told = true;
+      this.returnWrites.set(r.id, r);
+    }
+    const returned = back.map(r => this.returnedView(p.rec.id, r));
     // Only what is still kept: one older than THANKS_KEPT_DAYS may wait for the tick that forgets it.
     const kept = now + this.epochOffset - THANKS_KEPT_MS;
     const unread = [...this.thanks.values()].filter(t => t.helper === p.rec.id && !t.told && t.at > kept).sort((a, b) => b.at - a.at);
-    if (!unread.length) return;
+    if (!unread.length) {
+      if (returned.length) this.outbox.push({ to: p.rec.id, msg: { t: 'letter', thanks: [], returned } });
+      return;
+    }
     const blocks = this.blocks(p.rec.id);
     const groups = new Map<string, { group: ThanksGroup; givers: Set<string>; at: number }>();
     for (const t of unread) {
@@ -2532,9 +2785,9 @@ export class World {
       // The latest first: the list is newest first.
       if (g.group.names.length < 2) g.group.names.push(t.name);
     }
-    if (!groups.size) return;
+    if (!groups.size && !returned.length) return;
     const thanks = [...groups.values()].sort((a, b) => b.group.count - a.group.count || b.at - a.at).map(g => g.group);
-    this.outbox.push({ to: p.rec.id, msg: { t: 'letter', thanks } });
+    this.outbox.push({ to: p.rec.id, msg: { t: 'letter', thanks, ...(returned.length ? { returned } : {}) } });
   }
 
   /** Thanks older than THANKS_KEPT_DAYS are forgotten (storage deletes its own: Storage.forgetThanks). */
@@ -2573,14 +2826,13 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'cacheLeave', 'too_far');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'cacheLeave', p.slump ? 'down' : 'too_far');
     const c = this.crateNextTo(p, x, y);
     if (!c) return this.refuse(p, 'cacheLeave', 'too_far');
     const s = p.rec.bag[slot], def = s && this.items.get(s.item);
     if (!s || !def) return this.refuse(p, 'cacheLeave', 'empty_slot');
+    // Someone else's things go back to them at the lodge, not to whoever comes next.
+    if (s.bundle) return this.refuse(p, 'cacheLeave', 'not_yours');
     if (isKeepsake(def)) return this.refuse(p, 'cacheLeave', 'keepsake');
     if (!cacheTakes(def)) return this.refuse(p, 'cacheLeave', 'no_gear');
     const visit = this.visitAt(p, c);
@@ -2611,10 +2863,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    if (this.advance(p, now) <= 0) {
-      this.collapse(p, now);
-      return this.refuse(p, 'cacheTake', 'too_far');
-    }
+    if (this.spent(p, now)) return this.refuse(p, 'cacheTake', p.slump ? 'down' : 'too_far');
     const c = this.crateNextTo(p, x, y);
     if (!c) return this.refuse(p, 'cacheTake', 'too_far');
     const visit = this.visitAt(p, c);
@@ -2630,12 +2879,173 @@ export class World {
     this.cacheWrites.set(e.id, undefined);
     visit.took = true;
     const mine = e.owner === id;
-    const thanked = !mine && this.giveThanks(p, { id: e.owner, name: e.name }, { kind: 'cache', map: c.map.data.id, x: c.x, y: c.y, item: def.id }, now);
+    const thanked = !mine && this.giveThanks(this.person(p), { id: e.owner, name: e.name }, { kind: 'cache', map: c.map.data.id, x: c.x, y: c.y, item: def.id }, now);
     this.saveNow.set(id, p.rec);
     this.sendBag(p, now);
     this.rerate(p, now);
     this.tellVisitors(c, now);
     this.did(p, { kind: 'took', item: def.id, name: e.name, ...(mine ? { mine: true as const } : {}), ...(thanked ? { thanked: true as const } : {}) });
+  }
+
+  /**
+   * `id` gets `who` back up (rescue.ts): `who` lies slumped on their tile or the one next to it, in their
+   * zone, and `id` has more than RESCUE_ENERGY. They give that much of their own, and `who` gets up with
+   * it. `who` thanks them as they get up (thanks.ts: it counts for their Good neighbor, and their letter
+   * says what for), and everyone there sees `who` stand.
+   */
+  rescue(id: string, who: string, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    // Steps whose time has come first: the rescuer reaches from where they really are.
+    this.runQueue(p, now);
+    if (this.spent(p, now)) return this.refuse(p, 'rescue', p.slump ? 'down' : 'too_far');
+    const q = who === id ? undefined : this.players.get(who);
+    if (!q?.slump || q.zone !== p.zone) return this.refuse(p, 'rescue', 'gone');
+    if (manhattan(q.rec.x, q.rec.y, p.rec.x, p.rec.y) > 1) return this.refuse(p, 'rescue', 'too_far');
+    if (!canRescue(p.rec.energy)) return this.refuse(p, 'rescue', 'too_tired');
+    p.rec.energy -= RESCUE_ENERGY;
+    this.advance(q, now);
+    q.slump = undefined;
+    q.rec.energy = Math.min(q.max, RESCUE_ENERGY);
+    for (const r of [p, q]) {
+      this.refresh(r, now);
+      this.tell(r, now);
+    }
+    this.toZone(q.zone.key, { t: 'down', id: who, on: false });
+    const thanked = this.giveThanks(this.person(q), this.person(p), { kind: 'rescue', map: q.map.data.id, x: q.rec.x, y: q.rec.y, who }, now);
+    this.outbox.push({ to: who, msg: { t: 'raised', by: this.person(p), ...(thanked ? { thanked: true as const } : {}) } });
+    this.did(p, { kind: 'rescued', who, name: q.rec.name });
+  }
+
+  // ---------- the lost and found (lostfound.ts) ----------
+
+  /**
+   * `id` carries `owner`'s pile on tile x,y (theirs, or one of the four next to it) to the lodge for them:
+   * someone else's pile, all of it. Its owner's things are tied up into a bundle, one bag slot,
+   * and a bundle that lay in it (someone who collapsed carrying one) stays its own owner's; each needs a
+   * slot free. The pile is gone, and with it its hour: a bundle never fades. Everyone there sees it go.
+   */
+  carry(id: string, x: number, y: number, owner: string, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.spent(p, now)) return this.refuse(p, 'carry', p.slump ? 'down' : 'too_far');
+    if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return this.refuse(p, 'carry', 'too_far');
+    const d = owner !== id && p.map.inside(x, y) ? this.pileTiles.get(p.zone.key)?.get(y * p.map.width + x)?.find(o => o.owner === owner) : undefined;
+    if (!d) return this.refuse(p, 'carry', 'gone');
+    const { bundle, others } = packPile(d);
+    const carried = [...(bundle ? [bundle] : []), ...others];
+    if (p.rec.bag.length + carried.length > p.slots) return this.refuse(p, 'carry', 'bag_full');
+    this.removePile(d);
+    p.rec.bag = [...copyBag(p.rec.bag), ...copyBag(carried)];
+    // Saved with the pile's going, not at the next periodic save: a restart in between would find both.
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    this.did(p, { kind: 'carried', names: [...new Set(carried.map(s => s.bundle!.name))] });
+  }
+
+  /**
+   * `id` leaves every bundle they carry in the lost and found box on tile x,y, next to them. Each goes
+   * into its owner's chest whole: at once if they are online, as they next come into the game if not.
+   * The carrier earns a quarter of what it was worth (bundleWorth: never what the owner had taken out of
+   * their stash), not doubled by rest, since it is not their trip's; its owner earns the rest as their
+   * stash takes it (takeReturn). The owner thanks the carrier (thanks.ts), and their letter home says who
+   * carried it and from where. A bundle that came back already (a copy a crash left behind) only goes.
+   */
+  handIn(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.spent(p, now)) return this.refuse(p, 'handIn', p.slump ? 'down' : 'too_far');
+    if (manhattan(x, y, p.rec.x, p.rec.y) !== 1 || !p.map.data.objects.some(o => o.kind === 'lostfound' && o.x === x && o.y === y)) return this.refuse(p, 'handIn', 'too_far');
+    const bundles = bundlesIn(p.rec.bag);
+    if (!bundles.length) return this.refuse(p, 'handIn', 'empty_slot');
+    const wall = Math.floor(now + this.epochOffset);
+    let xp = 0;
+    for (const b of bundles) {
+      if (this.returnedBundles.has(b.id)) continue;
+      const share = carrierShare(bundleWorth(b, this.items));
+      xp += share;
+      this.lastReturnId = Math.max(wall, this.lastReturnId + 1);
+      const r: ReturnRecord = {
+        id: this.lastReturnId, bundle: b.id, owner: b.owner, carrier: id, name: p.rec.name, map: b.map, x: b.x, y: b.y, items: copyBag(b.items), xp: share, at: wall, told: false,
+      };
+      this.returns.set(r.id, r);
+      this.returnedBundles.add(b.id);
+      this.returnWrites.set(r.id, r);
+      const owner = this.players.get(b.owner);
+      if (owner) this.takeReturn(owner, r, now);
+      // Its owner thanks whoever brought it back, online or not, once a UTC day like any thanks.
+      this.giveThanks({ id: b.owner, name: b.name }, this.person(p), { kind: 'returned', map: b.map, x: b.x, y: b.y, who: b.owner }, now);
+    }
+    p.rec.bag = p.rec.bag.filter(s => !s.bundle);
+    this.saveNow.set(id, p.rec);
+    this.sendBag(p, now);
+    this.rerate(p, now);
+    const before = levelOf(p.rec.xp ?? 0);
+    if (xp > 0) this.grant(p, xp);
+    if (levelOf(p.rec.xp ?? 0) !== before) this.refresh(p, now);
+    this.tell(p, now);
+    this.did(p, { kind: 'handedIn', names: [...new Set(bundles.map(b => b.name))], xp: xp * this.xpTimes });
+  }
+
+  /**
+   * What someone carried back goes into its owner's chest, as their stash takes anything (store: what they
+   * had taken out of it earns nothing back), and they earn what it was worth there less what the carrier
+   * got, never below nothing: together never more than bringing it home would have earned. `returned`
+   * says it is in: it is saved with the stash, so nothing goes in twice. Online, they hear it at once.
+   */
+  private takeReturn(p: Online, r: ReturnRecord, now: number): void {
+    const before = levelOf(p.rec.xp ?? 0), gained = this.putBack(p.rec, r);
+    if (gained === null) return;
+    this.saveNow.set(p.rec.id, p.rec);
+    this.sendStash(p);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp ?? 0, p.rec.rested), gained } });
+    if (levelOf(p.rec.xp ?? 0) !== before) this.refresh(p, now);
+    this.tell(p, now);
+    // Told now, in the text box, and left out of the letter.
+    r.told = true;
+    this.returnWrites.set(r.id, r);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'returned', returned: this.returnedView(p.rec.id, r) } });
+  }
+
+  /** Puts what came back into a record's stash and XP (takeReturn), once: the XP it earned them, or null when the stash has it already. */
+  private putBack(rec: PlayerRecord, r: ReturnRecord): number | null {
+    if ((rec.returned ?? 0) >= r.id) return null;
+    const put = store(rec.stash ?? emptyStash(), r.items, this.items);
+    const gained = Math.max(0, put.xp - r.xp) * this.xpTimes;
+    rec.stash = fitPieces(put.stash, this.items, this.rng);
+    rec.xp = (rec.xp ?? 0) + gained;
+    rec.returned = r.id;
+    return gained;
+  }
+
+  /** Who carried it and from where, as its owner hears it: someone they block goes unnamed. */
+  private returnedView(owner: string, r: ReturnRecord): ReturnedView {
+    return { by: r.carrier !== null && this.blocks(owner).has(r.carrier) ? null : r.name, map: r.map, x: r.x, y: r.y };
+  }
+
+  /** XP that is no stashing (a carrier's share): as many times as a play-test says, never doubled by rest. */
+  private grant(p: Online, xp: number): void {
+    const gained = xp * this.xpTimes;
+    p.rec.xp = (p.rec.xp ?? 0) + gained;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, p.rec.rested), gained } });
+  }
+
+  /** What came back for someone who was away: into their record as they come into the game, oldest first, each once. True when anything did. */
+  private takeReturns(rec: PlayerRecord): boolean {
+    const due = [...this.returns.values()].filter(r => r.owner === rec.id && r.id > (rec.returned ?? 0)).sort((a, b) => a.id - b.id);
+    for (const r of due) this.putBack(rec, r);
+    return due.length > 0;
+  }
+
+  /** What came back and was told, older than THANKS_KEPT_DAYS, is forgotten (storage deletes its own: Storage.forgetReturns). */
+  private forgetReturns(now: number): void {
+    if (now < this.returnsForgetAt) return;
+    this.returnsForgetAt = now + RETURNS_LOOK_MS;
+    const kept = now + this.epochOffset - THANKS_KEPT_MS;
+    for (const [id, r] of this.returns) if (r.told && r.at <= kept) this.returns.delete(id);
   }
 
   /**
@@ -2773,6 +3183,8 @@ export class World {
     this.arrive(p, from, 'exit', now);
     const home = this.atHome(p);
     if (home) this.endTrip(p, now, null);
+    // So are the meals eaten for it (meals.ts).
+    if (home) this.endMeals(p, now);
     this.moveStory(p, { reach: to.data.id });
     if (home) this.homecoming(p, now);
   }
@@ -2802,6 +3214,46 @@ export class World {
     }
   }
 
+  // ---------- the slab in the ring of stones (slab.ts) ----------
+
+  /**
+   * `id` puts their hands to the slab on tile x,y, next to it and facing it. While it glows (its region is
+   * restless), hands put to it within SLAB_PAIR_MS of someone else's, who is still beside it, lift it: each
+   * of the two takes what it holds, into the bag. Alone it will not move, but the hands stay on it for
+   * SLAB_PAIR_MS, for whoever comes. Each player opens it once a restless phase, and only with room in the
+   * bag for all it holds: a bag that has none is told so, and its hands do not count.
+   */
+  slab(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    if (this.spent(p, now)) return this.refuse(p, 'slab', p.slump ? 'down' : 'too_far');
+    const o = p.map.data.objects.find((s): s is Extract<MapObject, { kind: 'slab' }> => s.kind === 'slab' && s.x === x && s.y === y);
+    if (!o || manhattan(x, y, p.rec.x, p.rec.y) !== 1 || !faces(p.rec.x, p.rec.y, p.rec.dir, x, y)) return this.refuse(p, 'slab', 'too_far');
+    const rule = p.map.data.kind === 'wilds' ? p.map.data.surge : undefined;
+    if (!rule || !slabGlows(this.surgeOf(p.map, now))) return this.refuse(p, 'slab', 'cold');
+    const round = surgeRound(rule, now + this.epochOffset), opened = (q: Online) => this.slabOpened.get(slabKey(q.rec.id, p.map, o)) === round;
+    if (opened(p)) return this.refuse(p, 'slab', 'opened');
+    if (addAllToBag(p.rec.bag, o.holds, this.items, p.slots).left.length) return this.refuse(p, 'slab', 'bag_full');
+    const key = `${p.zone.key} ${x},${y}`, first = this.slabPresses.get(key);
+    const q = first && first.id !== id && now - first.at <= SLAB_PAIR_MS ? this.players.get(first.id) : undefined;
+    // Whoever put their hands to it first is still there, with room, and has not had it this time.
+    if (q && q.zone === p.zone && !q.slump && manhattan(x, y, q.rec.x, q.rec.y) === 1 && !opened(q) && !addAllToBag(q.rec.bag, o.holds, this.items, q.slots).left.length) {
+      this.slabPresses.delete(key);
+      for (const [r, other] of [[q, p], [p, q]] as const) {
+        r.rec.bag = addAllToBag(r.rec.bag, o.holds, this.items, r.slots).bag;
+        this.slabOpened.set(slabKey(r.rec.id, p.map, o), round);
+        this.saveNow.set(r.rec.id, r.rec);
+        this.sendBag(r, now);
+        this.rerate(r, now);
+        this.did(r, { kind: 'slab', with: other.rec.name, got: o.holds.map(s => ({ item: s.item, count: s.count })) });
+      }
+      return;
+    }
+    this.slabPresses.set(key, { id, at: now });
+    this.refuse(p, 'slab', 'one_pair');
+  }
+
   /** The player's counts toward feats as they are now: the status panel asks when it opens. */
   stats(id: string): void {
     const p = this.players.get(id);
@@ -2812,11 +3264,12 @@ export class World {
 
   /**
    * Where an online player is: their zone (a copy of a map: two players in two copies of one map, two
-   * cabins say, never meet, so they never trade) and their tile.
+   * cabins say, never meet, so they never trade), their tile, and whether they are down (rescue.ts: they
+   * can trade nothing until someone gets them up).
    */
-  where(id: string): { zone: string; x: number; y: number } | undefined {
+  where(id: string): { zone: string; x: number; y: number; down?: true } | undefined {
     const p = this.players.get(id);
-    return p && { zone: p.zone.key, x: p.rec.x, y: p.rec.y };
+    return p && { zone: p.zone.key, x: p.rec.x, y: p.rec.y, ...(p.slump ? { down: true as const } : {}) };
   }
 
   /** What these picks of an online player's bag offer in a trade (offerFrom): only ever what the bag holds. */
@@ -2840,7 +3293,7 @@ export class World {
   swap(aId: string, bId: string, aGives: readonly BagSlot[], bGives: readonly BagSlot[], now: number): Swap {
     const a = this.players.get(aId), b = this.players.get(bId);
     if (!a || !b) return { ok: false, why: 'gone', who: a ? bId : aId };
-    // A bar that ran out collapses on this tick: with its bag, so nothing is handed over by someone who is falling.
+    // A bar that ran out goes down (or collapses) on this tick: with its bag, so nothing is handed over by someone who is falling.
     for (const p of [a, b]) if (this.advance(p, now) <= 0) return { ok: false, why: 'gone', who: p.rec.id };
     const r = swapOffers(a.rec.bag, b.rec.bag, aGives, bGives, a.slots, b.slots, this.items);
     if (!r.ok) return { ok: false, why: r.why, who: r.side === 'a' ? aId : bId };
@@ -2869,6 +3322,7 @@ export class World {
     this.moveLongNight(now);
     this.moveSurges(now);
     this.moveStorms(now);
+    this.moveRain(now);
     this.moveConditions(now);
     this.moveCalendar(now);
     this.startFlashes(now);
@@ -2877,8 +3331,11 @@ export class World {
     this.burnStone(now);
     if (wasAwake && !this.stoneAwake) this.outbox.push({ to: 'all', msg: { t: 'stone', stone: this.stoneView(now) } });
     for (const p of this.players.values()) {
-      if (this.advance(p, now) <= 0) {
-        this.collapse(p, now);
+      if (p.slump || this.advance(p, now) <= 0) {
+        if (p.slump) this.slumping(p, now);
+        else this.exhausted(p, now);
+        // Lying there (not collapsed yet), the fear goes on as ever: it builds alone in the dark, and whoever comes calms it.
+        if (p.slump) this.unnerve(p, now);
         continue;
       }
       if (p.queue.length) this.runQueue(p, now);
@@ -2908,6 +3365,7 @@ export class World {
     this.fadePiles(now);
     this.fadeMarks(now);
     this.forgetThanks(now);
+    this.forgetReturns(now);
     this.forgetEffects(now);
     this.forgetWalks(now);
     this.growFinds(now);
@@ -2937,12 +3395,13 @@ export class World {
     const was = this.weatherOf(map);
     if (was === weather) return;
     this.skies.set(map.data.id, weather);
+    // The rain over it stops now: what grows after it counts from here (moveRain).
+    if (was === 'rain' && this.rules.some(r => r.when === 'rain' && r.map === map)) this.rainedAt.set(map.data.id, now);
     for (const zone of this.copiesOf(map.data.id)) if (zone.players.size) this.toZone(zone.key, { t: 'weather', weather });
     if (weather === 'aurora' || was === 'aurora') for (const rule of this.rules) if (rule.when === 'aurora' && rule.map === map) this.openRule(rule, weather === 'aurora', now);
     for (const zone of this.copiesOf(map.data.id)) for (const p of [...zone.players]) {
       // Up to now at the rate of the old weather, which the player still has.
-      if (this.advance(p, now) <= 0) this.collapse(p, now);
-      else this.rerate(p, now);
+      if (!this.spent(p, now)) this.rerate(p, now);
     }
   }
 
@@ -2979,9 +3438,11 @@ export class World {
       credits: this.credits,
       caches: [...this.cacheWrites].map(([id, c]) => ({ id, item: c && { ...c } })),
       firsts: this.firstWrites,
+      returns: [...this.returnWrites.values()].map(r => ({ ...r, items: copyBag(r.items) })),
       ...(this.nightWrite ? { longNight: { ...this.nightWrite } } : {}),
     };
     this.firstWrites = [];
+    this.returnWrites.clear();
     this.nightWrite = undefined;
     this.pileWrites.clear();
     this.saveNow.clear();
@@ -3015,15 +3476,17 @@ export class World {
   }
 
   private move(p: Online, dir: Dir, seq: number, now: number): void {
-    // Energy that ran out before this step could start: the player collapses instead of walking.
-    if (this.advance(p, now) <= 0) return this.collapse(p, now);
+    // Energy that ran out before this step could start: the player goes down instead of walking.
+    if (this.spent(p, now)) return this.reject(p, seq);
     const { x, y } = stepTarget(p.rec.x, p.rec.y, dir);
-    if (!p.map.walkable(x, y) || this.barred(p, x, y)) {
+    if (!p.map.walkable(x, y, p.pass) || this.barred(p, x, y)) {
       // Steps queued behind this one were planned from a tile the player never reached.
       p.queue.length = 0;
       this.reject(p, seq);
-      // A neighbor's door that did not let them in says why (nobody lives there, or only friends may come in).
-      if (p.map.walkable(x, y)) this.turnedAway(p, x, y);
+      // A neighbor's door that did not let them in says why (nobody lives there, or only friends may come in);
+      // a padlocked door says why it stays shut; the culvert without waders is only water, and says nothing.
+      if (p.map.walkable(x, y, p.pass)) this.turnedAway(p, x, y);
+      else if (p.map.exitAt(x, y) && p.map.needs(x, y)) this.refuse(p, 'step', 'padlocked');
       return;
     }
     const { id } = p.rec;
@@ -3134,6 +3597,8 @@ export class World {
     // Home, their own copy of it (their cabin): the trip is over, and the letter waits there. A neighbor's is no homecoming.
     const home = this.atHome(p);
     if (home) this.endTrip(p, now, null);
+    // So are the meals eaten for it (meals.ts): a neighbor's cabin is no homecoming for them either.
+    if (home) this.endMeals(p, now);
     this.moveStory(p, { reach: map.data.id });
     if (host) this.visited(p, host);
     if (home) this.homecoming(p, now);
@@ -3220,6 +3685,69 @@ export class World {
     return this.copyFor(r, map);
   }
 
+  /**
+   * Energy up to now. Out of it the player cannot act: out in the wilds they go down where they stand
+   * (exhausted), anywhere else they collapse. True then, and while they lie slumped already.
+   */
+  private spent(p: Online, now: number): boolean {
+    if (p.slump) return true;
+    if (this.advance(p, now) > 0) return false;
+    this.exhausted(p, now);
+    return true;
+  }
+
+  /**
+   * Out of energy: out in the wilds the player slumps where they stand, a window to be saved (rescue.ts);
+   * anywhere else they collapse at once (nothing drains there, so it takes a way nothing has yet).
+   */
+  private exhausted(p: Online, now: number): void {
+    if (p.slump) return;
+    if (p.map.data.kind === 'wilds') this.slump(p, now);
+    else this.collapse(p, now);
+  }
+
+  /**
+   * Down: the player lies where they stand for SLUMP_S seconds (SLUMP_FLARE_S with a flare burning by
+   * them), unable to walk or act, while nothing drains them further (they are at 0) and no creature
+   * touches them. They hear how long they have; everyone in their zone sees them lie there, and hears
+   * once, in local chat, where they are down: by landmark (landmarks.ts), never where exactly. Someone who
+   * blocks them hears no line from them, this one either.
+   */
+  private slump(p: Online, now: number): void {
+    const { id, name, x, y } = p.rec;
+    p.rec.energy = 0;
+    // Steps sent before it came are refused: the client stands where the server has them.
+    for (const s of p.queue) this.reject(p, s.seq);
+    p.queue.length = 0;
+    p.after = undefined;
+    p.slump = { from: now, until: now + SLUMP_S * 1000, flare: false };
+    this.refresh(p, now);
+    this.tell(p, now);
+    if (!this.lengthen(p, now)) this.outbox.push({ to: id, msg: { t: 'slump', left: SLUMP_S } });
+    this.toZone(p.zone.key, { t: 'down', id, on: true });
+    const where = landmarkOf(p.map, x, y, m => this.maps.get(m)?.data);
+    for (const q of p.zone.players) if (!this.blocks(q.rec.id).has(id)) this.outbox.push({ to: q.rec.id, msg: { t: 'slumped', id, name, where } });
+  }
+
+  /** A flare burning by someone down gives them the longer window (they hear it); true when it did just now. */
+  private lengthen(p: Online, now: number): boolean {
+    const s = p.slump;
+    if (!s || s.flare || !this.nearFlare(p.zone, p.rec.x, p.rec.y, now)) return false;
+    s.flare = true;
+    s.until = s.from + SLUMP_FLARE_S * 1000;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'slump', left: round(Math.max(0, s.until - now) / 1000, 1) } });
+    return true;
+  }
+
+  /** Every tick while someone is down: a flare lit by them now gives them longer; when their time is up, they collapse. */
+  private slumping(p: Online, now: number): void {
+    this.advance(p, now);
+    // What they carry goes on fading: a live find keeps the wall clock's time.
+    if (p.live) this.fadeLive(p, now);
+    this.lengthen(p, now);
+    if (now >= p.slump!.until) this.collapse(p, now);
+  }
+
   /** Out of energy while online: the player wakes up at home, and both zones see it. */
   private collapse(p: Online, now: number): void {
     const from = p.zone, { map, x, y } = p.rec;
@@ -3236,7 +3764,14 @@ export class World {
    */
   private fall(p: Online, now: number): void {
     const { id, map, x, y } = p.rec;
+    // Nobody came in time: the window is over.
+    p.slump = undefined;
     this.dropBag(p, now);
+    // What they ate this trip is spent: the trip is over.
+    if (p.rec.meals) {
+      delete p.rec.meals;
+      this.saveNow.set(id, p.rec);
+    }
     const w = this.wakeUp;
     this.place(p, this.zoneFor(w.map, this.copyFor(p.rec, w.map), now), w.x, w.y, w.dir);
     p.rec.energy = this.maxOf(p.rec);
@@ -3288,7 +3823,9 @@ export class World {
       const into = this.items.get(s.item)?.live?.into;
       return into ? { item: into, count: s.count } : s;
     }));
-    const pile: DropRecord = { owner: id, name, map, ...copyField(p.zone.copy), x, y, items, droppedAt: Math.floor(now + this.epochOffset), trail };
+    // What of it they had taken out of their stash, for whoever carries it back to the lodge (lostfound.ts).
+    const owed = owedOf(p.rec.stash, items);
+    const pile: DropRecord = { owner: id, name, map, ...copyField(p.zone.copy), x, y, items, droppedAt: Math.floor(now + this.epochOffset), trail, owed };
     this.addPile(pile);
     this.pileWrites.set(id, pile);
     this.toZone(p.zone.key, { t: 'drop', drop: dropView(pile) });
@@ -3355,15 +3892,17 @@ export class World {
   private refresh(p: Online, now: number): void {
     const { x, y } = p.rec;
     // Being cozy changes Mods like a charm does (comfort.ts): out in the wilds they tire slower. Full of
-    // unease (unease.ts), hitchhikers find them twice as often.
+    // unease (unease.ts), hitchhikers find them twice as often. The meals eaten this trip count too (meals.ts).
     p.mods = modsOf(p.rec.stats ?? {}, [
-      ...charmsIn(p.rec.bag, this.items), ...(this.cozy(p, now) ? [COZY_MODS] : []), ...(uneaseFull(p.uneaseLevel) ? [UNEASE_MODS] : []),
+      ...charmsIn(p.rec.bag, this.items), ...mealMods(p.rec.meals, this.items), ...(this.cozy(p, now) ? [COZY_MODS] : []),
+      ...(uneaseFull(p.uneaseLevel) ? [UNEASE_MODS] : []),
     ]);
     p.load = bagLoad(p.rec.bag, this.items, p.mods.load);
-    p.max = this.maxOf(p.rec);
+    p.max = this.maxOf(p.rec, p.mods);
     p.slots = bagSlotsOf(p.rec.gear ?? {}, this.items);
-    // What they wear, and the effects working on them (a hand warmer), under the one cap.
-    const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn, this.boost(p.rec.id, now));
+    // What they wear, the effects working on them (a hand warmer) and a meal's cold resistance, under the one cap.
+    const boost = this.boost(p.rec.id, now);
+    const resist = resistOf(p.rec.gear ?? {}, this.items, p.rec.worn, { ...boost, cold: (boost.cold ?? 0) + p.mods.cold });
     const warmth = p.map.warm(x, y) ? p.zone.fires.warmth(x, y, now) : 0;
     const storm = this.stormOf(p.map, now)?.phase === 'storm', weather = this.weatherOf(p.map);
     p.rate = energyRate(p.map, x, y, weather, {
@@ -3382,6 +3921,8 @@ export class World {
       chill: { weather: SEASONS[this.season].chill, wet: SEASONS[this.season].wet },
       drain: p.mods.drain,
     });
+    // Down at 0, nothing drains them further (a surge or a storm neither) and nothing refills them: only a rescuer's energy gets them up.
+    if (p.slump) p.rate = 0;
     // Wind resistance (a raincoat) keeps the rain out.
     p.wetRate = wetRate(p.map.data.kind, weather, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
   }
@@ -3533,6 +4074,7 @@ export class World {
     // The aurora over where it was picked: each region has its own sky (a room, the one outside its door).
     if (this.weatherOf(p.map) === 'aurora') this.note(p, { find: item, during: 'aurora' });
     if (this.stormOf(p.map, now)?.phase === 'storm') this.note(p, { find: item, during: 'storm' });
+    if (this.weatherOf(p.map) === 'rain') this.note(p, { find: item, during: 'rain' });
   }
 
   /**
@@ -3681,12 +4223,13 @@ export class World {
   }
 
   /**
-   * A skulker's chase ended without a catch: its prey got out of it, unless they collapsed meanwhile. At
-   * the edge of the tall grass they reached, the chase ended there.
+   * A skulker's chase ended without a catch: its prey got out of it, unless they collapsed meanwhile or
+   * lie down out of energy (rescue.ts: it leaves them alone, which is no getting away). At the edge of
+   * the tall grass they reached, the chase ended there.
    */
   private escaped(s: Skulker): void {
     const p = s.chasing === undefined ? undefined : this.players.get(s.chasing);
-    if (!p || (p.fellAt ?? -Infinity) >= s.chaseUntil - SKULKER_CHASE_MS) return;
+    if (!p || p.slump || (p.fellAt ?? -Infinity) >= s.chaseUntil - SKULKER_CHASE_MS) return;
     this.saw(p, 'escaped');
     if (p.zone === s.zone && hidden(p.map, p.rec.x, p.rec.y)) this.saw(p, 'grass');
   }
@@ -3759,11 +4302,20 @@ export class World {
       if (!s || this.surgePhase.get(map.data.id) === s.phase) continue;
       const first = !this.surgePhase.has(map.data.id);
       this.surgePhase.set(map.data.id, s.phase);
+      // A restless time over: who opened this map's slab in it matters no more, and no hands wait on it.
+      if (s.phase === 'calm') this.forgetSlab(map);
       if (!first) this.toCopies(map.data.id, { t: 'surge', surge: s });
       for (const rule of this.rules) if (rule.when === 'unstable' && rule.map === map) this.openRule(rule, s.phase !== 'calm', now);
     }
     // The first tick also opens aurora finds if the world starts on an aurora night.
     for (const rule of this.rules) if (rule.when === 'aurora' && rule.open !== (this.weatherOf(rule.map) === 'aurora')) this.openRule(rule, !rule.open, now);
+  }
+
+  /** A restless time is over on `map`: who opened its slabs then, and hands still on them, are forgotten. */
+  private forgetSlab(map: TileMap): void {
+    for (const k of this.slabOpened.keys()) if (k.startsWith(`${map.data.id} `)) this.slabOpened.delete(k);
+    // By the zone's key: the map's, or the map's and a copy's (zoneKey).
+    for (const k of this.slabPresses.keys()) if (k.startsWith(`${map.data.id} `) || k.startsWith(`${map.data.id}:`)) this.slabPresses.delete(k);
   }
 
   /** A region's storm clock now (for an inside, the region around it), or null for a map that never storms. */
@@ -3784,6 +4336,23 @@ export class World {
       this.stormPhase.set(map.data.id, s.phase);
       if (!first) this.toCopies(map.data.id, { t: 'storm', storm: s });
       for (const rule of this.rules) if (rule.when === 'storm' && rule.map === map) this.openRule(rule, s.phase === 'storm', now);
+    }
+  }
+
+  /**
+   * What grows in the rain (chanterelles) grows while it rains over its map, by its region's own rain
+   * windows, and for its `after` seconds more, in every copy of the map; then it goes. When the server
+   * starts on the day's clock, the rain it missed is counted from the region's windows (sinceRain), so a
+   * restart just after the rain finds them still up.
+   */
+  private moveRain(now: number): void {
+    for (const rule of this.rules) {
+      if (rule.when !== 'rain') continue;
+      const id = rule.map.data.id;
+      if (this.weatherOf(rule.map) === 'rain') this.rainedAt.set(id, now);
+      else if (!this.rainedAt.has(id) && this.cycle) this.rainedAt.set(id, now - sinceRain(now + this.epochOffset, this.outdoors(rule.map).data.rain) * 1000);
+      const at = this.rainedAt.get(id);
+      this.openRule(rule, at !== undefined && now - at <= (rule.after ?? 0) * 1000, now);
     }
   }
 
@@ -4077,9 +4646,10 @@ export class World {
         continue;
       }
       zone.nextFlash = now + rule.every * 1000;
+      // Never under someone down: they could not step out of it.
       const out = [...zone.players].filter(p => {
         const steps = p.map.homeSteps(p.rec.x, p.rec.y);
-        return steps >= rule.steps[0] && steps <= rule.steps[1] && this.exposed(p, now);
+        return !p.slump && steps >= rule.steps[0] && steps <= rule.steps[1] && this.exposed(p, now);
       });
       const who = out[Math.floor(this.rng() * out.length)];
       if (!who) continue;
@@ -4415,8 +4985,8 @@ export class World {
           this.sendAway(w, now);
           continue;
         }
-        // Anyone who faces it holds it still, prey or not: a friend can keep watch.
-        if (here.some(p => manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_SEE && faces(p.rec.x, p.rec.y, p.rec.dir, w.x, w.y))) continue;
+        // Anyone who faces it holds it still, prey or not: a friend can keep watch. Someone down watches nothing.
+        if (here.some(p => !p.slump && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= WATCHER_SEE && faces(p.rec.x, p.rec.y, p.rec.dir, w.x, w.y))) continue;
         // An afterglow keeps them off: whoever glows with it is nobody's prey.
         const prey = here
           .filter(p => p.rec.energy > 0 && this.noticeable(p, now) && !this.glowing(p, now) && manhattan(p.rec.x, p.rec.y, w.x, w.y) <= (p.live ? WATCHER_HUNT_LIVE : WATCHER_HUNT))
@@ -4509,7 +5079,8 @@ export class World {
   /** A watcher reached a player: energy lost, one thing they carried taken (at random), and it goes away. */
   private touch(w: Watcher, p: Online, now: number): void {
     this.sendAway(w, now);
-    const units = p.rec.bag.flatMap((s, slot) => Array.from({ length: s.count }, () => slot));
+    // Only what is theirs: someone else's things, carried to the lodge for them, are left alone.
+    const units = p.rec.bag.flatMap((s, slot) => (s.bundle ? [] : Array.from({ length: s.count }, () => slot)));
     let lost: string | null = null, level = 0;
     if (units.length) {
       const slot = units[this.roll(units.length)]!;
@@ -4523,7 +5094,7 @@ export class World {
     this.advance(p, now);
     p.rec.energy = Math.max(0, p.rec.energy - WATCHER_TOUCH);
     this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'watcher', lost, ...(level ? { level } : {}) } });
-    if (p.rec.energy <= 0) return this.collapse(p, now);
+    if (p.rec.energy <= 0) return this.exhausted(p, now);
     this.refresh(p, now);
     this.tell(p, now);
   }
@@ -4644,7 +5215,7 @@ export class World {
     p.rec.energy = Math.max(0, p.rec.energy - SKULKER_CATCH);
     if (p.rec.energy <= 0) {
       this.outbox.push({ to: p.rec.id, msg: { t: 'touched', by: 'skulker', lost: null } });
-      return this.collapse(p, now);
+      return this.exhausted(p, now);
     }
     let lost: string | null = null, level = 0;
     if (p.rec.bag.length) {
@@ -4686,6 +5257,8 @@ export class World {
       if (s.phase === 'surge') lines.push(`${map.data.name}: a surge is on, ${about(s.left)} more. Get to a light.`);
       else if (s.phase === 'unstable') lines.push(`${map.data.name}: restless. A surge comes ${about(s.left)}.`);
       else lines.push(`${map.data.name}: calm. The next surge comes ${about(untilSurge(rule, s))}.`);
+      // Restless, the slab glows (slab.ts): two people there now can open it.
+      if (slabGlows(s)) for (const o of map.data.objects) if (o.kind === 'slab') lines.push(`${capital(o.name)} is glowing.`);
     }
     for (const map of regions) {
       const s = this.stormOf(map, now), rule = map.data.storm;
@@ -4827,13 +5400,19 @@ export class World {
 
   /**
    * A saved bag as it fits today's items: items that no longer exist are gone, gear is a piece to a slot
-   * (gear saved before pieces travelled, a strange object's, gets a new one), and a bag that no longer
-   * fits (a stack size went down) is packed again; whatever does not fit then is lost.
+   * (gear saved before pieces travelled, a strange object's, gets a new one), a bundle is one only with
+   * what a bundle holds (lostfound.ts), and a bag that no longer fits (a stack size went down) is packed
+   * again; whatever does not fit then is lost.
    */
   private fitBag(bag: unknown, slots: number): BagSlot[] {
-    // Only a live item keeps when it was picked.
-    const known = this.pieced((Array.isArray(bag) ? bag : []).filter((s): s is BagSlot => isSlot(s) && this.items.has(s.item))
-      .map(s => (s.since === undefined || this.items.get(s.item)!.live ? s : { item: s.item, count: s.count, ...(s.piece ? { piece: s.piece } : {}) })));
+    const kept = (s: BagSlot): boolean => this.items.has(s.item) && (this.items.get(s.item)!.kind === 'bundle' ? isBundle(s.bundle) : true);
+    // Only a live item keeps when it was picked, and only a bundle what it holds.
+    const known = this.pieced((Array.isArray(bag) ? bag : []).filter((s): s is BagSlot => isSlot(s) && kept(s))
+      .map(s => {
+        const { bundle, ...rest } = s;
+        const plain = s.since === undefined || this.items.get(s.item)!.live ? rest : { item: s.item, count: s.count, ...(s.piece ? { piece: s.piece } : {}) };
+        return this.items.get(s.item)!.kind === 'bundle' ? { ...plain, count: 1, bundle: copyBundle(bundle!) } : plain;
+      }));
     const fine = known.length <= slots && known.every(s => s.count <= this.items.get(s.item)!.stack);
     return fine ? copyBag(known) : addAllToBag([], known, this.items, slots).bag;
   }
@@ -4958,11 +5537,11 @@ export class World {
    */
   private restore(d: DropRecord): void {
     const map = this.maps.get(d.map);
-    const items = gather(this.pieced((Array.isArray(d.items) ? d.items : []).filter(s => isSlot(s) && this.items.has(s.item))));
+    const items = gather(this.pieced((Array.isArray(d.items) ? d.items : []).filter(s => isSlot(s) && this.items.has(s.item) && (this.items.get(s.item)!.kind !== 'bundle' || isBundle(s.bundle)))));
     if (!map || !map.inside(d.x, d.y) || !items.length || this.piles.has(d.owner)) return;
     const trail = (Array.isArray(d.trail) ? d.trail : []).filter(([x, y]) => map.inside(x, y)).slice(-TRAIL_STEPS);
-    const { zone: _zone, ...rest } = d;
-    this.addPile({ ...rest, ...(typeof d.zone === 'string' && d.zone ? { zone: d.zone } : {}), items, trail });
+    const { zone: _zone, owed, ...rest } = d;
+    this.addPile({ ...rest, ...(typeof d.zone === 'string' && d.zone ? { zone: d.zone } : {}), items, trail, ...(owed && typeof owed === 'object' ? { owed: { ...owed } } : {}) });
   }
 
   private addPile(d: DropRecord): void {
@@ -5124,9 +5703,12 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'progress', progress: progressOf(p.rec.xp, r.cup), gained: r.gained, ...(r.fromRest ? { fromRest: r.fromRest } : {}) } });
   }
 
-  /** A full bar: the level's, plus what the gear worn gives, and the keepsakes' when all of them are home. */
-  private maxOf(r: PlayerRecord): number {
-    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items, r.worn) + keepsakeEnergy(this.keepsakes, r.keepsakes);
+  /**
+   * A full bar: the level's, plus what the gear worn gives, the keepsakes' when all of them are home, and what
+   * `mods` add (a meal eaten this trip: the meals alone, unless the caller has the player's whole Mods at hand).
+   */
+  private maxOf(r: PlayerRecord, mods = modsOf({}, mealMods(r.meals, this.items))): number {
+    return maxEnergy(levelOf(r.xp ?? 0)) + gearEnergy(r.gear ?? {}, this.items, r.worn) + keepsakeEnergy(this.keepsakes, r.keepsakes) + Math.round(mods.energy);
   }
 
   /**
@@ -5494,8 +6076,8 @@ export class World {
 
   private refuse(
     p: Online,
-    action: 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind
-      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport',
+    action: 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | LookKind | 'checkout'
+      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab',
     reason: Refusal,
   ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });
@@ -5708,6 +6290,7 @@ const SEASON_WORDS: Record<Season, string> = {
   winter: 'colder out there, and snow instead of rain',
 };
 const lower = (s: string) => s[0]!.toLowerCase() + s.slice(1);
+const capital = (s: string) => s[0]!.toUpperCase() + s.slice(1);
 
 /** "in about 6 minutes", or "in under a minute"; `plain` drops the "in" ("for about 6 hours", "about 3 days"). */
 function about(seconds: number, plain = false): string {

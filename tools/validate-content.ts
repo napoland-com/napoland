@@ -5,13 +5,15 @@
  * rule on a real map with room to grow, and every keepsake lying where somebody can pick it up.
  * Then content/story.json: the chapters, and that what reaches each one is about people, desks, maps
  * and items that exist. Then content/notebook.json: the pages of the field notes, what opens them and
- * fills in their blanks, and that none says where anything is.
+ * fills in their blanks, and that none says where anything is. Then content/shop.json: the looks the
+ * shop sells, each priced in the same currencies, and none of them a look that can be earned.
  * Warnings are printed; any error makes the exit code 1. Usage: npm run validate
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
-  NOTE_AUTHORS, notesOf, validateItems, validateMap, validateNotebook, validateStory, validateWorld, type ItemsData, type MapData, type NotebookData, type StoryData,
+  NOTE_AUTHORS, SHOP_KINDS, notesOf, validateItems, validateMap, validateNotebook, validateShop, validateStory, validateWorld, type ItemsData, type MapData, type NotebookData,
+  type ShopData, type StoryData,
 } from '../packages/shared/src';
 
 /** The town where new players start and collapsed players wake up. */
@@ -102,5 +104,17 @@ else {
     console.log(`${NOTEBOOK}: error: cannot be checked: ${err instanceof Error ? err.message : String(err)}`);
     errors++;
   }
+}
+// The shop's catalog stands on its own: it names no map or item, only the looks that can be earned, which it never sells.
+const SHOP = 'shop.json';
+try {
+  const data = JSON.parse(readFileSync(resolve(import.meta.dirname, '../content', SHOP), 'utf8')) as ShopData;
+  const problems = validateShop(data);
+  for (const p of problems) console.log(`${SHOP}: ${p.level}: ${p.message}`);
+  errors += problems.filter(p => p.level === 'error').length;
+  if (!problems.length) console.log(`${SHOP}: ok (${SHOP_KINDS.map(k => `${data.looks.filter(l => l.kind === k).length} ${k}s`).join(', ')}, in ${Object.keys(data.looks[0]?.prices ?? {}).join(', ') || 'no currency'})`);
+} catch (err) {
+  console.log(`${SHOP}: error: cannot be checked: ${err instanceof Error ? err.message : String(err)}`);
+  errors++;
 }
 process.exit(errors ? 1 : 0);

@@ -145,6 +145,13 @@ describe('in the game', () => {
     expect(said()).toBe('Your stash is short of 8 cloth for a bed.');
   });
 
+  it('keeps cozy quiet during a new player\'s first steps: they wake up by the fire, and one thing at a time', () => {
+    g.firstSteps = 1;
+    g.handle({ t: 'energy', energy: FULL, body: { ...DRY, fireside: COZY_AFTER_S, cozy: 480 } }, 22_000);
+    expect(g.takeNews(22_000)).toEqual([]);
+    expect(g.bodyNow(22_000).cozy).toBe(480);
+  });
+
   it('announces cozy once, counts it down away from the fire and holds it by it, and says when it wears off', () => {
     g.handle({ t: 'energy', energy: FULL, body: { ...DRY, fireside: 0 } }, 2000);
     expect(g.takeNews(2000)).toEqual([]);

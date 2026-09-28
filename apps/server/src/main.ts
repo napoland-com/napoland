@@ -5,7 +5,7 @@
 import { dirname, join } from 'node:path';
 import { createAuth } from './auth';
 import { loadConfig } from './config';
-import { loadItems, loadMaps, loadNotebook, loadStory, loadWords } from './content';
+import { loadItems, loadMaps, loadNotebook, loadShop, loadStory, loadWords } from './content';
 import { flushLogs, log, setLogLevel } from './log';
 import { startServer } from './server';
 import { MemoryStorage, PgStorage, type Storage } from './storage';
@@ -42,6 +42,12 @@ async function main(): Promise<void> {
   // The words chat masks lie next to the items.
   const words = loadWords(join(dirname(cfg.itemsFile), 'words.json'));
   log.info('chat words loaded', { count: words.length });
+  // So does what the shop sells: checked whether the shop is open or not, as what was bought is worn either way.
+  const shopFile = join(dirname(cfg.itemsFile), 'shop.json');
+  const catalog = loadShop(shopFile, cfg.shop?.currency);
+  log.info('shop catalog loaded', { file: shopFile, version: catalog.version, looks: catalog.looks.length });
+  // Turned on, but not set up: it stays closed, and the log says what is missing (names, never values).
+  if (cfg.shopMissing.length) log.warn('the shop stays closed: SHOP_ENABLED is on, but these are not set', { missing: cfg.shopMissing });
 
   const storage: Storage = cfg.databaseUrl ? new PgStorage(cfg.databaseUrl, cfg.migrationsDir!) : new MemoryStorage();
   await storage.init();
@@ -73,6 +79,7 @@ async function main(): Promise<void> {
     ...(cfg.townCrowd || cfg.regionCrowd ? { crowd: { ...(cfg.townCrowd && { town: cfg.townCrowd }), ...(cfg.regionCrowd && { region: cfg.regionCrowd }) } } : {}),
     glimpseEveryMs: cfg.glimpseEveryMs,
     auth,
+    shop: { settings: cfg.shop, catalog },
   });
   // Only ever in development (the configuration refuses it in production): nobody should wonder later why levels came so fast.
   if (cfg.xpMultiplier !== 1) log.warn('XP_MULTIPLIER: stashing earns more XP than it should (play-tests only)', { times: cfg.xpMultiplier });
@@ -99,6 +106,8 @@ async function main(): Promise<void> {
     supabase: cfg.auth.mode === 'supabase' ? cfg.auth.url : undefined,
     // The buttons the sign-in card shows besides the email (AUTH_PROVIDERS).
     providers: cfg.auth.mode === 'legacy' ? undefined : cfg.auth.providers,
+    // Whether the shop takes payments, and real money or Stripe's test mode; never a key.
+    shop: cfg.shop ? { currency: cfg.shop.currency, mode: cfg.shop.live ? 'live' : 'test', stripe: cfg.shop.api } : 'closed',
   });
 
   let stopping = false;

@@ -19,8 +19,8 @@
  */
 import * as THREE from 'three';
 import {
-  DIR_VEC, dirToward, hidden, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Season, type TileKind, type TileMap,
-  type Weather,
+  DIR_VEC, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Season, type TileKind,
+  type TileMap, type Weather,
 } from '@napoland/shared';
 import { comfortModel, comfortShadow, lampLight } from './cabin';
 import { Afterglows, LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
@@ -33,7 +33,9 @@ import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
 } from './interior';
-import { bridgeModel, bridgeRails, cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
+import {
+  bridgeModel, bridgeRails, cardboardModel, carModel, culvertMouthModel, culvertMouths, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding, shedBuilding,
+} from './left';
 import { SNOW, ambience, assignBeams, assignLights, lightSources, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
 import { HUM, TELEPORT_RINGS, TELEPORT_ROCK_Y, napoBuilding, napoProp, napoSign, teleportCore, towerModel, type TeleportCore } from './napo';
@@ -60,6 +62,8 @@ export interface Avatar {
   afterglow?: boolean;
   /** What they wear (characters.ts). */
   look?: Look;
+  /** They lie slumped, out of energy, until someone gets them up (rescue.ts): everyone sees them lie there. */
+  down?: boolean;
   /** You, while NAPO's teleport takes you (beam.ts): going or coming, how many seconds into it, and its pad. */
   beam?: { phase: 'out' | 'in'; t: number; pad: { x: number; y: number } };
 }
@@ -72,6 +76,10 @@ interface RigEntry {
   shadow: THREE.Mesh;
   hitch?: THREE.Group;
   crouch: number;
+  /** From 0 to 1 as they go down out of energy (rescue.ts), and back as they get up. */
+  slump: number;
+  /** From 0 to 1 as they wade into the culvert's water, waist-deep. */
+  wade: number;
   clipped?: Map<THREE.Mesh, THREE.Material | THREE.Material[]>;
 }
 
@@ -162,6 +170,15 @@ const ROOF_SNOW = new THREE.Color('#dfe7ec');
 const TREE_GRADE: Readonly<Record<Season, [string, number]>> = {
   spring: ['#2f6a3a', 0.18], summer: ['#4a5530', 0.1], autumn: ['#5c4a26', 0.14], winter: ['#b4c4c2', 0.32],
 };
+/**
+ * Someone down lies face down on their tile, the pack up: leaned this far forward (radians), lifted so
+ * the face rests on the ground rather than in it, drawn back so the body lies over their own tile, and
+ * rolled a little to one side. SLUMP_S (seconds) is how long going down or getting up takes.
+ */
+const SLUMP_LEAN = 1.35, SLUMP_LIFT = 0.1, SLUMP_BACK = 0.42, SLUMP_ROLL = 0.22, SLUMP_TIME = 0.6;
+/** The water's surface (the pond's, the creek's and the culvert's), and how deep someone wading the culvert sinks into it. */
+const WATER_Y = -0.1;
+const WADE_DROP = 0.3;
 /** A house's doorway: its width and height, and how deep it goes in (the front wall's thickness). */
 const DOOR_W = 0.6;
 const DOOR_H = 0.84;
@@ -292,7 +309,7 @@ export class WorldView {
   /** How this place looks in the current weather (lighting.ts). */
   private amb: Ambience;
   private readonly pitch = THREE.MathUtils.degToRad(62);
-  /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass. */
+  /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass, `slump` as they go down, `wade` as they wade into the culvert's water. */
   private rigs = new Map<string, RigEntry>();
   /** The ground's colors (grass.ts), and the grass's material: null where no grass grows. */
   private ground!: Ground;
@@ -390,6 +407,9 @@ export class WorldView {
   /** The Old Stone's crystal, brighter while it is awake. */
   private crystalMat = stoneCrystal();
   private stoneAwake = false;
+  /** The seams of a slab (slab.ts): dark cracks in the stone, glowing violet like the Old Stone while the woods are restless. */
+  private seamMat = ownToon('#2c2a33', { emissive: 0x000000 });
+  private slabGlow = false;
   /** How much a surge washes this map now, 0 to 1. */
   private surgeK = 0;
   /** A storm blows over this map (outdoors). */
@@ -487,9 +507,9 @@ export class WorldView {
     this.puffs = [];
   }
 
-  /** Height of the ground a character stands on: on water frozen over, the ice. */
+  /** Height of the ground a character stands on: on water frozen over, the ice. A flooded culvert lies as low as water, and is as full. */
   private topY(x: number, y: number): number {
-    return this.map.level(x, y) * 0.55 + (this.map.kind(x, y) === 'water' ? (this.map.frozenAt(x, y) ? ICE_Y : -0.34) : 0);
+    return this.map.level(x, y) * 0.55 + (watery(this.map.kind(x, y)) ? (this.map.frozenAt(x, y) ? ICE_Y : -0.34) : 0);
   }
   private groundAt(x: number, y: number): number {
     return Math.max(0, this.topY(Math.floor(x), Math.floor(y)));
@@ -548,8 +568,9 @@ export class WorldView {
       for (const [ox, oy] of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
         const ny = map.inside(tx + ox, ty + oy) ? this.topY(tx + ox, ty + oy) : 0;
         if (ny >= y0 - 0.001) continue;
-        // The edge of the ice over open water is ice too.
-        const w = new THREE.Color(map.frozenAt(tx, ty) ? '#8aa9b5' : raised ? '#4f4336' : kind === 'mud' ? '#4a4034' : '#3f3529');
+        // The edge of the ice over open water is ice too; the culvert the loggers dug is walled in stone
+        // gone grey, where any other bank is earth.
+        const w = new THREE.Color(map.frozenAt(tx, ty) ? '#8aa9b5' : map.kind(tx + ox, ty + oy) === 'culvert' ? '#5e5c55' : raised ? '#4f4336' : kind === 'mud' ? '#4a4034' : '#3f3529');
         w.offsetHSL(0, 0, (hash2(tx + ox * 7, ty + oy * 11) - 0.5) * 0.05);
         let a: [number, number], b: [number, number];
         if (oy === -1) { a = [tx, ty]; b = [tx + 1, ty]; } else if (oy === 1) { a = [tx + 1, ty + 1]; b = [tx, ty + 1]; }
@@ -588,12 +609,12 @@ export class WorldView {
       if (road(x, y) && road(x, y + 1) && !road(x, y - 1) && !road(x, y + 2) && x % 2 === 0) dashes.push([x + 0.5, y + 1, false]);
     }
     this.instanced(new THREE.BoxGeometry(0.5, 0.01, 0.07), dashes, ([x, y, vertical], o, c) => { o.position.set(x, 0.006, y); o.rotation.y = vertical ? Math.PI / 2 : 0; c.set('#9c8a4a'); });
-    // The pond surface, gently moving.
+    // The pond surface, gently moving; the culvert's water is part of it.
     let x0 = W, y0 = H, x1 = -1, y1 = -1;
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (map.kind(x, y) === 'water') { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (watery(map.kind(x, y))) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
     if (x1 >= 0) {
       const wg = new THREE.PlaneGeometry(x1 - x0 + 2.2, y1 - y0 + 2.2, 16, 10).rotateX(-Math.PI / 2);
-      this.scene.add(part(wg, ownToon('#1d3a48', { transparent: true, opacity: 0.9 }), (x0 + x1 + 1) / 2, -0.1, (y0 + y1 + 1) / 2, false));
+      this.scene.add(part(wg, ownToon('#1d3a48', { transparent: true, opacity: 0.9 }), (x0 + x1 + 1) / 2, WATER_Y, (y0 + y1 + 1) / 2, false));
       const wpos = wg.attributes.position as THREE.BufferAttribute;
       this.animate.push(t => {
         for (let i = 0; i < wpos.count; i++) wpos.setY(i, Math.sin(t * 1.8 + wpos.getX(i) * 1.4 + wpos.getZ(i)) * 0.03);
@@ -744,7 +765,9 @@ export class WorldView {
     }
 
     const shrooms: Array<{ x: number; y: number; s: number }> = [];
-    for (const o of this.objects('shrooms')) for (const [sx, sy] of [[0.3, 0.3], [0.7, 0.36], [0.34, 0.72], [0.72, 0.7]] as const) shrooms.push({ x: o.x + sx, y: o.y + sy, s: 0.8 + hash2(o.x * 5 + sx * 10, o.y) * 0.5 });
+    // Nothing grows on a slab's stone: the glowcaps drawn where it lies stay under it.
+    const slabs = new Set(this.objects('slab').map(o => `${o.x},${o.y}`));
+    for (const o of this.objects('shrooms')) if (!slabs.has(`${o.x},${o.y}`)) for (const [sx, sy] of [[0.3, 0.3], [0.7, 0.36], [0.34, 0.72], [0.72, 0.7]] as const) shrooms.push({ x: o.x + sx, y: o.y + sy, s: 0.8 + hash2(o.x * 5 + sx * 10, o.y) * 0.5 });
     this.instanced(flat(new THREE.CylinderGeometry(0.022, 0.03, 0.12, 5)), shrooms, (f, o, c) => { o.position.set(f.x, 0.06 * f.s, f.y); o.scale.setScalar(f.s); c.set('#d9d2c0'); });
     this.instanced(new THREE.IcosahedronGeometry(0.075, 0), shrooms, (f, o) => { o.position.set(f.x, 0.13 * f.s, f.y); o.scale.set(f.s, f.s * 0.55, f.s); }, this.capMat);
   }
@@ -789,6 +812,11 @@ export class WorldView {
       if (h.style === 'mill') {
         // The old sawmill (left.ts): the same doorway, dark; nothing has burned in there since it closed.
         still.push(millBuilding(h, doorX, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }));
+        continue;
+      }
+      if (h.style === 'shed') {
+        // A board shed (left.ts), its door shut on a padlock: whoever carries what opens it walks in all the same.
+        still.push(shedBuilding(h, doorX, { w: DOOR_W, h: DOOR_H }));
         continue;
       }
       const g = new THREE.Group(), cx = h.x + h.w / 2, cz = h.y + h.h / 2;
@@ -886,6 +914,8 @@ export class WorldView {
       still.push(car);
     });
 
+    // The culvert's mouths (a rusted steel pipe half under the water, in its stone headwall), where it opens onto ground.
+    for (const m of culvertMouths(this.map)) still.push(culvertMouthModel(m.x, m.y, m.dir));
     for (const b of this.objects('board')) still.push(boardModel(b.x, b.y));
     for (const s of this.objects('sign')) {
       if (s.style === 'napo') { still.push(napoSign(s)); continue; }
@@ -961,6 +991,27 @@ export class WorldView {
         for (const d of debris.children) d.position.y = d.userData.y + Math.sin(t * 1.4 + d.userData.ph) * 0.12;
       });
     }
+
+    // A slab in the middle of a ring of stones (slab.ts): flat stone set in the ground, cracked along its
+    // seams, which glow violet like the Old Stone's crystal while the woods are restless, and pulse.
+    const slabs = this.objects('slab');
+    for (const sl of slabs) {
+      const g = new THREE.Group();
+      g.position.set(sl.x + 0.5, 0, sl.y + 0.5);
+      g.rotation.y = (hash2(sl.x, sl.y) - 0.5) * 0.3;
+      g.add(box(0.94, 0.08, 0.86, '#6f6b63', 0, 0.04, 0, 0.02), box(0.8, 0.02, 0.72, '#7b776e', 0, 0.085, 0, false));
+      still.push(g);
+      const seams = new THREE.Group();
+      seams.position.copy(g.position);
+      seams.rotation.y = g.rotation.y;
+      for (const [x, z, len, turn] of [[-0.12, -0.05, 0.62, 0.35], [0.18, 0.12, 0.4, -0.9], [-0.25, 0.22, 0.3, 1.3], [0.2, -0.22, 0.34, 0.2]] as const) {
+        const seam = part(new THREE.BoxGeometry(len, 0.012, 0.035), this.seamMat, x, 0.1, z, false);
+        seam.rotation.y = turn;
+        seams.add(seam);
+      }
+      this.scene.add(seams);
+    }
+    if (slabs.length) this.animate.push(t => { if (this.slabGlow) this.seamMat.emissive.setHex(0x8a4dff).multiplyScalar(0.55 + 0.45 * Math.sin(t * 2.2)); });
 
     for (const n of this.objects('npc')) {
       const { root, bang } = makeNpc(n.look);
@@ -1252,11 +1303,19 @@ export class WorldView {
   /**
    * How far out on the screen something standing on tile x,y is seen, from its feet to a head FAR_FIGURE_H
    * up: the larger of across and up, 0 in the middle to 1 at the edge (more: off it); null behind the camera.
-   * As last drawn: for what stands at the edge of the fog (unease.ts, EdgeOf).
+   * As last drawn: for what stands at the edge of the fog (unease.ts, EdgeOf). `covered` says whether a
+   * point of the canvas (CSS pixels from its top left) is hidden under the HUD: seen there it counts as not
+   * seen at all (null), feet, middle or head.
    */
-  edgeOf(x: number, y: number): number | null {
-    const feet = this.edgeAt(x, y, 0), head = this.edgeAt(x, y, FAR_FIGURE_H);
-    return feet === null || head === null ? null : Math.max(feet, head);
+  edgeOf(x: number, y: number, covered?: (px: number, py: number) => boolean): number | null {
+    let most = 0;
+    for (const lift of [0, FAR_FIGURE_H / 2, FAR_FIGURE_H]) {
+      const e = this.edgeAt(x, y, lift);
+      if (e === null) return null;
+      if (covered && covered((this.tmp.x + 1) / 2 * this.width, (1 - this.tmp.y) / 2 * this.height)) return null;
+      most = Math.max(most, e);
+    }
+    return most;
   }
 
   private edgeAt(x: number, y: number, lift: number): number | null {
@@ -1267,6 +1326,13 @@ export class WorldView {
   /** The piles on this map, for the echoes that walk to them: call it when they change or you move to another tile. */
   setEchoes(drops: Iterable<DropView>, focus: { x: number; y: number }) {
     this.echoes.set(drops, focus);
+  }
+
+  /** The woods are restless: a slab's seams glow (slab.ts), pulsing; calm, they are dark cracks again. */
+  setSlab(glow: boolean) {
+    if (glow === this.slabGlow) return;
+    this.slabGlow = glow;
+    if (!glow) this.seamMat.emissive.setHex(0x000000);
   }
 
   /** The Old Stone awake: its crystal and light burn brighter, and it turns faster. */
@@ -1428,14 +1494,15 @@ export class WorldView {
       seen.add(a.id);
       let e = this.rigs.get(a.id);
       const x = a.x + 0.5, z = a.y + 0.5, gy = this.groundAt(x, z);
-      // Everyone's tile is known, so everyone sees who crouches in tall grass.
-      const inGrass = hidden(this.map, Math.floor(x), Math.floor(z));
-      // A new jacket or new gear: the character is built again in it (as crouched as it was).
+      // Everyone's tile is known, so everyone sees who crouches in tall grass (someone down lies there instead), and who wades the culvert.
+      const inGrass = hidden(this.map, Math.floor(x), Math.floor(z)) && !a.down;
+      const inWater = this.map.kind(Math.floor(x), Math.floor(z)) === 'culvert';
+      // A new jacket or new gear: the character is built again in it (as crouched, as slumped and as deep in the water as it was).
       const look = JSON.stringify(a.look ?? {});
       if (!e || e.color !== a.color || e.look !== look) {
-        const crouch = e ? e.crouch : inGrass ? 1 : 0;
+        const crouch = e ? e.crouch : inGrass ? 1 : 0, slump = e ? e.slump : a.down ? 1 : 0, wade = e ? e.wade : inWater ? 1 : 0;
         if (e) this.dropRig(e);
-        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0), crouch };
+        e = { rig: makePlayer(a.color, a.look), color: a.color, look, shadow: this.blob(0.3, 0, 0), crouch, slump, wade };
         // Turned to face first, then leaned: a crouch leans forward whichever way they face.
         e.rig.root.rotation.order = 'YXZ';
         this.scene.add(e.rig.root, e.shadow);
@@ -1443,14 +1510,20 @@ export class WorldView {
       }
       const { rig } = e;
       const c = (e.crouch = crouchToward(e.crouch, inGrass, dt));
+      const k = (e.slump = Math.min(1, Math.max(0, e.slump + (a.down ? dt : -dt) / SLUMP_TIME)));
+      // Down, they lie over their own tile: drawn back against the way they face as they lean.
+      const [bx, bz] = DIR_VEC[a.dir], back = SLUMP_BACK * k;
+      // Wading, the water comes up to the waist: sinking in as they step down into it, as quick as a crouch.
+      const wd = (e.wade = crouchToward(e.wade, inWater, dt));
       // Crouched, only the head and shoulders show over the grass, and the step is shorter.
-      rig.root.position.set(x, gy + (a.moving ? Math.abs(Math.sin(a.phase)) * 0.045 * (1 - c * 0.6) : 0) - CROUCH_DROP * c, z);
-      rig.root.rotation.set(CROUCH_LEAN * c, FACE[a.dir], 0);
-      e.shadow.position.set(x, gy + BLOB_Y, z);
-      const sw = (a.moving ? Math.sin(a.phase) * 0.95 : a.turnT > 0 ? Math.sin((1 - a.turnT / 0.14) * Math.PI) * 0.45 : 0) * (1 - c * 0.45);
-      rig.legL.rotation.x = sw; rig.legR.rotation.x = -sw;
-      // The arms come forward as if pushing the grass aside.
-      rig.armL.rotation.x = -sw * 0.7 - c * 0.55; rig.armR.rotation.x = sw * 0.7 - c * 0.55;
+      rig.root.position.set(x - bx * back, gy + (a.moving ? Math.abs(Math.sin(a.phase)) * 0.045 * (1 - c * 0.6) : 0) - CROUCH_DROP * c - WADE_DROP * wd + SLUMP_LIFT * k, z - bz * back);
+      rig.root.rotation.set(CROUCH_LEAN * c + SLUMP_LEAN * k, FACE[a.dir], SLUMP_ROLL * k);
+      // On the water, the shadow lies on its surface.
+      e.shadow.position.set(x, wd > 0.5 ? WATER_Y + 0.01 : gy + BLOB_Y, z);
+      const sw = (a.moving ? Math.sin(a.phase) * 0.95 : a.turnT > 0 ? Math.sin((1 - a.turnT / 0.14) * Math.PI) * 0.45 : 0) * (1 - c * 0.45) * (1 - k);
+      rig.legL.rotation.x = sw + 0.25 * k; rig.legR.rotation.x = -sw - 0.1 * k;
+      // The arms come forward as if pushing the grass aside; down, they lie loose, one flung ahead.
+      rig.armL.rotation.x = -sw * 0.7 - c * 0.55 - 0.5 * k; rig.armR.rotation.x = sw * 0.7 - c * 0.55 - 2.1 * k;
       // You, while NAPO's teleport takes you (beam.ts): onto the pad and round, then gone from your feet up; or
       // back from your head down on the pad and off it onto your tile. Only your own screen has it.
       const pose = a.beam ? beamPose(a.beam.phase, a.beam.t) : null;
@@ -1476,7 +1549,7 @@ export class WorldView {
       if (this.amb.flashlight) {
         const [dx, dy] = DIR_VEC[a.dir];
         // Held where the hands are: lower while crouched, or it would light the top of your own cap.
-        const h = { id: a.id, x: x + dx * 0.2, y: gy + 0.75 - CROUCH_DROP * c, z: z + dy * 0.2, tx: x + dx * 4, ty: gy, tz: z + dy * 4 };
+        const h = { id: a.id, x: x + dx * 0.2, y: gy + 0.75 - CROUCH_DROP * c - WADE_DROP * wd, z: z + dy * 0.2, tx: x + dx * 4, ty: gy, tz: z + dy * 4 };
         if (a.id !== meId) held.push(h);
         else {
           this.flash.position.set(h.x, h.y, h.z);

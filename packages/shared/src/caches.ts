@@ -19,10 +19,11 @@ export const CACHE_NEAR = 3;
 
 /**
  * Can a thing be left in a crate? Gear and tools stay out, and so does a sealed lockbox (it never leaves
- * the chest) and a keepsake (it stays with you until you bring it home).
+ * the chest), a keepsake (it stays with you until you bring it home) or a bundle (someone else's things go
+ * to the lodge, not to whoever comes next: lostfound.ts).
  */
 export function cacheTakes(def: ItemDef | undefined): boolean {
-  return !!def && def.kind !== 'gear' && def.kind !== 'tool' && def.kind !== 'sealed' && def.kind !== 'keepsake';
+  return !!def && def.kind !== 'gear' && def.kind !== 'tool' && def.kind !== 'sealed' && def.kind !== 'keepsake' && def.kind !== 'bundle';
 }
 
 /** A thing in a crate, as its visitors see it: what, who left it (id and name), and how long ago (seconds, when sent). */

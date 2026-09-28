@@ -11,7 +11,7 @@ Ways for a group to reach what nobody reaches alone, to build and test one by on
 
 - **Shared light:** deep areas drain energy fast unless you stand in someone's lantern light; more lanterns make a bigger safe area.
 - **Group gates:** some passages open only when several people pull at once. **Built:** NAPO's gate into the Burn ([deeper-regions](deeper-regions.md)), for two.
-- **Rescue:** friends can carry you home when you collapse near them.
+- **Rescue:** built another way, as [a window to be saved](rescue-window.md): anyone on the map who reaches you in time gets you up with some of their own energy.
 - **Heavy finds:** the best finds need two people to carry.
 - **Camps:** a group can build a shared camp that works as a temporary home out in the woods.
 

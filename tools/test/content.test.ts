@@ -2,8 +2,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  ANYWHERE, CACHE_NEAR, COMFORTS, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, comfortMax, doorOf, findPath, findTiles, hidden, itemIndex, lotDoors, notesOf, objectTiles, opensOn,
-  secretKey, secretTitle, stepTarget, teleportArrival, upgradable, upgradeChance,
+  ANYWHERE, BUNDLE, CACHE_NEAR, COMFORTS, DIRS, NOTE_AUTHORS, NOTE_ON, SIGHTS, TileMap, UPGRADE_MAX, comfortMax, doorOf, findPath, findTiles, hidden, itemIndex, lotDoors, notesOf, objectTiles,
+  opensOn, secretKey, secretTitle, stepTarget, storyLines, teleportArrival, upgradable, upgradeChance,
   validateItems, validateNotebook, type ItemsData, type MapData, type MapExit, type MapNote, type MapObject, type NotebookData, type Sight, type StoryData,
 } from '@napoland/shared';
 
@@ -316,6 +316,73 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
   });
 });
 
+describe('the lost and found (roadmap/lost-and-found.md)', () => {
+  const lodge = maps.get('stonebrook-lodge')!;
+  const boxes = [...maps.values()].flatMap(m => m.data.objects.flatMap(o => (o.kind === 'lostfound' ? [{ map: m, o }] : [])));
+  const walt = lodge.data.objects.find(o => o.kind === 'npc' && o.id === 'walt')!;
+
+  it('is one box in the whole world, in Stonebrook Lodge at Walt\'s elbow, opened from the tile beside where you talk to him', () => {
+    expect(boxes.map(b => b.map.data.id)).toEqual(['stonebrook-lodge']);
+    const { o } = boxes[0]!;
+    expect(Math.abs(o.x - walt.x) + Math.abs(o.y - walt.y)).toBe(1);
+    expect(lodge.walkable(o.x, o.y)).toBe(false);
+    // You stand below it, as at the chest, a step from where you stand to talk to Walt, and a few from the door.
+    expect(lodge.walkable(o.x, o.y + 1)).toBe(true);
+    expect(Math.abs(o.x - walt.x) + Math.abs(o.y + 1 - (walt.y + 1))).toBe(1);
+    const path = findPath(lodge, lodge.data.spawn.x, lodge.data.spawn.y, o.x, o.y + 1);
+    expect(path.at(-1)).toEqual({ x: o.x, y: o.y + 1 });
+  });
+
+  it('moved nothing in the lodge: the box is the last thing in it, on floor that was open', () => {
+    expect(lodge.data.objects.at(-1)).toBe(boxes[0]!.o);
+    const before = new TileMap({ ...lodge.data, objects: lodge.data.objects.slice(0, -1) });
+    expect(before.walkable(boxes[0]!.o.x, boxes[0]!.o.y)).toBe(true);
+  });
+
+  it('has Walt say what it is for, last of what he always says, through the one place people\'s lines come from', () => {
+    const lines = walt.kind === 'npc' ? walt.lines : [];
+    expect(lines.at(-1)).toBe('Folks leave what they find here. Somebody\'s always glad of it.');
+    const story = JSON.parse(readFileSync(resolve(content, 'story.json'), 'utf8')) as StoryData;
+    expect(storyLines(story, story.chapters.at(-1)!.id, 'walt', lines).at(-1)).toBe(lines.at(-1));
+  });
+
+  it('knows the one bundle every carried pile is, and nothing in content gives one', () => {
+    expect(items.items.filter(i => i.kind === 'bundle').map(i => i.id)).toEqual([BUNDLE]);
+    expect(validateItems(items, [...maps.values()].map(m => m.data)).filter(p => p.level === 'error')).toEqual([]);
+  });
+});
+
+describe('a crate that needs two (roadmap/sealed-crates.md)', () => {
+  const woods = maps.get('near-woods')!;
+  const slabs = [...maps.values()].flatMap(m => m.data.objects.flatMap(o => (o.kind === 'slab' ? [{ map: m, o }] : [])));
+  const ring = woods.data.places!.find(p => p.name === 'ring of stones')!;
+
+  it('is one slab, in the middle of the ring of stones, holding two strange objects and a shard, named for the notice board', () => {
+    expect(slabs.map(s => s.map.data.id)).toEqual(['near-woods']);
+    const { o } = slabs[0]!;
+    expect([o.x, o.y]).toEqual([ring.x, ring.y]);
+    if (o.kind !== 'slab') throw new Error('not a slab');
+    expect(o.holds).toEqual([{ item: 'strange', count: 2 }, { item: 'shard', count: 1 }]);
+    expect(o.name).toBe('the slab in the ring of stones');
+    // The rocks of the ring stand around it, within a few steps each way.
+    const rocks = woods.data.objects.filter(r => r.kind === 'rock' && Math.hypot(r.x - o.x, r.y - o.y) <= 3.5);
+    expect(rocks.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it('moved nothing: it is the last thing in the woods but the notes people left, lying in open ground people walk, faced from all four sides', () => {
+    const { o } = slabs[0]!;
+    // Notes lie last on every map (notes-left-behind.md); before them, nothing comes after the slab.
+    const first = woods.data.objects.findIndex(n => n.kind === 'note');
+    expect(woods.data.objects.slice(0, first < 0 ? undefined : first).at(-1)).toBe(o);
+    expect(woods.walkable(o.x, o.y)).toBe(true);
+    for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]] as const) expect(woods.walkable(o.x + dx, o.y + dy), `${dx},${dy}`).toBe(true);
+    // It opens while the woods are restless: they surge.
+    expect(woods.data.surge).toBeDefined();
+    // Nothing grows on it.
+    for (const rule of items.finds.filter(f => f.map === 'near-woods')) expect(findTiles(woods, rule).some(t => t.x === o.x && t.y === o.y), rule.item).toBe(false);
+  });
+});
+
 describe('tall grass in the Near Woods (roadmap/richer-places.md)', () => {
   const map = maps.get('near-woods')!;
   const W = map.width;
@@ -621,6 +688,8 @@ describe('the pass that put more of the story in the places (roadmap/richer-plac
         // The road to your street, paved since over open ground (roadmap/street-visits.md).
         if (id === 'stonebrook' && ontoLane(x, y)) expect(`${was} to ${is}`, `${id} ${x},${y}`).toBe('g to r');
         else if (id === 'stonebrook') expect('gm'.includes(was) && 'wm'.includes(is) && !standing.has(`${x},${y}`), `${id} ${x},${y}: ${was} to ${is}`).toBe(true);
+        // The flooded culvert that came after (roadmap/locked-places.md) passes under the creek: water it stays, to all but waders.
+        else if (was === 'w') expect(is, `${id} ${x},${y}: ${was} to ${is}`).toBe('c');
         else expect(was, `${id} ${x},${y}: ${was} to ${is}`).toBe('t');
       }
     }
@@ -745,5 +814,118 @@ describe('the pass that put more of the story in the places (roadmap/richer-plac
       expect(cages.length).toBeGreaterThanOrEqual(3);
       for (const c of cages) expect(c.kind === 'cage' && c.text[0]!.startsWith('NAPO')).toBe(true);
     });
+  });
+});
+
+describe('places you can see but not reach yet (roadmap/locked-places.md)', () => {
+  const woods = maps.get('near-woods')!, W = woods.width;
+  const bog = woods.data.places!.find(p => p.name === 'the bog')!;
+  const shed = woods.data.objects.find((o): o is Extract<MapObject, { kind: 'house' }> => o.kind === 'house' && o.style === 'shed')!;
+  const hut = woods.data.objects.find((o): o is Extract<MapObject, { kind: 'house' }> => o.kind === 'house' && woods.exitAt(doorOf(o).x, doorOf(o).y)?.to === 'near-woods-ranger-hut')!;
+  const culvert: Array<[number, number]> = [];
+  for (let y = 0; y < woods.height; y++) for (let x = 0; x < W; x++) if (woods.kind(x, y) === 'culvert') culvert.push([x, y]);
+  const WADERS = new Set(['waders']);
+  const sides = (x: number, y: number) => [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const;
+  /** Walking steps from a tile to every other, as the game walks them, with what a pass opens. */
+  const walk = (from: readonly [number, number], pass?: ReadonlySet<string>) => {
+    const d = new Int32Array(W * woods.height).fill(-1), queue = [from[1] * W + from[0]];
+    d[queue[0]!] = 0;
+    for (let h = 0; h < queue.length; h++) {
+      const i = queue[h]!, x = i % W, y = Math.floor(i / W);
+      for (const [nx, ny] of sides(x, y)) {
+        if (!woods.walkable(nx, ny, pass) || woods.exitAt(nx, ny) || d[ny * W + nx]! >= 0) continue;
+        d[ny * W + nx] = d[i]! + 1;
+        queue.push(ny * W + nx);
+      }
+    }
+    return ([x, y]: readonly [number, number]) => d[y * W + x]!;
+  };
+  /** Where the culvert opens onto ground anyone walks (its mouths), and the ground each opens onto, the northern first. */
+  const mouths = culvert.flatMap(([x, y]) => sides(x, y).filter(([nx, ny]) => woods.walkable(nx, ny)).map(g => ({ at: [x, y] as const, ground: g }))).sort((a, b) => a.at[1] - b.at[1]);
+
+  it('a padlocked shed behind the ranger\'s hut, whose door only bolt cutters open, into a dark room of its own', () => {
+    expect([shed.w, shed.h]).toEqual([2, 2]);
+    // Behind the hut: north of it, and no farther off to either side than the hut is wide.
+    expect(shed.y + shed.h).toBeLessThanOrEqual(hut.y);
+    expect(hut.y - (shed.y + shed.h)).toBeLessThanOrEqual(2);
+    expect(Math.abs(shed.x + 1 - (hut.x + 1.5))).toBeLessThanOrEqual(2);
+    const door = doorOf(shed), exit = woods.data.exits.find(e => e.x === door.x && e.y === door.y)!;
+    expect(exit).toMatchObject({ to: 'near-woods-shed', lock: 'bolt-cutters' });
+    expect(woods.walkable(door.x, door.y)).toBe(false);
+    expect(woods.walkable(door.x, door.y, new Set(['bolt-cutters']))).toBe(true);
+    const room = maps.get('near-woods-shed')!;
+    expect(room.data).toMatchObject({ kind: 'inside', style: 'shed' });
+    expect(room.data.private).toBeUndefined();
+    expect(room.data.objects.some(o => o.kind === 'fireplace')).toBe(false);
+    expect(room.data.objects.some(o => o.kind === 'paper')).toBe(true);
+  });
+
+  it('where a strange object grows back every half hour, for everyone', () => {
+    const rules = items.finds.filter(f => f.map === 'near-woods-shed');
+    expect(rules).toEqual([expect.objectContaining({ item: 'strange', count: 1, respawn: [1800, 1800] })]);
+    expect(rules[0]!.when).toBeUndefined();
+    expect(findTiles(maps.get('near-woods-shed')!, rules[0]!).length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('a flooded culvert from the bog that comes out south of the creek, in the headlight clearing, entered only at its ends', () => {
+    expect(culvert.length).toBeGreaterThan(20);
+    // One run, whose every tile is water to anyone without waders.
+    const seen = new Set([culvert[0]![1] * W + culvert[0]![0]]), todo = [culvert[0]!];
+    while (todo.length) {
+      const [x, y] = todo.pop()!;
+      for (const [nx, ny] of sides(x, y)) if (woods.kind(nx, ny) === 'culvert' && !seen.has(ny * W + nx)) { seen.add(ny * W + nx); todo.push([nx, ny]); }
+    }
+    expect(seen.size).toBe(culvert.length);
+    for (const [x, y] of culvert) expect(!woods.walkable(x, y) && woods.walkable(x, y, WADERS), `${x},${y}`).toBe(true);
+    // Its two mouths: one by the bog, one south of the creek, in the clearing; nowhere else does it touch ground.
+    expect(new Set(mouths.map(m => `${m.at[0]},${m.at[1]}`)).size).toBe(2);
+    const north = mouths[0]!, south = mouths.at(-1)!;
+    expect(Math.hypot(north.ground[0] - bog.x, north.ground[1] - bog.y)).toBeLessThan(7);
+    expect(woods.homeSteps(...north.ground)).toBeGreaterThan(75);
+    // It passes under the creek, and what it comes out onto lies south of where it does.
+    const under = culvert.filter(([x, y]) => woods.kind(x, y - 1) === 'water' || woods.kind(x, y + 1) === 'water');
+    expect(under.length).toBeGreaterThan(0);
+    expect(south.ground[1]).toBeGreaterThan(Math.min(...under.map(([, y]) => y)));
+    expect(woods.homeSteps(...south.ground)).toBeLessThan(40);
+  });
+
+  it('saves about 44 steps from the bog to where it comes out, in waders, and a few on the whole way home', () => {
+    const from = [bog.x, bog.y] as const, out = mouths.at(-1)!.ground;
+    const round = walk(from)(out), through = walk(from, WADERS)(out);
+    expect(round - through).toBeGreaterThanOrEqual(40);
+    expect(round - through).toBeLessThanOrEqual(48);
+    const home = [31, woods.height - 2] as const;
+    expect(walk(from, WADERS)(home)).toBeLessThan(walk(from)(home));
+  });
+
+  it('moved nothing: the shed and its door came after everything before them, and every tile anyone walks is as far from home as without them', () => {
+    // Only what was placed after it (the slab in the ring of stones, walked over like the ground) and the
+    // notes people left, laid last on what stands here, come after the shed; its door is the last exit.
+    expect(woods.data.objects.slice(woods.data.objects.indexOf(shed) + 1).every(o => o.kind === 'note' || o.kind === 'slab')).toBe(true);
+    expect(woods.data.exits.at(-1)).toMatchObject({ to: 'near-woods-shed' });
+    // The woods as they were: forest where the culvert runs and the shed stands (its ground was cut out of the firs).
+    const under = new Set(objectTiles(shed).map(([x, y]) => `${x},${y}`));
+    const without = new TileMap({
+      ...woods.data, tiles: woods.data.tiles.map((r, y) => [...r.replaceAll('c', 't')].map((c, x) => (under.has(`${x},${y}`) ? 't' : c)).join('')),
+      exits: woods.data.exits.slice(0, -1), objects: woods.data.objects.filter(o => o !== shed),
+    });
+    expect(woods.deepest).toBe(without.deepest);
+    for (let y = 0; y < woods.height; y++) for (let x = 0; x < W; x++) {
+      if (!without.walkable(x, y)) continue;
+      expect(woods.walkable(x, y), `${x},${y}`).toBe(true);
+      expect(woods.homeSteps(x, y), `${x},${y}`).toBe(without.homeSteps(x, y));
+    }
+  });
+
+  it('are opened by tools made at the workbench at home from what comes from deep in: shards, and wire', () => {
+    for (const id of ['bolt-cutters', 'waders']) {
+      const def = items.items.find(i => i.id === id)!, recipe = items.recipes!.find(r => r.make === id)!;
+      expect(def).toMatchObject({ kind: 'tool', stack: 1 });
+      expect(def.about?.length).toBeGreaterThan(0);
+      expect(recipe.needs.find(n => n.item === 'shard')?.count).toBeGreaterThanOrEqual(1);
+      expect(recipe.needs.find(n => n.item === 'wire')?.count).toBeGreaterThanOrEqual(1);
+    }
+    expect(items.items.find(i => i.id === 'bolt-cutters')!.icon).toBe('cutters');
+    expect(items.items.find(i => i.id === 'waders')!.icon).toBe('waders');
   });
 });

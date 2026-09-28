@@ -49,6 +49,8 @@ const GRASS = color('#3f5c3a'), LUSH = color('#2d5636'), DRY = color('#6a6a41'),
 /** The ground under tall grass: the color of its lower blades, so the gaps between them read as depth, not holes. */
 const TALL_GROUND = color('#374628');
 const FERNS = color('#2b4330'), FOREST = color('#1f2c21'), WATER = color('#152229');
+/** The culvert's bed under its water: silt, browner than the creek's. */
+const SILT = color('#1e2420');
 const MUD = color('#554b3c'), WET_MUD = color('#453b2f'), DRY_MUD = color('#655940'), MUD_SHADE = color('#3a3227');
 /** Asphalt, and the darker patches where it was mended or stays wet. */
 const ROAD = color('#4b4e53'), PATCH = color('#3c3f44');
@@ -125,7 +127,7 @@ export class Ground {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       const kind = map.kind(x, y);
       shadeOf[y * W + x] = kind === 'forest' ? 1 : 0;
-      wetOf[y * W + x] = kind === 'water' ? 1 : kind === 'mud' ? 0.35 : 0;
+      wetOf[y * W + x] = kind === 'water' || kind === 'culvert' ? 1 : kind === 'mud' ? 0.35 : 0;
     }
     for (const o of map.data.objects) if (o.kind === 'tree' && map.inside(o.x, o.y)) shadeOf[o.y * W + o.x] = 0.7;
     this.shade = new Float32Array((W + 1) * (H + 1));
@@ -201,6 +203,9 @@ export class Ground {
         break;
       case 'water':
         out.copy(WATER);
+        break;
+      case 'culvert':
+        out.copy(SILT);
         break;
       case 'floor':
         out.copy(FLOOR);

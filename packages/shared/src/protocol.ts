@@ -17,6 +17,7 @@ import type { MeritsView } from './merits';
 import type { NotebookView } from './notebook';
 import type { ParcelView } from './parcels';
 import type { ProgressView } from './progress';
+import type { ShopView } from './shop';
 import type { ConditionsView, FlashView, SeasonView, StormView, SurgeView } from './sky';
 import type { ThanksFor, ThanksGroup } from './thanks';
 import { OFFER_MAX } from './trade';
@@ -30,8 +31,11 @@ import { OFFER_MAX } from './trade';
  * 34: visits (a neighbor's door lets you in: `visit` in the welcome and `zone`, whose furniture is theirs),
  * the road to your street, and NAPO's teleport (`teleport`), which a client that did not know would never use.
  * 35: the teleport in town takes you home, and a new player's first steps (`firstSteps`, in the welcome too).
+ * 36: the shop for looks (`checkout`, and `shop` in the welcome and when what you bought changes), and the window to be saved, someone down out in the wilds, whom an older page could not show or get up.
+ * 37: the lost and found, whose bundles, questions and letters an older page could not show.
+ * 38: the slab that needs two, which an older page could not put its hands to.
  */
-export const PROTOCOL_VERSION = 35;
+export const PROTOCOL_VERSION = 38;
 
 /**
  * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
@@ -142,6 +146,11 @@ export const ClientMsg = z.discriminatedUnion('t', [
    * x,y, next to you: from that slot first, then from others holding the same. A fire takes as many as fit.
    */
   z.object({ t: z.literal('feed'), x: z.number().int(), y: z.number().int(), slot: z.number().int().nonnegative().max(63), count: z.number().int().positive().max(FEED_MAX).optional() }),
+  /**
+   * Cook `recipe` (meals.ts, `cooking` in content/items.json) at the fire on tile x,y, next to you, while it
+   * burns: from what you carry, into a meal in your bag.
+   */
+  z.object({ t: z.literal('cook'), x: z.number().int(), y: z.number().int(), recipe: z.string().min(1).max(40) }),
   /** Read the notice board on tile x,y, next to you: how things stand out there. */
   z.object({ t: z.literal('board'), x: z.number().int(), y: z.number().int() }),
   /** Open the chest (your stash) on tile x,y, next to you: the server answers with what is in it. */
@@ -188,6 +197,13 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('pattern'), x: z.number().int(), y: z.number().int(), pattern: z.string().min(1).max(40).nullable() }),
   /** Wear a name tag badge of yours from the wardrobe at the chest on tile x,y, or none (null). */
   z.object({ t: z.literal('badge'), x: z.number().int(), y: z.number().int(), badge: z.string().min(1).max(40).nullable() }),
+  /**
+   * Buy a look in the shop (shop.ts) from the wardrobe at the chest on tile x,y: the server opens a payment
+   * for it on Stripe's page and says where (`checkout`). Only with `waiver`: the player said yes to getting
+   * it at once, and so to giving up the 14 days to change their mind. The look is theirs only once Stripe
+   * tells the server it is paid.
+   */
+  z.object({ t: z.literal('checkout'), x: z.number().int(), y: z.number().int(), look: z.string().min(1).max(40), waiver: z.literal(true) }),
   /** Ask someone to be your friend, by id (tapping their name tag) or by name. If they asked you already, you are friends. */
   z.object({ t: z.literal('befriend'), id: z.uuid().optional(), name: PlayerName.optional() }),
   /** Answer someone's friend request: yes makes you friends, no drops it. */
@@ -258,6 +274,19 @@ export const ClientMsg = z.discriminatedUnion('t', [
   /** Take the thing `id` out of the crate on tile x,y: once a visit; it thanks whoever left it. */
   z.object({ t: z.literal('cacheTake'), x: z.number().int(), y: z.number().int(), id: z.number().int().nonnegative() }),
   /**
+   * Get `who` back up (rescue.ts): they lie slumped on your tile or the one next to it, and you give them
+   * RESCUE_ENERGY of your own energy, which you need more than. Their thanks comes with it.
+   */
+  z.object({ t: z.literal('rescue'), who: z.uuid() }),
+  /**
+   * Carry `owner`'s pile on tile x,y (yours, or one of the four next to it) to the lodge for them
+   * (lostfound.ts): all of it, tied up into a bundle that takes one bag slot. Someone else's pile only;
+   * `pick` still takes half of it.
+   */
+  z.object({ t: z.literal('carry'), x: z.number().int(), y: z.number().int(), owner: z.uuid() }),
+  /** Leave every bundle you carry in the lost and found box on tile x,y, next to you: each goes back to whoever lost it. */
+  z.object({ t: z.literal('handIn'), x: z.number().int(), y: z.number().int() }),
+  /**
    * A at a door on your street, on tile x,y next to you: a neighbor's, you knock (they hear it if they are
    * home, and you hear whether they are); your own, what it offers (moving next to a friend: `doorstep`).
    */
@@ -276,6 +305,11 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('visitsOff'), off: z.boolean() }),
   /** A at NAPO's teleport on tile x,y next to you (the client asks first): in a cabin (anyone's) it sets you down in town, in front of its twin; in town, at home in front of the one in your own cabin. */
   z.object({ t: z.literal('teleport'), x: z.number().int(), y: z.number().int() }),
+  /**
+   * Put your hands to the slab on tile x,y, next to you and facing it (slab.ts): while it glows, it opens
+   * for two within SLAB_PAIR_MS of each other, each taking what it holds.
+   */
+  z.object({ t: z.literal('slab'), x: z.number().int(), y: z.number().int() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -283,6 +317,17 @@ export type ClientMsg = z.infer<typeof ClientMsg>;
 export interface FindView {
   id: number;
   item: string;
+  x: number;
+  y: number;
+}
+
+/**
+ * What you lost, carried back to the lodge (lostfound.ts): by whom (null: someone you block, who is not
+ * named), and where you lost it (a map and tile, which the letter says by landmark).
+ */
+export interface ReturnedView {
+  by: string | null;
+  map: string;
   x: number;
   y: number;
 }
@@ -370,7 +415,7 @@ export interface StoneView {
 
 /**
  * What something you asked for did, once the server carried it out: the client says it in the text box,
- * in its own words, from these facts (never guessed). One of these follows every feed, use, discard,
+ * in its own words, from these facts (never guessed). One of these follows every feed, cook, use, discard,
  * craft, mend, upgrade, open and thanks that went through (an upgrade that did not take went through:
  * its materials are spent), after everything else the action changed; a refusal is `refused`.
  */
@@ -391,6 +436,10 @@ export type Did =
       kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number };
       effect?: { lasts: number; again?: true };
     }
+  /** You cooked `count` of the meal `item` at a fire: it is in your bag. */
+  | { kind: 'cooked'; item: string; count: number }
+  /** You ate (or drank) the meal `item` (meals.ts): it works until you come home or collapse; `energy`, what it gave the bar at once. */
+  | { kind: 'ate'; item: string; energy?: number }
   /**
    * The workbench made `count` of `item`, into your stash. A tool (its kind says so) went to your tools
    * instead, yours for good: your tools came before this in a `tools` message. Furniture went into its
@@ -417,7 +466,18 @@ export type Did =
   /** You spent merits on `look` (merits.ts): it is yours for good, and `left` merits are still to spend. */
   | { kind: 'bought'; look: string; left: number }
   /** Your cabin moved next to `name`'s, onto their street: you stand in front of its door there now. */
-  | { kind: 'moved'; name: string };
+  | { kind: 'moved'; name: string }
+  /** You gave `who` (their `name`) RESCUE_ENERGY of your energy, and they got up (rescue.ts). */
+  | { kind: 'rescued'; who: string; name: string }
+  /**
+   * You tied up a pile to carry to the lodge (lostfound.ts): `names`, whose things you carry now, the
+   * pile's owner first (another bundle that lay in it stays its owner's).
+   */
+  | { kind: 'carried'; names: string[] }
+  /** You left what you carried for `names` in the lost and found box: it is back in their chests, and you earned `xp`. */
+  | { kind: 'handedIn'; names: string[]; xp: number }
+  /** You and `with` (their name) lifted the slab together (slab.ts): `got` is in your bag now. */
+  | { kind: 'slab'; with: string; got: BagSlot[] };
 
 /** What else weighs on you out there, besides energy: how wet you are (counted on at `wetRate` a second), your bag's load, a hitchhiker. */
 export interface BodyView {
@@ -436,6 +496,8 @@ export interface BodyView {
   cozy?: number;
   /** Seconds you have stood by your own fire, in your own cabin, as of this message (counting on while you stay). None: you are not by it. */
   fireside?: number;
+  /** The meals you ate this trip (meals.ts), in the order you ate them: they work until you come home or collapse. None: no meal. */
+  meals?: string[];
 }
 
 /** Why the server did not do what was asked. */
@@ -525,7 +587,31 @@ export type Refusal =
   /** Their street has no lot free: nobody can move next to them for now. */
   | 'street_full'
   /** You live on their street already. */
-  | 'neighbors';
+  | 'neighbors'
+  /** The shop is closed: the owner has not set up payments (or turned them off). */
+  | 'shop_closed'
+  /** The shop could not open a payment just now (Stripe did not answer): try again in a moment. */
+  | 'shop_down'
+  /** You are down (rescue.ts): you cannot walk or act until someone gets you up, or you collapse. */
+  | 'down'
+  /** Getting someone up takes more energy than you have: more than RESCUE_ENERGY. */
+  | 'too_tired'
+  /** A padlocked door (MapExit.lock): it takes a tool you do not have. */
+  | 'padlocked'
+  /** It is someone else's things, in a bundle (lostfound.ts): carried to the lodge, never opened, stashed, thrown away or left. */
+  | 'not_yours'
+  /** The slab lies cold: it opens only while the woods are restless (slab.ts). */
+  | 'cold'
+  /** Nobody else put their hands to the slab with yours: it will not move for one pair. */
+  | 'one_pair'
+  /** You opened the slab this restless time already: once each. */
+  | 'opened'
+  /** The fire is out: nothing cooks on it until someone lights it again. */
+  | 'fire_out'
+  /** You ate that meal this trip already: the same one twice does nothing more. */
+  | 'ate_it'
+  /** You ate two meals this trip already: a third waits for the next trip. */
+  | 'two_meals';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -589,8 +675,11 @@ export interface TradeView {
   theyConfirmed: boolean;
 }
 
-/** Why a trade is off: called off, the ask said no to or not answered, too far apart, one left the map, collapsed or went offline, or they are friends no more. */
-export type TradeOff = 'cancel' | 'no' | 'timeout' | 'far' | 'left' | 'collapsed' | 'offline' | 'unfriended';
+/**
+ * Why a trade is off: called off, the ask said no to or not answered, too far apart, one left the map,
+ * went down out of energy (rescue.ts), collapsed or went offline, or they are friends no more.
+ */
+export type TradeOff = 'cancel' | 'no' | 'timeout' | 'far' | 'left' | 'down' | 'collapsed' | 'offline' | 'unfriended';
 
 /**
  * How a trade ended: it went through (what you gave, and what you got), or it is off, and why, and who
@@ -623,6 +712,8 @@ export interface PlayerView {
   afterglow?: number;
   /** They play as a guest (only on a server with sign-in): no friends until they sign in. */
   guest?: true;
+  /** They lie slumped out in the wilds, out of energy, until someone gets them up or they collapse (rescue.ts). */
+  down?: true;
 }
 
 /** A map by id and version; a client whose copy has another version reloads. */
@@ -719,6 +810,8 @@ export type ServerMsg =
       restedAway?: number;
       /** What you spent of your merits and the looks you bought (merits.ts); what you earned follows from your XP. */
       merits: MeritsView;
+      /** The shop for looks (shop.ts): its catalog's version, the looks you bought in it, and whether it is open now. */
+      shop: ShopView;
       /** Your tools (item ids, items.ts, toolsOf), in the order you got them: kept for good, apart from the bag. */
       tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
@@ -808,7 +901,7 @@ export type ServerMsg =
    * out to be comes in `did` instead.
    */
   | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool'; double?: true }
-  /** What a feed, use, discard, craft, mend, upgrade, open or thanks you asked for did (for the text box). */
+  /** What a feed, cook, use, discard, craft, mend, upgrade, open or thanks you asked for did (for the text box). */
   | { t: 'did'; did: Did }
   /**
    * Someone (by `name`) thanked you, for `what` (thanks.ts). Out in the wilds it gave you `energy` (none:
@@ -816,8 +909,13 @@ export type ServerMsg =
    * text box says it, and it will not be in your letter.
    */
   | { t: 'thanked'; name: string; what: ThanksFor; energy?: number; line?: true }
-  /** You came home: who thanked you while you were away, and for what, the most thanked first. */
-  | { t: 'letter'; thanks: ThanksGroup[] }
+  /**
+   * You came home: who thanked you while you were away, and for what, the most thanked first; and who
+   * carried what you lost back to the lodge (lostfound.ts), the latest first.
+   */
+  | { t: 'letter'; thanks: ThanksGroup[]; returned?: ReturnedView[] }
+  /** What you lost came back to your chest while you play (lostfound.ts): who carried it, and where you lost it. */
+  | { t: 'returned'; returned: ReturnedView }
   /**
    * The crate on tile x,y of your map, as you opened it, or since it changed while you visit it: what is
    * in it, the newest first, and whether you left one and took one this visit.
@@ -845,6 +943,17 @@ export type ServerMsg =
   /** On your map: a creature appeared or moved, or went. */
   | { t: 'creature'; creature: CreatureView }
   | { t: 'creatureGone'; id: number }
+  /**
+   * You are down (rescue.ts): out of energy out in the wilds, you collapse in `left` seconds unless someone
+   * gets you up. Said again whenever that changes (a flare burning by you gives you longer).
+   */
+  | { t: 'slump'; left: number }
+  /** On your map: someone lies slumped, out of energy (on), or got back up (off). */
+  | { t: 'down'; id: string; on: boolean }
+  /** On your map: someone is down, `where` in words (landmarks.ts: "by the pond"), never where exactly. For local chat. */
+  | { t: 'slumped'; id: string; name: string; where: string }
+  /** Someone gave you RESCUE_ENERGY of theirs, and you are back up; `thanked`: you thanked them for it (not twice in a UTC day). */
+  | { t: 'raised'; by: PersonView; thanked?: true }
   /**
    * A creature reached you: you lost energy, and one of what you carried (if anything) went: a watcher
    * takes it, a skulker makes you drop a whole bag slot of it into your pile where you stand. `level`: it
@@ -923,6 +1032,10 @@ export type ServerMsg =
   | { t: 'badge'; id: string; badge: string | null }
   /** Your merits, whole, after you spent some: what you spent, and every look you bought. */
   | { t: 'merits'; merits: MeritsView }
+  /** The looks you bought in the shop, whole, after Stripe said one is paid or refunded: paid ones only, in the order you bought them. */
+  | { t: 'shop'; owned: string[] }
+  /** The payment you asked for (`checkout`) is open on Stripe's page, at `url`: the game takes you there. */
+  | { t: 'checkout'; look: string; url: string }
   /** The workbench you opened: what your stash holds, whole, after opening it, making or mending something, or a parcel came. */
   | { t: 'bench'; stash: BagSlot[] }
   /** On your map: a find grew here, or someone took one / it went. */
@@ -949,7 +1062,14 @@ export type ServerMsg =
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
+  | 'checkout'
+  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue'
+  | 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
   | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
+  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn'
+  | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab'
+  | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge'
+  | 'say' | 'call' | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends'
   | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm' | 'tradeCancel';
 

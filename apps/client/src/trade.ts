@@ -151,7 +151,7 @@ export function givenSlots(mine: readonly BagSlot[], bag: readonly BagSlot[], it
 /** One thing a side gives, as a row: its name (with its level), how many, and what it is. */
 function row(e: BagSlot, i: number, items: Items, mine: boolean, bag: readonly BagSlot[]): OfferRow {
   const def = items.get(e.item), stack = !single(e, items);
-  const facts = e.piece ? gearFacts(def, e.piece, items) : factsOf(def).slice(0, 3);
+  const facts = e.piece ? gearFacts(def, e.piece, items) : factsOf(def, items).slice(0, 3);
   const quirk = e.piece?.quirk ? items.quirk(e.piece.quirk) : undefined;
   return {
     i, item: e.item, name: pieceName(def, e.piece?.level), icon: iconFor(def), count: e.count, facts: facts.join(' · '),
@@ -233,6 +233,7 @@ export function tradeOverText(end: TradeEnd, name: string, items: Items): string
     case 'timeout': return you ? `${name} stopped waiting for your answer.` : `${name} did not answer.`;
     case 'far': return 'You are too far apart now. The trade is off.';
     case 'left': return you ? 'You left, so the trade is off.' : `${name} left. The trade is off.`;
+    case 'down': return you ? 'You are down, so the trade is off.' : `${name} is down. The trade is off.`;
     case 'collapsed': return you ? 'You collapsed, so the trade is off.' : `${name} collapsed. The trade is off.`;
     case 'offline': return `${name} went offline. The trade is off.`;
     case 'unfriended': return 'The trade is off.';
@@ -253,6 +254,8 @@ export function tradeRefusal(reason: Refusal, name: string): string {
     case 'bag_full': return 'Your bag has no room for all of it. Make room, or ask for less.';
     case 'their_bag_full': return `${name}'s bag has no room for it. Give less, or ask for more.`;
     case 'nothing_to_trade': return 'Nothing to trade yet: put something in first.';
+    // You cannot ask while you are down (Game.askTrade): it is whoever you asked.
+    case 'down': return `${name} is down. Get ${name} back up first.`;
     default: return 'That did not work.';
   }
 }

@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "pages": [
     {
       "id": "pop-23",
@@ -170,6 +170,23 @@
       "text": "A shard that broke loose while the woods were restless, still humming with it. Everyone can see the light over whoever carries one, and so can the watchers.",
       "blanks": [
         { "id": "live-fades", "ask": "It stays live... ?", "fill": "It stays live for a few minutes, then fades into a plain shard. Stashed fresh, it is worth the most.", "when": { "saw": "faded" } }
+      ]
+    },
+    {
+      "id": "food-from-the-woods",
+      "area": "near-woods",
+      "title": "Food from the woods",
+      "when": [{ "find": "huckleberries" }, { "find": "fiddleheads" }, { "find": "fir-tips" }],
+      "text": "Huckleberries ripen out in the open, fiddleheads uncurl by the water, fir tips are soft and green at the ends of the branches. At any fire that burns they cook into something that keeps me going."
+    },
+    {
+      "id": "chanterelles",
+      "area": "near-woods",
+      "title": "Chanterelles",
+      "when": { "find": "chanterelles" },
+      "text": "Golden mushrooms in the moss under the firs, smelling of apricots. There one hour and gone the next.",
+      "blanks": [
+        { "id": "chanterelles-rain", "ask": "They come up... ?", "fill": "They come up in the rain, and last a while after it stops.", "when": { "find": "chanterelles", "during": "rain" } }
       ]
     },
     {
@@ -451,6 +468,13 @@
       "title": "NAPO's first aid",
       "when": [{ "find": "hand-warmer" }, { "find": "rad-tablet" }],
       "text": "Hand warmers and rad tablets, still sealed, from NAPO's first-aid stores. One keeps the cold off me for a while, the other the glow. A second one does not add up: it only starts the time again."
+    },
+    {
+      "id": "meals",
+      "area": "anywhere",
+      "title": "A meal for the trip",
+      "when": { "saw": "ate" },
+      "text": "A meal cooked at a fire lasts the trip: until I am home again, or I fall. Two at a time, never the same one twice. Eaten at home before I set out, it goes the whole way with me."
     },
     {
       "id": "charms",

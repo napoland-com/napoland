@@ -15,7 +15,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  COZY_AFTER_S, COZY_DRAIN, ENERGY_MAX, PROTOCOL_VERSION, STEP_MS, TileMap, cozySeconds, type Dir, type ItemsData, type MapData, type ServerMsg,
+  COZY_AFTER_S, COZY_DRAIN, ENERGY_MAX, PROTOCOL_VERSION, SLUMP_S, STEP_MS, TileMap, cozySeconds, type Dir, type ItemsData, type MapData, type ServerMsg,
 } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { startServer } from '../src/server';
@@ -183,15 +183,18 @@ describe('cozy by your own fire', () => {
 
   it('ends early with a collapse, and is kept when you leave and come back while it lasts', () => {
     const w = world(rec('a', 'woods', 3, 5, 'up', { cozy: 600_000, energy: 0.1 }), rec('b', 'woods', 3, 5, 'up', { cozy: 600_000 }));
+    // Down first, out in the wilds (rescue.ts), and nobody comes.
+    const window = SLUMP_S * 1000;
     w.tick(2000);
+    w.tick(2000 + window);
     expect(w.zoneOf('a')).toBe(zoneKey('house', 'a'));
     expect(w.get('a')!.cozy).toBeUndefined();
-    const saved = w.leave('b', 3000)!;
+    const saved = w.leave('b', 3000 + window)!;
     expect(saved.cozy).toBe(600_000);
-    w.join(saved, 4000);
+    w.join(saved, 4000 + window);
     expect(w.get('b')!.cozy).toBe(600_000);
     // Gone by the time they come back: it counted down while they were away.
-    const late = w.leave('b', 5000)!;
+    const late = w.leave('b', 5000 + window)!;
     w.join(late, 700_000);
     expect(w.get('b')!.cozy).toBeUndefined();
   });

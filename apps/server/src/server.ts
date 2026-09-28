@@ -1,16 +1,20 @@
 /**
  * One running game server: HTTP + WebSocket on one port, the World (with the piles, marks, thanks and
  * what lies in the crates, saved before a restart), its tick and periodic saves, the hourly cleanup of thanks older than
- * THANKS_KEPT_DAYS, and with sign-in, the daily cleanup of guests who stayed away. main.ts builds it
- * from the environment; tests start it directly.
+ * THANKS_KEPT_DAYS, and with sign-in, the daily cleanup of guests who stayed away; and the shop's webhook
+ * while the shop is open. main.ts builds it from the environment; tests start it directly.
  */
 import type { AddressInfo } from 'node:net';
-import { DROP_LIFETIME_MS, GUEST_DAYS, THANKS_KEPT_MS, quickCalendar, weatherAt, type ItemsData, type NotebookData, type StoryData, type TileMap, type Weather } from '@napoland/shared';
+import {
+  DROP_LIFETIME_MS, GUEST_DAYS, THANKS_KEPT_MS, quickCalendar, weatherAt, type ItemsData, type NotebookData, type ShopData, type StoryData, type TileMap, type Weather,
+} from '@napoland/shared';
 import { legacyAuth, type Auth } from './auth';
+import type { ShopSettings } from './config';
 import { createHttpServer } from './http';
 import { log } from './log';
-import { attachNet } from './net';
+import { attachNet, type Net } from './net';
 import type { Storage } from './storage';
+import type { Fetch } from './stripe';
 import { MARK_LIFETIME_MS, World, type Crowd } from './world';
 
 export interface ServerOptions {
@@ -68,6 +72,13 @@ export interface ServerOptions {
   forgetGuestsEveryMs?: number;
   /** How often thanks older than THANKS_KEPT_DAYS are deleted (after start-up); default once an hour. */
   forgetThanksEveryMs?: number;
+  /**
+   * The shop for looks (shop.ts): how it is set up (settings; none: closed, and its webhook is not there),
+   * what it sells (content/shop.json, which also says which looks bought can be worn), and for tests, the
+   * network Stripe is reached over and the wall clock in seconds a webhook's signature is checked against.
+   * None: closed, selling nothing.
+   */
+  shop?: { settings: ShopSettings | undefined; catalog: ShopData; fetch?: Fetch; nowS?: () => number };
 }
 
 const DAY_MS = 86_400_000;
@@ -130,9 +141,13 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // Who lives where on the streets, online or not: after the guests who stayed away are gone, their lots with them.
   const lots = await o.storage.loadLots();
   if (lots.length) log.info('lots loaded', { lots: lots.length });
+  // What was carried back to the lodge waits for its owner's chest, and its letter, as long as it takes; then THANKS_KEPT_DAYS.
+  const returns = await o.storage.loadReturns(Date.now() - THANKS_KEPT_MS);
+  if (returns.length) log.info('things carried back loaded', { things: returns.length });
   const forgetThanks = async () => {
     try {
       await o.storage.forgetThanks(Date.now() - THANKS_KEPT_MS);
+      await o.storage.forgetReturns(Date.now() - THANKS_KEPT_MS);
     } catch (err) {
       // Housekeeping: it never keeps the game from running, and it runs again within the hour.
       log.error('deleting old thanks failed', { err });
@@ -150,6 +165,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     cacheItems,
     firsts,
     lots,
+    returns,
     stone,
     longNight,
     now: clock(),
@@ -168,8 +184,12 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     ...(o.restedEveryMs ? { restedEveryMs: o.restedEveryMs } : {}),
     ...(o.crowd ? { crowd: o.crowd } : {}),
     ...(o.glimpseEveryMs ? { glimpseEveryMs: o.glimpseEveryMs } : {}),
+    ...(o.shop ? { shop: o.shop.catalog } : {}),
   });
-  const http = createHttpServer({ clientDir: o.clientDir, players: () => world!.size, version: o.version, auth: auth.config });
+  // The webhook is only there while the shop is open; it is the network layer's, which comes next.
+  const late: { net?: Net } = {};
+  const stripeWebhook = o.shop?.settings ? (body: Buffer, signature: string | undefined) => late.net!.stripeWebhook(body, signature) : undefined;
+  const http = createHttpServer({ clientDir: o.clientDir, players: () => world!.size, version: o.version, auth: auth.config, ...(stripeWebhook ? { stripeWebhook } : {}) });
   const net = attachNet({
     auth,
     server: http,
@@ -183,7 +203,9 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     maxConnectionsPerIp: o.maxConnectionsPerIp,
     newPlayersPerIpPerHour: o.newPlayersPerIpPerHour,
     words: o.words,
+    ...(o.shop ? { shop: o.shop } : {}),
   });
+  late.net = net;
   try {
     await new Promise<void>((resolve, reject) => {
       http.once('error', reject);

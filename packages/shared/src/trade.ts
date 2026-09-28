@@ -21,10 +21,11 @@ export const OFFER_MAX = 16;
 
 /**
  * Can it change hands? Anything a bag holds; never a tool (yours for good), a sealed thing (it stays in
- * the chest) or a keepsake (yours alone, until it is home).
+ * the chest), a keepsake (yours alone, until it is home) or a bundle (someone else's things, on their way to
+ * the lodge: lostfound.ts).
  */
 export function tradeable(def: ItemDef | undefined): boolean {
-  return !!def && def.kind !== 'tool' && def.kind !== 'sealed' && def.kind !== 'keepsake';
+  return !!def && def.kind !== 'tool' && def.kind !== 'sealed' && def.kind !== 'keepsake' && def.kind !== 'bundle';
 }
 
 /** One pick of a bag for an offer: how many of what bag slot `slot` holds (a piece of gear or a live find is one). */

@@ -10,7 +10,7 @@ import { setLogLevel } from '../src/log';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { houseData, itemsData, townData, woodsData } from './fixtures';
-import { Client, savedPlayer, serverDefaults } from './helpers';
+import { Client, nobodyCame, savedPlayer, serverDefaults } from './helpers';
 
 /** Mira at 2,5 in town (talk to her from 2,6); a workbench at 1,1 in the house (from 1,2); the woods surge every ten minutes. */
 const SURGE = { every: 600, unstable: 60, surge: 120, sweep: 60 };
@@ -95,8 +95,9 @@ describe('the counts a first day keeps', () => {
   it('counts a collapse, and the zone home says so', async () => {
     const w = await serverAt();
     const p = await w.enter({ map: 'woods', x: 3, y: 6, energy: 1 });
-    // One energy lasts about four seconds where they stand.
+    // One energy lasts about four seconds where they stand; down, and nobody comes (rescue.ts).
     w.later(5000);
+    await nobodyCame(p.c, w.later);
     const zone = await p.c.next('zone', m => m.reason === 'collapse');
     expect(zone.stats.collapsed).toBe(1);
     expect(w.storage.get(p.id)!.stats!.collapsed).toBe(1);
@@ -112,6 +113,7 @@ describe('the counts a first day keeps', () => {
     expect((await maker.c.settle()).filter(m => m.t === 'stats')).toEqual([]);
     const faller = await w.enter({ map: 'woods', x: 3, y: 6, energy: 1, stats: { made: 1 } });
     w.later(5000);
+    await nobodyCame(faller.c, w.later);
     expect(await faller.c.next('stats')).toEqual({ t: 'stats', stats: { made: 1, collapsed: 1 } });
   });
 

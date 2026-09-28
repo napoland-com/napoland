@@ -137,6 +137,9 @@ describe('what the text box says about a trade', () => {
     expect(off({ kind: 'off', why: 'far' })).toBe('You are too far apart now. The trade is off.');
     expect(off({ kind: 'off', why: 'left', by: 'them' })).toBe('Ana left. The trade is off.');
     expect(off({ kind: 'off', why: 'collapsed', by: 'you' })).toBe('You collapsed, so the trade is off.');
+    // Down out there (rescue.ts), by name.
+    expect(off({ kind: 'off', why: 'down', by: 'them' })).toBe('Ana is down. The trade is off.');
+    expect(off({ kind: 'off', why: 'down', by: 'you' })).toBe('You are down, so the trade is off.');
     expect(off({ kind: 'off', why: 'offline', by: 'them' })).toBe('Ana went offline. The trade is off.');
     expect(off({ kind: 'off', why: 'unfriended' })).toBe('The trade is off.');
   });
@@ -147,6 +150,7 @@ describe('what the text box says about a trade', () => {
     expect(tradeRefusal('trades_off', 'Ana')).toBe('Ana takes no trade requests.');
     expect(tradeRefusal('too_far', 'Ana')).toBe('Walk up to Ana first: you trade face to face.');
     expect(tradeRefusal('sign_in_first', 'Ana')).toBe('Sign in to trade with your friends.');
+    expect(tradeRefusal('down', 'Ana')).toBe('Ana is down. Get Ana back up first.');
   });
 
   it('says how near a friend has to be', () => {

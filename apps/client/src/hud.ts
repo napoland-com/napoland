@@ -3,8 +3,8 @@
  * surge clock, the menu with the journal (the story, and the field notes, which the notebook in the
  * bag's header opens too), status and About panels, the joystick and A/B (and the fan of calls B
  * opens when held), name tags, notes over the heads of callers, the text box, the bag, the chest (the
- * stash, and the wardrobe beside it) and the workbench, and the fade and name banner when you arrive
- * somewhere.
+ * stash, and the wardrobe beside it, with the shop's tab while it is open) and the workbench, and the fade
+ * and name banner when you arrive somewhere.
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
@@ -16,8 +16,9 @@ import type { FriendsView } from './friends';
 import { CALL_GLYPHS, NOTEBOOK_ICON } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import { fieldNotesHtml, notesHtml, type FieldNotesView, type JournalView, type NotesView } from './journal';
-import { DOOR_SETTING, VISITS_SETTING, firstStepsView } from './said';
+import { DOOR_SETTING, SOMEONE_MAY_COME, VISITS_SETTING, firstStepsView } from './said';
 import type { SoundSetting } from './sound';
+import { SHOP_HINT, SHOP_TERMS, payPage, type ShopTabView } from './shop';
 import type { OfferRow, TradePanel } from './trade';
 import { uneaseLook } from './unease';
 import { BADGES_HINT, PATTERNS_HINT, WARDROBE_GATE, WARDROBE_HINT, type OutfitTile, type WardrobePart, type WardrobeView } from './wardrobe';
@@ -84,6 +85,8 @@ export interface HudHandlers {
   /** In the wardrobe: wear a pattern or a badge of yours, or none (null); spend merits on a look (the game asks first). */
   adorn?(kind: LookKind, id: string | null): void;
   buy?(look: string): void;
+  /** In the wardrobe's Shop tab: buy a look (the game asks first, with the waiver, then goes to Stripe's page). */
+  checkout?(look: string): void;
   /** The first goal was tapped where it does something: at the workbench, its card of what to make. */
   goal?(): void;
   craft?(recipe: string): void;
@@ -128,8 +131,8 @@ export interface HudHandlers {
   cancelCall?(): void;
   /** A tap on the text box itself (not on its buttons). */
   dialogTap(): void;
-  /** The question in the text box: YES or NO tapped; − or + pressed (-1 or 1) and let go (0); a tap anywhere outside the box. */
-  answer?(choice: 'yes' | 'no'): void;
+  /** The question in the text box: YES or NO tapped (or an answer of a choice, by its place); − or + pressed (-1 or 1) and let go (0); a tap anywhere outside the box. */
+  answer?(choice: 'yes' | 'no' | number): void;
   count?(dir: -1 | 0 | 1): void;
   dismiss?(): void;
   logout(): void;
@@ -171,6 +174,14 @@ export function bannerMs(title: string, sub: string): number {
 export function clock(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/**
+ * What the screen says while you are down (rescue.ts), quietly: how long you have, as a clock, and that
+ * someone may come. Null while you are not.
+ */
+export function slumpLook(left: number | null): { clock: string; text: string } | null {
+  return left === null ? null : { clock: clock(left), text: SOMEONE_MAY_COME };
 }
 
 /** What the surge pill says, and how it looks: nothing while calm. `caught`: the front is over you. */
@@ -330,8 +341,12 @@ export interface FanView { choice: CallKind | null; words: boolean }
 export interface CallNoteView { id: number; kind: CallKind; color: string; x: number; y: number; t: number }
 /** Someone's lines in the text box, as far as they are typed out (`done`: the whole line is). */
 export interface DialogView { who: string; text: string; done: boolean }
-/** A question in the text box (ask.ts): its words, the choice highlighted, and how many (null: it does not ask how many). */
-export interface AskView { who: string; text: string; choice: 'yes' | 'no'; count: { n: number; min: number; max: number } | null }
+/**
+ * A question in the text box (ask.ts): its words, the choice highlighted, and how many (null: it does not
+ * ask how many); `labels`, words on the two choices where they are not YES and NO. A choice between answers
+ * in words has them in `options`, and `choice` is the place of one.
+ */
+export interface AskView { who: string; text: string; choice: 'yes' | 'no' | number; count: { n: number; min: number; max: number } | null; labels?: { yes: string; no: string }; options?: string[] }
 /** What the text box says by itself: it stays up `ms` more (a thin line along its bottom runs out), or it waits for the server. */
 export interface NoteView { who: string; text: string; ms: number; waiting: boolean }
 
@@ -344,8 +359,8 @@ export class Hud {
   /** What the energy bar, vignette and fade show now, so a frame only touches the page when something changed. */
   private shown = {
     fill: -1, level: '', refill: false, pct: -1, vignette: -1, unease: 0, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
-    friends: '', personActs: '', talk: '', journal: '', field: '', notes: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', badge: '', tradeMine: '', tradeTheirs: '',
-    tradeBag: '',
+    friends: '', personActs: '', talk: '', journal: '', field: '', notes: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', shop: '', badge: '', tradeMine: '', tradeTheirs: '',
+    tradeBag: '', slump: '', choices: '',
   };
   /** The chest's tab: the stash (with what came in parcels, the first goal and what you wear), or the wardrobe. */
   private chestTab: 'stash' | 'wardrobe' = 'stash';
@@ -422,6 +437,7 @@ export class Hud {
         <div class="sub"><span class="conn" data-el="conn" data-state="connecting"><i></i><span data-el="connText">Connecting</span></span><span data-el="ping"></span></div>
         <div class="steps" data-el="steps" hidden role="status" aria-live="polite"><b data-el="stepsTitle"></b><span data-el="stepsText"></span></div></div>
       <div class="surge-glow" data-el="surgeGlow"></div>
+      <div class="slump panel" data-el="slump" role="status" aria-live="polite" hidden><b data-el="slumpClock"></b><span data-el="slumpText"></span></div>
       <button type="button" class="menu-btn" data-el="menuBtn" aria-label="Menu" aria-expanded="false">${ICON.menu}</button>
       <button type="button" class="menu-btn chat-btn" data-el="chatBtn" aria-label="Chat" aria-expanded="false">${ICON.chat}</button>
       <div class="menu-panel panel" data-el="menu" hidden>
@@ -473,12 +489,16 @@ export class Hud {
             <p class="hint" data-el="stashEmpty">Nothing here yet.</p>
           </div>
           <div class="chest-part" data-el="wardrobePart" role="tabpanel" aria-label="Wardrobe" hidden>
-            <span class="wardrobe-tabs" data-el="wardrobeTabs" role="tablist" aria-label="Wardrobe">${(['outfits', 'patterns', 'badges'] as const).map(p => `<button type="button" role="tab" data-wpart="${p}" aria-selected="${p === 'outfits'}">${p[0]!.toUpperCase()}${p.slice(1)}</button>`).join('')}</span>
+            <span class="wardrobe-tabs" data-el="wardrobeTabs" role="tablist" aria-label="Wardrobe">${(['outfits', 'patterns', 'badges', 'shop'] as const).map(p => `<button type="button" role="tab" data-wpart="${p}" aria-selected="${p === 'outfits'}"${p === 'shop' ? ' hidden' : ''}>${p[0]!.toUpperCase()}${p.slice(1)}</button>`).join('')}</span>
             <p class="hint" data-el="wardrobeHint">${WARDROBE_HINT}</p>
             <p class="merit-note" data-el="meritNote" hidden></p>
             <div class="grid outfits" data-el="outfitGrid"></div>
             <div class="grid outfits" data-el="patternGrid" hidden></div>
             <div class="grid outfits" data-el="badgeGrid" hidden></div>
+            <div class="shop-part" data-el="shopPart" hidden>
+              <p class="shop-terms"><a data-el="shopTerms" target="_blank" rel="noopener">${SHOP_TERMS}</a></p>
+              <div class="shop-grids" data-el="shopGrids"></div>
+            </div>
             <div class="gate" data-el="wardrobeGate" hidden><p>${WARDROBE_GATE}</p><button type="button" class="act go" data-signin>Sign in</button></div>
           </div>
         </div>
@@ -647,7 +667,10 @@ export class Hud {
     });
     this.el.dialog!.addEventListener('click', e => {
       const t = e.target as Element, choice = t.closest<HTMLElement>('[data-choice]'), step = t.closest<HTMLElement>('[data-step]');
-      if (choice) return this.h.answer?.(choice.dataset.choice as 'yes' | 'no');
+      if (choice) {
+        const c = choice.dataset.choice!;
+        return this.h.answer?.(c === 'yes' || c === 'no' ? c : Number(c));
+      }
       // − and + count on pointerdown (and repeat while held); a click that came from the keyboard is one step.
       if (step) {
         if (e.detail === 0) { this.h.count?.(Number(step.dataset.step) as -1 | 1); this.h.count?.(0); }
@@ -766,7 +789,7 @@ export class Hud {
       const tab = (e.target as Element).closest<HTMLElement>('[data-chest]')?.dataset.chest;
       if (tab === 'stash' || tab === 'wardrobe') this.showChestTab(tab);
       const part = (e.target as Element).closest<HTMLElement>('[data-wpart]')?.dataset.wpart;
-      if (part === 'outfits' || part === 'patterns' || part === 'badges') this.showWardrobePart(part);
+      if (part === 'outfits' || part === 'patterns' || part === 'badges' || part === 'shop') this.showWardrobePart(part);
     });
     this.el.storeAll!.addEventListener('click', () => this.h.store?.());
     // A tap looks, an action is a second step: in the chest, at the workbench and in the bag a tap opens
@@ -836,11 +859,16 @@ export class Hud {
     if (open && !was) this.h.chat?.({ a: 'opened' });
   }
 
-  /** The chat panel: the tab shown, its lines (oldest first), and why the last message did not go out. */
-  setChat(tab: 'world' | 'local', lines: ReadonlyArray<{ id: string; name: string; text: string; mine: boolean }>, note: string | null) {
+  /**
+   * The chat panel: the tab shown, its lines (oldest first), and why the last message did not go out. A
+   * line the game says about someone (`system`: they are down) is its words alone, set apart from what people said.
+   */
+  setChat(tab: 'world' | 'local', lines: ReadonlyArray<{ id: string; name: string; text: string; mine: boolean; system?: boolean }>, note: string | null) {
     this.chatTab = tab;
     for (const b of this.root.querySelectorAll<HTMLElement>('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
-    const html = lines.map(l => `<p class="cline"${l.mine ? ' data-mine' : ''}>${l.mine ? `<b>${esc(l.name)}</b>` : `<button type="button" class="who" data-who="${esc(l.id)}">${esc(l.name)}</button>`} ${esc(l.text)}</p>`).join('')
+    const html = lines.map(l => (l.system
+      ? `<p class="cline" data-sys>${esc(l.text)}</p>`
+      : `<p class="cline"${l.mine ? ' data-mine' : ''}>${l.mine ? `<b>${esc(l.name)}</b>` : `<button type="button" class="who" data-who="${esc(l.id)}">${esc(l.name)}</button>`} ${esc(l.text)}</p>`)).join('')
       || `<p class="hint">${tab === 'local' ? 'Only players near you hear what you say here, and see it over your head.' : 'Everyone online hears what you say here.'}</p>`;
     if (html !== this.shown.chat) {
       this.shown.chat = html;
@@ -1236,7 +1264,7 @@ export class Hud {
   /** Shows the chest's stash or its wardrobe, at the top, without a card: the card belonged to the other. */
   showChestTab(tab: 'stash' | 'wardrobe') {
     if (tab === 'wardrobe') this.setWardrobeNews(false);
-    if (tab === 'wardrobe' && this.wardrobePart !== 'outfits') this.setMeritNews(false);
+    if (tab === 'wardrobe' && meritsPart(this.wardrobePart)) this.setMeritNews(false);
     if (tab === this.chestTab) return;
     this.chestTab = tab;
     if (this.card?.where === 'stash' || this.docked === 'stash') this.closeCard();
@@ -1246,10 +1274,10 @@ export class Hud {
     this.el.stashBody!.scrollTop = 0;
   }
 
-  /** Shows one part of the wardrobe (outfits, patterns or badges), without a card: the card belonged to another. */
+  /** Shows one part of the wardrobe (outfits, patterns, badges or the shop), without a card: the card belonged to another. */
   showWardrobePart(part: WardrobePart) {
     // Patterns and badges share the merits' news: looking at either is looking at it.
-    if (part !== 'outfits') this.setMeritNews(false);
+    if (meritsPart(part)) this.setMeritNews(false);
     if (part === this.wardrobePart) return;
     this.wardrobePart = part;
     if (this.card?.where === 'stash' || this.docked === 'stash') this.closeCard();
@@ -1261,7 +1289,7 @@ export class Hud {
   /** A dot on the Patterns and Badges tabs (and on the Wardrobe's, until the wardrobe is looked at): stashing earned a merit. Looking at either takes it away. */
   setMeritNews(on: boolean) {
     // No dot where the patterns or the badges show already.
-    const news = on && !(this.stashOpen && this.chestTab === 'wardrobe' && this.wardrobePart !== 'outfits');
+    const news = on && !(this.stashOpen && this.chestTab === 'wardrobe' && meritsPart(this.wardrobePart));
     for (const b of this.el.stashSheet!.querySelectorAll<HTMLElement>('[data-wpart="patterns"], [data-wpart="badges"]')) b.toggleAttribute('data-news', news);
     if (news) this.setWardrobeNews(true);
   }
@@ -1274,9 +1302,15 @@ export class Hud {
   setWardrobe(v: WardrobeView) {
     this.wardrobe = v;
     const grids = [['wardrobe', this.el.outfitGrid!, wardrobeTilesHtml(v.tiles, 'data-outfit')], ['patterns', this.el.patternGrid!, wardrobeTilesHtml(v.patterns, 'data-look')],
-      ['badges', this.el.badgeGrid!, wardrobeTilesHtml(v.badges, 'data-look')]] as const;
+      ['badges', this.el.badgeGrid!, wardrobeTilesHtml(v.badges, 'data-look')], ['shop', this.el.shopGrids!, v.shop ? shopGridsHtml(v.shop) : '']] as const;
     for (const [key, el, html] of grids) if (html !== this.shown[key]) { this.shown[key] = html; el.innerHTML = html; }
     if (this.el.meritNote!.textContent !== v.merits) this.el.meritNote!.textContent = v.merits;
+    // The Shop tab only while the shop is open; its terms of sale only at an address a browser opens as a page.
+    this.el.wardrobeTabs!.querySelector<HTMLElement>('[data-wpart="shop"]')!.hidden = !v.shop;
+    const terms = this.el.shopTerms as HTMLAnchorElement, href = v.shop ? payPage(v.shop.terms) : null;
+    terms.hidden = !href;
+    if (href && terms.getAttribute('href') !== href) terms.setAttribute('href', href);
+    if (!v.shop && this.wardrobePart === 'shop') this.showWardrobePart('outfits');
     this.showWardrobe();
     this.refreshCard();
   }
@@ -1287,11 +1321,12 @@ export class Hud {
     this.el.wardrobeGate!.hidden = !gate;
     this.el.wardrobeTabs!.hidden = gate;
     this.el.wardrobeHint!.hidden = gate;
-    this.el.wardrobeHint!.textContent = part === 'outfits' ? WARDROBE_HINT : part === 'patterns' ? PATTERNS_HINT : BADGES_HINT;
-    this.el.meritNote!.hidden = gate || part === 'outfits';
+    this.el.wardrobeHint!.textContent = { outfits: WARDROBE_HINT, patterns: PATTERNS_HINT, badges: BADGES_HINT, shop: SHOP_HINT }[part];
+    this.el.meritNote!.hidden = gate || !meritsPart(part);
     this.el.outfitGrid!.hidden = gate || part !== 'outfits';
     this.el.patternGrid!.hidden = gate || part !== 'patterns';
     this.el.badgeGrid!.hidden = gate || part !== 'badges';
+    this.el.shopPart!.hidden = gate || part !== 'shop';
   }
 
   /** A card is open in the stash, at the workbench or in the bag. */
@@ -1359,6 +1394,8 @@ export class Hud {
     }
     const wear = target.closest<HTMLElement>('[data-wear]');
     if (wear) return wear.dataset.empty === 'true' ? 'empty' : { from: 'worn', slot: wear.dataset.wear as Slot };
+    const shop = target.closest<HTMLElement>('[data-shop]')?.dataset.shop;
+    if (shop) return { from: 'shop', id: shop };
     const outfit = target.closest<HTMLElement>('[data-outfit]')?.dataset.outfit;
     if (outfit) return { from: 'outfit', id: outfit };
     const look = target.closest<HTMLElement>('[data-look]')?.dataset.look;
@@ -1384,7 +1421,7 @@ export class Hud {
     clearTimeout(this.revealTimer);
     this.revealTimer = setTimeout(() => {
       if (!this.card || this.card.where !== where || refKey(this.card.ref) !== refKey(ref)) return;
-      const body = this.el[`${where}Body`]!, el = body.querySelector(pickedSelector(ref, where));
+      const body = this.el[`${where}Body`]!, el = showing(body, pickedSelector(ref, where));
       if (!el) return;
       const view = body.getBoundingClientRect(), r = el.getBoundingClientRect(), margin = 8;
       const by = r.bottom > view.bottom - margin ? r.bottom - view.bottom + margin : r.top < view.top + margin ? r.top - view.top - margin : 0;
@@ -1437,7 +1474,7 @@ export class Hud {
     }
     this.shown.card = html;
     for (const sheet of [this.el.stashSheet!, this.el.benchSheet!, this.el.bagSheet!, this.el.crateSheet!]) for (const el of sheet.querySelectorAll('[data-picked]')) el.removeAttribute('data-picked');
-    if (c) this.el[`${c.where}Body`]!.querySelector(pickedSelector(c.ref, c.where))?.setAttribute('data-picked', '');
+    if (c) showing(this.el[`${c.where}Body`]!, pickedSelector(c.ref, c.where))?.setAttribute('data-picked', '');
   }
 
   /** A: presses the open card's button. False when no card is open. */
@@ -1497,6 +1534,8 @@ export class Hud {
       case 'pattern': case 'badge': return this.h.adorn?.(a.kind, a.id);
       // It asks first, with the card still open behind the question.
       case 'buy': return this.h.buy?.(a.look);
+      // It asks first too, with the waiver, and then the payment is Stripe's page.
+      case 'checkout': return this.h.checkout?.(a.look);
     }
   }
 
@@ -1761,6 +1800,13 @@ export class Hud {
     if (hitched !== s.hitched) this.el.cling!.hidden = !(s.hitched = hitched);
   }
 
+  /** Where the HUD always covers the world, in page pixels: the status panel, the buttons at the top, the stick, A and B (what shows of them). */
+  covers(): DOMRect[] {
+    return [this.el.status, this.el.chatBtn, this.el.menuBtn, this.el.notebookBtn, this.el.stick, this.el.a, this.el.b]
+      .filter((e): e is HTMLElement => !!e && e.offsetParent !== null)
+      .map(e => e.getBoundingClientRect());
+  }
+
   /**
    * A lodestone tugs (lodestone.ts): the quirk's name shows on the status panel for a moment, in a short
    * soft pulse, then goes. It never says which way.
@@ -1799,6 +1845,21 @@ export class Hud {
       g.style.visibility = glow > 0 ? 'visible' : 'hidden';
       g.style.opacity = String(glow);
     }
+  }
+
+  /**
+   * While you are down (`left`: seconds until you collapse; null while you are not): a quiet countdown and
+   * "Someone may come." between your figure and the text box, clear of A and B. Called every frame; it
+   * writes only when the clock moves on.
+   */
+  setSlump(left: number | null) {
+    const look = slumpLook(left), key = look ? `${look.clock}|${look.text}` : '';
+    if (key === this.shown.slump) return;
+    this.shown.slump = key;
+    this.el.slump!.hidden = !look;
+    if (!look) return;
+    this.el.slumpClock!.textContent = look.clock;
+    if (this.el.slumpText!.textContent !== look.text) this.el.slumpText!.textContent = look.text;
   }
 
   /** How dark the world is (0 to 1) while you move between maps. The HUD stays above it. */
@@ -1879,10 +1940,22 @@ export class Hud {
     // A question comes anew with every change (setAsk), so the same one is never drawn twice.
     if (ask === s.ask) return;
     s.ask = ask;
+    // Two things to choose between: their words on the buttons, which then stand under the question.
+    this.el.dialog!.toggleAttribute('data-labels', !!ask?.labels);
+    // YES over NO, or a choice's answers in words, the same frame and the same caret.
+    const answers = ask?.options?.length ? ask.options.map((o, i) => [String(i), o] as const) : ([['yes', 'YES'], ['no', 'NO']] as const);
+    const html = answers.map(([c, label]) => `<button type="button" data-choice="${c}">${esc(label)}</button>`).join('');
+    if (html !== this.shown.choices) {
+      this.shown.choices = html;
+      this.el.choices!.innerHTML = html;
+      this.el.choices!.toggleAttribute('data-words', !!ask?.options?.length);
+    }
     for (const b of this.el.choices!.querySelectorAll<HTMLElement>('[data-choice]')) {
-      const on = b.dataset.choice === ask?.choice;
+      const on = b.dataset.choice === String(ask?.choice);
       b.toggleAttribute('data-on', on);
       b.setAttribute('aria-pressed', String(on));
+      const word = ask?.options?.length ? ask.options[Number(b.dataset.choice)] ?? '' : ask?.labels ? ask.labels[b.dataset.choice as 'yes' | 'no'] : b.dataset.choice === 'yes' ? 'YES' : 'NO';
+      if (b.textContent !== word) b.textContent = word;
     }
     const c = ask?.count;
     this.el.count!.hidden = !c;
@@ -2108,17 +2181,34 @@ function pickedSelector(r: DetailRef, where: CardSheet): string {
     case 'outfit': return `[data-outfit="${r.id}"]`;
     case 'crate': return `[data-centry="${r.id}"]`;
     case 'look': return `[data-look="${r.id}"]`;
+    case 'shop': return `[data-shop="${r.id}"]`;
   }
+}
+
+/** The first element under `root` that `selector` finds and that shows: a look bought in the shop is in two tabs, and one of them is hidden. */
+function showing(root: Element, selector: string): Element | null {
+  for (const el of root.querySelectorAll(selector)) if (!el.closest('[hidden]')) return el;
+  return null;
+}
+
+/** The wardrobe's parts that merits buy looks in (their news goes with them). */
+const meritsPart = (part: WardrobePart) => part === 'patterns' || part === 'badges';
+
+/** The Shop tab's looks: a heading and a grid for each kind it sells, each tile opening the shop's card. */
+export function shopGridsHtml(v: ShopTabView): string {
+  return v.groups.map(g => `<h3 class="stash-title">${esc(g.title)}</h3><div class="grid outfits" data-kind="${g.kind}">${wardrobeTilesHtml(g.tiles, 'data-shop')}</div>`).join('');
 }
 
 /**
  * A wardrobe's tiles: an outfit's, a pattern's or a badge's, each its drawing over its label, a tick on the
  * one worn, dim while it cannot be had yet, its price bright while merits can buy it (`data-buy`).
  */
-export function wardrobeTilesHtml(tiles: ReadonlyArray<OutfitTile & { buy?: boolean }>, attr: 'data-outfit' | 'data-look'): string {
+export function wardrobeTilesHtml(tiles: ReadonlyArray<OutfitTile & { buy?: boolean }>, attr: 'data-outfit' | 'data-look' | 'data-shop'): string {
   return tiles.map(t => {
-    const why = t.worn ? ', wearing it' : t.locked ? `, ${attr === 'data-outfit' ? `opens at ${t.label.toLowerCase()}` : `not yours yet: ${t.label}`}` : t.buy ? `, ${t.label} to buy` : '';
-    return `<button type="button" class="slot outfit" ${attr}="${esc(t.id)}"${t.locked ? ' data-locked' : ''}${t.worn ? ' data-worn' : ''}${t.buy ? ' data-buy' : ''}`
+    // A look from the shop opens the shop's card, in whichever tab it is.
+    const a = t.shop ? 'data-shop' : attr;
+    const why = t.worn ? ', wearing it' : t.locked ? `, ${a === 'data-outfit' ? `opens at ${t.label.toLowerCase()}` : a === 'data-shop' ? 'not yours' : `not yours yet: ${t.label}`}` : t.buy ? `, ${t.label} to buy` : '';
+    return `<button type="button" class="slot outfit" ${a}="${esc(t.id)}"${t.locked ? ' data-locked' : ''}${t.worn ? ' data-worn' : ''}${t.buy ? ' data-buy' : ''}`
       + ` aria-label="${esc(`${t.name}${why}`)}">${t.icon}<span class="lbl">${esc(t.label)}</span>${t.worn ? '<i class="on" aria-hidden="true"></i>' : ''}</button>`;
   }).join('');
 }

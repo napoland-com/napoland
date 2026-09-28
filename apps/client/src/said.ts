@@ -5,15 +5,18 @@
  * mending costs) or from the server. No drawing, so it is tested; game.ts asks and says, hud.ts shows it.
  */
 import {
-  CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, aOf, amount, comfortMax, countable, fireFull, levelOf, meritLookOf, meritsLeft, nounOf, pluralOf, thousands, toNextMerit,
-  type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear, type Recipe, type StoneView, type Upgrade,
+  CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, RESCUE_ENERGY, aOf, amount, comfortMax, countable, fireFull, formatPrice, levelOf, meritLookOf, meritsLeft,
+  nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear,
+  type Recipe, type Refusal, type ShopLook, type StoneView, type Upgrade, bagShort, type Mods,
 } from '@napoland/shared';
-import { ELEMENT_WORDS, oddsText, pieceName, type Items } from './items';
+import { ELEMENT_WORDS, bundleText, kgText, oddsText, pieceName, thingsOf, type Items } from './items';
 
 // ---------- naming things in a sentence ----------
 
 // How items are named is shared: the notice board, which the server writes, names them the same way.
 export { aOf, amount, nounOf, pluralOf };
+// A bundle's words are the bag's (items.ts), said here too.
+export { bundleText, kgText, thingsOf };
 
 /** Always with its number, for a list of what something takes: "1 scrap", "8 cloth", "2 shards". */
 export function counted(def: ItemDef, n: number): string {
@@ -88,6 +91,7 @@ export function stoneQuestion(def: ItemDef, n: number): string {
  */
 export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MARK_LIFETIME_MS / 1000, lift?: { charm: ItemDef; energy: number }, running?: number): string {
   const u = def.use ?? {}, n = nounOf(def);
+  if (u.meal) return eatQuestion(def);
   if (u.identify) return `Look closely at the ${n}? It will be used up.`;
   if (u.resist && u.lasts) {
     const does = `${effectWords(def)} for ${howLong(u.lasts)}`;
@@ -138,6 +142,68 @@ export function mendQuestion(def: ItemDef, cost: readonly BagSlot[], items: Item
 export function upgradeQuestion(def: ItemDef, to: number, next: Upgrade, items: Items): string {
   const uses = `Upgrade your ${nounOf(def)} to +${to}? It uses ${listOf(next.needs.map(x => amount(items.get(x.item), x.count)))}.`;
   return next.chance === undefined || next.chance >= 1 ? uses : `${uses} ${oddsText(next)}`;
+}
+
+// ---------- cooking at a fire, and meals (meals.ts) ----------
+
+/** A at a fire that burns and takes fuel, with something to cook in the bag: which of the two. */
+export const FIRE_CHOICE = 'Feed the fire, or cook on it?';
+export const FIRE_OPTIONS = ['Feed the fire', 'Cook'] as const;
+/** The bag can cook more than one thing: which. */
+export const WHAT_TO_COOK = 'What will you cook?';
+
+/** At a fire: "Cook fir-tip tea? It uses 3 fir tips." */
+export function cookQuestion(recipe: Recipe, items: Items): string {
+  const n = recipe.count ?? 1, made = items.get(recipe.make);
+  return `Cook ${n === 1 ? nounOf(made) : amount(made, n)}? It uses ${listOf(recipe.needs.map(x => counted(items.get(x.item), x.count)))}.`;
+}
+
+/** Something to cook, but not enough for anything: what the nearest meal still lacks. "For fir-tip tea you need 2 more fir tips." */
+export function cookShort(recipe: Recipe, bag: readonly BagSlot[], items: Items): string {
+  const more = bagShort(recipe, bag).map(s => { const d = items.get(s.item); return `${s.count} more ${s.count === 1 ? nounOf(d) : pluralOf(d)}`; });
+  return `For ${nounOf(items.get(recipe.make))} you need ${listOf(more)}.`;
+}
+
+/** What one Mods value a meal (or a charm) changes does, in plain words, lowercase: "cold bites 15% less". Null: nothing to say. */
+function modDoes(k: keyof Mods, v: number): string | null {
+  const pct = (x: number) => `${Math.round(Math.abs(x) * 100)}%`;
+  switch (k) {
+    case 'energy': return `${Math.round(v)} more energy on your bar`;
+    case 'cold': return `cold bites ${pct(v)} less`;
+    case 'load': return `your bag feels ${pct(1 - v)} lighter`;
+    case 'wetting': return `rain soaks you ${pct(1 - v)} slower`;
+    case 'hitch': return `hitchhikers find you ${pct(1 - v)} less often`;
+    case 'warmth': return `fires warm you ${pct(v - 1)} faster`;
+    case 'wear': return `your gear wears ${pct(1 - v)} slower`;
+    case 'drain': return `you tire ${pct(1 - v)} slower out there`;
+    case 'farDrain': return `far out, you tire ${pct(1 - v)} slower`;
+    case 'double': return `finds come up double ${pct(v)} of the time`;
+    case 'marks': return `your arrows last ${Math.round(v * 10) / 10} times as long`;
+    case 'markEnergy': return `a crushed glowcap gives you ${Math.round(v)} energy`;
+  }
+}
+
+/** What a meal does once eaten, lowercase: "15 more energy on your bar", "cold bites 15% less". */
+export function mealDoes(def: ItemDef): string {
+  const said = (Object.entries(def.eaten ?? {}) as Array<[keyof Mods, number]>).flatMap(([k, v]) => { const d = modDoes(k, v); return d ? [d] : []; });
+  return listOf(said) || 'it does you good';
+}
+
+/** From the bag: "Drink the fir-tip tea? 15 more energy on your bar until you come home." */
+export function eatQuestion(def: ItemDef): string {
+  return `${def.use?.meal === 'drink' ? 'Drink' : 'Eat'} the ${nounOf(def)}? ${capital(mealDoes(def))} until you come home.`;
+}
+
+/** The same meal twice, or a third: why not, before anything is asked. */
+export function ateAlready(def: ItemDef): string {
+  return `You ${def.use?.meal === 'drink' ? 'drank' : 'ate'} the ${nounOf(def)} this trip already. It works until you come home.`;
+}
+export const TWO_MEALS = 'You ate two meals this trip already. Another waits until you are home again.';
+
+/** The status panel's Meals row: what you ate and what it does. "Fir-tip tea: 15 more energy on your bar. Until you come home." */
+export function mealsText(meals: readonly string[], items: Items): string | null {
+  if (!meals.length) return null;
+  return `${meals.map(id => { const d = items.get(id); return `${d.name}: ${mealDoes(d)}`; }).join('. ')}. Until you come home.`;
 }
 
 /** At the chest, before a sealed thing is opened: "Open the NAPO lockbox? It has been sealed since the evacuation." */
@@ -213,6 +279,21 @@ export const MARKED = 'There is an arrow here already. Step onto another tile fi
 export const NO_ROOM = 'Your bag is full. Make room first.';
 /** Asked and answered, but the bag no longer holds it (a watcher took it, say). */
 export const GONE = 'It is not in your bag any more.';
+/**
+ * A padlocked door (the shed behind the ranger's hut), without the tool that opens it, in the words of
+ * NAPO's gate that will not move for one (GATE_PULLED): "You pull at the door. It gives a little, and no
+ * more: a padlock, rusted shut. Bolt cutters would do it." Said as you walk into it, face it and press A,
+ * or tap it.
+ */
+/** Over a tap on the flooded culvert without waders (TILE_NEEDS): what it is, and what would do it. */
+export function floodedText(tool: ItemDef | undefined): string {
+  return `The culvert is flooded to the waist, and the water is cold.${tool ? ` ${tool.name} would do it.` : ''}`;
+}
+
+export function padlocked(tool: ItemDef | undefined): string {
+  const why = tool ? `a padlock, rusted shut. ${tool.name} would do it.` : 'a padlock, rusted shut.';
+  return `You pull at the door. It gives a little, and no more: ${why}`;
+}
 
 /**
  * The stash lacks what making, mending or upgrading takes: "Your stash is short of 3 cloth and 1 resin for
@@ -312,6 +393,121 @@ export function leftBy(name: string, mine: boolean, ageS: number): string {
   return `left by ${mine ? 'you' : name}, ${agoText(ageS)}`;
 }
 
+// ---------- down out there, and getting someone up (rescue.ts) ----------
+
+/** Under the countdown, while you are down. */
+export const SOMEONE_MAY_COME = 'Someone may come.';
+/** Down, you cannot walk or act: what the box says when you try. */
+export const YOU_ARE_DOWN = 'You are down. You cannot move until someone comes.';
+
+/** The line local chat shows when someone on your map goes down, by landmark: "Ana is down by the pond." Your own says "You". */
+export function downLine(name: string, where: string, mine = false): string {
+  return `${mine ? 'You are' : `${name} is`} down ${where}.`;
+}
+
+/** A at someone down: "Give Ana 20 of your energy? Ana gets up with it, and you keep 44." By name, never a pronoun. */
+export function rescueQuestion(name: string, energy: number): string {
+  return `Give ${name} ${RESCUE_ENERGY} of your energy? ${name} gets up with it, and you keep ${Math.max(0, Math.floor(energy - RESCUE_ENERGY))}.`;
+}
+
+/** A at someone down, with too little energy to give: it takes more than RESCUE_ENERGY. */
+export function rescueTooTired(name: string, energy: number): string {
+  return `Getting ${name} up takes ${RESCUE_ENERGY} of your energy, and you need more than that. You have ${Math.max(0, Math.floor(energy))}.`;
+}
+
+/** Why the server did not let you get someone up, with their name. */
+export function rescueRefusal(reason: Refusal, name: string): string {
+  switch (reason) {
+    case 'too_tired': return `You need more than ${RESCUE_ENERGY} energy to get ${name} up.`;
+    case 'too_far': return `You are too far from ${name} now.`;
+    case 'down': return YOU_ARE_DOWN;
+    default: return `${name} is not down any more.`;
+  }
+}
+
+/** Someone got you up: "Bo gives you 20 energy, and you are back on your feet. You thank Bo." */
+export function raisedText(name: string, thanked = false): string {
+  return `${name} gives you ${RESCUE_ENERGY} energy, and you are back on your feet.${thanked ? ` You thank ${name}.` : ''}`;
+}
+
+// ---------- the lost and found (lostfound.ts) ----------
+
+/** "Ana's things", "Ana's things and Bo's things": whose things, each once. */
+const thingsOfAll = (names: readonly string[]): string => listOf([...new Set(names)].map(thingsOf));
+/** "Ana gets", "Ana and Bo get": whoever gets their things back, by name. */
+const gets = (names: readonly string[]): string => `${listOf([...new Set(names)])} ${new Set(names).size > 1 ? 'get' : 'gets'}`;
+
+/** A at someone else's pile: what to do with it. The two answers are TAKE_HALF and carryLabel. */
+export function pileQuestion(name: string): string {
+  return `What do you do with ${thingsOf(name)}?`;
+}
+/** The first answer at someone else's pile: the rule as ever, a random half, the rest lost. */
+export const TAKE_HALF = 'Take half';
+/** The second: all of it, tied up to carry to the lodge. */
+export function carryLabel(name: string): string {
+  return `Carry it to the lodge for ${name}`;
+}
+
+/** Why a bundle is not put away, left in a crate or thrown away: it is someone else's. */
+export function bundleNotYours(name: string): string {
+  return `${thingsOf(name)} are not yours to keep. Leave the bundle in the lost and found box in Stonebrook Lodge, and it goes home to ${name}.`;
+}
+
+/** The box in the lodge, carrying nothing: its sign. */
+export const LOST_AND_FOUND = 'Lost and found';
+export const LOST_AND_FOUND_LINES = [
+  "A battered wooden box. On the sign propped against it, in Walt's hand: LOST AND FOUND.",
+  'Find what someone lost out there, carry it back and leave it here: it goes home to whoever lost it.',
+];
+/** A at the box, carrying bundles: it asks first, since they leave your bag. */
+export function handInQuestion(names: readonly string[]): string {
+  return `Leave ${thingsOfAll(names)} in the lost and found box? ${gets(names)} it all back at home.`;
+}
+
+/** What it did: "You carry Ana's things now." */
+function carriedText(names: readonly string[]): string {
+  return `You carry ${thingsOfAll(names)} now. Leave it all in the lost and found box in Stonebrook Lodge, by Walt, and it goes home.`;
+}
+/** What it did: "You leave Ana's things in the box. Ana gets it all back at home. You earn 12 XP." */
+function handedInText(names: readonly string[], xp: number): string {
+  return `You leave ${thingsOfAll(names)} in the box. ${gets(names)} it all back at home.${xp > 0 ? ` You earn ${xp} XP.` : ''}`;
+}
+
+/**
+ * What you lost came back: "Bo carried what you lost by the pond back to the lodge." (`where` by landmark,
+ * set off by commas when it says how far a door is too: "by the pond, 36 steps from the old cabin, back";
+ * someone you block goes unnamed.)
+ */
+export function returnedLine(by: string | null, where: string): string {
+  return `${by ?? 'Someone'} carried what you lost ${where}${where.includes(',') ? ',' : ''} back to the lodge.`;
+}
+/** Said with it, once it is in your chest. */
+export const IN_YOUR_CHEST = 'It is in your chest.';
+
+// ---------- the slab in the ring of stones (slab.ts) ----------
+
+/** The name over the box at the slab. */
+export const SLAB = 'The slab';
+
+/** Why the slab did not open, by the server's answer. */
+export function slabRefusal(reason: Refusal): string {
+  switch (reason) {
+    case 'one_pair': return 'It will not move for one pair of hands.';
+    case 'cold': return 'The slab lies still and cold. Its seams glow when the woods grow restless.';
+    case 'opened': return 'You have had what the slab holds this time. It glows again the next time the woods grow restless.';
+    case 'bag_full': return 'Your bag has no room for what the slab holds. Make room first.';
+    case 'too_far': return 'Face the slab from right beside it.';
+    case 'down': return YOU_ARE_DOWN;
+    default: return 'The slab does not move.';
+  }
+}
+
+/** What it did: "Together with Bo, you lift the slab. You take 2 strange objects and a shard." */
+function slabText(did: Extract<Did, { kind: 'slab' }>, items: Items): string {
+  const got = listOf(did.got.map(s => amount(items.get(s.item), s.count)));
+  return `Together with ${did.with}, you lift the slab. You take ${got}.`;
+}
+
 // ---------- merits ----------
 
 /** "12,345": a count with its thousands apart, the same in every language the browser speaks (firsts.ts). */
@@ -346,6 +542,17 @@ export function noMerit(xp: number): string {
   return `You have no merit to spend. ${thousands(toNextMerit(xp))} XP to the next.`;
 }
 
+// ---------- the shop ----------
+
+/**
+ * Before a look is bought in the shop, at the wardrobe, with what it costs and the waiver the law asks for:
+ * the look comes at once, so the 14 days to change your mind are given up. "Buy the lighthouse oilskin for
+ * €2.99? You get it at once, so you give up the 14 days to change your mind."
+ */
+export function checkoutQuestion(look: ShopLook, price: number, currency: string): string {
+  return `Buy ${look.noun} for ${formatPrice(price, currency)}? You get ${look.plural ? 'them' : 'it'} at once, so you give up the 14 days to change your mind.`;
+}
+
 /** After: "The chevron pattern is yours for good. 2 merits left to spend." */
 function boughtText(did: Extract<Did, { kind: 'bought' }>): string {
   const look = meritLookOf(did.look), noun = look ? look.noun : 'it';
@@ -358,15 +565,19 @@ function boughtText(did: Extract<Did, { kind: 'bought' }>): string {
 /** The name over the box for what something did. */
 export function didWho(did: Did, items: Items): string {
   switch (did.kind) {
-    case 'fire': return 'Fire';
+    case 'fire': case 'cooked': return 'Fire';
     case 'stone': return 'The Old Stone';
     case 'made': case 'mended': case 'upgraded': return 'Workbench';
-    case 'used': case 'opened': return items.get(did.item).name;
+    case 'used': case 'opened': case 'ate': return items.get(did.item).name;
     case 'thrown': return pieceName(items.get(did.item), did.level);
     case 'thanked': return did.what === 'fire' ? 'Fire' : 'Arrow';
     case 'left': case 'took': return 'Crate';
     case 'bought': return 'Wardrobe';
     case 'moved': return YOUR_CABIN;
+    case 'rescued': return did.name;
+    case 'carried': return thingsOf(did.names[0] ?? 'Someone');
+    case 'handedIn': return LOST_AND_FOUND;
+    case 'slab': return SLAB;
   }
 }
 
@@ -378,6 +589,10 @@ export function didText(did: Did, items: Items): string {
   if (did.kind === 'bought') return boughtText(did);
   // Nor does a move: your cabin, next to the friend's, by name.
   if (did.kind === 'moved') return `Your cabin stands next to ${did.name}'s now.`;
+  if (did.kind === 'rescued') return `You give ${did.name} ${RESCUE_ENERGY} of your energy. ${did.name} is back up.`;
+  if (did.kind === 'carried') return carriedText(did.names);
+  if (did.kind === 'handedIn') return handedInText(did.names, did.xp);
+  if (did.kind === 'slab') return slabText(did, items);
   const def = items.get(did.item);
   switch (did.kind) {
     case 'fire': {
@@ -426,6 +641,10 @@ export function didText(did: Did, items: Items): string {
       const pl = they(def, did.count), gear = def.kind === 'gear';
       return `You make ${did.count === 1 ? aOf(def) : amount(def, did.count)}. ${pl ? 'They wait' : 'It waits'} in your stash${gear ? `: put ${pl ? 'them' : 'it'} on at the chest` : ''}.`;
     }
+    case 'cooked':
+      return `You cook ${did.count === 1 ? nounOf(def) : amount(def, did.count)}. ${did.count === 1 ? 'It is' : 'They are'} in your bag.`;
+    case 'ate':
+      return `You ${def.use?.meal === 'drink' ? 'drink' : 'eat'} the ${nounOf(def)}. ${capital(mealDoes(def))} until you come home.`;
     case 'mended':
       return `You mend your ${pieceNoun(def, did.level)}: as good as new.`;
     case 'upgraded': {
@@ -483,9 +702,6 @@ export function doorText(lot: LotView | null): string {
   if (!lot) return NOBODY_LIVES;
   return lot.name && lot.home ? `${lot.name} is home.` : 'Nobody answers.';
 }
-
-/** After the story's first chapter, on a new player's first wake (Game.firstWake): who to ask about the woods. */
-export const FIRST_WAKE = 'Mira, by the notice board in town, knows where things glow out in the woods.';
 
 /** The setting beside friend and trade requests: whether your street sees your name on your door, and your window lit while you are home. */
 export const DOOR_SETTING = 'Show my name on my door and when I am home';

@@ -11,9 +11,11 @@
  *
  * Plain logic with no page in it, so it is tested; game.ts runs it, hud.ts shows the text box.
  */
-import { FIRE_RADIUS, type Dir, type MapData, type MarkView, type PersonView, type Refusal, type ThanksFor, type ThanksGroup } from '@napoland/shared';
+import {
+  FIRE_RADIUS, TileMap, inSentence, landmarkOf, the, type Dir, type MapData, type MarkView, type PersonView, type Refusal, type ReturnedView, type ThanksFor, type ThanksGroup,
+} from '@napoland/shared';
 import type { Items } from './items';
-import { nounOf } from './said';
+import { IN_YOUR_CHEST, nounOf, returnedLine } from './said';
 
 /** How long you warm by a fire someone else fed, standing still, before the text box offers to thank them. */
 export const THANK_AFTER_MS = 3000;
@@ -42,18 +44,26 @@ export function thankRefusal(reason: Refusal, name: string): string {
   }
 }
 
-/** "The ranger's hut" in a sentence: "the ranger's hut". */
-const inSentence = (name: string) => name.replace(/^The /, 'the ');
-/** A place's name with its article: "pond" is "the pond", "the Tower" stays. */
-const withThe = (name: string) => (/^the /i.test(name) ? inSentence(name) : `the ${name}`);
+/** Built once for each map's data a letter names a spot on: the landmark walks its tiles. */
+const tileMaps = new WeakMap<MapData, TileMap>();
+/**
+ * Where tile x,y of a map is, in a few words, as the trip report says where you fell (landmarks.ts: "by the
+ * pond", "12 steps from the power line"); `find` names the rooms its doors lead into.
+ */
+export function where(map: MapData, x: number, y: number, find: (id: string) => MapData | undefined): string {
+  let tm = tileMaps.get(map);
+  if (!tm) tileMaps.set(map, (tm = new TileMap(map)));
+  return landmarkOf(tm, x, y, find);
+}
 
 /**
  * What a thanks was for, as a sentence names it: "the fire at the ranger's hut", "the fire at the leavers'
  * camp", "the campfire in the Near Woods", "your arrow by the pond" (the nearest place the map names),
- * "the resin you left in the old cabin's crate". `find` gives a map's data by id (every map ships with
- * the client).
+ * "the resin you left in the old cabin's crate", "the hand up by the pond, 36 steps from the old cabin" and "bringing back what Ana lost by the pond, 36 steps from the old cabin" (by landmark, as the
+ * trip report says where you fell; `giver`: who thanked, who was down or whose it was). `find` gives a
+ * map's data by id (every map ships with the client).
  */
-export function thanksFor(what: ThanksFor, find: (id: string) => MapData | undefined, items: Items): string {
+export function thanksFor(what: ThanksFor, find: (id: string) => MapData | undefined, items: Items, giver?: string): string {
   const map = find(what.map);
   switch (what.kind) {
     case 'cache': {
@@ -67,11 +77,37 @@ export function thanksFor(what: ThanksFor, find: (id: string) => MapData | undef
       return map.kind === 'inside' ? `the fire at ${inSentence(map.name)}` : `the campfire in ${inSentence(map.name)}`;
     }
     case 'mark': {
+      // An arrow was painted to point the way, and goes by the nearest place the map names, as the crow flies.
       if (!map) return 'your arrow';
       const place = [...(map.places ?? [])].sort((a, b) => Math.hypot(a.x - what.x, a.y - what.y) - Math.hypot(b.x - what.x, b.y - what.y))[0];
-      return place ? `your arrow by ${withThe(place.name)}` : `your arrow in ${inSentence(map.name)}`;
+      return place ? `your arrow by ${the(place.name)}` : `your arrow in ${inSentence(map.name)}`;
+    }
+    case 'rescue': {
+      // Never a pronoun, and not the name again either: whoever was down is whoever thanked ("Ana thanked you for the hand up by the pond").
+      return map ? `the hand up ${where(map, what.x, what.y, find)}` : 'the hand up';
+    }
+    case 'returned': {
+      // By name too: whoever lost it is whoever thanked.
+      const who = giver ?? 'someone';
+      return map ? `bringing back what ${who} lost ${where(map, what.x, what.y, find)}` : `bringing back what ${who} lost`;
     }
   }
+}
+
+/**
+ * What came back to your chest while you were away (lostfound.ts), for the letter home: "Bo carried what
+ * you lost by the pond back to the lodge.", the latest first, two at most and then how many more, and
+ * where it is now.
+ */
+export function returnedLines(returned: readonly ReturnedView[], find: (id: string) => MapData | undefined): string[] {
+  if (!returned.length) return [];
+  const line = (r: ReturnedView) => {
+    const map = find(r.map);
+    return returnedLine(r.by, map ? where(map, r.x, r.y, find) : 'out there');
+  };
+  const lines = (returned.length > 3 ? returned.slice(0, 2) : returned).map(line);
+  if (returned.length > 3) lines.push(`And ${returned.length - 2} more of your things came back.`);
+  return [...lines, returned.length > 1 ? 'It is all in your chest.' : IN_YOUR_CHEST];
 }
 
 /** Who, in a letter: one name, two, or how many people. */
@@ -92,7 +128,7 @@ function timesOf(g: ThanksGroup): string {
  */
 export function letterLines(groups: readonly ThanksGroup[], find: (id: string) => MapData | undefined, items: Items): string[] {
   const shown = groups.length > 3 ? groups.slice(0, 2) : groups;
-  const lines = shown.map(g => `${whoOf(g)} thanked you${timesOf(g)} for ${thanksFor(g.what, find, items)}.`);
+  const lines = shown.map(g => `${whoOf(g)} thanked you${timesOf(g)} for ${thanksFor(g.what, find, items, g.names[0])}.`);
   if (groups.length > 3) {
     const rest = groups.slice(2).reduce((n, g) => n + g.count, 0);
     lines.push(`And ${rest} more thanks, for other things.`);

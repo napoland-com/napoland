@@ -3,18 +3,21 @@
  * the fixture maps, and WebSocket clients that keep every message they get.
  */
 import { randomBytes, randomUUID } from 'node:crypto';
+import { request } from 'node:http';
 import { afterAll, afterEach, beforeAll, expect } from 'vitest';
 import WebSocket from 'ws';
 import {
-  CALENDAR_DAY_MS, DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, utcDay, xpFor, type BagSlot, type ClientMsg, type DropView, type ItemsData, type ServerMsg,
+  CALENDAR_DAY_MS, DROP_LIFETIME_MS, ENERGY_MAX, GUEST_DAYS, MARK_LIFETIME_MS, PROTOCOL_VERSION, SLUMP_S, utcDay, xpFor, type BagSlot, type ClientMsg, type DropView, type ItemsData,
+  type ServerMsg,
 } from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
-import { MemoryStorage, type PlayerRecord, type Storage } from '../src/storage';
+import { MemoryStorage, type PlayerRecord, type PurchaseRecord, type Storage } from '../src/storage';
+import { signPayload, type Fetch } from '../src/stripe';
 import { World, colorFor } from '../src/world';
-import { chestMaps, fixtureMaps, itemsData } from './fixtures';
+import { chestMaps, fixtureMaps, itemsData, shopData, shopSettings } from './fixtures';
 
 export type Msg<T extends ServerMsg['t']> = Extract<ServerMsg, { t: T }>;
 
@@ -103,6 +106,17 @@ export async function eventually<T>(attempt: () => Promise<T>, what: string, tim
   }
 }
 
+/**
+ * Out of energy out in the wilds, a player goes down first (rescue.ts) and collapses only when nobody came
+ * in time. Once `c`'s player is down, this takes what they heard of it out of the inbox (their energy at 0
+ * among it) and moves the test's game clock (`move`) past that window, so they collapse as ever on the next tick.
+ */
+export async function nobodyCame(c: Client, move: (ms: number) => void): Promise<void> {
+  await c.next('slump');
+  await c.settle();
+  move(SLUMP_S * 1000);
+}
+
 let names = 0;
 export const newName = (): string => `Player ${++names}`;
 
@@ -155,6 +169,7 @@ export async function restartKeepsBagsAndPiles(first: Storage, second: Storage, 
     const c = await loginTo(one.port, carrier.token);
     const f = await loginTo(one.port, faller.token);
     now += 5000; // 1 energy lasts about 4.1 s where the faller stands
+    await nobodyCame(f.c, ms => { now += ms; });
     await f.c.next('zone', m => m.reason === 'collapse');
     await eventually(async () => expect(await stored(faller.id)).toBe(true), 'the pile to be stored');
     dropped = one.world.dropViews('woods');
@@ -363,6 +378,42 @@ export async function keepsRested(storage: Storage): Promise<void> {
   const other = `dev:${randomUUID()}@example.test`;
   await savedPlayer(storage, { tokenHash: null, authSub: other, rested: 12 });
   expect((await storage.findByAuthSub(other))!.rested).toBe(12);
+}
+
+/**
+ * What was carried back to the lodge (lostfound.ts), kept on `storage` (in memory, or a real database): a
+ * return stored, then told; loaded while its owner's chest does not have it yet, however old, or while it
+ * is recent; forgotten only once it is in the chest (the owner's `returned`, saved with the chest, which a
+ * save only ever raises) and old. And a pile keeps what its owner owed their stash.
+ */
+export async function keepsReturns(storage: Storage): Promise<void> {
+  const DAY = 86_400_000, now = Date.now(), kept = now - 7 * DAY;
+  const ana = await savedPlayer(storage), bo = await savedPlayer(storage);
+  const old = {
+    id: now - 10 * DAY, bundle: `${ana.id}:1`, owner: ana.id, carrier: bo.id, name: bo.name, map: 'woods', x: 3, y: 6,
+    items: [{ item: 'nail', count: 4 }, { item: 'coat', count: 1, piece: { cond: 0.5 } }], xp: 3, at: now - 10 * DAY, told: false,
+  };
+  const mine = async () => (await storage.loadReturns(kept)).filter(r => r.owner === ana.id);
+  await storage.saveReturn(old);
+  // Ten days old, but not in her chest yet: kept, whatever its age.
+  expect(await mine()).toEqual([old]);
+  await storage.saveReturn({ ...old, told: true });
+  expect((await mine())[0]!.told).toBe(true);
+  const load = async () => (await storage.findByTokenHash(hashToken(ana.token)))!;
+  const rec = await load();
+  expect(rec.returned).toBeUndefined();
+  await storage.save({ ...rec, returned: old.id });
+  // A copy saved from before never takes it back out of her chest.
+  await storage.save({ ...rec, returned: 0 });
+  expect((await load()).returned).toBe(old.id);
+  const recent = { ...old, id: now - DAY, bundle: `${ana.id}:2`, at: now - DAY, told: false };
+  await storage.saveReturn(recent);
+  // In the chest and old: gone. Recent, or not in the chest: kept.
+  expect(await storage.forgetReturns(kept)).toBeGreaterThanOrEqual(1);
+  expect((await mine()).map(r => r.bundle)).toEqual([recent.bundle]);
+  // A pile keeps what was owed.
+  await storage.saveDrop({ owner: ana.id, name: ana.name, map: 'woods', x: 3, y: 6, items: [{ item: 'moss', count: 3 }], droppedAt: now, trail: [], owed: { moss: 2 } });
+  expect((await storage.loadDrops(now - DROP_LIFETIME_MS)).find(d => d.owner === ana.id)).toMatchObject({ items: [{ item: 'moss', count: 3 }], owed: { moss: 2 } });
 }
 
 /**
@@ -712,9 +763,9 @@ export async function keepsToolsParcelsAndOutfit(storage: Storage): Promise<{ su
  * find in the bag, the counts, the stash with its pieces, what is worn and how worn, the chapter). A save
  * writes every field it carries but the thanks received, which only creditThanks adds to (a save from an
  * older copy of the player never undoes one), and a save without tools, parcels, an outfit or furniture
- * loses none of them; every save says whether they are cozy, where their cabin stands and whether they keep
- * their door to themselves, and the letter about their street stays read. Returns the player's identity and
- * what was kept.
+ * loses none of them; every save says whether they are cozy, the meals they ate this trip, where their cabin
+ * stands and whether they keep their door to themselves, and the letter about their street stays read. Returns
+ * the player's identity and what was kept.
  */
 export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; kept: PlayerRecord }> {
   const sub = `dev:${randomUUID()}@example.test`, id = randomUUID();
@@ -725,7 +776,7 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
     xp: 120, stash: { items: { moss: 9, coat: 1 }, out: { moss: 2 }, pieces: { coat: [{ cond: 1, level: 1 }] } },
     gear: { shirt: 'coat' }, worn: { shirt: { cond: 0.75, level: 2 } }, story: 'the-lineman', tools: ['stonebrook-map', 'radio'],
     parcels: { welcome: true, day: 20_724, days: 0b1 }, outfit: 'napo-suit', notebook: { pages: ['glowcaps', 'watchers'], blanks: [] }, furniture: ['iron-stove'], cozy: 1_700_000_300_000,
-    street: 2, lot: 7, doorOff: true, visitsOff: true, firstSteps: 2,
+    street: 2, lot: 7, doorOff: true, visitsOff: true, firstSteps: 2, meals: ['stew'],
     createdAt: 1_700_000_000_123, lastSeenAt: 1_700_000_000_456,
   };
   expect(await storage.create(rec)).toBe(true);
@@ -742,7 +793,7 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
     ...shown, streetTold: true, map: 'town', x: 0, y: 5, dir: 'down', energy: 90, wet: 0, bag: [{ item: 'moss', count: 1 }], stats: { ...rec.stats, fed: 4, thanked: 7 }, xp: 131,
     stash: { items: { moss: 11, coat: 1 }, out: {}, pieces: { coat: [{ cond: 1, level: 1 }] } }, worn: { shirt: { cond: 1, level: 2 } }, tools: [...rec.tools!, 'near-woods-map'],
     parcels: { welcome: true, day: 20_725, days: 0b11 }, outfit: 'rain-cape', notebook: { pages: ['glowcaps', 'watchers'], blanks: ['watcher-stops'] }, furniture: ['iron-stove', 'bed'],
-    cozy: 1_700_000_400_000, street: 3, lot: 0, firstSteps: 3, lastSeenAt: rec.lastSeenAt + 1000,
+    cozy: 1_700_000_400_000, street: 3, lot: 0, firstSteps: 3, meals: ['stew', 'tea'], lastSeenAt: rec.lastSeenAt + 1000,
   };
   await storage.save(later);
   expect(await load()).toEqual({ ...later, stats: { ...later.stats, thanked: 8 } });
@@ -752,10 +803,11 @@ export async function keepsWholeRow(storage: Storage): Promise<{ sub: string; ke
   await storage.save({ ...none, stats: counts, lastSeenAt: later.lastSeenAt + 1000 });
   const kept = await load();
   expect(kept).toEqual({ ...later, stats: { ...later.stats, thanked: 8 }, lastSeenAt: later.lastSeenAt + 1000 });
-  // Every save says whether they are cozy: one without it, and they are not.
-  const { cozy: _cozy, ...cold } = kept;
+  // Every save says whether they are cozy, and what they ate this trip: one without it, and they are not, and ate nothing.
+  const { cozy: _cozy, meals: _meals, ...cold } = kept;
   await storage.save({ ...cold, lastSeenAt: kept.lastSeenAt + 1000 });
   expect((await load()).cozy).toBeUndefined();
+  expect((await load()).meals).toBeUndefined();
   // And which of the first steps is theirs to take: one without it, and they took them all.
   const { firstSteps: _first, ...past } = kept;
   await storage.save({ ...past, lastSeenAt: kept.lastSeenAt + 1100 });
@@ -920,6 +972,172 @@ export async function keepsFriendsAndMessages(storage: Storage): Promise<void> {
   await storage.deleteTells(b.id, a.id);
   expect(await storage.tellsTo(b.id)).toEqual([]);
   await storage.addReport({ reporter: a.id, reported: b.id, reason: 'spam', quote: null, at: 1_700_000_002_000 });
+}
+
+/**
+ * A fake Stripe for the shop's tests, never the network: every checkout it is asked for is a page of its own
+ * on Stripe's checkout host, and it keeps what it was asked. `failNext` makes its next answer a failure:
+ * no answer at all, or an error from Stripe.
+ */
+export function fakeStripe() {
+  const asked: Array<{ url: string; params: Record<string, string>; headers: Record<string, string> }> = [];
+  let n = 0, fail: 'network' | 'error' | null = null;
+  const fetch: Fetch = async (url, init) => {
+    asked.push({ url, params: Object.fromEntries(new URLSearchParams(init.body)), headers: init.headers });
+    const how = fail;
+    fail = null;
+    if (how === 'network') throw new Error('Stripe cannot be reached');
+    if (how === 'error') return { ok: false, status: 500, json: async () => ({ error: { type: 'api_error' } }) };
+    const id = `cs_test_fake_${++n}`;
+    return { ok: true, status: 200, json: async () => ({ id, url: `https://checkout.stripe.com/c/pay/${id}` }) };
+  };
+  return { fetch, asked, failNext: (how: 'network' | 'error') => { fail = how; } };
+}
+
+/**
+ * A Stripe event as its webhook sends it: a checkout of the game's completed (paid unless `paid` is false;
+ * not the game's when `ours` is false), with what Stripe says of its customer, which the game never keeps.
+ */
+export function paidEvent(o: { player: string; look: string; session?: string; amount?: number; currency?: string; pi?: string | null; live?: boolean; paid?: boolean; ours?: boolean }): string {
+  const session = o.session ?? `cs_test_${randomUUID()}`;
+  return JSON.stringify({
+    id: `evt_${randomUUID()}`, object: 'event', type: 'checkout.session.completed', livemode: o.live ?? false,
+    data: {
+      object: {
+        id: session, object: 'checkout.session', mode: 'payment', payment_status: o.paid === false ? 'unpaid' : 'paid', amount_total: o.amount ?? 299, currency: o.currency ?? 'eur',
+        payment_intent: o.pi === undefined ? `pi_${randomUUID()}` : o.pi, customer_details: { email: 'buyer@example.test', name: 'A Buyer' },
+        metadata: o.ours === false ? {} : { napoland_player: o.player, napoland_look: o.look },
+      },
+    },
+  });
+}
+
+/** A Stripe event as its webhook sends it: the charge of payment `pi` refunded, in full unless `full` is false. */
+export function refundEvent(o: { pi: string; full?: boolean; live?: boolean }): string {
+  return JSON.stringify({
+    id: `evt_${randomUUID()}`, object: 'event', type: 'charge.refunded', livemode: o.live ?? false,
+    data: { object: { id: `ch_${randomUUID()}`, object: 'charge', payment_intent: o.pi, amount: 299, amount_refunded: o.full === false ? 100 : 299, refunded: o.full !== false } },
+  });
+}
+
+/**
+ * Sends `body` to the webhook of the server on `port` (POST /stripe-webhook unless said), signed as Stripe
+ * signs it with `secret` at `t` (seconds; now unless said), or with the header `signature` as given (none:
+ * no header). Returns the status and what it answered.
+ */
+export function postWebhook(port: number, body: string | Buffer, sign: { secret: string; t?: number } | { signature?: string }, o: { path?: string; method?: string } = {}): Promise<{ status: number; body: string }> {
+  const signature = 'secret' in sign ? signPayload(body, sign.secret, sign.t ?? Math.floor(Date.now() / 1000)) : sign.signature;
+  return new Promise((resolve, reject) => {
+    const req = request(
+      { host: '127.0.0.1', port, path: o.path ?? '/stripe-webhook', method: o.method ?? 'POST', headers: { 'Content-Type': 'application/json', ...(signature !== undefined ? { 'Stripe-Signature': signature } : {}) } },
+      res => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', chunk => (text += chunk));
+        res.on('end', () => resolve({ status: res.statusCode!, body: text }));
+      },
+    );
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
+/**
+ * Purchases kept on `storage` (in memory, or a real database): none for a new player; a checkout paid is
+ * kept once however often Stripe says it; a player's looks are those of their paid purchases, each once,
+ * in the order they first bought it, read with the player and never written by a save; a refund takes a
+ * look back unless another payment for it stands; a purchase for a player who is gone is kept whose-less.
+ * Returns the player's id and the sessions of their purchases.
+ */
+export async function keepsPurchases(storage: Storage): Promise<{ id: string; sessions: string[] }> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  const { id } = await savedPlayer(storage, { tokenHash: null, authSub: sub, wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  expect((await load()).shop).toBeUndefined();
+  expect(await storage.shopLooksOf(id)).toEqual([]);
+  const at = 1_800_000_000_000, pi = `pi_${randomUUID()}`;
+  const paid: PurchaseRecord = { session: `cs_test_${randomUUID()}`, player: id, look: 'winter-parka', amount: 299, currency: 'eur', paymentIntent: pi, status: 'paid', created: at, refunded: null };
+  expect(await storage.addPurchase(paid)).toBe(true);
+  // Stripe sends it again until it hears it arrived: kept once.
+  expect(await storage.addPurchase({ ...paid, created: at + 5000 })).toBe(false);
+  expect((await load()).shop).toEqual(['winter-parka']);
+  // Another look, and the first bought again (two tabs at once): each look once, in the order first bought.
+  const heart = { ...paid, session: `cs_test_${randomUUID()}`, paymentIntent: `pi_${randomUUID()}`, look: 'heart', amount: 99, created: at + 1000 };
+  const again = { ...paid, session: `cs_test_${randomUUID()}`, paymentIntent: `pi_${randomUUID()}`, created: at + 2000 };
+  expect(await storage.addPurchase(heart)).toBe(true);
+  expect(await storage.addPurchase(again)).toBe(true);
+  expect(await storage.shopLooksOf(id)).toEqual(['winter-parka', 'heart']);
+  // A save never writes them, whatever the record says: only Stripe's word does.
+  const rec = await load();
+  await storage.save({ ...rec, shop: [], lastSeenAt: rec.lastSeenAt + 1000 });
+  expect((await load()).shop).toEqual(['winter-parka', 'heart']);
+  const { shop: _shop, ...without } = rec;
+  await storage.save({ ...without, lastSeenAt: rec.lastSeenAt + 2000 });
+  expect(await load()).toEqual({ ...rec, lastSeenAt: rec.lastSeenAt + 2000 });
+  // The first payment refunded: the parka stays theirs by the second, now bought after the heart.
+  expect(await storage.refundPurchase(pi, at + 10_000)).toEqual({ player: id, look: 'winter-parka' });
+  expect(await storage.refundPurchase(pi, at + 20_000)).toBeNull();
+  expect(await storage.shopLooksOf(id)).toEqual(['heart', 'winter-parka']);
+  expect(await storage.refundPurchase(again.paymentIntent!, at + 30_000)).toEqual({ player: id, look: 'winter-parka' });
+  expect((await load()).shop).toEqual(['heart']);
+  // Another of the account's sales: nothing of the game's.
+  expect(await storage.refundPurchase(`pi_${randomUUID()}`, at)).toBeNull();
+  // A player gone before Stripe's word came: the payment is kept, whose-less, and nobody has its look.
+  const gone = { ...paid, session: `cs_test_${randomUUID()}`, paymentIntent: null, player: randomUUID() };
+  expect(await storage.addPurchase(gone)).toBe(true);
+  expect(await storage.shopLooksOf(gone.player)).toEqual([]);
+  return { id, sessions: [paid.session, heart.session, again.session] };
+}
+
+/**
+ * The shop through a restart, over the network with dev sign-in, on `first` and then `second` (the same
+ * storage, or two connections to the same database), with a fake Stripe. Signed in at the chest, a player
+ * opens a payment for the winter parka; Stripe's webhook says it is paid, and they hear it at once and put it
+ * on. After the restart they come back with it bought and on, and whoever joins sees it; the shop has it as
+ * theirs, so a second payment for it is refused.
+ */
+export async function shopKeptThroughARestart(first: Storage, second: Storage): Promise<void> {
+  setLogLevel('silent');
+  const stripe = fakeStripe();
+  const options = (storage: Storage): ServerOptions => ({
+    ...serverDefaults(), storage, maps: chestMaps(), items: itemsData(), auth: devAuth(), shop: { settings: shopSettings(), catalog: shopData(), fetch: stripe.fetch },
+  });
+  const who = randomUUID().slice(0, 8), mail = `shop-${who}@example.test`;
+  const saved = await savedPlayer(first, { map: 'house', x: 3, y: 2, dir: 'up', tokenHash: null, authSub: `dev:${mail}` });
+  const signIn = async (port: number) => {
+    const c = await Client.open(port);
+    c.send({ t: 'hello', v: PROTOCOL_VERSION, auth: mail });
+    return { c, welcome: await c.next('welcome') };
+  };
+
+  const one = await startServer(options(first));
+  try {
+    const { c, welcome } = await signIn(one.port);
+    expect(welcome.shop).toEqual({ version: 3, owned: [], open: { currency: 'eur', terms: 'https://example.test/terms' } });
+    c.send({ t: 'checkout', x: 3, y: 1, look: 'winter-parka', waiver: true });
+    expect(await c.next('checkout')).toMatchObject({ look: 'winter-parka', url: expect.stringMatching(/^https:\/\/checkout\.stripe\.com\//) });
+    expect(await postWebhook(one.port, paidEvent({ player: saved.id, look: 'winter-parka' }), { secret: shopSettings().webhookSecret })).toEqual({ status: 200, body: 'Kept' });
+    expect(await c.next('shop')).toEqual({ t: 'shop', owned: ['winter-parka'] });
+    c.send({ t: 'outfit', x: 3, y: 1, outfit: 'winter-parka' });
+    expect(await c.next('outfit')).toEqual({ t: 'outfit', id: saved.id, outfit: 'winter-parka' });
+    c.ws.terminate();
+    await waitFor(() => one.world.size === 0, 'the player to leave');
+  } finally {
+    await one.stop();
+  }
+  expect(await second.findByAuthSub(`dev:${mail}`)).toMatchObject({ outfit: 'winter-parka', shop: ['winter-parka'] });
+
+  const two = await startServer(options(second));
+  try {
+    const { c, welcome } = await signIn(two.port);
+    expect(welcome.shop.owned).toEqual(['winter-parka']);
+    expect(welcome.players.find(p => p.id === saved.id)).toMatchObject({ outfit: 'winter-parka' });
+    c.send({ t: 'checkout', x: 3, y: 1, look: 'winter-parka', waiver: true });
+    expect(await c.next('refused')).toEqual({ t: 'refused', action: 'checkout', reason: 'owned' });
+    c.ws.terminate();
+  } finally {
+    await two.stop();
+  }
 }
 
 /**

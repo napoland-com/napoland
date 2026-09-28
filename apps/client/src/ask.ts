@@ -7,8 +7,12 @@
  *
  * Plain state with no page in it, so it is tested without one. Game keeps the open question (Game.ask)
  * and passes it the stick, A, B and taps; hud.ts draws it. Everything that uses something up asks
- * through it: feeding a fire or the Old Stone, using and throwing away what is in the bag, making and
- * mending at the workbench, and later opening, upgrading, cooking and giving.
+ * through it: feeding a fire or the Old Stone, cooking at one, using and throwing away what is in the
+ * bag, making and mending at the workbench, and later opening, upgrading and giving.
+ *
+ * A question can also be a choice between a few answers in words ("Feed the fire" or "Cook"), in the
+ * frame where YES and NO stand: up and down choose, A says the chosen one, and B, or a tap outside the
+ * box, is none of them. It asks nothing about using something up; what it leads to does.
  */
 import type { Dir } from '@napoland/shared';
 import type { AskView } from './hud';
@@ -31,21 +35,37 @@ export interface Ask {
   yes(n: number): void;
   /** NO, B or a tap outside the box: nothing happens, nothing is spent. */
   no?(): void;
+  /**
+   * Two things to choose between, instead of YES and NO (at someone else's pile: "Take half" or "Carry it
+   * to the lodge for Ana"): the words on each, and what the second one does. B and a tap outside the box
+   * still back out, and nothing happens.
+   */
+  choices?: { yes: string; other: string; run(): void };
   /** What the question is about, when something else may take it back before it is answered (a friend's ask to trade that is over). */
   tag?: 'trade';
+  /**
+   * A choice instead of YES and NO: these answers in words, top to bottom, the first chosen to start. The
+   * one said is `pick`ed, by its place; B or a tap outside the box is `no`, as ever. It never counts.
+   */
+  options?: readonly string[];
+  pick?(i: number): void;
 }
 
-export type Choice = 'yes' | 'no';
+/** YES or NO, or the place of an answer in words (a choice: Ask.options). */
+export type Choice = 'yes' | 'no' | number;
+/** How a question is answered: a choice, or backed out of (B, a tap outside the box), which is NO where there is one. */
+export type Answer = Choice | 'back';
 
 export class Question {
-  choice: Choice = 'yes';
+  choice: Choice;
   /** How many, from `min` to `max`; 1 when it does not count. */
   n: number;
   readonly min: number;
   readonly max: number;
 
   constructor(readonly ask: Ask) {
-    const c = ask.count;
+    const c = ask.options?.length ? undefined : ask.count;
+    this.choice = ask.options?.length ? 0 : 'yes';
     this.min = c ? Math.max(1, Math.floor(c.min)) : 1;
     this.max = c ? Math.max(this.min, Math.floor(c.max)) : 1;
     this.n = Math.min(this.max, Math.max(this.min, Math.floor(c?.start ?? this.min)));
@@ -61,10 +81,16 @@ export class Question {
     return typeof t === 'string' ? t : t(this.n);
   }
 
-  /** Up and down choose YES or NO; left and right take one away or add one. True when anything changed. */
+  /**
+   * Up and down choose YES or NO (or, in a choice, the answer above or below, stopping at either end); left
+   * and right take one away or add one. True when anything changed.
+   */
   move(dir: Dir): boolean {
     if (dir === 'left' || dir === 'right') return this.step(dir === 'left' ? -1 : 1);
-    const c: Choice = dir === 'up' ? 'yes' : 'no';
+    const options = this.ask.options?.length ?? 0;
+    const c: Choice = options
+      ? Math.min(options - 1, Math.max(0, (typeof this.choice === 'number' ? this.choice : 0) + (dir === 'up' ? -1 : 1)))
+      : dir === 'up' ? 'yes' : 'no';
     if (c === this.choice) return false;
     this.choice = c;
     return true;
@@ -79,9 +105,22 @@ export class Question {
     return true;
   }
 
-  /** What the text box draws for it. */
+  /** What the text box draws for it: YES and NO, or the answers of a choice. */
   view(): AskView {
-    return { who: this.ask.who, text: this.text, choice: this.choice, count: this.counts ? { n: this.n, min: this.min, max: this.max } : null };
+    const c = this.ask.choices;
+    return {
+      who: this.ask.who, text: this.text, choice: this.choice, count: this.counts ? { n: this.n, min: this.min, max: this.max } : null,
+      ...(c ? { labels: { yes: c.yes, no: c.other } } : {}),
+      ...(this.ask.options?.length ? { options: [...this.ask.options] } : {}),
+    };
+  }
+
+  /** What an answer does: an answer in words (by its place), YES, the second of two choices, or NO (backing out is NO). */
+  run(answer: Answer): void {
+    if (typeof answer === 'number') return this.ask.pick?.(answer);
+    if (answer === 'yes') return this.ask.yes(this.n);
+    if (answer === 'no' && this.ask.choices) return this.ask.choices.run();
+    this.ask.no?.();
   }
 }
 

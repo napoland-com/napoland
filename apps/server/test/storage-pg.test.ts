@@ -14,9 +14,9 @@ import { DROP_LIFETIME_MS, utcDay } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { PgStorage, type CacheItemRecord, type DropRecord, type MarkRecord, type PlayerRecord, type ThanksRecord } from '../src/storage';
 import {
-  forgetsGuestsWhoStayedAway, keepsFirsts, keepsFriendsAndMessages, keepsMerits, keepsBests, keepsNotebook, keepsNotes, keepsParcels, keepsRested, keepsToolsParcelsAndOutfit, keepsTheWornOutMark,
-  keepsWhatANewerReleaseSaved, keepsWholeRow, meritsKeptThroughARestart, outfitsKeptThroughARestart, parcelsThroughRestarts, playFirstThenSignIn, restKeptThroughARestart,
-  restartKeepsBagsAndPiles, savesATradeTogether, signInAndClaim,
+  forgetsGuestsWhoStayedAway, keepsFirsts, keepsFriendsAndMessages, keepsMerits, keepsBests, keepsNotebook, keepsNotes, keepsParcels, keepsPurchases, keepsRested,
+  keepsToolsParcelsAndOutfit, keepsTheWornOutMark, keepsWhatANewerReleaseSaved, keepsWholeRow, meritsKeptThroughARestart, outfitsKeptThroughARestart, parcelsThroughRestarts,
+  playFirstThenSignIn, restKeptThroughARestart, restartKeepsBagsAndPiles, savesATradeTogether, shopKeptThroughARestart, signInAndClaim, keepsReturns,
 } from './helpers';
 import { itemsData } from './fixtures';
 
@@ -65,7 +65,7 @@ describe.skipIf(!url)('PgStorage', () => {
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
       '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql', '016_caches.sql', '017_zones.sql', '018_rested.sql', '019_merits.sql',
       '020_trades_off.sql', '021_notebook.sql', '022_notes.sql', '023_firsts.sql', '024_furniture.sql', '025_streets.sql', '026_door.sql',
-      '027_bests.sql', '028_visits.sql', '029_first_steps.sql',
+      '027_bests.sql', '028_visits.sql', '029_first_steps.sql', '030_returns.sql', '035_purchases.sql', '036_meals.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -300,6 +300,10 @@ describe.skipIf(!url)('PgStorage', () => {
     }
   });
 
+  it('keeps what was carried back to the lodge until it is in its owner\'s chest, and what a pile owed (030_returns.sql)', async () => {
+    await keepsReturns(storage);
+  });
+
   it('keeps the cup of rest: none for a new player, what a save writes, none once spent; and the previous release\'s saves leave it alone', async () => {
     await keepsRested(storage);
     const rec = { ...player('Pg Rested'), rested: 140 };
@@ -345,6 +349,43 @@ describe.skipIf(!url)('PgStorage', () => {
     // Whatever else the looks column holds reads as none bought (the World checks every id too).
     await admin.query(`UPDATE ${schema}.players SET looks = '{"not": "a list"}' WHERE id = $1`, [rec.id]);
     expect((await storage.findByTokenHash(rec.tokenHash))!.looks).toBeUndefined();
+  });
+
+  it('keeps purchases once, reads what each player bought with them, never writes it in a save, and takes a look back by a refund', async () => {
+    const { id, sessions } = await keepsPurchases(storage);
+    const rows = await admin.query(
+      `SELECT session, player, look, amount, currency, status, refunded IS NOT NULL AS refunded FROM ${schema}.purchases WHERE session = ANY($1) ORDER BY created`,
+      [sessions],
+    );
+    expect(rows.rows).toEqual([
+      { session: sessions[0], player: id, look: 'winter-parka', amount: 299, currency: 'eur', status: 'refunded', refunded: true },
+      { session: sessions[1], player: id, look: 'heart', amount: 99, currency: 'eur', status: 'paid', refunded: false },
+      { session: sessions[2], player: id, look: 'winter-parka', amount: 299, currency: 'eur', status: 'refunded', refunded: true },
+    ]);
+    // A purchase for a player who was gone when Stripe's word came is kept, whose-less.
+    const orphans = await admin.query(`SELECT count(*)::int AS n FROM ${schema}.purchases WHERE player IS NULL`);
+    expect(orphans.rows[0].n).toBeGreaterThanOrEqual(1);
+  });
+
+  it('keeps the purchases of a deleted player, whose-less, for the accounts', async () => {
+    const { id, sessions } = await keepsPurchases(storage);
+    await admin.query(`DELETE FROM ${schema}.players WHERE id = $1`, [id]);
+    const rows = await admin.query(`SELECT player FROM ${schema}.purchases WHERE session = ANY($1)`, [sessions]);
+    expect(rows.rows).toEqual([{ player: null }, { player: null }, { player: null }]);
+  });
+
+  it('keeps what the shop sold through a restart of the server, over the network', async () => {
+    const fresh = await freshSchema();
+    const first = new PgStorage(fresh.url, MIGRATIONS);
+    const second = new PgStorage(fresh.url, MIGRATIONS);
+    try {
+      await first.init();
+      await second.init();
+      await shopKeptThroughARestart(first, second);
+    } finally {
+      await first.close();
+      await second.close();
+    }
   });
 
   it('keeps merits through a restart of the server, over the network', async () => {
@@ -527,7 +568,7 @@ describe.skipIf(!url)('PgStorage', () => {
     const { sub, kept } = await keepsWholeRow(storage);
     const row = await admin.query(
       `SELECT map, x, y, dir, energy, bag, wet, stats, xp, stash, gear, worn, story, tools, parcel_welcome, parcel_day, parcel_days, outfit, thanked, notebook, furniture, cozy_until, street, lot,
-         door_off, street_told, first_steps
+         door_off, street_told, first_steps, meals
        FROM ${schema}.players WHERE auth_sub = $1`,
       [sub],
     );
@@ -536,7 +577,7 @@ describe.skipIf(!url)('PgStorage', () => {
     expect(row.rows).toEqual([{
       map: kept.map, x: kept.x, y: kept.y, dir: kept.dir, energy: kept.energy, bag: kept.bag, wet: kept.wet, stats: counts, xp: kept.xp, stash: kept.stash, gear: kept.gear,
       worn: kept.worn, story: kept.story, tools: kept.tools, parcel_welcome: true, parcel_day: 20_725, parcel_days: 0b11, outfit: 'rain-cape', thanked: 8, notebook: kept.notebook,
-      furniture: ['iron-stove', 'bed'], cozy_until: new Date(1_700_000_400_000), street: 3, lot: 0, door_off: false, street_told: true, first_steps: 3,
+      furniture: ['iron-stove', 'bed'], cozy_until: new Date(1_700_000_400_000), street: 3, lot: 0, door_off: false, street_told: true, first_steps: 3, meals: ['stew', 'tea'],
     }]);
   });
 

@@ -13,7 +13,7 @@
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import {
-  ENERGY_MAX, FIRE_MAX_S, STEP_MS, TileMap, conditionsAt, DAY_S,
+  ENERGY_MAX, FIRE_MAX_S, SLUMP_S, STEP_MS, TileMap, conditionsAt, DAY_S,
   type ConditionsData, type Dir, type ItemsData, type MapData, type ServerMsg,
 } from '@napoland/shared';
 import { Calls } from '../src/calls';
@@ -193,34 +193,38 @@ describe('copies of a map', () => {
     walk(w, 'a', ['up'], 1000);
     walk(w, 'c', ['up'], 1000);
     w.drain();
-    // 1 energy lasts about 4 s a step from home: a falls on 4,10 of the copy, and wakes up at home.
+    // 1 energy lasts about 4 s a step from home: a goes down on 4,10 of the copy, nobody comes, and a falls
+    // there and wakes up at home.
     w.tick(10_000);
+    w.drain();
+    const at = 10_000 + SLUMP_S * 1000;
+    w.tick(at);
     const fell = w.drain();
-    const pile = { id: 'a', x: 4, y: 10, owner: 'a', name: 'A', until: 10_000 + 3_600_000, trail: [] };
+    const pile = { id: 'a', x: 4, y: 10, owner: 'a', name: 'A', until: at + 3_600_000, trail: [] };
     expect(heardOn(fell, FX)).toContainEqual({ t: 'drop', drop: pile });
     expect(heardOn(fell, 'field').filter(m => m.t === 'drop')).toEqual([]);
     expect(w.dropViews(FX)).toEqual([pile]);
     expect(w.dropViews('field')).toEqual([]);
     expect(w.zoneOf('a')).toBe('town');
     const writes = w.takeWrites();
-    expect(writes.drops).toEqual([{ owner: 'a', drop: { owner: 'a', name: 'A', map: 'field', zone: X, x: 4, y: 10, items: [{ item: 'moss', count: 3 }], droppedAt: 10_000, trail: [] } }]);
+    expect(writes.drops).toEqual([{ owner: 'a', drop: { owner: 'a', name: 'A', map: 'field', zone: X, x: 4, y: 10, items: [{ item: 'moss', count: 3 }], droppedAt: at, trail: [], owed: {} } }]);
     storage.push(writes.drops[0]!.drop!);
     // Right where it lies, but in the main copy: nothing there.
-    w.pick('c', 4, 10, 11_000);
+    w.pick('c', 4, 10, at + 1000);
     expect(to(w.drain(), 'c')).toEqual([{ t: 'refused', action: 'pick', reason: 'gone' }]);
     // Nobody is left in the copy: it closes, and its pile stays, as storage keeps it.
-    w.tick(12_000);
+    w.tick(at + 2000);
     expect(w.zoneKeys()).toEqual(MAIN);
     expect(w.dropViews(FX)).toEqual([pile]);
 
     const again = new Copies(maps(), 'town', 'overcast', { items: ITEMS, rng: () => 0, drops: storage });
     expect(again.dropViews(FX)).toEqual([pile]);
     expect(again.dropViews('field')).toEqual([]);
-    again.send('a', 'field', X).join(rec('a'), 20_000);
-    walk(again, 'a', ['up'], 20_000);
+    again.send('a', 'field', X).join(rec('a'), at + 20_000);
+    walk(again, 'a', ['up'], at + 20_000);
     const [zone] = of(to(again.drain(), 'a'), 'zone');
     expect(zone!.drops).toEqual([pile]);
-    again.pick('a', 4, 10, 21_000);
+    again.pick('a', 4, 10, at + 21_000);
     expect(to(again.drain(), 'a')[0]).toEqual({ t: 'got', items: [{ item: 'moss', count: 3 }], from: 'drop' });
   });
 

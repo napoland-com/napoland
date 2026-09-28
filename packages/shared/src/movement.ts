@@ -2,7 +2,7 @@
  * Tile-by-tile movement rules shared by the server (which enforces them) and the client
  * (which predicts them so walking feels instant).
  */
-import type { TileMap } from './map';
+import type { Pass, TileMap } from './map';
 import type { Dir } from './protocol';
 
 /** Time to walk one tile: 200 ms is 5 tiles per second, one steady running pace. */
@@ -54,9 +54,11 @@ export function dirToward(dx: number, dy: number): Dir {
 /**
  * Shortest 4-direction path from (sx, sy) to (tx, ty), as the tiles to walk through (start excluded).
  * If the target cannot be reached, the path leads to the closest reachable tile.
- * With `adjacent`, the path stops next to the target (to talk to someone or face a sign).
+ * With `adjacent`, the path stops next to the target (to talk to someone or face a sign). `pass`: what
+ * the walker holds, which opens the tiles that open only for some (TileMap.walkable): the culvert to
+ * waders, a padlocked door to bolt cutters; without it the way goes round them, as the server's would.
  */
-export function findPath(map: TileMap, sx: number, sy: number, tx: number, ty: number, adjacent = false, maxNodes = 5000): Array<{ x: number; y: number }> {
+export function findPath(map: TileMap, sx: number, sy: number, tx: number, ty: number, adjacent = false, maxNodes = 5000, pass?: Pass): Array<{ x: number; y: number }> {
   const W = map.width;
   const start = sy * W + sx;
   const prev = new Int32Array(W * map.height).fill(-1);
@@ -78,7 +80,7 @@ export function findPath(map: TileMap, sx: number, sy: number, tx: number, ty: n
     }
     for (const dir of DIRS) {
       const n = stepTarget(x, y, dir);
-      if (!map.walkable(n.x, n.y)) continue;
+      if (!map.walkable(n.x, n.y, pass)) continue;
       const j = n.y * W + n.x;
       if (seen[j]) continue;
       seen[j] = 1;

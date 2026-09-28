@@ -55,11 +55,13 @@ export const SIGHTS = [
   'faded',
   /** The Old Stone woke. */
   'woke',
+  /** You ate (or drank) a meal you cooked at a fire (meals.ts). */
+  'ate',
 ] as const;
 export type Sight = (typeof SIGHTS)[number];
 
-/** When a find was picked up, for a blank that waits for one picked up then: on an aurora night, or while a storm blew over its region. */
-export const DURING = ['aurora', 'storm'] as const;
+/** When a find was picked up, for a blank that waits for one picked up then: on an aurora night, while a storm blew over its region, or in the rain. */
+export const DURING = ['aurora', 'storm', 'rain'] as const;
 export type During = (typeof DURING)[number];
 
 /** A readable thing by where it stands: the map and its tile (the first, for something bigger), for what has no id of its own. */

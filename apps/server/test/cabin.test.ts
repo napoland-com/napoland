@@ -8,7 +8,7 @@
  * 2,3; its way out at 2,4 leads back to 7,3 in front of the door, facing down.
  */
 import { describe, expect, it } from 'vitest';
-import { ENERGY_MAX, PROTOCOL_VERSION, TileMap, utcDay, type Dir, type MapData, type StoryData } from '@napoland/shared';
+import { ENERGY_MAX, PROTOCOL_VERSION, SLUMP_S, TileMap, utcDay, type Dir, type MapData, type StoryData } from '@napoland/shared';
 import { Chat } from '../src/chat';
 import type { PlayerRecord, ThanksRecord } from '../src/storage';
 import { World, colorFor, zoneKey, type Outgoing } from '../src/world';
@@ -93,7 +93,10 @@ describe('your own cabin', () => {
 
   it('wakes you up in it after a collapse, by the fire, full and alone; what you carried lies where you fell', () => {
     const w = world(rec('a', 'woods', 3, 6, 'up', { energy: 1, bag: [{ item: 'moss', count: 1 }] }), rec('c', 'woods', 5, 5), inTown('t', 0, 5));
+    // Down first (rescue.ts), and nobody comes.
     w.tick(5000);
+    w.drain();
+    w.tick(5000 + SLUMP_S * 1000);
     const out = noEnergy(w.drain());
     expect(out).toContainEqual({ to: '*', map: 'woods', except: 'a', msg: { t: 'leave', id: 'a' } });
     expect(out).toContainEqual({ to: '*', map: own('a'), except: 'a', msg: { t: 'join', player: viewOf('a', 2, 2, 'down') } });
@@ -146,7 +149,9 @@ describe('your own cabin', () => {
     const collapsing = new World(cabinMaps(), 'town', 'overcast', { items: itemsData(), rng: () => 0, thanks: [thanks(500)] });
     collapsing.join(rec('a', 'woods', 3, 6, 'up', { energy: 1 }), 1000);
     collapsing.drain();
+    // Down, and nobody comes: they wake at home.
     collapsing.tick(6000);
+    collapsing.tick(6000 + SLUMP_S * 1000);
     const out = collapsing.drain().filter(o => o.to === 'a').map(o => o.msg);
     expect(out.map(m => m.t)).toEqual(expect.arrayContaining(['zone', 'letter']));
     expect(out).toContainEqual(letter);
@@ -170,7 +175,7 @@ describe('your own cabin', () => {
 });
 
 describe('your own cabin over the network', () => {
-  const { ctx, join, enter, login } = setup({ maps: cabinMaps(), items: itemsData(), weather: 'overcast' });
+  const { ctx, join, enter } = setup({ maps: cabinMaps(), items: itemsData(), weather: 'overcast' });
 
   it('is where a new player starts: by the fire, facing the room, alone in it', async () => {
     const [a, b] = [await join(), await join()];
@@ -203,8 +208,23 @@ describe('your own cabin over the network', () => {
     expect(out.players.map(p => p.id)).toEqual([a.id]);
   });
 
+  it('never tells the client whose copy it is in: the welcome names the room alone, as it always did', async () => {
+    const c = await join();
+    expect(c.welcome).toMatchObject({ v: PROTOCOL_VERSION, map: { id: 'house', version: 1 } });
+    expect(JSON.stringify(c.welcome)).not.toContain(own(c.id));
+  });
+});
+
+describe('your own cabin over the network, on a game clock', () => {
+  let now = 1_000_000;
+  const { ctx, enter, login } = setup({ maps: cabinMaps(), items: itemsData(), weather: 'overcast', clock: () => now });
+
   it('wakes you in it after a collapse, and takes you back into it when you come back', async () => {
     const a = await enter({ map: 'woods', x: 3, y: 6, dir: 'up', energy: 0.2, bag: [{ item: 'moss', count: 1 }] });
+    // Down first (rescue.ts), and nobody comes.
+    now += 2000;
+    await a.c.next('slump');
+    now += SLUMP_S * 1000;
     expect(await a.c.next('zone')).toMatchObject({ map: { id: 'house' }, x: 2, y: 2, dir: 'down', players: [{ id: a.id }], reason: 'collapse' });
     a.c.ws.close();
     await waitFor(() => !ctx.server.world.has(a.id), 'a to leave');
@@ -212,11 +232,5 @@ describe('your own cabin over the network', () => {
     const again = await login(a.token);
     expect(again.welcome).toMatchObject({ map: { id: 'house' }, players: [{ id: a.id, x: 2, y: 2 }] });
     expect(ctx.server.world.zoneOf(a.id)).toBe(own(a.id));
-  });
-
-  it('never tells the client whose copy it is in: the welcome names the room alone, as it always did', async () => {
-    const c = await join();
-    expect(c.welcome).toMatchObject({ v: PROTOCOL_VERSION, map: { id: 'house', version: 1 } });
-    expect(JSON.stringify(c.welcome)).not.toContain(own(c.id));
   });
 });
