@@ -57,9 +57,9 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
-  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MOVES, NO_ROOM, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, buyQuestion, cabinWho,
-  comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn, openQuestion,
-  placedAlready, sentence, shortOf, stashShort, stoneQuestion, tossQuestion, upgradeQuestion, useQuestion,
+  CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MOVES, NO_ROOM, RESIDENT, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, buyQuestion,
+  cabinWho, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn,
+  openQuestion, placedAlready, sentence, shortOf, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { trophiesIn } from './view/cabin';
@@ -299,6 +299,12 @@ export class Game {
   streetChanges = 0;
   /** The doors of the street's lots, lot by lot (lotDoors); none off it. */
   private lotDoor: Array<{ x: number; y: number }> = [];
+  /**
+   * You keep your name off your door and your window dark to your street (the setting beside friend and
+   * trade requests), as the server last said: in the welcome, and whenever you change it. It counts in
+   * socialChanges, as the friends panel shows it.
+   */
+  doorOff = false;
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The id of the chapter of the story you are in, as the server said ('' until its welcome). */
@@ -433,8 +439,8 @@ export class Game {
   private thanking: { id: string; name: string } | null = null;
   /** The server's wall clock at our `now` (the welcome says it): the UTC day turns by it. */
   private wall = { now: 0, ms: 0 };
-  /** A letter from home (thanks while you were away), until the text box is free to show it. */
-  private letter: string[] | null = null;
+  /** Letters from home (who thanked you while you were away, the one about your street), in the order they came, each until the text box is free to show it. */
+  private letters: string[][] = [];
   /** Whom you last asked to trade: a refusal names them (the trade is the server's to make). */
   private tradeWith: PersonView | null = null;
   /** You called off the trade with this player: what the server says of it until it has heard you is old news. */
@@ -567,6 +573,8 @@ export class Game {
         this.stepMs = msg.stepMs;
         this.enter(map, msg.players, msg.finds, msg.drops, someoneElse);
         this.setStreet(msg.street);
+        this.doorOff = msg.doorOff === true;
+        this.socialChanges++;
         this.scene(msg, now);
         this.bag = msg.bag;
         this.bagAt = now;
@@ -638,7 +646,14 @@ export class Game {
         break;
       }
       case 'door':
-        this.inform(cabinWho(msg.name), doorText(msg.name, msg.home));
+        this.inform(cabinWho(msg.lot), doorText(msg.lot));
+        break;
+      case 'doorOff':
+        this.doorOff = msg.off;
+        this.socialChanges++;
+        break;
+      case 'streetLetter':
+        this.letters.push(streetLetterLines(msg.doorOff));
         break;
       case 'doorstep':
         this.offerMoves(msg.moves);
@@ -828,7 +843,7 @@ export class Game {
       }
       case 'letter': {
         const lines = letterLines(msg.thanks, id => this.maps.find(id), this.items);
-        if (lines.length) this.letter = lines;
+        if (lines.length) this.letters.push(lines);
         break;
       }
       case 'progress':
@@ -1183,7 +1198,12 @@ export class Game {
     if (lot === s.mine) return this.send({ t: 'knock', x, y });
     const owner = s.lots[lot];
     if (!owner) return this.inform(cabinWho(null), NOBODY_LIVES);
-    this.act(cabinWho(owner.name), KNOCKING, { t: 'knock', x, y });
+    this.act(cabinWho(owner), KNOCKING, { t: 'knock', x, y });
+  }
+
+  /** The setting beside friend and trade requests: keep your name off your door and your window dark (`off`), or show both. The server says back how it stands. */
+  setDoorOff(off: boolean) {
+    if (this.online) this.send({ t: 'doorOff', off });
   }
 
   /** At your own door: each friend whose street has a lot free, asked about in turn (NO asks about the next); none, and the box says how it works. */
@@ -1764,7 +1784,7 @@ export class Game {
   private doorAt(x: number, y: number): Talker | undefined {
     const s = this.street, lot = this.lotDoor.findIndex(d => d.x === x && d.y === y);
     if (!s || lot < 0) return undefined;
-    return { x, y, who: lot === s.mine ? YOUR_CABIN : cabinWho(s.lots[lot]?.name ?? null), lines: [], kind: 'door', lot };
+    return { x, y, who: lot === s.mine ? YOUR_CABIN : cabinWho(s.lots[lot] ?? null), lines: [], kind: 'door', lot };
   }
 
   /** A neighbor's door: knocked at, never walked into (the server keeps you out as well). */
@@ -1945,9 +1965,9 @@ export class Game {
     const day = utcDay(this.wall.ms + (now - this.wall.now));
     if (day !== this.thankedDay) { this.thankedDay = day; this.thankedToday.clear(); }
     const free = this.online && !covered && !this.held && !this.question && !this.note && !this.dialog;
-    if (free && this.letter) {
-      this.openDialog({ x: 0, y: 0, who: 'Letter', lines: this.letter, kind: 'talk' });
-      this.letter = null;
+    const letter = free && this.letters.shift();
+    if (letter) {
+      this.openDialog({ x: 0, y: 0, who: 'Letter', lines: letter, kind: 'talk' });
       return;
     }
     const me = this.online ? this.me : undefined, blocked = new Set((this.friends?.blocked ?? []).map(p => p.id));
@@ -2010,13 +2030,13 @@ export class Game {
     return journal(this.story, this.chapter);
   }
 
-  /** The name plates near you on your street, over the doors of cabins someone lives in: whose each one is. */
+  /** The name plates near you on your street, over the doors of cabins someone lives in: whose each one is (a resident's, kept to themselves). */
   platesNear(): Array<{ lot: number; name: string; x: number; y: number }> {
     const me = this.me, s = this.street;
     if (!me || !s) return [];
     return this.lotDoor.flatMap((d, lot) => {
       const l = s.lots[lot];
-      return l && Math.hypot(d.x - me.x, d.y + 1 - me.y) <= PLATE_TAG_TILES ? [{ lot, name: l.name, x: d.x, y: d.y }] : [];
+      return l && Math.hypot(d.x - me.x, d.y + 1 - me.y) <= PLATE_TAG_TILES ? [{ lot, name: l.name ?? RESIDENT, x: d.x, y: d.y }] : [];
     });
   }
 

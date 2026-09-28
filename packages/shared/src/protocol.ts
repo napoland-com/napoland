@@ -20,7 +20,7 @@ import type { ThanksFor, ThanksGroup } from './thanks';
 import { OFFER_MAX } from './trade';
 
 /** Bump when a change breaks older clients; they reload to get the new version. */
-export const PROTOCOL_VERSION = 28;
+export const PROTOCOL_VERSION = 29;
 
 /** The most one `feed` puts in at once: more than a fire out there ever takes of anything that burns. */
 export const FEED_MAX = 30;
@@ -247,6 +247,11 @@ export const ClientMsg = z.discriminatedUnion('t', [
   z.object({ t: z.literal('knock'), x: z.number().int(), y: z.number().int() }),
   /** At your own door: move your cabin next to friend `to`'s, onto their street, where a lot must be free. It comes with you. */
   z.object({ t: z.literal('move'), to: z.uuid() }),
+  /**
+   * The setting in the menu: keep your name off your door and your window dark to your street (`off`), or
+   * show both (as everyone does until they choose). Anyone, guests too: a guest's name is on a door as well.
+   */
+  z.object({ t: z.literal('doorOff'), off: z.boolean() }),
 ]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
@@ -492,10 +497,11 @@ export interface FriendView extends PersonView {
 
 /**
  * A lot on your street: whose cabin it is (their name, on the plate by its door) and whether they are home
- * (online, in their own cabin: its window is lit).
+ * (online, in their own cabin: its window is lit). No name: a resident who keeps both to themselves (the
+ * setting in the menu); their window never lights.
  */
 export interface LotView {
-  name: string;
+  name?: string;
   home?: true;
 }
 
@@ -650,6 +656,8 @@ export type ServerMsg =
       furniture?: string[];
       /** On your street: its lots, and which is yours. */
       street?: StreetView;
+      /** You keep your name off your door and your window dark (the setting in the menu). */
+      doorOff?: true;
       serverTime: number;
     }
   /**
@@ -674,12 +682,23 @@ export type ServerMsg =
   | { t: 'furniture'; furniture: string[] }
   /** On your street: a lot changed (someone moved in or away, came home or left it); null: nobody lives there now. */
   | { t: 'lot'; lot: number; view: LotView | null }
-  /** You knocked at the door on tile x,y of your street: whose it is (null: nobody lives there yet), and whether they are home. */
-  | { t: 'door'; x: number; y: number; name: string | null; home: boolean }
+  /**
+   * You knocked at the door on tile x,y of your street: whose it is and whether they are home, as it answers
+   * you (`lot`: null, nobody lives there yet; no name, a resident who keeps their door to themselves and
+   * answers only friends: to anyone else, nobody answers).
+   */
+  | { t: 'door'; x: number; y: number; lot: LotView | null }
   /** At your own door: the friends whose street has a lot free, whom you could move next to. */
   | { t: 'doorstep'; moves: PersonView[] }
   /** Someone (`name`) knocked at your door while you were home. */
   | { t: 'knocked'; name: string }
+  /** Your door's setting, as it stands now that you changed it (`off`: your name off it, your window dark). */
+  | { t: 'doorOff'; off: boolean }
+  /**
+   * The first time you come home since streets came: a letter about what your street sees of you (your name
+   * on your door, your window lit while you are home; `doorOff`: you keep both to yourself already). Once.
+   */
+  | { t: 'streetLetter'; doorOff: boolean }
   /**
    * You picked these up (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
    * A find that is a `tool` is yours for good instead, and your tools follow in a `tools` message.

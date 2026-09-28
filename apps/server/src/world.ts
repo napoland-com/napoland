@@ -73,7 +73,9 @@
  * the player's own street, in front of their own door; the others' doors are knocked at, not walked into,
  * and a window is lit while its owner is home. At their own door a player may move their cabin next to a
  * friend's, onto the friend's street, if a lot is free there. Who lives where is kept for everyone, online
- * or not, loaded at start-up.
+ * or not, loaded at start-up. Anyone may keep their name off their door and their window dark (the setting
+ * in the menu): the street sees a resident then, and a knock is answered only for friends. The first time
+ * each player comes home since streets came, a letter says what the street sees of them.
  *
  * Crowds: a town square holds about TOWN_CROWD players, and a region of the wilds REGION_CROWD, before
  * another copy of it opens; the rooms off a place (its houses, its shelters) follow the copy they are
@@ -357,6 +359,8 @@ export const HUM_NEAR = 2;
 export const KNOCK_EVERY_MS = 3000;
 /** A player moves their cabin at most once in this long: every move is saved at once, and both streets hear of it. */
 export const MOVE_EVERY_MS = 10_000;
+/** A player's door setting changes at most once in this long: each change is saved at once, and their whole street hears of it. */
+export const DOOR_EVERY_MS = 1000;
 /**
  * A copy of a town square holds this many players (with those in its rooms) before another opens: about
  * as many as the square has room for without everyone walking through everyone else.
@@ -459,6 +463,8 @@ export interface Joined extends Scene {
   furniture?: string[];
   /** On their street: its lots, and which is theirs. */
   street?: StreetView;
+  /** They keep their name off their door and their window dark. */
+  doorOff?: true;
 }
 
 /** How a trade's swap went (World.swap): what each side gave, or why nothing moved and whose bag it was about. */
@@ -590,6 +596,8 @@ interface Online {
   knockAt: number;
   /** When they last moved their cabin (game time): once in MOVE_EVERY_MS. */
   movedAt: number;
+  /** When they last changed their door's setting (game time): once in DOOR_EVERY_MS. */
+  doorAt: number;
 }
 
 /** A player's lot: whose it is (their name goes on its plate), on which street, and which. */
@@ -598,6 +606,8 @@ interface Lot {
   name: string;
   street: number;
   lot: number;
+  /** Its owner keeps their name off the door and the window dark (PlayerRecord.doorOff): the street sees a resident, never home. */
+  off?: true;
 }
 
 /** Where a player stands with their own fire (comfort.ts): away, warming by it (under COZY_AFTER_S), or held there, cozy in full. */
@@ -1131,7 +1141,7 @@ export class World {
     for (const l of options.lots ?? []) {
       if (!this.street || !Number.isInteger(l.street) || l.street < 1 || !Number.isInteger(l.lot) || l.lot < 0 || l.lot >= this.lotDoor.length) continue;
       if (this.lots.has(l.id) || this.streetLots(l.street)[l.lot]) continue;
-      this.settle({ id: l.id, name: l.name, street: l.street, lot: l.lot });
+      this.settle({ id: l.id, name: l.name, street: l.street, lot: l.lot, ...(l.off && { off: true as const }) });
     }
 
     // Where each map's creatures may wake is the same in every copy of it: worked out once.
@@ -1286,6 +1296,10 @@ export class World {
     else delete r.furniture;
     // Where their cabin stands is what the World keeps of it (it may have been given to someone else meanwhile, or never saved).
     this.recordLot(r);
+    if (r.doorOff !== true) delete r.doorOff;
+    if (r.streetTold !== true) delete r.streetTold;
+    // Their door's setting is theirs: the lot kept for them follows it, and so does their street.
+    this.markDoor(r.id, r.doorOff === true);
     // Cozy is a time on the wall clock: it went on counting down while they were away.
     if (!(Number.isFinite(r.cozy) && r.cozy! > now + this.epochOffset)) delete r.cozy;
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
@@ -1327,7 +1341,7 @@ export class World {
     const p: Online = {
       rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
       hitchAt: now, trail: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null,
-      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity,
+      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity, doorAt: -Infinity,
     };
     this.refresh(p, now);
     this.revisit(p);
@@ -1357,6 +1371,7 @@ export class World {
       finds: this.findsFor(r, zone),
       ...this.cabinOf(p),
       ...this.streetOf(p),
+      ...(r.doorOff && { doorOff: true as const }),
     };
   }
 
@@ -2175,6 +2190,13 @@ export class World {
    */
   private homecoming(p: Online, now: number): void {
     p.gifts = 0;
+    // The first time home since streets came (a new player's too): a letter says what the street sees of
+    // them and where to hide it, once, before any thanks.
+    if (this.street && !p.rec.streetTold) {
+      p.rec.streetTold = true;
+      this.saveNow.set(p.rec.id, p.rec);
+      this.outbox.push({ to: p.rec.id, msg: { t: 'streetLetter', doorOff: p.rec.doorOff === true } });
+    }
     // Only what is still kept: one older than THANKS_KEPT_DAYS may wait for the tick that forgets it.
     const kept = now + this.epochOffset - THANKS_KEPT_MS;
     const unread = [...this.thanks.values()].filter(t => t.helper === p.rec.id && !t.told && t.at > kept).sort((a, b) => b.at - a.at);
@@ -2318,7 +2340,10 @@ export class World {
     if (now - p.knockAt < KNOCK_EVERY_MS) return this.refuse(p, 'knock', 'slow_down');
     p.knockAt = now;
     const them = owner && this.players.get(owner.id), home = !!them && this.ownCabin(them);
-    this.outbox.push({ to: id, msg: { t: 'door', x, y, name: owner?.name ?? null, home } });
+    // A door kept to oneself answers only friends (asked both ways): to anyone else, a resident, and nobody answers.
+    const answers = !!owner && (!owner.off || this.friends(id).has(owner.id) || this.friends(owner.id).has(id));
+    const view: LotView | null = !owner ? null : answers ? { name: owner.name, ...(home && { home: true as const }) } : {};
+    this.outbox.push({ to: id, msg: { t: 'door', x, y, lot: view } });
     // Someone who blocks the knocker hears nothing from them, and the knocker is not told (the lit window says they are home anyway).
     if (them && home && !this.blocks(them.rec.id).has(id)) this.outbox.push({ to: them.rec.id, msg: { t: 'knocked', name: p.rec.name } });
   }
@@ -2344,7 +2369,7 @@ export class World {
     p.movedAt = now;
     this.unsettle(mine);
     this.tellLot(mine.street, mine.lot);
-    const moved = this.settle({ id, name: p.rec.name, street: friend.street, lot });
+    const moved = this.settle({ id, name: p.rec.name, street: friend.street, lot, ...(p.rec.doorOff && { off: true as const }) });
     this.recordLot(p.rec);
     this.saveNow.set(id, p.rec);
     this.tellLot(moved.street, moved.lot);
@@ -2352,6 +2377,24 @@ export class World {
     this.place(p, this.zoneFor(this.street!, String(moved.street), now), at.x, at.y, 'down');
     this.arrive(p, from, 'exit', now);
     this.did(p, { kind: 'moved', name: friend.name });
+  }
+
+  /**
+   * The setting in the menu: the player keeps their name off their door and their window dark to their
+   * street (`off`), or shows both, as everyone does until they choose. Saved at once, and their street sees
+   * the change; they hear the setting back as it stands (unchanged, when it changed too soon before).
+   */
+  doorOff(id: string, off: boolean, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    if (off !== (p.rec.doorOff === true) && now - p.doorAt >= DOOR_EVERY_MS) {
+      p.doorAt = now;
+      if (off) p.rec.doorOff = true;
+      else delete p.rec.doorOff;
+      this.markDoor(id, off);
+      this.saveNow.set(id, p.rec);
+    }
+    this.outbox.push({ to: id, msg: { t: 'doorOff', off: p.rec.doorOff === true } });
   }
 
   /** Players deleted from storage (guests who stayed away): their lots are free again. */
@@ -4320,7 +4363,7 @@ export class World {
     if (had) return had;
     let street = 1;
     while (!this.streetLots(street).includes(undefined)) street++;
-    const lot = this.settle({ id: r.id, name: r.name, street, lot: this.streetLots(street).indexOf(undefined) });
+    const lot = this.settle({ id: r.id, name: r.name, street, lot: this.streetLots(street).indexOf(undefined), ...(r.doorOff && { off: true as const }) });
     this.recordLot(r);
     this.saveNow.set(r.id, this.players.get(r.id)?.rec ?? r);
     this.tellLot(lot.street, lot.lot);
@@ -4351,8 +4394,19 @@ export class World {
   /** A lot as its street sees it: whose it is, and whether they are home (online, in their own cabin: a lit window). */
   private lotView(lot: Lot | undefined): LotView | null {
     if (!lot) return null;
+    // Kept to themselves: a resident, whose window never lights.
+    if (lot.off) return {};
     const owner = this.players.get(lot.id);
     return { name: lot.name, ...(owner && this.ownCabin(owner) ? { home: true as const } : {}) };
+  }
+
+  /** The lot kept for a player follows their door's setting; their street sees it at once if it changed. */
+  private markDoor(id: string, off: boolean): void {
+    const lot = this.lots.get(id);
+    if (!lot || !!lot.off === off) return;
+    if (off) lot.off = true;
+    else delete lot.off;
+    this.tellLot(lot.street, lot.lot);
   }
 
   /** Everyone on street `n` hears how a lot on it stands now (nobody is told when nobody is out on it). */
