@@ -187,6 +187,8 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 
 .dialog { position: absolute; left: calc(var(--pad) + var(--safe-l)); right: calc(var(--pad) + var(--safe-r)); bottom: calc(var(--pad) * 3.2 + var(--dp) + var(--pad) + var(--safe-b)); min-height: calc(var(--u) * 7.4); padding: calc(var(--u) * 1.2) calc(var(--u) * 1.5) calc(var(--u) * 1.4); font-family: var(--font-text); font-weight: 700; font-size: calc(var(--u) * 1.35); line-height: 1.4; pointer-events: auto; cursor: pointer; display: none; }
 .hud.talking .dialog { display: block; }
+/* A card of several lines (how the trip went) keeps its line breaks. */
+.dialog .line { white-space: pre-line; }
 .dialog .who { position: absolute; left: calc(var(--u) * 1); top: calc(var(--u) * -1.55); padding: .15em .7em; font-family: var(--font-ui); font-weight: 600; font-size: calc(var(--u) * 1.05); color: #ffcf5a; }
 .dialog .more { position: absolute; right: calc(var(--u) * 1.1); bottom: calc(var(--u) * .45); color: #e0873a; font-size: calc(var(--u) * 1); }
 @media (prefers-reduced-motion: no-preference) { .dialog .more { animation: bob .9s steps(2, jump-none) infinite; } }

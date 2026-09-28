@@ -1,8 +1,8 @@
 ---
 id: trip-report
 title: How the trip went
-status: next
-order: 100
+status: done
+order: 570
 area: gameplay
 depends: [home-stash-xp-levels, richer-places]
 ---

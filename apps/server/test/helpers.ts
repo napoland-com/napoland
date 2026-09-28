@@ -613,6 +613,24 @@ export async function keepsNotes(storage: Storage): Promise<void> {
   expect(await storage.findByAuthSub(other)).toMatchObject({ notes: ['walt-truck'], keepsakes: ['tin-whistle'] });
 }
 
+/** The best trips (world.ts, endTrip), in `storage`: kept, grown, and never lost to a save without them. */
+export async function keepsBests(storage: Storage): Promise<void> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  await savedPlayer(storage, { tokenHash: null, authSub: sub });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const rec = await load();
+  expect(rec.bests).toBeUndefined();
+  const bests = { deepest: { map: 'near-woods', depth: 1, steps: 96 }, longestS: 660, xp: 47 };
+  const kept = { ...rec, bests, lastSeenAt: rec.lastSeenAt + 1000 };
+  await storage.save(kept);
+  expect((await load()).bests).toEqual(bests);
+  const { bests: _bests, ...without } = kept;
+  await storage.save(without);
+  expect((await load()).bests).toEqual(bests);
+  await storage.save({ ...kept, bests: { ...bests, longestS: 900 } });
+  expect((await load()).bests).toEqual({ ...bests, longestS: 900 });
+}
+
 /**
  * What a newer release saved that this one does not know, through the World and `storage` (in memory,
  * or a real database), as after a rollback to this release: items it has no definition of (in the bag,
