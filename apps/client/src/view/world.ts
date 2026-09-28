@@ -123,6 +123,8 @@ const MIST_TILES = 190;
 const BLOB_Y = 0.036;
 /** Winter's ice lies this high: a little under the ground around it, over the water under it. */
 export const ICE_Y = -0.05;
+/** Snow on the roofs in winter: every roof's own color most of the way to this. */
+const ROOF_SNOW = new THREE.Color('#dfe7ec');
 /** How the firs take a season: their green toward this, that far (a frost in winter). */
 const TREE_GRADE: Readonly<Record<Season, [string, number]>> = {
   spring: ['#2f6a3a', 0.18], summer: ['#4a5530', 0.1], autumn: ['#5c4a26', 0.14], winter: ['#b4c4c2', 0.32],
@@ -700,7 +702,9 @@ export class WorldView {
     // The cabins of a street are the players' own (their door leads each into their own cabin): plain and
     // kept, a name plate over the door, the windows dark unless their owner is home (setLots).
     const chimneys: THREE.Vector3[] = [], litPane = new THREE.BoxGeometry(0.46, 0.38, 0.05);
-    for (const { house: h, x: doorX, fire: burning } of houseDoors(this.map, this.peek)) {
+    for (const { house: plain, x: doorX, fire: burning } of houseDoors(this.map, this.peek)) {
+      // In winter snow lies on every roof.
+      const h = this.season === 'winter' ? { ...plain, roof: new THREE.Color(plain.roof).lerp(ROOF_SNOW, 0.72).getStyle() } : plain;
       const plate = !!h.plate, fire = burning && !plate;
       if (h.style === 'napo') {
         // One of NAPO's buildings (napo.ts): the same doorway, concrete around it, smoke from a flue.

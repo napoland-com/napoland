@@ -223,11 +223,11 @@ describe('the letter about your street', () => {
 
   it('says what the street sees of you, and where to change it', () => {
     expect(streetLetterLines(false)).toEqual([
-      'Your cabin stands on Residents\' Lane now. Your neighbors see your name on your door, and your window lit while you are home.',
+      'Your cabin stands on Residents\' Lane, among your neighbors\'. They see your name on your door, and your window lit while you are home.',
       'You can hide both in the menu, under Friends.',
     ]);
     expect(streetLetterLines(true)).toEqual([
-      'Your cabin stands on Residents\' Lane now. Your neighbors see a resident\'s cabin: your name stays off your door, and your window dark, as you chose.',
+      'Your cabin stands on Residents\' Lane, among your neighbors\'. They see a resident\'s cabin: your name stays off your door, and your window dark, as you chose.',
       'You can show both in the menu, under Friends.',
     ]);
   });

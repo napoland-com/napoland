@@ -492,8 +492,8 @@ export const DOOR_SETTING = 'Show my name on my door and when I am home';
  */
 export function streetLetterLines(doorOff: boolean): string[] {
   return doorOff
-    ? ['Your cabin stands on Residents\' Lane now. Your neighbors see a resident\'s cabin: your name stays off your door, and your window dark, as you chose.', 'You can show both in the menu, under Friends.']
-    : ['Your cabin stands on Residents\' Lane now. Your neighbors see your name on your door, and your window lit while you are home.', 'You can hide both in the menu, under Friends.'];
+    ? ['Your cabin stands on Residents\' Lane, among your neighbors\'. They see a resident\'s cabin: your name stays off your door, and your window dark, as you chose.', 'You can show both in the menu, under Friends.']
+    : ['Your cabin stands on Residents\' Lane, among your neighbors\'. They see your name on your door, and your window lit while you are home.', 'You can hide both in the menu, under Friends.'];
 }
 
 /** At home, when a neighbor knocks at your door. */
