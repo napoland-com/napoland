@@ -98,7 +98,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'not_friends': return 'You can only message friends';
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
-    case 'slow_down': return 'Slow down a little';
+    case 'slow_down': return action === 'call' ? 'Catch your breath first' : 'Slow down a little';
     case 'sign_in_first': return action === 'say' || action === undefined ? 'Sign in to talk' : action === 'outfit' ? 'Sign in to wear an outfit' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'bag_at_home': return 'The bag you wear changes only at home';

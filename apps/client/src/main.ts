@@ -10,11 +10,12 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type Dir, type Gear, type ItemsData, type MapData, type MapRef, type OAuthProvider,
-  type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData, type MapRef,
+  type OAuthProvider, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
+import { CALL_WORDS_UNTIL, CallButton, type BPress } from './calls';
 import { detailView } from './details';
 import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
@@ -120,6 +121,21 @@ const showStatus = () => {
  * (the bag, the workbench), so A and B answer it before anything else.
  */
 const boxUp = () => !!game.question || !!game.note;
+/** B held, a finger on it or Q: a tap is B, held with nothing open it is a call (calls.ts). */
+const callB = new CallButton();
+/**
+ * B held becomes a call only with no panel, card, text box or question open (nor the sign-in cards), on
+ * a map that is not fading away: whatever B would close or back out of, it closes, never a call.
+ */
+const callable = () => game.online && overlay.hidden && !arrival.dark && !panelOpen() && !hud.cardOpen && !hud.menuOpen && !boxUp() && !game.dialog;
+/** How many calls this browser has sung: the fan says them in words the first few times. */
+const CALLS_KEY = 'napoland.calls';
+let callsSung = Math.max(0, Math.floor(Number(store.get(CALLS_KEY)) || 0));
+/** What B does, pressed or let go: B as ever, or a call sung (counted, once it went). */
+const bDoes = (r: BPress) => {
+  if (r?.kind === 'b') controls.b();
+  else if (r?.kind === 'call' && game.call(r.call, performance.now())) store.set(CALLS_KEY, String(++callsSung));
+};
 /** The stick and A and B, on screen or on the keyboard (keys.ts): the same handlers either way. */
 const controls = {
   // While it asks, the stick answers the question, and the panel it was asked from stays open.
@@ -128,6 +144,11 @@ const controls = {
   a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.pressCard()) return; else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the text box first, then the About panel, then out of the status, a card or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressB(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
+  // B held and let go, where the finger is on the fan, 1, 2 or 3 while Q is held, and a hold taken away.
+  holdB: (on: boolean) => { const now = performance.now(); bDoes(on ? callB.press(now, callable()) : callB.release(now, callable())); },
+  pointB: (choice: CallKind | null) => callB.point(choice),
+  call: (kind: CallKind) => bDoes(callB.choose(kind, callable())),
+  cancelCall: () => callB.cancel(),
 };
 const hud = new Hud(screen, {
   ...controls,
@@ -659,6 +680,8 @@ const toSay: News[] = [];
 let heard: Scene | undefined;
 /** The question and what the box says by itself, as last drawn (Game.boxChanges). */
 let boxShown = -1;
+/** The fan of calls over B as last drawn: '' while closed. */
+let fanShown = '';
 function frame(now: number) {
   // Asked first, so one frame that throws cannot stop the game (or leave it black mid-arrival).
   requestAnimationFrame(frame);
@@ -719,7 +742,7 @@ function frame(now: number) {
   const body = game.online ? game.bodyNow(now) : null;
   hud.setBody(body);
   if (body) hud.setLoad(body.load);
-  const worldNews = game.news.splice(0);
+  const worldNews = game.takeNews(now);
   for (const n of worldNews) {
     // A dot on the menu until the journal is opened (it shows the chapter at once if it is open).
     if (n.kind === 'chapter') { toSay.push(n); if (!hud.journalOpen) hud.setJournalNews(true); continue; }
@@ -826,6 +849,19 @@ function frame(now: number) {
     return [{ id: b.id, text: b.text, x: s.x, y: s.y }];
   }));
   hud.setFloats(game.floats.map(f => { const s = view.project(f.x, f.y, 1.3); return { ...f, x: s.x, y: s.y }; }));
+  // A note over the head of whoever called, where they stand now (the tile it came from, if they left).
+  hud.setCallNotes(game.calls.map(c => {
+    const p = game.players.get(c.who), s = view.project(p?.x ?? c.x, p?.y ?? c.y, 1.25);
+    return { id: c.n, kind: c.kind, color: p?.color ?? '#f1ece0', x: s.x, y: s.y, t: Math.max(0, now - c.at) / 1000 };
+  }));
+  // B held long enough with nothing open opens the fan; nobody calls into a map that is fading away.
+  if (arrival.dark > 0 && callB.open) callB.cancel();
+  callB.tick(now, callable());
+  const words = callsSung < CALL_WORDS_UNTIL, fan = callB.open ? `${callB.choice}|${words}` : '';
+  if (fan !== fanShown) {
+    fanShown = fan;
+    hud.setFan(callB.open ? { choice: callB.choice, words } : null);
+  }
   // A question, or what the box says by itself, is drawn again only when it changed.
   if (game.boxChanges !== boxShown) {
     boxShown = game.boxChanges;

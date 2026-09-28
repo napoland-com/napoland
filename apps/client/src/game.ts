@@ -19,18 +19,21 @@
  *   last told it;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
  *   it tells us, we show them; so is what everyone wears, gear and outfits (you choose yours at the chest);
+ * - a call (calls.ts) goes to the server, which says who heard it: each one heard, yours too, is sung
+ *   from where it came, and a note rises over the caller's head;
  * - the map can change: walking onto an exit, or collapsing, makes the server move you (`zone`);
  * - energy, wetness, fires and the surge clock are counted forward between the server's reports, so
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe, nextUpgrade,
-  objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, DIR_VEC, type NextGear,
+  BUBBLE_S, CALL_EVERY_MS, FEED_MAX, STEP_MS, activeConditions, addToBag, bagSlotsOf, dirOf, dirToward, energyAfter, findPath, fireTakes, flashHits, inSurge, journal, mendCost, nearestRecipe,
+  nextUpgrade, objectTiles, outfitsFor, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, DIR_VEC, type NextGear,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
-  type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
+  type CallKind, type ChatTo, type ConditionsView, type FlashKind, type FlashView, type ParcelView, type RefusedAction, type StormView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
+import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
 import { pieceAt, type DetailRef } from './details';
 import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
@@ -151,6 +154,8 @@ export type News =
   | { kind: 'level'; progress: ProgressView; from: number }
   /** A new day's conditions, by name. */
   | { kind: 'conditions'; names: string[] }
+  /** Someone (`id`, you too) sang a call from tile x,y, heard `at` (our clock): the ears announce it (soundscape.ts), nothing is shown but the note over their head. */
+  | { kind: 'call'; id: string; call: CallKind; x: number; y: number; at: number }
   | { kind: 'chapter'; chapter: Chapter }
   /** A parcel came into your chest; the welcome parcel also names the outfits signing in gave you (their ids). */
   | { kind: 'parcel'; parcel: ParcelView; outfits?: string[] };
@@ -182,6 +187,8 @@ export class Game {
   dialog: { who: string; lines: string[]; i: number; shown: number } | null = null;
   /** Words rising over a tile; `row` stacks several said at once (0 at the bottom). */
   floats: Array<{ id: number; text: string; color: string; x: number; y: number; t: number; row: number }> = [];
+  /** Calls heard on this map, for the note over each caller's head: whose, which, from what tile, and when (our clock), for CALL_NOTE_S. */
+  calls: Array<{ n: number; who: string; kind: CallKind; x: number; y: number; at: number }> = [];
   /** What lies on this map to pick up, by id. */
   finds = new Map<number, FindView>();
   /** Piles on this map, by id (the owner's id: each player leaves at most one). */
@@ -274,6 +281,9 @@ export class Game {
   /** Counts every change to the question and the note, so the box is drawn again only when it changed. */
   boxChanges = 0;
   private fid = 0;
+  private callN = 0;
+  /** When this client last sent a call (our clock): the server takes one every CALL_EVERY_MS. */
+  private calledAt = -Infinity;
   private seq = 0;
   private pending: Array<{ seq: number; x: number; y: number }> = [];
   private path: Array<{ x: number; y: number }> = [];
@@ -414,7 +424,7 @@ export class Game {
         this.scene(msg, now);
         this.stats = msg.stats;
         this.statsChanges++;
-        this.dialog = null; this.marker = null; this.floats = [];
+        this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
         // Where the server put us wins over the list, and we stay ourselves even if the list left us out.
         const me = this.me ?? (old ? { ...old } : undefined);
         if (me) {
@@ -636,6 +646,13 @@ export class Game {
         this.friends = msg;
         this.socialChanges++;
         break;
+      case 'called':
+        // A hidden tab runs no frames to take them: what it heard long ago goes, so the lists stay short.
+        this.calls = this.calls.filter(c => now - c.at < CALL_NOTE_S * 1000);
+        this.news = this.news.filter(n => n.kind !== 'call' || now - n.at < CALL_FRESH_MS);
+        this.calls.push({ n: ++this.callN, who: msg.id, kind: msg.kind, x: msg.x, y: msg.y, at: now });
+        this.news.push({ kind: 'call', id: msg.id, call: msg.kind, x: msg.x, y: msg.y, at: now });
+        break;
       case 'said': {
         const mine = msg.id === this.meId;
         this.chat = [...this.chat, { to: msg.to, id: msg.id, name: msg.name, text: msg.text, mine }].slice(-CHAT_LOG);
@@ -656,6 +673,7 @@ export class Game {
       case 'refused':
         if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
         if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
+        if (msg.action === 'call') { this.murmur(refusalText(msg.reason, msg.action)); break; }
         // What was asked first is answered in the same box; the rest (picking up, the chest) over your head.
         if (ASKED_FIRST.has(msg.action)) {
           this.inform(this.note?.waiting ? this.note.who : '', sentence(refusalText(msg.reason, msg.action)));
@@ -692,7 +710,7 @@ export class Game {
       this.current = map;
       this.talkers = talkersOf(map);
       this.chest = null; this.opening = null; this.bench = null; this.benching = null; this.benchCard = null;
-      this.dialog = null; this.marker = null; this.floats = [];
+      this.dialog = null; this.marker = null; this.floats = []; this.calls = [];
       this.clearBox();
     }
     this.players.clear();
@@ -863,6 +881,31 @@ export class Game {
     this.chatNote = null;
     this.chatChanges++;
     this.send({ t: 'say', to, text: t });
+  }
+
+  /**
+   * Sings a call (calls.ts): the server says who hears it, you among them, and the note comes back like
+   * anyone's. Another one too soon is not sent, and the text over your head says so. True when it went.
+   */
+  call(kind: CallKind, now: number): boolean {
+    if (!this.online) return false;
+    if (now - this.calledAt < CALL_EVERY_MS + CALL_SLACK_MS) {
+      this.murmur(refusalText('slow_down', 'call'));
+      return false;
+    }
+    this.calledAt = now;
+    this.send({ t: 'call', kind });
+    return true;
+  }
+
+  /**
+   * The news since the last frame, for the interface to announce, and none of it again. A call heard
+   * longer ago than CALL_FRESH_MS is left out: the tab was hidden, and old calls must not sing at once.
+   */
+  takeNews(now: number): News[] {
+    const out = this.news.filter(n => n.kind !== 'call' || now - n.at < CALL_FRESH_MS);
+    this.news = [];
+    return out;
   }
 
   /** Speech bubbles still up, by who said it. */
@@ -1427,6 +1470,7 @@ export class Game {
     this.clock = now;
     for (const f of this.floats) f.t += dt;
     this.floats = this.floats.filter(f => f.t < 1.3);
+    if (this.calls.length && now - this.calls[0]!.at >= CALL_NOTE_S * 1000) this.calls = this.calls.filter(c => now - c.at < CALL_NOTE_S * 1000);
     if (this.marker) { this.marker.t += dt; if (this.marker.t > 0.8) this.marker = null; }
     if (this.dialog) { const line = this.dialog.lines[this.dialog.i] ?? ''; this.dialog.shown = Math.min(line.length, this.dialog.shown + dt * 48); }
     // − or + held keeps counting; what the box says by itself closes when its time is up.
