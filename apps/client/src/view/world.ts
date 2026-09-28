@@ -100,6 +100,8 @@ export const lightningAt = (t: number) => Math.sin(t * 0.71) * Math.sin(t * 1.93
 const RING = 17;
 /** Over this many tiles a road or trail leaving the map fades into the dark ground outside it. */
 const FADE = 6;
+/** The most drawing-buffer pixels to a CSS pixel: past two, a phone pays for sharpness nobody sees. */
+const MAX_PIXEL_RATIO = 2;
 /** Poles farther apart than this belong to different lines: no wire between them. */
 const MAX_WIRE = 10;
 /** One patch of mist for about this many tiles. */
@@ -166,6 +168,8 @@ function blocks<T extends { x: number; y: number }>(items: T[]): T[][] {
 }
 
 export class WorldView {
+  /** The share of the full resolution to draw at (quality.ts); applied on the next resize. */
+  pixelScale = 1;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(30, 1, 0.1, 400);
   private terrain!: THREE.Mesh;
@@ -1012,7 +1016,9 @@ export class WorldView {
   resize(width: number, height: number) {
     this.width = Math.max(1, width);
     this.height = Math.max(1, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    // Up to twice the screen's CSS pixels, a step fewer while a slow phone needs it, never fewer than one each.
+    const top = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+    this.renderer.setPixelRatio(Math.max(Math.min(1, top), top * this.pixelScale));
     this.renderer.setSize(this.width, this.height, false);
     this.camera.aspect = this.width / this.height;
     if (this.height >= this.width) this.camera.setViewOffset(this.width, this.height, 0, Math.round(this.height * 0.08), this.width, this.height);

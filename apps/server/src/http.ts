@@ -42,7 +42,7 @@ export interface HttpOptions {
   players: () => number;
   /** The running version, for /health, so a deploy can be checked from outside. Default 'dev'. */
   version?: string;
-  /** How players sign in, for /auth-config. Default: without sign-in (legacy). */
+  /** How players sign in, for /auth-config (with sign-in, the providers the card offers too). Default: without sign-in (legacy). */
   auth?: AuthConfig;
 }
 

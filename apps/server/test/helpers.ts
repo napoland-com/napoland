@@ -342,6 +342,30 @@ export async function keepsParcels(storage: Storage): Promise<void> {
 }
 
 /**
+ * Tools and parcels kept side by side in one player (on `storage`, in memory or a real database): made
+ * with both, saved with both changed, and a save with neither (a record that never had them) loses
+ * neither. Returns the player's identity and what was kept.
+ */
+export async function keepsToolsAndParcels(storage: Storage): Promise<{ sub: string; kept: PlayerRecord }> {
+  const sub = `dev:${randomUUID()}@example.test`;
+  // Whole, as a save writes it back (every storage fills in a stash, counts, XP and wetness), so what is read back compares as it is.
+  await savedPlayer(storage, {
+    tokenHash: null, authSub: sub, wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} }, tools: ['stonebrook-map', 'radio'], parcels: { welcome: true, day: 20_724, days: 0b1 },
+  });
+  const load = async () => (await storage.findByAuthSub(sub))!;
+  const made = await load();
+  expect(made).toMatchObject({ tools: ['stonebrook-map', 'radio'], parcels: { welcome: true, day: 20_724, days: 0b1 } });
+  const later = { ...made, tools: [...made.tools!, 'near-woods-map'], parcels: { welcome: true, day: 20_725, days: 0b11 }, lastSeenAt: made.lastSeenAt + 1000 };
+  await storage.save(later);
+  expect(await load()).toEqual(later);
+  const { tools: _tools, parcels: _parcels, ...neither } = later;
+  await storage.save({ ...neither, lastSeenAt: later.lastSeenAt + 1000 });
+  const kept = await load();
+  expect(kept).toEqual({ ...later, lastSeenAt: later.lastSeenAt + 1000 });
+  return { sub, kept };
+}
+
+/**
  * The parcels through restarts, on `storage`: a welcome parcel the first time someone signs in; after a
  * restart the same day, nothing more; on the next calendar day, that day's parcel, into a stash that
  * kept everything. Each server's world clock reads a time of that day.

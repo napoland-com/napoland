@@ -154,6 +154,8 @@ export const MAX_BAG = 16;
 export interface WornView { slot: Slot; name: string; icon: string; /** How worn down (1 new, 0 worn out), for gear that wears. */ cond?: number; /** Its quirk's name. */ quirk?: string }
 /** A row of the workbench: what a recipe makes (or a mend), what it needs against what your stash holds, and whether it can be done. */
 export interface RecipeView { id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean }
+/** A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or another tool of yours. */
+export interface ToolView { item: string | null; label: string; icon: string }
 
 /** One row of the status panel: a label, what it says, and a bar (0 to 1) when it has one. */
 export interface StatusRow { label: string; text: string; bar?: number; tone?: 'good' | 'bad' | 'plain' }
@@ -324,7 +326,7 @@ export class Hud {
         <div class="choices panel" data-el="choices" role="group" aria-label="Your answer" hidden><button type="button" data-choice="yes">YES</button><button type="button" data-choice="no">NO</button></div>
         <div class="more" data-el="more" aria-hidden="true" style="visibility: hidden">&#9660;</div><i class="timer" data-el="timer" aria-hidden="true" hidden></i></div>
       <div class="sheet panel" data-el="sheet" data-open="false" role="dialog" aria-label="Bag">
-        <div class="sheet-head"><b>Bag</b><span class="room" data-el="room"></span><span class="tools" data-el="tools"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
+        <div class="sheet-head bag-head"><span class="heading"><b>Bag</b><span class="room" data-el="room"></span></span><span class="tools" data-el="tools"></span><button type="button" class="close" data-el="close" aria-label="Close the bag">${ICON.x}</button></div>
         <div class="grid" data-el="grid">${Array.from({ length: MAX_BAG }, (_, i) => `<button type="button" class="slot" data-slot="${i}" data-empty="true" aria-label="Empty slot"${i < BAG_SLOTS ? '' : ' hidden'}></button>`).join('')}</div>
         <div class="detail" data-el="detail" aria-live="polite">
           <p class="hint" data-el="hint">${EMPTY_BAG}</p>
@@ -1030,10 +1032,9 @@ export class Hud {
     line.hidden = false;
   }
 
-  /** Your tools, as buttons in the bag's header: first one button for all your maps (`map`, its icon; it opens the one for where you are), then the rest. */
-  setTools(tools: Array<{ item: string; name: string; icon: string }>, map: string | null = null) {
-    const html = (map ? `<button type="button" class="slot" data-map aria-label="Open the map">${map}</button>` : '')
-      + tools.map(t => `<button type="button" class="slot" data-tool="${esc(t.item)}" aria-label="${esc(`Open the ${t.name.toLowerCase()}`)}">${t.icon}</button>`).join('');
+  /** Your tools, as buttons in the bag's header (toolViews): the one map button, and a button for each other tool, in the order you got them. */
+  setTools(tools: ToolView[]) {
+    const html = tools.map(t => `<button type="button" class="slot" ${t.item === null ? 'data-map' : `data-tool="${esc(t.item)}"`} aria-label="${esc(t.label)}">${t.icon}</button>`).join('');
     if (this.el.tools!.innerHTML !== html) this.el.tools!.innerHTML = html;
   }
 

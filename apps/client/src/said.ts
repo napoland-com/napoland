@@ -148,6 +148,14 @@ export function stashShort(short: readonly BagSlot[], items: Items, what: { make
   return 'make' in what ? `Your stash is short of ${list} for ${aOf(what.make)}.` : `Your stash is short of ${list} to mend your ${nounOf(what.mend)}.`;
 }
 
+/** Where a tool is once you have it: never the stash or the bag, but a button of its own in the bag's header. */
+const YOURS = 'It is yours for good: its button is in your bag.';
+
+/** At the workbench, a tool you have already: each is yours once. */
+export function haveTool(def: ItemDef): string {
+  return `You have ${aOf(def)} already. ${YOURS}`;
+}
+
 /** What a list of needs lacks against what a stash holds, need by need (none: it can pay). */
 export function shortOf(needs: readonly BagSlot[], stash: readonly BagSlot[]): BagSlot[] {
   return needs.flatMap(n => {
@@ -197,6 +205,8 @@ export function didText(did: Did, items: Items): string {
       return said.length ? said.join(' ') : `You use the ${n}.`;
     }
     case 'made': {
+      // A tool never goes into the stash: it joins your tools (World.giveTool).
+      if (def.kind === 'tool') return `You make ${aOf(def)}. ${YOURS}`;
       const pl = they(def, did.count), gear = def.kind === 'gear';
       return `You make ${did.count === 1 ? aOf(def) : amount(def, did.count)}. ${pl ? 'They wait' : 'It waits'} in your stash${gear ? `: put ${pl ? 'them' : 'it'} on at the chest` : ''}.`;
     }

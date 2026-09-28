@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CALENDAR_DAY_MS, WEEKDAYS, WHOLE_WEEK, calendarDay, daysThisWeek, everyDaySoFar, gift, itemIndex, nextParcel, openInStash, openSealed, quickCalendar, store, takeOut, validateItems,
+  CALENDAR_DAY_MS, STARTER_TOOLS, WEEKDAYS, WHOLE_WEEK, calendarDay, daysThisWeek, everyDaySoFar, gift, itemIndex, nextParcel, openInStash, openSealed, quickCalendar, store, takeOut, validateItems,
   weekIndex, weekOf, weekdayOf, type ItemDef, type ItemsData, type MapData, type ParcelState, type ParcelsData,
 } from '../src';
 
@@ -176,8 +176,10 @@ describe('checking the parcels and sealed things in content', () => {
     id: 'room', name: 'Room', version: 1, kind: 'town', depth: 0, width: 3, height: 3, tiles: ['ggg', 'ggg', 'ggg'], levels: ['000', '000', '000'],
     spawn: { x: 1, y: 1, dir: 'down' }, exits: [], objects: [],
   };
-  const map = { id: 'map', name: 'Map', kind: 'tool', stack: 1, text: 'A map.' } satisfies ItemDef;
-  const data = (d: Partial<ItemsData>): ItemsData => ({ version: 1, items: [...ITEMS, map], finds: [], parcels: DATA, ...d });
+  // The starter tools, as every world with tools has them (validateItems): the first stands for any tool.
+  const tools = STARTER_TOOLS.map((id): ItemDef => ({ id, name: `Map ${id}`, kind: 'tool', stack: 1, icon: 'map', text: 'A map.' }));
+  const map = tools[0]!;
+  const data = (d: Partial<ItemsData>): ItemsData => ({ version: 1, items: [...ITEMS, ...tools], finds: [], parcels: DATA, ...d });
   const errors = (d: Partial<ItemsData>) => validateItems(data(d), [room]).filter(p => p.level === 'error').map(p => p.message);
 
   it('takes a well-made calendar and lockbox', () => {
@@ -188,13 +190,13 @@ describe('checking the parcels and sealed things in content', () => {
   it('wants a parcel for each of the seven days, each of things that lie in a stash', () => {
     expect(errors({ parcels: { ...DATA, week: DATA.week.slice(1) } })).toEqual(['parcels: week is a parcel for each of the 7 days, Monday first']);
     expect(errors({ parcels: { ...DATA, welcome: [] } })).toEqual(['parcels: the welcome parcel: a list of items and counts, not empty']);
-    expect(errors({ parcels: { ...DATA, allWeek: [{ item: 'map', count: 1 }] } })).toEqual(['parcels: allWeek: map is a tool, which never lies in a stash']);
+    expect(errors({ parcels: { ...DATA, allWeek: [{ item: map.id, count: 1 }] } })).toEqual([`parcels: allWeek: ${map.id} is a tool, which never lies in a stash`]);
     const week = DATA.week.map((d, i) => (i === 2 ? [{ item: 'tea', count: 0 }] : d));
     expect(errors({ parcels: { ...DATA, week } })).toEqual(["parcels: Wednesday's parcel: tea is not an item", "parcels: Wednesday's parcel: each count is a whole number from 1"]);
   });
 
   it('wants a sealed thing to hold something, by weight, earn no XP and hold no sealed thing', () => {
-    const sealed = (more: Partial<ItemDef>) => ({ items: [...ITEMS.filter(i => i.id !== 'lockbox'), map, { ...lockbox, ...more }] });
+    const sealed = (more: Partial<ItemDef>) => ({ items: [...ITEMS.filter(i => i.id !== 'lockbox'), ...tools, { ...lockbox, ...more }] });
     expect(errors(sealed({ holds: [] }))).toEqual(['item "lockbox": a sealed thing holds something']);
     expect(errors(sealed({ xp: 10 }))).toEqual(['item "lockbox": a sealed thing is only opened, at the chest, and earns no XP']);
     expect(errors(sealed({ holds: [{ weight: 0, any: 'charm' }] }))).toEqual(['item "lockbox": holding 1: its weight is above 0']);
@@ -202,12 +204,12 @@ describe('checking the parcels and sealed things in content', () => {
     expect(errors(sealed({ holds: [{ weight: 1, items: [{ item: 'lockbox', count: 1 }] }] }))).toEqual(['item "lockbox": holding 1: lockbox is sealed too']);
     expect(errors(sealed({ holds: [{ weight: 1, any: 'gear' }] }))).toEqual(['item "lockbox": holding 1: any is resource, consumable or charm']);
     expect(errors(sealed({ holds: [{ weight: 1, any: 'consumable' }] }))).toEqual(['item "lockbox": holding 1: any consumable, but there is none']);
-    expect(errors({ items: [...ITEMS, map, { ...map, id: 'box', kind: 'resource', holds: lockbox.holds }] })).toEqual(['item "box": only a sealed thing holds something']);
+    expect(errors({ items: [...ITEMS, ...tools, { id: 'box', name: 'Box', kind: 'resource', stack: 1, text: 'A box.', holds: lockbox.holds }] })).toEqual(['item "box": only a sealed thing holds something']);
   });
 
   it('warns when one thing a lockbox may hold alone has no line to say what it is good for', () => {
     const plain = { ...lockbox, holds: [{ weight: 1, items: [{ item: 'resin', count: 3 }] }] };
-    expect(validateItems({ ...data({}), items: [...ITEMS.filter(i => i.id !== 'lockbox'), map, plain] }, [room])).toEqual([
+    expect(validateItems({ ...data({}), items: [...ITEMS.filter(i => i.id !== 'lockbox'), ...tools, plain] }, [room])).toEqual([
       { level: 'warning', message: 'item "resin": lockbox may hold it, but it has no about line to say what it is good for' },
     ]);
   });

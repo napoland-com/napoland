@@ -32,8 +32,8 @@ import type { FriendsMsg, TalkLine } from './friends';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, refusalText, type Items } from './items';
 import {
-  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, makeQuestion, mendQuestion, noShard, nothingToBurn, openQuestion, sentence, shortOf,
-  stashShort, stoneQuestion, tossQuestion, useQuestion,
+  GONE, INDOORS, MARKED, NO_ROOM, TENDED, TOO_DARK, didText, didWho, feedQuestion, fullFire, haveTool, makeQuestion, mendQuestion, noShard, nothingToBurn, openQuestion, sentence,
+  shortOf, stashShort, stoneQuestion, tossQuestion, useQuestion,
 } from './said';
 import type { Maps } from './maps';
 import type { Avatar } from './view/world';
@@ -203,7 +203,7 @@ export class Game {
   statsChanges = 0;
   /** What the woods are like today and this week (sky.ts), as the server said. */
   conditions: ConditionsView = { today: [], week: null, next: null };
-  /** Your tools (item ids), as the welcome said: a paper map, for now. */
+  /** Your tools (item ids), in the order you got them: as the welcome said, then whole again whenever you get one. Replaced, never changed in place. */
   tools: string[] = [];
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
@@ -585,10 +585,13 @@ export class Game {
         this.bagAt = now;
         break;
       }
+      case 'tools':
+        this.tools = msg.tools;
+        break;
       case 'got': {
         this.picking = null;
-        // A column over your head, in the order the server listed them, first on top.
-        msg.items.forEach((s, i) => this.floatOverMe(`+${s.count} ${this.items.get(s.item).name}`, GAIN, msg.items.length - 1 - i));
+        // A column over your head, in the order the server listed them, first on top. A tool is yours once: no count.
+        msg.items.forEach((s, i) => this.floatOverMe(`+${msg.from === 'tool' ? '' : s.count} ${this.items.get(s.item).name}`, GAIN, msg.items.length - 1 - i));
         // Named, so the player knows which feat to thank.
         if (msg.double) this.floatOverMe('Forager: it came up double', GAIN, msg.items.length);
         // Someone else's pile can leave you nothing (your half did not fit, or the coin went the
@@ -628,7 +631,7 @@ export class Game {
           break;
         }
         if (msg.action === 'pick') this.picking = null;
-        this.floatOverMe(refusalText(msg.reason), NO);
+        this.floatOverMe(refusalText(msg.reason, msg.action), NO);
         break;
       default:
         break;
@@ -894,10 +897,15 @@ export class Game {
     if (c && this.online) this.send({ t: 'unequip', x: c.x, y: c.y, slot });
   }
 
-  /** At the open workbench: make a recipe. It asks first ("Make a raincoat? It uses 8 cloth and 4 resin."), or says what the stash lacks. */
+  /**
+   * At the open workbench: make a recipe. It asks first ("Make a raincoat? It uses 8 cloth and 4 resin."),
+   * or says why not: the stash lacks something, or it makes a tool you have already (each is yours once).
+   */
   craft(recipe: string) {
     const b = this.bench, r = this.items.recipes.find(x => x.id === recipe);
     if (!b || !this.online || !r) return;
+    const made = this.items.get(r.make);
+    if (made.kind === 'tool' && this.tools.includes(r.make)) return this.inform('Workbench', haveTool(made));
     const short = shortOf(r.needs, b.stash);
     if (short.length) return this.inform('Workbench', stashShort(short, this.items, { make: this.items.get(r.make) }));
     const text = makeQuestion(r, this.items);
@@ -1221,6 +1229,11 @@ export class Game {
     this.dialog = { who: t.who, lines: t.lines, i: 0, shown: 0 };
     // Someone's lines take the box from what it said by itself.
     if (this.note && !this.note.waiting) { this.note = null; this.boxChanges++; }
+  }
+
+  /** The text box with these lines under `who`, as a sign's: what one of your tools is, tapped in the bag's header. */
+  read(who: string, lines: string[]) {
+    if (lines.length) this.openDialog({ x: 0, y: 0, who, lines, kind: 'talk' });
   }
 
   /** "Word from the woods today: thick fog, and a NAPO cache. This week: copper week." Null when nothing is going on. */
