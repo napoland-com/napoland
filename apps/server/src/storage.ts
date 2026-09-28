@@ -48,6 +48,11 @@ export interface PlayerRecord {
   worn?: Worn;
   /** The id of the latest chapter of the story the player reached (story.ts). None: they never started. */
   story?: string;
+  /**
+   * The tools the player owns (item ids), in the order they got them. None: they never got one of their
+   * own, and carry the starter tools (items.ts, STARTER_TOOLS). A save without it keeps what was saved.
+   */
+  tools?: string[];
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
@@ -196,7 +201,7 @@ const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out
 const copyWorn = (w: Worn): Worn => Object.fromEntries(Object.entries(w).map(([slot, p]) => [slot, { ...p }]));
 const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...rec, bag: copyBag(rec.bag), ...(rec.stats ? { stats: { ...rec.stats } } : {}), ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
-  ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}),
+  ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
 });
 
 export class MemoryStorage implements Storage {
@@ -256,7 +261,7 @@ export class MemoryStorage implements Storage {
       Object.assign(cur, {
         map: rec.map, x: rec.x, y: rec.y, dir: rec.dir, color: rec.color, energy: rec.energy, bag: copyBag(rec.bag), wet: rec.wet ?? 0, stats: { ...rec.stats },
         xp: rec.xp ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
-        ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), lastSeenAt: rec.lastSeenAt,
+        ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}), lastSeenAt: rec.lastSeenAt,
       });
     }
   }
@@ -420,6 +425,8 @@ interface PlayerRow {
   worn: unknown;
   /** Null for a player who never started the story. */
   story: string | null;
+  /** Null for a player who never got a tool of their own. */
+  tools: unknown;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -481,6 +488,8 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   // What the World checks again when the player joins.
   ...(r.worn && typeof r.worn === 'object' && !Array.isArray(r.worn) ? { worn: r.worn as Worn } : {}),
   ...(r.story ? { story: r.story } : {}),
+  // A list of ids as the server wrote it; anything else reads as never set (the World checks it again).
+  ...(Array.isArray(r.tools) ? { tools: r.tools.filter((t): t is string => typeof t === 'string') } : {}),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -532,12 +541,13 @@ export class PgStorage implements Storage {
   // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
-      `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18)
+      `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
+        rec.tools ? JSON.stringify(rec.tools) : null,
       ],
     );
     return r.rowCount === 1;
@@ -546,11 +556,11 @@ export class PgStorage implements Storage {
   async save(rec: PlayerRecord): Promise<void> {
     await this.pool.query(
       `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9, stats = $10::jsonb, xp = $11, stash = $12::jsonb,
-       gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), last_seen_at = $13 WHERE id = $1`,
+       gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools), last_seen_at = $13 WHERE id = $1`,
       [
         rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(rec.stats ?? {}), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
-        rec.story ?? null,
+        rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null,
       ],
     );
   }

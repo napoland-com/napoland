@@ -4,7 +4,7 @@
  */
 import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, type Element } from './gear';
-import { STARTER_TOOLS, findTiles, type ItemsData } from './items';
+import { STARTER_TOOLS, TOOL_ICONS, findTiles, type ItemsData } from './items';
 import { DECOR, TILE_CHARS, TileMap, doorOf, objectTiles, type MapData, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
 import { Dir } from './protocol';
@@ -274,7 +274,9 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
 /**
  * content/items.json: every item well formed, and every find rule pointing at a real item and map,
  * with enough tiles to grow on (at least as many as `count`, and a warning below three times that,
- * because a picked find grows back somewhere else and needs room to move).
+ * because a picked find grows back somewhere else and needs room to move). A recipe or a find whose
+ * item is a tool gives that tool (World.giveTool): a tool is owned once and never used up, so such a
+ * recipe makes one, and nothing is paid with a tool, mended with one or turns into one.
  */
 export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
   const out: Problem[] = [];
@@ -295,9 +297,13 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!['resource', 'consumable', 'charm', 'gear', 'tool'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear or tool`);
     if (i.kind === 'tool') {
       if (i.stack !== 1) err(`${name}: a tool stacks one to a slot`);
-      if (i.use || i.weight || i.xp || i.fuel || i.charge) err(`${name}: a tool is never used up, weighs nothing and earns no XP`);
+      if (i.use || i.weight || i.xp || i.fuel || i.charge || i.live) err(`${name}: a tool is never used up, weighs nothing and earns no XP`);
       if (i.chart !== undefined && !maps.some(m => m.id === i.chart)) err(`${name}: charts ${i.chart}, which is not a map`);
-    } else if (i.chart !== undefined) err(`${name}: only a tool charts a map`);
+      if (!TOOL_ICONS.includes(i.icon!)) err(`${name}: a tool needs an icon for its button in the bag's header (${TOOL_ICONS.join(', ')})`);
+    } else {
+      if (i.chart !== undefined) err(`${name}: only a tool charts a map`);
+      if (i.icon !== undefined) err(`${name}: only a tool has an icon (everything else is drawn by its id)`);
+    }
     if (i.kind === 'gear') {
       if (!SLOTS.includes(i.slot!)) err(`${name}: gear needs a slot (${SLOTS.join(', ')})`);
       if (i.tier !== undefined && !TIERS.includes(i.tier)) err(`${name}: tier is one of ${TIERS.join(', ')}`);
@@ -339,9 +345,12 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!def) err(`the starter gear ${g} is not an item`);
     else if (def.kind !== 'gear') err(`the starter gear ${g} is not gear`);
   }
+  // Once there are tools at all, whoever never got one of their own carries the starter tools: they must be tools.
+  const tools = new Set(data.items.filter(i => i.kind === 'tool').map(i => i.id));
   for (const t of STARTER_TOOLS) {
     const def = data.items.find(i => i.id === t);
     if (def && def.kind !== 'tool') err(`the starter tool ${t} is not a tool`);
+    else if (!def && tools.size) err(`the starter tool ${t} is not an item`);
   }
   for (const [tier, s] of Object.entries(data.wear ?? {})) {
     if (!TIERS.includes(tier as never)) err(`wear: ${tier} is not a tier`);
@@ -352,6 +361,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!cost?.length) err(`mend: mending ${tier} gear costs nothing`);
     for (const n of cost ?? []) {
       if (!ids.has(n.item)) err(`mend: ${tier} needs ${n.item}, which is not an item`);
+      else if (tools.has(n.item)) err(`mend: ${tier} needs ${n.item}, a tool: tools are never used up`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`mend: each need is a whole number from 1`);
     }
   }
@@ -368,14 +378,18 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     recipeIds.add(r.id);
     if (!ids.has(r.make)) err(`${name} makes ${r.make}, which is not an item`);
     if (r.count !== undefined && !(Number.isInteger(r.count) && r.count >= 1)) err(`${name}: count is a whole number from 1`);
+    // What it makes goes by its kind: a tool to the player's tools (World.giveTool), anything else to the stash.
+    else if (tools.has(r.make) && r.count !== undefined && r.count !== 1) err(`${name} makes ${r.make}, a tool, which is yours once: count is 1 or left out`);
     if (!r.needs?.length) err(`${name} needs nothing`);
     for (const n of r.needs ?? []) {
       if (!ids.has(n.item)) err(`${name} needs ${n.item}, which is not an item`);
+      else if (tools.has(n.item)) err(`${name} needs ${n.item}, a tool: tools are never used up`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
     }
   }
   for (const i of data.items) for (const r of i.reveals ?? []) {
     if (!ids.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, which is not an item`);
+    else if (tools.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a tool: tools are made at the workbench or found`);
     if (r.item === i.id) err(`item ${JSON.stringify(i.id)} reveals itself`);
     if (!Number.isInteger(r.count) || r.count < 1 || !(r.weight > 0)) err(`item ${JSON.stringify(i.id)}: a reveal needs a count from 1 and a weight above 0`);
     // Looking closely says what it turned out to be and what that is good for: the `about` line.

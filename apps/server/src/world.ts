@@ -36,7 +36,8 @@
  * restless, or on aurora nights. What a player picks up goes in their bag. When they collapse, the
  * bag falls out as a pile where they fell (one per player), with the last steps they walked: its owner
  * gets it all back, anyone else a random half (the rest is lost), and it fades an hour after the
- * collapse. The rules for items and bags are in shared/items.ts.
+ * collapse. The rules for items and bags are in shared/items.ts. Tools are each player's own for good,
+ * apart from the bag (giveTool): made at the workbench or found, and never in a pile.
  */
 import {
   QUIRKS,
@@ -99,6 +100,7 @@ import {
   surgeFront,
   takeFromBag,
   takeItem,
+  toolsOf,
   untilSurge,
   weatherAt,
   wetRate,
@@ -257,7 +259,7 @@ export interface Joined extends Scene {
   conditions: ConditionsView;
   stats: Stats;
   progress: ProgressView;
-  /** Every tool the player carries (for now, the starter tools that exist). */
+  /** Every tool the player owns, in the order they got them (toolsOf): the starter tools until they got one of their own. */
   tools: string[];
   story: StoryView;
 }
@@ -445,7 +447,7 @@ const copyStash = (s: Stash): Stash => ({
 });
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
-  ...(r.worn ? { worn: copyWorn(r.worn) } : {}),
+  ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}),
 });
 /** A saved piece as the server writes them: a condition from 0 to 1, and a quirk the game knows (or none). */
 const isPiece = (p: unknown): p is Piece => {
@@ -457,6 +459,8 @@ const isSlot = (s: unknown): s is BagSlot => {
   const { item, count, since } = (typeof s === 'object' && s !== null ? s : {}) as Partial<BagSlot>;
   return typeof item === 'string' && Number.isInteger(count) && count! > 0 && (since === undefined || Number.isFinite(since));
 };
+/** Saved tools: item ids, each once, in the order they came. Anything but a list was never set (the starter tools). */
+const cleanTools = (t: unknown): string[] | undefined => (Array.isArray(t) ? [...new Set(t.filter((id): id is string => typeof id === 'string' && id !== ''))] : undefined);
 /** Saved counts, trusted only where they are whole numbers from 0. */
 const cleanStats = (s: unknown): Stats => {
   const out: Stats = {};
@@ -729,6 +733,8 @@ export class World {
       // Gear counted in the stash gets its pieces (all of it, for a stash saved before pieces existed).
       stash: fitPieces(cleanStash(rec.stash, this.items), this.items, this.rng),
       xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
+      // Kept as saved, ids this release does not know included (toolsOf).
+      tools: cleanTools(rec.tools),
     };
     // Maps change between visits: a map may be gone (start over at home), or the saved tile may be
     // inside something new or part of an exit now (start at that map's spawn). Never start inside
@@ -760,7 +766,7 @@ export class World {
     return {
       player, map: mapRef(map), players: this.views(here), ...this.scene(here, now), energy: energyView(p), body: bodyView(p), bag: bagView(r.bag, now + this.epochOffset),
       stone: this.stoneView(now), conditions: this.conditionsNow(now), stats: { ...r.stats }, progress: progressOf(r.xp ?? 0),
-      tools: STARTER_TOOLS.filter(t => this.items.get(t)?.kind === 'tool'),
+      tools: toolsOf(r.tools, this.items),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
     };
@@ -1061,18 +1067,23 @@ export class World {
     if (!this.benchNextTo(p, x, y)) return this.refuse(p, 'craft', 'too_far');
     const recipe = this.recipes.get(recipeId);
     if (!recipe) return this.refuse(p, 'craft', 'gone');
+    // A tool made is the player's for good (giveTool), never the stash's: one of each, so a second is refused before anything is paid.
+    const tool = this.items.get(recipe.make)?.kind === 'tool';
+    if (tool && this.owns(p, recipe.make)) return this.refuse(p, 'craft', 'have_tool');
     const stash = p.rec.stash ?? emptyStash();
     if (!canMake(recipe, stash.items)) return this.refuse(p, 'craft', 'missing');
-    const items = { ...stash.items }, count = recipe.count ?? 1;
+    const items = { ...stash.items }, count = tool ? 1 : recipe.count ?? 1;
     for (const n of recipe.needs) {
       items[n.item] = items[n.item]! - n.count;
       if (!items[n.item]) delete items[n.item];
     }
-    items[recipe.make] = (items[recipe.make] ?? 0) + count;
+    if (!tool) items[recipe.make] = (items[recipe.make] ?? 0) + count;
     // Gear made comes new, piece by piece.
     p.rec.stash = fitPieces({ items, out: { ...stash.out }, pieces: stash.pieces }, this.items, this.rng);
     this.saveNow.set(id, p.rec);
+    if (tool) this.giveTool(id, recipe.make);
     this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
+    // The text box says where it went: a tool (its kind tells the client) is the player's for good.
     this.did(p, { kind: 'made', item: recipe.make, count });
   }
 
@@ -1124,6 +1135,28 @@ export class World {
     this.sendBag(p, now);
     this.sendStash(p);
     this.rerate(p, now);
+  }
+
+  /**
+   * Gives a player who is online a tool for good: the one way a tool comes (made at the workbench,
+   * found, and later a parcel or a chapter). It joins their tools, never the bag: no slot, no weight,
+   * never in a pile, the stash or a trade, and nothing takes it away, so it is saved at once. They hear
+   * their tools; how it came is for the caller to say (a find floats with `got`, the workbench says it
+   * in the text box with `did`). False, and nothing happens, when it is no tool or theirs already.
+   */
+  giveTool(id: string, item: string): boolean {
+    const p = this.players.get(id);
+    if (!p || this.items.get(item)?.kind !== 'tool' || this.owns(p, item)) return false;
+    // The first of their own writes down the starter tools they carried until now.
+    p.rec.tools = [...(p.rec.tools ?? STARTER_TOOLS), item];
+    this.saveNow.set(id, p.rec);
+    this.outbox.push({ to: id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items) } });
+    return true;
+  }
+
+  /** Does the player own this tool? One who never got one of their own owns the starter tools. */
+  private owns(p: Online, item: string): boolean {
+    return (p.rec.tools ?? STARTER_TOOLS).includes(item);
   }
 
   /**
@@ -2071,6 +2104,7 @@ export class World {
    */
   private pickFind(p: Online, find: Find, now: number): void {
     const { rule } = find;
+    if (rule.item.kind === 'tool') return this.pickTool(p, find, now);
     const r = addToBag(p.rec.bag, rule.item, 1, p.slots);
     if (r.left) return this.refuse(p, 'pick', 'bag_full');
     // A live find starts fading now: it stacks one to a slot, so the new one is the last slot.
@@ -2087,6 +2121,25 @@ export class World {
     this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
     if (wild) this.count(p, 'found', now);
     this.rerate(p, now);
+    this.moveStory(p, { pick: rule.item.id });
+  }
+
+  /**
+   * A find that is a tool: the player's for good (giveTool), never the bag's, and never double. It is
+   * gone for everyone like any find and grows back by its rule; one they own already stays where it
+   * lies, for someone else. Picked up, it floats like any find (`got`), and it counts like any find,
+   * for the forager and the story.
+   */
+  private pickTool(p: Online, find: Find, now: number): void {
+    const { rule } = find;
+    if (this.owns(p, rule.item.id)) return this.refuse(p, 'pick', 'have_tool');
+    this.finds.get(rule.map.data.id)!.delete(find.tile);
+    const [soonest, latest] = rule.respawn;
+    this.later(rule, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'got', items: [{ item: rule.item.id, count: 1 }], from: 'tool' } });
+    this.giveTool(p.rec.id, rule.item.id);
+    this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
+    if (this.wild(p.map)) this.count(p, 'found', now);
     this.moveStory(p, { pick: rule.item.id });
   }
 

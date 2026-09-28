@@ -15,10 +15,18 @@ import { objectTiles, type MapObject, type TileKind, type TileMap } from './map'
 
 /**
  * A resource is gathered, a consumable used up, a charm works while it is in your bag, gear is worn
- * (gear.ts). A tool is yours for good: never used up, never in a pile, weighing nothing, and it takes
- * no bag slot (players carry their tools apart from the bag, like what they wear).
+ * (gear.ts). A tool is yours for good, once made at the workbench or found: never used up, never in a
+ * pile, the stash or a trade, weighing nothing, and it takes no bag slot (players keep their tools
+ * apart from the bag, like what they wear: a button each in the bag's header).
  */
 export type ItemKind = 'resource' | 'consumable' | 'charm' | 'gear' | 'tool';
+
+/**
+ * The drawings a tool's button in the bag's header can show: content/items.json names one for each
+ * tool (`icon`), and the client draws each (icons.ts). A tool that needs a new drawing adds it here.
+ */
+export const TOOL_ICONS = ['map'] as const;
+export type ToolIcon = (typeof TOOL_ICONS)[number];
 
 /** What using an item does. A mark costs the item; so does everything else here. */
 export interface ItemUse {
@@ -75,6 +83,8 @@ export interface ItemDef {
   color?: string;
   /** A paper map (a tool): the id of the map it is a drawing of. */
   chart?: string;
+  /** A tool: the drawing on its button in the bag's header. Every tool has one; nothing else does. */
+  icon?: ToolIcon;
   /**
    * Live: worth `xp` if stashed within `fresh` seconds of being picked, then `fade` XP less every
    * minute until it is worth no more than `into` (a plain item), which it then becomes (liveXp, liveEnds).
@@ -139,10 +149,21 @@ export interface BagSlot {
 }
 
 /**
- * The tools everyone carries: for now a paper map of every area there is (the town, the Near Woods, the
- * South Road). Later some areas will have none until one is found out there.
+ * The tools of a player who never got one of their own (their saved tools are null): a paper map of
+ * every area there is (the town, the Near Woods, the South Road). Later some areas will have none until
+ * one is found out there. The first tool a player gets writes these down with it, so a tool added here
+ * later reaches only the players who never got one: give it to the others too (World.giveTool).
  */
 export const STARTER_TOOLS: readonly string[] = ['stonebrook-map', 'near-woods-map', 'south-road-map'];
+
+/**
+ * The tools a player owns, as today's items know them, in the order they got them: their saved list
+ * (none: the starter tools), without the ids that are not tools here. Such an id comes from a newer
+ * release (one rolled back): it stays in the save, for when that release is back.
+ */
+export function toolsOf(saved: readonly string[] | undefined, items: Map<string, ItemDef>): string[] {
+  return (saved ?? STARTER_TOOLS).filter(t => items.get(t)?.kind === 'tool');
+}
 
 /** Slots in the bag until the bag becomes equipment (a tote 6, a backpack 8, a hiking pack 12...). */
 export const BAG_SLOTS = 8;

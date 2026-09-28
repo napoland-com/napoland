@@ -15,8 +15,7 @@ import { detailView } from './details';
 import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
-import { MAP_ICON, iconFor } from './icons';
-import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, wearText, wornViews } from './items';
+import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, wearText, wornViews } from './items';
 import { journalView } from './journal';
 import { Keys, keyTarget } from './keys';
 import { Maps } from './maps';
@@ -143,7 +142,7 @@ const hud = new Hud(screen, {
   craft: recipe => (recipe.startsWith('mend:') ? game.mend(recipe.slice(5) as Slot) : game.craft(recipe)),
   benchClosed: () => game.closeBench(),
   // What a tap in the chest or at the workbench shows, from what the open one says your stash holds.
-  details: ref => detailView(ref, { items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn }),
+  details: ref => detailView(ref, { items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools }),
   chat: a => {
     if (a.a === 'tab') chatTab = a.to;
     else if (a.a === 'say') game.say(a.to, a.text);
@@ -170,6 +169,8 @@ const hud = new Hud(screen, {
     }
   },
   map: () => openMap(),
+  // Any other tool of yours says what it is, in the text box (which the bag would cover).
+  tool: item => { hud.toggleBag(false); game.read(items.get(item).name, [items.get(item).text]); },
   version: () => loadVersion(),
   sound: s => { sound.set(s); store.set(SOUND_KEY, JSON.stringify(s)); },
 });
@@ -693,18 +694,14 @@ function frame(now: number) {
   }
   // Also when what you wear wears down or is mended: its mend row changes.
   if (game.bench && (benchChanged || game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn)) {
-    hud.setBench([...mendViews(game.myGear, game.myWorn, game.bench.stash, items), ...recipeViews(items.recipes, game.bench.stash, items)]);
+    hud.setBench([...mendViews(game.myGear, game.myWorn, game.bench.stash, items), ...recipeViews(items.recipes, game.bench.stash, items, game.tools)]);
   }
   if (game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn) {
     gearShown = { gear: game.myGear, worn: game.myWorn };
     hud.setWearing(wornViews(game.myGear, items, game.myWorn));
   }
-  // Your maps are one button, which opens the one for where you are; any other tool has its own.
-  if (game.tools !== toolsShown) {
-    toolsShown = game.tools;
-    const others = toolsShown.filter(t => !items.get(t).chart).map(item => ({ item, name: items.get(item).name, icon: iconFor(items.get(item)) }));
-    hud.setTools(others, toolsShown.some(t => items.get(t).chart) ? MAP_ICON : null);
-  }
+  // Your maps are one button, which opens the one for where you are; any other tool has its own, in the order you got them.
+  if (game.tools !== toolsShown) hud.setTools(toolViews((toolsShown = game.tools), items));
   if (game.chest !== chestShown || game.progress !== progressShown) {
     if (game.chest && !chestShown) hud.toggleStash(true);
     if (!game.chest && chestShown) hud.toggleStash(false);

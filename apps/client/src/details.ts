@@ -127,6 +127,8 @@ export interface DetailState {
   stash: readonly BagSlot[];
   gear: Gear;
   worn: Worn;
+  /** The tools you own: a recipe for one of them cannot be made again. None known: none. */
+  tools?: readonly string[];
 }
 
 /**
@@ -240,10 +242,16 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
     case 'recipe': {
       const recipe = items.recipes.find(r => r.id === ref.id);
       if (!recipe) return null;
-      const def = items.get(recipe.make), count = recipe.count ?? 1, card = gearCard(def, undefined, s);
+      // A tool is not worn and resists nothing: its card says what it is, like anything else's.
+      const def = items.get(recipe.make), count = recipe.count ?? 1, card = def.kind === 'tool' ? itemCard(def, count) : gearCard(def, undefined, s);
       const needs = needViews(recipe.needs, s);
       if (count > 1) card.count = count;
       card.costs = { title: 'It takes', needs };
+      // Each tool is yours once: its button stays greyed, and pressed it still says why, in the text box (Game.craft).
+      if (def.kind === 'tool' && s.tools?.includes(def.id)) {
+        card.notes.push({ text: 'It is yours for good: its button is in your bag.', tone: 'plain' });
+        return { ...card, act: { label: 'You have it', enabled: false, does: { kind: 'make', recipe: recipe.id } } };
+      }
       short(card, needs);
       return { ...card, act: { label: count > 1 ? `Make ${count}` : 'Make', enabled: needs.every(n => n.have >= n.need), does: { kind: 'make', recipe: recipe.id } } };
     }

@@ -226,7 +226,10 @@ export type Did =
    * it), what a strange object turned out to be.
    */
   | { kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot }
-  /** The workbench made `count` of `item`, into your stash. */
+  /**
+   * The workbench made `count` of `item`, into your stash. A tool (its kind says so) went to your tools
+   * instead, yours for good: your tools came before this in a `tools` message.
+   */
   | { kind: 'made'; item: string; count: number }
   /** The `item` you wear is mended: whole again. */
   | { kind: 'mended'; item: string }
@@ -285,7 +288,9 @@ export type Refusal =
   /** Gear stays in the chest: it is put on from there. */
   | 'gear_stays'
   /** That is as good as new already, or cannot be mended. */
-  | 'whole';
+  | 'whole'
+  /** You have that tool already: each is yours once, for good (a find of it stays for someone else). */
+  | 'have_tool';
 
 /** Someone, by id and name. */
 export interface PersonView {
@@ -375,7 +380,7 @@ export type ServerMsg =
       stats: Stats;
       /** Your XP and level (progress.ts). */
       progress: ProgressView;
-      /** Your tools (item ids, items.ts): kept for good, apart from the bag. */
+      /** Your tools (item ids, items.ts, toolsOf), in the order you got them: kept for good, apart from the bag. */
       tools: string[];
       /** The version of content/items.json the server runs; a client with another version reloads. */
       items: number;
@@ -395,12 +400,15 @@ export type ServerMsg =
   | { t: 'energy'; energy: EnergyView; body: BodyView }
   /** Your bag, whole, after any change. A live item's slot has its `age` as of now. */
   | { t: 'bag'; bag: BagSlot[] }
+  /** Your tools, whole (item ids, in the order you got them), after you got one. */
+  | { t: 'tools'; tools: string[] }
   /**
    * You picked these up (for a "+2 Glowcap" over your head); your new bag follows in a `bag` message.
+   * A find that is a `tool` is yours for good instead, and your tools follow in a `tools` message.
    * `double`: the find came up double (the forager's ranks, feats.ts). What a strange object turns
    * out to be comes in `did` instead.
    */
-  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop'; double?: true }
+  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool'; double?: true }
   /** What a feed, use, discard, craft or mend you asked for did (for the text box). */
   | { t: 'did'; did: Did }
   /** Something asked for that did not happen, and why. */
