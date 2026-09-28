@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-home",
   "name": "Home",
-  "version": 5,
+  "version": 6,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -28,7 +28,7 @@
   "private": true,
   "wake": {"x":4,"y":2,"dir":"down"},
   "exits": [
-    {"x":4,"y":6,"w":1,"h":1,"to":"stonebrook","tx":8,"ty":21,"dir":"down"}
+    {"x":4,"y":6,"w":1,"h":1,"to":"residents-lane","tx":6,"ty":21,"dir":"down"}
   ],
   "objects": [
     {"kind":"fireplace","x":4,"y":1},

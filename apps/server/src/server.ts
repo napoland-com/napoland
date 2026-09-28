@@ -89,11 +89,14 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
       log.error('cannot tell since when guests are deleted: none are for now', { err });
     }
   }
+  // Their lots are free again once the World runs (it is made below, after the first cleanup).
+  let world: World | undefined;
   const forgetGuests = async () => {
     if (Date.now() - since < GUEST_DAYS * DAY_MS) return;
     try {
       const gone = await o.storage.forgetGuests(Date.now() - GUEST_DAYS * DAY_MS);
-      if (gone) log.info('guests deleted', { guests: gone, days: GUEST_DAYS });
+      if (gone.length) log.info('guests deleted', { guests: gone.length, days: GUEST_DAYS });
+      world?.forgetLots(gone);
     } catch (err) {
       // Housekeeping: it never keeps the game from running, and it runs again tomorrow.
       log.error('deleting guests who stayed away failed', { err });
@@ -113,6 +116,9 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // What lies in the crates stays until someone takes it.
   const cacheItems = await o.storage.loadCacheItems();
   if (cacheItems.length) log.info('crates loaded', { things: cacheItems.length });
+  // Who lives where on the streets, online or not: after the guests who stayed away are gone, their lots with them.
+  const lots = await o.storage.loadLots();
+  if (lots.length) log.info('lots loaded', { lots: lots.length });
   const forgetThanks = async () => {
     try {
       await o.storage.forgetThanks(Date.now() - THANKS_KEPT_MS);
@@ -124,11 +130,12 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   const stone = await o.storage.loadStone();
   const cycle = o.weather === 'cycle';
   const shift = o.clockShiftMs ?? 0;
-  const world = new World(o.maps, o.homeMap, cycle ? weatherAt(Date.now() + shift).weather : (o.weather as Weather), {
+  world = new World(o.maps, o.homeMap, cycle ? weatherAt(Date.now() + shift).weather : (o.weather as Weather), {
     cycle,
     marks,
     thanks,
     cacheItems,
+    lots,
     stone,
     now: clock(),
     // Where players run out tells how hard each part of the world really is.
@@ -143,7 +150,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     ...(o.parcelDayMs ? { calendar: quickCalendar(o.parcelDayMs, Date.now() + shift) } : {}),
     xpTimes: o.xpMultiplier,
   });
-  const http = createHttpServer({ clientDir: o.clientDir, players: () => world.size, version: o.version, auth: auth.config });
+  const http = createHttpServer({ clientDir: o.clientDir, players: () => world!.size, version: o.version, auth: auth.config });
   const net = attachNet({
     auth,
     server: http,

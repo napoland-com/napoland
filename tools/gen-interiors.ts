@@ -12,9 +12,10 @@
  * Every shelter out in the wilds whose fire people rest by keeps a crate for whoever comes next (a
  * `cache`, caches.ts), added last in its list so that nothing placed before it ever moves.
  *
- * The outside generators (gen-map.ts, gen-woods.ts) put the exit on each house's door with doorInto,
- * which fails if the room expects its house somewhere else. This script checks the other direction, so
- * run it after them: each door on the outside maps must lead to its room's way in.
+ * The outside generators (gen-map.ts, gen-woods.ts, gen-street.ts) put the exit on each house's door with
+ * doorInto, which fails if the room expects its house somewhere else. This script checks the other
+ * direction, so run it after them: each door on the outside maps must lead to its room's way in. Your own
+ * cabin is behind every door of Residents' Lane (`lots`): each player's own, whichever lot is theirs.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -40,6 +41,12 @@ interface Room {
   private?: true;
   /** Where you wake up in it, by the fire: as a new player, and after a collapse. */
   wake?: { x: number; y: number; dir: Dir };
+  /**
+   * Behind every door of its street (gen-street.ts), not one house's: each lot's cabin is this room, its
+   * owner's own copy of it. `door` is then the first lot's, where its way out leads unless the server says
+   * otherwise (it takes each player out in front of their own door).
+   */
+  lots?: true;
 }
 
 /** The camera shows about six tiles around you: a room this size fits on any screen. */
@@ -57,7 +64,8 @@ const ROOMS: readonly Room[] = [
     // Years of damp spoiled the rest (comfort.ts): an iron stove in the corner, a shelf, a drying rack
     // by the fire, the bed, the rug and the lamp on the table stand spoiled in their places until you
     // make each again at the workbench, which sets it there at once.
-    id: 'stonebrook-home', name: 'Home', version: 5, outside: 'stonebrook', door: [8, 20], private: true, wake: { x: 4, y: 2, dir: 'down' },
+    // Its door is every cabin's on Residents' Lane (gen-street.ts): the server lets each player in through their own.
+    id: 'stonebrook-home', name: 'Home', version: 6, outside: 'residents-lane', door: [6, 20], lots: true, private: true, wake: { x: 4, y: 2, dir: 'down' },
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -595,7 +603,7 @@ export function doorInto(id: string, outside: string, house: House): MapExit {
   const room = ROOMS.find(r => r.id === id);
   if (!room) throw new Error(`there is no room ${id} in tools/gen-interiors.ts`);
   const d = doorOf(house);
-  if (room.outside !== outside || room.door[0] !== d.x || room.door[1] !== d.y) {
+  if (room.outside !== outside || (!room.lots && (room.door[0] !== d.x || room.door[1] !== d.y))) {
     throw new Error(`the room ${id} expects its door at ${room.door.join(',')} in ${room.outside}, but this house's door is at ${d.x},${d.y} in ${outside}`);
   }
   if ((room.style ?? null) !== (house.style ?? null)) throw new Error(`the room ${id} is ${room.style ?? 'a cabin\'s'} style, but its house is ${house.style ?? 'a cabin'}`);
@@ -704,11 +712,12 @@ if (import.meta.main) {
   }
   // The other direction of doorInto: the door on the outside map must lead to the room's way in. It is
   // written by the outside map's generator, so after changing a room's size, run that one again too.
-  const GENERATOR: Record<string, string> = { stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south' };
+  const GENERATOR: Record<string, string> = { stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'residents-lane': 'npm run gen:street' };
   for (const room of ROOMS) {
     const outside = JSON.parse(readFileSync(resolve(import.meta.dirname, `../content/maps/${room.outside}.json`), 'utf8')) as MapData;
-    const door = outside.exits.find(e => e.to === room.id), way = wayOut(room);
-    if (door?.x === room.door[0] && door.y === room.door[1] && door.tx === way.x && door.ty === way.y - 1) continue;
+    const doors = outside.exits.filter(e => e.to === room.id), way = wayOut(room);
+    const first = doors[0], inside = doors.every(e => e.tx === way.x && e.ty === way.y - 1);
+    if (first?.x === room.door[0] && first.y === room.door[1] && inside && (room.lots || doors.length === 1)) continue;
     console.log(`error: ${room.outside}.json has no door at ${room.door.join(',')} into ${room.id}'s way in (${way.x},${way.y - 1}): run ${GENERATOR[room.outside] ?? `the generator of ${room.outside}`} again`);
     failed = true;
   }

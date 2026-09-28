@@ -209,6 +209,8 @@ export class WorldView {
   /** Your cabin's furniture (cabin.ts), built again when what stands in its places changes: what was built last. */
   private comfortRoot = new THREE.Group();
   private comfortKey: string | null = null;
+  /** On a street, each lot's lit windows, lot by lot: shown while its owner is home (setLots). Kept out of the bake. */
+  private lotLights: THREE.Object3D[] = [];
   /** The real lights, each on one of the nearest sources (index into `sources`, -1 for none). */
   private slots = Array.from({ length: LIGHTS }, () => ({ light: new THREE.PointLight(LAMP_COLOR, 0, LAMP_REACH, 2), source: -1, on: 0 }));
   /** The tile the lights were last handed out for. */
@@ -594,8 +596,11 @@ export class WorldView {
     }
 
     // Every house can be entered: its door stands open. Behind a burning fire the doorway glows and the chimney smokes.
-    const chimneys: THREE.Vector3[] = [];
-    for (const { house: h, x: doorX, fire } of houseDoors(this.map, this.peek)) {
+    // The cabins of a street are the players' own (their door leads each into their own cabin): plain and
+    // kept, a name plate over the door, the windows dark unless their owner is home (setLots).
+    const chimneys: THREE.Vector3[] = [], litPane = new THREE.BoxGeometry(0.46, 0.38, 0.05);
+    for (const { house: h, x: doorX, fire: burning } of houseDoors(this.map, this.peek)) {
+      const plate = !!h.plate, fire = burning && !plate;
       if (h.style === 'napo') {
         // One of NAPO's buildings (napo.ts): the same doorway, concrete around it, smoke from a flue.
         const { root, flue } = napoBuilding(h, doorX, fire, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }, { warm: this.warm, doorGlow: this.doorGlow });
@@ -636,8 +641,9 @@ export class WorldView {
       const hinge = new THREE.Group();
       hinge.position.set(dx - DOOR_W / 2, 0, 0.87);
       // Wide open where someone lives; hanging off to one side in an empty house.
-      hinge.rotation.y = h.lit ? -1.95 : -1.68;
-      hinge.add(box(DOOR_W - 0.04, DOOR_H - 0.04, 0.05, h.lit ? '#4a3526' : '#3d352d', (DOOR_W - 0.04) / 2, (DOOR_H - 0.04) / 2 + 0.01, 0, 0.018));
+      const kept = !!h.lit || plate;
+      hinge.rotation.y = kept ? -1.95 : -1.68;
+      hinge.add(box(DOOR_W - 0.04, DOOR_H - 0.04, 0.05, kept ? '#4a3526' : '#3d352d', (DOOR_W - 0.04) / 2, (DOOR_H - 0.04) / 2 + 0.01, 0, 0.018));
       hinge.add(box(0.04, 0.04, 0.03, '#b09a62', DOOR_W - 0.12, 0.44, 0.04, false));
       g.add(hinge);
       g.add(box(0.66, 0.014, 0.36, '#6d4d35', dx, 0.007, 1.07, false), box(0.52, 0.02, 0.24, '#4a3024', dx, 0.01, 1.07, false));
@@ -645,11 +651,16 @@ export class WorldView {
       // abandoned: dark, windows boarded up; or, where the people left for what they thought would be
       // two weeks, the curtains they drew, which never light.
       if (h.lit) g.add(part(new THREE.BoxGeometry(0.14, 0.1, 0.08), this.warm, dx, 1.0, 0.9, false));
+      // The name plate over the door: its owner's name shows on it as you pass (the Hud's tag).
+      if (plate) g.add(box(0.44, 0.12, 0.03, '#8a6a45', dx, DOOR_H + 0.17, 0.87, 0.012), box(0.3, 0.025, 0.01, '#3b2b1d', dx, DOOR_H + 0.17, 0.888, false));
+      const lights = new THREE.Group();
       [-0.85, 0.85].forEach((wx, k) => {
         g.add(box(0.58, 0.5, 0.04, '#2a221b', wx, 0.72, 0.855, false));
         const lit = !!h.lit && k === 0;
         g.add(part(new THREE.BoxGeometry(0.46, 0.38, 0.05), lit ? this.warm : toon('#1c1f24'), wx, 0.72, 0.87, false));
-        if (h.curtains) curtainPanels(g, curtainColor(h), wx, 0.72, 0.9, 0.46, 0.38);
+        // Lit over the dark pane, a hair in front of it, while the owner is home.
+        if (plate) lights.add(part(litPane, this.warm, wx, 0.72, 0.876, false));
+        else if (h.curtains) curtainPanels(g, curtainColor(h), wx, 0.72, 0.9, 0.46, 0.38);
         else if (!lit) {
           const p1 = box(0.56, 0.07, 0.03, '#6b5a44', wx, 0.76, 0.9, false); p1.rotation.z = 0.35; g.add(p1);
           const p2 = box(0.56, 0.07, 0.03, '#6b5a44', wx, 0.66, 0.9, false); p2.rotation.z = -0.3; g.add(p2);
@@ -658,6 +669,12 @@ export class WorldView {
       g.add(box(0.28, 0.55, 0.28, '#58554f', 0.9, 1.95, -0.35));
       if (fire) chimneys.push(new THREE.Vector3(cx + 0.9, 2.26, cz - 0.35));
       still.push(g);
+      if (plate) {
+        lights.position.copy(g.position);
+        lights.visible = false;
+        this.scene.add(lights);
+        this.lotLights.push(lights);
+      }
     }
     if (chimneys.length) {
       const smoke = (this.smoke = new Smoke(chimneys));
@@ -950,6 +967,11 @@ export class WorldView {
     this.sources = lamp ? [...this.baseSources, { kind: 'lamp', ...lampLight(lamp), flicker: false, ph: 0, tx: lamp.x, ty: lamp.y }] : this.baseSources;
     // The real lights are handed out again on the next frame, the lamp among them.
     this.lightTile = NaN;
+  }
+
+  /** On a street: the lots whose owner is home (by number, the street's houses in order) have their windows lit. */
+  setLots(lit: ReadonlySet<number>) {
+    this.lotLights.forEach((l, i) => { l.visible = lit.has(i); });
   }
 
   /** How big each fire burns (fire.ts, fireLevel), by its fireplace's tile: asked every frame. */

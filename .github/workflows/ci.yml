@@ -47,7 +47,7 @@ jobs:
           if [ -n "$(git status --porcelain -- content)" ]; then
             git status --short -- content
             git --no-pager diff --stat -- content
-            echo "::error title=Generated maps are out of date::The maps in content/ are not what the generators make. Run npm run gen (gen:map, gen:woods, gen:south, then gen:interiors) and npm run validate, and commit what changed. Never edit or merge generated JSON by hand: change the generator and run it again."
+            echo "::error title=Generated maps are out of date::The maps in content/ are not what the generators make. Run npm run gen (gen:map, gen:woods, gen:south, gen:street, then gen:interiors) and npm run validate, and commit what changed. Never edit or merge generated JSON by hand: change the generator and run it again."
             exit 1
           fi
 

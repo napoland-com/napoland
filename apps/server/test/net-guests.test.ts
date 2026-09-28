@@ -245,7 +245,7 @@ describe('guests who stay away', () => {
       expect(await c.next('welcome')).toMatchObject({ you: back.id, guest: true });
       expect(storage.get(back.id)!.lastSeenAt).toBeGreaterThan(cutoff);
       // The day's round comes right after: it stays.
-      expect(await storage.forgetGuests(cutoff)).toBe(0);
+      expect(await storage.forgetGuests(cutoff)).toEqual([]);
       expect(storage.get(back.id)).toBeDefined();
     } finally {
       c.ws.terminate();

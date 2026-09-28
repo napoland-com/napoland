@@ -80,6 +80,13 @@ export interface PlayerRecord {
   furniture?: string[];
   /** Until when (ms since the epoch) the player is cozy from their own fire (comfort.ts). None: they are not. Every save says it. */
   cozy?: number;
+  /**
+   * Where the player's cabin stands (world.ts, streets): the number of their street (from 1) and their lot
+   * on it (from 0, the street's houses in order). Both or neither; none: they have not come home since
+   * streets came. Every save says it.
+   */
+  street?: number;
+  lot?: number;
   /** Milliseconds since the epoch. Every save sets lastSeenAt: a guest last seen GUEST_DAYS ago is deleted. */
   createdAt: number;
   lastSeenAt: number;
@@ -158,6 +165,14 @@ export interface CacheItemRecord {
   at: number;
 }
 
+/** A player's lot on a street, for the World to know who lives where, online or not: their name goes on its plate. */
+export interface LotRecord {
+  id: string;
+  name: string;
+  street: number;
+  lot: number;
+}
+
 /** The Old Stone: shards in it, whether it is awake, and when (ms since the epoch) that charge was so. */
 export interface StoneRecord {
   charge: number;
@@ -224,9 +239,9 @@ export interface Storage {
   /**
    * Deletes every character nobody signed in with (authSub null: a guest, on a server with sign-in)
    * last seen before `seenBefore` (ms since the epoch), with their pile, marks, links and unread
-   * messages. Never one someone signed in with. Returns how many went.
+   * messages. Never one someone signed in with. Returns the ids of those who went (their lots are free).
    */
-  forgetGuests(seenBefore: number): Promise<number>;
+  forgetGuests(seenBefore: number): Promise<string[]>;
   /**
    * When this server began to delete guests who stay away (ms since the epoch): the first call stores
    * `now`, every later one returns it. No guest goes before GUEST_DAYS after it, so every player can
@@ -235,6 +250,8 @@ export interface Storage {
   guestsSince(now: number): Promise<number>;
   /** How many players exist. */
   count(): Promise<number>;
+  /** Every player's lot on a street (world.ts, streets), with their name: who lives where. */
+  loadLots(): Promise<LotRecord[]>;
   /** Every pile dropped after `after` (ms since the epoch), oldest first. Older ones have faded: they are forgotten. */
   loadDrops(after: number): Promise<DropRecord[]>;
   /** Stores a player's pile, in place of the one they had. */
@@ -373,9 +390,11 @@ export class MemoryStorage implements Storage {
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
         ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.furniture ? { furniture: [...rec.furniture] } : {}), lastSeenAt: rec.lastSeenAt,
       });
-      // Every save says whether they are cozy, as it says where they are.
+      // Every save says whether they are cozy, and where their cabin stands, as it says where they are.
       if (rec.cozy !== undefined) cur.cozy = rec.cozy;
       else delete cur.cozy;
+      if (rec.street !== undefined && rec.lot !== undefined) Object.assign(cur, { street: rec.street, lot: rec.lot });
+      else { delete cur.street; delete cur.lot; }
       // Every save says where they are: back in the main copy, the copy they were in is forgotten.
       if (rec.zone) cur.zone = rec.zone;
       else delete cur.zone;
@@ -392,11 +411,11 @@ export class MemoryStorage implements Storage {
     return true;
   }
 
-  async forgetGuests(seenBefore: number): Promise<number> {
-    let gone = 0;
+  async forgetGuests(seenBefore: number): Promise<string[]> {
+    const gone: string[] = [];
     for (const rec of [...this.byId.values()]) {
       if (rec.authSub !== null || rec.lastSeenAt >= seenBefore) continue;
-      gone++;
+      gone.push(rec.id);
       // Like the database's foreign keys: what belongs to them goes with them. (Reports stay, as there.)
       this.byId.delete(rec.id);
       if (rec.tokenHash !== null) this.idByToken.delete(rec.tokenHash);
@@ -418,6 +437,10 @@ export class MemoryStorage implements Storage {
 
   async count(): Promise<number> {
     return this.byId.size;
+  }
+
+  async loadLots(): Promise<LotRecord[]> {
+    return [...this.byId.values()].flatMap(r => (r.street !== undefined && r.lot !== undefined ? [{ id: r.id, name: r.name, street: r.street, lot: r.lot }] : []));
   }
 
   async loadDrops(after: number): Promise<DropRecord[]> {
@@ -609,6 +632,9 @@ interface PlayerRow {
   furniture: unknown;
   /** Null for a player who is not cozy. */
   cozy_until: Date | null;
+  /** Where their cabin stands (019_streets.sql): both null for a player who has not come home since streets came. */
+  street: number | null;
+  lot: number | null;
   created_at: Date;
   last_seen_at: Date;
 }
@@ -708,6 +734,7 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   // A list of ids as the server wrote it; anything else reads as none (the World checks it again).
   ...(Array.isArray(r.furniture) ? { furniture: r.furniture.filter((t): t is string => typeof t === 'string') } : {}),
   ...(r.cozy_until ? { cozy: r.cozy_until.getTime() } : {}),
+  ...(r.street !== null && r.lot !== null ? { street: r.street, lot: r.lot } : {}),
   createdAt: r.created_at.getTime(),
   lastSeenAt: r.last_seen_at.getTime(),
 });
@@ -769,15 +796,15 @@ export class PgStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
-         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, furniture, cozy_until)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26::jsonb, $27)
+         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, furniture, cozy_until, street, lot)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26::jsonb, $27, $28, $29)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)),
         rec.xp ?? 0, JSON.stringify(rec.stash ?? { items: {}, out: {} }), rec.gear ? JSON.stringify(rec.gear) : null, new Date(rec.createdAt), new Date(rec.lastSeenAt),
         rec.tools ? JSON.stringify(rec.tools) : null, rec.parcels?.welcome ?? false, rec.parcels?.day ?? null, rec.parcels?.days ?? 0, rec.outfit ?? null,
         Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '', rec.furniture ? JSON.stringify(rec.furniture) : null,
-        rec.cozy === undefined ? null : new Date(rec.cozy),
+        rec.cozy === undefined ? null : new Date(rec.cozy), rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null,
       ],
     );
     return r.rowCount === 1;
@@ -794,12 +821,13 @@ export class PgStorage implements Storage {
        gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
        parcel_welcome = COALESCE($18::boolean, parcel_welcome), parcel_day = CASE WHEN $18::boolean IS NULL THEN parcel_day ELSE $19::integer END,
        parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23,
-       furniture = COALESCE($24::jsonb, furniture), cozy_until = $25, last_seen_at = $13 WHERE id = $1`,
+       furniture = COALESCE($24::jsonb, furniture), cozy_until = $25, street = $26, lot = $27, last_seen_at = $13 WHERE id = $1`,
       [
         rec.id, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(rec.bag), rec.wet ?? 0, JSON.stringify(savedStats(rec.stats)), rec.xp ?? 0,
         JSON.stringify(rec.stash ?? { items: {}, out: {} }), new Date(rec.lastSeenAt), rec.gear ? JSON.stringify(rec.gear) : null, rec.worn ? JSON.stringify(rec.worn) : null,
         rec.story ?? null, rec.tools ? JSON.stringify(rec.tools) : null, p ? p.welcome : null, p ? p.day : null, p ? p.days : null,
         rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '', rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
+        rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null,
       ],
     );
   }
@@ -809,11 +837,11 @@ export class PgStorage implements Storage {
     return r.rowCount === 1;
   }
 
-  async forgetGuests(seenBefore: number): Promise<number> {
+  async forgetGuests(seenBefore: number): Promise<string[]> {
     // Their pile, marks, links, unread messages and thanks go with the row (ON DELETE CASCADE); a
     // report about them stays, without them (ON DELETE SET NULL). An index covers exactly these rows (011).
-    const r = await this.pool.query('DELETE FROM players WHERE auth_sub IS NULL AND last_seen_at < $1', [new Date(seenBefore)]);
-    return r.rowCount ?? 0;
+    const r = await this.pool.query<{ id: string }>('DELETE FROM players WHERE auth_sub IS NULL AND last_seen_at < $1 RETURNING id', [new Date(seenBefore)]);
+    return r.rows.map(g => g.id);
   }
 
   async guestsSince(now: number): Promise<number> {
@@ -826,6 +854,11 @@ export class PgStorage implements Storage {
   async count(): Promise<number> {
     const r = await this.pool.query<{ n: number }>('SELECT count(*)::int AS n FROM players');
     return r.rows[0]!.n;
+  }
+
+  async loadLots(): Promise<LotRecord[]> {
+    const r = await this.pool.query<{ id: string; name: string; street: number; lot: number }>('SELECT id, name, street, lot FROM players WHERE street IS NOT NULL AND lot IS NOT NULL');
+    return r.rows.map(l => ({ id: l.id, name: l.name, street: l.street, lot: l.lot }));
   }
 
   async loadDrops(after: number): Promise<DropRecord[]> {

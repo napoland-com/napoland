@@ -280,7 +280,8 @@ export type SocialAction =
   | { a: 'tell'; id: string; text: string }
   | { a: 'requests'; off: boolean };
 
-export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean }
+/** A name over someone's head; `pile`: whose pile it is; `plate`: whose cabin, on the plate by its door (your street). */
+export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; plate?: boolean }
 /** `row` stacks words said at once, 0 at the bottom. */
 export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number; row: number }
 /** The fan of calls over B: the call the finger is on (null: off the fan), and whether the words show under the notes. */
@@ -1549,7 +1550,7 @@ export class Hud {
     more!.setAttribute('aria-disabled', String(c.n >= c.max));
   }
 
-  /** Name tags above other players and near piles, positioned in screen pixels. */
+  /** Name tags above other players, near piles and on the name plates of your street, positioned in screen pixels. */
   setTags(tags: TagView[]) {
     const seen = new Set<string>();
     for (const t of tags) {
@@ -1557,9 +1558,9 @@ export class Hud {
       let el = this.tagEls.get(t.id);
       if (!el) {
         el = document.createElement('div');
-        el.className = t.pile ? 'tag pile' : 'tag';
+        el.className = t.pile ? 'tag pile' : t.plate ? 'tag plate' : 'tag';
         // A player's tag can be tapped: their card, to ask them to be friends (or block or report them).
-        if (!t.pile) el.dataset.player = t.id;
+        if (!t.pile && !t.plate) el.dataset.player = t.id;
         this.el.labels!.appendChild(el);
         this.tagEls.set(t.id, el);
       }

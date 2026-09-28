@@ -79,8 +79,8 @@ export function useLabel(item: ItemDef): string {
 export function refusalText(reason: Refusal, action?: RefusedAction): string {
   switch (reason) {
     case 'bag_full': return 'Your bag is full';
-    case 'too_far': return 'Too far';
-    case 'gone': return 'Someone got there first';
+    case 'too_far': return action === 'move' ? 'Only at your own door' : 'Too far';
+    case 'gone': return action === 'move' ? 'They have no cabin on a street yet' : 'Someone got there first';
     case 'not_usable': return 'That cannot be used';
     case 'empty_slot': return 'That slot is empty';
     case 'not_here': return 'Not here';
@@ -95,10 +95,10 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'missing': return 'Your stash lacks what it needs';
     case 'unknown_player': return 'Nobody by that name';
     case 'requests_off': return 'They take no friend requests';
-    case 'not_friends': return 'You can only message friends';
+    case 'not_friends': return action === 'move' ? 'You can only move next to friends' : 'You can only message friends';
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
-    case 'slow_down': return action === 'call' ? 'Catch your breath first' : 'Slow down a little';
+    case 'slow_down': return action === 'call' ? 'Catch your breath first' : action === 'knock' ? 'Give them a moment to answer' : action === 'move' ? 'You only just moved' : 'Slow down a little';
     case 'sign_in_first': return action === 'say' || action === undefined ? 'Sign in to talk' : action === 'outfit' ? 'Sign in to wear an outfit' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'bag_at_home': return 'The bag you wear changes only at home';
@@ -114,6 +114,8 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'left_one': return 'You left something here this time already';
     case 'took_one': return 'You took something here this time already';
     case 'placed': return 'It stands in its place already';
+    case 'street_full': return 'Their street has no lot free';
+    case 'neighbors': return 'You live on the same street already';
   }
 }
 
