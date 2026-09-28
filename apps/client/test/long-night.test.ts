@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { BagSlot, ClientMsg, ItemsData, LongNightView, MapData, MapObject, PlayerView } from '@napoland/shared';
+import { TALK_TURN, type BagSlot, type ClientMsg, type ItemsData, type LongNightView, type MapData, type MapObject, type PlayerView } from '@napoland/shared';
 import { Game } from '../src/game';
 import { Items } from '../src/items';
 import { Maps } from '../src/maps';
@@ -76,9 +76,13 @@ describe('the notice board and Walt', () => {
   });
 
   it('has Walt ask for fuel first on the Long Night, with how long his fire has, and say it when it went out; any other night, what he always says', () => {
-    expect(talk(game(ON, 1080).g)).toEqual(['Long Night tonight. Nobody keeps this fire alone tonight, not me either: it wants resin and cloth from whoever\'s about, till dawn. There\'s about 18 minutes in it.', ...walt.lines]);
-    expect(talk(game({ ...ON, out: true }, 0).g)).toEqual(['It went out on us. Light it again if you\'ve got something that burns, but the woods will know it went out.', ...walt.lines]);
-    expect(talk(game(OFF, null).g)).toEqual(walt.lines);
+    expect(talk(game(ON, 1080).g)).toEqual(['Long Night tonight. Nobody keeps this fire alone tonight, not me either: it wants resin and cloth from whoever\'s about, till dawn. There\'s about 18 minutes in it.', ...walt.lines.slice(0, TALK_TURN)]);
+    expect(talk(game({ ...ON, out: true }, 0).g)).toEqual(['It went out on us. Light it again if you\'ve got something that burns, but the woods will know it went out.', ...walt.lines.slice(0, TALK_TURN)]);
+    // What he always says comes a few lines a talk, the next talk taking up where the last left off.
+    const other = game(OFF, null).g;
+    expect(talk(other)).toEqual(walt.lines.slice(0, TALK_TURN));
+    other.dialog = null;
+    expect(talk(other)).toEqual(walt.lines.slice(TALK_TURN, 2 * TALK_TURN));
     // Under a minute, or somewhere he cannot see it.
     expect(waltOnTheLongNight(false, 45)).toBe('Long Night tonight. Nobody keeps this fire alone tonight, not me either: it wants resin and cloth from whoever\'s about, till dawn. It\'s nearly out.');
     expect(waltOnTheLongNight(false, null)).toBe('Long Night tonight. Nobody keeps this fire alone tonight, not me either: it wants resin and cloth from whoever\'s about, till dawn.');

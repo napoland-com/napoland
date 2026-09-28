@@ -45,7 +45,7 @@
 import {
   BUBBLE_S, CACHE_SIZE, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, RESTED_NOTICE, SEASONS, STEP_MS, activeConditions, addToBag, bagSlotsOf, blankOf, cacheTakes, charmsIn, dirOf, dirToward, effectsAfter,
   emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal, lotDoors, markLifetime, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf,
-  nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
+  nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, secretTitle, stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, DIR_VEC, type Blank,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type ItemDef, type MapObject,
   type Gear, type MarkView, type PersonView, type PieceAt, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
@@ -363,6 +363,8 @@ export class Game {
   friends: FriendsMsg | null = null;
   /** Private messages this session, by the other player's id, oldest first; replaced whole on every change. */
   talks = new Map<string, TalkLine[]>();
+  /** Where the next talk with each person takes up what they always say (linesInTurn), by their id: this session's. */
+  private heard = new Map<string, number>();
   /** Friends whose messages you have not opened yet. */
   unread = new Set<string>();
   /** Whose card is open in the friends panel: their messages count as read while it is. */
@@ -1195,9 +1197,12 @@ export class Game {
       // What people say comes in one order (storyLines, story.ts): the chapter's hint, what they say once
       // about what you did for the first time, what they have heard (Mira: what the woods are like today),
       // then what they always say. The server hears who you talked to, or what you read.
+      // What they always say comes a few lines a talk (linesInTurn), taken up where the last talk left off.
       const word = t.id === 'mira' ? this.miraWord() : t.id === 'walt' ? this.waltWord() : null, today = word ? [word] : [];
-      const person = t.story && 'talk' in t.story ? t.story.talk : undefined;
-      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, t.lines, this.stats, today) : [...today, ...t.lines] });
+      const person = t.story && 'talk' in t.story ? t.story.talk : undefined, key = t.id ?? `${t.x},${t.y}`;
+      const turn = linesInTurn(t.lines, this.heard.get(key) ?? 0);
+      this.heard.set(key, turn.next);
+      this.openDialog({ ...t, lines: person ? storyLines(this.story, this.chapter, person, turn.lines, this.stats, today) : [...today, ...turn.lines] });
       // Said once: the server keeps it when it hears the talk, and so do we, for the next time you talk meanwhile.
       const told = person ? toldAfter(this.story, person, this.stats) : undefined;
       if (told !== undefined && told !== (this.stats.told ?? 0)) { this.stats = { ...this.stats, told }; this.statsChanges++; }

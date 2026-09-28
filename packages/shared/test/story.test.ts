@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_REMARKS, chapterOf, journal, nextChapter, reachedBy, remarksDue, storyLines, toldAfter, validateStory, type ItemsData, type MapData, type MapObject, type Remark, type StoryData } from '../src';
+import { MAX_REMARKS, TALK_TURN, chapterOf, journal, linesInTurn, nextChapter, reachedBy, remarksDue, storyLines, toldAfter, validateStory, type ItemsData, type MapData, type MapObject, type Remark, type StoryData } from '../src';
 
 /** A short story: home, then bring something home, then talk to Tom, then read the station's log. */
 function story(): StoryData {
@@ -189,5 +189,23 @@ describe('validateStory', () => {
     expect(msgs).toMatch(/2 people have the id tom/);
     expect(msgs).toMatch(/2 desks have the id station-log/);
     expect(errors({ version: 0, chapters: [] })).toMatch(/version must be a whole number from 1\nthere are no chapters/);
+  });
+});
+
+describe('what someone always says, a few lines a talk', () => {
+  const eight = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+  it('says TALK_TURN lines a talk, in order, up to the last, then starts over', () => {
+    expect(TALK_TURN).toBe(3);
+    expect(linesInTurn(eight, 0)).toEqual({ lines: ['a', 'b', 'c'], next: 3 });
+    expect(linesInTurn(eight, 3)).toEqual({ lines: ['d', 'e', 'f'], next: 6 });
+    expect(linesInTurn(eight, 6)).toEqual({ lines: ['g', 'h'], next: 0 });
+    // Lines taken away since (another release): from the start.
+    expect(linesInTurn(eight.slice(0, 5), 6)).toEqual({ lines: ['a', 'b', 'c'], next: 3 });
+  });
+
+  it('says all of it every time when there is little more than a talk\'s worth', () => {
+    expect(linesInTurn(['a', 'b', 'c', 'd'], 0)).toEqual({ lines: ['a', 'b', 'c', 'd'], next: 0 });
+    expect(linesInTurn(['a'], 5)).toEqual({ lines: ['a'], next: 0 });
+    expect(linesInTurn([], 0)).toEqual({ lines: [], next: 0 });
   });
 });
