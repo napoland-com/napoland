@@ -16,7 +16,7 @@
  *   everything moves smoothly.
  */
 import {
-  BUBBLE_S, STEP_MS, activeConditions, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, journal, stepTarget, storyLines, surgeFront, DIR_VEC,
+  BUBBLE_S, STEP_MS, activeConditions, dirOf, dirToward, energyAfter, findPath, flashHits, inSurge, journal, objectTiles, stepTarget, storyLines, surgeFront, DIR_VEC,
   type BagSlot, type BodyView, type Chapter, type ClientMsg, type CreatureView, type Dir, type DropView, type EnergyView, type FindView, type FireView, type MapObject,
   type Gear, type MarkView, type PersonView, type Quirk, type Worn, type PlayerView, type ProgressView, type ServerMsg, type Slot, type Stats, type StoneView, type StoryData, type SurgeView, type TileMap,
   type ChatTo, type ConditionsView, type FlashKind, type FlashView, type RefusedAction, type StormView,
@@ -100,11 +100,18 @@ const CREATURE_STEP_MS: Record<CreatureView['kind'], number> = { watcher: 420, s
 /** A creature as the game animates it: like a player, and what kind it is and whom it chases. */
 type Creature = Mover & { kind: CreatureView['kind']; chasing: string | undefined };
 
+/** What a sign is called in the text box, by its style. */
+const SIGN_WHO = { plain: 'Sign', napo: 'NAPO sign', cardboard: 'Cardboard sign', mailbox: 'Mailbox' } as const;
+
 function talkersOf(map: TileMap): Talker[] {
   return map.data.objects.flatMap((o: MapObject): Talker[] => {
     if (o.kind === 'npc') return [{ x: o.x, y: o.y, who: o.name, lines: o.lines, kind: 'talk', id: o.id, story: { talk: o.id } }];
-    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: o.style === 'napo' ? 'NAPO sign' : 'Sign', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'sign') return [{ x: o.x, y: o.y, who: SIGN_WHO[o.style ?? 'plain'], lines: o.text, kind: 'talk' }];
     if (o.kind === 'console') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', story: { read: o.id } }];
+    if (o.kind === 'paper') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk' }];
+    if (o.kind === 'cage') return [{ x: o.x, y: o.y, who: 'NAPO tag', lines: o.text, kind: 'talk' }];
+    // A jeep is bigger than one tile: its stencil reads from whichever end you face.
+    if (o.kind === 'jeep') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO jeep', lines: o.text, kind: 'talk' }));
     if (o.kind === 'board') return [{ x: o.x, y: o.y, who: 'Notice board', lines: [], kind: 'board' }];
     if (o.kind === 'fireplace') return [{ x: o.x, y: o.y, who: 'Fire', lines: [], kind: 'fire' }];
     if (o.kind === 'stone') return [{ x: o.x, y: o.y, who: 'The Old Stone', lines: [], kind: 'stone' }];

@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { TileMap, validateMap, validateWorld, type MapData } from '@napoland/shared';
+import { TileMap, validateMap, validateWorld, type MapData, type MapObject } from '@napoland/shared';
 import { Maps } from '../src/maps';
-import { campfireModel, hearthModel } from '../src/view/fire';
+import { campfireModel, coldHearthModel, hearthModel } from '../src/view/fire';
 import {
-  WALL_LOW, WALL_TALL, doorways, floorTile, furnitureModel, hasFire, hearthAt, houseDoors, roomTone, wallShapes, wallTile, windowSpots, type QuadFn,
+  WALL_LOW, WALL_TALL, doorways, floorTile, furnitureModel, hasFire, hearthAt, houseDoors, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots, type QuadFn,
 } from '../src/view/interior';
+import { curtainColor } from '../src/view/left';
 import { cabin, houseTown, shed, tinyTown, tinyWoods } from './fixtures';
 
 const room = new TileMap(cabin());
@@ -189,6 +190,83 @@ describe('furniture', () => {
     // Against the west wall: its back is at the tile's west edge, and it is shallow east to west.
     expect(b.min.x).toBeLessThan(1.1);
     expect(b.max.x - b.min.x).toBeLessThan(0.6);
+  });
+});
+
+describe('the houses of those who left, and the mill (roadmap/richer-places.md)', () => {
+  /** The cabin with these things in it, and no fire: a house whose people left. */
+  const left = (...objects: MapObject[]) => new TileMap({ ...cabin(), id: 'left', objects });
+
+  it('keeps windows clear of a cold hearth\'s chimney, a tall clock and a calendar or a drawing on the wall', () => {
+    const m = left({ kind: 'hearth', x: 4, y: 1 }, { kind: 'clock', x: 6, y: 1 }, { kind: 'paper', x: 2, y: 0, look: 'calendar', name: 'Calendar', text: ['Our turn.'] });
+    const spots = windowSpots(m, wallShapes(m)).map(w => w.x);
+    for (const x of [2, 3, 4, 5, 6]) expect(spots).not.toContain(x);
+    expect(spots.length).toBeGreaterThan(0);
+  });
+
+  it('draws the curtains inside a house whose people drew them, in the cloth they have from the street, and boards in the empty house', () => {
+    const town: MapData = { ...houseTown(), objects: houseTown().objects.map(o => (o.kind === 'house' && !o.lit ? { ...o, curtains: true } : o)) };
+    const shedHouse = town.objects.find(o => o.kind === 'house' && !o.lit)!;
+    expect(roomCurtains(shed(), id => (id === 'hometown' ? town : undefined))).toBe(curtainColor(shedHouse));
+    expect(roomCurtains(shed(), id => (id === 'hometown' ? houseTown() : undefined))).toBeNull();
+    expect(roomCurtains(cabin(), id => (id === 'hometown' ? town : undefined))).toBeNull();
+    const pane = new THREE.MeshBasicMaterial();
+    const colors = (g: THREE.Object3D) => { const out = new Set<string>(); g.traverse(o => { if (o instanceof THREE.Mesh) out.add((o.material as THREE.MeshToonMaterial).color?.getHexString() ?? ''); }); return out; };
+    expect(colors(windowModel(2, 0, pane, true, '#6e3a3a'))).toContain('6e3a3a');
+    expect(colors(windowModel(2, 0, pane, true))).toContain('5d4c3b');
+  });
+
+  it('builds what they left on its tiles: dust sheets, a crib, a stopped clock, a note or a list on a table, a calendar or a drawing on the wall', () => {
+    const things: MapObject[] = [
+      { kind: 'sheeted', x: 1, y: 3 }, { kind: 'sheeted', x: 6, y: 2 }, { kind: 'sheeted', x: 7, y: 4 }, { kind: 'crib', x: 3, y: 1 }, { kind: 'clock', x: 1, y: 1 },
+      { kind: 'paper', x: 4, y: 3, look: 'note', name: 'Note', text: ['Back soon.'] }, { kind: 'paper', x: 5, y: 3, look: 'list', name: 'List', text: ['TAKE: the cat.'] },
+    ];
+    const m = left(...things);
+    for (const o of things) {
+      const b = new THREE.Box3().setFromObject(furnitureModel(o, m)!);
+      expect([b.min.x >= o.x - 0.03, b.max.x <= o.x + 1.03, b.min.z >= o.y - 0.03, b.max.z <= o.y + 1.03], `${o.kind} at ${o.x},${o.y}`).toEqual([true, true, true, true]);
+    }
+    // On the wall: flat against the face of the wall tile, up where it can be read from the floor below.
+    for (const look of ['calendar', 'drawing'] as const) {
+      const b = new THREE.Box3().setFromObject(furnitureModel({ kind: 'paper', x: 2, y: 0, look, name: 'On the wall', text: ['.'] }, m)!);
+      expect(b.min.z, look).toBeGreaterThanOrEqual(0.99);
+      expect(b.max.z, look).toBeLessThan(1.1);
+      expect(b.min.y, look).toBeGreaterThan(0.8);
+      expect(b.max.y, look).toBeLessThan(WALL_TALL);
+    }
+  });
+
+  it('leaves a cold hearth\'s stones as a lit one\'s, with ash and charred ends where the fire was, and nothing that glows', () => {
+    const embers = new THREE.MeshBasicMaterial();
+    const lit = new THREE.Box3().setFromObject(hearthModel(4, 1, embers).model), cold = coldHearthModel(4, 1);
+    const b = new THREE.Box3().setFromObject(cold);
+    expect(b.max.y).toBeCloseTo(lit.max.y);
+    let glows = false;
+    cold.traverse(o => { if (o instanceof THREE.Mesh && (o.material === embers || (o.material as THREE.MeshToonMaterial).emissive?.getHex())) glows = true; });
+    expect(glows).toBe(false);
+  });
+
+  it('builds the mill\'s floor of boards, and its saw, carriage and sawdust inside the room', () => {
+    const mill = roomTone(false, 'mill');
+    expect(mill.boards).toBe(true);
+    expect(mill.concrete).toBeFalsy();
+    /** The heights where a wall's bands meet, low down. */
+    const seams = (tone: ReturnType<typeof roomTone>) => {
+      const ys = new Set<number>();
+      wallTile((a, b, c, d) => { for (const p of [a, b, c, d]) if (p[1] > 0 && p[1] < 0.2) ys.add(Math.round(p[1] * 1000) / 1000); }, room, shapes, 4, 0, tone);
+      return [...ys].sort();
+    };
+    // Sawn boards start with a thin dark line; round logs stand on a sill.
+    expect(seams(mill)[0]).toBeCloseTo(0.02);
+    expect(seams(roomTone(false))[0]).toBeCloseTo(0.1);
+    const floor = new TileMap({ ...cabin(), id: 'mill', style: 'mill', objects: [] });
+    for (const o of [{ kind: 'saw', x: 4, y: 1 }, { kind: 'carriage', x: 2, y: 2, w: 5 }, { kind: 'sawdust', x: 3, y: 4 }] as MapObject[]) {
+      const b = new THREE.Box3().setFromObject(furnitureModel(o, floor)!);
+      const w = o.kind === 'carriage' ? o.w : 1;
+      expect([b.min.z >= o.y - 0.5, b.max.z <= o.y + 1.05], o.kind).toEqual([true, true]);
+      // The line shaft over the saw runs along the wall; everything else keeps to its tiles.
+      if (o.kind !== 'saw') expect([b.min.x >= o.x - 0.05, b.max.x <= o.x + w + 0.05], o.kind).toEqual([true, true]);
+    }
   });
 });
 

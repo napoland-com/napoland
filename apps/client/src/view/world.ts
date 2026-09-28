@@ -7,25 +7,27 @@
  * and disposed when you leave it, which frees what it put on the GPU. Big maps stay fast on
  * phones: trees, ferns and grass are drawn in blocks the camera skips when they are off screen, the
  * props that never move (houses and NAPO's buildings, cars, signs, lamps, poles, masts, barrels,
- * fences, furniture, hearths; napo.ts draws NAPO's) are joined into a few meshes, and only the few
- * lamps and fires nearest you carry a real light. grass.ts decides how the ground and the grass look,
- * and tall grass: players crouch in it, and it sways and parts around them on the GPU.
+ * fences, furniture, hearths; napo.ts draws NAPO's, left.ts what the town and the leavers left) are
+ * joined into a few meshes, and only the few lamps and fires nearest you carry a real light. grass.ts
+ * decides how the ground and the grass look, and tall grass: players crouch in it, and it sways and
+ * parts around them on the GPU.
  * Inside a building (a map of kind 'inside') there is no weather and no world around the room, only
  * black: see interior.ts for the room, fire.ts for the fire and lighting.ts for the light.
  */
 import * as THREE from 'three';
 import { DIR_VEC, hidden, type Dir, type DropView, type FindView, type FlashView, type MapData, type MapObject, type MarkView, type TileKind, type TileMap, type Weather } from '@napoland/shared';
 import { LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
-import { Fires, GLOW_Y, Smoke, campfireModel, flicker, hearthModel, type Puffs } from './fire';
+import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
 import { CROUCH_DROP, CROUCH_LEAN, GrassMaterial, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps } from './grass';
 import { Creatures, Echoes, Flares, Flashes, Marks, Prints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
-  doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomTone, wallShapes, wallTile, windowModel, windowSpots,
+  doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
 } from './interior';
+import { cardboardModel, carModel, curtainColor, curtainPanels, headlightCar, leftModel, mailboxModel, millBuilding } from './left';
 import { ambience, assignLights, lightSources, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
-import { napoBuilding, napoSign, towerModel } from './napo';
+import { napoBuilding, napoProp, napoSign, towerModel } from './napo';
 import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, merge, mulberry32, ownToon, part, softTexture, toon } from './toon';
 
 export interface Avatar {
@@ -363,9 +365,9 @@ export class WorldView {
       if (toward) for (const c of corner) c.lerp(toward, fade);
       quad([tx, y0, ty], [tx, y0, ty + 1], [tx + 1, y0, ty + 1], [tx + 1, y0, ty], corner[0], corner[1], corner[2], corner[3]);
     };
-    // Outdoors, a building's timbers are weathered; indoors the room is warm if a fire burns in it, and
-    // concrete if it is one of NAPO's.
-    const tone = roomTone(this.warmRoom, map.data.style === 'napo');
+    // Outdoors, a building's timbers are weathered; indoors the room is warm if a fire burns in it,
+    // concrete if it is one of NAPO's, and boards if it is the mill's.
+    const tone = roomTone(this.warmRoom, map.data.style ?? false);
     this.shapes = wallShapes(map);
     for (let ty = 0; ty < map.height; ty++) for (let tx = 0; tx < map.width; tx++) {
       const kind = map.kind(tx, ty)!, y0 = this.topY(tx, ty), raised = map.level(tx, ty) > 0;
@@ -587,6 +589,11 @@ export class WorldView {
         still.push(root);
         continue;
       }
+      if (h.style === 'mill') {
+        // The old sawmill (left.ts): the same doorway, dark; nothing has burned in there since it closed.
+        still.push(millBuilding(h, doorX, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }));
+        continue;
+      }
       const g = new THREE.Group(), cx = h.x + h.w / 2, cz = h.y + h.h / 2;
       g.position.set(cx, 0, cz);
       // The door's middle across the front: 0 for the usual three-tile house, whose door is its middle tile.
@@ -621,13 +628,15 @@ export class WorldView {
       g.add(hinge);
       g.add(box(0.66, 0.014, 0.36, '#6d4d35', dx, 0.007, 1.07, false), box(0.52, 0.02, 0.24, '#4a3024', dx, 0.01, 1.07, false));
       // Someone lives in a lit house: a lamp over the door and one warm window. An unlit one is
-      // abandoned: dark, windows boarded up.
+      // abandoned: dark, windows boarded up; or, where the people left for what they thought would be
+      // two weeks, the curtains they drew, which never light.
       if (h.lit) g.add(part(new THREE.BoxGeometry(0.14, 0.1, 0.08), this.warm, dx, 1.0, 0.9, false));
       [-0.85, 0.85].forEach((wx, k) => {
         g.add(box(0.58, 0.5, 0.04, '#2a221b', wx, 0.72, 0.855, false));
         const lit = !!h.lit && k === 0;
         g.add(part(new THREE.BoxGeometry(0.46, 0.38, 0.05), lit ? this.warm : toon('#1c1f24'), wx, 0.72, 0.87, false));
-        if (!lit) {
+        if (h.curtains) curtainPanels(g, curtainColor(h), wx, 0.72, 0.9, 0.46, 0.38);
+        else if (!lit) {
           const p1 = box(0.56, 0.07, 0.03, '#6b5a44', wx, 0.76, 0.9, false); p1.rotation.z = 0.35; g.add(p1);
           const p2 = box(0.56, 0.07, 0.03, '#6b5a44', wx, 0.66, 0.9, false); p2.rotation.z = -0.3; g.add(p2);
         }
@@ -650,35 +659,29 @@ export class WorldView {
       still.push(m, box(0.42, 0.03, 0.42, '#4b2819', b.x + 0.5, 0.38, b.y + 0.5, false));
     }
 
-    for (const c of this.objects('car')) {
-      const car = new THREE.Group();
-      car.position.set(c.x + c.w / 2, 0, c.y + 0.5);
-      car.rotation.y = Math.PI / 2;
-      car.add(box(0.9, 0.36, 1.9, '#5f7470', 0, 0.34, 0), box(0.92, 0.12, 1.5, '#6b4a2e', 0, 0.34, -0.05, false));
-      car.add(box(0.84, 0.34, 1.15, '#5f7470', 0, 0.68, -0.22));
-      car.add(box(0.86, 0.22, 0.95, '#1a252c', 0, 0.7, -0.22, false), box(0.76, 0.2, 0.02, '#23313a', 0, 0.7, 0.36, false));
-      car.add(box(0.7, 0.04, 0.9, '#2b2b2e', 0, 0.88, -0.22), box(0.5, 0.14, 0.6, '#3d3a34', 0, 0.97, -0.25));
-      for (const [x, z] of [[-0.44, 0.6], [0.44, 0.6], [-0.44, -0.62], [0.44, -0.62]] as const) {
-        const w = part(flat(new THREE.CylinderGeometry(0.17, 0.17, 0.12, 10)), '#18181b', x, 0.17, z, 0.02);
-        w.rotation.z = Math.PI / 2;
-        car.add(w);
+    // Cars (left.ts). One of them keeps the headlight, the one farthest from where you arrive: the light
+    // is already in the scene, and moving it onto that car keeps the number of lights fixed.
+    const cars = this.objects('car'), lit = headlightCar(cars, this.map.data.spawn);
+    cars.forEach((c, i) => {
+      const car = carModel(c, { head: this.headMat, tail: this.tailMat });
+      if (i === lit) {
+        const target = new THREE.Object3D();
+        target.position.set(0, 0, 6);
+        this.headLight.position.set(0, 0.45, 1);
+        this.headLight.target = target;
+        car.add(this.headLight, target);
+        this.hasCar = true;
+        // Baking takes the car's meshes; the group stays for the headlight.
+        this.scene.add(car);
       }
-      for (const x of [-0.28, 0.28]) car.add(part(new THREE.BoxGeometry(0.14, 0.08, 0.03), this.headMat, x, 0.4, 0.955, false), part(new THREE.BoxGeometry(0.12, 0.08, 0.03), this.tailMat, x, 0.42, -0.955, false));
-      // One headlight (the last car's): it is already in the scene, and moving it here keeps the light count fixed.
-      const target = new THREE.Object3D();
-      target.position.set(0, 0, 6);
-      this.headLight.position.set(0, 0.45, 1);
-      this.headLight.target = target;
-      car.add(this.headLight, target);
-      this.hasCar = true;
-      // Baking takes the car's meshes; the group stays for the headlight.
-      this.scene.add(car);
       still.push(car);
-    }
+    });
 
     for (const b of this.objects('board')) still.push(boardModel(b.x, b.y));
     for (const s of this.objects('sign')) {
       if (s.style === 'napo') { still.push(napoSign(s)); continue; }
+      if (s.style === 'mailbox') { still.push(mailboxModel(s)); continue; }
+      if (s.style === 'cardboard') { still.push(cardboardModel(s)); continue; }
       const g = new THREE.Group();
       g.position.set(s.x + 0.5, 0, s.y + 0.5);
       g.add(box(0.08, 0.46, 0.08, '#4a3a2c', 0, 0.23, 0), box(0.56, 0.32, 0.07, '#6b5334', 0, 0.5, 0));
@@ -765,8 +768,10 @@ export class WorldView {
    */
   private buildRoom(still: THREE.Object3D[]) {
     const { map } = this;
+    // Furniture (interior.ts), what the town and the leavers left (left.ts) and NAPO's things (napo.ts):
+    // wherever they stand, in a room or out of doors.
     for (const o of map.data.objects) {
-      const m = furnitureModel(o, map);
+      const m = o.kind === 'hearth' ? coldHearthModel(o.x, o.y) : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
       if (m) still.push(m);
     }
     const fireplaces = this.objects('fireplace');
@@ -787,8 +792,10 @@ export class WorldView {
     this.instanced(this.shadowGeo, furnitureShadows(map), ([x, z, rx, rz], o) => { o.position.set(x, BLOB_Y, z); o.scale.set(rx, 1, rz); }, this.shadowMat);
     if (this.outdoors) return;
     const light: Array<readonly [number, number, number, number]> = [];
+    // The house of people who left has its curtains drawn inside too, in the same cloth as from the street.
+    const curtains = roomCurtains(map.data, this.peek);
     for (const w of windowSpots(map, this.shapes)) {
-      still.push(windowModel(w.x, w.y, this.paneMat, !this.warmRoom));
+      still.push(windowModel(w.x, w.y, this.paneMat, !this.warmRoom, curtains));
       light.push([w.x + 0.5, w.y + 1.95, 1.5, 2.1]);
     }
     for (const d of doorways(map)) {
