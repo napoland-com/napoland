@@ -674,8 +674,13 @@ const manhattan = (ax: number, ay: number, bx: number, by: number) => Math.abs(a
 
 export class World {
   readonly stepMs: number;
-  /** Where new players start and collapsed players wake up. */
+  /** The home town: where the home is, and the roads out start. */
   readonly home: TileMap;
+  /**
+   * Where new players start and collapsed players wake up: the wake point of the home off the home town
+   * (in their own copy of it, when it is private: their cabin), or the town's spawn if it has none.
+   */
+  readonly wakeUp: { map: TileMap; x: number; y: number; dir: Dir };
   /** The version of the items (content/items.json): a client with another one reloads. */
   readonly itemsVersion: number;
   /** The story's chapters (story.ts): where each player is in it is theirs (PlayerRecord.story). */
@@ -810,6 +815,9 @@ export class World {
     const home = this.maps.get(homeId);
     if (!home) throw new Error(`the home map ${homeId} does not exist`);
     this.home = home;
+    // validateWorld keeps it to one home, whose door opens onto the home town.
+    const room = [...this.maps.values()].find(m => m.data.wake && this.around.get(m.data.id) === home);
+    this.wakeUp = room ? { map: room, ...room.data.wake! } : { map: home, ...home.data.spawn };
     this.sky = weather;
     this.cycle = options.cycle ?? false;
     this.guests = options.guests ?? false;
@@ -983,13 +991,12 @@ export class World {
       tools: cleanTools(rec.tools),
       ...(rec.parcels !== undefined ? { parcels: cleanParcels(rec.parcels) } : {}),
     };
-    // Maps change between visits: a map may be gone (start over at home), or the saved tile may be
-    // inside something new or part of an exit now (start at that map's spawn). Never start inside
-    // a wall, or on an exit that would move you the moment you step.
+    // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
+    // saved tile may be inside something new or part of an exit now (start at that map's spawn). Never
+    // start inside a wall, or on an exit that would move you the moment you step.
     let map = this.maps.get(r.map), copy: string;
     if (!map) {
-      map = this.home;
-      toSpawn(r, map);
+      ({ map, x: r.x, y: r.y, dir: r.dir } = this.wakeUp);
       copy = this.copyFor(r, map);
     } else {
       if (!map.walkable(r.x, r.y) || map.exitAt(r.x, r.y)) toSpawn(r, map);
@@ -2005,25 +2012,28 @@ export class World {
     this.place(p, this.zoneFor(map, this.copyFor(p.rec, map), now), to.x, to.y, to.dir);
     this.arrive(p, from, 'exit', now);
     this.moveStory(p, { reach: map.data.id });
-    // Home, whichever copy of it: the letter waits there.
+    // Home, whichever copy of it (their own cabin): the letter waits there.
     if (this.homes.has(map.data.id)) this.homecoming(p, now);
   }
 
   /**
    * The copy of `map` a player walks into (an exit, or waking up at home): the one place that decides
    * it, so what comes (crowded places splitting into copies, streets) changes only this. `player` is as
-   * they are before they go: where they come from. For now every map has only its main copy, the world
+   * they are before they go: where they come from. A private room (the home) is each player's own copy of
+   * it, keyed by them, where nobody else ever is; every other map has only its main copy, the world
    * everyone shares.
    */
-  protected copyFor(_player: PlayerRecord, _map: TileMap): string {
-    return '';
+  protected copyFor(player: PlayerRecord, map: TileMap): string {
+    return map.data.private ? player.id : '';
   }
 
   /**
-   * The copy of `map` a player comes back into when they join: the one they were saved in if it still
-   * makes sense (it is open: someone is in it), else the main copy.
+   * The copy of `map` a player comes back into when they join: their own, always, in a private room;
+   * elsewhere the one they were saved in if it still makes sense (it is open: someone is in it), else
+   * the main copy.
    */
   private rejoin(r: PlayerRecord, map: TileMap): string {
+    if (map.data.private) return this.copyFor(r, map);
     const copy = typeof r.zone === 'string' ? r.zone : '';
     return copy && this.zones.has(zoneKey(map.data.id, copy)) ? copy : '';
   }
@@ -2033,14 +2043,19 @@ export class World {
     const from = p.zone;
     this.fall(p, now);
     this.arrive(p, from, 'collapse', now);
+    // Woken up in the home (their cabin), they are home as if they had walked in: the letter is there.
+    if (this.homes.has(p.map.data.id)) this.homecoming(p, now);
   }
 
-  /** Out of energy: what the player carries falls out where they are, and they go home to the spawn with a full bar, dry and alone. */
+  /**
+   * Out of energy: what the player carries falls out where they are, and they wake up at home (by the
+   * fire in their own cabin, where the home is theirs) with a full bar, dry and alone.
+   */
   private fall(p: Online, now: number): void {
     const { id, map, x, y } = p.rec;
     this.dropBag(p, now);
-    const { spawn } = this.home.data;
-    this.place(p, this.zoneFor(this.home, this.copyFor(p.rec, this.home), now), spawn.x, spawn.y, spawn.dir);
+    const w = this.wakeUp;
+    this.place(p, this.zoneFor(w.map, this.copyFor(p.rec, w.map), now), w.x, w.y, w.dir);
     p.rec.energy = this.maxOf(p.rec);
     p.rec.wet = 0;
     p.hitched = false;

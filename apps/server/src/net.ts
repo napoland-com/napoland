@@ -506,8 +506,9 @@ export function attachNet(o: NetOptions): Net {
   }
 
   /**
-   * A new player at the home map's spawn: with a new token without sign-in (`sub` null: in legacy
-   * mode, or a guest), or belonging to `sub`. Undefined if that failed the session.
+   * A new player, where everyone wakes up (World.wakeUp: at home, by the fire): with a new token
+   * without sign-in (`sub` null: in legacy mode, or a guest), or belonging to `sub`. Undefined if that
+   * failed the session.
    */
   async function newPlayer(s: Session, name: string, sub: string | null): Promise<Entry | undefined> {
     if (isFull()) return void fail(s, 'server_full', FULL_TEXT);
@@ -527,9 +528,10 @@ export function attachNet(o: NetOptions): Net {
       const token = sub === null ? randomBytes(32).toString('base64url') : undefined;
       const id = randomUUID();
       const now = Date.now();
-      const { id: map, spawn } = world.home.data;
+      // Where everyone wakes up: at home, by the fire (the World puts them in a copy of the home of their own).
+      const { map, x, y, dir } = world.wakeUp;
       const rec: PlayerRecord = {
-        id, name, tokenHash: token === undefined ? null : hashToken(token), authSub: sub, map, x: spawn.x, y: spawn.y, dir: spawn.dir,
+        id, name, tokenHash: token === undefined ? null : hashToken(token), authSub: sub, map: map.data.id, x, y, dir,
         color: colorFor(id), energy: ENERGY_MAX, bag: [], wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} }, createdAt: now, lastSeenAt: now,
       };
       // create() also refuses the name if another player took it since nameTaken().
