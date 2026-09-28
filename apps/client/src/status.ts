@@ -136,8 +136,9 @@ export function statusView(s: StatusInput): StatusView {
  * outfits it opens, which a guest (`guest`) would wear once signed in.
  */
 export function newsBanner(n: News, place: string, items?: Items, guest = false): { title: string; sub: string } | null {
-  // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where.
-  if (n.kind === 'call' || n.kind === 'note') return null;
+  // A call is for the ears alone (soundscape.ts): a banner would say who called, and from where. A
+  // lodestone's tug is a pulse on the status panel and a faint sound: a banner would make it loud.
+  if (n.kind === 'call' || n.kind === 'tug' || n.kind === 'note') return null;
   if (n.kind === 'keepsake') {
     const def = items?.get(n.item), energy = items?.keepsakes?.energy ?? 0;
     if (n.home >= n.of) return { title: 'All the keepsakes are home', sub: `${def ? `${def.name}, the last of them.\n` : ''}Your energy bar is ${energy} bigger, for good.` };

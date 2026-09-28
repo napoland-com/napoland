@@ -2,7 +2,7 @@
 id: notes-left-behind
 title: Notes and keepsakes left behind
 status: done
-order: 440
+order: 460
 area: world
 depends: [field-notebook]
 ---

@@ -105,7 +105,8 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'sign_in_first':
       if (action === 'say' || action === undefined) return 'Sign in to talk';
       if (action === 'outfit' || action === 'pattern' || action === 'badge') return `Sign in to wear ${action === 'outfit' ? 'an outfit' : `a ${action}`}`;
-      return action === 'buy' ? 'Sign in to spend merits' : 'Sign in to make friends';
+      if (action === 'buy') return 'Sign in to spend merits';
+      return action.startsWith('trade') ? 'Sign in to trade' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
     case 'bag_at_home': return 'The bag you wear changes only at home';
     case 'whole': return 'It needs no mending';
@@ -123,6 +124,11 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'owned': return 'It is yours already';
     case 'no_merits': return 'You have no merit to spend on it';
     case 'not_owned': return 'It is not yours yet: spend a merit on it first';
+    case 'trades_off': return 'They take no trade requests';
+    case 'busy': return 'They are trading with someone else';
+    case 'trading': return 'Finish the trade you are in first';
+    case 'their_bag_full': return 'Their bag has no room for it';
+    case 'nothing_to_trade': return 'There is nothing to trade yet';
   }
 }
 

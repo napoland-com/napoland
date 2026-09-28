@@ -13,7 +13,7 @@ import { setLogLevel } from '../src/log';
 import { hashToken } from '../src/net';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server';
 import { MemoryStorage, type PlayerRecord, type Storage } from '../src/storage';
-import { colorFor } from '../src/world';
+import { World, colorFor } from '../src/world';
 import { chestMaps, fixtureMaps, itemsData } from './fixtures';
 
 export type Msg<T extends ServerMsg['t']> = Extract<ServerMsg, { t: T }>;
@@ -492,6 +492,8 @@ export async function forgetsGuestsWhoStayedAway(storage: Storage): Promise<{ aw
   await storage.addReport({ reporter: signed.id, reported: away.id, reason: 'spam', quote: null, at: now - 1000 });
   // Coming back counts: seen now, it stays.
   expect(await storage.seen(back.id, now)).toBe(true);
+  // Only a guest is seen so: someone signed in with is no guest (a guest's hello by token loses to the claim).
+  expect(await storage.seen(signed.id, now)).toBe(false);
 
   expect(await storage.forgetGuests(cutoff)).toBe(1);
   expect(await storage.findByTokenHash(hashToken(away.token))).toBeNull();
@@ -586,6 +588,53 @@ export async function keepsNotes(storage: Storage): Promise<void> {
   const other = `dev:${randomUUID()}@example.test`;
   await savedPlayer(storage, { tokenHash: null, authSub: other, notes: ['walt-truck'], keepsakes: ['tin-whistle'] });
   expect(await storage.findByAuthSub(other)).toMatchObject({ notes: ['walt-truck'], keepsakes: ['tin-whistle'] });
+}
+
+/**
+ * What a newer release saved that this one does not know, through the World and `storage` (in memory,
+ * or a real database), as after a rollback to this release: items it has no definition of (in the bag,
+ * in the stash with their pieces and in `out`) and counts it does not keep are never shown and never
+ * lost: the player plays without them, and every save writes them back as they were, so the newer
+ * release, back, finds them. `items` are this release's items (they know moss and nails, not a lantern).
+ */
+export async function keepsWhatANewerReleaseSaved(storage: Storage, items: ItemsData): Promise<void> {
+  const lantern = { item: 'lantern', count: 1, piece: { cond: 0.5, glow: 3 } };
+  const { id, token } = await savedPlayer(storage, {
+    map: 'town', x: 0, y: 5,
+    bag: [{ item: 'moss', count: 2 }, lantern as BagSlot, { item: 'nail', count: 1 }],
+    stats: { found: 4, sparks: 9, charted: { woods: true } } as never,
+    stash: { items: { moss: 1, lantern: 2 }, out: { lantern: 1 }, pieces: { lantern: [{ cond: 1, glow: 1 }, { cond: 0.2, glow: 2 }] } } as never,
+  });
+  const world = new World(fixtureMaps(), 'town', 'overcast', { items });
+  const joined = world.join((await storage.findByTokenHash(hashToken(token)))!, 0);
+  // Played without it: nothing of it is shown.
+  expect(joined.bag).toEqual([{ item: 'moss', count: 2 }, { item: 'nail', count: 1 }]);
+  expect(joined.stash).toEqual([{ item: 'moss', count: 1 }]);
+  // A save of the player as they play writes it all back, as it was.
+  await storage.save(world.get(id)!);
+  const back = (await storage.findByTokenHash(hashToken(token)))!;
+  expect(back.bag).toEqual([{ item: 'moss', count: 2 }, { item: 'nail', count: 1 }, lantern]);
+  expect(back.stats).toEqual({ found: 4, sparks: 9, charted: { woods: true } });
+  expect(back.stash).toEqual({ items: { moss: 1, lantern: 2 }, out: { lantern: 1 }, pieces: { lantern: [{ cond: 1, glow: 1 }, { cond: 0.2, glow: 2 }] } });
+}
+
+/**
+ * The mark that what a player wears was counted as taken out of the stash, once (PlayerRecord.wornOut), on
+ * `storage` (in memory, or a real database): kept with the counts but never among them, and never
+ * forgotten by a save of a record without it.
+ */
+export async function keepsTheWornOutMark(storage: Storage): Promise<void> {
+  const { token } = await savedPlayer(storage, { stats: { found: 2 } });
+  const load = async () => (await storage.findByTokenHash(hashToken(token)))!;
+  const rec = await load();
+  expect(rec.wornOut).toBeUndefined();
+  await storage.save({ ...rec, wornOut: true, lastSeenAt: rec.lastSeenAt + 1000 });
+  const marked = await load();
+  expect(marked.wornOut).toBe(true);
+  expect(marked.stats).toEqual({ found: 2 });
+  const { wornOut: _mark, ...without } = marked;
+  await storage.save({ ...without, lastSeenAt: marked.lastSeenAt + 1000 });
+  expect((await load()).wornOut).toBe(true);
 }
 
 /**
@@ -764,13 +813,18 @@ export function setup(options: Partial<ServerOptions> | (() => Partial<ServerOpt
  */
 export async function keepsFriendsAndMessages(storage: Storage): Promise<void> {
   const a = await savedPlayer(storage), b = await savedPlayer(storage);
-  expect(await storage.findPerson({ name: a.name.toUpperCase() })).toEqual({ id: a.id, name: a.name, requestsOff: false, signedIn: false });
+  expect(await storage.findPerson({ name: a.name.toUpperCase() })).toEqual({ id: a.id, name: a.name, requestsOff: false, tradesOff: false, signedIn: false });
   expect(await storage.findPerson({ id: randomUUID() })).toBeNull();
   // Whether anyone signed in with them: a guest cannot be asked to be friends.
   const signed = await savedPlayer(storage, { tokenHash: null, authSub: `dev:${randomUUID()}@example.test` });
   expect((await storage.findPerson({ id: signed.id }))?.signedIn).toBe(true);
   await storage.setRequestsOff(b.id, true);
-  expect((await storage.findPerson({ id: b.id }))?.requestsOff).toBe(true);
+  expect((await storage.findPerson({ id: b.id }))).toMatchObject({ requestsOff: true, tradesOff: false });
+  // The two settings are apart: trade requests off leaves friend requests as they were.
+  await storage.setTradesOff(a.id, true);
+  expect((await storage.findPerson({ id: a.id }))).toMatchObject({ requestsOff: false, tradesOff: true });
+  await storage.setTradesOff(a.id, false);
+  expect((await storage.findPerson({ id: a.id }))?.tradesOff).toBe(false);
 
   await storage.setLink(a.id, b.id, 'request', true);
   await storage.setLink(a.id, b.id, 'request', true);
@@ -792,4 +846,21 @@ export async function keepsFriendsAndMessages(storage: Storage): Promise<void> {
   await storage.deleteTells(b.id, a.id);
   expect(await storage.tellsTo(b.id)).toEqual([]);
   await storage.addReport({ reporter: a.id, reported: b.id, reason: 'spam', quote: null, at: 1_700_000_002_000 });
+}
+
+/**
+ * Two players who traded, saved together (on `storage`, in memory or a real database): both bags and
+ * stashes as the swap left them, read back whole.
+ */
+export async function savesATradeTogether(storage: Storage): Promise<void> {
+  const whole = { wet: 0, stats: {}, xp: 0, stash: { items: {}, out: {} } };
+  const [a, b] = [await savedPlayer(storage, { ...whole, bag: [{ item: 'nail', count: 3 }] }), await savedPlayer(storage, { ...whole, bag: [{ item: 'tea', count: 1 }] })];
+  const load = async (token: string) => (await storage.findByTokenHash(hashToken(token)))!;
+  const [ra, rb] = [await load(a.token), await load(b.token)];
+  const after = [
+    { ...ra, bag: [{ item: 'tea', count: 1 }], stash: { items: {}, out: { tea: 1 } }, lastSeenAt: ra.lastSeenAt + 1000 },
+    { ...rb, bag: [{ item: 'nail', count: 3 }], lastSeenAt: rb.lastSeenAt + 1000 },
+  ];
+  await storage.saveTogether(after);
+  expect([await load(a.token), await load(b.token)]).toEqual(after);
 }

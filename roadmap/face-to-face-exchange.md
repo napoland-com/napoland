@@ -1,8 +1,8 @@
 ---
 id: face-to-face-exchange
 title: Face-to-face exchange
-status: planned
-order: 50
+status: done
+order: 430
 area: social
 depends: [friends-messages, gear-on-the-road]
 ---
