@@ -64,7 +64,7 @@ import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
   CRATE_FULL, CRATE_NO_GEAR, GONE, INDOORS, KEEPSAKE_STAYS, KNOCKING, LEFT_ONE, MARKED, NOBODY_LIVES, NO_MAP_YET, NO_MOVES, NO_ROOM, RESIDENT, TENDED, TOOK_ONE, TOO_DARK, YOUR_CABIN, buyQuestion,
   cabinWho, comfortLines, didText, didWho, doorText, feedQuestion, fullFire, haveTool, knockedText, leaveQuestion, makeQuestion, mendQuestion, moveQuestion, noMerit, noShard, nothingToBurn,
-  openQuestion, placedAlready, sentence, shortOf, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, waltOnTheLongNight,
+  openQuestion, FIRST_WAKE, placedAlready, sentence, shortOf, stashShort, stoneQuestion, streetLetterLines, tossQuestion, upgradeQuestion, useQuestion, waltOnTheLongNight,
 } from './said';
 import { Lodestone, shardNear } from './lodestone';
 import { trophiesIn } from './view/cabin';
@@ -468,7 +468,8 @@ export class Game {
   /** The server's wall clock at our `now` (the welcome says it): the UTC day turns by it. */
   private wall = { now: 0, ms: 0 };
   /** Letters from home (who thanked you while you were away, the one about your street), in the order they came, each until the text box is free to show it. */
-  private letters: string[][] = [];
+  /** What the text box brings up by itself when it is free (idle): letters, and a new player's first wake. */
+  private letters: { who: string; lines: string[] }[] = [];
   /** Whom you last asked to trade: a refusal names them (the trade is the server's to make). */
   private tradeWith: PersonView | null = null;
   /** You called off the trade with this player: what the server says of it until it has heard you is old news. */
@@ -720,7 +721,7 @@ export class Game {
         this.socialChanges++;
         break;
       case 'streetLetter':
-        this.letters.push(streetLetterLines(msg.doorOff));
+        this.letters.push({ who: 'Letter', lines: streetLetterLines(msg.doorOff) });
         break;
       case 'doorstep':
         this.offerMoves(msg.moves);
@@ -916,7 +917,7 @@ export class Game {
       }
       case 'letter': {
         const lines = letterLines(msg.thanks, id => this.maps.find(id), this.items);
-        if (lines.length) this.letters.push(lines);
+        if (lines.length) this.letters.push({ who: 'Letter', lines });
         break;
       }
       case 'progress':
@@ -2045,7 +2046,7 @@ export class Game {
     const free = this.online && !covered && !this.held && !this.question && !this.note && !this.dialog;
     const letter = free && this.letters.shift();
     if (letter) {
-      this.openDialog({ x: 0, y: 0, who: 'Letter', lines: letter, kind: 'talk' });
+      this.openDialog({ x: 0, y: 0, who: letter.who, lines: letter.lines, kind: 'talk' });
       return;
     }
     const me = this.online ? this.me : undefined, blocked = new Set((this.friends?.blocked ?? []).map(p => p.id));
@@ -2056,6 +2057,18 @@ export class Game {
       skip: id => this.thankedToday.has(id) || blocked.has(id),
     });
     if (offer) this.offerThanks(offer);
+  }
+
+  /**
+   * A new player's first moment, at home by the fire: the story's first chapter in the text box, before any
+   * letter, and who knows the woods. Only while nothing is done yet (the first chapter, no XP). True when it
+   * is to be said: main.ts keeps that, so each character hears it once.
+   */
+  firstWake(): boolean {
+    const first = this.story.chapters[0];
+    if (!this.online || !first || this.chapter !== first.id || this.progress.xp > 0) return false;
+    this.letters.unshift({ who: first.title, lines: [first.text, FIRST_WAKE] });
+    return true;
   }
 
   /** "Ana fed this fire. Thank Ana?" YES sends the thanks; NO means never again for that fire or arrow this session. */

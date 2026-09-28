@@ -69,6 +69,8 @@ const soundSetting = ((): SoundSetting => {
   } catch { return { volume: 0.7, muted: false }; }
 })();
 const sound = new Sound(soundSetting);
+/** The characters whose first wake this browser has already shown (Game.firstWake), one key each. */
+const FIRST_WAKE_KEY = 'napoland.woke';
 /** The radio's switch, as this browser keeps it: on unless it was turned off, so a radio just made is heard at once. */
 const RADIO_KEY = 'napoland.radio';
 let radioOn = store.get(RADIO_KEY) !== 'off';
@@ -636,6 +638,9 @@ conn.onMessage = (msg: ServerMsg) => {
   game.handle(msg, now);
   hud.setOnline(game.players.size);
   if (msg.t === 'welcome') {
+    // A new player's first wake says where they are and who knows the woods, once for each character here.
+    const woke = `${FIRST_WAKE_KEY}.${msg.you}`;
+    if (!store.get(woke) && game.firstWake()) store.set(woke, '1');
     if (!arrived || view.map !== game.map) {
       arrived = true;
       arrival.cut();
