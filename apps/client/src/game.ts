@@ -847,8 +847,9 @@ export class Game {
       }
       case 'energy': {
         // Cozy just now (it was not, as last told): the news says for how long. Worn off away from your fire: a word over your head.
+        // Not during a new player's first steps: they wake up by the fire, and one thing at a time (DESIGN.md).
         const was = this.body.view.cozy ?? 0, is = msg.body.cozy ?? 0;
-        if (!was && is > 0) this.news.push({ kind: 'cozy', minutes: Math.round(is / 60) });
+        if (!was && is > 0 && this.firstSteps === null) this.news.push({ kind: 'cozy', minutes: Math.round(is / 60) });
         else if (was > 0 && !is && msg.body.fireside === undefined) this.murmur('The warmth of home wears off');
         // The trip is over (home again, or a collapse), and what you ate for it with it.
         if (this.body.view.meals?.length && !msg.body.meals?.length) this.murmur('What you ate has worn off');
