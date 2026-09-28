@@ -3,14 +3,15 @@
  * can be tested; hud.ts shows it and main.ts asks for it.
  */
 import {
-  ELEMENTS, FEATS, GUEST_DAYS, outfitsOpening, rankOf, rankText, type BagSlot, type BodyView, type Element, type EnergyView, type Feat, type FlashKind, type ProgressView, type Stats, type StoneView,
-  type StormView, type SurgeView, type Weather,
+  ELEMENTS, FEATS, GUEST_DAYS, LEVEL_MAX, MERIT_XP, RESTED_MAX, meritsLeft, outfitsOpening, rankOf, rankText, toNextMerit, type BagSlot, type BodyView, type Element, type EnergyView, type Feat,
+  type FlashKind, type MeritsView, type ProgressView, type Stats, type StoneView, type StormView, type SurgeView, type Weather,
 } from '@napoland/shared';
 import { listWords } from './details';
 import { minutes, type News } from './game';
 import type { FeatView, StatusView } from './hud';
 import type { Items } from './items';
 import { parcelBanner } from './parcels';
+import { meritText, thousands } from './said';
 import { outfitWords } from './wardrobe';
 
 export interface StatusInput {
@@ -38,15 +39,14 @@ export interface StatusInput {
   quirks: string[];
   /** You play as a guest (the welcome said). */
   guest?: boolean;
+  /** What you spent of your merits (merits.ts): past level 20, the panel says how many are left and how far the next is. */
+  merits?: MeritsView;
 }
 
 /** What the Status tab tells a guest, above everything else: where their progress lives, how long, and what keeps it. */
 export const GUEST_NOTE = `You are playing as a guest. Your progress lives in this browser: clearing its data loses it, and a guest who stays away for ${GUEST_DAYS} days is deleted. Signing in keeps everything.`;
 
-/** "12,345": a count with its thousands apart, the same in every language the browser speaks. */
-export function thousands(n: number): string {
-  return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-}
+export { thousands };
 
 /**
  * A feat in the status panel, from its count: its rank, what that rank does (before rank 1, what rank 1
@@ -62,6 +62,16 @@ export function featView(f: Feat, count: number): FeatView {
     next: next ? `${thousands(count)} of ${thousands(next.need)} ${f.counts} to rank ${rank + 1}` : 'Top rank',
     ...(next && { progress: Math.min(1, count / next.need) }),
   };
+}
+
+/** The cup of rest in the status panel, under Rested: "140 XP of doubled stashing left", or what fills it while it is empty. */
+export function restedText(xp: number): string {
+  return xp > 0 ? `${thousands(xp)} XP of doubled stashing left` : 'Empty. It fills while you are not playing, and then what you stash counts double.';
+}
+
+/** "Rested: your next 140 XP from the chest count double.": at the chest while the cup holds any. */
+export function restedLine(xp: number): string {
+  return `Rested: your next ${thousands(xp)} XP from the chest count double.`;
 }
 
 /** "Level 3 · 150 XP, 120 to go": where you stand, for the status panel and the stash's header. */
@@ -85,6 +95,13 @@ export function statusView(s: StatusInput): StatusView {
   const rows: StatusView['rows'] = [];
   const p = s.progress;
   rows.push({ label: 'Level', text: levelText(p), bar: p.to === null ? 1 : (p.xp - p.from) / (p.to - p.from), tone: 'good' });
+  // Level 20 is the top: past it, the XP stashing earns goes to merits.
+  if (p.level >= LEVEL_MAX) {
+    const spent = s.merits?.spent ?? 0;
+    rows.push({ label: 'Merits', text: meritText(p.xp, spent, s.guest), bar: (MERIT_XP - toNextMerit(p.xp)) / MERIT_XP, tone: meritsLeft(p.xp, spent) ? 'good' : 'plain' });
+  }
+  const rested = p.rested ?? 0;
+  rows.push({ label: 'Rested', text: restedText(rested), bar: rested / RESTED_MAX, tone: rested > 0 ? 'good' : 'plain' });
   if (s.energy) {
     const e = s.energy, how = e.rate < 0 ? 'draining' : e.rate > 0 && e.value < e.max ? 'coming back' : 'holding';
     rows.push({ label: 'Energy', text: `${Math.round(e.value)} of ${e.max}, ${how}`, bar: e.value / e.max, tone: e.rate < 0 ? 'bad' : e.rate > 0 ? 'good' : 'plain' });
@@ -125,9 +142,16 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
   if (n.kind === 'level') {
     const opened = listWords(outfitsOpening(n.from, n.progress.level).map(o => `the ${outfitWords(o.name)}`));
     const outfits = opened ? (guest ? `\nSign in to wear ${opened}.` : `\nNew in your wardrobe: ${opened}.`) : '';
-    return { title: `Level ${n.progress.level}`, sub: `Your energy bar grows to ${n.progress.maxEnergy}.\nYou can go a little farther now.${outfits}` };
+    // The top: what comes next is merits.
+    const top = n.progress.level >= LEVEL_MAX ? `\nFrom here on, every ${thousands(MERIT_XP)} XP earns a merit.` : '';
+    return { title: `Level ${n.progress.level}`, sub: `Your energy bar grows to ${n.progress.maxEnergy}.\nYou can go a little farther now.${outfits}${top}` };
   }
   if (n.kind === 'chapter') return { title: `Journal: ${n.chapter.title}`, sub: 'A new chapter of the story.\nRead it in your journal, in the menu.' };
+  if (n.kind === 'rested') return { title: 'Rested', sub: `Your next ${thousands(n.xp)} XP from the chest count double.` };
+  if (n.kind === 'merit') {
+    const spend = guest ? 'Sign in to spend merits in the wardrobe at your chest.' : `You have ${n.left} to spend in the wardrobe at your chest.`;
+    return { title: n.earned === 1 ? 'A merit' : `${n.earned} merits`, sub: `Past level ${LEVEL_MAX}, every ${thousands(MERIT_XP)} XP earns one.\n${spend}` };
+  }
   if (n.kind === 'live') return { title: 'It is still live', sub: `Stash it within ${minutes(n.fresh)} for the most XP.` };
   if (n.kind === 'feat') {
     const f = FEATS.find(x => x.id === n.id);

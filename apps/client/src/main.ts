@@ -10,7 +10,7 @@ import '@fontsource-variable/nunito';
 import '@fontsource/roboto/latin-500.css';
 import './style.css';
 import {
-  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData, type MapRef,
+  HUM_BEFORE_S, OAUTH_PROVIDERS, bagSlotsOf, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir, type Gear, type ItemsData, type MapData, type MapRef,
   type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type Slot, type StoryData, type Weather, type Worn,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
@@ -20,6 +20,8 @@ import { detailView } from './details';
 import { Game, type News } from './game';
 import { friendsView, lastFrom } from './friends';
 import { Hud, type TagView } from './hud';
+import { badgeIcon } from './icons';
+import { crateView } from './crates';
 import { Items, mendViews, quirkNames, recipeViews, resistText, slotViews, toolViews, upgradeOf, upgradeViews, wearText, wornViews } from './items';
 import { journalView } from './journal';
 import { Keys, keyTarget } from './keys';
@@ -35,7 +37,7 @@ import { soundscape, type Scene } from './soundscape';
 import { CODE_LENGTH, SignIn, digits, loadAuthConfig, type AuthBackend, type Screen } from './signin';
 import { Resolution } from './quality';
 import { heardFinds, nearest, radioOf, type RadioScene } from './radio';
-import { levelText, newsBanner, statusView } from './status';
+import { levelText, newsBanner, restedLine, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
 import { WorldView, createRenderer, lightningAt } from './view/world';
@@ -100,18 +102,21 @@ let welcomed = false;
 /** The first welcome of this page shows where you are; later ones are reconnects. */
 let arrived = false;
 const game = new Game(maps, msg => { if (welcomed) conn.send(msg); }, items, story);
-/** A panel is open over the world (the bag, the journal, the stash, a trade...), where it covers the banners. */
-const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen || hud.tradeOpen;
-/** Close the bag, the journal, the chat, the status and About panels, a trade (which calls it off) and the menu; true when one was open. */
+/** A panel is open over the world (the bag, the journal, the stash, a crate, a trade...), where it covers the banners. */
+const panelOpen = () => hud.bagOpen || hud.journalOpen || hud.statusOpen || hud.aboutOpen || hud.stashOpen || hud.benchOpen || hud.crateOpen || hud.friendsOpen || hud.chatOpen || hud.paperOpen
+  || hud.tradeOpen;
+/** Close the bag, the journal, the chat, the status and About panels, a crate, a trade (which calls it off) and the menu; true when one was open. */
 const closePanels = () => {
   const open = panelOpen() || hud.menuOpen;
   hud.showPaper(null);
-  hud.toggleBag(false); hud.toggleJournal(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleMenu(false); hud.toggleFriends(false); hud.toggleChat(false);
+  hud.toggleBag(false); hud.toggleJournal(false); hud.toggleStatus(false); hud.toggleAbout(false); hud.toggleStash(false); hud.toggleBench(false); hud.toggleCrate(false); hud.toggleMenu(false); hud.toggleFriends(false); hud.toggleChat(false);
   hud.toggleTrade(false);
   return open;
 };
 /** What the wardrobe knows: whether you play as a guest, your level and the outfit you wear. */
-const wardrobeNow = (): WardrobeState => ({ guest: game.guest, level: game.progress.level, wearing: game.myOutfit });
+const wardrobeNow = (): WardrobeState => ({
+  guest: game.guest, level: game.progress.level, wearing: game.myOutfit, xp: game.progress.xp, merits: game.merits, pattern: game.myPattern, badge: game.myBadge,
+});
 /** The status panel, as the game stands now. */
 const showStatus = () => {
   const now = performance.now();
@@ -119,7 +124,7 @@ const showStatus = () => {
     energy: game.energy(now), body: game.bodyNow(now), surge: game.surgeNow(now), caught: game.caught(now), stone: game.stone, stats: game.stats, bag: game.bag, items,
     progress: game.progress, resists: resistText(game.myGear, items, game.myWorn),
     wear: wearText(game.myGear, game.myWorn, items), quirks: quirkNames(game.myWorn, items),
-    storm: game.stormNow(now), flash: game.flashed(now), weather, wilds: game.map.data.kind === 'wilds', guest: game.guest,
+    storm: game.stormNow(now), flash: game.flashed(now), weather, wilds: game.map.data.kind === 'wilds', guest: game.guest, merits: game.merits,
   }));
 };
 /**
@@ -147,7 +152,7 @@ const controls = {
   // While it asks, the stick answers the question, and the panel it was asked from stays open.
   pad: (dir: Dir | null) => { if (dir && !game.question) closePanels(); game.padChange(dir, performance.now()); },
   // The text box first (it stands above everything but the paper map); then, with a card open in the stash or at the workbench, A presses its button.
-  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.pressCard()) return; else if (hud.tradeOpen) game.tradePressA(); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
+  a: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressA(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (hud.journalOpen) hud.toggleJournal(false); else if (hud.statusOpen) hud.toggleStatus(false); else if (hud.pressCard()) return; else if (hud.tradeOpen) game.tradePressA(); else if (hud.stashOpen) hud.toggleStash(false); else if (hud.benchOpen) hud.toggleBench(false); else if (hud.crateOpen) hud.toggleCrate(false); else if (hud.friendsOpen) hud.toggleFriends(false); else if (hud.chatOpen) hud.toggleChat(false); else if (hud.bagOpen) hud.toggleBag(false); else game.pressA(); },
   // Back out of the text box first, then the About panel, then out of the status, a card or the bag's details, before the bag itself opens or closes.
   b: () => { if (hud.paperOpen) hud.showPaper(null); else if (boxUp()) game.pressB(); else if (hud.menuOpen) hud.toggleMenu(false); else if (hud.aboutOpen) hud.toggleAbout(false); else if (!game.pressB() && !hud.back()) hud.toggleBag(); },
   // B held and let go, where the finger is on the fan, 1, 2 or 3 while Q is held, and a hold taken away.
@@ -179,6 +184,8 @@ const hud = new Hud(screen, {
   doff: slot => game.doff(slot),
   open: item => game.openSealed(item),
   outfit: id => game.wearOutfit(id),
+  adorn: (kind, id) => game.wearLook(kind, id),
+  buy: look => game.buyLook(look),
   // At the workbench, the first goal opens the card of what to make (once the workbench has answered).
   goal: () => {
     const next = game.nextGear();
@@ -193,10 +200,15 @@ const hud = new Hud(screen, {
     else game.craft(recipe);
   },
   benchClosed: () => game.closeBench(),
-  // What a tap in the chest, at the workbench or in the bag shows, from what the open chest or workbench says your stash holds.
+  // Taking out of a crate asks nothing; leaving one asks first (the game does).
+  crateTake: id => game.takeFromCache(id),
+  crateLeave: slot => game.leaveInCache(slot),
+  crateClosed: () => game.closeCache(),
+  // What a tap in the chest, at the workbench, in the bag or at a crate shows, from what the open chest or workbench says your stash holds, or what the open crate holds.
   details: (ref, where) => detailView(ref, {
-    items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools, panel: where === 'bag' ? 'bag' : 'home',
-    wardrobe: wardrobeNow(),
+    items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools,
+    panel: where === 'bag' ? 'bag' : where === 'crate' ? 'crate' : 'home', wardrobe: wardrobeNow(),
+    ...(game.cache ? { crate: { items: game.cacheItemsNow(performance.now()), left: game.cache.left, took: game.cache.took, me: game.meId ?? '' } } : {}),
   }),
   chat: a => {
     if (a.a === 'tab') chatTab = a.to;
@@ -691,12 +703,17 @@ let chatShown: { changes: number; tab: ChatTo } = { changes: -1, tab: chatTab };
 let newsShown = '';
 /** The friends panel asks for the list again this often while it is open: who is online, and where. */
 const FRIENDS_REFRESH_MS = 10_000;
+/** An open crate is drawn again this often: "2 min ago" moves on. */
+const CRATE_REDRAW_MS = 15_000;
 let friendsAskedAt = 0;
 /** The chest as the stash sheet shows it: it opens when the game opens one, and follows what is in it. */
 let chestShown: typeof game.chest = null;
 let capacityShown = 0;
 /** The workbench and the gear worn, as their sheets show them. */
 let benchShown: typeof game.bench = null;
+/** The crate as its sheet shows it, and when that was drawn: how long ago each thing was left moves on. */
+let crateShown: typeof game.cache = null;
+let crateAt = 0;
 /** Glowing footprints (a quirk): the tile each player was last seen on, and the prints left on this map, oldest first. */
 const printTiles = new Map<string, string>();
 let prints: Array<{ map: string; x: number; y: number; dir: Dir; at: number }> = [];
@@ -705,6 +722,10 @@ let humFor = -Infinity;
 let gearShown: { gear: Gear | null; worn: Worn | null } = { gear: null, worn: null };
 /** The wardrobe as drawn: a guest's gate, or the outfits of a level, and the one worn. */
 let wardrobeShown = '';
+/** The badge before your own name, as drawn (undefined: not yet). */
+let badgeShown: string | null | undefined;
+/** A badge's drawing, if it is one this copy draws. */
+const badgeOf = (id: string | undefined) => (id ? badgeIcon(id) : undefined);
 let toolsShown: string[] | null = null;
 let radioShown: boolean | null = null;
 /** Your radio (radioOf), and where the finds it listens for lie on this map: found again only when the finds or the weather change. */
@@ -750,6 +771,8 @@ function frame(now: number) {
   arrival.update(dt);
   game.held = arrival.leaving;
   game.update(dt, now);
+  // The letter home, and offers to thank someone, wait for the panels (and any card open in one), the menu, the fan of calls and the fade.
+  game.idle(now, panelOpen() || hud.cardOpen || hud.menuOpen || callB.open || arrival.dark > 0);
   const me = game.me;
   if (game.lootChanges !== lootShown.changes || view !== lootShown.view) {
     lootShown = { changes: game.lootChanges, view };
@@ -807,9 +830,12 @@ function frame(now: number) {
     if (n.kind === 'feat') { toSay.push(n); continue; }
     // A dot on the chest's Wardrobe tab too, until it is looked at, when the level opened an outfit.
     if (n.kind === 'level') { toSay.push(n); if (!game.guest && outfitsOpening(n.from, n.progress.level).length) hud.setWardrobeNews(true); continue; }
+    // A merit waits like a level (it comes at the chest), and puts a dot on the patterns and badges it buys until they are looked at.
+    if (n.kind === 'merit') { toSay.push(n); if (!game.guest) hud.setMeritNews(true); continue; }
     // A parcel that comes on arrival waits for the place's name to be read first; one that comes while
-    // the chest is open needs no banner, as the stash says what came (below).
+    // the chest is open needs no banner, as the stash says what came (below). Arriving rested waits the same way.
     if (n.kind === 'parcel') { if (!game.chest) toSay.push(n); continue; }
+    if (n.kind === 'rested') { toSay.push(n); continue; }
     const b = newsBanner(n, game.map.data.name, items, game.guest);
     if (b) hud.showBanner(b.title, b.sub);
   }
@@ -866,10 +892,18 @@ function frame(now: number) {
     hud.setWearing(wornViews(game.myGear, items, game.myWorn));
   }
   // A guest who signs in has the outfits at once; a new level opens more.
-  const wardrobe = wardrobeNow(), wardrobeKey = `${wardrobe.guest}|${wardrobe.level}|${wardrobe.wearing}`;
+  // Merits come with XP, and each look bought or worn changes a tile.
+  const wardrobe = wardrobeNow(), wardrobeKey = `${wardrobe.guest}|${wardrobe.level}|${wardrobe.wearing}|${meritsOf(game.progress.xp)}|${game.merits.spent}|${game.merits.owned}|${wardrobe.pattern}|${wardrobe.badge}`;
   if (wardrobeKey !== wardrobeShown) {
     wardrobeShown = wardrobeKey;
     hud.setWardrobe(wardrobeView(wardrobe));
+  }
+  if (game.cache !== crateShown || (game.cache && now - crateAt > CRATE_REDRAW_MS)) {
+    if (game.cache && !crateShown) hud.toggleCrate(true);
+    if (!game.cache && crateShown) hud.toggleCrate(false);
+    crateShown = game.cache;
+    crateAt = now;
+    if (game.cache) hud.setCrate(crateView({ ...game.cache, items: game.cacheItemsNow(now) }, items, game.meId ?? ''));
   }
   // Your maps are one button, which opens the one for where you are; any other tool has its own, in the order you got them.
   if (game.tools !== toolsShown || radioOn !== radioShown) {
@@ -888,6 +922,8 @@ function frame(now: number) {
     progressShown = game.progress;
     if (game.chest) hud.setStash(slotViews(game.chest.stash, items), levelText(game.progress));
     hud.setLevel(game.progress.level);
+    // At the chest, as it is spent: how much more of what comes home counts double.
+    hud.setRested(game.progress.rested ? restedLine(game.progress.rested) : null);
   }
   // Open, the stash says once what came in the parcels since it last opened, and in one that comes while it is.
   if (game.chest && game.parcels.length) {
@@ -914,7 +950,15 @@ function frame(now: number) {
   };
   sound.update(soundscape(scene, heard));
   heard = scene;
-  const tags: TagView[] = [...game.players.values()].filter(p => p.id !== game.meId).map(p => { const s = view.project(p.x, p.y, 1.25); return { id: p.id, name: p.name, x: s.x, y: s.y }; });
+  const tags: TagView[] = [...game.players.values()].filter(p => p.id !== game.meId).map(p => {
+    const s = view.project(p.x, p.y, 1.25), badge = badgeOf(game.badges.get(p.id));
+    return { id: p.id, name: p.name, x: s.x, y: s.y, ...(badge ? { badge } : {}) };
+  });
+  // Your own, before your name at the top: what everyone else sees on your name tag.
+  if (game.myBadge !== badgeShown) {
+    badgeShown = game.myBadge;
+    hud.setBadge(badgeOf(badgeShown ?? undefined) ?? null);
+  }
   // Whose pile it is, while you are near. Its id is its owner's, so it gets a key of its own.
   for (const d of game.pilesNear()) { const s = view.project(d.x, d.y, 0.62); tags.push({ id: `pile:${d.id}`, name: d.name, x: s.x, y: s.y, pile: true }); }
   hud.setTags(tags);

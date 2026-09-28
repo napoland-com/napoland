@@ -140,6 +140,11 @@ export type MapObject =
   | { kind: 'chest'; x: number; y: number }
   /** The workbench, beside the chest at home: it makes gear from what your stash holds (recipes in content/items.json). */
   | { kind: 'workbench'; x: number; y: number }
+  /**
+   * A crate for whoever comes next (caches.ts), where people rest by a fire out there: anyone opens it,
+   * leaves a thing and takes one. `name`: what people call it, as a letter says it ("the old cabin's crate").
+   */
+  | { kind: 'cache'; x: number; y: number; name: string }
   /** Furniture, inside buildings. A bed is one tile wide and two long (head at y); a rug is only drawn. */
   | { kind: 'bed'; x: number; y: number }
   | { kind: 'table'; x: number; y: number }
@@ -212,6 +217,16 @@ export interface MapData {
    * floor (mill: boards, not logs). Its door is a building of the same style.
    */
   style?: 'napo' | 'mill';
+  /**
+   * A room with a chest only: a home that is each player's own. Whoever walks in through its door is in a
+   * copy of the room of their own (their cabin, the server's zones), where nobody else ever is.
+   */
+  private?: true;
+  /**
+   * A private room only, the one whose door opens onto the home town: where you wake up in it (as a new
+   * player, and after a collapse), on a walkable tile by its fire, facing `dir`.
+   */
+  wake?: { x: number; y: number; dir: Dir };
   /** Places on this map people call by name; the paper map writes them in. */
   places?: MapPlace[];
   /** The wilds only: skulkers, creatures that lie in the ferns and chase whoever they hear or see. */
@@ -247,7 +262,7 @@ const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
-  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage',
+  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache',
 ]);
 /** Objects that are only drawn: you walk over or through them. */
 export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stake', 'sawdust']);
@@ -255,7 +270,7 @@ export const DECOR = new Set<MapObject['kind']>(['shrooms', 'rug', 'skid', 'stak
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
  */
-export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage']);
+export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache']);
 
 /** How many tiles an object covers, across and down: houses, vehicles, log decks, beds, rugs and a few more are bigger than one. */
 export function footprint(o: MapObject): [number, number] {

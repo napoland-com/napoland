@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ENERGY_MAX, ENERGY_PER_LEVEL, LEVEL_MAX, XP_CURVE, emptyStash, gift, itemIndex, levelOf, maxEnergy, openInStash, progressOf, stashList, store, storeLive, takeOut, turnedInto,
-  usedUp, type ItemsData, type Stash,
+  ENERGY_MAX, ENERGY_PER_LEVEL, LEVEL_MAX, RESTED_EVERY_MS, RESTED_MAX, XP_CURVE, cleanRested, emptyStash, gift, itemIndex, levelOf, maxEnergy, openInStash, progressOf, restAfter, restFor,
+  spendRest, stashList, store, storeLive, takeOut, turnedInto, usedUp, type ItemsData, type Stash,
 } from '../src';
 
 const data: ItemsData = {
@@ -103,5 +103,70 @@ describe('the stash', () => {
     const after = store(s, [{ item: 'cap', count: 1 }], items).stash;
     after.pieces!.coat![0]!.cond = 1;
     expect(s.pieces!.coat![0]!.cond).toBe(0.3);
+  });
+});
+
+describe('rest, while away', () => {
+  const HOUR = 3_600_000, DAY = 24 * HOUR;
+
+  it('fills one XP of the cup for every 20 minutes away, whole ones only', () => {
+    expect(RESTED_EVERY_MS).toBe(20 * 60_000);
+    expect(restFor(0)).toBe(0);
+    expect(restFor(19 * 60_000)).toBe(0);
+    expect(restFor(20 * 60_000)).toBe(1);
+    expect(restFor(59 * 60_000)).toBe(2);
+    expect(restFor(8 * HOUR)).toBe(24);
+    expect(restAfter(10, 2 * HOUR)).toBe(16);
+  });
+
+  it('holds three days\' worth at most, 216 XP, however long you stay away or however much it held', () => {
+    expect(RESTED_MAX).toBe(216);
+    expect(restFor(3 * DAY)).toBe(216);
+    expect(restFor(400 * DAY)).toBe(216);
+    expect(restAfter(0, 3 * DAY - 20 * 60_000)).toBe(215);
+    expect(restAfter(200, DAY)).toBe(216);
+    expect(restAfter(216, HOUR)).toBe(216);
+  });
+
+  it('counts time that runs backwards, and a cup saved wrong, as nothing', () => {
+    expect(restFor(-DAY)).toBe(0);
+    expect(restFor(Number.NaN)).toBe(0);
+    expect(restAfter(30, -DAY)).toBe(30);
+    for (const bad of [-5, Number.NaN, Infinity, '40', null, undefined]) expect(cleanRested(bad), String(bad)).toBe(0);
+    expect(cleanRested(12.7)).toBe(12);
+    expect(cleanRested(9000)).toBe(RESTED_MAX);
+    expect(restAfter(9000, HOUR)).toBe(RESTED_MAX);
+  });
+
+  it('fills faster only when a play-test says so', () => {
+    expect(restFor(30_000, 1000)).toBe(30);
+    expect(restFor(10 * DAY, 1000)).toBe(RESTED_MAX);
+    expect(restAfter(5, 12_000, 1000)).toBe(17);
+  });
+
+  it('doubles what stashing earns while the cup holds any, the extra out of it', () => {
+    expect(spendRest(12, 140)).toEqual({ gained: 24, fromRest: 12, cup: 128 });
+    expect(spendRest(12, 12)).toEqual({ gained: 24, fromRest: 12, cup: 0 });
+  });
+
+  it('never pays more than the cup holds, and an empty cup pays nothing', () => {
+    expect(spendRest(40, 5)).toEqual({ gained: 45, fromRest: 5, cup: 0 });
+    expect(spendRest(40, 0)).toEqual({ gained: 40, fromRest: 0, cup: 0 });
+  });
+
+  it('is left alone by what earns nothing: a parcel, a lockbox\'s contents, what comes back after being taken out', () => {
+    expect(spendRest(0, 140)).toEqual({ gained: 0, fromRest: 0, cup: 140 });
+    // A parcel goes in as a gift, and taken out and brought back it earns nothing: nothing to double.
+    const gifted = gift(emptyStash(), [{ item: 'shard', count: 3 }], items);
+    const out = takeOut(gifted, 'shard', 3).stash;
+    expect(spendRest(store(out, [{ item: 'shard', count: 3 }], items).xp, 140)).toEqual({ gained: 0, fromRest: 0, cup: 140 });
+    // What was never home counts, and counts double.
+    expect(spendRest(store(emptyStash(), [{ item: 'shard', count: 2 }], items).xp, 140)).toEqual({ gained: 48, fromRest: 24, cup: 116 });
+  });
+
+  it('shows with where you stand, and not at all when the cup is empty', () => {
+    expect(progressOf(40, 140)).toEqual({ xp: 40, level: 2, from: XP_CURVE, to: XP_CURVE * 4, maxEnergy: ENERGY_MAX + ENERGY_PER_LEVEL, rested: 140 });
+    expect(progressOf(40, 0)).toEqual(progressOf(40));
+    expect(progressOf(40).rested).toBeUndefined();
   });
 });

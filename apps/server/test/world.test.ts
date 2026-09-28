@@ -257,10 +257,16 @@ describe('World: turning, joining and leaving', () => {
       stats: {},
       // Nothing stashed yet: level 1, and the next level at 30 XP.
       progress: { xp: 0, level: 1, from: 0, to: 30, maxEnergy: ENERGY_MAX },
+      // Seen just before joining: no time away to rest in.
+      restedAway: 0,
+      // No merits spent and no looks bought.
+      merits: { spent: 0, owned: [] },
       // No items, so no paper map to carry.
       tools: [],
       // No story in this world: no chapter to be in.
       story: { version: 0, chapter: '' },
+      // Nobody thanked today.
+      thanked: [],
     });
     expect(w.drain()).toEqual([
       { to: '*', map: 'test', except: 'a', msg: { t: 'join', player: joined.player } },
@@ -679,7 +685,7 @@ describe('World: finds', () => {
     expect(w.get('a')!.bag).toEqual([{ item: 'moss', count: 1 }]);
     expect(w.findViews('woods')).toEqual([]);
     // Finds live in memory, and the bag is saved with the player later: nothing to write now.
-    expect(w.takeWrites()).toEqual({ drops: [], players: [], marks: [] });
+    expect(w.takeWrites()).toEqual({ drops: [], players: [], marks: [], thanks: [], credits: [], caches: [] });
   });
 
   it('reaches the four tiles next to the player, not across a corner or farther; an empty tile is gone', () => {
@@ -910,7 +916,7 @@ describe('World: piles', () => {
       { to: '*', map: 'woods', msg: { t: 'dropGone', id: 'a' } },
     ]);
     expect(w.dropViews('woods')).toEqual([]);
-    expect(w.takeWrites()).toEqual({ drops: [{ owner: 'a', drop: undefined }], players: [w.get('a')], marks: [] });
+    expect(w.takeWrites()).toEqual({ drops: [{ owner: 'a', drop: undefined }], players: [w.get('a')], marks: [], thanks: [], credits: [], caches: [] });
   });
 
   it('leaves in the pile what does not fit in the owner\'s bag (the map hears it again), and refuses when nothing fits', () => {
@@ -928,7 +934,7 @@ describe('World: piles', () => {
     w.pick('a', 4, 5, 2000);
     expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'refused', action: 'pick', reason: 'bag_full' } }]);
     expect(w.dropViews('woods')).toEqual([dropOf(pile)]);
-    expect(w.takeWrites()).toEqual({ drops: [], players: [], marks: [] });
+    expect(w.takeWrites()).toEqual({ drops: [], players: [], marks: [], thanks: [], credits: [], caches: [] });
     // With two slots free, the rest comes back and the pile is gone.
     w.discard('a', 0, 3000);
     w.discard('a', 0, 3000);
@@ -952,7 +958,7 @@ describe('World: piles', () => {
       { to: 'b', msg: { t: 'bag', bag: got.items } },
       { to: '*', map: 'woods', msg: { t: 'dropGone', id: 'a' } },
     ]);
-    expect(w.takeWrites()).toEqual({ drops: [{ owner: 'a', drop: undefined }], players: [w.get('b')], marks: [] });
+    expect(w.takeWrites()).toEqual({ drops: [{ owner: 'a', drop: undefined }], players: [w.get('b')], marks: [], thanks: [], credits: [], caches: [] });
     // The owner comes too late.
     w.pick('a', 4, 5, 2000);
     expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'refused', action: 'pick', reason: 'gone' } }]);

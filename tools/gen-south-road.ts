@@ -16,7 +16,8 @@
  *
  * Energy only comes back by a fire: the bunker's (tended), the camp's, the laboratory's, the
  * dormitory's and the checkpoint's (these burn down unless someone feeds them). The rooms are in
- * gen-interiors.ts.
+ * gen-interiors.ts, each with a crate for whoever comes next; the camp keeps one by its fire in the
+ * open, placed after everything else so that nothing on the road moves for it.
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -461,10 +462,17 @@ for (const [x, text] of CAGES) onForest({ kind: 'cage', x, y: 66, text }, 'l');
   }
 }
 
+// A crate for whoever comes next (caches.ts), at the edge of the leavers' camp, three steps from its fire.
+// Placed after everything else, what the leavers and NAPO left included: every choice above hashes the
+// tile or checks what stands around it, so anything placed earlier could move them. And like those, it
+// stands on forest it clears, so every tile anyone could walk on stays walkable and as far from home:
+// the one forest tile this near the fire with open ground in front of it, where you open it from.
+onForest({ kind: 'cache', x: CAMP[0] - 3, y: CAMP[1] - 3, name: 'the crate at the leavers\' camp' });
+
 // ---- Output ----
 
 const map: MapData = {
-  id: 'south-road', name: 'The South Road', version: 2, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'south-road', name: 'The South Road', version: 3, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 35, y: 2, dir: 'down' },
@@ -503,7 +511,7 @@ const ORDER = '*A!HFCK@kvibBnLc#-T^o~=",_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
   lamp: '*', antenna: 'A', sign: '!', board: '!', console: 'k', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', pole: 'i', barrel: 'b',
-  fence: '-', tree: 'T', rock: 'o', shrooms: ',', fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_', woodpile: 'b',
+  fence: '-', tree: 'T', rock: 'o', shrooms: ',', fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_', woodpile: 'b', cache: 'c',
   // What the leavers left at the jam, and NAPO in its motor pool and at the field site.
   luggage: 'b', truck: 'K', pump: 'i', cage: '#',
   // The rest stands in town, in the Near Woods and in the rooms.

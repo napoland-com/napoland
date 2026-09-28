@@ -1,7 +1,7 @@
 {
   "id": "near-woods-old-cabin",
   "name": "The old cabin",
-  "version": 2,
+  "version": 3,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -33,6 +33,7 @@
     {"kind":"crate","x":7,"y":1},
     {"kind":"crate","x":1,"y":3},
     {"kind":"crate","x":6,"y":3},
-    {"kind":"crate","x":7,"y":3}
+    {"kind":"crate","x":7,"y":3},
+    {"kind":"cache","x":2,"y":1,"name":"the old cabin's crate"}
   ]
 }

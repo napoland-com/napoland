@@ -163,7 +163,7 @@ describe('what the server says about the world out there', () => {
   it('counts wetness on between reports, and keeps the fires, marks, creatures and flares of the map', () => {
     g.handle(welcome(camp(), [me(3, 3)], FULL, {
       body: { ...DRY, wetRate: 0.01 },
-      marks: [{ id: 1, x: 2, y: 2, dir: 'up', color: '#fff', name: 'Bea', until: 1e13 }],
+      marks: [{ id: 1, x: 2, y: 2, dir: 'up', color: '#fff', owner: 'bea', name: 'Bea', until: 1e13 }],
       creatures: [{ id: 4, kind: 'watcher', x: 0, y: 0, dir: 'down' }],
       flares: [{ x: 1, y: 1, left: 10 }],
     }), now);
@@ -283,6 +283,7 @@ describe('what the interface says', () => {
     });
     expect(v.rows[0]).toEqual({ label: 'Level', text: 'Level 2 · 40 XP, 80 to go', bar: 10 / 90, tone: 'good' });
     expect(v.rows.slice(1).map(r => [r.label, r.text])).toEqual([
+      ['Rested', 'Empty. It fills while you are not playing, and then what you stash counts double.'],
       ['Energy', '40 of 100, draining'],
       ['Wet', '50%, getting wetter'],
       ['Load', '80% of what you carry easily'],

@@ -1,8 +1,8 @@
 ---
 id: thanks
 title: Thanks, and while you were away
-status: planned
-order: 40
+status: done
+order: 350
 area: social
 depends: [survival-dynamics]
 ---

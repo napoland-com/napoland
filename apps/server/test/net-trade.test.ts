@@ -1,14 +1,15 @@
 /**
- * Face-to-face exchange over real WebSockets: two friends on one map, at most TRADE_REACH tiles apart,
+ * Face-to-face exchange over real WebSockets: two friends in one copy of a map, at most TRADE_REACH tiles apart,
  * ask and answer, put things in, press Ready and Trade, and the server swaps both sides in one step.
  * Anything that changes either side takes both Readys back; walking apart, another map, a collapse or
  * going offline calls it off; nothing traded ever earns XP twice.
  */
 import { describe, expect, it } from 'vitest';
-import { PROTOCOL_VERSION, TRADE_REACH, type BagSlot, type ItemsData, type TradeView } from '@napoland/shared';
+import { PROTOCOL_VERSION, TRADE_REACH, TileMap, type BagSlot, type ItemsData, type TradeView } from '@napoland/shared';
 import { devAuth } from '../src/auth';
 import type { PlayerRecord } from '../src/storage';
 import { TRADE_ASK_MS, TRADE_ASKS_PER_MINUTE } from '../src/trade';
+import { zoneKey } from '../src/world';
 import { chestMaps, itemsData } from './fixtures';
 import { newName, setup, waitFor, type Client, type Msg } from './helpers';
 
@@ -290,6 +291,21 @@ describe('a trade between two friends', () => {
     expect(ctx.server.world.get(a.id)!.stash).toEqual({ items: {}, out: {} });
     expect(ctx.server.world.get(b.id)!.stash).toEqual({ items: { nail: 7 }, out: {} });
     expect([ctx.server.world.get(a.id)!.xp ?? 0, ctx.server.world.get(b.id)!.xp]).toEqual([0, 2 * 3]);
+  });
+});
+
+describe('a trade and the copies of a map', () => {
+  // The house made a home of one's own, as the real one is (cabin.test.ts): everyone is alone in their copy of it.
+  const maps = () => chestMaps().map(m => (m.data.id === 'house' ? new TileMap({ ...m.data, private: true, wake: { x: 2, y: 2, dir: 'down' } }) : m));
+  const { ctx, enter } = setup({ items: tradeItems(), maps: maps() });
+
+  it('is never between two copies: two friends each in their own cabin are not face to face', async () => {
+    const a = await enter({ map: 'house', x: 2, y: 2 }), b = await enter({ map: 'house', x: 3, y: 2 });
+    for (const [x, y] of [[a.id, b.id], [b.id, a.id]] as const) await ctx.storage.setLink(x, y, 'friend', true);
+    expect([ctx.server.world.zoneOf(a.id), ctx.server.world.zoneOf(b.id)]).toEqual([zoneKey('house', a.id), zoneKey('house', b.id)]);
+    a.c.send({ t: 'tradeOpen', id: b.id });
+    expect(await a.c.next('refused')).toEqual({ t: 'refused', action: 'tradeOpen', reason: 'too_far' });
+    expect(b.c.inbox.some(m => m.t === 'trade')).toBe(false);
   });
 });
 
