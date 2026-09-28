@@ -20,7 +20,7 @@
  * you stand. A flare keeps them all off and shakes off a hitchhiker. Anyone can paint arrows on the ground with a
  * glowcap; they last a day. The Old Stone in town wakes when enough shards are fed to it, and while
  * awake it calms every surge. Strange objects found deep in turn into something when looked at in
- * town. Feats, earned by what you do out there, make it a little easier for good (feats.ts).
+ * town. Feats, earned rank by rank by what you do out there, make it a little easier for good (feats.ts).
  *
  * Gear is kept piece by piece (gear.ts): what a player wears wears down while they are out in the
  * wilds, protects less and less when nearly worn out, and is mended at the workbench; anomalous
@@ -43,9 +43,8 @@ import {
   STARTER_TOOLS,
   DROP_LIFETIME_MS,
   ENERGY_SYNC_MS,
-  FEATS,
-  HEAVY_LOAD,
   STATS,
+  STEP_STATS,
   STEP_MS,
   SURGE_DRAIN,
   FLASH_BURST_S,
@@ -63,7 +62,7 @@ import {
   charmsIn,
   chapterOf,
   energyRate,
-  featsOf,
+  featOf,
   fitPieces,
   mendCost,
   newPiece,
@@ -81,6 +80,7 @@ import {
   merge,
   modsOf,
   progressOf,
+  rankOf,
   reachedBy,
   resistOf,
   stashList,
@@ -89,6 +89,7 @@ import {
   takeOut,
   usedUp,
   reveal,
+  stepCounts,
   stepTarget,
   stormAt,
   surgeAt,
@@ -1070,6 +1071,7 @@ export class World {
     p.rec.worn = { ...p.rec.worn, [slot]: { ...piece, cond: 1 } };
     this.saveNow.set(id, p.rec);
     this.outbox.push({ to: id, msg: { t: 'mended', item } });
+    this.count(p, 'mended', now);
     // Its condition (in the body) before the bench, so the bench's mend row is gone when it redraws.
     this.refresh(p, now);
     this.tell(p, now);
@@ -1138,6 +1140,12 @@ export class World {
     const here = p.map.data.objects.some(o => o.kind === 'board' && o.x === x && o.y === y);
     if (!here || manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
     this.outbox.push({ to: p.rec.id, msg: { t: 'board', lines: this.news(now) } });
+  }
+
+  /** The player's counts toward feats as they are now: the status panel asks when it opens. */
+  stats(id: string): void {
+    const p = this.players.get(id);
+    if (p) this.outbox.push({ to: id, msg: { t: 'stats', stats: { ...p.rec.stats } } });
   }
 
   /**
@@ -1251,9 +1259,10 @@ export class World {
     if (p.map.data.kind === 'wilds') {
       p.trail.push([x, y]);
       if (p.trail.length > TRAIL_STEPS) p.trail.shift();
-      if (this.sky === 'rain') this.count(p, 'rainSteps', now);
-      if (this.sky === 'night' || this.sky === 'aurora') this.count(p, 'nightSteps', now);
-      if (p.load >= HEAVY_LOAD) this.count(p, 'heavySteps', now);
+      // The pack mule counts what the bag really weighs: a feel made lighter by its own ranks or a charm
+      // must not slow the count toward its next rank.
+      const real = bagLoad(p.rec.bag, this.items);
+      for (const stat of STEP_STATS) if (stepCounts(stat, p.map, x, y, this.sky, real)) this.count(p, stat, now);
     }
     const exit = p.map.exitAt(x, y);
     if (exit) this.cross(p, exit, now);
@@ -1378,6 +1387,7 @@ export class World {
       storm,
       flash: this.flashes.find(f => f.map === p.map.data.id && flashHits(flashView(f, now), x, y))?.kind,
       resist,
+      farDrain: p.mods.farDrain,
     });
     // Wind resistance (a raincoat) keeps the rain out.
     p.wetRate = wetRate(p.map.data.kind, this.sky, warmth > 0, p.mods.wetting * (1 - resist.wind), storm);
@@ -1408,13 +1418,13 @@ export class World {
     return p.rec.energy;
   }
 
-  /** Out in the wilds, what the player wears wears down: `dt` seconds of it. The rates follow on the next refresh. */
+  /** Out in the wilds, what the player wears wears down: `dt` seconds of it, slower for a mender. The rates follow on the next refresh. */
   private wearDown(p: Online, dt: number): void {
     const worn = p.rec.worn;
     if (!worn) return;
     for (const slot of SLOTS) {
       const piece = worn[slot], s = wearSeconds(p.rec.gear?.[slot] ? this.items.get(p.rec.gear[slot]!) : undefined, this.wear);
-      if (piece && s && piece.cond > 0) piece.cond = Math.max(0, piece.cond - dt / s);
+      if (piece && s && piece.cond > 0) piece.cond = Math.max(0, piece.cond - (dt * p.mods.wear) / s);
     }
   }
 
@@ -1439,17 +1449,20 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'chapter', id: next.id } });
   }
 
-  /** One more of what counts toward a feat; a feat reached is the player's for good, and they hear it. */
+  /**
+   * One more of what counts toward a feat. A new rank is the player's for good: they hear it (once:
+   * counts only go up), and it is saved at once.
+   */
   private count(p: Online, stat: (typeof STATS)[number], now: number): void {
     const stats = (p.rec.stats ??= {});
-    const had = featsOf(stats).length;
-    stats[stat] = (stats[stat] ?? 0) + 1;
-    const earned = featsOf(stats);
-    if (earned.length === had) return;
-    const feat = FEATS.find(f => f.stat === stat && (stats[stat] ?? 0) === f.need);
-    if (feat) this.outbox.push({ to: p.rec.id, msg: { t: 'feat', id: feat.id, stats: { ...stats } } });
+    const n = (stats[stat] ?? 0) + 1;
+    stats[stat] = n;
+    const feat = featOf(stat);
+    const rank = feat ? rankOf(feat, n) : 0;
+    if (!feat || rank === rankOf(feat, n - 1)) return;
+    this.outbox.push({ to: p.rec.id, msg: { t: 'feat', id: feat.id, rank, stats: { ...stats } } });
     this.saveNow.set(p.rec.id, p.rec);
-    // The feat changes the rates right away, however little: the player hears them.
+    // The rank changes the rates right away, however little: the player hears them.
     this.refresh(p, now);
     this.tell(p, now);
   }
@@ -2019,19 +2032,27 @@ export class World {
     return def !== undefined && addToBag(bag, def, 1, slots).left === 0;
   }
 
-  /** One find, one unit of its item: into the bag if it fits, and a new one grows later somewhere else. */
+  /**
+   * One find, one unit of its item: into the bag if it fits, and a new one grows later somewhere else.
+   * Out in the wilds it counts for the forager, whose find may come up double.
+   */
   private pickFind(p: Online, find: Find, now: number): void {
     const { rule } = find;
     const r = addToBag(p.rec.bag, rule.item, 1, p.slots);
     if (r.left) return this.refuse(p, 'pick', 'bag_full');
     // A live find starts fading now: it stacks one to a slot, so the new one is the last slot.
     if (rule.item.live) r.bag.at(-1)!.since = Math.floor(now + this.epochOffset);
-    p.rec.bag = r.bag;
+    // Never a live find: those are few on purpose, the prize of a restless region. The second goes in only if it fits.
+    const wild = this.wild(p.map);
+    const again = wild && !rule.item.live && p.mods.double > 0 && this.rng() < p.mods.double ? addToBag(r.bag, rule.item, 1, p.slots) : undefined;
+    const double = again !== undefined && again.left === 0;
+    p.rec.bag = again && double ? again.bag : r.bag;
     this.finds.get(rule.map.data.id)!.delete(find.tile);
     const [soonest, latest] = rule.respawn;
     this.later(rule, now + (soonest + this.rng() * (latest - soonest)) * 1000, find.tile);
-    this.got(p, [{ item: rule.item.id, count: 1 }], 'find', now);
+    this.got(p, [{ item: rule.item.id, count: double ? 2 : 1 }], 'find', now, double);
     this.toMap(rule.map.data.id, { t: 'findGone', id: find.id });
+    if (wild) this.count(p, 'found', now);
     this.rerate(p, now);
     this.moveStory(p, { pick: rule.item.id });
   }
@@ -2182,9 +2203,9 @@ export class World {
     return Math.min(n - 1, Math.floor(this.rng() * n));
   }
 
-  /** Tells the player what they got, then their whole bag. */
-  private got(p: Online, items: BagSlot[], from: 'find' | 'drop', now: number): void {
-    this.outbox.push({ to: p.rec.id, msg: { t: 'got', items, from } });
+  /** Tells the player what they got (and whether a find came up double), then their whole bag. */
+  private got(p: Online, items: BagSlot[], from: 'find' | 'drop', now: number, double = false): void {
+    this.outbox.push({ to: p.rec.id, msg: { t: 'got', items, from, ...(double && { double: true as const }) } });
     this.sendBag(p, now);
   }
 

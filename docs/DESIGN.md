@@ -170,7 +170,19 @@ Everything is data (`content/items.json`: name, what it is, stack size, stats, w
 
 A status tab (in the menu, and a tap on the status panel top left opens it) shows your level and XP, energy (maximum, now, and what is draining it at the moment, element by element), your five resistances with where they come from (each piece of gear), and any effects running (a hand warmer, a storm you are in).
 
-Built so far: energy, how wet you are, your load, what clings to you, your charms, the surge, the Old Stone, and your **feats**. Feats are small perks for good, earned by what you do out there, not bought: Rain walker (1,500 steps in the rain: rain soaks you 20% slower), Night owl (1,000 steps in the dark: hitchhikers half as often), Pack mule (800 steps with a heavy bag: it feels 15% lighter), Fire keeper (20 fires fed: fires warm you 15% faster). Earning one is announced with a banner.
+Built so far: energy, how wet you are, your load, what clings to you, your charms, the surge, the Old Stone, and your **feats**. Feats are small perks for good, earned by what you do out there, not bought, and each climbs five ranks as what counts toward it adds up: the first comes in the first hours, the last after months of playing, never from grinding (like The Long Dark's skills).
+
+**Built:** seven feats, five ranks each, every rank a little stronger than the one before:
+
+- **Rain walker** (steps out in the rain): rain soaks you 20, 30, 40, 45 and 50% slower, at 1,500, 5,000, 15,000, 40,000 and 100,000 steps.
+- **Night owl** (steps out in the dark): hitchhikers find you 50, 60, 70, 75 and 80% less often, at 1,000, 3,500, 10,000, 25,000 and 60,000 steps.
+- **Pack mule** (steps out with a heavy bag): what you carry feels 15, 20, 25, 28 and 30% lighter, at 800, 2,500, 8,000, 20,000 and 50,000 steps.
+- **Fire keeper** (fires fed): fires warm you 15, 20, 25, 28 and 30% faster, at 20, 60, 200, 500 and 1,200 fires.
+- **Mender** (pieces mended at the workbench): gear wears 5, 10, 15, 20 and 25% slower out there, at 5, 15, 40, 100 and 250 pieces.
+- **Forager** (finds picked up out in the wilds, the shelters out there included; not piles, and not in town): a find comes up double 5, 8, 11, 13 and 15% of the time, at 200, 700, 2,000, 5,000 and 12,000 finds. Never a live find, and the second one only if the bag has room for it.
+- **Pathfinder** (steps out in the wilds 85 or more walking steps from home): that far out, and only there, the drain is 3, 6, 9, 12 and 15% gentler, at 500, 1,500, 5,000, 12,000 and 30,000 steps.
+
+Rank 1 of the first four is what those feats were before they had ranks, at the same counts, and what was counted before carries over: whoever had counted more already is at that rank when they come back, without a banner. A new rank is announced once, with a banner ("Rain walker, rank 2" and "Rain soaks you 30% slower."), as soon as no panel, text box or other banner is in the way. The status panel shows each feat with its rank as five pips, what the rank does (before rank 1, what rank 1 will do), and a bar with how far the next rank is ("3,212 of 5,000 steps in the rain to rank 2"); at rank 5, "Top rank".
 
 Your level shows next to your name, and the Status panel starts with your level and the XP to the next one; a guest's starts with what playing as a guest means, and the Sign in button ([Play first, sign in to keep it](#together-chat-and-friends)).
 

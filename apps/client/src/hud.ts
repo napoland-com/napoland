@@ -5,7 +5,7 @@
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
-import { BAG_SLOTS, SLOTS, type BodyView, type Dir, type EnergyView, type Slot, type SurgeView } from '@napoland/shared';
+import { BAG_SLOTS, RANKS, SLOTS, type BodyView, type Dir, type EnergyView, type Slot, type SurgeView } from '@napoland/shared';
 import { aboutBody, versionView } from './about';
 import type { FriendsView } from './friends';
 import { liveState, type SlotView } from './items';
@@ -146,14 +146,38 @@ export interface RecipeView { id: string; name: string; icon: string; facts: str
 
 /** One row of the status panel: a label, what it says, and a bar (0 to 1) when it has one. */
 export interface StatusRow { label: string; text: string; bar?: number; tone?: 'good' | 'bad' | 'plain' }
-/** The status panel: what a guest should know first (with a Sign in button), rows about you, then a section per feat. */
-export interface StatusView { guest?: string; rows: StatusRow[]; feats: Array<{ name: string; text: string; done: boolean; progress: number }> }
+/**
+ * A feat in the status panel: its rank (0 before the first), what that rank does, how far the next
+ * one is in words, and as a share for its bar (none at the top rank).
+ */
+export interface FeatView { name: string; rank: number; does: string; next: string; progress?: number }
+/** The status panel: what a guest should know first (with a Sign in button), rows about you, then a card per feat. */
+export interface StatusView { guest?: string; rows: StatusRow[]; feats: FeatView[] }
 
 /** What the chat and the friends panel say to a guest, over a Sign in button, instead of what they cannot use yet. */
 export const CHAT_GATE = 'Sign in to chat with other players. Signing in keeps your character.';
 export const FRIENDS_GATE = 'Sign in to make friends and write to them. Signing in keeps your character.';
 /** A guest's card, as someone signed in sees it: no friends yet, but they can still be blocked and reported. */
 export const GUEST_CARD = 'They play as a guest. Once they sign in, you can be friends.';
+
+/** The status panel's body: what a guest should know first, the rows about you, then the feats. */
+export function statusHtml(v: StatusView): string {
+  return [
+    v.guest ? `<div class="gate snote"><p>${esc(v.guest)}</p><button type="button" class="act go" data-signin>Sign in</button></div>` : '',
+    ...v.rows.map(r => `<div class="srow" data-tone="${r.tone ?? 'plain'}"><span class="k">${esc(r.label)}</span><span class="v">${esc(r.text)}</span>${r.bar === undefined ? '' : `<span class="sbar"><i style="transform:translateX(${((Math.min(1, Math.max(0, r.bar)) - 1) * 100).toFixed(1)}%)"></i></span>`}</div>`),
+    '<h3>Feats</h3>',
+    `<div class="feats">${v.feats.map(featHtml).join('')}</div>`,
+  ].join('');
+}
+
+/** A feat's card: its name and rank as pips (the ones earned lit), what it does, and the way to the next rank. */
+export function featHtml(f: FeatView): string {
+  const pips = Array.from({ length: RANKS }, (_, i) => `<i${i < f.rank ? ' data-on' : ''}></i>`).join('');
+  const bar = f.progress === undefined ? '' : `<span class="sbar"><i style="transform:translateX(${((Math.min(1, Math.max(0, f.progress)) - 1) * 100).toFixed(1)}%)"></i></span>`;
+  return `<div class="feat" data-rank="${f.rank}"${f.progress === undefined ? ' data-top' : ''}><b>${esc(f.name)}</b>`
+    + `<span class="pips" role="img" aria-label="Rank ${f.rank} of ${RANKS}">${pips}</span>`
+    + `<span class="does">${esc(f.does)}</span>${bar}<span class="next">${esc(f.next)}</span></div>`;
+}
 
 const EMPTY_BAG = 'Your bag is empty. Things you find out there go here, and you keep them only if you bring them home.';
 const PICK_SLOT = 'Tap something to see what it is.';
@@ -721,12 +745,7 @@ export class Hud {
 
   /** What the status panel shows. Only written to the page when it changed. */
   setStatus(v: StatusView) {
-    const html = [
-      v.guest ? `<div class="gate snote"><p>${esc(v.guest)}</p><button type="button" class="act go" data-signin>Sign in</button></div>` : '',
-      ...v.rows.map(r => `<div class="srow" data-tone="${r.tone ?? 'plain'}"><span class="k">${esc(r.label)}</span><span class="v">${esc(r.text)}</span>${r.bar === undefined ? '' : `<span class="sbar"><i style="transform:translateX(${((Math.min(1, Math.max(0, r.bar)) - 1) * 100).toFixed(1)}%)"></i></span>`}</div>`),
-      '<h3>Feats</h3>',
-      ...v.feats.map(f => `<div class="feat"${f.done ? ' data-done' : ''}><b>${esc(f.name)}</b><span>${esc(f.text)}</span>${f.done ? '' : `<span class="sbar"><i style="transform:translateX(${((f.progress - 1) * 100).toFixed(1)}%)"></i></span>`}</div>`),
-    ].join('');
+    const html = statusHtml(v);
     if (html === this.shown.status) return;
     this.shown.status = html;
     this.el.statusBody!.innerHTML = html;

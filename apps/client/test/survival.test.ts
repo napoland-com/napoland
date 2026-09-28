@@ -179,8 +179,9 @@ describe('what the server says about the world out there', () => {
     expect(texts()).toEqual(['It took your fir resin', 'The cold goes right through you', 'Something clings to you. Find a light']);
     g.handle({ t: 'surge', surge: { phase: 'unstable', left: 20, into: 0 } }, now);
     g.handle({ t: 'stone', stone: { ...ASLEEP, charge: 20, awake: true, left: 3600 } }, now);
-    g.handle({ t: 'feat', id: 'rain-walker', stats: { rainSteps: 1500 } }, now);
+    g.handle({ t: 'feat', id: 'rain-walker', rank: 1, stats: { rainSteps: 1500 } }, now);
     expect(g.news.map(n => n.kind)).toEqual(['surge', 'stone', 'feat']);
+    expect(g.news.at(-1)).toEqual({ kind: 'feat', id: 'rain-walker', rank: 1 });
     expect(g.stats).toEqual({ rainSteps: 1500 });
   });
 });
@@ -236,7 +237,7 @@ describe('what the interface says', () => {
       ['Surge', 'It has you. Get to a light!'],
       ['Old Stone', 'Asleep. 3 of 20 shards.'],
     ]);
-    expect(v.feats.map(f => [f.name, f.done])).toEqual(FEATS.map(f => [f.name, f.id === 'rain-walker']));
+    expect(v.feats.map(f => [f.name, f.rank])).toEqual(FEATS.map(f => [f.name, f.id === 'rain-walker' ? 1 : 0]));
     expect(v.feats.find(f => f.name === 'Fire keeper')!.progress).toBe(0.25);
   });
 
@@ -261,8 +262,8 @@ describe('what the interface says', () => {
     expect(newsBanner({ kind: 'storm', view: { phase: 'clear', left: 2000 } }, 'The Near Woods')?.sub).toBe('The Near Woods is clear again.');
     expect(newsBanner({ kind: 'surge', view: { phase: 'unstable', left: 360, into: 0 } }, 'The Near Woods')?.title).toBe('The Near Woods grows restless');
     expect(newsBanner({ kind: 'stone', view: { ...ASLEEP, awake: true } }, '')?.title).toBe('The Old Stone woke up');
-    expect(newsBanner({ kind: 'feat', id: 'night-owl' }, '')?.title).toBe('Feat: Night owl');
-    expect(newsBanner({ kind: 'feat', id: 'nope' }, '')).toBeNull();
+    expect(newsBanner({ kind: 'feat', id: 'night-owl', rank: 1 }, '')?.title).toBe('Night owl, rank 1');
+    expect(newsBanner({ kind: 'feat', id: 'nope', rank: 1 }, '')).toBeNull();
   });
 });
 

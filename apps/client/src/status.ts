@@ -3,10 +3,11 @@
  * can be tested; hud.ts shows it and main.ts asks for it.
  */
 import {
-  ELEMENTS, FEATS, GUEST_DAYS, type BagSlot, type BodyView, type Element, type EnergyView, type FlashKind, type ProgressView, type Stats, type StoneView, type StormView, type SurgeView, type Weather,
+  ELEMENTS, FEATS, GUEST_DAYS, rankOf, rankText, type BagSlot, type BodyView, type Element, type EnergyView, type Feat, type FlashKind, type ProgressView, type Stats, type StoneView,
+  type StormView, type SurgeView, type Weather,
 } from '@napoland/shared';
 import { minutes, type News } from './game';
-import type { StatusView } from './hud';
+import type { FeatView, StatusView } from './hud';
 import type { Items } from './items';
 
 export interface StatusInput {
@@ -38,6 +39,27 @@ export interface StatusInput {
 
 /** What the Status tab tells a guest, above everything else: where their progress lives, how long, and what keeps it. */
 export const GUEST_NOTE = `You are playing as a guest. Your progress lives in this browser: clearing its data loses it, and a guest who stays away for ${GUEST_DAYS} days is deleted. Signing in keeps everything.`;
+
+/** "12,345": a count with its thousands apart, the same in every language the browser speaks. */
+export function thousands(n: number): string {
+  return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/**
+ * A feat in the status panel, from its count: its rank, what that rank does (before rank 1, what rank 1
+ * will do), and how far the next rank is ("3,212 of 5,000 steps in the rain to rank 2"), or the top.
+ */
+export function featView(f: Feat, count: number): FeatView {
+  const rank = rankOf(f, count), next = f.ranks[rank];
+  const does = rankText(f, Math.max(1, rank));
+  return {
+    name: f.name,
+    rank,
+    does: rank ? `${does}.` : `Rank 1: ${does[0]!.toLowerCase()}${does.slice(1)}.`,
+    next: next ? `${thousands(count)} of ${thousands(next.need)} ${f.counts} to rank ${rank + 1}` : 'Top rank',
+    ...(next && { progress: Math.min(1, count / next.need) }),
+  };
+}
 
 /** "Level 3 · 150 XP, 120 to go": where you stand, for the status panel and the stash's header. */
 export function levelText(p: ProgressView): string {
@@ -83,11 +105,7 @@ export function statusView(s: StatusInput): StatusView {
   if (s.flash) rows.push({ label: 'Flash', text: 'The ground under you is discharging. Step off it!', tone: 'bad' });
   const st = s.stone;
   if (st.need) rows.push({ label: 'Old Stone', text: st.awake ? `Awake for ${minutes(st.left)}. Surges are gentler.` : `Asleep. ${st.charge} of ${st.need} shards.`, tone: st.awake ? 'good' : 'plain' });
-  const feats = FEATS.map(f => {
-    const have = s.stats[f.stat] ?? 0;
-    return { name: f.name, text: f.text, done: have >= f.need, progress: Math.min(1, have / f.need) };
-  });
-  return { rows, feats, ...(s.guest && { guest: GUEST_NOTE }) };
+  return { rows, feats: FEATS.map(f => featView(f, s.stats[f.stat] ?? 0)), ...(s.guest && { guest: GUEST_NOTE }) };
 }
 
 /** The banner for news from the world: a surge's or storm's new phase, the Old Stone waking or sleeping, a feat, a level, a chapter of the story. Null: nothing to say. */
@@ -98,7 +116,7 @@ export function newsBanner(n: News, place: string): { title: string; sub: string
   if (n.kind === 'live') return { title: 'It is still live', sub: `Stash it within ${minutes(n.fresh)} for the most XP.` };
   if (n.kind === 'feat') {
     const f = FEATS.find(x => x.id === n.id);
-    return f ? { title: `Feat: ${f.name}`, sub: f.text } : null;
+    return f && f.ranks[n.rank - 1] ? { title: `${f.name}, rank ${n.rank}`, sub: `${rankText(f, n.rank)}.` } : null;
   }
   if (n.kind === 'stone') {
     return n.view.awake

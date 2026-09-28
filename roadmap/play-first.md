@@ -2,7 +2,7 @@
 id: play-first
 title: Play first, sign in to keep it
 status: done
-order: 230
+order: 240
 area: tech
 depends: [sign-in]
 ---

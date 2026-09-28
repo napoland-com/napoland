@@ -282,12 +282,22 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .srow .sbar { grid-column: 2; }
 .sbar { position: relative; display: block; height: max(4px, calc(var(--u) * .4)); border-radius: 99px; overflow: hidden; background: #1c222c; box-shadow: inset 0 0 0 1px #0c0f15, 0 0 0 1px #3e4658; }
 .sbar i { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(#ffe0a0, #e0873a); }
-.feat { display: grid; grid-template-columns: minmax(0, 1fr); gap: .2em; padding: .5em .7em; border-radius: 9px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
+/* Feats: a card each, its rank as five pips (the ones earned lit). Two cards a row only where both fit
+   whole (an upright tablet); a phone, upright or on its side, shows one. */
+.feats { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 20em), 1fr)); gap: calc(var(--u) * .55); }
+.feat { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; align-content: start; gap: .3em .8em; padding: .55em .75em .6em; border-radius: 9px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; }
 .feat b { font-family: var(--font-ui); font-weight: 600; color: #d3ccbb; }
-.feat span { color: #b9b2a2; font-size: .92em; }
-.feat[data-done] { box-shadow: inset 0 0 0 1px #8a7440; }
-.feat[data-done] b { color: #ffcf5a; }
-.feat[data-done] b::after { content: " ✓"; }
+.feat .does, .feat .sbar, .feat .next { grid-column: 1 / -1; }
+.feat .does { color: #e6dfcf; font-size: .95em; line-height: 1.3; }
+.feat .next { color: #b9b2a2; font-size: .88em; line-height: 1.3; font-variant-numeric: tabular-nums; }
+.feat .pips { display: flex; gap: max(3px, .32em); }
+.feat .pips i { width: max(7px, .66em); height: max(7px, .66em); border-radius: 50%; background: #10141b; box-shadow: inset 0 0 0 1.5px #4a5468; }
+.feat .pips i[data-on] { background: radial-gradient(circle at 35% 35%, #fff3cc, #ffcf5a 55%, #d9822f); box-shadow: 0 0 0 1px #8a7440, 0 0 5px rgba(255, 207, 90, .5); }
+/* Not earned yet: quieter, what rank 1 will do in grey. */
+.feat[data-rank="0"] .does { color: #b9b2a2; }
+.feat:not([data-rank="0"]) { box-shadow: inset 0 0 0 1px #8a7440; }
+.feat:not([data-rank="0"]) b { color: #ffcf5a; }
+.feat[data-top] .next { color: #ffcf5a; font-weight: 800; }
 /* The journal (journal.ts): the chapters of the story reached, the latest first. It opens where the bag does. */
 .journal-sheet .hint, .journal-body { flex: none; width: 100%; max-width: max(440px, calc(var(--u) * 40)); }
 .journal-body { display: grid; gap: calc(var(--u) * .6); font-family: var(--font-text); font-weight: 700; font-size: max(12px, calc(var(--u) * 1.2)); line-height: 1.4; }
