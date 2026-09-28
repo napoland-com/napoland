@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { doorOf, type MapObject } from '@napoland/shared';
 import {
-  HUM, NAPO_WALL_H, NAPO_YELLOW, TELEPORT_ROCK_Y, TOWER_H, cageModel, jeepModel, napoBuilding, napoProp, napoSign, napoTruck, pumpModel, stakeModel, teleportCore, teleportModel, towerModel,
+  HUM, NAPO_WALL_H, NAPO_YELLOW, TELEPORT_RINGS, TELEPORT_ROCK_Y, TOWER_H, cageModel, jeepModel, napoBuilding, napoProp, napoSign, napoTruck, pumpModel, stakeModel, teleportCore, teleportModel, towerModel,
 } from '../src/view/napo';
 
 type House = Extract<MapObject, { kind: 'house' }>;
@@ -134,25 +134,36 @@ describe('what NAPO left out in the places', () => {
     }
   });
 
-  it('stands a teleport on its tile, under a cabin\'s ceiling, rimmed and clamped in NAPO yellow, its rock humming in its arch over a glow', () => {
+  it('stands a teleport on its tile as a beam pad: the arch at its back, clear of whoever stands on the pad, rimmed and clamped in NAPO yellow', () => {
     const t = teleportModel({ x: 7, y: 4 });
     onTiles(t, 7, 4);
     const arch = new THREE.Box3().setFromObject(t);
     expect(arch.max.y).toBeLessThan(NAPO_WALL_H);
     expect(colored(t, NAPO_YELLOW).length).toBeGreaterThan(2);
     expect(napoProp({ kind: 'teleport', x: 12, y: 26 })).not.toBeNull();
-    // What moves in it: the rock, in the glow the cages share, floating in the arch over its plate; the glow; and
-    // the ring that spreads over the plate, as wide as it at most, just over it.
-    const glow = new THREE.MeshBasicMaterial(), ripple = new THREE.MeshBasicMaterial();
-    const core = teleportCore({ x: 7, y: 4 }, HUM, glow, ripple);
+    // Someone on the pad (0.45 wide, 0.95 tall, in the middle of the tile) meets no steel: the posts stand wider
+    // than them, and the arch over them is higher.
+    const body = new THREE.Box3(new THREE.Vector3(7.5 - 0.23, 0.1, 4.5 - 0.15), new THREE.Vector3(7.5 + 0.23, 1.05, 4.5 + 0.15));
+    const steel = meshes(t).filter(m => (m.material as THREE.MeshToonMaterial).color?.getHexString() === '6f777a');
+    expect(steel.length).toBeGreaterThan(2);
+    expect(steel.filter(m => new THREE.Box3().setFromObject(m).intersectsBox(body))).toEqual([]);
+  });
+
+  it('moves on a teleport: the rock humming over the crown, the glow and its ripple, and for a trip, rings, a column and sparks, hidden until then', () => {
+    const m = { rock: HUM, glow: new THREE.MeshBasicMaterial(), ripple: new THREE.MeshBasicMaterial(), light: new THREE.MeshBasicMaterial(), column: new THREE.MeshBasicMaterial() };
+    const core = teleportCore({ x: 7, y: 4 }, m);
     onTiles(core.root, 7, 4);
-    expect([uses(core.root, HUM), uses(core.root, glow), uses(core.root, ripple)]).toEqual([true, true, true]);
+    expect([HUM, m.glow, m.ripple, m.light, m.column].map(x => uses(core.root, x))).toEqual([true, true, true, true, true]);
+    const crown = new THREE.Box3().setFromObject(teleportModel({ x: 7, y: 4 })).max.y;
     expect(core.rock.position.y).toBe(TELEPORT_ROCK_Y);
-    const rock = new THREE.Box3().setFromObject(core.rock);
-    expect(rock.min.y).toBeGreaterThan(0.2);
-    expect(rock.max.y).toBeLessThan(arch.max.y - 0.1);
+    expect(new THREE.Box3().setFromObject(core.rock).min.y).toBeGreaterThan(crown - 0.02);
     const ring = new THREE.Box3().setFromObject(core.ripple);
     expect(ring.max.x - ring.min.x).toBeLessThanOrEqual(0.7);
     expect([ring.min.y, ring.max.y].every(y => y > 0.1 && y < 0.13)).toBe(true);
+    expect(core.rings).toHaveLength(TELEPORT_RINGS.n);
+    // Each ring fades on its own: a copy of the light each.
+    expect(new Set(core.rings.map(r => (r as THREE.Mesh).material)).size).toBe(TELEPORT_RINGS.n);
+    expect([...core.rings, core.column, ...core.sparks].every(o => !o.visible)).toBe(true);
+    expect(core.sparks.length).toBeGreaterThan(10);
   });
 });

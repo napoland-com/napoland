@@ -57,6 +57,7 @@ import {
   type Season, type SeasonView, type StormView, type StreetView, type TileKind, type TradeEnd, type TradeView, type VisitView, type Weather,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
+import { BEAM_IN_S, BEAM_OUT_S, padFor, popAt } from './beam';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
 import { pieceAt, type DetailRef } from './details';
 import type { FriendsMsg, TalkLine } from './friends';
@@ -255,7 +256,9 @@ const SOCIAL_ACTIONS = new Set<RefusedAction>(['befriend', 'answer', 'unfriend',
 /** What a `refused` can answer about a trade: the text box says why, naming whoever it is with. */
 const TRADE_ACTIONS = new Set<RefusedAction>(['tradeOpen', 'tradeAnswer', 'tradeOffer', 'tradeReady', 'tradeConfirm', 'tradeCancel']);
 /** What asks first in the text box (ask.ts): a no from the server is said in the same box. */
-const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move']);
+const ASKED_FIRST = new Set<RefusedAction>(['feed', 'use', 'discard', 'craft', 'mend', 'upgrade', 'open', 'thank', 'cacheLeave', 'buy', 'knock', 'move', 'teleport']);
+/** If the server has not moved you this long after the teleport was sent, the trip is off: you are shown where you stand. */
+const BEAM_WAIT_MS = 4000;
 /** Changed in the wardrobe, whose panel would hide anything said over your head: a no is said in the box, which stands above it. */
 const WARDROBE = new Set<RefusedAction>(['outfit', 'pattern', 'badge']);
 
@@ -365,6 +368,15 @@ export class Game {
    */
   firstSteps: number | null = null;
   firstStepsChanges = 0;
+  /**
+   * NAPO's teleport using you (beam.ts): going, from YES until the server moves you ('out', `sent` once the
+   * teleport is asked for), then arriving by its twin ('in', `pad` the one you arrive at). `t` is seconds into
+   * it, counted in frames (a frame that took long, building the new map, skips none of it). Nobody walks
+   * meanwhile. Null the rest of the time.
+   */
+  beam: { phase: 'out' | 'in'; t: number; pad: { x: number; y: number }; sent?: number } | null = null;
+  /** Where others vanished or appeared at a teleport, for the view to pop (takePops). */
+  private pops: Array<{ x: number; y: number }> = [];
   /** Your XP and level. */
   progress: ProgressView = { xp: 0, level: 1, from: 0, to: null, maxEnergy: 100 };
   /** The id of the chapter of the story you are in, as the server said ('' until its welcome). */
@@ -739,6 +751,9 @@ export class Game {
           me.tx = me.x = msg.x; me.ty = me.y = msg.y; me.dir = msg.dir; me.anim = null; me.turnT = 0;
           this.players.set(me.id, me);
         }
+        // Moved by the teleport we asked for: we arrive at its twin, in front of which the server put us.
+        const pad = this.beam?.phase === 'out' && this.beam.sent !== undefined ? padFor(map.data.objects, msg.x, msg.y) : undefined;
+        this.beam = pad ? { phase: 'in', t: 0, pad } : null;
         break;
       }
       case 'energy': {
@@ -1018,7 +1033,10 @@ export class Game {
         }
         this.progress = msg.progress;
         break;
-      case 'join':
+      case 'join': {
+        // Come in front of a teleport: a pop there, as they leave one by the other.
+        const pop = msg.player.id !== this.meId && popAt(this.current.data.objects, 'join', msg.player.x, msg.player.y);
+        if (pop) this.pops.push(pop);
         this.players.set(msg.player.id, this.mover(msg.player));
         this.gear.set(msg.player.id, msg.player.gear ?? {});
         this.quirks.set(msg.player.id, msg.player.quirks ?? []);
@@ -1037,6 +1055,7 @@ export class Game {
         else this.guests.delete(msg.player.id);
         this.socialChanges++;
         break;
+      }
       case 'glow':
         if (msg.on) this.live.add(msg.id);
         else this.live.delete(msg.id);
@@ -1045,11 +1064,15 @@ export class Game {
         if (msg.left > 0) this.afterglows.set(msg.id, now + msg.left * 1000);
         else this.afterglows.delete(msg.id);
         break;
-      case 'leave':
+      case 'leave': {
+        // Gone from beside a teleport: everyone else sees a pop where they stood (the trip is theirs alone).
+        const was = this.players.get(msg.id), pop = was && msg.id !== this.meId && popAt(this.current.data.objects, 'leave', was.tx, was.ty);
+        if (pop) this.pops.push(pop);
         this.players.delete(msg.id);
         this.live.delete(msg.id);
         this.afterglows.delete(msg.id);
         break;
+      }
       case 'step': {
         const p = this.players.get(msg.id);
         if (!p) break;
@@ -1153,6 +1176,8 @@ export class Game {
         this.socialChanges++;
         break;
       case 'refused':
+        // The teleport said no (someone moved, or it is gone): the trip is off, and you are shown where you stand.
+        if (msg.action === 'teleport') this.beam = null;
         if (SOCIAL_ACTIONS.has(msg.action)) { this.socialNote = refusalText(msg.reason, msg.action); this.socialChanges++; break; }
         if (TRADE_ACTIONS.has(msg.action)) { this.inform('Trade', tradeRefusal(msg.reason, this.trade?.with.name ?? this.tradeWith?.name ?? 'them')); break; }
         if (msg.action === 'say') { this.chatNote = refusalText(msg.reason, msg.action); this.chatChanges++; break; }
@@ -1184,6 +1209,8 @@ export class Game {
   disconnected(now: number) {
     this.online = false;
     this.pending = []; this.path = []; this.goal = null;
+    // A trip half done is off: the next welcome says where you are.
+    this.beam = null;
     // Answers to what we asked went with the connection, and what was being asked may no longer hold.
     this.picking = null; this.opening = null; this.chest = null; this.benching = null; this.bench = null; this.benchCard = null; this.caching = null; this.cache = null;
     // A trade lasts only while both are online: the server calls it off.
@@ -1294,6 +1321,7 @@ export class Game {
     // A press that closes what the box says does nothing else.
     if (this.note) return this.closeNote();
     if (this.dialog) return this.advanceDialog();
+    if (this.beam) return;
     const me = this.me;
     if (!me || me.anim) return;
     const act = this.action();
@@ -1339,7 +1367,7 @@ export class Game {
     }
     if (t.kind === 'teleport') {
       // It takes you somewhere else, so it asks first: the one in a cabin (anyone's) to town, the one in town home.
-      return this.ask({ who: TELEPORT, text: teleportQuestion(!this.current.data.private), yes: () => { if (this.online) this.send({ t: 'teleport', x: t.x, y: t.y }); } });
+      return this.ask({ who: TELEPORT, text: teleportQuestion(!this.current.data.private), yes: () => this.beamOut(t) });
     }
     if (t.kind === 'chest') {
       if (!this.online) return;
@@ -1935,6 +1963,7 @@ export class Game {
     if (this.question) return this.answer('no');
     if (this.note) return this.closeNote();
     if (this.dialog) return this.advanceDialog();
+    if (this.beam) return;
     const me = this.me;
     if (!me) return;
     const from = { x: me.tx, y: me.ty };
@@ -2359,6 +2388,7 @@ export class Game {
 
   update(dt: number, now: number) {
     this.clock = now;
+    this.beamOn(dt, now);
     for (const f of this.floats) f.t += dt;
     this.floats = this.floats.filter(f => f.t < 1.3);
     if (this.calls.length && now - this.calls[0]!.at >= CALL_NOTE_S * 1000) this.calls = this.calls.filter(c => now - c.at < CALL_NOTE_S * 1000);
@@ -2410,7 +2440,7 @@ export class Game {
   /** Decide the local player's next step once they stand on a tile. */
   private driveMe(now: number) {
     const me = this.me;
-    if (!me || me.anim || this.dialog || this.question || !this.online || this.held) { this.justStepped = false; return; }
+    if (!me || me.anim || this.dialog || this.question || !this.online || this.held || this.beam) { this.justStepped = false; return; }
     // On an exit the server is about to move us to another map, and steps planned on this one would be refused.
     if (this.map.exitAt(me.tx, me.ty)) {
       this.exitSince ??= now;
@@ -2470,12 +2500,44 @@ export class Game {
   }
 
   avatars(): Avatar[] {
-    const hitched = this.body.view.hitched;
+    const hitched = this.body.view.hitched, b = this.beam;
     return [...this.players.values()].map(p => ({
       id: p.id, x: p.x, y: p.y, dir: p.dir, moving: !!p.anim, phase: p.phase, color: p.color, turnT: p.turnT, hitched: hitched && p.id === this.meId, live: this.live.has(p.id),
       afterglow: (this.afterglows.get(p.id) ?? 0) > this.clock,
       look: lookOf(this.gear.get(p.id) ?? {}, this.items, this.outfits.get(p.id), this.patterns.get(p.id)),
+      ...(b && p.id === this.meId && { beam: { phase: b.phase, t: b.t, pad: b.pad } }),
     }));
+  }
+
+  /** Where others vanished or appeared at a teleport since the last call: the view pops each once. */
+  takePops(): Array<{ x: number; y: number }> {
+    const out = this.pops;
+    this.pops = [];
+    return out;
+  }
+
+  /** YES at NAPO's teleport: the trip starts on your screen (beam.ts); the server is asked once you are gone. */
+  private beamOut(pad: { x: number; y: number }) {
+    if (!this.online || !this.me) return;
+    this.path = []; this.goal = null;
+    this.beam = { phase: 'out', t: 0, pad: { x: pad.x, y: pad.y } };
+  }
+
+  /** The trip's clock: gone at BEAM_OUT_S, so the teleport is sent; arrived at BEAM_IN_S; off if the server never moved us. */
+  private beamOn(dt: number, now: number) {
+    const b = this.beam;
+    if (!b) return;
+    b.t += dt;
+    if (b.phase === 'in') {
+      if (b.t >= BEAM_IN_S) this.beam = null;
+    } else if (b.sent !== undefined) {
+      // The screen going dark for the new map (held) holds the server's answer: that is no time to give up.
+      if (this.held) b.sent = now;
+      else if (now - b.sent > BEAM_WAIT_MS) this.beam = null;
+    } else if (b.t >= BEAM_OUT_S) {
+      b.sent = now;
+      if (this.online) this.send({ t: 'teleport', x: b.pad.x, y: b.pad.y });
+    }
   }
 
   /** The creatures on this map, where they are drawn now, and whom they chase. */

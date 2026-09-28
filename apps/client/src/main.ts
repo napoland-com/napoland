@@ -1016,6 +1016,8 @@ function frame(now: number) {
   const passing = game.passing, glimpsed = me && passing.active ? passing.update(now, me.x, me.y, game.players.size <= 1 && game.map.data.kind === 'wilds') : 0;
   view.setGlimpse(passing.x, passing.y, passing.heading, passing.walking, passing.color, glimpsed);
   const t = (now - start) / 1000;
+  // Someone else vanished or appeared at a teleport: a pop there (the trip itself is theirs alone).
+  for (const p of game.takePops()) view.pop(p.x, p.y);
   view.render(t, dt, me ?? view.map.data.spawn, game.avatars(), game.meId, game.marker);
   const map = game.map, rule = map.data.surge;
   const scene: Scene = {

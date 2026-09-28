@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { TileMap, teleportArrival, type ClientMsg, type ItemsData, type MapData, type MapObject, type PlayerView } from '@napoland/shared';
+import { BEAM_IN_S, BEAM_OUT_S } from '../src/beam';
 import { friendsView } from '../src/friends';
 import { Game } from '../src/game';
 import { Items } from '../src/items';
@@ -31,6 +32,11 @@ const BOS = { furniture: ['bed', 'trophy-shelf'], visit: { name: 'Bo', trophies:
 
 let sent: ClientMsg[];
 let g: Game;
+let now = 3000;
+/** Runs the game for `ms`, sixty frames a second: long enough for the teleport's trip (beam.ts) to send it. */
+function run(ms: number) {
+  for (let t = 0; t < ms; t += 1000 / 60) { now += 1000 / 60; g.update(1 / 60, now); }
+}
 /** In a cabin, in front of tile x,y and facing it: your own (with your stove, and a warm pebble in your stash), or Bo's. */
 function standBefore(o: { x: number; y: number }, bos = false) {
   const at = me(o.x, o.y + 1);
@@ -134,11 +140,16 @@ describe('NAPO\'s teleport', () => {
     expect([g.question, sent]).toEqual([null, []]);
     g.pressA();
     g.answer('yes');
+    // Sent once the trip on your screen has taken you (beam.ts).
+    run(BEAM_OUT_S * 1000 + 50);
     expect(sent).toEqual([{ t: 'teleport', x: teleport.x, y: teleport.y }]);
+    // Into Bo's cabin, in front of its teleport: to the game that is where the trip set you down, so it plays out first.
     standBefore(teleport, true);
+    run(BEAM_IN_S * 1000 + 50);
     g.pressA();
     expect(g.askView()).toMatchObject({ text: teleportQuestion(false) });
     g.answer('yes');
+    run(BEAM_OUT_S * 1000 + 50);
     expect(sent).toEqual([{ t: 'teleport', x: teleport.x, y: teleport.y }]);
   });
 
@@ -150,6 +161,7 @@ describe('NAPO\'s teleport', () => {
     expect(g.askView()).toMatchObject({ who: TELEPORT, text: 'Go home? It sets you down in your cabin.' });
     expect(sent).toEqual([]);
     g.answer('yes');
+    run(BEAM_OUT_S * 1000 + 50);
     expect(sent).toEqual([{ t: 'teleport', x: twin.x, y: twin.y }]);
   });
 
