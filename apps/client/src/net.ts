@@ -32,13 +32,19 @@ export class Connection {
     void this.open();
   }
 
-  /** Close and stop reconnecting (for example when the server says the login is invalid). */
+  /**
+   * Close and stop reconnecting (for example when the server says the login is invalid, or a guest
+   * leaves the world to sign in). A socket closed here is closed for the game too: onClose, at once
+   * (its own close event, later, is no news any more).
+   */
   stop() {
     this.stopped = true;
     clearTimeout(this.timer);
     const ws = this.ws;
     this.ws = null;
-    ws?.close();
+    if (!ws) return;
+    ws.close();
+    this.onClose();
   }
 
   send(msg: ClientMsg) {

@@ -6,8 +6,9 @@ import { COMFORTS, type Comfort } from './comfort';
 import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
 import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
-import { FRONTED, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, hangs, objectTiles, underfoot, type MapData, type MapObject, type NpcLook, type TileKind } from './map';
+import { FRONTED, NOTE_AUTHORS, NOTE_ON, NOTE_WHEN, PAPER_LOOKS, TILE_CHARS, TileMap, doorOf, footprint, hangs, objectTiles, underfoot, type MapData, type MapObject, type NpcLook, type TileKind } from './map';
 import { DIRS, stepTarget } from './movement';
+import { ANYWHERE, DURING, SIGHTS, opensOn, readableAt, type NotebookData, type NotebookEvent } from './notebook';
 import { WEEKDAYS } from './parcels';
 import { Dir } from './protocol';
 import { FLASH_BURST_S, FLASH_GLOW_S } from './sky';
@@ -133,6 +134,13 @@ export function validateMap(data: MapData): Problem[] {
       const front = stepTarget(o.x, o.y, 'down');
       if (!map.walkable(front.x, front.y)) err(`${o.kind} at ${o.x},${o.y}: the tile in front (below) is not walkable, so nobody can talk to it`);
     }
+    if (o.kind === 'note') validateNote(o, data, map, err);
+  }
+  const noteTiles = new Set<string>();
+  for (const o of data.objects) {
+    if (o.kind !== 'note') continue;
+    if (noteTiles.has(`${o.x},${o.y}`)) err(`two notes lie on ${o.x},${o.y}: facing it, only one could be read`);
+    noteTiles.add(`${o.x},${o.y}`);
   }
   const s = data.spawn;
   if (!map.walkable(s.x, s.y)) err(`spawn ${s.x},${s.y} is not walkable`);
@@ -247,6 +255,30 @@ function validateVehicle(o: Extract<MapObject, { kind: 'car' | 'truck' | 'jeep' 
   }
 }
 
+/** A note says something in a few lines the text box shows one at a time. */
+export const NOTE_LINE_MAX = 140;
+
+/**
+ * A note someone left (notes.ts): named for good, by someone who left notes, saying something; it lies
+ * on something it can lie on (a table, a pole, a car...), and somebody can stand beside that to read it.
+ * Wax only shows on paper the rain reaches: a rain note lies out of doors. `faint` says what shows at
+ * the wrong time, so only a note with a time has it.
+ */
+function validateNote(o: Extract<MapObject, { kind: 'note' }>, data: MapData, map: TileMap, err: (message: string) => void): void {
+  const where = `note ${JSON.stringify(o.id)} at ${o.x},${o.y}`;
+  if (!ID.test(o.id ?? '')) err(`${where}: its id is lowercase words joined by hyphens (what players read is kept by it)`);
+  if (!(NOTE_AUTHORS as readonly string[]).includes(o.by)) err(`${where}: by is ${NOTE_AUTHORS.join(', ')}, not ${JSON.stringify(o.by)}`);
+  if (!o.name?.trim()) err(`${where} needs a name: what the text box calls it`);
+  if (!Array.isArray(o.text) || !o.text.length || o.text.some(t => typeof t !== 'string' || !t.trim())) err(`${where} has nothing to read`);
+  else for (const t of o.text) if (t.length > NOTE_LINE_MAX) err(`${where}: a line is ${t.length} characters, ${NOTE_LINE_MAX} at most`);
+  if (o.when !== undefined && !(NOTE_WHEN as readonly string[]).includes(o.when)) err(`${where}: when is ${NOTE_WHEN.join(', ')} or left out, not ${JSON.stringify(o.when)}`);
+  if (o.faint !== undefined && (o.when === undefined || typeof o.faint !== 'string' || !o.faint.trim())) err(`${where}: faint says what shows at the wrong time, so only a note with a when has it`);
+  if (o.when === 'rain' && data.kind === 'inside') err(`${where}: only rain shows it, and no rain falls inside`);
+  const under = data.objects.find(u => (NOTE_ON as readonly string[]).includes(u.kind) && objectTiles(u).some(([x, y]) => x === o.x && y === o.y));
+  if (!under) err(`${where} lies on nothing: it lies on a ${NOTE_ON.join(', a ')}`);
+  if (!DIRS.some(d => { const n = stepTarget(o.x, o.y, d); return map.walkable(n.x, n.y); })) err(`${where}: nobody can stand beside it to read it`);
+}
+
 /**
  * Tall grass (hidden) is ground you wade into: never under something that stands there, never raised,
  * never an exit. The tiles in front of a door and of what you read or talk to stay plain ground, so
@@ -340,6 +372,15 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   }
   if (wakes.length > 1) out.push({ level: 'error', map: wakes[1]!.data.id, message: `wake: ${wakes.map(m => m.data.id).join(' and ')} both have one, but everyone wakes up in the same home` });
 
+  // What a player read is kept by the note's id, whichever map it lies on.
+  const notes = new Map<string, string>();
+  for (const map of byId.values()) for (const o of map.data.objects) {
+    if (o.kind !== 'note') continue;
+    const other = notes.get(o.id);
+    if (other) out.push({ level: 'error', map: map.data.id, message: `note ${JSON.stringify(o.id)} at ${o.x},${o.y}: ${other} has that id too` });
+    else notes.set(o.id, `the note at ${o.x},${o.y} of ${map.data.id}`);
+  }
+
   const reached = new Set([homeId]);
   const queue = [homeId];
   for (let h = 0; h < queue.length; h++) {
@@ -372,7 +413,11 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     for (const [field, v] of [['noun', i.noun], ['plural', i.plural], ['about', i.about]] as const) {
       if (v !== undefined && !(typeof v === 'string' && v.trim())) err(`${name}: ${field}, when given, says something`);
     }
-    if (!['resource', 'consumable', 'charm', 'gear', 'tool', 'sealed', 'furniture'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear, tool, sealed or furniture`);
+    if (!['resource', 'consumable', 'charm', 'gear', 'tool', 'sealed', 'keepsake', 'furniture'].includes(i.kind)) err(`${name}: kind must be resource, consumable, charm, gear, tool, sealed, keepsake or furniture`);
+    if (i.kind === 'keepsake') {
+      if (i.stack !== 1) err(`${name}: a keepsake is one of a kind, one to a slot`);
+      if (i.use || i.weight || i.fuel || i.charge || i.live || i.reveals) err(`${name}: a keepsake is only brought home: never used, burned or fed, and it weighs nothing to speak of`);
+    }
     if (i.kind === 'furniture') {
       if (!(COMFORTS as readonly string[]).includes(i.furnishes as string)) err(`${name}: furniture furnishes a place in the cabin: ${COMFORTS.join(', ')}`);
       if (!(Number.isInteger(i.comfort) && i.comfort! >= 1 && i.comfort! <= 10)) err(`${name}: furniture adds comfort, a whole number from 1 to 10`);
@@ -449,6 +494,10 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
   // A sealed thing comes only in a parcel and stays in the stash until it is opened there (World.open):
   // nothing may put one in a bag, make one, or pay with one unopened.
   const sealed = new Set(data.items.filter(i => i.kind === 'sealed').map(i => i.id));
+  // A keepsake lies in one place for each player (keepsakes, below) until they bring it home, where it
+  // stays: nothing grows, makes, holds or pays with one.
+  const keepsakes = new Set(data.items.filter(i => i.kind === 'keepsake').map(i => i.id));
+  const KEPT = 'those lie in one place each, and stay home once brought there';
   // Furniture is made at the workbench for its place in the cabin and set there at once (World.craft): it
   // never lies in a bag or a stash, so nothing may put it in one, and nothing is paid with it.
   const furniture = data.items.filter(i => i.kind === 'furniture');
@@ -483,6 +532,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (tools.has(n.item)) err(`mend: ${tier} needs ${n.item}, a tool: tools are never used up`);
       else if (sealed.has(n.item)) err(`mend: ${tier} needs ${n.item}, a sealed thing: ${OPENED}`);
       else if (placed.has(n.item)) err(`mend: ${tier} needs ${n.item}: ${PLACED}`);
+      else if (keepsakes.has(n.item)) err(`mend: ${tier} needs ${n.item}, a keepsake: ${KEPT}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`mend: each need is a whole number from 1`);
     }
   }
@@ -496,6 +546,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (tools.has(n.item)) err(`${name} needs ${n.item}, a tool: tools are never used up`);
       else if (sealed.has(n.item)) err(`${name} needs ${n.item}, a sealed thing: ${OPENED}`);
       else if (placed.has(n.item)) err(`${name} needs ${n.item}: ${PLACED}`);
+      else if (keepsakes.has(n.item)) err(`${name} needs ${n.item}, a keepsake: ${KEPT}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
     }
     if (u?.chance !== undefined && !(typeof u.chance === 'number' && u.chance > 0 && u.chance <= 1)) err(`${name}: chance is a share above 0, at most 1`);
@@ -515,6 +566,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     else if (sealed.has(r.make)) err(`${name} makes ${r.make}, a sealed thing: those come only in parcels`);
     // Furniture is set in its one place at once: one at a time.
     else if (placed.has(r.make) && r.count !== undefined && r.count !== 1) err(`${name} makes ${r.make}, furniture, which has one place: count is 1 or left out`);
+    else if (keepsakes.has(r.make)) err(`${name} makes ${r.make}, a keepsake: ${KEPT}`);
     if (r.count !== undefined && !(Number.isInteger(r.count) && r.count >= 1)) err(`${name}: count is a whole number from 1`);
     // What it makes goes by its kind: a tool to the player's tools (World.giveTool), anything else to the stash.
     else if (tools.has(r.make) && r.count !== undefined && r.count !== 1) err(`${name} makes ${r.make}, a tool, which is yours once: count is 1 or left out`);
@@ -524,6 +576,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       else if (tools.has(n.item)) err(`${name} needs ${n.item}, a tool: tools are never used up`);
       else if (sealed.has(n.item)) err(`${name} needs ${n.item}, a sealed thing: ${OPENED}`);
       else if (placed.has(n.item)) err(`${name} needs ${n.item}: ${PLACED}`);
+      else if (keepsakes.has(n.item)) err(`${name} needs ${n.item}, a keepsake: ${KEPT}`);
       if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${name}: each need is a whole number from 1`);
     }
   }
@@ -537,6 +590,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     else if (tools.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a tool: tools are made at the workbench or found`);
     else if (sealed.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a sealed thing: ${NO_BAG}`);
     else if (placed.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}: ${PLACED}`);
+    else if (keepsakes.has(r.item)) err(`item ${JSON.stringify(i.id)} reveals ${r.item}, a keepsake: ${KEPT}`);
     if (r.item === i.id) err(`item ${JSON.stringify(i.id)} reveals itself`);
     if (!Number.isInteger(r.count) || r.count < 1 || !(r.weight > 0)) err(`item ${JSON.stringify(i.id)}: a reveal needs a count from 1 and a weight above 0`);
     // Looking closely says what it turned out to be and what that is good for: the `about` line.
@@ -549,6 +603,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!def) return err(`${where}: ${id} is not an item`);
     if (def.kind === 'tool') err(`${where}: ${id} is a tool, which never lies in a stash`);
     if (def.kind === 'furniture') err(`${where}: ${id}: ${PLACED}`);
+    if (def.kind === 'keepsake') err(`${where}: ${id} is a keepsake: ${KEPT}`);
     if (sealed && def.kind === 'sealed') err(`${where}: ${id} is sealed too`);
   };
   const slotsOf = (list: unknown, where: string, sealed = false) => {
@@ -587,6 +642,7 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!ids.has(f.item)) err(`${name}: there is no item ${f.item}`);
     else if (sealed.has(f.item)) err(`${name}: ${f.item} is a sealed thing: ${NO_BAG}`);
     else if (placed.has(f.item)) err(`${name}: ${f.item}: ${PLACED}`);
+    else if (keepsakes.has(f.item)) err(`${name}: ${f.item} is a keepsake: ${KEPT}`);
     const mapData = byId.get(f.map);
     if (!mapData) return err(`${name}: there is no map ${f.map}`);
     if (!Number.isInteger(f.count) || f.count < 1) err(`${name}: count must be a whole number from 1`);
@@ -613,7 +669,40 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     else if (room < f.count * 3) warn(`${name}: only ${room} tiles fit the rule for ${f.count} finds; they have little room to move`);
     return undefined;
   });
+  validateKeepsakes(data, keepsakes, byId, err);
   return out;
+}
+
+/**
+ * Where the keepsakes lie (notes.ts): each keepsake in exactly one place, on a tile somebody can walk
+ * onto and pick it up from (not an exit, which would carry them off), never two on one tile; and the
+ * whole set home makes the bar bigger by a whole number.
+ */
+function validateKeepsakes(data: ItemsData, keepsakes: Set<string>, maps: Map<string, MapData>, err: (message: string) => void): void {
+  const k = data.keepsakes;
+  if (k === undefined) {
+    if (keepsakes.size) err(`keepsakes: ${[...keepsakes].join(', ')} lie nowhere`);
+    return;
+  }
+  if (!(Number.isInteger(k.energy) && k.energy >= 1)) err('keepsakes: energy is a whole number from 1, what the whole set home adds to the bar');
+  if (!Array.isArray(k.places)) return err('keepsakes: places is a list');
+  const placed = new Set<string>(), tiles = new Set<string>();
+  k.places.forEach((p, n) => {
+    const where = `keepsakes: place ${n + 1} (${p?.item})`;
+    if (!keepsakes.has(p?.item)) return err(`${where}: ${p?.item} is not a keepsake`);
+    if (placed.has(p.item)) err(`${where}: ${p.item} lies in two places`);
+    placed.add(p.item);
+    const mapData = maps.get(p.map);
+    if (!mapData) return err(`${where}: there is no map ${p.map}`);
+    const map = new TileMap(mapData);
+    if (!map.walkable(p.x, p.y)) err(`${where}: ${p.x},${p.y} on ${p.map} is not walkable`);
+    else if (map.exitAt(p.x, p.y)) err(`${where}: ${p.x},${p.y} on ${p.map} is an exit`);
+    const tile = `${p.map} ${p.x},${p.y}`;
+    if (tiles.has(tile)) err(`${where}: another keepsake lies on ${tile}`);
+    tiles.add(tile);
+    return undefined;
+  });
+  for (const id of keepsakes) if (!placed.has(id)) err(`keepsakes: ${id} lies nowhere`);
 }
 
 /**
@@ -713,4 +802,95 @@ function validateConditions(data: ItemsData, byId: Map<string, MapData>, err: (m
     }
   }
   return ids;
+}
+
+/** A page is short: a few lines in the journal. */
+const PAGE_TITLE_MAX = 32;
+const PAGE_TEXT_MAX = 300;
+/**
+ * Words that say where something is, which a page never does (the world is learned by walking it): the
+ * compass, a count of steps or tiles, a tile's two numbers. "The South Road" is a name, not a way.
+ */
+const WHERE = [/\b(north|south|east|west)(east|west|ern|wards?)?\b/i, /\b\d+ (steps?|tiles?)\b/i, /\b\d{1,2} ?, ?\d{1,2}\b/];
+export const saysWhere = (text: string): boolean => WHERE.some(re => re.test(text.replace(/\bSouth Road\b/g, '')));
+
+/**
+ * content/notebook.json: pages with ids, areas, titles and texts, each opened by what a player picks up,
+ * reads or lives through, about finds, readable things and sights that exist, and never saying where
+ * anything is; blanks with a question, its answer and what fills it in.
+ */
+export function validateNotebook(data: NotebookData, maps: MapData[], items?: ItemsData): Problem[] {
+  const out: Problem[] = [];
+  const err = (message: string) => out.push({ level: 'error', message });
+  const warn = (message: string) => out.push({ level: 'warning', message });
+  if (!Number.isInteger(data.version) || data.version < 1) err('version must be a whole number from 1');
+  if (!Array.isArray(data.pages) || !data.pages.length) {
+    err('there are no pages');
+    return out;
+  }
+  const byId = new Map(maps.map(m => [m.id, m]));
+  const areas = new Set([ANYWHERE, ...maps.filter(m => m.kind !== 'inside').map(m => m.id)]);
+  // What can be picked up: what finds grow, and what a strange object may turn out to be.
+  const found = new Set([...(items?.finds ?? []).map(f => f.item), ...(items?.items ?? []).flatMap(i => (i.reveals ?? []).map(r => r.item))]);
+  // What has an id of its own to be read by: NAPO's desks.
+  const named = new Set<string>();
+  for (const m of maps) for (const o of m.objects) if (o.kind === 'console') named.add(o.id);
+  const event = (e: NotebookEvent, name: string) => {
+    const kinds = typeof e === 'object' && e !== null ? Object.keys(e).filter(k => k !== 'during') : [];
+    if (kinds.length !== 1 || !['find', 'read', 'saw'].includes(kinds[0]!)) return err(`${name}: an event is one of find, read or saw`);
+    if ('during' in e && !('find' in e)) err(`${name}: only a find has a during`);
+    if ('find' in e) {
+      if (!found.has(e.find)) err(`${name}: nothing out there is ${String(e.find)}: no find grows it and nothing turns out to be it`);
+      if (e.during !== undefined && !(DURING as readonly string[]).includes(e.during)) err(`${name}: during is ${DURING.join(' or ')}`);
+    } else if ('read' in e) {
+      if (typeof e.read === 'string') {
+        if (!named.has(e.read)) err(`${name}: nothing to read has the id ${e.read}`);
+      } else {
+        const m = byId.get(e.read?.map);
+        const o = m && readableAt(m, e.read.x, e.read.y);
+        if (!m) err(`${name}: there is no map ${String(e.read?.map)}`);
+        else if (!o) err(`${name}: nothing to read at ${e.read.x},${e.read.y} in ${e.read.map}`);
+        else if (o.x !== e.read.x || o.y !== e.read.y) err(`${name}: the ${o.kind} at ${e.read.x},${e.read.y} in ${e.read.map} is named by its first tile, ${o.x},${o.y}`);
+      }
+    } else if (!(SIGHTS as readonly string[]).includes(e.saw)) err(`${name}: saw is one of ${SIGHTS.join(', ')}`);
+    return undefined;
+  };
+  const words = (text: unknown, name: string, max: number) => {
+    if (typeof text !== 'string' || !text.trim()) return err(`${name} says nothing`);
+    if (text.length > max) err(`${name} is ${text.length} characters: a page is short, ${max} at most`);
+    if (saysWhere(text)) err(`${name} says where something is: "${text}". A page never does`);
+    return undefined;
+  };
+  const pageIds = new Set<string>(), blankIds = new Set<string>();
+  data.pages.forEach((p, i) => {
+    const name = `page ${i + 1} (${JSON.stringify(p?.id)})`;
+    if (typeof p !== 'object' || p === null) return err(`${name}: a page has an id, an area, a title, a text and what opens it`);
+    if (!ID.test(p.id ?? '')) err(`${name}: an id is lowercase words joined by hyphens`);
+    if (pageIds.has(p.id)) err(`${name} is there twice`);
+    pageIds.add(p.id);
+    if (!areas.has(p.area)) err(`${name}: its area is a town or a region (${[...areas].filter(a => a !== ANYWHERE).join(', ')}), or ${ANYWHERE}`);
+    words(p.title, `${name}: its title`, PAGE_TITLE_MAX);
+    words(p.text, `${name}: its text`, PAGE_TEXT_MAX);
+    const opens = p.when === undefined ? [] : opensOn(p);
+    if (!opens.length) err(`${name}: nothing opens it`);
+    opens.forEach((e, k) => event(e, `${name}: what opens it${opens.length > 1 ? ` (${k + 1})` : ''}`));
+    if (p.blanks !== undefined && !Array.isArray(p.blanks)) return err(`${name}: blanks is a list`);
+    (p.blanks ?? []).forEach((b, k) => {
+      const where = `${name}: blank ${k + 1} (${JSON.stringify(b?.id)})`;
+      if (typeof b !== 'object' || b === null) return err(`${where}: a blank has an id, a question, its answer and what fills it in`);
+      if (!ID.test(b.id ?? '')) err(`${where}: an id is lowercase words joined by hyphens`);
+      if (blankIds.has(b.id)) err(`${where} is there twice`);
+      blankIds.add(b.id);
+      words(b.ask, `${where}: its question`, PAGE_TITLE_MAX * 2);
+      if (typeof b.ask === 'string' && !b.ask.trim().endsWith('?')) err(`${where}: its question ends in "?"`);
+      words(b.fill, `${where}: its answer`, PAGE_TEXT_MAX / 2);
+      if (b.when === undefined) return err(`${where}: nothing fills it in`);
+      event(b.when, `${where}: what fills it in`);
+      // It would fill in as the page opens, and never read as a question.
+      if (opens.some(e => JSON.stringify(e) === JSON.stringify(b.when))) warn(`${where}: filled in by what opens its page, so it never reads as a question`);
+      return undefined;
+    });
+    return undefined;
+  });
+  return out;
 }

@@ -1,7 +1,7 @@
 {
   "id": "south-road-checkpoint",
   "name": "The checkpoint",
-  "version": 3,
+  "version": 4,
   "kind": "inside",
   "depth": 0,
   "width": 7,
@@ -32,7 +32,8 @@
     {"kind":"bed","x":5,"y":1},
     {"kind":"table","x":1,"y":3},
     {"kind":"crate","x":5,"y":4},
-    {"kind":"cache","x":2,"y":3,"name":"the checkpoint's crate"}
+    {"kind":"cache","x":2,"y":3,"name":"the checkpoint's crate"},
+    {"kind":"note","x":1,"y":3,"id":"barlow-checkpoint","by":"barlows","name":"A note on the table","text":["Nobody at the checkpoint. The barrier is down, the lamp is out, and the book lies open on the desk.","We waited a day and a night, and nobody came. Dan says we go on in the morning, and so we will.","Whoever reads this: we were the Barlows, from the cabin at the end. If you pass it, keep the lamp lit. Ellen"]}
   ],
   "style": "napo"
 }

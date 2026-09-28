@@ -39,6 +39,8 @@ AWS_PROFILE=napoland node tools/deploy.mjs --version <tag>    # roll back to an 
 
 `curl https://www.napoland.com/health` shows the running version (`version` is the commit).
 
+Before releasing anything that changes what is saved (a migration, or new fields in the players' jsonb), take a backup (`/data/napoland/release/backup.sh`, Backups and restoring below), and restore it if you roll back past that release: an older release saves players with only what it knows.
+
 ## Looking at the server
 
 ```bash
@@ -123,9 +125,8 @@ first, then list it. Both send players to Supabase's callback,
 4. **The game:** in [deploy/compose.yaml](../deploy/compose.yaml), under `game`, `environment`, add
    `AUTH_PROVIDERS: google,apple` (or only the one that is set up), then release. The buttons show from
    the next page load; `curl https://www.napoland.com/auth-config` lists them. Try each on a phone:
-   a guest who signs in keeps their character. Try an email code too: with a provider listed, the
-   client switches Supabase to the PKCE flow those need, which also carries the email sign-in. Before
-   the switch, try it on a test project with the same settings if you can.
+   a guest who signs in keeps their character. Try an email code too: the client uses Supabase's
+   PKCE flow for every sign-in, the email code included, whether or not a provider is listed.
 
 Supabase links an account's sign-ins by their email address: someone who played with an email code
 and signs in with Google or Apple under the same address plays the same character. Apple's hidden

@@ -177,6 +177,17 @@ export function dayIndex(wallMs: number): number {
   return Math.floor(wallMs / 1000 / DAY_S);
 }
 
+/**
+ * The day of the night of the answer (dayIndex): those who stayed count the Zone's days from it, a day for
+ * each turn of the sky, as Vera's card does ("Day 3,041"). Late in September 2026 it is past day 3,050.
+ */
+export const ANSWER_DAY = 618_683;
+
+/** The Zone's day at a wall time: how many turns of the sky since the night of the answer. */
+export function zoneDay(wallMs: number): number {
+  return dayIndex(wallMs) - ANSWER_DAY;
+}
+
 /** The week at a wall time. Weeks turn on Monday at 00:00 UTC (the epoch was a Thursday), always at a dawn. */
 export function weekIndex(wallMs: number): number {
   return Math.floor((wallMs / 1000 + 3 * 86400) / 604800);

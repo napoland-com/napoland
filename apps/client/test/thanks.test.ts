@@ -155,7 +155,7 @@ describe('offering to thank someone who fed a fire', () => {
     expect(g.question?.text).toBe('Ana fed this fire. Thank Ana?');
     g = new Game(maps, m => sent.push(m), ITEMS);
     enter([4, 2], { fires: [fire(['ana', 'bo', 'cy'])], thanked: ['ana'] });
-    g.handle({ t: 'friends', friends: [], incoming: [], outgoing: [], blocked: [{ id: 'bo', name: 'Bo' }], requestsOff: false }, now);
+    g.handle({ t: 'friends', friends: [], incoming: [], outgoing: [], blocked: [{ id: 'bo', name: 'Bo' }], requestsOff: false, tradesOff: false }, now);
     run(THANK_AFTER_MS + 100);
     expect(g.question?.text).toBe('Cy fed this fire. Thank Cy?');
   });

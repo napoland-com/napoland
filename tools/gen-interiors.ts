@@ -10,7 +10,8 @@
  * fireplace stands against the top wall with floor in front: the tiles around it are where energy
  * comes back. A room without one is cold and dark. Rooms stay small so the camera shows all of one.
  * Every shelter out in the wilds whose fire people rest by keeps a crate for whoever comes next (a
- * `cache`, caches.ts), added last in its list so that nothing placed before it ever moves.
+ * `cache`, caches.ts), added last in its list so that nothing placed before it ever moves. The notes
+ * people left (notes-left.ts) come after even that, each lying on a table, a shelf, a crate or a bed.
  *
  * The outside generators (gen-map.ts, gen-woods.ts) put the exit on each house's door with doorInto,
  * which fails if the room expects its house somewhere else. This script checks the other direction, so
@@ -19,6 +20,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { TileMap, doorOf, hangs, objectTiles, underfoot, validateMap, type Comfort, type Dir, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
+import { noteAt } from './notes-left';
 
 type House = Extract<MapObject, { kind: 'house' }>;
 
@@ -82,7 +84,7 @@ const ROOMS: readonly Room[] = [
   {
     // Whoever lived next door left with the others and never came back: no fire, dust, what they
     // could not carry. The only dark room in town.
-    id: 'stonebrook-empty-house', name: 'The empty house', version: 1, outside: 'stonebrook', door: [15, 20],
+    id: 'stonebrook-empty-house', name: 'The empty house', version: 2, outside: 'stonebrook', door: [15, 20],
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -100,6 +102,9 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 3, y: 3 },
       { kind: 'table', x: 1, y: 4 },
       { kind: 'crate', x: 6, y: 5 },
+      // The Barlows slept here one night on their way out (notes-left.ts).
+      noteAt('barlow-tins', 1, 4),
+      noteAt('barlow-next-door', 2, 1),
     ],
   },
   {
@@ -150,7 +155,7 @@ const ROOMS: readonly Room[] = [
     // The Near Woods' first shelter, past the crossroads, and the nearest to town. Abandoned once; now
     // somebody keeps the fire going, so it never goes out: a new player always has one safe fire (the
     // other shelters' fires burn down). A bunk, crates, not much else.
-    id: 'near-woods-old-cabin', name: 'The old cabin', version: 3, outside: 'near-woods', door: [47, 38],
+    id: 'near-woods-old-cabin', name: 'The old cabin', version: 4, outside: 'near-woods', door: [47, 38],
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -169,11 +174,14 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 7, y: 3 },
       // A crate for whoever comes next, by the fire (caches.ts). Last, so nothing before it moves.
       { kind: 'cache', x: 2, y: 1, name: 'the old cabin\'s crate' },
+      noteAt('ranger-fires', 6, 1),
+      noteAt('ranger-deer', 7, 3),
+      noteAt('barlow-old-cabin', 1, 3),
     ],
   },
   {
     // Behind the lonely lamp, the refuge of the west loop: one room, a bunk, the fire, a ranger's things.
-    id: 'near-woods-ranger-hut', name: 'The ranger\'s hut', version: 2, outside: 'near-woods', door: [30, 6],
+    id: 'near-woods-ranger-hut', name: 'The ranger\'s hut', version: 3, outside: 'near-woods', door: [30, 6],
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -189,12 +197,18 @@ const ROOMS: readonly Room[] = [
       { kind: 'table', x: 1, y: 3 },
       { kind: 'crate', x: 5, y: 4 },
       { kind: 'cache', x: 2, y: 3, name: 'the ranger\'s crate' },
+      // Hers: the logbook on the shelf, the note on the table, one in the crate that only shows in the
+      // dark, and under the pillow one that only shows on a green night.
+      noteAt('ranger-rocks', 1, 1),
+      noteAt('ranger-tall-ones', 1, 3),
+      noteAt('ranger-dark', 5, 4),
+      noteAt('ranger-green', 5, 1),
     ],
   },
   {
     // The deepest shelter, at the end of the east trail: the cabin whose light was always on. Somebody
     // lived here longer than anywhere else in the woods.
-    id: 'near-woods-end-cabin', name: 'The cabin at the end', version: 2, outside: 'near-woods', door: [55, 4],
+    id: 'near-woods-end-cabin', name: 'The cabin at the end', version: 3, outside: 'near-woods', door: [55, 4],
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -213,12 +227,18 @@ const ROOMS: readonly Room[] = [
       { kind: 'bed', x: 1, y: 4 },
       { kind: 'crate', x: 7, y: 5 },
       { kind: 'cache', x: 5, y: 1, name: 'the crate in the cabin at the end' },
+      // The Barlows' home: Ellen's lists, Wren's notes, and the ranger's, in the ink that shows in the dark.
+      noteAt('barlow-oil', 6, 1),
+      noteAt('ranger-lamp', 7, 1),
+      noteAt('barlow-crews', 6, 3),
+      noteAt('barlow-tall-ones', 1, 4),
+      noteAt('barlow-ferns', 7, 5),
     ],
   },
   {
     // The NAPO Bunker, the first building down the South Road and its nearest shelter to town: bunks,
     // NAPO's rules for staff on the wall, and Ruth, who keeps the fire going, so it never goes out.
-    id: 'south-road-bunker', name: 'The NAPO Bunker', version: 3, outside: 'south-road', door: [42, 15], style: 'napo',
+    id: 'south-road-bunker', name: 'The NAPO Bunker', version: 4, outside: 'south-road', door: [42, 15], style: 'napo',
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -255,13 +275,14 @@ const ROOMS: readonly Room[] = [
         ],
       },
       { kind: 'cache', x: 1, y: 3, name: 'the bunker\'s crate' },
+      noteAt('ranger-ruth', 2, 1),
     ],
   },
   {
     // The NAPO Laboratory, in the research station's main building: benches, the station's log and a
     // radio still on, a stove against the back wall (it burns down unless someone feeds it), and Vera,
     // the last of NAPO's researchers, who never left.
-    id: 'south-road-laboratory', name: 'The NAPO Laboratory', version: 3, outside: 'south-road', door: [23, 42], style: 'napo',
+    id: 'south-road-laboratory', name: 'The NAPO Laboratory', version: 4, outside: 'south-road', door: [23, 42], style: 'napo',
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -314,6 +335,7 @@ const ROOMS: readonly Room[] = [
         ],
       },
       { kind: 'cache', x: 3, y: 1, name: 'the laboratory\'s crate' },
+      noteAt('ranger-vera', 9, 4),
     ],
   },
   {
@@ -368,7 +390,7 @@ const ROOMS: readonly Room[] = [
   {
     // The Tower's shed: the panel that works the Tower, with a note taped over its switch, and crates of
     // spare parts. No fire.
-    id: 'south-road-tower-shed', name: 'The tower shed', version: 2, outside: 'south-road', door: [46, 44], style: 'napo',
+    id: 'south-road-tower-shed', name: 'The tower shed', version: 3, outside: 'south-road', door: [46, 44], style: 'napo',
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -390,12 +412,13 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 5, y: 1 },
       { kind: 'shelf', x: 1, y: 3 },
       { kind: 'crate', x: 5, y: 4 },
+      noteAt('walt-tower', 1, 3),
     ],
   },
   {
     // The checkpoint's booth on the quarantine line, at the end of the South Road: a stove that burns
     // down, a cot, and the log the last guard kept.
-    id: 'south-road-checkpoint', name: 'The checkpoint', version: 3, outside: 'south-road', door: [40, 83], style: 'napo',
+    id: 'south-road-checkpoint', name: 'The checkpoint', version: 4, outside: 'south-road', door: [40, 83], style: 'napo',
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -419,6 +442,7 @@ const ROOMS: readonly Room[] = [
       { kind: 'table', x: 1, y: 3 },
       { kind: 'crate', x: 5, y: 4 },
       { kind: 'cache', x: 2, y: 3, name: 'the checkpoint\'s crate' },
+      noteAt('barlow-checkpoint', 1, 3),
     ],
   },
   // The houses of four families who left Stonebrook when NAPO said two weeks, and never came back

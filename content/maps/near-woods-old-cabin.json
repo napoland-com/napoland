@@ -1,7 +1,7 @@
 {
   "id": "near-woods-old-cabin",
   "name": "The old cabin",
-  "version": 3,
+  "version": 4,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -34,6 +34,9 @@
     {"kind":"crate","x":1,"y":3},
     {"kind":"crate","x":6,"y":3},
     {"kind":"crate","x":7,"y":3},
-    {"kind":"cache","x":2,"y":1,"name":"the old cabin's crate"}
+    {"kind":"cache","x":2,"y":1,"name":"the old cabin's crate"},
+    {"kind":"note","x":6,"y":1,"id":"ranger-fires","by":"ranger","name":"A note on the shelf","text":["Resin burns longest. Cloth catches fastest. Green wood never: it smokes and gives nothing back.","Whoever keeps this fire going when I am not here: thank you. Whoever you are."]},
+    {"kind":"note","x":7,"y":3,"id":"ranger-deer","by":"ranger","name":"Tucked in the crate","text":["The deer left the meadow the week of the answer. The birds went a week before it, all in one morning.","The ferns have not been still since. Something lies in them now, and it listens."]},
+    {"kind":"note","x":1,"y":3,"id":"barlow-old-cabin","by":"barlows","name":"A note in the crate","text":["The fire was going when we got here, and nobody about. We slept by it and left what we could spare.","Dan, Wren and me, walking out. If the ranger comes by: we have gone. E.B."]}
   ]
 }

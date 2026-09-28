@@ -4,22 +4,19 @@
  * the game runs; the game server only ever sees that token. Loaded only when the server asks for
  * Supabase sign-in, so the game does not download it otherwise.
  *
- * Google and Apple use the PKCE flow: the page goes to the provider through Supabase, keeping a
- * one-time secret here, and comes back to the game's address with a code that only that secret turns
- * into a session, so a code caught on the way is worth nothing. supabase-js exchanges it as it starts
- * (detectSessionInUrl). The email code works the same in either flow: it is checked directly.
+ * Every sign-in uses the PKCE flow: for Google and Apple the page goes to the provider through
+ * Supabase, keeping a one-time secret here, and comes back to the game's address with a code that only
+ * that secret turns into a session, so a code caught on the way is worth nothing. supabase-js exchanges
+ * it as it starts (detectSessionInUrl). The email code is checked directly. Never the implicit flow:
+ * that one takes a whole session from any address the page is opened at, so a link carrying someone
+ * else's session in its fragment would sign this browser in to their account without a word.
  */
 import { createClient, isAuthRetryableFetchError, type AuthError } from '@supabase/supabase-js';
 import { AuthProblem, type AuthBackend } from './signin';
 
-/**
- * `oauth`: the server offers Google or Apple (auth-config's providers). Only then does the client use
- * the PKCE flow they need: until the owner turns a provider on, the email code keeps the flow it was
- * tested with in production.
- */
-export function supabaseBackend(url: string, publishableKey: string, oauth = false): AuthBackend {
+export function supabaseBackend(url: string, publishableKey: string): AuthBackend {
   const { auth } = createClient(url, publishableKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: oauth ? 'pkce' : 'implicit' },
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce' },
   });
   // Starting, supabase-js reads a provider's answer from the address and takes out a code it used, but
   // leaves an error, or a code it could not use: tidied once it has read them, so a reload does not
@@ -62,13 +59,15 @@ export function supabaseBackend(url: string, publishableKey: string, oauth = fal
 
 /** What Supabase adds to the game's address coming back from Google or Apple (in the query, and errors in the fragment too). */
 const ANSWER_PARAMS = ['code', 'sb_flow_id', 'error', 'error_code', 'error_description'];
+/** A whole session in the fragment, as the implicit flow hands one over: never ours (PKCE), so it goes too. */
+const SESSION_PARAMS = ['access_token', 'refresh_token'];
 
-/** The address without a provider's answer in it, or null when it has none. */
+/** The address without a provider's answer (or a session someone put in its fragment) in it, or null when it has none. */
 export function withoutAnswer(href: string): string | null {
   const url = new URL(href);
   const hash = new URLSearchParams(url.hash.slice(1));
   const inQuery = ANSWER_PARAMS.filter(p => url.searchParams.has(p));
-  const inHash = ANSWER_PARAMS.some(p => hash.has(p));
+  const inHash = [...ANSWER_PARAMS, ...SESSION_PARAMS].some(p => hash.has(p));
   if (!inQuery.length && !inHash) return null;
   for (const p of inQuery) url.searchParams.delete(p);
   if (inHash) url.hash = '';

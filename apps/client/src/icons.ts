@@ -86,6 +86,16 @@ const ICONS: Record<string, string> = {
     <circle cx="16" cy="16" r="6.5" fill="#7ff3e6"/>
     <path d="M13.2 13.6c.9-1.2 2.2-1.8 3.6-1.8" stroke="#effffd" stroke-width="1.4"/>
     <path d="M5.5 11.5c-1.4 3-1.4 6 0 9M26.5 11.5c1.4 3 1.4 6 0 9M8.8 13.4c-.6 1.7-.6 3.5 0 5.2M23.2 13.4c.6 1.7.6 3.5 0 5.2" stroke="#9ff5ec" stroke-width="1.3"/>`),
+  // A lump of coal that never went out: black, cracked, and red in the cracks.
+  'ember-coal': icon(`${halo(16, 18, 12, '#ff6a3a')}
+    <path d="M6 20.5c0-4.8 4.4-8.5 10.2-8.5 5.6 0 9.8 3.4 9.8 7.8 0 4.6-4.4 7.2-10 7.2S6 25 6 20.5z" fill="#2b2322"/>
+    <path d="M10.5 18.5l3.2 1.6 2-2.6 3 2.2 2.8-1.4M13.7 20.1l-.6 3.4M18.7 19.7l.8 3.2" stroke="#ff7a3c" stroke-width="1.5"/>`),
+  // A pale moth, its wings spread, with a dark spot on each.
+  'pale-moth': icon(`${halo(16, 16, 13, '#f2ecd8')}
+    <path d="M16 11c-3-5.5-10.5-6.5-11.5-2.5-.8 3.4 2.8 6.4 7.2 6.8-3.6 1.2-5.2 4.6-3 6.8 2.2 2.1 5.9-.6 7.3-4.6 1.4 4 5.1 6.7 7.3 4.6 2.2-2.2.6-5.6-3-6.8 4.4-.4 8-3.4 7.2-6.8C26.5 4.5 19 5.5 16 11z" fill="#e9e3d0"/>
+    <path d="M16 10.5v11" stroke-width="1.8"/>
+    <path d="M15 9.5c-.8-1.6-2-2.6-3.2-3M17 9.5c.8-1.6 2-2.6 3.2-3" stroke-width="1.1"/>
+    <circle cx="10" cy="11" r="1.4" fill="#b9ad90" stroke="none"/><circle cx="22" cy="11" r="1.4" fill="#b9ad90" stroke="none"/>`),
   // NAPO's grey steel lockbox: a lid, a band of NAPO yellow and a padlock that has not been opened since the evacuation.
   lockbox: icon(`<path d="M4.5 13h23v13.5c0 .8-.7 1.5-1.5 1.5H6c-.8 0-1.5-.7-1.5-1.5z" fill="#7d8b92"/>
     <path d="M4 9.8c0-1 .8-1.8 1.8-1.8h20.4c1 0 1.8.8 1.8 1.8V13H4z" fill="#aebbc1"/>
@@ -93,6 +103,39 @@ const ICONS: Record<string, string> = {
     <path d="M14.3 15.6v-1.9a1.7 1.7 0 0 1 3.4 0v1.9" stroke-width="1.4"/>
     <rect x="12.6" y="15.6" width="6.8" height="6.6" rx="1.2" fill="#4d5963"/>
     <circle cx="16" cy="18.4" r=".9" fill="#e8dfc8" stroke="none"/><path d="M16 19.2v1.4" stroke-width="1.1"/>`),
+  // The keepsakes people left (notes.ts), each one of a kind, in a soft gold light that says so.
+  // A photograph of the town before: a white border, the mill's roof, the street, the Old Stone whole.
+  'old-photograph': icon(`${halo(16, 16, 14, '#ffd98a')}
+    <g transform="rotate(-6 16 16)"><path d="M5 7.5h22v17H5z" fill="#efe6cf"/>
+    <path d="M7.5 10h17v10.5h-17z" fill="#6f6556"/>
+    <path d="M7.5 16l4-3.5 4 3h9v5h-17z" fill="#9a8f7c" stroke="none"/>
+    <path d="M18.5 20.5v-4.6l1.4-2.2 1.4 2.2v4.6z" fill="#cfc4ad" stroke="none"/>
+    <path d="M7.5 20.5h17" stroke="#4d463c" stroke-width="1.2"/></g>`),
+  // The ranger's brass compass: a round case on its ring, the needle turned toward the woods.
+  'brass-compass': icon(`${halo(16, 17, 13, '#ffd98a')}
+    <circle cx="16" cy="18" r="9" fill="#c9a24a"/>
+    <circle cx="16" cy="18" r="6.4" fill="#efe6cf"/>
+    <path d="M14.4 5.8a1.6 1.6 0 0 1 3.2 0V9h-3.2z" fill="#c9a24a"/>
+    <path d="M16 13.2l1.6 4.8H14.4z" fill="#b33a2a" stroke="none"/><path d="M16 22.8l-1.6-4.8h3.2z" fill="#4d463c" stroke="none"/>
+    <circle cx="16" cy="18" r=".9" fill="#4d463c" stroke="none"/>`),
+  // Walt's tin pole tag, stamped with the last pole of the north line, two nail holes.
+  'pole-tag': icon(`${halo(16, 16, 13, '#ffd98a')}
+    <path d="M6 9.5h20a1.5 1.5 0 0 1 1.5 1.5v10a1.5 1.5 0 0 1-1.5 1.5H6A1.5 1.5 0 0 1 4.5 21V11A1.5 1.5 0 0 1 6 9.5z" fill="#aebbc1"/>
+    <circle cx="7.4" cy="16" r="1.1" fill="#2f343c" stroke="none"/><circle cx="24.6" cy="16" r="1.1" fill="#2f343c" stroke="none"/>
+    <path d="M10.8 19.4v-6.8l3.4 6.8v-6.8M16.6 16h2.4M21 12.6v6.8" stroke="#4d5963" stroke-width="1.5"/>`),
+  // Wren's tin whistle: a long thin pipe, its paint worn off near the mouth, and the holes along it.
+  'tin-whistle': icon(`${halo(16, 16, 13, '#ffd98a')}
+    <g transform="rotate(-38 16 16)"><path d="M3.5 13.8h25v4.4h-25z" fill="#6d8a5a"/>
+    <path d="M3.5 13.8h6v4.4h-6z" fill="#c9cfd2"/>
+    <circle cx="13.5" cy="16" r="1" fill="#1c1a18" stroke="none"/><circle cx="17" cy="16" r="1" fill="#1c1a18" stroke="none"/>
+    <circle cx="20.5" cy="16" r="1" fill="#1c1a18" stroke="none"/><circle cx="24" cy="16" r="1" fill="#1c1a18" stroke="none"/></g>`),
+  // Dan Barlow's NAPO staff badge: a clip, NAPO's yellow band, and a pale square where the photo was.
+  'staff-badge': icon(`${halo(16, 17, 13, '#ffd98a')}
+    <path d="M13.5 3.5h5v4h-5z" fill="#7d8b92"/>
+    <path d="M8 7h16a1.5 1.5 0 0 1 1.5 1.5v18A1.5 1.5 0 0 1 24 28H8a1.5 1.5 0 0 1-1.5-1.5v-18A1.5 1.5 0 0 1 8 7z" fill="#efe6cf"/>
+    <path d="M6.5 9.5h19v3.4h-19z" fill="#d6ad2f" stroke="none"/>
+    <path d="M10 15.5h6v6.5h-6z" fill="#d8d2c2" stroke="#8a8474" stroke-width="1"/>
+    <path d="M18 16.5h4.5M18 19h4.5M10 25h12" stroke="#6a6a78" stroke-width="1.2"/>`),
 };
 
 /** Anything else: a small sack tied at the top. */
@@ -176,6 +219,12 @@ export const RADIO_ICON = icon(`<path d="M21 11.5l3.6-8" stroke-width="1.6"/><ci
   <rect x="18" y="18.2" width="6.4" height="3.4" rx=".7" fill="#7ff0a8" stroke="none"/>
   <circle cx="21.2" cy="25.2" r="1.7" fill="#c9c2b0"/>`);
 
+/** A pocket notebook with its band and a pencil beside it: the field notes' button in the bag's header. */
+export const NOTEBOOK_ICON = icon(`<path d="M6.5 5.5c0-.8.7-1.5 1.5-1.5h12.5c.8 0 1.5.7 1.5 1.5v21c0 .8-.7 1.5-1.5 1.5H8c-.8 0-1.5-.7-1.5-1.5z" fill="#8a6440"/>
+  <path d="M9.5 4v24" stroke="#5c4029" stroke-width="1.6"/><path d="M18.5 4v24" stroke="#2e3440" stroke-width="1.8"/>
+  <path d="M11.5 9h5v3.5h-5z" fill="#e8dfc8" stroke="none"/>
+  <path d="M25 8.5h2.6v15.5L26.3 27 25 24z" fill="#d9a82b"/><path d="M25 11h2.6" stroke="#8a6a1f"/>`);
+
 /**
  * Outfits in the wardrobe (outfits.ts): a small figure in each, in the colors the world draws it in
  * (view/characters.ts, OUTFIT_LOOKS): what it wears on its head over a head, and the clothes below.
@@ -216,6 +265,59 @@ const OUTFIT_ICONS: Record<string, string> = {
 export function outfitIcon(id: string): string {
   return OUTFIT_ICONS[id] ?? SACK;
 }
+
+/**
+ * Jacket patterns in the wardrobe (merits.ts): a jacket in a slate cloth with the pattern on it, in the
+ * shade the world draws it in on that cloth (view/characters.ts, PATTERN_LOOKS, shadeOf), or its own colors.
+ */
+const CLOTH = '#5f7384', SHADE = '#a2aeb8';
+/** The jacket filled first, the pattern over it, then its outline over both. */
+const jacketWith = (inner: string) => icon(`<path d="${JACKET}" fill="${CLOTH}" stroke="none"/>${inner}<path d="M16 13.4V25" stroke="#46545f" stroke-width="1"/><path d="${JACKET}"/>`);
+const PATTERN_ICONS: Record<string, string> = {
+  stripes: jacketWith(`<path d="M11.6 13.2V25M14.2 14V25M17.8 14V25M20.4 13.2V25M6.6 14.6l2 3.8M25.4 14.6l-2 3.8" stroke="${SHADE}" stroke-width="1.3"/>`),
+  checks: jacketWith(`<path d="M10.3 13.2h2.85v2.95h-2.85zM16 13.4h2.85v2.75H16zM13.15 16.15H16v2.95h-2.85zM18.85 16.15h2.85v2.95h-2.85zM10.3 19.1h2.85v2.95h-2.85zM16 19.1h2.85v2.95H16zM13.15 22.05H16V25h-2.85zM18.85 22.05h2.85V25h-2.85z" fill="${SHADE}" stroke="none"/>`),
+  chevron: jacketWith(`<path d="M11 16l5 3 5-3M11 20.2l5 3 5-3" stroke="${SHADE}" stroke-width="1.6"/><path d="M7.4 18.2l1.5 1.1M24.6 18.2l-1.5 1.1" stroke="${SHADE}" stroke-width="1.3"/>`),
+  reflective: jacketWith(`<path d="M10.3 20.4h11.4M10.3 23h11.4M7 17.3l1.6 1.9M25 17.3l-1.6 1.9" stroke="#e2e6e2" stroke-width="1.4"/>`),
+  'napo-patch': jacketWith(`<path d="M17.4 19h3.4v2.6h-3.4z" fill="#d6ad2f" stroke="none"/><path d="M18 20.3h2.2" stroke="#4a3d12" stroke-width=".8"/><path d="M6.7 15.4l2-1 1.3 2.3-2 1z" fill="#d6ad2f" stroke="none"/>`),
+  squares: jacketWith(`<path d="M10.8 19.3h3.8v3.6h-3.8z" fill="#c39a3e" stroke="#e6d6ae" stroke-width=".7" stroke-dasharray="1 .8"/><path d="M17.5 15.3h3.4v3.4h-3.4z" fill="#3e7c77" stroke="#e6d6ae" stroke-width=".7" stroke-dasharray="1 .8"/><path d="M15.2 22.4h2.6V25h-2.6z" fill="#4f6b95" stroke="none"/><path d="M6.7 15.4l2-1 1.3 2.3-2 1z" fill="#a8584a" stroke="none"/>`),
+};
+
+/** A pattern's drawing, for the wardrobe's tiles and cards; a sack for one this copy cannot draw. */
+export function patternIcon(id: string): string {
+  return PATTERN_ICONS[id] ?? SACK;
+}
+
+/** No pattern: the jacket as it is. */
+export const NO_PATTERN_ICON = jacketWith('');
+
+/**
+ * Name tag badges (merits.ts): small, bold shapes, since they sit beside a name on its tag, about as tall
+ * as the letters; the wardrobe shows the same drawings larger.
+ */
+const BADGE_ICONS: Record<string, string> = {
+  // A fir on its trunk.
+  fir: icon(`<path d="M16 3.5l-6.2 9h3.2l-4.6 7h3.7L8 26h16l-4.1-6.5h3.7l-4.6-7h3.2z" fill="#4f8a55"/><path d="M14.6 26h2.8v3.3h-2.8z" fill="#6b4a31"/>`),
+  // A flame, bright at its heart.
+  flame: icon(`${halo(16, 18, 12, '#ff9a4a')}<path d="M16 3.5c1.6 4.6 7.2 7.3 7.2 13.6a7.2 7.2 0 0 1-14.4 0c0-3.5 2-5.4 3.4-7.4.4 2.5 1.5 3.7 2.6 4.2C14.6 10.6 15.2 7 16 3.5z" fill="#f08a3a"/>
+    <path d="M16 15.6c1 2 3.1 3.1 3.1 5.6a3.1 3.1 0 0 1-6.2 0c0-1.6 1.2-2.9 3.1-5.6z" fill="#ffd27a" stroke="none"/>`),
+  // A violet shard.
+  shard: icon(`${halo(16, 15, 13, '#a77dff')}<path d="M16 3l-6.4 11L16 28z" fill="#9a6cf0"/><path d="M16 3l6.4 11L16 28z" fill="#c9adff"/><path d="M9.6 14l6.4 2.5 6.4-2.5M16 16.5V28" stroke-width="1.1"/>`),
+  // A street lamp with its orange light, the one no wires run to.
+  lamp: icon(`${halo(16, 13, 11, '#ffb347')}<path d="M14.9 14.5h2.2v14h-2.2z" fill="#4d5963"/><path d="M10.5 9.5h11l-2.4 4.2h-6.2z" fill="#3a4450"/><path d="M13 13.7h6l-.8 1.6h-4.4z" fill="#ffcf6a" stroke="none"/><path d="M12 28.5h8" stroke-width="1.8"/>`),
+  // A pale moth, wings open.
+  moth: icon(`<path d="M16 12.5C13.2 7.6 4.5 7.3 4.5 12.8c0 3.9 4.6 5.7 9 4.9-2.8 1.8-4.6 4.8-2.8 7.2 1.9 2 4.1-.9 5.3-4.6 1.2 3.7 3.4 6.6 5.3 4.6 1.8-2.4 0-5.4-2.8-7.2 4.4.8 9-1 9-4.9 0-5.5-8.7-5.2-11.5-.3z" fill="#cdbf9f"/>
+    <path d="M16 11.5v10.5M14.6 8.3l1.4 3.2 1.4-3.2" stroke-width="1.3"/><circle cx="9.4" cy="12.4" r="1.4" fill="#8a7a5c" stroke="none"/><circle cx="22.6" cy="12.4" r="1.4" fill="#8a7a5c" stroke="none"/>`),
+  // The Old Stone, standing, its crack alight.
+  'old-stone': icon(`${halo(16, 16, 13, '#b39bff')}<path d="M10.5 28.5V11.6c0-4.4 2.6-7.6 5.5-7.6s5.5 3.2 5.5 7.6v16.9z" fill="#8a8f96"/><path d="M16.6 7.5l-1.9 5.3 2.2 3.3-1.8 5.6" stroke="#d9ccff" stroke-width="1.5"/><path d="M8 28.5h16" stroke-width="1.8"/>`),
+};
+
+/** A badge's drawing, on a name tag and in the wardrobe; none for one this copy cannot draw. */
+export function badgeIcon(id: string): string | undefined {
+  return BADGE_ICONS[id];
+}
+
+/** No badge: an empty name tag. */
+export const NO_BADGE_ICON = icon(`<rect x="4.5" y="11" width="23" height="10" rx="5" stroke-width="1.8"/><path d="M10 16h12" stroke-width="1.4" stroke-dasharray="1.6 2"/>`);
 
 /** No outfit: an empty hanger. */
 export const NO_OUTFIT_ICON = icon(`<path d="M16 12.6v-1.7c0-1 .6-1.5 1.5-2 .9-.5 1.5-1.1 1.5-2.1 0-1.3-1.2-2.3-2.9-2.3-1.6 0-2.7 1-2.7 2.3" stroke-width="1.8"/>
