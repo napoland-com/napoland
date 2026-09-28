@@ -165,6 +165,14 @@ describe('loadConfig: signing in', () => {
     expect(problem({ TOWN_CROWD: 'a few' })).toMatch(/TOWN_CROWD must be a whole number/);
   });
 
+  it('shows people\'s steps more often for a play-test of glimpses, never in production', () => {
+    expect(loadConfig({}, REPO).glimpseEveryMs).toBe(0);
+    expect(loadConfig({ GLIMPSE_EVERY_MS: '5000' }, REPO).glimpseEveryMs).toBe(5000);
+    expect(problem({ GLIMPSE_EVERY_MS: '5000', NODE_ENV: 'production' })).toMatch(/GLIMPSE_EVERY_MS .* refused when NODE_ENV=production/);
+    expect(problem({ GLIMPSE_EVERY_MS: '10' })).toMatch(/GLIMPSE_EVERY_MS must be a whole number from 1000 to 3600000/);
+    expect(problem({ GLIMPSE_EVERY_MS: 'often' })).toMatch(/GLIMPSE_EVERY_MS must be a whole number/);
+  });
+
   it('takes a Supabase project: its address (as an origin) and its publishable key', () => {
     expect(loadConfig(supabase, REPO).auth).toEqual({ mode: 'supabase', url: 'https://abcd.supabase.co', publishableKey: PUBLISHABLE, jwtSecret: undefined, providers: [] });
     expect(loadConfig({ ...supabase, SUPABASE_URL: 'https://abcd.supabase.co/' }, REPO).auth).toMatchObject({ url: 'https://abcd.supabase.co' });

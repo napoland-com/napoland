@@ -29,6 +29,8 @@
  * - warming at a fire someone else fed, or stopping where someone's arrow points, the text box offers
  *   once to thank them (thanks.ts); thanks that reach you float over your head out in the wilds, are
  *   said in the text box anywhere else, and come in a letter when you walk in at home;
+ * - alone out in the wilds, now and then someone's steps from the last day walk past as a see-through
+ *   figure in their color (glimpses.ts): the server sends only the color and the tiles, never who;
  * - finds and piles on your map, fires, marks, creatures and flares, and your bag, are the server's:
  *   it tells us, we show them; so is what everyone wears, gear and outfits (you choose yours at the chest);
  * - a call (calls.ts) goes to the server, which says who heard it: each one heard, yours too, is sung
@@ -56,6 +58,7 @@ import { Question, Repeat, noteMs, type Ask, type Choice } from './ask';
 import { CALL_FRESH_MS, CALL_NOTE_S, CALL_SLACK_MS } from './calls';
 import { pieceAt, type DetailRef } from './details';
 import type { FriendsMsg, TalkLine } from './friends';
+import { Passing } from './glimpses';
 import type { AskView, NoteView } from './hud';
 import { countOf, lookOf, pieceName, refusalText, type Items } from './items';
 import {
@@ -301,6 +304,8 @@ export class Game {
    * screen's edges, steps that are not yours and, where watchers roam, something at the edge of the fog.
    */
   unease = 0;
+  /** Someone's steps, glimpsed while you are alone out in the wilds (glimpses.ts): the walk under way, if any. */
+  readonly passing = new Passing();
   /** The Old Stone in town, and your counts toward feats (each feat's rank follows from its count). */
   stone: StoneView = { charge: 0, need: 0, awake: false, left: 0 };
   stats: Stats = {};
@@ -767,6 +772,9 @@ export class Game {
       case 'unease':
         this.unease = Math.min(UNEASE_LEVELS, Math.max(0, Math.round(msg.level) || 0));
         break;
+      case 'glimpse':
+        this.passing.begin(msg.glimpse, now);
+        break;
       case 'flare':
         this.flares.push({ x: msg.flare.x, y: msg.flare.y, until: now + msg.flare.left * 1000 });
         break;
@@ -1092,6 +1100,7 @@ export class Game {
     this.trade = null; this.tradeMine = []; this.tradeAsk = null; this.callingOff = null;
     this.clearBox();
     this.offers.reset();
+    this.passing.end();
     // Nobody tells us how energy changes while we are away, so the bar holds still until the next welcome.
     const e = this.energy(now);
     if (e) this.lastEnergy = { view: { ...e, rate: 0 }, at: now };
@@ -1103,6 +1112,8 @@ export class Game {
    * or for another player (`someoneElse`: a welcome for another character, on the same map).
    */
   private enter(map: TileMap, players: PlayerView[], finds: FindView[], drops: DropView[], someoneElse = false) {
+    // A glimpse was of the place you were in, among the people there.
+    this.passing.end();
     if (map !== this.current || someoneElse) {
       this.current = map;
       this.talkers = talkersOf(map);
