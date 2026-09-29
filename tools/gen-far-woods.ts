@@ -26,6 +26,7 @@ import {
 } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
 import { BURN_WAY_HOME, FAR_WOODS_GATE, GATE_WIDTH } from './burn-gate';
+import { FAR_WOODS_ROAD, MARSH_WAY_HOME } from './marsh-road';
 import { FAR_WOODS_END, NEAR_WOODS_END } from './trappers-trail';
 
 const W = 80, H = 100, SEED = 20260929;
@@ -164,6 +165,11 @@ clearing(CAMP.x, CAMP.y, 8, 6, 21);
 trail([[64, 52], [66, 47], [67, 42], [65, 37]], 1, 0.4, 22, 3);
 const CUT = { x: 63.5, y: 34.5 } as const;
 clearing(CUT.x, CUT.y, 5.4, 4, 23);
+// East out of the camp the loggers laid a corduroy road over the wet ground, off the map into the Marsh (gen-marsh.ts).
+trail([[69, 58], [74, 58], [FAR_WOODS_ROAD.x - 1, FAR_WOODS_ROAD.y]], 1, 0.3, 25, 3);
+tile[FAR_WOODS_ROAD.y]![FAR_WOODS_ROAD.x] = 'm';
+/** Onto the Marsh, east along the corduroy road. */
+const TO_MARSH: MapExit = { x: FAR_WOODS_ROAD.x, y: FAR_WOODS_ROAD.y, w: 1, h: 1, to: 'marsh', tx: MARSH_WAY_HOME.x + 1, ty: MARSH_WAY_HOME.y, dir: 'right' };
 // And an old skid trail runs west from the camp through the middle of the woods to the trapper's cabin.
 trail([[55, 58], [49, 57], [42, 59], [35, 58], [28, 60], [19, 63]], 1, 0.35, 24, 3);
 
@@ -494,11 +500,11 @@ const SURGE: SurgeRule = { every: 2400, unstable: 300, surge: 150, sweep: 120, o
 const STORM: StormRule = { every: 2400, warn: 60, length: 240, offset: 660 };
 
 const map: MapData = {
-  id: 'far-woods', name: 'The Far Woods', version: 3, kind: 'wilds', depth: 2, width: W, height: H,
+  id: 'far-woods', name: 'The Far Woods', version: 4, kind: 'wilds', depth: 2, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: ENTRY[0], y: ENTRY[1] - 1, dir: 'up' },
-  exits: [EXIT, ...doors],
+  exits: [EXIT, TO_MARSH, ...doors],
   objects,
   // Old growth holds the damp: the wettest region, two showers a day, from dawn to 8 minutes after it and
   // from 24 minutes until nightfall, and none while the Near Woods' rain falls (12 to 24), so the way up

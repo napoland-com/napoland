@@ -187,6 +187,8 @@ export const GATE_PULLED = 'You pull at the gate. It gives a little, and no more
 export const ROPE_PULLED = 'You take the rope and lean back on it. It slides, and holds nothing: tied off for three, it will not hold fewer.';
 /** You see this many tiles past yourself in the snow while it falls up there: a whiteout. */
 export const WHITEOUT = 3;
+/** And this many in the Marsh, whose mist never lifts. */
+export const MARSH_MIST = 6;
 
 /** What a sign is called in the text box, by its style. */
 const SIGN_WHO = { plain: 'Sign', napo: 'NAPO sign', cardboard: 'Cardboard sign', mailbox: 'Mailbox' } as const;
@@ -3012,11 +3014,12 @@ export class Game {
     return waltOnTheLongNight(n.out, f ? this.fireLeft(f.x, f.y, now) ?? null : null);
   }
 
-  /** You see this many tiles past yourself on this map, when a condition brings fog here, or while it snows in the snow (a whiteout; outdoors only). */
+  /** You see this many tiles past yourself on this map, when a condition brings fog here, while it snows in the snow (a whiteout), and always in the Marsh's mist (outdoors only). */
   fogCap(): number | undefined {
     if (this.current.data.kind === 'inside') return undefined;
     const fogs = activeConditions(this.items.conditions, this.conditions).filter(c => c.map === this.current.data.id && c.fog !== undefined).map(c => c.fog!);
     if (this.current.data.forest === 'snow' && this.weather === 'rain') fogs.push(WHITEOUT);
+    if (this.current.data.forest === 'marsh') fogs.push(MARSH_MIST);
     return fogs.length ? Math.min(...fogs) : undefined;
   }
 

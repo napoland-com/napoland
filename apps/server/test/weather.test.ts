@@ -146,7 +146,7 @@ describe('rain, region by region', () => {
     expect(board.fires.out.filter(f => !regions.includes(f.map))).toEqual([]);
     expect(board.fires.out).toContainEqual({ name: 'the ranger\'s hut', map: 'near-woods' });
     expect(board.fires.out).toContainEqual({ name: 'the trapper\'s cabin', map: 'far-woods' });
-    expect(board.works.map(v => [v.id, v.map])).toEqual([['pond-footbridge', 'near-woods'], ['pond-light', 'near-woods']]);
+    expect(board.works.map(v => [v.id, v.map])).toEqual([['pond-footbridge', 'near-woods'], ['pond-light', 'near-woods'], ['marsh-boardwalk-west', 'marsh'], ['marsh-boardwalk-east', 'marsh']]);
     expect(board.lamps.map(l => [l.map, l.left])).toEqual([['near-woods', 0]]);
   });
 });

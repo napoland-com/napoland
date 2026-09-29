@@ -160,6 +160,11 @@ const ICONS: Record<string, string> = {
     <path d="M14.5 17.2c1.4-1.8 3.8-1.6 4.4.4.6 2.2-1.4 4.4-3.4 3.8-1.8-.6-2.2-2.6-1-4.2z" fill="#6b4020"/>
     <path d="M12.4 14.2c.6-1.4 1.4-2.6 2.2-3.4" stroke="#ffe3a8" stroke-width="1.3"/>`),
   // A lump of green glass from the scar, bubbled, with a bright edge where it broke.
+  // A brick of cut peat, dark and fibrous, a wisp of its smoke already.
+  peat: icon(`<path d="M5 14l11-5 11 5v8l-11 5-11-5z" fill="#4a3a2a"/>
+    <path d="M5 14l11 5 11-5M16 19v8" stroke="#2a2018" stroke-width="1.2"/>
+    <path d="M8 15.6l5 2.2M19 17.6l5-2.2M9 19.4l4 1.8" stroke="#6b5640" stroke-width="1"/>
+    <path d="M16 7c-1.4-1.6 1.2-2.6 0-4.2" stroke="#9aa0a6" stroke-width="1.2"/>`),
   // A shard of clear quartz off the crest, rime furred along its edges, a cold blue glint.
   'rime-quartz': icon(`${halo(16, 17, 12, '#bfe6ff')}
     <path d="M9 25l3.4-15.5L17.6 5l5.6 6.4L24 25z" fill="#d9eef8"/>

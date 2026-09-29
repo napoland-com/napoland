@@ -1,0 +1,38 @@
+{
+  "id": "marsh-cutters-hut",
+  "name": "The cutters' hut",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 7,
+  "height": 6,
+  "tiles": [
+    "xxxxxxx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xpppppx",
+    "xxxpxxx"
+  ],
+  "levels": [
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000",
+    "0000000"
+  ],
+  "spawn": {"x":3,"y":4,"dir":"up"},
+  "exits": [
+    {"x":3,"y":5,"w":1,"h":1,"to":"marsh","tx":12,"ty":17,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"fireplace","x":3,"y":1},
+    {"kind":"bed","x":1,"y":1},
+    {"kind":"bed","x":5,"y":2},
+    {"kind":"woodpile","x":5,"y":4},
+    {"kind":"paper","x":1,"y":3,"look":"note","name":"The cutting book","text":["The cutters' book, a line a day in May: how many rows cut, how many turned to dry.","The last May, the lines get short: \"Lights on the water again. Nobody went out to them.\"","And last: \"Left the peat stacked. Come back in August for it.\" Nobody did."]},
+    {"kind":"shelf","x":5,"y":1},
+    {"kind":"cache","x":4,"y":1,"name":"the cutters' crate"}
+  ]
+}

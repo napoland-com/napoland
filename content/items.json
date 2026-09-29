@@ -1,5 +1,5 @@
 {
-  "version": 34,
+  "version": 35,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -7,6 +7,7 @@
     {"id":"wire","name":"Copper wire","noun":"wire","plural":"wire","kind":"resource","stack":10,"xp":4,"weight":0.4,"text":"Copper wire from where the old power line came down. Sometimes it still hums, and on aurora nights more of it turns up by the poles."},
     {"id":"cloth","name":"Cloth scraps","noun":"cloth","plural":"cloth","kind":"resource","stack":10,"xp":2,"weight":0.1,"fuel":90,"text":"Strips of curtain and blanket from the rooms and cars people left behind. Still dry, so they catch fast in a fire.","about":"Cloth mends gear at the workbench, and it catches fast in a fire."},
     {"id":"cedar-bark","name":"Cedar bark","noun":"cedar bark","plural":"cedar bark","kind":"resource","stack":20,"xp":2,"weight":0.15,"fuel":240,"text":"Long strips of bark off the old cedars of the Far Woods, dry and stringy inside. It burns hot and slow: feed it to a fire.","about":"It burns in a fire, 4 minutes a strip."},
+    {"id":"peat","name":"Peat","noun":"brick of peat","plural":"bricks of peat","kind":"resource","stack":10,"xp":4,"weight":0.5,"fuel":900,"text":"A brick of peat the town cut from the Marsh and stacked to dry, and never came back for: dark, crumbling, smelling of smoke already. It burns low and long, all night: feed it to a fire.","about":"It burns in a fire, 15 minutes a brick."},
     {"id":"battery","name":"Old battery","noun":"old battery","plural":"old batteries","kind":"resource","stack":10,"xp":6,"weight":0.5,"text":"A heavy dry cell stamped NAPO, a little charge still in it. NAPO's field kit ran on them: its radios, its lamps, the instruments at its posts. A lantern made at the workbench runs on them.","about":"NAPO's field kit ran on them, and so does a lantern made at the workbench."},
     {"id":"huckleberries","name":"Huckleberries","noun":"huckleberry","plural":"huckleberries","kind":"resource","stack":10,"xp":1,"weight":0.05,"text":"Small dark-blue berries off the low bushes out in the clearings, sweet and a little sour. Pressed into cakes by a fire, they keep for a trip."},
     {"id":"fiddleheads","name":"Fiddleheads","noun":"fiddlehead","kind":"resource","stack":10,"xp":1,"weight":0.05,"text":"The tight green curls of young ferns, picked where the ground stays wet by the water. Good in a stew."},
@@ -42,6 +43,7 @@
     {"id":"far-woods-map","name":"Map of the Far Woods","kind":"tool","stack":1,"chart":"far-woods","icon":"map","text":"The trapper's own map of the Far Woods, in pencil on the back of a feed-store calendar: his trails, the gorge, the loggers' camp, and the hollow he kept away from. It never tells you where you are: find the gorge, the rocks and the cabin around you, and work it out."},
     {"id":"burn-map","name":"Map of the Burn","kind":"tool","stack":1,"chart":"burn","icon":"map","text":"The trapper's map of his north line, redrawn in charcoal after the fire: the snags, the black creek, the windfall, and the scar he marked with a cross. It never tells you where you are: find the creek, the cabin and the scar around you, and work it out."},
     {"id":"ridge-map","name":"Map of the Ridge","kind":"tool","stack":1,"chart":"ridge","icon":"map","text":"The trappers' map of their high line, in pencil on the back of the hut's old tally: the rope, the hut, the zigzag up through the last firs, the tarn and the crest, and the icefall marked \"short way, spikes\". It never tells you where you are: find the hut, the tarn and the crest around you, and work it out."},
+    {"id":"marsh-map","name":"Map of the Marsh","kind":"tool","stack":1,"chart":"marsh","icon":"map","text":"The peat cutters' map of the bog, in pencil on a page of their cutting book: the corduroy road, the hut, the two channels and the long ways round them, the cuttings, and the black pool, which they drew and did not name. It never tells you where you are: find the channels, the cuttings and the pool around you, and work it out."},
     {"id":"radio","name":"Field radio","noun":"radio","kind":"tool","stack":1,"icon":"radio","senses":{"finds":[{"item":"shard"},{"item":"live-shard"},{"item":"strange"},{"item":"wire","when":"aurora"}],"loud":6,"faint":15},"text":"An old NAPO field radio, rewired to listen. Out in the wilds it crackles, louder the nearer you are to something strange: a shard, a strange object, or copper wire on an aurora night. Anywhere else it only hums.","about":"Out in the wilds it crackles louder the nearer you are to something strange. Its button turns it off and on."},
     {"id":"bolt-cutters","name":"Bolt cutters","noun":"pair of bolt cutters","plural":"pairs of bolt cutters","kind":"tool","stack":1,"icon":"cutters","text":"Long-handled bolt cutters, forged from scrap at the workbench, their jaws edged with shard. They bite through a rusted padlock like a dry twig.","about":"They bite through the rusted padlock on the shed behind the ranger's hut."},
     {"id":"waders","name":"Waders","noun":"pair of waders","plural":"pairs of waders","kind":"tool","stack":1,"icon":"waders","text":"Chest waders of cloth sealed with resin, the seams bound with copper wire, a shard sewn into the lining against the cold. In them you wade the flooded culvert by the bog.","about":"In them you wade the flooded culvert by the bog, and come out dry south of the creek."},
@@ -170,6 +172,16 @@
     {"item":"rime-quartz","map":"ridge","around":{"x":24,"y":10,"r":9},"on":["lot"],"count":3,"respawn":[1200,2400]},
     {"item":"thermos","map":"ridge-high-hut","near":{"kinds":["fireplace","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"ridge-map","map":"ridge-high-hut","near":{"kinds":["paper","bed"],"radius":1.5},"count":1,"respawn":[60,120]},
+    {"item":"peat","map":"marsh","on":["mud"],"around":{"x":27,"y":26,"r":7},"count":4,"respawn":[300,600]},
+    {"item":"peat","map":"marsh-cutters-hut","near":{"kinds":["woodpile","bed"],"radius":1.5},"count":1,"respawn":[900,1800]},
+    {"item":"glowcap","map":"marsh","on":["mud","ferns"],"count":6,"respawn":[120,300]},
+    {"item":"shard","map":"marsh","steps":[45,999],"count":3,"respawn":[1200,2400]},
+    {"item":"shard","map":"marsh","around":{"x":46,"y":19,"r":6},"count":2,"respawn":[900,1800]},
+    {"item":"live-shard","map":"marsh","steps":[35,999],"count":4,"respawn":[60,120],"when":"unstable"},
+    {"item":"strange","map":"marsh","steps":[40,999],"count":2,"respawn":[1200,2400]},
+    {"item":"strange","map":"marsh","steps":[35,999],"count":3,"respawn":[120,240],"when":"unstable"},
+    {"item":"thermos","map":"marsh-cutters-hut","near":{"kinds":["fireplace","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
+    {"item":"marsh-map","map":"marsh-cutters-hut","near":{"kinds":["paper"],"radius":1.5},"count":1,"respawn":[60,120]},
     {"item":"flare","map":"far-woods-field-post","near":{"kinds":["crate","shelf"],"radius":1.5},"count":1,"respawn":[1200,2400]},
     {"item":"scrap","map":"near-woods","around":{"x":20,"y":41,"r":4},"count":3,"respawn":[86400,86400],"condition":"napo-cache"},
     {"item":"wire","map":"near-woods","around":{"x":20,"y":41,"r":4},"count":3,"respawn":[86400,86400],"condition":"napo-cache"},
@@ -317,7 +329,9 @@
   },
   "works": [
     {"id":"pond-footbridge","build":"footbridge","name":"the footbridge","where":"by the pond, in the Near Woods","item":"scrap","need":30,"wear":5,"hold":35},
-    {"id":"pond-light","build":"light","name":"the street light","where":"in the pond clearing, in the Near Woods","item":"wire","need":12,"wear":2,"hold":14}
+    {"id":"pond-light","build":"light","name":"the street light","where":"in the pond clearing, in the Near Woods","item":"wire","need":12,"wear":2,"hold":14},
+    {"id":"marsh-boardwalk-west","build":"footbridge","name":"the west boardwalk","where":"across the first channel, in the Marsh","item":"scrap","need":24,"wear":4,"hold":28},
+    {"id":"marsh-boardwalk-east","build":"footbridge","name":"the east boardwalk","where":"across the second channel, in the Marsh","item":"wire","need":10,"wear":2,"hold":12}
   ],
   "longNight": { "items": ["wire", "strange"], "regrow": 2 }
 }

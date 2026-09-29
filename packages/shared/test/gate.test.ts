@@ -80,6 +80,7 @@ describe('the burnt forest', () => {
   it('is said of the wilds only', () => {
     expect(errors(woods({ forest: 'burnt' }))).toEqual([]);
     expect(errors(woods({ forest: 'snow' }))).toEqual([]);
+    expect(errors(woods({ forest: 'marsh' }))).toEqual([]);
     expect(errors(woods({ forest: 'ash' as 'burnt' })).join()).toMatch(/forest "ash"/);
   });
 });
