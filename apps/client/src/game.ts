@@ -2479,9 +2479,11 @@ export class Game {
   }
 
   /**
-   * What A would do now: get up someone who is down on the tile you face (or your own), else pick up
-   * what lies on your own tile, else on the tile you face (on either, a pile before a find), and only
-   * then talk to whoever you face or read the sign.
+   * What A would do now: get up someone who is down on the tile you face (or your own), else talk to
+   * whoever you face or use what stands there (a gate, a sign, a fire), and only then pick up what lies
+   * on your own tile, else on the tile you face (on either, a pile before a find). What stands in the
+   * world comes before what lies on the ground: a pile dropped under a gate would otherwise keep you
+   * from ever pulling at it. Turning away, or a tap on it, still picks it up.
    */
   action(): Action | null {
     const me = this.me;
@@ -2489,12 +2491,13 @@ export class Game {
     const [dx, dy] = DIR_VEC[me.dir];
     const down = this.downAt(me.tx + dx, me.ty + dy) ?? this.downAt(me.tx, me.ty);
     if (down) return { kind: 'rescue', id: down.id, name: down.name };
+    const talker = this.talkerAt(me.tx + dx, me.ty + dy);
+    if (talker) return { kind: 'talk', talker };
     for (const [x, y] of [[me.tx, me.ty], [me.tx + dx, me.ty + dy]] as const) {
       const thing = this.thingAt(x, y);
       if (thing) return { kind: 'pick', x, y, what: thing.kind };
     }
-    const talker = this.talkerAt(me.tx + dx, me.ty + dy);
-    return talker ? { kind: 'talk', talker } : null;
+    return null;
   }
 
   /** What lies on tile x,y to pick up: a pile before a find. */

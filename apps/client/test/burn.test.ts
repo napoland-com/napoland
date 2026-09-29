@@ -37,6 +37,21 @@ describe('NAPO\'s gate', () => {
     expect(sent).toContainEqual({ t: 'talk', x: gate.x + 1, y: gate.y });
   });
 
+  it('is pulled at even with your own pile lying under you: what stands comes before what lies there, and facing away picks it up', () => {
+    const sent: ClientMsg[] = [];
+    const [x, y] = [gate.x + 1, gate.y + 1];
+    const me: PlayerView = { id: 'me', name: 'Aldo', x, y, dir: 'up', color: '#f29e4c', gear: {}, quirks: [] };
+    const g = new Game(new Maps(all), m => sent.push(m), items);
+    const drops = [{ id: 'me', x, y, owner: 'me', name: 'Aldo', until: 1e13, trail: [] }];
+    g.handle(welcome(far, [me], undefined, { tools: [...STARTER_TOOLS], items: items.version, drops }), 1000);
+    expect(g.action()).toMatchObject({ kind: 'talk', talker: { who: 'NAPO gate' } });
+    g.pressA();
+    expect(sent).toContainEqual({ t: 'talk', x, y: gate.y });
+    expect(sent.filter(m => m.t === 'pick')).toEqual([]);
+    g.handle(welcome(far, [{ ...me, dir: 'down' }], undefined, { tools: [...STARTER_TOOLS], items: items.version, drops }), 1000);
+    expect(g.action()).toEqual({ kind: 'pick', x, y, what: 'drop' });
+  });
+
   it('is drawn: its posts, the gate between them, and a handle for each who pulls', () => {
     expect(gateModel(gate).children.length).toBeGreaterThan(gate.w * 3);
   });
