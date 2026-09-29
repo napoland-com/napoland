@@ -808,7 +808,7 @@ const GLYPH: Record<MapObject['kind'], string> = {
   truck: 'C', luggage: 'b', boxes: 'c', rocker: 'n', piano: 'n', bike: 'n', birdcage: 'n', pump: 'i', cage: 'c',
   hearth: 'F', sheeted: 'n', crib: 'B', clock: 'L', paper: 'n', saw: 'n', carriage: 'n', sawdust: '_', lostfound: 'c',
   // The loggers' camp, the gorge's bridge and the trapper's things are the Far Woods' (gen-far-woods.ts).
-  ruin: 'H', yarder: '#', spool: 'o', bridge: '=', traps: 'L', gate: 'G',
+  ruin: 'H', yarder: '#', spool: 'o', bridge: '=', traps: 'L', gate: 'G', kitchen: 'n',
   // A note lies on something else, which shows.
   note: ' ',
   // What the town builds and keeps stands in town (gen-map.ts, gen-interiors.ts).

@@ -54,9 +54,9 @@ describe('the questions', () => {
     expect(useQuestion(item('thermos'), { value: 88, max: 100, rate: 0 })).toBe('Drink the thermos? Only +12 energy: your bar is nearly full.');
     expect(useQuestion(item('thermos'), { value: 100, max: 100, rate: 0 })).toBe('Drink the thermos? Your energy is full already.');
     expect(useQuestion(item('flare'), null)).toBe('Light a road flare? It burns 45 seconds.');
-    expect(useQuestion(item('glowcap'), null)).toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day.');
+    expect(useQuestion(item('glowcap'), null)).toBe('Crush a glowcap to paint an arrow at your feet, pointing the way you face? Everyone sees it for a day.');
     // A good neighbor's arrows last longer, and the question says so.
-    expect(useQuestion(item('glowcap'), null, 2 * 86_400)).toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for 2 days.');
+    expect(useQuestion(item('glowcap'), null, 2 * 86_400)).toBe('Crush a glowcap to paint an arrow at your feet, pointing the way you face? Everyone sees it for 2 days.');
     expect(useQuestion(item('strange'), null)).toBe('Look closely at the strange object? It will be used up.');
   });
 

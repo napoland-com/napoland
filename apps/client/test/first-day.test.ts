@@ -175,7 +175,7 @@ describe('a new player\'s first wake', () => {
   it('says the story\'s first chapter in the text box, alone, before any letter: first steps say what to do', () => {
     const g = game();
     g.handle(welcome(home(), [me(2, 2)], FULL, { items: items.version, story: { version: 2, chapter: 'home' } }), 1000);
-    g.handle({ t: 'streetLetter', doorOff: false }, 1000);
+    g.handle({ t: 'homeLetter' }, 1000);
     expect(g.firstWake()).toBe(true);
     g.idle(1000, false);
     expect(g.dialog).toMatchObject({ who: 'Home', lines: ['You woke up at home.'] });

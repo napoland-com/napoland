@@ -8,7 +8,7 @@
  * It only draws state and reports input; the rules live in game.ts.
  * There is no map on purpose: napoland is a mapless game, you learn the world by walking it.
  */
-import { BAG_SLOTS, RANKS, SLOTS, type BodyView, type CallKind, type Dir, type EnergyView, type LookKind, type Slot, type SurgeView } from '@napoland/shared';
+import { BAG_SLOTS, BUNDLE, RANKS, SLOTS, type BodyView, type CallKind, type Dir, type EnergyView, type LookKind, type Slot, type SurgeView } from '@napoland/shared';
 import { aboutBody, versionView } from './about';
 import { BOARD_TABS, BOARD_TAB_NAMES, type BoardPanel, type BoardTab } from './board';
 import { CALL_NOTE_S, CALL_WORDS, FAN, fanChoice } from './calls';
@@ -17,7 +17,7 @@ import type { FriendsView } from './friends';
 import { CALL_GLYPHS, NOTEBOOK_ICON } from './icons';
 import { liveState, upgradeId, upgradeOf, type SlotView } from './items';
 import { fieldNotesHtml, notesHtml, type FieldNotesView, type JournalView, type NotesView, peopleHtml, type PersonScenes } from './journal';
-import { DOOR_SETTING, SOMEONE_MAY_COME, VISITS_SETTING, firstStepsView } from './said';
+import { SOMEONE_MAY_COME, VISITS_SETTING, firstStepsView } from './said';
 import type { SoundSetting } from './sound';
 import { SHOP_HINT, SHOP_TERMS, payPage, type ShopTabView } from './shop';
 import type { OfferRow, TradePanel } from './trade';
@@ -196,6 +196,15 @@ export function surgeLook(s: SurgeView | null, caught: boolean): { text: string;
   return caught ? { text: `Caught in the surge! Find a light. ${clock(s.left)}`, level: 'caught' } : { text: `Surge! It sweeps toward home. ${clock(s.left)}`, level: 'surge' };
 }
 
+/**
+ * What B says of the bag while you play, without opening it: how full it is, once it is nearly (one slot left)
+ * or quite full, so a find you cannot pick up is no surprise. Null: nothing to say.
+ */
+export function bagCount(slots: number, capacity: number): { text: string; full: boolean } | null {
+  if (capacity <= 0 || slots < capacity - 1) return null;
+  return { text: `${Math.min(slots, capacity)}/${capacity}`, full: slots >= capacity };
+}
+
 /** What the bag's header says: slots used, and the load once there is some to speak of. */
 export function roomText(slots: number, load: number, capacity: number = BAG_SLOTS): string {
   const room = `${slots} of ${capacity}`;
@@ -223,7 +232,7 @@ export interface GoalView { text: string; ready: boolean; act: boolean }
  */
 export interface RecipeView {
   id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean;
-  group?: 'mend' | 'upgrade' | 'make' | 'cabin';
+  group?: 'mend' | 'upgrade' | 'make' | 'cabin' | 'home';
 }
 /**
  * A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or
@@ -325,18 +334,19 @@ export type SocialAction =
   | { a: 'tell'; id: string; text: string }
   | { a: 'requests'; off: boolean }
   | { a: 'tradeRequests'; off: boolean }
-  /** Your door's setting (anyone's, guests' too): your name off it and your window dark (`off`), or both shown. */
-  | { a: 'door'; off: boolean }
+  /** Who may visit your home: nobody (`off`), or your friends. */
   | { a: 'visits'; off: boolean }
   /** Their card's Trade: ask them to trade (greyed out when they are not near: the game says why). */
-  | { a: 'trade'; id: string; name: string };
+  | { a: 'trade'; id: string; name: string }
+  /** Their card's Visit: go to their home by NAPO's teleport (greyed out when it cannot be: the game says why). */
+  | { a: 'visit'; id: string; name: string };
 
 /** What the trade panel asks the game to do: give (or take back) a bag slot, one fewer or one more on a row of your side, Ready, Trade, or call it off. */
 export type TradeAction = { a: 'give'; slot: number } | { a: 'step'; i: number; by: -1 | 1 } | { a: 'ready' } | { a: 'confirm' } | { a: 'cancel' };
 
 /**
  * A name over someone's head (with the drawing of their badge, merits.ts, when they wear one), over a pile
- * while you are near it (`pile`), or on the plate by a cabin's door on your street (`plate`).
+ * while you are near it (`pile`), or on the plate by the door of the house in a garden (`plate`).
  */
 export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; plate?: boolean; badge?: string }
 /** `row` stacks words said at once, 0 at the bottom. */
@@ -372,6 +382,7 @@ export class Hud {
     fill: -1, level: '', refill: false, pct: -1, vignette: -1, unease: 0, dark: -1, wet: -1, wetShown: false, hitched: false, surge: '', surgeLevel: '', surgeGlow: -1, room: '', status: '', stash: '', bench: '', crate: '', card: '',
     friends: '', personActs: '', talk: '', journal: '', field: '', notes: '', people: '', chat: '', goal: '', wardrobe: '', patterns: '', badges: '', shop: '', badge: '', tradeMine: '', tradeTheirs: '',
     tradeBag: '', slump: '', choices: '', boardSky: '', boardOut: '', boardTown: '', boardWeek: '',
+    wayHome: null as number | null, turn: false, bagCount: '',
   };
   /** The chest's tab: the stash (with what came in parcels, the first goal and what you wear), or the wardrobe. */
   private chestTab: 'stash' | 'wardrobe' = 'stash';
@@ -444,7 +455,7 @@ export class Hud {
       <div class="banner panel" data-el="banner" role="status" aria-live="polite"><b data-el="bannerTitle"></b><span data-el="bannerSub"></span></div>
       <div class="status panel" data-el="status"><div class="name"><span><span class="badge" data-el="myBadge" aria-hidden="true" hidden></span><span data-el="name">...</span><span class="lvl" data-el="level" hidden></span></span><span data-el="online"></span></div>
         <div class="guest" data-el="guest" hidden><span class="guest-tag">Guest</span><button type="button" class="signin" data-signin>Sign in</button></div>
-        <div class="energy" data-el="energy" hidden>${ICON.bolt}<div class="bar" data-el="energyBar" role="meter" aria-label="Energy" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="energyFill"></div></div></div>
+        <div class="energy" data-el="energy" hidden>${ICON.bolt}<div class="bar" data-el="energyBar" role="meter" aria-label="Energy" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="energyFill"></div><i class="home" data-el="energyHome" hidden></i></div></div>
         <div class="wet" data-el="wet" hidden>${ICON.drop}<div class="bar" data-el="wetBar" role="meter" aria-label="Wet" aria-valuemin="0" aria-valuemax="100"><div class="fill" data-el="wetFill"></div></div></div>
         <div class="cling" data-el="cling" hidden role="status">${ICON.cling}<span>Something clings to you</span></div>
         <div class="tug" data-el="tug" hidden role="status"><i aria-hidden="true">✦</i><span data-el="tugName"></span></div>
@@ -465,7 +476,7 @@ export class Hud {
         <button type="button" data-el="menuLogout">Log out</button>
       </div>
       <div class="stick" data-el="stick" role="group" aria-label="Movement stick"><div class="knob" data-el="knob"></div></div>
-      <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back. Hold it to call">B</button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button>
+      <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back. Hold it to call">B<i class="bagcount" data-el="bagCount" hidden></i></button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button>
         <div class="fan" data-el="fan" aria-hidden="true">${FAN.map((f, i) => `<span class="call" data-call="${f.kind}" style="--a: ${-f.deg}deg"><span class="dot" data-key="${i + 1}">${CALL_GLYPHS[f.kind]}</span><span class="w">${esc(CALL_WORDS[f.kind])}</span></span>`).join('')}</div></div>
       <div class="scrim" data-el="scrim" hidden></div>
       <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div class="line" data-el="text"></div>
@@ -578,7 +589,6 @@ export class Hud {
           <label class="setting"><input type="checkbox" data-el="requestsOn"> Let people ask me to be friends</label>
           <label class="setting"><input type="checkbox" data-el="tradesOn"> Let friends ask me to trade</label>
         </div>
-        <label class="setting" data-el="doorSetting"><input type="checkbox" data-el="doorOn"> ${DOOR_SETTING}</label>
         <label class="setting" data-el="visitSetting"><input type="checkbox" data-el="visitsOn"> ${VISITS_SETTING}</label>
         <div class="person" data-el="personView" hidden>
           <p class="where" data-el="personWhere"></p>
@@ -783,7 +793,6 @@ export class Hud {
     });
     this.el.requestsOn!.addEventListener('change', e => this.h.social?.({ a: 'requests', off: !(e.target as HTMLInputElement).checked }));
     this.el.tradesOn!.addEventListener('change', e => this.h.social?.({ a: 'tradeRequests', off: !(e.target as HTMLInputElement).checked }));
-    this.el.doorOn!.addEventListener('change', e => this.h.social?.({ a: 'door', off: !(e.target as HTMLInputElement).checked }));
     this.el.visitsOn!.addEventListener('change', e => this.h.social?.({ a: 'visits', off: !(e.target as HTMLInputElement).checked }));
     // The trade panel: its X calls the trade off, as any way of closing it does.
     this.el.tradeClose!.addEventListener('click', () => this.toggleTrade(false));
@@ -815,6 +824,7 @@ export class Hud {
       switch (b.dataset.act) {
         case 'open': return this.h.social?.({ a: 'person', id, name });
         case 'trade': return this.h.social?.({ a: 'trade', id, name: this.personName });
+        case 'visit': return this.h.social?.({ a: 'visit', id, name: this.personName });
         case 'accept': return this.h.social?.({ a: 'answer', id, yes: true });
         case 'decline': return this.h.social?.({ a: 'answer', id, yes: false });
         case 'befriend': return this.h.social?.({ a: 'befriend', id });
@@ -971,10 +981,9 @@ export class Hud {
     if (rows !== this.shown.friends) { this.shown.friends = rows; this.el.friendsRows!.innerHTML = rows; }
     (this.el.requestsOn as HTMLInputElement).checked = !v.requestsOff;
     (this.el.tradesOn as HTMLInputElement).checked = !v.tradesOff;
-    (this.el.doorOn as HTMLInputElement).checked = !v.doorOff;
     (this.el.visitsOn as HTMLInputElement).checked = !v.visitsOff;
-    // Anyone's, guests' too (a guest's name is on a door as well, and a guest's cabin stands on a street): below the list, or below the card a guest finds.
-    this.el.doorSetting!.hidden = this.el.visitSetting!.hidden = !!p && !this.guest;
+    // Below the list: friends visit, so a guest, who has none yet, has no one to keep out.
+    this.el.visitSetting!.hidden = !!p || this.guest;
     this.el.friendsTitle!.textContent = p ? p.name : 'Friends';
     // A guest has no friends yet: one card says what signing in opens, whoever's name tag brought them here.
     this.el.friendsGate!.hidden = !this.guest;
@@ -992,10 +1001,12 @@ export class Hud {
     // Someone who plays as a guest cannot be asked yet, but can be blocked and reported like anyone.
     const guestCard = p.guest && p.standing === 'none';
     this.el.personWhere!.textContent = guestCard ? GUEST_CARD : { friend: `Friends · ${p.where}`, asked: 'You asked them to be friends', asking: 'They asked to be your friend', blocked: 'Blocked: they cannot ask you or write to you', none: '' }[p.standing];
-    // A friend face to face can be asked to trade; farther away, the button says why not when pressed.
+    // A friend face to face can be asked to trade; farther away, the button says why not when pressed. A friend's
+    // home can be visited from town or a home, while they let friends in; otherwise Visit says why not.
     const trade = `<button type="button" class="act go" data-act="trade"${p.trade === 'near' ? '' : ' aria-disabled="true"'}>Trade</button>`;
+    const visit = `<button type="button" class="act go" data-act="visit"${p.visit === 'ok' ? '' : ' aria-disabled="true"'}>Visit</button>`;
     const acts = (guestCard ? '' : {
-      friend: trade + btn('unfriend', null, 'Unfriend'),
+      friend: trade + visit + btn('unfriend', null, 'Unfriend'),
       asked: btn('unfriend', null, 'Take back'),
       asking: btn('accept', null, 'Accept', 'go') + btn('decline', null, 'No'),
       blocked: btn('unblock', null, 'Unblock'),
@@ -1511,6 +1522,7 @@ export class Hud {
       if (!id) return null;
       const of = upgradeOf(id);
       if (of) return { from: 'upgrade', of };
+      if (id === 'home') return { from: 'home' };
       return id.startsWith('mend:') ? { from: 'mend', slot: id.slice(5) as Slot } : { from: 'recipe', id };
     }
     // The bag's own slots, or the chest's row of them.
@@ -1651,6 +1663,7 @@ export class Hud {
       case 'use': return this.h.use(a.slot);
       case 'toss': return this.h.discard(a.slot);
       case 'make': return this.bench(a.recipe);
+      case 'build': return this.bench('home');
       case 'mend': return this.bench(`mend:${a.slot}`);
       case 'upgrade': return this.bench(upgradeId(a.of));
       case 'open': return this.h.open?.(a.item);
@@ -1789,7 +1802,8 @@ export class Hud {
     this.showRoom();
     const hint = slots.length ? PICK_SLOT : EMPTY_BAG;
     if (this.el.hint!.textContent !== hint) this.el.hint!.textContent = hint;
-    (this.el.storeAll as HTMLButtonElement).disabled = !slots.length;
+    // Someone else's things go to the lodge, never into your chest: with nothing else in the bag, nothing goes in.
+    (this.el.storeAll as HTMLButtonElement).disabled = !slots.some(s => s.item !== BUNDLE);
     // A card stays open while its slot still holds the same (a thermos drunk: one fewer).
     this.refreshCard();
   }
@@ -1825,6 +1839,13 @@ export class Hud {
   private showRoom() {
     const t = roomText(this.bag.length, this.load, this.capacity);
     if (t !== this.shown.room) this.el.room!.textContent = this.shown.room = t;
+    const count = bagCount(this.bag.length, this.capacity), el = this.el.bagCount!, key = count ? `${count.text}${count.full ? '!' : ''}` : '';
+    if (key === this.shown.bagCount) return;
+    this.shown.bagCount = key;
+    el.hidden = !count;
+    el.textContent = count?.text ?? '';
+    el.toggleAttribute('data-full', !!count?.full);
+    this.el.b!.setAttribute('aria-label', `B: bag and back. Hold it to call${count ? `. Bag ${count.text}${count.full ? ', full' : ''}` : ''}`);
   }
 
   get menuOpen(): boolean {
@@ -1862,6 +1883,22 @@ export class Hud {
   setLogoutLabel(label: string) { this.el.menuLogout!.textContent = label; }
   /** Players on your map, you included (the server only tells us about the map you are on). */
   setOnline(n: number) { this.el.online!.textContent = n > 1 ? `${n} here` : ''; }
+
+  /**
+   * The mark on the energy bar for the way home (Game.wayHome): about what walking home takes, as a share of
+   * the bar, out in the wilds; it turns to a warning once it is time to turn back. Null: no mark.
+   */
+  setWayHome(share: number | null, turn: boolean) {
+    const s = this.shown, mark = this.el.energyHome!;
+    const at = share === null ? null : Math.round(Math.min(1, Math.max(0, share)) * 200) / 200;
+    if (at !== s.wayHome) {
+      s.wayHome = at;
+      mark.hidden = at === null;
+      if (at !== null) mark.style.left = `${(at * 100).toFixed(1)}%`;
+      this.el.energyBar!.setAttribute('aria-description', at === null ? '' : `The way home takes about ${Math.round(at * 100)}% of your energy`);
+    }
+    if (turn !== s.turn) mark.toggleAttribute('data-turn', (s.turn = turn));
+  }
 
   /**
    * The energy bar under your name, and the dark edges of the screen when it runs low. Called
@@ -2096,7 +2133,7 @@ export class Hud {
     more!.setAttribute('aria-disabled', String(c.n >= c.max));
   }
 
-  /** Name tags above other players, near piles and on the name plates of your street, positioned in screen pixels. */
+  /** Name tags above other players, near piles and on the name plate of the house in a garden, positioned in screen pixels. */
   setTags(tags: TagView[]) {
     const seen = new Set<string>();
     for (const t of tags) {
@@ -2208,7 +2245,7 @@ export function offerHtml(rows: readonly OfferRow[], side: 'mine' | 'theirs'): s
 }
 
 /** The headings of the workbench's list, over the rows of each kind. */
-const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> = { mend: 'Mend', upgrade: 'Upgrade', make: 'Make', cabin: 'For your cabin' };
+const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> = { mend: 'Mend', upgrade: 'Upgrade', make: 'Make', cabin: 'For your home', home: 'Build your home up' };
 
 /**
  * The workbench's list: its rows in the order given (mending, upgrades, what it makes, then furniture for
@@ -2305,6 +2342,7 @@ function pickedSelector(r: DetailRef, where: CardSheet): string {
     case 'worn': return `[data-wear="${r.slot}"]`;
     case 'stash': return r.n === undefined ? `[data-item="${r.item}"]:not([data-n])` : `[data-item="${r.item}"][data-n="${r.n}"]`;
     case 'recipe': return `[data-recipe="${r.id}"]`;
+    case 'home': return '[data-recipe="home"]';
     case 'mend': return `[data-recipe="mend:${r.slot}"]`;
     case 'upgrade': return `[data-recipe="${upgradeId(r.of)}"]`;
     case 'outfit': return `[data-outfit="${r.id}"]`;

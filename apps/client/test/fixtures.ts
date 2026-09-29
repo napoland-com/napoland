@@ -150,6 +150,8 @@ export interface Extras {
   /** What the town has come to (town.ts), and the world's clock as the welcome was sent. */
   town?: TownView;
   clock?: number;
+  /** How far your own house is built (house.ts): the garage it starts as, unless a test says otherwise. */
+  house?: number;
 }
 /** Dry, light and alone. */
 export const DRY: BodyView = { wet: 0, wetRate: 0, load: 0, hitched: false, worn: {} };
@@ -185,6 +187,7 @@ export function welcome(map: MapData, players: PlayerView[], energy: EnergyView 
     thanked: extras.thanked ?? [],
     // Nothing read and nothing home yet, and the town as it was before anything came back.
     notes: [], keepsakes: [], firsts: [], town: extras.town ?? { done: [], given: {} }, clock: extras.clock ?? 0,
+    house: extras.house ?? 1,
   };
 }
 

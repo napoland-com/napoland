@@ -91,15 +91,13 @@ type Thing = 'luggage' | 'boxes' | 'rocker' | 'piano' | 'bike' | 'birdcage' | 'p
 const THINGS = new Set<string>(['luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage', 'yarder', 'spool']);
 
 /**
- * The area a map belongs to: the map itself; for a room, the place its door opens onto; for a street (and
- * the cabins on it), the town its end leads back to, whose map shows the way onto it.
+ * The area a map belongs to: the map itself; for a room, the place its door opens onto (a home's house, its
+ * garden, which no paper map charts: NAPO's teleport is the only way there).
  */
 export function areaOf(id: string, find: (id: string) => MapData | undefined): string {
   const here = find(id);
-  if (here?.street) return here.exits.map(e => e.to).find(to => find(to)?.kind === 'town' && !find(to)?.street) ?? id;
   if (here?.kind !== 'inside') return id;
-  const out = here.exits.map(e => e.to).find(to => find(to)?.kind !== 'inside');
-  return out ? (find(out)?.street ? areaOf(out, find) : out) : id;
+  return here.exits.map(e => e.to).find(to => find(to)?.kind !== 'inside') ?? id;
 }
 
 /** Which of your tools is the map of the area you are in: the one that charts it, if you carry it (some areas have none). */

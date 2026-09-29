@@ -14,7 +14,7 @@ import { setLogLevel } from '../src/log';
 import { startServer } from '../src/server';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { World, colorFor, type Outgoing } from '../src/world';
-import { houseData, itemsData, laneData, streetTownData, townData, woodsData } from './fixtures';
+import { gardenData, homeTownData, houseData, itemsData, townData, woodsData } from './fixtures';
 import { Client, nobodyCame, savedPlayer, serverDefaults, waitFor } from './helpers';
 
 const woods = (): MapData => ({ ...woodsData(), objects: [...woodsData().objects, { kind: 'fireplace', x: 6, y: 6 }] });
@@ -176,16 +176,15 @@ describe('meals', () => {
 });
 
 describe('meals and NAPO\'s teleport', () => {
-  /** The cabin every lot's door leads into, with NAPO's teleport at 3,1, and the town of a street with its twin at 8,5 (as in first-steps.test.ts). */
+  /** The home in its garden, with NAPO's teleport at 3,1, and the town of homes with its twin at 8,5 (as in first-steps.test.ts). */
   const cabin = (): MapData => ({
     id: 'house', name: 'Home', version: 1, kind: 'inside', depth: 0, width: 5, height: 5, tiles: ['xxxxx', 'xpppx', 'xpppx', 'xpppx', 'xxpxx'],
-    levels: Array<string>(5).fill('00000'), spawn: { x: 2, y: 3, dir: 'up' }, exits: [{ x: 2, y: 4, w: 1, h: 1, to: 'lane', tx: 2, ty: 3, dir: 'down' }],
+    levels: Array<string>(5).fill('00000'), spawn: { x: 2, y: 3, dir: 'up' }, exits: [{ x: 2, y: 4, w: 1, h: 1, to: 'garden', tx: 3, ty: 4, dir: 'down' }],
     objects: [{ kind: 'chest', x: 1, y: 1 }, { kind: 'teleport', x: 3, y: 1 }], private: true, wake: { x: 2, y: 2, dir: 'down' },
   });
-  const town = (): MapData => ({ ...streetTownData(), objects: [...streetTownData().objects, { kind: 'teleport', x: 8, y: 5 }] });
 
   it('end coming home by the teleport, as walking in does', () => {
-    const w = new World([new TileMap(town()), new TileMap(laneData()), new TileMap(cabin()), new TileMap(woodsData())], 'town', 'overcast', { items: items(), rng: () => 0.9 });
+    const w = new World([new TileMap(homeTownData()), new TileMap(gardenData('house', { x: 2, y: 3 })), new TileMap(cabin()), new TileMap(woodsData())], 'town', 'overcast', { items: items(), rng: () => 0.9 });
     w.join(rec('a', 'town', 8, 6, 'up', { bag: [{ item: 'brew', count: 1 }] }), 0);
     w.returned('a', 0);
     w.use('a', 0, 1000);

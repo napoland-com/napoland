@@ -4,23 +4,23 @@
  * after the last one nothing more is. World rules first, then over real WebSockets, where everyone new
  * starts on the first.
  *
- * The fixture world: the town of a street (fixtures.ts) with NAPO's teleport at 8,5 (it sets you down at
+ * The fixture world: the town of homes (fixtures.ts) with NAPO's teleport at 8,5 (it sets you down at
  * 8,6, facing down), its road up into the woods, where moss grows by the campfire (at 5,1 with the dice
- * at 0.9); and the cabin every lot's door leads into:
+ * at 0.9); the garden (fixtures.ts) and the home in it:
  *
  *   house (5x5, private)
  *     01234
  *   0 xxxxx
  *   1 xHpTx   H chest (1,1), T teleport (3,1): the one in town sets you down at 3,2, facing down
  *   2 xpzpx   z where you wake up (2,2)
- *   3 xpppx   2,3: where every lot's door leads in
- *   4 xxpxx   2,4: out onto the lane, in front of your lot's door
+ *   3 xpppx   2,3: where the garden's door leads in
+ *   4 xxpxx   2,4: out into the garden, in front of the house's door
  */
 import { describe, expect, it } from 'vitest';
 import { ENERGY_MAX, FIRST_STEPS, STEP_MS, TileMap, validateWorld, type Dir, type MapData, type ServerMsg } from '@napoland/shared';
-import type { LotRecord, PlayerRecord } from '../src/storage';
+import type { PlayerRecord } from '../src/storage';
 import { World, colorFor, zoneKey, type Outgoing } from '../src/world';
-import { itemsData, laneData, streetTownData, woodsData } from './fixtures';
+import { gardenData, homeTownData, itemsData, woodsData } from './fixtures';
 import { setup, waitFor } from './helpers';
 
 function home(): MapData {
@@ -29,28 +29,22 @@ function home(): MapData {
     tiles: ['xxxxx', 'xpppx', 'xpppx', 'xpppx', 'xxpxx'],
     levels: Array<string>(5).fill('00000'),
     spawn: { x: 2, y: 3, dir: 'up' },
-    exits: [{ x: 2, y: 4, w: 1, h: 1, to: 'lane', tx: 2, ty: 3, dir: 'down' }],
+    exits: [{ x: 2, y: 4, w: 1, h: 1, to: 'garden', tx: 3, ty: 4, dir: 'down' }],
     objects: [{ kind: 'chest', x: 1, y: 1 }, { kind: 'teleport', x: 3, y: 1 }],
     private: true,
     wake: { x: 2, y: 2, dir: 'down' },
   };
 }
 
-function town(): MapData {
-  const t = streetTownData();
-  return { ...t, objects: [...t.objects, { kind: 'teleport', x: 8, y: 5 }] };
-}
-
-const maps = () => [new TileMap(town()), new TileMap(laneData()), new TileMap(home()), new TileMap(woodsData())];
+const garden = () => gardenData('house', { x: 2, y: 3 });
+const maps = () => [new TileMap(homeTownData()), new TileMap(garden()), new TileMap(home()), new TileMap(woodsData())];
 
 const rec = (id: string, map: string, x: number, y: number, dir: Dir, more: Partial<PlayerRecord> = {}): PlayerRecord => ({
   id, name: id.toUpperCase(), tokenHash: `hash-${id}`, authSub: null, map, x, y, dir, color: colorFor(id), energy: ENERGY_MAX, bag: [], createdAt: 1, lastSeenAt: 1, ...more,
 });
-const lot = (id: string, n: number): LotRecord => ({ id, name: id.toUpperCase(), street: 1, lot: n });
-
 /** With the dice at 0.9, the moss in the woods lies at 5,1. */
-function world(lots: LotRecord[]): World {
-  return new World(maps(), 'town', 'overcast', { items: itemsData(), rng: () => 0.9, lots });
+function world(): World {
+  return new World(maps(), 'town', 'overcast', { items: itemsData(), rng: () => 0.9 });
 }
 /** Settled in where the record says: whom they block, and who blocks them, is known (World.returned). */
 function enter(w: World, r: PlayerRecord): void {
@@ -74,15 +68,15 @@ function walk(w: World, id: string, dirs: Dir[], at: number): number {
 const times = (dir: Dir, n: number): Dir[] => Array<Dir>(n).fill(dir);
 
 describe('the fixtures', () => {
-  it('fit together: a cabin with a teleport, and its twin in town', () => {
-    expect(validateWorld([town(), laneData(), home(), woodsData()], 'town').filter(p => p.level === 'error')).toEqual([]);
+  it('fit together: a home with a teleport, and its twin in town', () => {
+    expect(validateWorld([homeTownData(), garden(), home(), woodsData()], 'town').filter(p => p.level === 'error')).toEqual([]);
     expect(FIRST_STEPS).toBe(3);
   });
 });
 
 describe('the first steps', () => {
   it('take a new player to town by the teleport, out of town to pick something up, and home again to the chest, each saved and said at once', () => {
-    const w = world([lot('a', 0)]);
+    const w = world();
     enter(w, rec('a', 'house', 2, 2, 'down', { zone: 'a', firstSteps: 1 }));
     w.drain();
     w.takeWrites();
@@ -124,19 +118,17 @@ describe('the first steps', () => {
     expect(steps(w.drain(), 'a')).toEqual([]);
   });
 
-  it('count the first one walked too: out the door, along the lane and up the road into town', () => {
-    const w = world([lot('a', 0)]);
+  it('are not taken walking out into your garden: only town is the first, and the teleport the one way there', () => {
+    const w = world();
     enter(w, rec('a', 'house', 2, 3, 'down', { zone: 'a', firstSteps: 1 }));
-    let at = walk(w, 'a', ['down'], 1000);
-    expect(w.get('a')).toMatchObject({ map: 'lane', x: 2, y: 3 });
-    w.drain();
-    at = walk(w, 'a', [...times('right', 4), ...times('down', 2)], at);
-    expect(w.get('a')).toMatchObject({ map: 'town' });
-    expect(steps(w.drain(), 'a')).toEqual([{ t: 'firstSteps', step: 2 }]);
+    walk(w, 'a', ['down'], 1000);
+    expect(w.get('a')).toMatchObject({ map: 'garden', x: 3, y: 4 });
+    expect(steps(w.drain(), 'a')).toEqual([]);
+    expect(w.get('a')!.firstSteps).toBe(1);
   });
 
   it('go one at a time: a step out of turn, or something picked up in town, is not one', () => {
-    const w = world([lot('a', 0), lot('b', 1), lot('c', 2)]);
+    const w = world();
     // Two steps ahead: in the woods, on the moss's tile, the first still to take.
     enter(w, rec('a', 'woods', 5, 1, 'down', { firstSteps: 1 }));
     // Out of town is where the second is: nails picked up in town are not it.
@@ -165,7 +157,7 @@ describe('the first steps', () => {
   });
 
   it('are never shown to a player from before them', () => {
-    const w = world([lot('old', 0)]);
+    const w = world();
     enter(w, rec('old', 'house', 2, 2, 'down', { zone: 'old' }));
     let at = walk(w, 'old', ['right'], 1000);
     w.teleport('old', 3, 1, at);
@@ -181,7 +173,7 @@ describe('the first steps', () => {
   });
 
   it('keep a saved step that is one of them, and say it in the welcome; anything else saved reads as none', () => {
-    const w = world([]);
+    const w = world();
     for (const [i, n] of [1, 2, 3].entries()) {
       const id = `ok${i}`;
       expect(w.join(rec(id, 'town', 1 + i, 5, 'down', { firstSteps: n }), 0).firstSteps).toBe(n);

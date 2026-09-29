@@ -6,7 +6,7 @@
  */
 import {
   CACHE_SIZE, COZY_AFTER_S, FIRST_STEPS, LEVEL_MAX, MARK_LIFETIME_MS, MERIT_XP, RESCUE_ENERGY, aOf, amount, comfortMax, countable, fireFull, formatPrice, levelOf, meritLookOf, meritsLeft,
-  nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type ItemDef, type LotView, type MeritLook, type NextGear,
+  nounOf, pluralOf, thousands, toNextMerit, type BagSlot, type Comfort, type Did, type Dir, type Element, type EnergyView, type HouseLevel, type ItemDef, type MeritLook, type NextGear,
   type Recipe, type Refusal, type ShopLook, type StoneView, type Upgrade, bagShort, type Mods, workLeft, type SwapDef, type TownView, type TownWork, LAMP_MAX_S, worksDays, type WorksDef, type WorksView,
 } from '@napoland/shared';
 import { ELEMENT_WORDS, bundleText, kgText, oddsText, pieceName, thingsOf, type Items } from './items';
@@ -175,7 +175,7 @@ export function useQuestion(def: ItemDef, energy: EnergyView | null, markS = MAR
   }
   if (u.flare) return `Light ${aOf(def)}? It burns ${howLong(u.flare)}.`;
   if (u.mark) {
-    const ask = `Crush ${aOf(def)} to paint an arrow where you face? Everyone sees it for ${howLong(markS)}.`;
+    const ask = `Crush ${aOf(def)} to paint an arrow at your feet, pointing the way you face? Everyone sees it for ${howLong(markS)}.`;
     return lift ? `${ask} Your ${nounOf(lift.charm)} gives you ${lift.energy} energy.` : ask;
   }
   return `Use the ${n}? It will be used up.`;
@@ -227,11 +227,35 @@ export function cookQuestion(recipe: Recipe, items: Items): string {
   return `Cook ${n === 1 ? nounOf(made) : amount(made, n)}? It uses ${listOf(recipe.needs.map(x => counted(items.get(x.item), x.count)))}.`;
 }
 
-/** Something to cook, but not enough for anything: what the nearest meal still lacks. "For fir-tip tea you need 2 more fir tips." */
+/**
+ * Something to cook, but not enough for anything: what the nearest meal still lacks, in the bag (a fire cooks
+ * what you carry). "For fir-tip tea you need 2 more fir tips in your bag."
+ */
 export function cookShort(recipe: Recipe, bag: readonly BagSlot[], items: Items): string {
   const more = bagShort(recipe, bag).map(s => { const d = items.get(s.item); return `${s.count} more ${s.count === 1 ? nounOf(d) : pluralOf(d)}`; });
-  return `For ${nounOf(items.get(recipe.make))} you need ${listOf(more)}.`;
+  return `For ${nounOf(items.get(recipe.make))} you need ${listOf(more)} in your bag.`;
 }
+
+/**
+ * At the fire at home, with nothing to cook in the bag but something for a meal in the chest: a fire cooks
+ * what you carry, so take it out first; with the kitchen built (`kitchen`), that cooks from the chest.
+ * "To cook fir-tip tea, carry 3 fir tips: take them out of your chest first. A fire cooks what you carry."
+ */
+export function cookFromChest(recipe: Recipe, items: Items, kitchen: boolean): string {
+  const need = listOf(recipe.needs.map(x => counted(items.get(x.item), x.count)));
+  const them = recipe.needs.length === 1 && recipe.needs[0]!.count === 1 && countable(items.get(recipe.needs[0]!.item)) ? 'it' : 'them';
+  const carry = `To cook ${nounOf(items.get(recipe.make))}, carry ${need}: take ${them} out of your chest first. A fire cooks what you carry.`;
+  return kitchen ? `${carry} Your kitchen cooks from the chest.` : carry;
+}
+
+/** At the kitchen (house.ts), with too little for any meal in the bag and the chest together: what the nearest lacks. */
+export function kitchenShort(recipe: Recipe, short: readonly BagSlot[], items: Items): string {
+  const more = short.map(s => { const d = items.get(s.item); return `${s.count} more ${s.count === 1 ? nounOf(d) : pluralOf(d)}`; });
+  return `For ${nounOf(items.get(recipe.make))} you need ${listOf(more)}, in your bag or your chest.`;
+}
+
+/** Nothing to cook at the kitchen: nothing in the bag or the chest that any meal takes. */
+export const KITCHEN_EMPTY = 'Nothing to cook: your bag and your chest hold nothing a meal takes. Fir tips, berries, fiddleheads and chanterelles grow out in the woods.';
 
 /** What one Mods value a meal (or a charm) changes does, in plain words, lowercase: "cold bites 15% less". Null: nothing to say. */
 function modDoes(k: keyof Mods, v: number): string | null {
@@ -309,6 +333,12 @@ export const TENDED = 'Someone keeps this fire going. It needs nothing.';
 /** The map button where you carry no map of the area: farther out, a region's map is found, not given. */
 export const NO_MAP_YET = 'You have no map of this place yet.';
 
+/** Over your head, once, when your energy is down to little more than the way home takes (Game.wayHome). */
+export const TURN_BACK = 'Time to turn back';
+
+/** The map button at home: no paper map shows a home, since nothing but NAPO's teleport leads there. */
+export const NO_MAP_HOME = 'No map shows a home: nothing leads there but NAPO\'s teleport.';
+
 /**
  * What Walt says first on the Long Night: the fire by him is everyone's to feed until dawn, with how long
  * it has (`left`, seconds of fuel; null when he does not know); or, once it went out, that it did.
@@ -370,12 +400,14 @@ export function padlocked(tool: ItemDef | undefined): string {
 }
 
 /**
- * The stash lacks what making, mending or upgrading takes: "Your stash is short of 3 cloth and 1 resin for
- * a raincoat.", "...to mend your raincoat.", "...to upgrade your raincoat to +5."
+ * The stash lacks what making, mending, upgrading or building your home up takes: "Your stash is short of 3
+ * cloth and 1 resin for a raincoat.", "...to mend your raincoat.", "...to upgrade your raincoat to +5.",
+ * "...to build your home up to a cabin."
  */
-export function stashShort(short: readonly BagSlot[], items: Items, what: { make: ItemDef } | { mend: ItemDef; level?: number } | { upgrade: ItemDef; to: number }): string {
+export function stashShort(short: readonly BagSlot[], items: Items, what: { make: ItemDef } | { mend: ItemDef; level?: number } | { upgrade: ItemDef; to: number } | { build: string }): string {
   const list = listOf(short.map(x => counted(items.get(x.item), x.count)));
   if ('make' in what) return `Your stash is short of ${list} for ${aOf(what.make)}.`;
+  if ('build' in what) return `Your stash is short of ${list} to build your home up to a ${what.build}.`;
   if ('mend' in what) return `Your stash is short of ${list} to mend your ${pieceNoun(what.mend, what.level)}.`;
   return `Your stash is short of ${list} to upgrade your ${nounOf(what.upgrade)} to +${what.to}.`;
 }
@@ -388,25 +420,25 @@ export function haveTool(def: ItemDef): string {
   return `You have ${aOf(def)} already. ${YOURS}`;
 }
 
-// ---------- a cozy cabin (comfort.ts) ----------
+// ---------- a cozy home (comfort.ts) ----------
 
-/** At the workbench, furniture you made already: each place in the cabin has one. */
+/** At the workbench, furniture you made already: each place in the home has one. */
 export function placedAlready(def: ItemDef): string {
   return `Your ${nounOf(def)} stands in its place already.`;
 }
 
-/** What stands in a place of your cabin until you make its furniture again, as the text box names it. */
+/** What stands in a place of your home until you make its furniture again, as the text box names it. */
 export const SPOILED_NAMES: Readonly<Record<Comfort, string>> = {
   stove: 'Old stove', bed: 'Bed frame', rug: 'Old rug', lamp: 'Old lamp', rack: 'Broken rack', shelf: 'Old shelf',
 };
 
 /**
- * A at a place in your cabin: what stands there spoiled and where to make it again, or, made, what it is;
+ * A at a place in your home: what stands there spoiled and where to make it again, or, made, what it is;
  * the trophy shelf says what stands on it (`trophies`: the charms and anomalous gear in your stash).
  */
 export function comfortLines(what: Comfort, def: ItemDef | undefined, placed: boolean, trophies: readonly ItemDef[] = [], visiting = false): { who: string; lines: string[] } {
   if (!def) return { who: SPOILED_NAMES[what], lines: ['Years of damp spoiled it.'] };
-  // In a neighbor's cabin it is theirs to make: only what stands there.
+  // In a friend's home it is theirs to make: only what stands there.
   if (!placed) return { who: SPOILED_NAMES[what], lines: visiting ? [def.spoiled ?? 'Years of damp spoiled it.'] : [def.spoiled ?? 'Years of damp spoiled it.', `Make ${aOf(def)} at the workbench beside the chest: it goes straight into its place.`] };
   if (what !== 'shelf') return { who: def.name, lines: [def.text] };
   const empty = visiting ? 'Nothing on it yet.' : 'Nothing on it yet. The charms and anomalous gear you keep in your stash will stand here.';
@@ -659,7 +691,8 @@ const lower = (t: string) => t.charAt(0).toLowerCase() + t.slice(1);
 /** The name over the box for what something did. */
 export function didWho(did: Did, items: Items, ctx: DidContext = {}): string {
   switch (did.kind) {
-    case 'fire': case 'cooked': return 'Fire';
+    case 'fire': return 'Fire';
+    case 'cooked': return did.chest ? KITCHEN : 'Fire';
     case 'lamp': return 'Lookout';
     case 'brought': { const w = items.works.get(did.works); return w ? worksWho(w) : 'Mending'; }
     case 'stone': return 'The Old Stone';
@@ -671,7 +704,7 @@ export function didWho(did: Did, items: Items, ctx: DidContext = {}): string {
     case 'bought': return 'Wardrobe';
     case 'swapped': { const who = ctx.town?.swaps.find(x => x.id === did.swap)?.who; return (who && ctx.name?.(who)) ?? 'Swap'; }
     case 'gave': return 'The town ledger';
-    case 'moved': return YOUR_CABIN;
+    case 'built': return YOUR_HOME;
     case 'rescued': return did.name;
     case 'carried': return thingsOf(did.names[0] ?? 'Someone');
     case 'handedIn': return LOST_AND_FOUND;
@@ -691,8 +724,8 @@ export function didText(did: Did, items: Items, ctx: DidContext = {}): string {
     const who = ctx.name?.(swap.who) ?? 'They';
     return `${who} takes ${amount(items.get(swap.give.item), did.count * swap.give.count)} and hands you ${amount(items.get(swap.get.item), did.count * swap.get.count)}.`;
   }
-  // Nor does a move: your cabin, next to the friend's, by name.
-  if (did.kind === 'moved') return `Your cabin stands next to ${did.name}'s now.`;
+  // Nor does building your home up: what it is now, in its own words.
+  if (did.kind === 'built') return builtText(did.level, items.house);
   if (did.kind === 'rescued') return `You give ${did.name} ${RESCUE_ENERGY} of your energy. ${did.name} is back up.`;
   if (did.kind === 'carried') return carriedText(did.names);
   if (did.kind === 'handedIn') return handedInText(did.names, did.xp);
@@ -749,16 +782,16 @@ export function didText(did: Did, items: Items, ctx: DidContext = {}): string {
     case 'made': {
       // A tool never goes into the stash: it joins your tools (World.giveTool). What it does comes with it.
       if (def.kind === 'tool') return `You make ${aOf(def)}. ${YOURS}${def.about ? ` ${def.about}` : ''}`;
-      // Nor does furniture: it stands in its place in your cabin at once, and the cabin is cozier.
+      // Nor does furniture: it stands in its place in your home at once, and the home is cozier.
       if (def.kind === 'furniture') {
         const of = comfortMax(items.byId.values());
-        return `You make ${aOf(def)} and set it in its place. Your cabin's comfort is ${did.comfort ?? def.comfort ?? 0} of ${of}.`;
+        return `You make ${aOf(def)} and set it in its place. Your home's comfort is ${did.comfort ?? def.comfort ?? 0} of ${of}.`;
       }
       const pl = they(def, did.count), gear = def.kind === 'gear';
       return `You make ${did.count === 1 ? aOf(def) : amount(def, did.count)}. ${pl ? 'They wait' : 'It waits'} in your stash${gear ? `: put ${pl ? 'them' : 'it'} on at the chest` : ''}.`;
     }
     case 'cooked':
-      return `You cook ${did.count === 1 ? nounOf(def) : amount(def, did.count)}. ${did.count === 1 ? 'It is' : 'They are'} in your bag.`;
+      return `You cook ${did.count === 1 ? nounOf(def) : amount(def, did.count)}${did.chest ? ', some of it from your chest' : ''}. ${did.count === 1 ? 'It is' : 'They are'} in your bag.`;
     case 'ate':
       return `You ${def.use?.meal === 'drink' ? 'drink' : 'eat'} the ${nounOf(def)}. ${capital(mealDoes(def))} until you come home.`;
     case 'mended':
@@ -799,72 +832,102 @@ export function didText(did: Did, items: Items, ctx: DidContext = {}): string {
   }
 }
 
-// ---------- your street ----------
+// ---------- your home (roadmap/home-lots.md) ----------
 
-/** The name over the box at your own door. */
-export const YOUR_CABIN = 'Your cabin';
+/** The name over the box at home: a friend came to visit, or the house was built up. */
+export const YOUR_HOME = 'Home';
 
-/** On the plate of someone who keeps their name off their door (the setting in the menu). */
-export const RESIDENT = 'A resident';
+/** Over the box at the kitchen (house.ts). */
+export const KITCHEN = 'Kitchen';
 
-/** The name over the box at a neighbor's door: whose cabin it is, a resident's who keeps their name to themselves, or an empty one. */
-export function cabinWho(lot: LotView | null): string {
-  if (!lot) return 'Empty cabin';
-  return lot.name ? `${lot.name}'s cabin` : `${RESIDENT}'s cabin`;
-}
+/** Over the box at the map table in a home (house.ts): the notice board's news at home. */
+export const MAP_TABLE = 'Map table';
 
-/** While a knock waits for its answer. */
-export const KNOCKING = 'You knock.';
+/** The setting below friend and trade requests (Friends, in the menu): whether friends may visit your home (off: nobody). */
+export const VISITS_SETTING = 'Let my friends visit my home';
 
-/** At a door nobody lives behind yet. */
-export const NOBODY_LIVES = 'Nobody lives here yet.';
-
-/**
- * What a knock hears back: whether they are home. By name, never a pronoun. Someone who keeps their door to
- * themselves answers only friends: to anyone else, nobody answers. Visiting is for later.
- */
-export function doorText(lot: LotView | null): string {
-  if (!lot) return NOBODY_LIVES;
-  return lot.name && lot.home ? `${lot.name} is home.` : 'Nobody answers.';
-}
-
-/** The setting beside friend and trade requests: whether your street sees your name on your door, and your window lit while you are home. */
-export const DOOR_SETTING = 'Show my name on my door and when I am home';
-
-/** The setting below it: whether your neighbors may walk into your cabin (off: only friends). */
-export const VISITS_SETTING = 'Let my neighbors come into my cabin';
-
-/**
- * A neighbor's door that stayed shut when you walked into it: nobody lives there, or its owner lets only
- * friends in (or keeps you out). By name, never a pronoun.
- */
-export function shutText(lot: LotView | null): string {
-  if (!lot) return NOBODY_LIVES;
-  return lot.name ? `The door stays shut: ${lot.name} lets only friends in.` : 'The door stays shut: only friends come in here.';
-}
-
-/** At home, when a neighbor walks into your cabin. */
+/** At home, when a friend comes to visit (NAPO's teleport sets them down by yours). By name, never a pronoun. */
 export function visitedText(name: string): string {
-  return `${name} came in.`;
+  return `${name} came to visit.`;
 }
 
-/** Whose cabin you walked into: over the box in there, and on the banner as you come in. */
-export function visitWho(name: string): string {
-  return `${name}'s cabin`;
+/** What a house at `level` is called in a sentence ("garage"), from the data's names; "house" for a level it does not know. */
+export function houseWord(level: number, levels: readonly HouseLevel[]): string {
+  return (levels[level - 1]?.name ?? 'house').toLowerCase();
 }
 
-/** A neighbor's chest and workbench are theirs alone: A at one says so (the server refuses them too). */
-export function notYours(name: string, what: 'chest' | 'bench'): { who: string; text: string } {
+/**
+ * What a place in a friend's home is called, over the box in there and on the banner as you come in: the
+ * house by what it is built up to ("Bo's cabin"), the garden round it ("Bo's garden").
+ */
+export function visitWho(name: string, place: string): string {
+  return `${name}'s ${place}`;
+}
+
+/** Your own garden's name on the banner, as you walk out of your house. */
+export const YOUR_GARDEN = 'Your garden';
+
+/** A friend's chest, workbench and kitchen are theirs alone: A at one says so (the server refuses them too). */
+export function notYours(name: string, what: 'chest' | 'bench' | 'kitchen'): { who: string; text: string } {
+  if (what === 'kitchen') return { who: `${name}'s kitchen`, text: `Only ${name} cooks here.` };
   return what === 'chest' ? { who: `${name}'s chest`, text: `Only ${name} opens it.` } : { who: `${name}'s workbench`, text: `Only ${name} works at it.` };
 }
 
-/** Over the box at NAPO's teleport, in a cabin or in town. */
+/** Over the box at NAPO's teleport, in a house or in town. */
 export const TELEPORT = 'NAPO teleport';
 
-/** A at NAPO's teleport asks first: the one in a cabin goes to town, the one in town home (`home`). */
+/** A at NAPO's teleport asks first: the one in a house goes to town, the one in town home (`home`). */
 export function teleportQuestion(home: boolean): string {
-  return home ? 'Go home? It sets you down in your cabin.' : 'Go to town? It sets you down by the notice board.';
+  return home ? 'Go home? It sets you down inside your own home.' : 'Go to town? It sets you down by the notice board.';
 }
+
+/** Visit on a friend's card asks first, since NAPO's teleport takes you there. By name, never a pronoun. */
+export function visitQuestion(name: string): string {
+  return `Visit ${name}'s home? NAPO's teleport sets you down inside it.`;
+}
+
+/**
+ * Why Visit on a friend's card is greyed, said when it is pressed: out in the wilds (a visit is no way home),
+ * or their home keeps visitors out. Null: it can be pressed.
+ */
+export function visitWhyNot(name: string, why: 'wilds' | 'closed' | 'here'): string {
+  if (why === 'wilds') return `Visits start from town or from home: come back before you visit ${name}.`;
+  if (why === 'here') return `You are in ${name}'s home already.`;
+  return `${name} keeps visitors out for now.`;
+}
+
+/**
+ * The boxes standing where the kitchen or the map table goes, until the house is built up to it (house.ts):
+ * what will stand there, and what builds it. `level`: what the house is called then ("cabin").
+ */
+export function boxesLines(what: 'kitchen' | 'board', level: string): string[] {
+  return what === 'kitchen'
+    ? [`Boxes, stacked where a kitchen goes. Once the workbench builds your home up to a ${level}, a kitchen stands here: it cooks from your chest.`]
+    : [`Boxes, stacked where a map table goes. Once the workbench builds your home up to a ${level}, a map table stands here: it tells how things stand out there, as the notice board in town does.`];
+}
+
+/** A friend's boxes, where their house is not built up yet: the same, about them. By name, never a pronoun. */
+export function friendsBoxes(name: string): string[] {
+  return [`Boxes, stacked against the wall. ${name} has not built this far yet.`];
+}
+
+/** At the workbench: "Build your home up to a cabin? It uses 20 scrap, 20 resin, 12 cloth and 8 wire." */
+export function buildQuestion(level: string, needs: readonly BagSlot[], items: Items): string {
+  return `Build your home up to a ${level}? It uses ${listOf(needs.map(x => counted(items.get(x.item), x.count)))}.`;
+}
+
+/** Built: what the house is now, and what that gives (the level's own words, from the data). */
+export function builtText(level: number, levels: readonly HouseLevel[]): string {
+  const l = levels[level - 1];
+  return l ? `Your home is a ${l.name.toLowerCase()} now. ${l.text}` : 'Your home is built up.';
+}
+
+/** The letter the first time you come home since homes stood in gardens of their own: how home works now, a page at a time. */
+export const HOME_LETTER: readonly string[] = [
+  'Your home stands in a garden of its own now, fenced all round. NAPO\'s teleport inside it is the way to town, and the one by the notice board brings you back.',
+  'Friends can visit from the friends list, whether you are in or not. You can keep them out in the menu, under Friends.',
+  'And the workbench builds your home up, a level at a time, from what your chest holds.',
+];
 
 /** Over a new player's first steps (roadmap/first-steps.md), with which one it is. */
 export const FIRST_STEPS_TITLE = 'First steps';
@@ -884,29 +947,6 @@ export function firstStepsView(step: number | null): { title: string; text: stri
   const text = step === null ? undefined : FIRST_STEP_LINES[step - 1];
   return text === undefined ? null : { title: `${FIRST_STEPS_TITLE} · ${step} of ${FIRST_STEPS}`, text };
 }
-
-/**
- * The letter the first time you come home since streets came: what your street sees of you, and where to
- * change it (`doorOff`: you keep both to yourself already).
- */
-export function streetLetterLines(doorOff: boolean): string[] {
-  return doorOff
-    ? ['Your cabin stands on Residents\' Lane, among your neighbors\'. They see a resident\'s cabin: your name stays off your door, and your window dark, as you chose.', 'You can show both in the menu, under Friends.']
-    : ['Your cabin stands on Residents\' Lane, among your neighbors\'. They see your name on your door, and your window lit while you are home.', 'You can hide both in the menu, under Friends.'];
-}
-
-/** At home, when a neighbor knocks at your door. */
-export function knockedText(name: string): string {
-  return `${name} knocked.`;
-}
-
-/** At your own door, for a friend whose street has a lot free. */
-export function moveQuestion(name: string): string {
-  return `Move next to ${name}? Your cabin comes with you.`;
-}
-
-/** At your own door, with no friend to move next to. */
-export const NO_MOVES = 'Your own cabin. When a friend has a lot free on their street, you can move next to them from here.';
 
 /** A plain no from the server, as a sentence for the box. */
 export function sentence(text: string): string {

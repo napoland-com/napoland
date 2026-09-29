@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { GLIMPSE_KEPT_MS, GLIMPSE_STEPS, GUEST_DAYS, WORKS_GIVERS } from '@napoland/shared';
-import { DOOR_SETTING, VISITS_SETTING } from '../src/said';
+import { VISITS_SETTING } from '../src/said';
 
 const page = readFileSync(resolve(import.meta.dirname, '../public/privacy.html'), 'utf8');
 const words = page.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
@@ -38,13 +38,17 @@ describe('the privacy policy', () => {
     expect(listUnder('How long we keep it').find(li => li.startsWith('The last steps of a walk'))).toMatch(/a day at most, in our server's memory only/);
   });
 
-  it('names the settings for your door and your cabin as the menu does, and says what a neighbor who walks in sees, and what is not kept', () => {
-    expect(words).toContain(`turn off "${DOOR_SETTING}"`);
+  it('names the setting for visits as the menu does, and says what a friend who visits sees, what is kept of a home, and what is not', () => {
     expect(words).toContain(`turn off "${VISITS_SETTING}"`);
-    expect(words).toContain('whether you let your neighbors into its cabin');
+    expect(words).toContain('whether you keep visitors out of its home');
+    expect(words).toContain('how far it built its home up (a garage, a cabin, a house)');
+    expect(words).toMatch(/only friends visit/i);
     expect(words).toMatch(/what stands on your trophy shelf once you made one \(each charm and each piece of anomalous gear in your stash, once/);
     expect(words).toContain('Nothing else of your stash, your bag or your chest is shown');
-    expect(words).toContain('you read the character name of whoever comes in; that is not kept');
+    expect(words).toContain('you read the character name of whoever comes to visit; that is not kept');
+    // Streets are gone: what the game kept of them is forgotten, and nothing else speaks of them as they were.
+    expect(words).toContain('are forgotten the next time your character plays');
+    expect(words).not.toMatch(/knock|Show my name on my door|neighbors on your street/);
     expect(words).not.toContain('nobody else ever is');
   });
 

@@ -23,7 +23,7 @@ const items = new Items(content);
 const home = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../../content/maps/stonebrook-home.json'), 'utf8')) as MapData;
 const recipe = (id: string) => items.recipes.find(r => r.id === id)!;
 
-describe('the workbench, for your cabin', () => {
+describe('the workbench, for your home', () => {
   it('lists the furniture after the rest, under a heading of its own, with the comfort each adds', () => {
     const rows = recipeViews(items.recipes, [{ item: 'cloth', count: 6 }], items, [], ['bed']);
     const cabin = rows.filter(r => r.group === 'cabin');
@@ -37,7 +37,7 @@ describe('the workbench, for your cabin', () => {
   it('asks first, saying where it goes, and says what it made and how comfortable the cabin is now', () => {
     expect(makeQuestion(recipe('iron-stove'), items)).toBe('Make an iron stove? It uses 10 scrap, 3 wire and 5 resin. It goes straight into its place.');
     expect(makeQuestion(recipe('rag-rug'), items)).toBe('Make a rag rug? It uses 6 cloth. It goes straight into its place.');
-    expect(didText({ kind: 'made', item: 'iron-stove', count: 1, comfort: 4 }, items)).toBe('You make an iron stove and set it in its place. Your cabin\'s comfort is 4 of 10.');
+    expect(didText({ kind: 'made', item: 'iron-stove', count: 1, comfort: 4 }, items)).toBe('You make an iron stove and set it in its place. Your home\'s comfort is 4 of 10.');
     expect(placedAlready(items.get('drying-rack'))).toBe('Your drying rack stands in its place already.');
   });
 
@@ -45,10 +45,10 @@ describe('the workbench, for your cabin', () => {
     const state = { items, bag: [], stash: [{ item: 'scrap', count: 4 }, { item: 'resin', count: 2 }], gear: {}, worn: {} };
     const card = detailView({ from: 'recipe', id: 'trophy-shelf' }, state)!;
     expect(card).toMatchObject({ name: 'Trophy shelf', facts: ['Comfort 1'], act: { label: 'Make', enabled: true } });
-    expect(card.notes.map(n => n.text)).toEqual(['Made, it goes straight into its place in your cabin.']);
+    expect(card.notes.map(n => n.text)).toEqual(['Made, it goes straight into its place in your home.']);
     const made = detailView({ from: 'recipe', id: 'trophy-shelf' }, { ...state, furniture: ['trophy-shelf'] })!;
     expect(made).toMatchObject({ act: { label: 'In its place', enabled: false } });
-    expect(made.notes.map(n => n.text)).toEqual(['It stands in its place in your cabin.']);
+    expect(made.notes.map(n => n.text)).toEqual(['It stands in its place in your home.']);
   });
 });
 

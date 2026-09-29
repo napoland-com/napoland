@@ -11,6 +11,7 @@
 import type { Comfort } from './comfort';
 import type { Mods } from './feats';
 import type { Element, Piece, Quirk, Recipe, Slot, Tier, Upgrade } from './gear';
+import type { HouseLevel } from './house';
 import type { ParcelsData } from './parcels';
 import type { ConditionsData, Season } from './sky';
 import { objectTiles, type MapObject, type TileKind, type TileMap, type TownGate } from './map';
@@ -222,6 +223,8 @@ export interface ItemsData {
   works?: WorksDef[];
   /** What grows back faster on a Long Night that has its bonus (sky.ts, world.ts). None: nothing does. */
   longNight?: LongNightData;
+  /** The levels a house is built up to at the workbench, the first the one it starts at (house.ts). None: every house stays as it starts. */
+  house?: HouseLevel[];
 }
 
 /** The Long Night's bonus (ItemsData.longNight). */

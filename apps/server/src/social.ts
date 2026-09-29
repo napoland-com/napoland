@@ -16,8 +16,8 @@
  *   to be friends. A guest can still be blocked and reported.
  *
  * Whoever a change touches hears their friends list again (if online); the list says which friends
- * are online, and on which map. Who each player online is friends with is kept at hand too, for the
- * World (a friend's street is one they may move their cabin to).
+ * are online, and on which map, and whose home keeps visitors out. Who each player online is friends with
+ * is kept at hand too, for the World (a friend's home is one they may visit).
  */
 import type { PersonView, Refusal, RefusedAction, ReportReason, ServerMsg } from '@napoland/shared';
 import { RollingLimit } from './limits';
@@ -60,9 +60,11 @@ export interface SocialOptions {
   unlinked?: (a: string, b: string) => void;
   /**
    * How two players stand changed (friends or not, a block either way), and what is kept at hand says so now:
-   * whoever that keeps out of either one's cabin walks out of it (world.ts, visits).
+   * whoever that keeps out of either one's home is sent home (world.ts, homes).
    */
   changed?: (a: string, b: string) => void;
+  /** Whether a player keeps every visitor out of their home: their card in a friend's list greys Visit. */
+  closed?: (id: string) => boolean;
 }
 
 const has = (links: LinkRecord[], from: string, to: string, kind: LinkRecord['kind']) => links.some(l => l.from === from && l.to === to && l.kind === kind);
@@ -97,6 +99,13 @@ export class Social {
   /** Who `id` is friends with, while they are online (nobody before joined() has run, and nobody for a guest). */
   friends(id: string): ReadonlySet<string> {
     return this.befriended.get(id) ?? NOBODY;
+  }
+
+  /** `id` let visitors in or kept them out: their friends online hear their lists again, which say so. */
+  homeChanged(id: string): void {
+    for (const friend of this.friends(id)) {
+      if (this.o.where(friend) !== undefined && !this.o.isGuest?.(friend)) void this.list(friend).catch((err: unknown) => log.error('a friends list failed', { id: friend, err }));
+    }
   }
 
   /** A player left: nothing of theirs is kept at hand. */
@@ -257,7 +266,7 @@ export class Social {
     this.befriended.set(id, new Set(out('friend').map(p => p.id)));
     this.o.send(id, {
       t: 'friends',
-      friends: out('friend').map(p => ({ ...p, map: this.o.where(p.id) ?? null })),
+      friends: out('friend').map(p => ({ ...p, map: this.o.where(p.id) ?? null, ...(this.o.closed?.(p.id) && { closed: true as const }) })),
       incoming: links.filter(l => l.to === id && l.kind === 'request').map(l => ({ id: l.from, name: l.fromName })),
       outgoing: out('request'),
       blocked: out('block'),

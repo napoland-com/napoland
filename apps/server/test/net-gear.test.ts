@@ -148,7 +148,7 @@ describe('gear on the road, over the network', () => {
     // each region's own weather and effects that run for a while (30), seasons, whose ice is walked on (31), the Long Night (32), how the trip went (33),
     // visits, the road to your street and NAPO's teleport (34), the teleport home with a new player's first steps (35), the shop for looks with the window to be saved (36),
     // the lost and found (37), the slab that needs two (38) and the town waking up (39) and the fire lookout, climbed and its lamp fed, with the woods mended together (40, one release),
-    // then the notice board as a panel (41).
-    expect(PROTOCOL_VERSION).toBe(41);
+    // then the notice board as a panel (41), and homes in gardens of their own, visits from the friends list and houses built up (42).
+    expect(PROTOCOL_VERSION).toBe(42);
   });
 });

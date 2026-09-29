@@ -26,7 +26,7 @@ describe('what cooking and meals say', () => {
     expect(cookQuestion(recipe('fir-tip-tea'), real)).toBe('Cook fir-tip tea? It uses 3 fir tips.');
     expect(cookQuestion(recipe('chanterelle-stew'), real)).toBe('Cook chanterelle stew? It uses 3 chanterelles and 2 fiddleheads.');
     expect(cookQuestion(recipe('berry-pemmican'), real)).toBe('Cook berry pemmican? It uses 5 huckleberries.');
-    expect(cookShort(recipe('chanterelle-stew'), [{ item: 'chanterelles', count: 2 }], real)).toBe('For chanterelle stew you need 1 more chanterelle and 2 more fiddleheads.');
+    expect(cookShort(recipe('chanterelle-stew'), [{ item: 'chanterelles', count: 2 }], real)).toBe('For chanterelle stew you need 1 more chanterelle and 2 more fiddleheads in your bag.');
     expect([FIRE_CHOICE, FIRE_OPTIONS]).toEqual(['Feed the fire, or cook on it?', ['Feed the fire', 'Cook']]);
   });
 
@@ -161,7 +161,7 @@ describe('at a fire', () => {
     g.pressB();
     atTheFire([{ item: 'tips', count: 1 }], null);
     g.pressA();
-    expect(g.note?.text).toBe('For fir-tip tea you need 2 more fir tips.');
+    expect(g.note?.text).toBe('For fir-tip tea you need 2 more fir tips in your bag.');
   });
 
   it('feeds a dead fire as ever: nothing cooks on it until it burns again', () => {

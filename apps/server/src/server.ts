@@ -110,14 +110,14 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
       log.error('cannot tell since when guests are deleted: none are for now', { err });
     }
   }
-  // Their lots are free again once the World runs (it is made below, after the first cleanup).
+  // Their homes go with them once the World runs (it is made below, after the first cleanup).
   let world: World | undefined;
   const forgetGuests = async () => {
     if (Date.now() - since < GUEST_DAYS * DAY_MS) return;
     try {
       const gone = await o.storage.forgetGuests(Date.now() - GUEST_DAYS * DAY_MS);
       if (gone.length) log.info('guests deleted', { guests: gone.length, days: GUEST_DAYS });
-      world?.forgetLots(gone);
+      world?.forgetHomes(gone);
     } catch (err) {
       // Housekeeping: it never keeps the game from running, and it runs again tomorrow.
       log.error('deleting guests who stayed away failed', { err });
@@ -140,9 +140,9 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
   // Who found each secret first is kept for good (firsts.ts).
   const firsts = await o.storage.loadFirsts();
   if (firsts.length) log.info('first finders loaded', { firsts: firsts.length });
-  // Who lives where on the streets, online or not: after the guests who stayed away are gone, their lots with them.
-  const lots = await o.storage.loadLots();
-  if (lots.length) log.info('lots loaded', { lots: lots.length });
+  // Every player's home, online or not: after the guests who stayed away are gone, their homes with them.
+  const homes = await o.storage.loadHomes();
+  if (homes.length) log.info('homes loaded', { homes: homes.length });
   // What was carried back to the lodge waits for its owner's chest, and its letter, as long as it takes; then THANKS_KEPT_DAYS.
   const returns = await o.storage.loadReturns(Date.now() - THANKS_KEPT_MS);
   if (returns.length) log.info('things carried back loaded', { things: returns.length });
@@ -169,7 +169,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     thanks,
     cacheItems,
     firsts,
-    lots,
+    homes,
     returns,
     stone,
     town,

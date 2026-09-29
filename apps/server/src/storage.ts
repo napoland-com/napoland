@@ -147,19 +147,12 @@ export interface PlayerRecord {
    */
   meals?: string[];
   /**
-   * Where the player's cabin stands (world.ts, streets): the number of their street (from 1) and their lot
-   * on it (from 0, the street's houses in order). Both or neither; none: they have not come home since
-   * streets came. Every save says it.
+   * How far the player's house is built (house.ts): 2 and up, built up at the workbench. None: the garage every
+   * house starts as. Every save says it.
    */
-  street?: number;
-  lot?: number;
-  /**
-   * The menu's setting (world.ts, streets): the player keeps their name off their door and their window
-   * dark to their street. None: both show, as for everyone until they choose. Every save says it.
-   */
-  doorOff?: true;
-  /** They read the letter about their street, the first time they came home since streets came: never again. A save without it keeps it. */
-  streetTold?: true;
+  house?: number;
+  /** They read the letter about home in its own garden, the first time they came home since homes stood in gardens: never again. A save without it keeps it. */
+  homeTold?: true;
   /**
    * Their best trips (world.ts, endTrip): the farthest (the deepest region, then the most steps from home
    * in it), the longest in seconds, the most XP brought home. None: no trip yet. They only grow, and a save
@@ -167,8 +160,8 @@ export interface PlayerRecord {
    */
   bests?: PlayerBests;
   /**
-   * The menu's setting (world.ts, visits): only friends may walk into their cabin. None: their neighbors
-   * may, as for everyone until they choose. Every save says it.
+   * The menu's setting (world.ts, homes): nobody may visit their home. None: their friends may, as for
+   * everyone until they choose. Every save says it.
    */
   visitsOff?: true;
   /**
@@ -323,17 +316,15 @@ export interface ReturnRecord {
   told: boolean;
 }
 
-/** A player's lot on a street, for the World to know who lives where, online or not: their name goes on its plate. */
-export interface LotRecord {
+/** A player's home, for the World to know it online or not: whose it is, who may visit, and what a visitor sees there. */
+export interface HomeRecord {
   id: string;
   name: string;
-  street: number;
-  lot: number;
-  /** They keep their name off their door, and their window dark (PlayerRecord.doorOff). */
-  off?: true;
-  /** They let only friends into their cabin (PlayerRecord.visitsOff). */
+  /** How far their house is built (PlayerRecord.house); none: the garage it starts as. */
+  house?: number;
+  /** They keep every visitor out (PlayerRecord.visitsOff). */
   closed?: true;
-  /** What their cabin shows a neighbor who walks in while they are away: the furniture they made, and the stash their trophy shelf shows. */
+  /** What their home shows a friend who visits while they are away: the furniture they made, and the stash their trophy shelf shows. */
   furniture?: string[];
   stash?: unknown;
 }
@@ -498,7 +489,7 @@ export interface Storage {
   /**
    * Deletes every character nobody signed in with (authSub null: a guest, on a server with sign-in)
    * last seen before `seenBefore` (ms since the epoch), with their pile, marks, links and unread
-   * messages. Never one someone signed in with. Returns the ids of those who went (their lots are free).
+   * messages. Never one someone signed in with. Returns the ids of those who went (their homes go with them).
    */
   forgetGuests(seenBefore: number): Promise<string[]>;
   /**
@@ -509,8 +500,8 @@ export interface Storage {
   guestsSince(now: number): Promise<number>;
   /** How many players exist. */
   count(): Promise<number>;
-  /** Every player's lot on a street (world.ts, streets), with their name: who lives where. */
-  loadLots(): Promise<LotRecord[]>;
+  /** Every player's home (world.ts, homes), with their name: what a friend who visits sees there, and whether it lets them in. */
+  loadHomes(): Promise<HomeRecord[]>;
   /** Every pile dropped after `after` (ms since the epoch), oldest first. Older ones have faded: they are forgotten. */
   loadDrops(after: number): Promise<DropRecord[]>;
   /** Stores a player's pile, in place of the one they had. */
@@ -745,17 +736,15 @@ export class MemoryStorage implements Storage {
         // Like the database: what came back is never put into the chest twice, whatever an older copy says.
         returned: Math.max(cur.returned ?? 0, rec.returned ?? 0),
       });
-      // Every save says whether they are cozy, the meals they ate this trip, and where their cabin stands, as it says where they are.
+      // Every save says whether they are cozy, the meals they ate this trip, and how far their house is built, as it says where they are.
       if (rec.cozy !== undefined) cur.cozy = rec.cozy;
       else delete cur.cozy;
       if (rec.meals?.length) cur.meals = [...rec.meals];
       else delete cur.meals;
-      if (rec.street !== undefined && rec.lot !== undefined) Object.assign(cur, { street: rec.street, lot: rec.lot });
-      else { delete cur.street; delete cur.lot; }
-      // And whether they keep their door to themselves; the letter about the street, once read, stays read.
-      if (rec.doorOff) cur.doorOff = true;
-      else delete cur.doorOff;
-      if (rec.streetTold) cur.streetTold = true;
+      if (rec.house !== undefined && rec.house > 1) cur.house = rec.house;
+      else delete cur.house;
+      // And who may visit; the letter about home in its own garden, once read, stays read.
+      if (rec.homeTold) cur.homeTold = true;
       if (rec.visitsOff) cur.visitsOff = true;
       else delete cur.visitsOff;
       if (rec.firstSteps) cur.firstSteps = rec.firstSteps;
@@ -820,11 +809,11 @@ export class MemoryStorage implements Storage {
     return this.byId.size;
   }
 
-  async loadLots(): Promise<LotRecord[]> {
-    return [...this.byId.values()].flatMap(r => (r.street !== undefined && r.lot !== undefined ? [{
-      id: r.id, name: r.name, street: r.street, lot: r.lot, ...(r.doorOff && { off: true as const }), ...(r.visitsOff && { closed: true as const }),
+  async loadHomes(): Promise<HomeRecord[]> {
+    return [...this.byId.values()].map(r => ({
+      id: r.id, name: r.name, ...(r.house !== undefined && { house: r.house }), ...(r.visitsOff && { closed: true as const }),
       ...(r.furniture && { furniture: [...r.furniture] }), ...(r.stash && { stash: structuredClone(r.stash) }),
-    }] : []));
+    }));
   }
 
   async loadDrops(after: number): Promise<DropRecord[]> {
@@ -1125,13 +1114,10 @@ interface PlayerRow {
   cozy_until: Date | null;
   /** The meals eaten this trip, a list of item ids (036_meals.sql); null: none. */
   meals: unknown;
-  /** Where their cabin stands (025_streets.sql): both null for a player who has not come home since streets came. */
-  street: number | null;
-  lot: number | null;
-  /** Whether they keep their door to themselves, and whether they read the letter about their street (026_door.sql). */
-  door_off: boolean;
-  street_told: boolean;
-  /** Whether only friends may walk into their cabin (028_visits.sql). */
+  /** How far their house is built, null for the garage it starts as, and whether they read the letter about home in its own garden (037_house.sql). */
+  house: number | null;
+  home_told: boolean;
+  /** Whether they keep every visitor out of their home (028_visits.sql, when it kept out all but friends). */
   visits_off: boolean;
   /** A new player's first step to take now; null when done, or for anyone older (029_first_steps.sql). */
   first_steps: number | null;
@@ -1316,9 +1302,8 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.cozy_until ? { cozy: r.cozy_until.getTime() } : {}),
   // A list of ids as the server wrote it; anything else, or none, reads as no meal (the World checks it again).
   ...(Array.isArray(r.meals) && r.meals.some(m => typeof m === 'string') ? { meals: r.meals.filter((m): m is string => typeof m === 'string') } : {}),
-  ...(r.street !== null && r.lot !== null ? { street: r.street, lot: r.lot } : {}),
-  ...(r.door_off ? { doorOff: true as const } : {}),
-  ...(r.street_told ? { streetTold: true as const } : {}),
+  ...(r.house !== null && r.house > 1 ? { house: r.house } : {}),
+  ...(r.home_told ? { homeTold: true as const } : {}),
   ...(r.visits_off ? { visitsOff: true as const } : {}),
   ...(r.first_steps ? { firstSteps: r.first_steps } : {}),
   // The purchases' word, never the row's: a list of look ids (the World keeps only the looks it has).
@@ -1358,9 +1343,10 @@ const thanksFor = (json: unknown): ThanksFor | null => {
 // is: a record without one is in the main copy. So is the cup of rest: none is empty. The mark of what was worn
 // counted as taken out (PlayerRecord.wornOut), once written with the counts, stays, and a save without field
 // notes, notes read or keepsakes home (the previous release's, which never writes them) leaves those; one
-// without furniture keeps it too, like the tools, while whether they are cozy, the meals they ate this trip, where
-// their cabin stands and whether they keep their door to themselves is said by every save; the letter about their
-// street, once read, stays read.
+// without furniture keeps it too, like the tools, while whether they are cozy, the meals they ate this trip, how
+// far their house is built and who may visit is said by every save; the letter about home in its own garden, once
+// read, stays read. Where a cabin stood on a street before homes stood in gardens of their own (street, lot,
+// door_off, street_told) is forgotten at the first save since: nothing reads it any more.
 const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, color = $6, energy = $7, bag = $8::jsonb, wet = $9,
   stats = $10::jsonb || CASE WHEN players.stats ? 'wornOut' THEN '{"wornOut": 1}'::jsonb ELSE '{}'::jsonb END, xp = $11, stash = $12::jsonb,
   gear = $14::jsonb, worn = $15::jsonb, story = COALESCE($16::text, story), tools = COALESCE($17::jsonb, tools),
@@ -1368,9 +1354,9 @@ const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, colo
   parcel_days = COALESCE($20::smallint, parcel_days), outfit = CASE WHEN $21::boolean THEN $22::text ELSE outfit END, zone = $23, rested = $24,
   merits_spent = COALESCE($25::integer, merits_spent), looks = COALESCE($26::jsonb, looks), pattern = CASE WHEN $27::boolean THEN $28::text ELSE pattern END,
   badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, notebook = COALESCE($31::jsonb, notebook), notes = COALESCE($32::jsonb, notes),
-  keepsakes = COALESCE($33::jsonb, keepsakes), furniture = COALESCE($34::jsonb, furniture), cozy_until = $35, street = $36, lot = $37, door_off = $38,
-  street_told = street_told OR $39, bests = COALESCE($40::jsonb, bests), visits_off = $41, first_steps = $42, returned = GREATEST(returned, $43::bigint), meals = $44::jsonb,
-  last_seen_at = $13 WHERE id = $1`;
+  keepsakes = COALESCE($33::jsonb, keepsakes), furniture = COALESCE($34::jsonb, furniture), cozy_until = $35, house = $36, home_told = home_told OR $37,
+  bests = COALESCE($38::jsonb, bests), visits_off = $39, first_steps = $40, returned = GREATEST(returned, $41::bigint), meals = $42::jsonb,
+  street = NULL, lot = NULL, door_off = false, street_told = false, last_seen_at = $13 WHERE id = $1`;
 
 // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
 function saveParams(rec: PlayerRecord): unknown[] {
@@ -1382,10 +1368,14 @@ function saveParams(rec: PlayerRecord): unknown[] {
     rec.outfit !== undefined, rec.outfit ?? null, rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? null, rec.looks ? JSON.stringify(rec.looks) : null,
     rec.pattern !== undefined, rec.pattern ?? null, rec.badge !== undefined, rec.badge ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null,
     rec.notes ? JSON.stringify(rec.notes) : null, rec.keepsakes ? JSON.stringify(rec.keepsakes) : null,
-    rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
-    rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null, rec.doorOff === true, rec.streetTold === true,
+    rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy), houseOf(rec), rec.homeTold === true,
     rec.bests ? JSON.stringify(rec.bests) : null, rec.visitsOff === true, rec.firstSteps ?? null, rec.returned ?? 0, rec.meals?.length ? JSON.stringify(rec.meals) : null,
   ];
+}
+
+/** How far a house is built, as saved: null for the garage it starts as. */
+function houseOf(rec: PlayerRecord): number | null {
+  return rec.house !== undefined && rec.house > 1 ? rec.house : null;
 }
 
 /** Held while migrating, so two servers starting together do not both apply the same file. */
@@ -1436,10 +1426,10 @@ export class PgStorage implements Storage {
   async create(rec: PlayerRecord): Promise<boolean> {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
-         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, rested, merits_spent, looks, pattern, badge, notebook, notes, keepsakes, furniture, cozy_until, street, lot,
-         door_off, street_told, visits_off, first_steps, meals)
+         parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, rested, merits_spent, looks, pattern, badge, notebook, notes, keepsakes, furniture, cozy_until, house,
+         home_told, visits_off, first_steps, meals)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27,
-         $28::jsonb, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb, $34::jsonb, $35, $36, $37, $38, $39, $40, $41, $42::jsonb)
+         $28::jsonb, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb, $34::jsonb, $35, $36, $37, $38, $39, $40::jsonb)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedCounts(rec)),
@@ -1448,8 +1438,7 @@ export class PgStorage implements Storage {
         Math.max(0, Math.floor(rec.stats?.thanked ?? 0)), rec.zone ?? '', rec.rested ?? 0, rec.meritsSpent ?? 0, rec.looks?.length ? JSON.stringify(rec.looks) : null,
         rec.pattern ?? null, rec.badge ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null, rec.notes ? JSON.stringify(rec.notes) : null,
         rec.keepsakes ? JSON.stringify(rec.keepsakes) : null, rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
-        rec.street ?? null, rec.street === undefined ? null : rec.lot ?? null, rec.doorOff === true, rec.streetTold === true, rec.visitsOff === true,
-        rec.firstSteps ?? null, rec.meals?.length ? JSON.stringify(rec.meals) : null,
+        houseOf(rec), rec.homeTold === true, rec.visitsOff === true, rec.firstSteps ?? null, rec.meals?.length ? JSON.stringify(rec.meals) : null,
       ],
     );
     return r.rowCount === 1;
@@ -1497,14 +1486,14 @@ export class PgStorage implements Storage {
     return r.rows[0]!.n;
   }
 
-  async loadLots(): Promise<LotRecord[]> {
-    const r = await this.pool.query<{ id: string; name: string; street: number; lot: number; door_off: boolean; visits_off: boolean; furniture: unknown; stash: unknown }>(
-      'SELECT id, name, street, lot, door_off, visits_off, furniture, stash FROM players WHERE street IS NOT NULL AND lot IS NOT NULL',
+  async loadHomes(): Promise<HomeRecord[]> {
+    const r = await this.pool.query<{ id: string; name: string; house: number | null; visits_off: boolean; furniture: unknown; stash: unknown }>(
+      'SELECT id, name, house, visits_off, furniture, stash FROM players',
     );
-    // What each cabin shows a visitor comes as it was saved; the World cleans it (and keeps only what its shelf shows of the stash).
-    return r.rows.map(l => ({
-      id: l.id, name: l.name, street: l.street, lot: l.lot, ...(l.door_off && { off: true as const }), ...(l.visits_off && { closed: true as const }),
-      ...(Array.isArray(l.furniture) && { furniture: l.furniture.filter((t): t is string => typeof t === 'string') }), ...(l.stash !== null && { stash: l.stash }),
+    // What each home shows a visitor comes as it was saved; the World cleans it (and keeps only what its shelf shows of the stash).
+    return r.rows.map(h => ({
+      id: h.id, name: h.name, ...(h.house !== null && { house: h.house }), ...(h.visits_off && { closed: true as const }),
+      ...(Array.isArray(h.furniture) && { furniture: h.furniture.filter((t): t is string => typeof t === 'string') }), ...(h.stash !== null && { stash: h.stash }),
     }));
   }
 

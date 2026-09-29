@@ -19,12 +19,13 @@
  */
 import * as THREE from 'three';
 import {
-  BEAM_HALF, BEAM_REACH, DIR_VEC, LANTERN_REACH, PRINTS_PER_MAP, beamAngle, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
+  BEAM_HALF, BEAM_REACH, DIR_VEC, LANTERN_REACH, PRINTS_PER_MAP, beamAngle, builtIn, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
   type TileMap, type Weather,
 } from '@napoland/shared';
 import { comfortModel, comfortShadow, lampLight } from './cabin';
 import { Afterglows, Lanterns, LiveGlows, makeNpc, makePlayer, type Look, type Rig } from './characters';
 import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthModel, type Puffs } from './fire';
+import { homeModel, homeTone, kitchenModel, mapTableModel } from './home';
 import {
   CROUCH_DROP, CROUCH_LEAN, GRADES, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial,
 } from './grass';
@@ -34,7 +35,7 @@ import {
   type QuadFn, type WallShape,
 } from './interior';
 import {
-  LOOKOUT_DECK, LOOKOUT_LAMP_Y, LOOKOUT_STAND_Z, bridgeModel, bridgeRails, cardboardModel, carModel, culvertMouthModel, culvertMouths, curtainColor, curtainPanels, footbridgeModel, headlightCar, leftModel, lookoutModel, mailboxModel, millBuilding, porchModel, shedBuilding,
+  LOOKOUT_DECK, LOOKOUT_LAMP_Y, LOOKOUT_STAND_Z, boxesModel, bridgeModel, bridgeRails, cardboardModel, carModel, culvertMouthModel, culvertMouths, curtainColor, curtainPanels, footbridgeModel, headlightCar, leftModel, lookoutModel, mailboxModel, millBuilding, porchModel, shedBuilding,
 } from './left';
 import { SNOW, ambience, assignBeams, assignLights, lightSources, onSnow, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
@@ -316,13 +317,23 @@ function blocks<T extends { x: number; y: number }>(items: T[]): T[][] {
 }
 
 /**
- * The view of the map someone arrives on (or the same map as the season turns, `season`), in place of
- * `old`: the new one is built (and its shaders compiled) before the old one is freed, so every program
- * both draw with stays compiled and only what the new map needs that the old did not is compiled, behind
- * the black screen of the arrival.
+ * The home a view draws, in a home of one's own (its house and its garden): how far its house is built
+ * (house.ts), and whose it is (a friend's name while you visit; null, your own). A view is built again when
+ * either changes (main.ts). Anywhere else, the first level and nobody.
  */
-export function nextView(renderer: THREE.WebGLRenderer, old: WorldView, map: TileMap, peek?: (id: string) => MapData | undefined, season?: Season): WorldView {
-  const view = new WorldView(renderer, map, peek, season);
+export interface HomeLook {
+  house: number;
+  owner: string | null;
+}
+
+/**
+ * The view of the map someone arrives on (or the same map as the season turns, `season`, or the same home as
+ * its house is built up, `home`), in place of `old`: the new one is built (and its shaders compiled) before
+ * the old one is freed, so every program both draw with stays compiled and only what the new map needs that
+ * the old did not is compiled, behind the black screen of the arrival.
+ */
+export function nextView(renderer: THREE.WebGLRenderer, old: WorldView, map: TileMap, peek?: (id: string) => MapData | undefined, season?: Season, home?: HomeLook): WorldView {
+  const view = new WorldView(renderer, map, peek, season, home);
   old.dispose();
   return view;
 }
@@ -367,8 +378,6 @@ export class WorldView {
   /** Your cabin's furniture (cabin.ts), built again when what stands in its places changes: what was built last. */
   private comfortRoot = new THREE.Group();
   private comfortKey: string | null = null;
-  /** On a street, each lot's lit windows, lot by lot: shown while its owner is home (setLots). Kept out of the bake. */
-  private lotLights: THREE.Object3D[] = [];
   /** The real lights, each on one of the nearest sources (index into `sources`, -1 for none). */
   private slots = Array.from({ length: LIGHTS }, () => ({ light: new THREE.PointLight(LAMP_COLOR, 0, LAMP_REACH, 2), source: -1, on: 0 }));
   /** The tile the lights were last handed out for. */
@@ -509,6 +518,7 @@ export class WorldView {
    */
   constructor(
     private readonly renderer: THREE.WebGLRenderer, readonly map: TileMap, private readonly peek: (id: string) => MapData | undefined = () => undefined, readonly season: Season = 'spring',
+    readonly home: HomeLook = { house: 1, owner: null },
   ) {
     this.outdoors = map.data.kind !== 'inside';
     // Only your model while a teleport takes you has a plane that cuts it (clipRig); nothing else pays for it.
@@ -644,7 +654,7 @@ export class WorldView {
     };
     // Outdoors, a building's timbers are weathered; indoors the room is warm if a fire burns in it,
     // concrete if it is one of NAPO's, and boards if it is the mill's.
-    const tone = roomTone(this.warmRoom, map.data.style ?? false);
+    const tone = map.data.private ? homeTone(this.home.house) : roomTone(this.warmRoom, map.data.style ?? false);
     this.shapes = wallShapes(map);
     for (let ty = 0; ty < map.height; ty++) for (let tx = 0; tx < map.width; tx++) {
       const kind = map.kind(tx, ty)!, y0 = this.topY(tx, ty), raised = map.level(tx, ty) > 0;
@@ -978,13 +988,18 @@ export class WorldView {
     }
 
     // Every house can be entered: its door stands open. Behind a burning fire the doorway glows and the chimney smokes.
-    // The cabins of a street are the players' own (their door leads each into their own cabin): plain and
-    // kept, a name plate over the door, the windows dark unless their owner is home (setLots).
-    const chimneys: THREE.Vector3[] = [], litPane = new THREE.BoxGeometry(0.46, 0.38, 0.05);
+    // The house in a garden of one's own is drawn as its owner built it up (home.ts): a garage, a cabin or a house.
+    const chimneys: THREE.Vector3[] = [];
     for (const { house: plain, x: doorX, fire: burning } of houseDoors(this.map, this.peek)) {
       // In winter snow lies on every roof.
       const h = this.season === 'winter' ? { ...plain, roof: new THREE.Color(plain.roof).lerp(ROOF_SNOW, 0.72).getStyle() } : plain;
-      const plate = !!h.plate, fire = burning && !plate;
+      if (h.plate) {
+        const { root, smoke } = homeModel(h, this.home.house, doorX, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }, { warm: this.warm, doorGlow: this.doorGlow });
+        if (burning) chimneys.push(smoke);
+        still.push(root);
+        continue;
+      }
+      const fire = burning;
       if (h.style === 'napo') {
         // One of NAPO's buildings (napo.ts): the same doorway, concrete around it, smoke from a flue.
         const { root, flue } = napoBuilding(h, doorX, fire, { w: DOOR_W, h: DOOR_H, back: DOOR_BACK }, { warm: this.warm, doorGlow: this.doorGlow });
@@ -1033,7 +1048,7 @@ export class WorldView {
       const hinge = new THREE.Group();
       hinge.position.set(dx - DOOR_W / 2, 0, 0.87);
       // Wide open where someone lives; hanging off to one side in an empty house.
-      const kept = !!h.lit || plate;
+      const kept = !!h.lit;
       hinge.rotation.y = kept ? -1.95 : -1.68;
       hinge.add(box(DOOR_W - 0.04, DOOR_H - 0.04, 0.05, kept ? '#4a3526' : '#3d352d', (DOOR_W - 0.04) / 2, (DOOR_H - 0.04) / 2 + 0.01, 0, 0.018));
       hinge.add(box(0.04, 0.04, 0.03, '#b09a62', DOOR_W - 0.12, 0.44, 0.04, false));
@@ -1043,16 +1058,11 @@ export class WorldView {
       // abandoned: dark, windows boarded up; or, where the people left for what they thought would be
       // two weeks, the curtains they drew, which never light.
       if (h.lit) g.add(part(new THREE.BoxGeometry(0.14, 0.1, 0.08), this.warm, dx, 1.0, 0.9, false));
-      // The name plate over the door: its owner's name shows on it as you pass (the Hud's tag).
-      if (plate) g.add(box(0.44, 0.12, 0.03, '#8a6a45', dx, DOOR_H + 0.17, 0.87, 0.012), box(0.3, 0.025, 0.01, '#3b2b1d', dx, DOOR_H + 0.17, 0.888, false));
-      const lights = new THREE.Group();
       [-0.85, 0.85].forEach((wx, k) => {
         g.add(box(0.58, 0.5, 0.04, '#2a221b', wx, 0.72, 0.855, false));
         const lit = !!h.lit && k === 0;
         g.add(part(new THREE.BoxGeometry(0.46, 0.38, 0.05), lit ? this.warm : toon('#1c1f24'), wx, 0.72, 0.87, false));
-        // Lit over the dark pane, a hair in front of it, while the owner is home.
-        if (plate) lights.add(part(litPane, this.warm, wx, 0.72, 0.876, false));
-        else if (h.curtains) curtainPanels(g, curtainColor(h), wx, 0.72, 0.9, 0.46, 0.38);
+        if (h.curtains) curtainPanels(g, curtainColor(h), wx, 0.72, 0.9, 0.46, 0.38);
         else if (!lit) {
           const p1 = box(0.56, 0.07, 0.03, '#6b5a44', wx, 0.76, 0.9, false); p1.rotation.z = 0.35; g.add(p1);
           const p2 = box(0.56, 0.07, 0.03, '#6b5a44', wx, 0.66, 0.9, false); p2.rotation.z = -0.3; g.add(p2);
@@ -1061,12 +1071,6 @@ export class WorldView {
       g.add(box(0.28, 0.55, 0.28, '#58554f', 0.9, 1.95, -0.35));
       if (fire) chimneys.push(new THREE.Vector3(cx + 0.9, 2.26, cz - 0.35));
       still.push(g);
-      if (plate) {
-        lights.position.copy(g.position);
-        lights.visible = false;
-        this.scene.add(lights);
-        this.lotLights.push(lights);
-      }
     }
     if (chimneys.length) {
       const smoke = (this.smoke = new Smoke(chimneys));
@@ -1118,7 +1122,8 @@ export class WorldView {
       }
       this.buildFarLights();
     }
-    for (const b of this.objects('board')) still.push(boardModel(b.x, b.y));
+    // In a home the board is the map table, drawn with the room (buildRoom).
+    if (!this.map.data.private) for (const b of this.objects('board')) still.push(boardModel(b.x, b.y));
     for (const s of this.objects('sign')) {
       if (s.style === 'napo') { still.push(napoSign(s)); continue; }
       if (s.style === 'mailbox') { still.push(mailboxModel(s)); continue; }
@@ -1264,7 +1269,10 @@ export class WorldView {
     // A bridge's rails run along its outer sides only: it looks at the bridge beside it (bridgeRails).
     const bridges = new Set(this.objects('bridge').map(b => `${b.x},${b.y}`));
     for (const o of map.data.objects) {
-      const m = o.kind === 'hearth' ? coldHearthModel(o.x, o.y)
+      // In a home, the kitchen and the map table once the house is built up to them (house.ts), boxes before.
+      const later = map.data.private && (o.kind === 'kitchen' || o.kind === 'board');
+      const m = later ? (!builtIn(o, this.home.house) ? boxesModel(o) : o.kind === 'kitchen' ? kitchenModel(o, map) : mapTableModel(o))
+        : o.kind === 'hearth' ? coldHearthModel(o.x, o.y)
         : o.kind === 'bridge' ? bridgeModel(o, bridgeRails(o, (x, y) => bridges.has(`${x},${y}`)))
         : o.kind === 'note' ? noteModel(o, map)
         : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
@@ -1457,19 +1465,6 @@ export class WorldView {
     this.sources = lamp ? [...this.baseSources, { kind: 'lamp', ...lampLight(lamp), flicker: false, ph: 0, tx: lamp.x, ty: lamp.y }] : this.baseSources;
     // The real lights are handed out again on the next frame, the lamp among them.
     this.lightTile = NaN;
-  }
-
-  /** On a street: the lots whose owner is home (by number, the street's houses in order) have their windows lit. */
-  setLots(lit: ReadonlySet<number>) {
-    this.lotLights.forEach((l, i) => { l.visible = lit.has(i); });
-  }
-
-  /** How many lots this view draws (a street's cabins; none anywhere else), and whose windows are lit now, by number: for tests and the console. */
-  get lots(): number {
-    return this.lotLights.length;
-  }
-  lotsLit(): number[] {
-    return this.lotLights.flatMap((l, i) => (l.visible ? [i] : []));
   }
 
   /** How big each fire burns (fire.ts, fireLevel), by its fireplace's tile: asked every frame. */

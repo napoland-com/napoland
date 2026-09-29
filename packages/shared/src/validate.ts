@@ -5,6 +5,7 @@
 import { COMFORTS, type Comfort } from './comfort';
 import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
+import { HOME_H, HOME_W } from './house';
 import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
 import { BUNDLE } from './lostfound';
 import {
@@ -70,7 +71,6 @@ export function validateMap(data: MapData): Problem[] {
   else if (data.kind === 'wilds' && data.depth < 1) err('the wilds have depth 1 or more');
   if (!Array.isArray(data.exits)) err('exits must be a list (it may be empty)');
   if (data.style !== undefined && (!(HOUSE_STYLES as readonly string[]).includes(data.style) || data.kind !== 'inside')) err(`style ${JSON.stringify(data.style)}: only an inside has a style, and it is napo (one of NAPO's rooms), mill (the sawmill's floor) or shed (a shed's floor)`);
-  if (data.street !== undefined && (data.street !== true || data.kind !== 'town')) err('street: only a town is a street of cabins, and then it is true');
   if (out.some(p => p.level === 'error')) return out;
 
   const map = new TileMap(data);
@@ -100,17 +100,19 @@ export function validateMap(data: MapData): Problem[] {
       const d = doorOf(o);
       if (!exitTiles.has(`${d.x},${d.y}`)) err(`house at ${o.x},${o.y}: its door ${d.x},${d.y} is not an exit, but every building must lead inside`);
       if (!map.walkable(d.x, d.y + 1)) err(`house at ${o.x},${o.y}: the tile in front of its door (${d.x},${d.y + 1}) is not walkable`);
-      // A cabin is drawn 3 by 2; NAPO's buildings and the mill are drawn to their size.
+      // A cabin is drawn 3 by 2, the house in a garden of one's own 5 by 3; NAPO's buildings and the mill are drawn to their size.
       if (o.style !== undefined && !(HOUSE_STYLES as readonly string[]).includes(o.style)) err(`house at ${o.x},${o.y}: style is napo, mill, shed or left out, not ${JSON.stringify(o.style)}`);
+      else if (o.plate) { if (o.w !== HOME_W || o.h !== HOME_H) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: the house in a garden of one's own is ${HOME_W} by ${HOME_H}, whatever its owner builds it up to`); }
       else if (!o.style && (o.w !== 3 || o.h !== 2)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a cabin is 3 by 2 (only NAPO's buildings, the mill and a shed come in other sizes)`);
       else if (o.style === 'napo' && !(o.w >= 3 && o.w <= 9 && o.h >= 2 && o.h <= 5)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a NAPO building is 3 to 9 wide and 2 to 5 deep`);
       else if (o.style === 'mill' && !(o.w >= 5 && o.w <= 9 && o.h >= 2 && o.h <= 4)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: the mill is long and low, 5 to 9 wide and 2 to 4 deep`);
       else if (o.style === 'shed' && (o.w !== 2 || o.h !== 2)) err(`house at ${o.x},${o.y} is ${o.w} by ${o.h}: a shed is 2 by 2`);
       // Curtains are what the people who left drew behind them: never in a lit house, a mill or NAPO's.
       if (o.curtains && (o.style || o.lit)) err(`house at ${o.x},${o.y}: curtains are drawn only in a cabin nobody lives in (no style, not lit)`);
-      // On a street every cabin is a lot, with its owner's name by the door; its window lights while they are home.
-      if (data.street && (!o.plate || o.style || o.curtains || o.lit)) err(`house at ${o.x},${o.y}: on a street every house is a plain cabin with a name plate (plate), unlit and without curtains`);
-      if (!data.street && o.plate !== undefined) err(`house at ${o.x},${o.y}: only a cabin on a street has a name plate`);
+      // The house in a garden of one's own is its owner's: their name by the door, and it stands as they built it up (house.ts).
+      if (o.plate !== undefined && (o.plate !== true || o.style || o.curtains || o.lit || data.private !== true || data.kind !== 'town')) {
+        err(`house at ${o.x},${o.y}: only the house in a garden of one's own (a private town) has a name plate (plate: true), unlit, without a style or curtains`);
+      }
     }
     if (o.kind === 'car' || o.kind === 'truck' || o.kind === 'jeep') validateVehicle(o, map, err);
     if ((o.kind === 'logs' || o.kind === 'carriage') && !footprint(o).every(n => Number.isInteger(n) && n >= 1 && n <= (o.kind === 'logs' ? 4 : 9))) {
@@ -174,7 +176,7 @@ export function validateMap(data: MapData): Problem[] {
     }
     if (o.kind === 'teleport') {
       // One in every cabin, and its twin in the home town (validateWorld): nowhere else, and one a map.
-      if (data.private !== true && (data.kind !== 'town' || data.street)) err(`teleport at ${o.x},${o.y}: NAPO's teleports stand in a home of one's own and in the home town`);
+      if (data.private === true ? data.kind !== 'inside' : data.kind !== 'town') err(`teleport at ${o.x},${o.y}: NAPO's teleports stand inside a home of one's own and in the home town`);
       else if (data.objects.filter(p => p.kind === 'teleport').length > 1) err(`teleport at ${o.x},${o.y}: a map has one teleport`);
       const at = teleportArrival(o);
       if (map.exitAt(at.x, at.y)) err(`teleport at ${o.x},${o.y}: it sets you down on the tile in front of it (${at.x},${at.y}), which is an exit`);
@@ -182,8 +184,13 @@ export function validateMap(data: MapData): Problem[] {
     if (o.kind === 'comfort') {
       // Each player's cabin is theirs alone: only there does furniture wait to be made again (comfort.ts).
       if (!(COMFORTS as readonly string[]).includes(o.what)) err(`comfort at ${o.x},${o.y}: it is a place for ${COMFORTS.join(', ')}, not ${JSON.stringify(o.what)}`);
-      else if (data.private !== true) err(`comfort at ${o.x},${o.y}: a place for furniture is only in a home of one's own (private)`);
+      else if (data.private !== true || data.kind !== 'inside') err(`comfort at ${o.x},${o.y}: a place for furniture is only in a home of one's own (a private room)`);
       else if (data.objects.filter(p => p.kind === 'comfort' && p.what === o.what).length > 1) err(`comfort at ${o.x},${o.y}: a home has one place for its ${o.what}`);
+    }
+    // What the house opens from a level on (house.ts) stands in the house of one's own, the level it waits for 2 or more.
+    if (o.kind === 'kitchen' && (data.private !== true || data.kind !== 'inside')) err(`kitchen at ${o.x},${o.y}: a kitchen stands in a home of one's own (a private room)`);
+    if ((o.kind === 'kitchen' || o.kind === 'board') && o.house !== undefined && !(Number.isInteger(o.house) && o.house >= 2 && data.private === true && data.kind === 'inside')) {
+      err(`${o.kind} at ${o.x},${o.y}: house is the level of the house it stands in from, 2 or more, and only in a home of one's own`);
     }
     if (o.kind === 'npc' && !o.lines.length) err(`npc ${o.id} has nothing to say`);
     if (o.kind === 'npc') for (const [k, c] of Object.entries(o.look ?? {})) {
@@ -224,9 +231,16 @@ export function validateMap(data: MapData): Problem[] {
   validateTownLater(data, err);
   const s = data.spawn;
   if (!map.walkable(s.x, s.y)) err(`spawn ${s.x},${s.y} is not walkable`);
-  // A home of one's own: only a room with the chest, where each player's stash is, is private.
-  if (data.private !== undefined && (data.private !== true || data.kind !== 'inside' || !data.objects.some(o => o.kind === 'chest'))) {
-    err('private: only a room with a chest (a home) is private, and then it is true');
+  // A home of one's own: the room with the chest, where each player's stash is, and the garden its house
+  // stands in, closed all round: the house's door is its only way out (home is reached by NAPO's teleport).
+  const houses = data.objects.filter(o => o.kind === 'house');
+  const room = data.kind === 'inside' && data.objects.some(o => o.kind === 'chest');
+  const garden = data.kind === 'town' && houses.length === 1 && houses[0]!.kind === 'house' && houses[0]!.plate === true;
+  if (data.private !== undefined && (data.private !== true || !(room || garden))) {
+    err('private: only a home is private (the room with a chest, or the garden with its house, a name plate on it), and then it is true');
+  } else if (data.private && garden) {
+    const door = houses[0]!.kind === 'house' ? doorOf(houses[0]!) : undefined;
+    if (data.exits.some(e => e.x !== door?.x || e.y !== door.y || e.w !== 1 || e.h !== 1)) err('private: a garden of one\'s own is closed all round: its one way out is its house\'s door');
   }
   if (data.wake !== undefined) {
     const w = data.wake;
@@ -543,11 +557,6 @@ function validateTallGrass(data: MapData, map: TileMap, err: (message: string) =
   if (lit) warn(`${lit} tiles of tall grass in a street light or by a fire, where creatures never come anyway`);
 }
 
-/** Is every tile of this exit on the map's edge (a road out, rather than a door)? */
-function onEdge(map: TileMap, e: MapData['exits'][number]): boolean {
-  return e.x === 0 || e.y === 0 || e.x + e.w === map.width || e.y + e.h === map.height;
-}
-
 /**
  * How the maps fit together: every exit leads to a map that exists, onto walkable tiles that are
  * not exits themselves (or you would bounce back and forth), and every map can be reached from
@@ -564,26 +573,25 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   if (!home) return [...out, { level: 'error', map: homeId, message: `the home map ${homeId} does not exist` }];
   if (home.data.kind !== 'town') out.push({ level: 'error', map: homeId, message: 'the home map must be a town (players start there, or in the home off it, and wake up there after a collapse)' });
 
-  // A street of cabins (Residents' Lane): one at most, whose every door leads into one home of one's own,
-  // each player's own cabin. The way onto it is a road: a way off the edge of the home town, like the
-  // roads out to the regions, and its end leads back there along it. No door leads onto it.
-  const streets = [...byId.values()].filter(m => m.data.street);
-  if (streets.length > 1) out.push({ level: 'error', map: streets[1]!.data.id, message: `street: ${streets.map(m => m.data.id).join(' and ')} are both streets, but every player's cabin stands on the one` });
-  for (const street of streets) {
-    const rooms = new Set(street.data.objects.flatMap(o => (o.kind === 'house' ? [street.exitAt(doorOf(o).x, doorOf(o).y)?.to ?? ''] : [])));
-    const room = rooms.size === 1 ? byId.get([...rooms][0]!) : undefined;
-    if (!room?.data.private) out.push({ level: 'error', map: street.data.id, message: 'street: every cabin on it leads into the one home of one\'s own (a private room): its owner\'s own cabin' });
-    if (!street.data.exits.some(e => e.to === homeId)) out.push({ level: 'error', map: street.data.id, message: `street: its end leads back to the home town (${homeId})` });
-    if (!home.data.exits.some(e => e.to === street.data.id && onEdge(home, e))) out.push({ level: 'error', map: street.data.id, message: `street: the home town (${homeId}) reaches it by a road off its edge` });
+  // The garden of a home of one's own (a private town, its one house the owner's): one at most, and its
+  // house leads into the home of one's own (the private room), whose way out leads back into it. Nothing
+  // else leads into it: home is reached by NAPO's teleport (validateMap keeps the garden closed all round).
+  const gardens = [...byId.values()].filter(m => m.data.private && m.data.kind === 'town');
+  if (gardens.length > 1) out.push({ level: 'error', map: gardens[1]!.data.id, message: `private: ${gardens.map(m => m.data.id).join(' and ')} are both gardens, but every player's house stands in the one` });
+  for (const garden of gardens) {
+    const room = byId.get(garden.data.exits[0]?.to ?? '');
+    if (!room?.data.private || room.data.kind !== 'inside') out.push({ level: 'error', map: garden.data.id, message: 'private: the house in the garden leads into the home of one\'s own (a private room)' });
+    else if (room.data.exits.some(e => e.to !== garden.data.id)) out.push({ level: 'error', map: room.data.id, message: `private: the home's way out leads into its garden (${garden.data.id}), nowhere else` });
+    for (const map of byId.values()) {
+      if (map !== room && map.data.exits.some(e => e.to === garden.data.id)) out.push({ level: 'error', map: map.data.id, message: `nothing leads into the garden of a home (${garden.data.id}) but its house: home is reached by NAPO's teleport` });
+    }
   }
   for (const map of byId.values()) {
-    // A door leads into a building: its exit must go to an inside, not to a town (the street neither: its
-    // way in is a road) or the wilds.
+    // A door leads into a building: its exit must go to an inside, not to a town or the wilds.
     for (const o of map.data.objects) {
       if (o.kind !== 'house') continue;
       const d = doorOf(o), into = map.exitAt(d.x, d.y), target = into && byId.get(into.to);
-      if (target?.data.street) out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: its door leads onto the street ${into!.to}, whose way in is a road off the edge of the home town (${homeId}), never a door` });
-      else if (target && target.data.kind !== 'inside') out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: its door leads to ${into!.to}, which is not an inside` });
+      if (target && target.data.kind !== 'inside') out.push({ level: 'error', map: map.data.id, message: `house at ${o.x},${o.y}: its door leads to ${into!.to}, which is not an inside` });
       // Concrete outside, concrete inside: one of NAPO's buildings leads into one of its rooms, the mill
       // onto its floor, a cabin into a cabin's.
       else if (target && (o.style ?? null) !== (target.data.style ?? null)) {
@@ -635,8 +643,8 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
     }
   }
 
-  // NAPO's teleports: the one in every cabin (a home of one's own) sets you down in front of its twin in
-  // the home town, the only town that has one, and that one sets you down at home, in front of the cabin's.
+  // NAPO's teleports: the one in every house (a home of one's own) sets you down in front of its twin in
+  // the home town, the only town that has one, and that one sets you down at home, in front of the house's.
   const teleporting = [...byId.values()].filter(m => m.data.objects.some(o => o.kind === 'teleport'));
   for (const m of teleporting) {
     if (m.data.kind === 'town' && m.data.id !== homeId) out.push({ level: 'error', map: m.data.id, message: `teleport: NAPO's teleport in town stands in the home town (${homeId})` });
@@ -645,12 +653,12 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
   if (inCabin && !inTown) out.push({ level: 'error', map: homeId, message: 'teleport: the one in the cabin has its twin in the home town, where it sets you down' });
   if (inTown && !inCabin) out.push({ level: 'error', map: homeId, message: 'teleport: the one in the home town has its twin in the cabin, where it sets you down at home' });
 
-  // Where new players start and collapsed ones wake up: one home, off the home town or off the street
-  // there (every player's own cabin), so it is never in doubt.
+  // Where new players start and collapsed ones wake up: one home, whose door opens onto the home town or
+  // into its garden (every player's own house), so it is never in doubt.
   const wakes = [...byId.values()].filter(m => m.data.wake);
-  const offTown = (m: TileMap) => m.data.exits.some(e => e.to === homeId || (byId.get(e.to)?.data.street && byId.get(e.to)!.data.exits.some(x => x.to === homeId)));
+  const offTown = (m: TileMap) => m.data.exits.some(e => e.to === homeId || gardens.some(g => g.data.id === e.to));
   for (const m of wakes) {
-    if (!offTown(m)) out.push({ level: 'error', map: m.data.id, message: `wake: only the home off the home town (${homeId}), or off its street, is where you wake up, and this room's door opens elsewhere` });
+    if (!offTown(m)) out.push({ level: 'error', map: m.data.id, message: `wake: only the home off the home town (${homeId}), or in its own garden, is where you wake up, and this room's door opens elsewhere` });
   }
   if (wakes.length > 1) out.push({ level: 'error', map: wakes[1]!.data.id, message: `wake: ${wakes.map(m => m.data.id).join(' and ')} both have one, but everyone wakes up in the same home` });
 
@@ -687,9 +695,11 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
 
   const reached = new Set([homeId]);
   const queue = [homeId];
+  // The home town's teleport reaches the home with its twin, which nothing else leads into.
+  const beamed = inTown ? teleporting.filter(m => m.data.private).map(m => ({ to: m.data.id })) : [];
   for (let h = 0; h < queue.length; h++) {
     const m = byId.get(queue[h]!)?.data;
-    const ways = [...(m?.exits ?? []), ...(m?.objects ?? []).filter(o => o.kind === 'gate')];
+    const ways = [...(m?.exits ?? []), ...(m?.objects ?? []).filter(o => o.kind === 'gate'), ...(m?.id === homeId ? beamed : [])];
     for (const e of ways) if (byId.has(e.to) && !reached.has(e.to)) { reached.add(e.to); queue.push(e.to); }
   }
   for (const id of byId.keys()) if (!reached.has(id)) out.push({ level: 'warning', map: id, message: `cannot be reached from ${homeId}` });
@@ -849,6 +859,27 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
     if (!(data.recipes ?? []).some(r => r.make === f.id)) warn(`item ${JSON.stringify(f.id)}: nothing makes it at the workbench`);
   }
   for (const m of homes) for (const o of m.objects) if (o.kind === 'comfort' && !furnished.has(o.what)) warn(`${m.id}: the place for the ${o.what} at ${o.x},${o.y} has no furniture to make for it`);
+  // The levels a house is built up to (house.ts): the first is what every house starts as, and each after it
+  // is paid from the stash, with things a stash holds; what waits for a level stands in a home that reaches it.
+  const levels = data.house ?? [];
+  if (levels.length > 9) err(`house: ${levels.length} levels, but a house has at most 9`);
+  levels.forEach((l, i) => {
+    const where = `house level ${i + 1}`;
+    if (!l?.name?.trim() || !l.text?.trim()) err(`${where} needs a name and its words (text)`);
+    if (i === 0 && l?.needs?.length) err(`${where}: the first level is the house as it starts, and takes nothing`);
+    if (i > 0 && !l?.needs?.length) err(`${where}: building up to it takes something from the stash (needs)`);
+    for (const n of l?.needs ?? []) {
+      const def = data.items.find(d => d.id === n.item);
+      if (!def) err(`${where} needs ${JSON.stringify(n.item)}, which is no item`);
+      else if (['sealed', 'furniture', 'bundle', 'tool', 'keepsake'].includes(def.kind)) err(`${where} needs ${n.item}: a ${def.kind} is never paid with`);
+      if (!(Number.isInteger(n.count) && n.count >= 1)) err(`${where}: what it needs is counted in whole numbers from 1`);
+    }
+  });
+  for (const m of homes) for (const o of m.objects) {
+    if ((o.kind === 'kitchen' || o.kind === 'board') && o.house !== undefined && o.house > Math.max(1, levels.length)) {
+      err(`${m.id}: the ${o.kind} at ${o.x},${o.y} waits for level ${o.house} of the house, which the items do not have`);
+    }
+  }
   // Nothing in content gives a bundle: only a pile carried to the lodge is one.
   const bundles = new Set(data.items.filter(i => i.kind === 'bundle').map(i => i.id));
   // What a slab holds goes into the bags of the two who open it: things a bag carries.

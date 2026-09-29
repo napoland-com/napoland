@@ -5,13 +5,13 @@
  * Plain logic with no drawing, so it can be tested.
  */
 import {
-  BAG_SLOTS, SLOTS, WEAR_FADES, boardWords, effectResist, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, shopLookOf, upgradable, upgradeChance,
-  wearSeconds, type BagSlot, type EffectView, type Element, type Gear, type ItemDef, type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction,
+  BAG_SLOTS, SLOTS, WEAR_FADES, boardWords, effectResist, houseName, nextHouse, itemIndex, liveEnds, liveXp, longNightWords, mendCost, meritLookOf, nextUpgrade, outfitOf, resistOf, shopLookOf, upgradable, upgradeChance,
+  wearSeconds, type BagSlot, type EffectView, type Element, type Gear, type HouseLevel, type ItemDef, type ItemsData, type Piece, type PieceAt, type Quirk, type Recipe, type Refusal, type RefusedAction,
   type ShopData, type Slot, type Upgrade, type Worn, type WorksDef, type BoardWords, slotKg,
 } from '@napoland/shared';
 import type { RecipeView, ToolView, WornView } from './hud';
 import type { Look } from './view/characters';
-import { iconFor } from './icons';
+import { houseIcon, iconFor } from './icons';
 
 export class Items {
   /** The version of content/items.json this client carries; 0 when it has none. */
@@ -22,6 +22,8 @@ export class Items {
   readonly recipes: Recipe[];
   /** What cooks at a fire (meals.ts). */
   readonly cooking: Recipe[];
+  /** The levels a house is built up to (house.ts), the first the one it starts at: none, and every house stays as it starts. */
+  readonly house: HouseLevel[];
   /** How gear wears out, what mending and upgrading it cost, and the quirks' names and words. */
   readonly wear: ItemsData['wear'];
   readonly mend: ItemsData['mend'];
@@ -46,6 +48,7 @@ export class Items {
     this.byId = data ? itemIndex(data) : new Map();
     this.recipes = data?.recipes ?? [];
     this.cooking = data?.cooking ?? [];
+    this.house = data?.house ?? [];
     this.wear = data?.wear;
     this.mend = data?.mend;
     this.upgrades = data?.upgrades;
@@ -101,12 +104,14 @@ export function useLabel(item: ItemDef): string {
 export function refusalText(reason: Refusal, action?: RefusedAction): string {
   switch (reason) {
     case 'bag_full': return 'Your bag is full';
-    case 'too_far': return action === 'move' ? 'Only at your own door' : 'Too far';
-    case 'gone': return action === 'move' ? 'They have no cabin on a street yet' : action === 'checkout' ? 'The shop does not sell that' : 'Someone got there first';
+    case 'too_far': return action === 'visit' ? 'Visits start from town or from home: come back first' : 'Too far';
+    case 'gone': return action === 'visit' ? 'Their home is nowhere to be found' : action === 'checkout' ? 'The shop does not sell that' : 'Someone got there first';
     case 'not_usable': return 'That cannot be used';
     case 'empty_slot': return 'That slot is empty';
-    case 'not_here': return 'Not here';
-    case 'not_yours': return 'That is not yours';
+    case 'not_here': return action === 'use' ? 'Not here: an arrow needs open ground, off the way on' : action === 'build' ? 'Only in your own home' : 'Not here';
+    // Someone else's: a bundle (lostfound.ts) is carried to the lodge; a friend's chest, workbench or kitchen is theirs.
+    case 'not_yours':
+      return action === 'discard' || action === 'store' || action === 'cacheLeave' ? 'That is someone else\'s bundle: carry it to the lost and found box in the lodge' : 'That is not yours';
     case 'not_fuel': return 'That will not burn';
     case 'fire_full': return 'The fire is as big as it gets';
     case 'tended': return 'Someone keeps this fire going';
@@ -118,12 +123,12 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'missing': return action === 'cook' ? 'You do not carry what it takes' : action === 'swap' ? 'You do not carry enough of it' : 'Your stash lacks what it needs';
     case 'unknown_player': return 'Nobody by that name';
     case 'requests_off': return 'They take no friend requests';
-    case 'not_friends': return action === 'move' ? 'You can only move next to friends' : 'You can only message friends';
+    case 'not_friends': return action === 'visit' ? 'You visit friends only' : 'You can only message friends';
     case 'you_blocked': return 'You blocked them';
     case 'too_many': return 'Too many waiting already';
     case 'slow_down':
       if (action === 'checkout') return 'Give it a moment before you try again';
-      return action === 'call' ? 'Catch your breath first' : action === 'knock' ? 'Give them a moment to answer' : action === 'move' ? 'You only just moved' : 'Slow down a little';
+      return action === 'call' ? 'Catch your breath first' : 'Slow down a little';
     case 'sign_in_first':
       if (action === 'say' || action === undefined) return 'Sign in to talk';
       if (action === 'outfit' || action === 'pattern' || action === 'badge') return `Sign in to wear ${action === 'outfit' ? 'an outfit' : `a ${action}`}`;
@@ -154,14 +159,14 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
     case 'nothing_to_trade': return 'There is nothing to trade yet';
     case 'not_needed': return 'The ledger wants no more of that for it';
     case 'placed': return 'It stands in its place already';
-    case 'street_full': return 'Their street has no lot free';
-    case 'neighbors': return 'You live on the same street already';
+    case 'closed': return 'They keep visitors out of their home';
+    case 'built': return 'Your home is built as far as it goes';
+    case 'not_built': return 'It is not built yet: the workbench builds your home up to it';
     case 'shop_closed': return 'The shop is closed';
     case 'shop_down': return 'The shop cannot reach Stripe right now. Try again in a moment';
     case 'down': return 'You are down. You cannot move until someone comes';
     case 'too_tired': return 'You need more energy than that';
     case 'padlocked': return 'A padlock, rusted shut';
-    case 'not_yours': return 'That is someone else\'s bundle: carry it to the lost and found box in the lodge';
     case 'cold': return action === 'slab' ? 'It lies cold until the woods grow restless' : 'Nobody keeps this hearth yet. It stays cold';
     case 'one_pair': return 'It will not move for one pair of hands';
     case 'opened': return 'You opened it this time already';
@@ -338,10 +343,11 @@ export function lookOf(gear: Gear, items: Items, outfit?: string, pattern?: stri
 /**
  * The workbench's recipes against what a stash holds: what each makes, what it needs, whether it can.
  * A tool is yours once: the row of one among your `tools` says you have it, and is never ready (its
- * card says so too, details.ts). Furniture for your cabin (comfort.ts) comes after the rest, under a
+ * card says so too, details.ts). Furniture for your home (comfort.ts) comes after the rest, under a
  * heading of its own, and the row of a piece already among your `furniture` says it stands in its place.
+ * Last of all, with `house` (how far your house is built: house.ts), building your home up to its next level.
  */
-export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[], items: Items, tools: readonly string[] = [], furniture: readonly string[] = []): RecipeView[] {
+export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[], items: Items, tools: readonly string[] = [], furniture: readonly string[] = [], house?: number): RecipeView[] {
   const rows = recipes.map((r): RecipeView => {
     const def = items.get(r.make), needs = needsOf(r.needs, stash, items);
     if (def.kind === 'furniture') {
@@ -351,7 +357,19 @@ export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[
     const have = def.kind === 'tool' && tools.includes(r.make);
     return { id: r.id, group: 'make', name: def.name, icon: iconFor(def), facts: have ? 'You have it' : factsOf(def).join(' · '), needs, can: !have && needs.every(n => n.have >= n.need) };
   });
-  return [...rows.filter(r => r.group !== 'cabin'), ...rows.filter(r => r.group === 'cabin')];
+  const home = house === undefined || !items.house.length ? [] : [homeRow(house, stash, items)];
+  return [...rows.filter(r => r.group !== 'cabin'), ...rows.filter(r => r.group === 'cabin'), ...home];
+}
+
+/**
+ * The workbench's row for your home (house.ts): the next level, with what it takes against the stash and
+ * what your home is now; or, built as far as it goes, what it is, and nothing to build. Its id is "home".
+ */
+export function homeRow(house: number, stash: readonly BagSlot[], items: Items): RecipeView {
+  const next = nextHouse(house, items.house), now = houseName(house, items.house);
+  if (!next) return { id: 'home', group: 'home', name: now, icon: houseIcon(house), facts: 'Built as far as it goes', needs: [], can: false };
+  const needs = needsOf(next.needs, stash, items);
+  return { id: 'home', group: 'home', name: next.name, icon: houseIcon(next.level), facts: `Your home is a ${now.toLowerCase()} now`, needs, can: needs.every(n => n.have >= n.need) };
 }
 
 /**

@@ -1,8 +1,8 @@
 /**
  * Small maps for the server tests, so they never depend on the real content (which changes as the
  * world grows): a town with a house, the inside of that house, and a patch of woods joined to the
- * town by a two-lane road; and for a street, the town with a road onto a lane of cabins instead of the
- * house (streetTownData, laneData).
+ * town by a two-lane road; and for homes, the town with NAPO's teleport instead of the house, a garden and
+ * the home in it (homeTownData, gardenData, homeRoomData).
  *
  *   town (10x8)                        woods (8x8, depth 1)
  *     0123456789                         01234567
@@ -97,45 +97,84 @@ export const chestMaps = (): TileMap[] => {
 export const MOSS_TILES = [{ x: 3, y: 1 }, { x: 4, y: 1 }, { x: 5, y: 1 }];
 
 /**
- * The town of a street (streets.test.ts, visits.test.ts): townData without its house. Its road off the
- * bottom edge, (4,7) and (5,7), leads onto laneData's lane where the road comes in, (6,4) and (7,4).
+ * The home town of a world of homes (homes.test.ts and others): townData without its house, and NAPO's
+ * teleport by its road at 8,5, the twin of the one in every home: it sets you down at 8,6, facing down.
  */
-export function streetTownData(): MapData {
+export function homeTownData(): MapData {
   const t = townData();
   return {
     ...t,
-    exits: [...t.exits.filter(e => e.to !== 'house'), { x: 4, y: 7, w: 2, h: 1, to: 'lane', tx: 6, ty: 4, dir: 'up' }],
-    objects: t.objects.filter(o => o.kind !== 'house'),
+    exits: t.exits.filter(e => e.to !== 'house'),
+    objects: [...t.objects.filter(o => o.kind !== 'house'), { kind: 'teleport', x: 8, y: 5 }],
   };
 }
 
 /**
- * A street of three lots (every street is a copy of it), each door into the home (`house`, a private room
- * whose door leads back out onto it): the lane's end leads back onto the town's road, at its 4,6.
+ * The garden of a home of one's own (every player's is a copy of it, the server's zones): the house, 5 by 3
+ * with a name plate by its door, whose door leads into room `room` at `into` (its 2,4); forest all round,
+ * and no other way out (home is reached by NAPO's teleport).
  *
- *   lane (13x6, a street)
- *     0123456789012
- *   0 ttttttttttttt
- *   1 tHHHgHHHgHHHt
- *   2 tHDHgHDHgHDHt   D: the lots' doors, 0 (2,2), 1 (6,2), 2 (10,2): into the home, at its 2,3
- *   3 tgggggggggggt
- *   4 tgggggggggggt   (6,4): where the road from town comes in, the spawn, facing up
- *   5 ttttttggttttt   (6,5) and (7,5): the lane's end, to the town's 4,6
+ *   garden (9x7, private)
+ *     012345678
+ *   0 ttttttttt
+ *   1 tHHHHHggt
+ *   2 tHHHHHggt
+ *   3 tHHDHHggt   D: the house's door (3,3), into the room at its 2,4, facing up
+ *   4 tgggggggt   (3,4): in front of it, where the room's way out comes out, facing down; the spawn
+ *   5 tgggggggt
+ *   6 ttttttttt
  */
-export function laneData(): MapData {
-  const house = (x: number) => ({ kind: 'house' as const, x, y: 1, w: 3, h: 2, roof: '#6b7075', lit: 0 as const, plate: true as const });
+export function gardenData(room = 'house', into = { x: 2, y: 4 }): MapData {
   return {
-    id: 'lane', name: 'The Lane', version: 1, kind: 'town', depth: 0, width: 13, height: 6, street: true,
-    tiles: ['ttttttttttttt', ...Array<string>(4).fill('tgggggggggggt'), 'ttttttggttttt'],
-    levels: Array<string>(6).fill('0000000000000'),
-    spawn: { x: 6, y: 4, dir: 'up' },
-    exits: [
-      ...[2, 6, 10].map(x => ({ x, y: 2, w: 1, h: 1, to: 'house', tx: 2, ty: 3, dir: 'up' as const })),
-      { x: 6, y: 5, w: 2, h: 1, to: 'town', tx: 4, ty: 6, dir: 'up' },
-    ],
-    objects: [house(1), house(5), house(9)],
+    id: 'garden', name: 'Garden', version: 1, kind: 'town', depth: 0, width: 9, height: 7, private: true,
+    tiles: ['ttttttttt', ...Array<string>(5).fill('tgggggggt'), 'ttttttttt'],
+    levels: Array<string>(7).fill('000000000'),
+    spawn: { x: 3, y: 4, dir: 'down' },
+    exits: [{ x: 3, y: 3, w: 1, h: 1, to: room, tx: into.x, ty: into.y, dir: 'up' }],
+    objects: [{ kind: 'house', x: 1, y: 1, w: 5, h: 3, roof: '#5d4a3b', lit: 0, plate: true }],
   };
 }
+
+/**
+ * A home of one's own (the private room, the house's inside) whose door opens into gardenData's garden,
+ * with everything a home has: the fire you wake up by, the chest, the workbench, NAPO's teleport, places for
+ * furniture, and what the house opens as it is built up (house.ts: the kitchen, the map table).
+ *
+ *   house (7x6, private)
+ *     0123456
+ *   0 xxxxxxx
+ *   1 xWFHTsx   W workbench (1,1), F fire (2,1), H chest (3,1), T teleport (4,1): it sets you down at 4,2; s the shelf's place (5,1)
+ *   2 xpzpppx   z where you wake up (2,2); 1,2 to 3,2 are warm
+ *   3 xoppKMx   o the stove's place (1,3); K the kitchen (4,3), from level 2; M the map table (5,3), from level 3
+ *   4 xpppppx   (2,4): where the garden's door leads in, facing up
+ *   5 xxpxxxx   (2,5): out into the garden, in front of the house's door
+ */
+export function homeRoomData(): MapData {
+  return {
+    id: 'house', name: 'Home', version: 1, kind: 'inside', depth: 0, width: 7, height: 6,
+    tiles: ['xxxxxxx', 'xpppppx', 'xpppppx', 'xpppppx', 'xpppppx', 'xxpxxxx'],
+    levels: Array<string>(6).fill('0000000'),
+    spawn: { x: 2, y: 4, dir: 'up' },
+    exits: [{ x: 2, y: 5, w: 1, h: 1, to: 'garden', tx: 3, ty: 4, dir: 'down' }],
+    objects: [
+      { kind: 'workbench', x: 1, y: 1 }, { kind: 'fireplace', x: 2, y: 1 }, { kind: 'chest', x: 3, y: 1 }, { kind: 'teleport', x: 4, y: 1 },
+      { kind: 'comfort', x: 5, y: 1, what: 'shelf' }, { kind: 'comfort', x: 1, y: 3, what: 'stove' },
+      { kind: 'kitchen', x: 4, y: 3, house: 2 }, { kind: 'board', x: 5, y: 3, house: 3 },
+    ],
+    private: true,
+    wake: { x: 2, y: 2, dir: 'down' },
+  };
+}
+
+/** The world of homes, ready for a World (home: 'town'): the town with its teleport, the garden, the home, the woods. */
+export const homeMaps = (): TileMap[] => [new TileMap(homeTownData()), new TileMap(gardenData()), new TileMap(homeRoomData()), new TileMap(woodsData())];
+
+/** The levels a house is built up to in the tests (house.ts): a garage, then a cabin for 2 nails, then a house for 3 nails and a moss. */
+export const HOUSE_LEVELS = [
+  { name: 'Garage', text: 'Where it starts.' },
+  { name: 'Cabin', needs: [{ item: 'nail', count: 2 }], text: 'A kitchen by the fire.' },
+  { name: 'House', needs: [{ item: 'nail', count: 3 }, { item: 'moss', count: 1 }], text: 'A map table.' },
+];
 
 /** What a test shop sells: an outfit, a jacket pattern and a name tag badge, priced in euros and francs. */
 export function shopData(): ShopData {

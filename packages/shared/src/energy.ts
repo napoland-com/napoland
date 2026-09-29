@@ -23,7 +23,7 @@
  */
 import { FAR_STEPS } from './feats';
 import type { Resist } from './gear';
-import type { MapKind, TileMap } from './map';
+import type { Arrival, MapExit, MapKind, TileMap } from './map';
 import type { Weather } from './protocol';
 import type { FlashKind } from './sky';
 
@@ -205,4 +205,49 @@ export function wetRate(kind: MapKind, weather: Weather, byFire: boolean, wettin
 /** Energy after `seconds` at `rate`, kept between 0 and max. */
 export function energyAfter(e: EnergyView, seconds: number): number {
   return Math.min(e.max, Math.max(0, e.value + e.rate * seconds));
+}
+
+/**
+ * Time to turn back: energy down to about what the way home takes (wayHomeCost), with a margin for what the
+ * estimate cannot know (a detour, the rain coming on).
+ */
+export function timeToTurn(energy: number, wayHome: number): boolean {
+  return energy <= wayHome * 1.25 + 6;
+}
+
+/** How much a tile drains, apart from everything that is not the map: its region's depth, and how far from home it lies. */
+function depthAndDistance(depth: number, steps: number): number {
+  return Math.max(1, depth) * (1 + steps / DRAIN_GROWTH_STEPS);
+}
+
+/**
+ * About how much energy the walk home from tile x,y of `map` takes (DESIGN.md, pillar 2: one more find, or
+ * turn back now), draining at `rate` there now (per second, as the server says it): the steps to each map's
+ * way home (TileMap.homeSteps), from here and then from where that way home comes out, map after map, until
+ * one that does not drain (a town). Each step drains as its region's depth and its distance from home drain
+ * it, and everything else that drains you now (the weather, the load, being wet, what you wear) stays as it
+ * is here. Null where nothing drains (a town, a room, by a fire) or there is no way home. It is an estimate
+ * for the eye: a fire on the way, a surge or a storm changes it, and a region with more than one way home
+ * is walked by its first (the one its map lists first).
+ */
+export function wayHomeCost(map: TileMap, x: number, y: number, rate: number, find: (id: string) => TileMap | undefined, stepMs = 200): number | null {
+  if (map.data.kind !== 'wilds' || !(rate < 0)) return null;
+  const here = map.homeSteps(x, y);
+  if (here < 0) return null;
+  // Everything but the map, as it drains you now.
+  const k = -rate / (DRAIN_PER_SECOND * depthAndDistance(map.data.depth, here));
+  let total = 0, m: TileMap | undefined = map, steps = here;
+  // A way home always leads shallower (validateWorld warns otherwise): a few maps at most, and never round.
+  for (let hops = 0; m && m.data.kind === 'wilds' && hops < 12; hops++) {
+    // The walk from `steps` away down to the way home: each step at the drain of the tile it starts on.
+    const depth = m.data.depth;
+    total += DRAIN_PER_SECOND * k * (stepMs / 1000) * (steps + (steps * (steps + 1)) / (2 * DRAIN_GROWTH_STEPS)) * Math.max(1, depth);
+    const out: MapExit | undefined = m.data.exits.find(e => e.home);
+    const arrival: Arrival | undefined = out && m.exitAt(out.x, out.y);
+    m = arrival && find(arrival.to);
+    if (!m || !arrival) break;
+    steps = m.homeSteps(arrival.x, arrival.y);
+    if (steps < 0) break;
+  }
+  return total;
 }

@@ -9,6 +9,7 @@ export * from './feats';
 export * from './firsts';
 export * from './gear';
 export * from './glimpses';
+export * from './house';
 export * from './items';
 export * from './landmarks';
 export * from './lostfound';

@@ -185,9 +185,9 @@ export type MapObject =
    * sawmill, long and low, timber under a sawtooth roof (`roof` its rusted metal), or with style 'shed'
    * a board shed, 2 by 2, under a lean-to roof (`roof`), whose door is padlocked when its exit has a
    * `lock`. Lit: someone is home. `curtains`: a cabin whose people left and drew the curtains behind
-   * them; its windows never light. `plate`: a cabin on a street, a lot (MapData.street), with a name
-   * plate by its door where its owner's name shows; its window lights while its owner is at home,
-   * whatever `lit` says.
+   * them; its windows never light. `plate`: the house in a garden of one's own (a private town map), 5 by 3,
+   * with a name plate by its door where its owner's name shows: drawn as its owner has built it up (a
+   * garage, a cabin, a house: house.ts), whatever `roof` and `lit` say.
    */
   | { kind: 'house'; x: number; y: number; w: number; h: number; roof: string; lit: 0 | 1; style?: 'napo' | 'mill' | 'shed'; curtains?: boolean; plate?: true }
   /**
@@ -279,8 +279,17 @@ export type MapObject =
    * it (town.ts).
    */
   | { kind: 'fireplace'; x: number; y: number; tended?: boolean; name?: string; longNight?: boolean; town?: TownGate }
-  /** A notice board: reading it tells how things stand out there (the server writes it). */
-  | { kind: 'board'; x: number; y: number }
+  /**
+   * A notice board: reading it tells how things stand out there (the server writes it). In a home of one's
+   * own it is the map table, which tells the same: `house`, the level of the house it stands in from (house.ts).
+   */
+  | { kind: 'board'; x: number; y: number; house?: number }
+  /**
+   * The kitchen in a home of one's own (house.ts): a stove and a counter against a wall, the pantry under it.
+   * It cooks what a fire cooks (`cooking` in content/items.json), paid from the bag and then the chest.
+   * `house`: the level of the house it stands in from; below it, boxes stand in its place.
+   */
+  | { kind: 'kitchen'; x: number; y: number; house?: number }
   /**
    * A roof on posts over w by h tiles, walked under: whoever stands under it keeps out of the rain and
    * dries off, as under any roof. Built by the town (`town`: a work of its ledger, town.ts).
@@ -342,10 +351,10 @@ export type MapObject =
    */
   | { kind: 'comfort'; x: number; y: number; what: Comfort }
   /**
-   * One of NAPO's teleports: one in every cabin (a home of one's own) and its twin in the home town.
-   * A at the cabin's takes you to town, onto the tile in front of the town's (teleportArrival); A at the
-   * town's takes you home, onto the tile in front of the one in your own cabin. Faced like a desk, from
-   * the tile in front of it.
+   * One of NAPO's teleports: one in every house (a home of one's own) and its twin in the home town.
+   * A at the house's takes you to town, onto the tile in front of the town's (teleportArrival); A at the
+   * town's takes you home, onto the tile in front of the one in your own house. A friend's visit sets
+   * them down in front of the one in yours. Faced like a desk, from the tile in front of it.
    */
   | { kind: 'teleport'; x: number; y: number }
   /**
@@ -429,26 +438,20 @@ export interface MapData {
    */
   style?: 'napo' | 'mill' | 'shed';
   /**
-   * A room with a chest only: a home that is each player's own. Whoever walks in through their own door is
-   * in a copy of the room of their own (their cabin, the server's zones), where only the neighbors they let
-   * in join them, to look round (world.ts, visits).
+   * A home that is each player's own: the room with the chest (the house's inside) and the garden it stands
+   * in (a town map whose one house has a `plate`). Each player is in copies of them of their own (the
+   * server's zones), where only the friends they let visit join them, to look round (world.ts, visits).
    */
   private?: true;
   /**
-   * A private room only, the one whose door opens onto the home town: where you wake up in it (as a new
-   * player, and after a collapse), on a walkable tile by its fire, facing `dir`.
+   * A private room only, the house's inside: where you wake up in it (as a new player, and after a
+   * collapse), on a walkable tile by its fire, facing `dir`.
    */
   wake?: { x: number; y: number; dir: Dir };
   /** Places on this map people call by name; the paper map writes them in. */
   places?: MapPlace[];
   /** What else on this map changes with the town (town.ts): houses that light up, the town's sign, a room's name. */
   town?: MapTown;
-  /**
-   * A town only: a street of cabins (Residents' Lane), where each player's cabin stands. The server keeps a
-   * copy of it for each street of neighbors, each of its houses a lot (in the order they are listed),
-   * whose door leads into its owner's own cabin (the private home).
-   */
-  street?: true;
   /** The wilds only: skulkers, creatures that lie in the ferns and chase whoever they hear or see. */
   skulkers?: SkulkerRule;
   /**
@@ -531,7 +534,7 @@ const BLOCKING = new Set<MapObject['kind']>([
   'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
-  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport', 'lostfound', 'ledger',
+  'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport', 'lostfound', 'ledger', 'kitchen',
   'ruin', 'yarder', 'spool', 'traps', 'gate', 'lookout',
 ]);
 
@@ -557,7 +560,7 @@ export function underfoot(o: MapObject): boolean {
  * What you face to read or talk to, standing in front of it: the tile below it must stay open
  * ground (a jeep, bigger, is read from any side of it).
  */
-export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache', 'teleport', 'lostfound', 'ledger']);
+export const FRONTED = new Set<MapObject['kind']>(['sign', 'npc', 'board', 'chest', 'workbench', 'console', 'paper', 'cage', 'cache', 'teleport', 'lostfound', 'ledger', 'kitchen']);
 /**
  * What the town's state may gate (TownGate, town.ts): who is where, a lamp or a hearth that stays dark
  * until the town mends or lights it, what a sign says, and a porch the town builds. Nothing else comes
@@ -614,12 +617,6 @@ export function objectTiles(o: MapObject): Array<[number, number]> {
  */
 export function hidden(map: TileMap, x: number, y: number): boolean {
   return map.kind(x, y) === 'tallgrass';
-}
-
-/** The doors of a street's lots (MapData.street), lot by lot: its houses' doors, in the order the map lists them. None on any other map. */
-export function lotDoors(data: MapData): Array<{ x: number; y: number }> {
-  if (!data.street) return [];
-  return data.objects.flatMap(o => (o.kind === 'house' ? [doorOf(o)] : []));
 }
 
 /**
