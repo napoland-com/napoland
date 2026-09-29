@@ -634,6 +634,8 @@ const known = (ref: MapRef) => !!maps.get(ref);
 // It asks the sign-in what to say on every connection: a reconnect uses the freshest token.
 const conn = new Connection(serverUrl(), () => signin?.hello() ?? null);
 let ping: number | undefined;
+/** How many are in the game, as the last pong said. */
+let playersOnline: number | undefined;
 conn.onOpen = () => { welcomed = false; hud.setConnection('connecting'); };
 conn.onClose = () => { welcomed = false; game.disconnected(performance.now()); hud.setConnection('offline'); };
 conn.onMessage = (msg: ServerMsg) => {
@@ -648,7 +650,7 @@ conn.onMessage = (msg: ServerMsg) => {
       hud.setName(msg.name);
       hud.setGuest(msg.guest);
       hud.setLogoutLabel(msg.guest ? 'Sign in' : authMode === 'legacy' ? 'Log out' : 'Sign out');
-      hud.setConnection('online', ping);
+      hud.setConnection('online', ping, playersOnline);
       break;
     case 'zone':
       if (!known(msg.map)) return outdated();
@@ -658,7 +660,8 @@ conn.onMessage = (msg: ServerMsg) => {
       break;
     case 'pong':
       ping = now - msg.at;
-      hud.setConnection('online', ping);
+      playersOnline = msg.players;
+      hud.setConnection('online', ping, playersOnline);
       return;
     case 'error':
       if (msg.code === 'bad_version') outdated();

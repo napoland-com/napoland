@@ -1140,7 +1140,8 @@ export type ServerMsg =
   | { t: 'reject'; seq: number; x: number; y: number; dir: Dir }
   /** The weather over your map turned (the night comes everywhere at once; rain, region by region). */
   | { t: 'weather'; weather: Weather }
-  | { t: 'pong'; at: number; serverTime: number }
+  /** `players`: how many are in the game on this server right now, everyone counted once (the status card shows it). */
+  | { t: 'pong'; at: number; serverTime: number; players?: number }
   /** The hello (or the game here) ended; `name` comes with has_character: the account's own character. */
   | { t: 'error'; code: ErrorCode; message: string; name?: string };
 

@@ -329,7 +329,7 @@ export function attachNet(o: NetOptions): Net {
     if (byteLength(data) > MAX_MESSAGE_BYTES) return void disconnect(s, 1009, 'message too big');
     const msg = isBinary ? null : parseClientMsg(raw);
     if (!msg) return fail(s, 'bad_message', 'Bad message');
-    if (msg.t === 'ping') return send(s, { t: 'pong', at: msg.at, serverTime: Date.now() });
+    if (msg.t === 'ping') return send(s, { t: 'pong', at: msg.at, serverTime: Date.now(), players: world.size });
     if (s.state === 'auth') return fail(s, 'bad_message', 'Wait for welcome');
     switch (msg.t) {
       case 'step':
