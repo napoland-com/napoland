@@ -121,26 +121,26 @@ beforeEach(() => {
 
 describe('at someone else\'s pile', () => {
   it('asks what to do: A on Take half picks up half, as ever', () => {
-    g.handle(welcome(tinyWoods(), [me(2, 2)], undefined, { drops: [pile('ana', 'Ana', 2, 1)], items: items.version }), now);
+    g.handle(welcome(tinyWoods(), [me(2, 2, 'right')], undefined, { drops: [pile('ana', 'Ana', 3, 2)], items: items.version }), now);
     g.pressA();
     expect(g.askView()).toEqual({ who: 'Ana\'s things', text: 'What do you do with Ana\'s things?', choice: 'yes', count: null, labels: { yes: 'Take half', no: 'Carry it to the lodge for Ana' } });
     expect(sent).toEqual([]);
     g.pressA();
-    expect(sent).toEqual([{ t: 'pick', x: 2, y: 1 }]);
+    expect(sent).toEqual([{ t: 'pick', x: 3, y: 2 }]);
   });
 
   it('carries it to the lodge on the second answer, and the box says what it did', () => {
-    g.handle(welcome(tinyWoods(), [me(2, 2)], undefined, { drops: [pile('ana', 'Ana', 2, 1)], items: items.version }), now);
+    g.handle(welcome(tinyWoods(), [me(2, 2, 'right')], undefined, { drops: [pile('ana', 'Ana', 3, 2)], items: items.version }), now);
     g.pressA();
     g.padChange('down', now);
     g.pressA();
-    expect(sent).toEqual([{ t: 'carry', x: 2, y: 1, owner: 'ana' }]);
+    expect(sent).toEqual([{ t: 'carry', x: 3, y: 2, owner: 'ana' }]);
     g.handle({ t: 'did', did: { kind: 'carried', names: ['Ana'] } }, now);
     expect(g.note).toMatchObject({ who: 'Ana\'s things', text: expect.stringContaining('You carry Ana\'s things now.') });
   });
 
   it('backs out on B, or a tap outside the box: nothing goes', () => {
-    g.handle(welcome(tinyWoods(), [me(2, 2)], undefined, { drops: [pile('ana', 'Ana', 2, 1)], items: items.version }), now);
+    g.handle(welcome(tinyWoods(), [me(2, 2, 'right')], undefined, { drops: [pile('ana', 'Ana', 3, 2)], items: items.version }), now);
     g.pressA();
     g.padChange('down', now);
     expect(g.pressB()).toBe(true);

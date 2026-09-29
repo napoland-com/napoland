@@ -140,17 +140,16 @@ describe('what A does', () => {
     expect(picks()).toEqual([{ t: 'pick', x: 3, y: 2 }]);
   });
 
-  it('picks up before it talks: the sign is read once nothing lies there', () => {
+  it('talks before it picks up: the sign you face is read first, and the find underfoot is picked up facing away', () => {
     // At 1,2 facing the sign at 1,1, with a glowcap underfoot.
     start(1, 2, { finds: [glowcap(1, 1, 2)] });
     g.pressA();
-    expect(picks()).toEqual([{ t: 'pick', x: 1, y: 2 }]);
-    expect(g.dialog).toBeNull();
-    g.handle({ t: 'got', items: [{ item: 'glowcap', count: 1 }], from: 'find' }, now);
-    g.handle({ t: 'findGone', id: 1 }, now);
-    g.pressA();
     expect(g.dialog?.who).toBe('Sign');
-    expect(picks()).toHaveLength(1);
+    expect(picks()).toEqual([]);
+    while (g.dialog) g.pressA();
+    start(1, 2, { finds: [glowcap(1, 1, 2)] }, 'down');
+    g.pressA();
+    expect(picks()).toEqual([{ t: 'pick', x: 1, y: 2 }]);
   });
 
   it('only looks at your own tile and the one you face', () => {
