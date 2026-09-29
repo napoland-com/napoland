@@ -273,6 +273,7 @@ describe('World: turning, joining and leaving', () => {
       shop: [],
       // No items, so no paper map to carry.
       tools: [],
+      charts: {},
       // No story in this world: no chapter to be in; and no field notes, so not a page yet.
       story: { version: 0, chapter: '' },
       // Nobody thanked today.

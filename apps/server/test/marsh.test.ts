@@ -5,7 +5,7 @@
  */
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { STEP_MS, type MapObject } from '@napoland/shared';
+import { STEP_MS, quarterOf, type MapObject } from '@napoland/shared';
 import { loadItems, loadMaps, loadStory } from '../src/content';
 import { setup } from './helpers';
 
@@ -46,8 +46,11 @@ describe('the Marsh, along the corduroy road', () => {
     expect(await a.c.next('step', m => m.seq === 2)).toMatchObject({ x: west.x, y: west.y });
   });
 
-  it('keeps its map in the cutters\' hut, for whoever has none', async () => {
-    const a = await enter({ map: 'marsh-cutters-hut', x: 3, y: 4 });
-    expect(a.welcome.finds.map(f => f.item)).toContain('marsh-map');
+  it('has its map torn in four across it, a piece in each quarter', async () => {
+    const home = marsh.data.exits.find(e => e.home)!;
+    const a = await enter({ map: 'marsh', x: home.x + 1, y: home.y });
+    const pieces = a.welcome.finds.filter(f => f.item === 'marsh-map');
+    expect(pieces.map(f => f.piece).sort()).toEqual([0, 1, 2, 3]);
+    for (const f of pieces) expect(quarterOf(f.x, f.y, marsh.width, marsh.height)).toBe(f.piece);
   });
 });

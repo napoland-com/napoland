@@ -6,7 +6,7 @@
  */
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { GATE_WINDOW_MS, PRINTS_KEPT_MS, SEASONS, energyRate, seasonAt, type MapObject, type Season, type ServerMsg } from '@napoland/shared';
+import { GATE_WINDOW_MS, PRINTS_KEPT_MS, SEASONS, energyRate, quarterOf, seasonAt, type MapObject, type Season, type ServerMsg } from '@napoland/shared';
 import { loadItems, loadMaps, loadStory } from '../src/content';
 import { setup } from './helpers';
 
@@ -110,8 +110,11 @@ describe('the Ridge, up the trappers\' rope', () => {
     expect(a.welcome.energy.rate).toBeLessThan(energyRate(ridge, home.x, home.y - 1, 'overcast', chill(seasonAt(now))));
   });
 
-  it('keeps its map in the high hut, for whoever has none', async () => {
-    const a = await enter({ map: 'ridge-high-hut', x: 3, y: 4 });
-    expect(a.welcome.finds.map(f => f.item)).toContain('ridge-map');
+  it('has its map torn in four across it, a piece in each quarter', async () => {
+    const home = ridge.data.exits.find(e => e.home)!;
+    const a = await enter({ map: 'ridge', x: home.x, y: home.y - 1 });
+    const pieces = a.welcome.finds.filter(f => f.item === 'ridge-map');
+    expect(pieces.map(f => f.piece).sort()).toEqual([0, 1, 2, 3]);
+    for (const f of pieces) expect(quarterOf(f.x, f.y, ridge.width, ridge.height)).toBe(f.piece);
   });
 });

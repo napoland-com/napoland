@@ -118,6 +118,7 @@ import {
   SLOTS,
   STARTER_GEAR,
   STARTER_TOOLS,
+  PIECES,
   DROP_LIFETIME_MS,
   ENERGY_SYNC_MS,
   RESCUE_ENERGY,
@@ -406,7 +407,7 @@ import {
   type WorksView,
 } from '@napoland/shared';
 import { FIRE_LOW_S, FIRE_MAX_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, FirstRecord, HomeRecord, LongNightRecord, MarkRecord, PlayerRecord, ReturnRecord, StoneRecord, ThanksRecord, TownRecord, WorksRecords } from './storage';
+import { copyCharts, type CacheItemRecord, type DropRecord, type FirstRecord, type HomeRecord, type LongNightRecord, type MarkRecord, type PlayerRecord, type ReturnRecord, type StoneRecord, type ThanksRecord, type TownRecord, type WorksRecords } from './storage';
 import { Lamps, type Lamp, type Lookout } from './lookout';
 import { Works } from './works';
 
@@ -584,6 +585,8 @@ export interface Joined extends Scene {
   shop: string[];
   /** Every tool the player owns, in the order they got them (toolsOf): the starter tools until they got one of their own. */
   tools: string[];
+  /** Of the torn maps among them, the pieces found (items.ts, quarterOf). */
+  charts: Record<string, number[]>;
   story: StoryView;
   /** Whom the player thanked today (UTC), by id. */
   thanked: string[];
@@ -1015,7 +1018,9 @@ const bodyView = (p: Online, wall: number, by: boolean, effects: EffectView[]): 
  * Wetness is left out: it moves at a steady rate the client counts on, and is told when that turns.
  */
 const changing = (p: Online): boolean => (p.rate < 0 && p.rec.energy > 0) || (p.rate > 0 && p.rec.energy < p.max);
-const findView = (f: Find): FindView => ({ id: f.id, item: f.rule.item.id, x: f.tile % f.rule.map.width, y: Math.floor(f.tile / f.rule.map.width) });
+const findView = (f: Find): FindView => ({
+  id: f.id, item: f.rule.item.id, x: f.tile % f.rule.map.width, y: Math.floor(f.tile / f.rule.map.width), ...(f.rule.def.piece !== undefined ? { piece: f.rule.def.piece } : {}),
+});
 const dropView = (d: DropRecord): DropView => ({
   id: d.owner, x: d.x, y: d.y, owner: d.owner, name: d.name, until: d.droppedAt + DROP_LIFETIME_MS, trail: (d.trail ?? []).map(([x, y]) => [x, y]),
 });
@@ -1074,7 +1079,7 @@ const copyStash = (s: Stash): Stash => ({
 const copyRecord = (r: PlayerRecord): PlayerRecord => ({
   ...r, bag: copyBag(r.bag), ...(r.kept ? { kept: { bag: structuredClone(r.kept.bag) } } : {}), stats: { ...r.stats }, ...(r.stash ? { stash: copyStash(r.stash) } : {}), ...(r.gear ? { gear: { ...r.gear } } : {}),
   ...(r.worn ? { worn: copyWorn(r.worn) } : {}), ...(r.tools ? { tools: [...r.tools] } : {}), ...(r.parcels ? { parcels: { ...r.parcels } } : {}),
-  ...(r.looks ? { looks: [...r.looks] } : {}), ...(r.shop ? { shop: [...r.shop] } : {}),
+  ...(r.charts ? { charts: copyCharts(r.charts) } : {}), ...(r.looks ? { looks: [...r.looks] } : {}), ...(r.shop ? { shop: [...r.shop] } : {}),
   ...(r.notebook ? { notebook: { pages: [...r.notebook.pages], blanks: [...r.notebook.blanks] } } : {}),
   ...(r.notes ? { notes: [...r.notes] } : {}), ...(r.keepsakes ? { keepsakes: [...r.keepsakes] } : {}),
   ...(r.furniture ? { furniture: [...r.furniture] } : {}), ...(r.meals ? { meals: [...r.meals] } : {}),
@@ -1112,6 +1117,11 @@ const isSlot = (s: unknown): s is BagSlot => {
 };
 /** Saved tools: item ids, each once, in the order they came. Anything but a list was never set (the starter tools). */
 const cleanTools = (t: unknown): string[] | undefined => (Array.isArray(t) ? [...new Set(t.filter((id): id is string => typeof id === 'string' && id !== ''))] : undefined);
+/** Saved pieces of torn maps: a map's id to its quarters, each once, from 0 to PIECES - 1. Anything else was never set. */
+const cleanCharts = (c: unknown): Record<string, number[]> | undefined => {
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return undefined;
+  return Object.fromEntries(Object.entries(c).flatMap(([id, l]) => (Array.isArray(l) ? [[id, [...new Set(l.filter((n): n is number => Number.isInteger(n) && n >= 0 && n < PIECES))]]] : [])));
+};
 /** Saved furniture: the same, a list of item ids, each once. An id today's items do not know stays saved, for the release that made it. */
 const cleanFurniture = cleanTools;
 /**
@@ -1645,9 +1655,16 @@ export class World {
     return [...(this.zones.get(zone)?.finds.values() ?? [])].filter(f => !p || this.sees(p, f)).map(findView);
   }
 
-  /** Does a player see this find? Every one but a tool they own already: it lies there for whoever does not (pickTool). */
+  /**
+   * Does a player see this find? Every one but a tool they own already: it lies there for whoever does not
+   * (pickTool). A piece of a torn map lies there until they have that piece; one who owns the map whole
+   * (found before it was torn, or given) has every piece.
+   */
   private sees(p: Online, f: Find): boolean {
-    return f.rule.item.kind !== 'tool' || !this.owns(p, f.rule.item.id);
+    const { item } = f.rule, piece = f.rule.def.piece;
+    if (item.kind !== 'tool' || !this.owns(p, item.id)) return true;
+    const found = p.rec.charts?.[item.id];
+    return piece !== undefined && found !== undefined && !found.includes(piece);
   }
 
   /** The piles lying in a zone, open or not. */
@@ -1695,6 +1712,7 @@ export class World {
       rested: restAfter(cleanRested(rec.rested), away, this.restedEvery),
       // Kept as saved, ids this release does not know included (toolsOf).
       tools: cleanTools(rec.tools),
+      charts: cleanCharts(rec.charts),
       // Merits spent stay spent, and every look bought stays theirs, a newer release's too (a list of ids, as the tools are).
       meritsSpent: Number.isInteger(rec.meritsSpent) && rec.meritsSpent! > 0 ? rec.meritsSpent : 0,
       looks: cleanTools(rec.looks) ?? [],
@@ -1795,7 +1813,7 @@ export class World {
       bag: bagView(r.bag, now + this.epochOffset),
       stash: stashList(p.rec.stash ?? emptyStash(), this.itemOrder), stone: this.stoneView(now), conditions: this.conditionsNow(now), season: this.seasonNow(now),
       longNight: this.longNightView(now), stats: { ...r.stats },
-      progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), shop: this.shopOwned(r), tools: toolsOf(r.tools, this.items),
+      progress: progressOf(r.xp ?? 0, r.rested), restedAway: restFor(away, this.restedEvery), merits: this.meritsOf(r), shop: this.shopOwned(r), tools: toolsOf(r.tools, this.items), charts: copyCharts(r.charts ?? {}),
       // The chapter they are in, which is the first for someone who never started (story.ts).
       story: { version: this.story.version, chapter: chapterOf(this.story, r.story)?.id ?? '' },
       thanked: [...this.thanks.values()].filter(t => t.giver === r.id && t.day === today).map(t => t.helper),
@@ -2822,11 +2840,16 @@ export class World {
     p.rec.tools = [...(p.rec.tools ?? STARTER_TOOLS), item];
     // Waders open the culvert, bolt cutters the shed's door: from their very next step.
     p.pass = this.passOf(p.rec);
-    this.saveNow.set(id, p.rec);
-    this.outbox.push({ to: id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items) } });
-    // Another of it lying where they are is someone else's to find from now on: it goes from their sight.
-    for (const f of p.zone.finds.values()) if (f.rule.item.id === item) this.outbox.push({ to: id, msg: { t: 'findGone', id: f.id } });
+    this.toolsChanged(p);
     return true;
+  }
+
+  /** Their tools changed (a new one, or a piece of a torn map): saved at once, told to them, and what they own now goes from their sight. */
+  private toolsChanged(p: Online): void {
+    this.saveNow.set(p.rec.id, p.rec);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'tools', tools: toolsOf(p.rec.tools, this.items), charts: copyCharts(p.rec.charts ?? {}) } });
+    // Another of it lying where they are is someone else's to find from now on: it goes from their sight.
+    for (const f of p.zone.finds.values()) if (f.rule.item.kind === 'tool' && !this.sees(p, f)) this.outbox.push({ to: p.rec.id, msg: { t: 'findGone', id: f.id } });
   }
 
   /** Does the player own this tool? One who never got one of their own owns the starter tools. */
@@ -5826,13 +5849,18 @@ export class World {
    * for the forager and the story.
    */
   private pickTool(p: Online, find: Find, now: number): void {
-    const { rule } = find;
-    if (this.owns(p, rule.item.id)) return this.refuse(p, 'pick', 'have_tool');
+    const { rule } = find, piece = rule.def.piece;
+    if (!this.sees(p, find)) return this.refuse(p, 'pick', 'have_tool');
     find.zone.finds.delete(find.tile);
     const [soonest, latest] = rule.respawn;
+    // ponytail: a piece taken grows back for the next player like a whole map does, rather than lying there for each player at once.
     this.later(rule, find.zone, now + ((soonest + this.rng() * (latest - soonest)) * 1000) / this.regrow(rule.item.id), find.tile);
-    this.outbox.push({ to: p.rec.id, msg: { t: 'got', items: [{ item: rule.item.id, count: 1 }], from: 'tool' } });
-    this.giveTool(p.rec.id, rule.item.id);
+    this.outbox.push({ to: p.rec.id, msg: { t: 'got', items: [{ item: rule.item.id, count: 1 }], from: piece === undefined ? 'tool' : 'piece' } });
+    if (piece !== undefined) {
+      // The piece joins their charts before the map joins their tools, so the tools message says both; the map is theirs from the first piece.
+      p.rec.charts = { ...p.rec.charts, [rule.item.id]: [...(p.rec.charts?.[rule.item.id] ?? []), piece] };
+      if (!this.giveTool(p.rec.id, rule.item.id)) this.toolsChanged(p);
+    } else this.giveTool(p.rec.id, rule.item.id);
     this.toZone(find.zone.key, { t: 'findGone', id: find.id });
     if (this.wild(p.map)) this.count(p, 'found', now);
     this.moveStory(p, { pick: rule.item.id });

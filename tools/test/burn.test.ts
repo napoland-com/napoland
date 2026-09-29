@@ -144,11 +144,15 @@ describe('the Burn, what it gives', () => {
     expect(findTiles(burn, rule).length).toBeGreaterThanOrEqual(3 * rule.count);
   });
 
-  it('keeps its paper map in the line cabin, found and not given, growing back for the next', () => {
+  it('has its paper map torn in four pieces across it, one in each quarter, found and not given, growing back for the next', () => {
     expect(byId.get('burn-map')).toMatchObject({ kind: 'tool', chart: 'burn', icon: 'map' });
     expect(STARTER_TOOLS).not.toContain('burn-map');
-    const rule = items.finds.find(f => f.item === 'burn-map')!;
-    expect(rule.map).toBe('burn-line-cabin');
-    expect(rule.respawn[1]).toBeLessThanOrEqual(180);
+    const rules = items.finds.filter(f => f.item === 'burn-map');
+    expect(rules.map(r => r.piece).sort()).toEqual([0, 1, 2, 3]);
+    for (const rule of rules) {
+      expect(rule.map).toBe('burn');
+      expect(rule.count).toBe(1);
+      expect(rule.respawn[1]).toBeLessThanOrEqual(180);
+    }
   });
 });

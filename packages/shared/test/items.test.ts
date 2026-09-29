@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CACHE_NEAR, CACHE_SIZE, STARTER_TOOLS, TileMap, addAllToBag, addToBag, cacheTakes, findTiles, halfOf, itemIndex, liveEnds, liveXp, merge, takeFromBag, takeItem, toolsOf, validateItems,
-  type ItemDef, type ItemsData, type MapData,
+  CACHE_NEAR, CACHE_SIZE, PIECES, STARTER_TOOLS, TileMap, addAllToBag, addToBag, cacheTakes, findTiles, halfOf, itemIndex, liveEnds, liveXp, merge, quarterOf, takeFromBag, takeItem, toolsOf, validateItems,
+  type FindRule, type ItemDef, type ItemsData, type MapData,
 } from '../src';
 
 const glowcap: ItemDef = { id: 'glowcap', name: 'Glowcap', kind: 'resource', stack: 10, text: 'Glows after rain.' };
@@ -260,5 +260,33 @@ describe('a crate for whoever comes next', () => {
     // A piece of gear carries its own condition and quirk, a tool is yours for good, and a lockbox is opened at the chest.
     expect([coat, chart, lockbox, undefined].map(cacheTakes)).toEqual([false, false, false, false]);
     expect([CACHE_SIZE, CACHE_NEAR]).toEqual([6, 3]);
+  });
+});
+
+describe('a torn map, in pieces', () => {
+  const tool = (id: string): ItemDef => ({ id, name: id, kind: 'tool', stack: 1, icon: 'map', text: 'A map.' });
+  const map: ItemDef = { ...tool('woods-map'), chart: 'woods' };
+  const starters = STARTER_TOOLS.map(tool);
+  /** A piece of the woods' map at tile x,y (the woods are 6 by 5: the quarters split at x 3 and y 2). */
+  const piece = (n: number, x: number, y: number, item = 'woods-map'): FindRule => ({ item, map: 'woods', piece: n, around: { x, y, r: 0.5 }, count: 1, respawn: [1, 2] });
+  const errors = (finds: FindRule[], items: ItemDef[] = [map, glowcap, ...starters]) => validateItems({ version: 1, items, finds }, [woods()]).filter(p => p.level === 'error').map(p => p.message);
+
+  it('splits a map in four quarters, the middle lines going east and south', () => {
+    expect([quarterOf(0, 0, 6, 5), quarterOf(2, 1, 6, 5), quarterOf(3, 0, 6, 5), quarterOf(0, 2, 6, 5), quarterOf(5, 4, 6, 5)]).toEqual([0, 0, 1, 2, 3]);
+    expect(PIECES).toBe(4);
+  });
+
+  it('passes four pieces, one in each quarter, of a map of that place', () => {
+    expect(errors([piece(0, 1, 0), piece(1, 4, 1), piece(2, 0, 3), piece(3, 4, 3)])).toEqual([]);
+  });
+
+  it('catches a piece outside its quarter, of no map of the place, a missing piece, and a map found whole as well', () => {
+    const msgs = errors([piece(1, 1, 0), piece(0, 4, 1), piece(2, 0, 3), piece(9, 4, 3), piece(3, 4, 3, 'glowcap'), { item: 'woods-map', map: 'woods', count: 1, respawn: [1, 2] }]);
+    expect(msgs).toContainEqual(expect.stringMatching(/find 0 .*piece 1 may lie outside its quarter of woods/));
+    expect(msgs).toContainEqual(expect.stringMatching(/find 1 .*piece 0 may lie outside its quarter of woods/));
+    expect(msgs).toContainEqual(expect.stringMatching(/find 3 .*piece is a quarter, 0 to 3/));
+    expect(msgs).toContainEqual(expect.stringMatching(/find 4 .*a piece of glowcap, which is no map of woods/));
+    expect(msgs).toContain('woods-map is torn in pieces, but no find grows piece 3');
+    expect(msgs).toContain('woods-map is torn in pieces, and a find grows it whole too');
   });
 });

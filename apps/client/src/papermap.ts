@@ -7,7 +7,7 @@
  * sketchOf turns a map into what to draw (plain data, so it can be tested); paperMap draws it on a
  * canvas once per map version and keeps it.
  */
-import { doorOf, footprint, type MapData, type TileMap } from '@napoland/shared';
+import { PIECES, doorOf, footprint, quarterOf, type MapData, type TileMap } from '@napoland/shared';
 
 /** Tiles, center to center, apart from which two poles are not on one line (as in the 3D world). */
 const MAX_WIRE = 10;
@@ -201,6 +201,27 @@ export function sketchOf(map: TileMap, nameOf: (id: string) => string | undefine
 }
 
 /**
+ * What a torn map shows with only these pieces (quarters, quarterOf) found: everything drawn in a found
+ * quarter, and nothing in a missing one, names included. A wire needs both its poles; a line its middle.
+ * With every piece found, the sketch itself.
+ */
+export function mask(s: Sketch, found: readonly number[]): Sketch {
+  if (Array.from({ length: PIECES }, (_, n) => n).every(n => found.includes(n))) return s;
+  const at = (x: number, y: number) => found.includes(quarterOf(Math.floor(x), Math.floor(y), s.width, s.height));
+  const pt = (p: Pt) => at(p[0], p[1]);
+  const mid = ([a, b]: [Pt, Pt]) => at((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+  const box = (b: { x: number; y: number; w: number; h: number }) => at(b.x + b.w / 2, b.y + b.h / 2);
+  return {
+    ...s,
+    forest: s.forest.filter(pt), trees: s.trees.filter(pt), ground: s.ground.filter(pt), grass: s.grass.filter(pt), water: s.water.filter(pt), roads: s.roads.filter(pt),
+    houses: s.houses.filter(box), poles: s.poles.filter(pt), wires: s.wires.filter(([a, b]) => pt(a) && pt(b)), masts: s.masts.filter(pt), fences: s.fences.filter(mid),
+    cars: s.cars.filter(c => pt(c.at)), signs: s.signs.filter(pt), logs: s.logs.filter(box), stumps: s.stumps.filter(pt), stakes: s.stakes.filter(pt), skids: s.skids.filter(mid),
+    ruins: s.ruins.filter(box), bridges: s.bridges.filter(mid), things: s.things.filter(t => pt(t.at)), culverts: s.culverts.map(run => run.filter(pt)).filter(run => run.length > 1),
+    footbridges: s.footbridges.filter(mid), labels: s.labels.filter(l => at(l.x, l.y)),
+  };
+}
+
+/**
  * Labels where they are drawn (kept off the paper's edge), each on the nearest line (a line up first,
  * then down, then two up...) where it covers no name written before it, no mast and no sign: two doors
  * side by side get one name above the other, and a place named at its mast gets its name clear of it.
@@ -306,16 +327,21 @@ const drawn = new Map<string, HTMLCanvasElement>();
 
 /**
  * The drawing of a map, made once per map version and what the town has come to (`town`: a room it names
- * may be called something else once someone comes home to it, town.ts).
+ * may be called something else once someone comes home to it, town.ts), and, for a torn map, the pieces
+ * found (`found`, quarters; none given: whole).
  */
-export function paperMap(map: TileMap, nameOf: (id: string) => string | undefined, town = ''): HTMLCanvasElement {
-  const key = `${map.data.id}@${map.data.version}#${town}`;
+export function paperMap(map: TileMap, nameOf: (id: string) => string | undefined, town = '', found?: readonly number[]): HTMLCanvasElement {
+  const pieces = found ? [...found].sort() : undefined;
+  const key = `${map.data.id}@${map.data.version}#${town}#${pieces?.join() ?? 'whole'}`;
   let c = drawn.get(key);
-  if (!c) drawn.set(key, (c = draw(sketchOf(map, nameOf))));
+  if (!c) drawn.set(key, (c = draw(pieces ? mask(sketchOf(map, nameOf), pieces) : sketchOf(map, nameOf), pieces)));
   return c;
 }
 
-function draw(s: Sketch): HTMLCanvasElement {
+/** The quarters a torn map is missing, given the pieces found; none for a whole map. */
+const missing = (found?: readonly number[]): number[] => (found ? Array.from({ length: PIECES }, (_, n) => n).filter(n => !found.includes(n)) : []);
+
+function draw(s: Sketch, found?: readonly number[]): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = (s.width + MARGIN * 2) * PX;
   c.height = (s.height + MARGIN * 2 + 3) * PX;
@@ -341,6 +367,18 @@ function draw(s: Sketch): HTMLCanvasElement {
   g.moveTo(c.width / 2, 0); g.lineTo(c.width / 2, c.height);
   g.moveTo(0, c.height / 2); g.lineTo(c.width, c.height / 2);
   g.stroke();
+
+  // A torn map: each quarter of the paper is a piece, from the paper's edge to the middle lines of the
+  // map (quarterOf), below the title. The pieces found are drawn; the rest is bare paper (torn below).
+  const hw = Math.floor(s.width / 2), hh = Math.floor(s.height / 2), top = PX * 4.5;
+  const quarter = (n: number) => ({ x0: n & 1 ? X(hw) : 0, x1: n & 1 ? c.width : X(hw), y0: n & 2 ? Y(hh) : top, y1: n & 2 ? c.height : Y(hh) });
+  const gone = missing(found);
+  g.save();
+  if (gone.length) {
+    g.beginPath();
+    for (let n = 0; n < PIECES; n++) if (!gone.includes(n)) { const q = quarter(n); g.rect(q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0); }
+    g.clip();
+  }
 
   g.lineCap = 'round';
   g.lineJoin = 'round';
@@ -499,12 +537,36 @@ function draw(s: Sketch): HTMLCanvasElement {
   g.stroke();
   g.lineWidth = 1.6;
 
-  // Words in handwriting, each a little tilted.
+  g.restore();
+  // The missing pieces: bare paper, a shade paler, and a torn edge where a piece found ends against one missing.
+  for (const n of gone) {
+    const q = quarter(n);
+    g.fillStyle = 'rgba(245,235,210,.55)';
+    g.fillRect(q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0);
+  }
+  g.strokeStyle = 'rgba(110,80,45,.8)';
+  g.lineWidth = 1.5;
+  g.lineCap = 'butt';
+  g.beginPath();
+  for (const n of gone) for (const m of [n ^ 1, n ^ 2]) {
+    if (gone.includes(m)) continue;
+    // The edge the two share: vertical between east and west, horizontal between north and south.
+    const q = quarter(n), vertical = m === (n ^ 1);
+    const [a0, a1, at] = vertical ? [q.y0, q.y1, X(hw)] : [q.x0, q.x1, Y(hh)];
+    for (let k = 0, p = a0; p <= a1; k++, p = Math.min(a1, p + PX * 0.45)) {
+      const off = (hash(k, n, 21) - 0.5) * PX * 0.7;
+      const [x, y] = vertical ? [at + off, p] : [p, at + off];
+      if (k) g.lineTo(x, y); else g.moveTo(x, y);
+      if (p === a1) break;
+    }
+  }
+  g.stroke();
+  g.lineCap = 'round';
+  // Words in handwriting, each a little tilted: the names of the pieces found (mask), whole even where one
+  // runs over a torn edge, and the title on any piece.
   g.fillStyle = INK;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  g.font = `italic 700 ${PX * 2.4}px ${HAND}`;
-  g.fillText(s.title, c.width / 2, PX * 3);
   g.font = `italic ${PX * 1.8}px ${HAND}`;
   s.labels.forEach((l, i) => {
     g.save();
@@ -513,6 +575,8 @@ function draw(s: Sketch): HTMLCanvasElement {
     g.fillText(l.text, 0, 0);
     g.restore();
   });
+  g.font = `italic 700 ${PX * 2.4}px ${HAND}`;
+  g.fillText(s.title, c.width / 2, PX * 3);
   // A key in the margin for the one mark that is not a picture of its thing.
   if (s.grass.length) {
     const kx = X(0.5), ky = Y(s.height + 2.2);

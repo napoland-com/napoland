@@ -151,11 +151,15 @@ describe('the Marsh, what it gives', () => {
     for (const f of items.finds.filter(f => f.item === 'peat' && f.map === 'marsh')) expect(findTiles(marsh, f).length).toBeGreaterThanOrEqual(3 * f.count);
   });
 
-  it('keeps its paper map in the cutters\' hut, found and not given, growing back for the next', () => {
+  it('has its paper map torn in four pieces across it, one in each quarter, found and not given, growing back for the next', () => {
     expect(byId.get('marsh-map')).toMatchObject({ kind: 'tool', chart: 'marsh', icon: 'map' });
     expect(STARTER_TOOLS).not.toContain('marsh-map');
-    const rule = items.finds.find(f => f.item === 'marsh-map')!;
-    expect(rule.map).toBe('marsh-cutters-hut');
-    expect(rule.respawn[1]).toBeLessThanOrEqual(180);
+    const rules = items.finds.filter(f => f.item === 'marsh-map');
+    expect(rules.map(r => r.piece).sort()).toEqual([0, 1, 2, 3]);
+    for (const rule of rules) {
+      expect(rule.map).toBe('marsh');
+      expect(rule.count).toBe(1);
+      expect(rule.respawn[1]).toBeLessThanOrEqual(180);
+    }
   });
 });

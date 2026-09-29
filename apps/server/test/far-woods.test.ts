@@ -121,7 +121,7 @@ describe('the Far Woods over WebSockets, as the content ships', () => {
     expect(finder.welcome.finds).toContainEqual(find);
     finder.c.send({ t: 'pick', x: find.x, y: find.y });
     expect(await finder.c.next('got')).toEqual({ t: 'got', items: [{ item: 'far-woods-map', count: 1 }], from: 'tool' });
-    expect(await finder.c.next('tools')).toEqual({ t: 'tools', tools: [...STARTER_TOOLS, 'far-woods-map'] });
+    expect(await finder.c.next('tools')).toEqual({ t: 'tools', tools: [...STARTER_TOOLS, 'far-woods-map'], charts: {} });
     expect(await probe.c.next('findGone')).toEqual({ t: 'findGone', id: find.id });
     await waitFor(() => ctx.storage.get(finder.id)?.tools?.includes('far-woods-map') === true, 'the map to be saved');
     expect(ctx.storage.get(finder.id)!.bag).toEqual([]);

@@ -340,6 +340,8 @@ export interface FindView {
   item: string;
   x: number;
   y: number;
+  /** A piece of a torn map (`item` is the map): the quarter of it this piece covers (items.ts, quarterOf). */
+  piece?: number;
 }
 
 /**
@@ -859,6 +861,8 @@ export type ServerMsg =
       shop: ShopView;
       /** Your tools (item ids, items.ts, toolsOf), in the order you got them: kept for good, apart from the bag. */
       tools: string[];
+      /** Of the torn maps among them, the pieces you found (quarters, items.ts): a map not listed here is whole. */
+      charts?: Record<string, number[]>;
       /** The version of content/items.json the server runs; a client with another version reloads. */
       items: number;
       /** Where you are in the story. */
@@ -915,8 +919,8 @@ export type ServerMsg =
   | { t: 'energy'; energy: EnergyView; body: BodyView }
   /** Your bag, whole, after any change. A live item's slot has its `age` as of now. */
   | { t: 'bag'; bag: BagSlot[] }
-  /** Your tools, whole (item ids, in the order you got them), after you got one. */
-  | { t: 'tools'; tools: string[] }
+  /** Your tools, whole (item ids, in the order you got them), after you got one, or a piece of a torn map (`charts`, as in the welcome). */
+  | { t: 'tools'; tools: string[]; charts?: Record<string, number[]> }
   /** The furniture in the home you are in, whole (item ids), after its owner made one: it stands in its place now. */
   | { t: 'furniture'; furniture: string[] }
   /**
@@ -940,7 +944,7 @@ export type ServerMsg =
    * `double`: the find came up double (the forager's ranks, feats.ts). What a strange object turns
    * out to be comes in `did` instead.
    */
-  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool'; double?: true }
+  | { t: 'got'; items: BagSlot[]; from: 'find' | 'drop' | 'tool' | 'piece'; double?: true }
   /** What a feed, cook, use, discard, craft, mend, upgrade, open or thanks you asked for did (for the text box). */
   | { t: 'did'; did: Did }
   /**

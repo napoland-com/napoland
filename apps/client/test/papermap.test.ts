@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TileMap, type MapData } from '@napoland/shared';
-import { areaOf, mapFor, sketchOf } from '../src/papermap';
+import { areaOf, mapFor, mask, sketchOf } from '../src/papermap';
 
 /** Forest around a road going north from the way home, a pond, a cabin with its door, and two poles. */
 function woods(): MapData {
@@ -194,5 +194,31 @@ describe('which map the map button opens', () => {
     expect(mapFor('home', tools, chartOf, find)).toBe('town-map');
     expect(mapFor('far', tools, chartOf, find)).toBeUndefined();
     expect(mapFor('woods', ['town-map'], chartOf, find)).toBeUndefined();
+  });
+});
+
+describe('a torn map, drawn by the pieces found', () => {
+  const s = sketchOf(new TileMap(woods()), id => names[id]);
+
+  it('keeps what lies in the quarters found, names included, and nothing of the rest', () => {
+    // The woods are 10 by 10: the road down the middle-left (x 4) runs through the west quarters, the pond and its name lie north-east.
+    const nw = mask(s, [0]);
+    expect(nw.roads.length).toBe(4);
+    for (const [x, y] of nw.roads) expect([x < 5, y < 5]).toEqual([true, true]);
+    expect(nw.water).toEqual([]);
+    expect(nw.houses).toHaveLength(1);
+    expect(nw.labels.map(l => l.text)).toEqual(['The hut']);
+    const ne = mask(s, [1]);
+    expect(ne.water).toHaveLength(8);
+    expect(ne.roads).toEqual([]);
+    expect(ne.labels.map(l => l.text)).toEqual(['pond']);
+    // The power line runs from y 2 to y 7: its wire needs both poles, one in each half.
+    expect(ne.poles).toHaveLength(1);
+    expect(ne.wires).toEqual([]);
+    expect(mask(s, [1, 3]).wires).toHaveLength(1);
+  });
+
+  it('is the whole sketch with every piece found', () => {
+    expect(mask(s, [3, 1, 0, 2])).toBe(s);
   });
 });

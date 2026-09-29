@@ -351,7 +351,8 @@ function openMap() {
   const map = data && maps.get(data);
   if (!map) return game.noMap();
   hud.toggleBag(false);
-  hud.showPaper(paperMap(map, id => maps.find(id)?.name, game.town.done.join()));
+  // A torn map shows the pieces found so far; one not in the charts is whole.
+  hud.showPaper(paperMap(map, id => maps.find(id)?.name, game.town.done.join(), game.charts[item!]));
 }
 
 const keys = new Keys({
