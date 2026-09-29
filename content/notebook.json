@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "pages": [
     {
       "id": "pop-23",
@@ -445,6 +445,62 @@
       "title": "Rime quartz",
       "when": { "find": "rime-quartz" },
       "text": "Clear quartz off the crest's stones, furred with rime that will not melt by any fire. It hums in the hand. Hard enough to put a point on steel."
+    },
+    {
+      "id": "the-marsh",
+      "area": "marsh",
+      "title": "The Marsh",
+      "when": { "read": { "map": "marsh", "x": 8, "y": 18 } },
+      "text": "Off the loggers' corduroy road the ground gives way to bog. The town cut its peat out here, before. The mist never lifts, and I tire three times as fast as in the Near Woods. The lights on the water are not lanterns."
+    },
+    {
+      "id": "the-cutters-hut",
+      "area": "marsh",
+      "title": "The cutters' hut",
+      "when": { "read": { "map": "marsh-cutters-hut", "x": 1, "y": 3 } },
+      "text": "The peat cutters slept here in May, a line a day in their book. The last May the lights were on the water again, and they left the peat stacked to dry. Nobody came back for it in August."
+    },
+    {
+      "id": "channel-boards",
+      "area": "marsh",
+      "title": "Channel boards",
+      "when": { "read": { "map": "marsh", "x": 17, "y": 22 } },
+      "text": "The boards across the channels rot, and whoever passes mends them, a few sheets of scrap at a time. While they stand the way is short. When they fall in, it is the long way round again, for everyone."
+    },
+    {
+      "id": "the-channels-head",
+      "area": "marsh",
+      "title": "The channel's head",
+      "when": { "read": { "map": "marsh", "x": 22, "y": 8 } },
+      "text": "The long way round the first channel, by its head. Slow, but it is always there, whatever the boards are doing."
+    },
+    {
+      "id": "the-peat-cuttings",
+      "area": "marsh",
+      "title": "The peat cuttings",
+      "when": { "read": { "map": "marsh", "x": 28, "y": 29 } },
+      "text": "Long dark banks where the town cut peat, the spades still stuck in them. A brick of it burns all night: a whole shelter fire kept going by one armful."
+    },
+    {
+      "id": "the-channels-foot",
+      "area": "marsh",
+      "title": "The channel's foot",
+      "when": { "read": { "map": "marsh", "x": 36, "y": 31 } },
+      "text": "The long way round the second channel, by its foot. Past it the reeds get thick, and at night something lies in them."
+    },
+    {
+      "id": "the-black-pool",
+      "area": "marsh",
+      "title": "The black pool",
+      "when": { "read": { "map": "marsh", "x": 43, "y": 24 } },
+      "text": "Dark water in a ring of reeds, and stones in the reeds that hum back like the ring in the Near Woods. The lights gather over it. Nobody fishes it, and nobody should wait for the lights to come to them."
+    },
+    {
+      "id": "peat",
+      "area": "marsh",
+      "title": "Peat",
+      "when": { "find": "peat" },
+      "text": "Dark, crumbling, smelling of smoke before it is lit. It burns low and long, far longer than resin. Worth carrying to whichever fire out there nobody keeps."
     },
     {
       "id": "glowcaps",

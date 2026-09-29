@@ -28,7 +28,7 @@ import { Fires, GLOW_Y, Smoke, campfireModel, coldHearthModel, flicker, hearthMo
 import {
   CROUCH_DROP, CROUCH_LEAN, GRADES, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial,
 } from './grass';
-import { Creatures, Echoes, FAR_FIGURE_H, FarFigure, Flares, Flashes, Marks, Passer, Prints, SnowPrints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
+import { Creatures, Echoes, FAR_FIGURE_H, FarFigure, Flares, Flashes, MarshLights, Marks, Passer, Prints, SnowPrints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
@@ -250,6 +250,8 @@ export const DEEP_FERNS: readonly [number, number] = [1.3, 1.5];
 export const SNAG_TINT = new THREE.Color(0.3, 0.26, 0.24);
 /** Snow on the Ridge's firs (MapData.forest 'snow'): the same firs, their boughs whitened. */
 export const FROST_TINT = new THREE.Color(1.5, 1.6, 1.7);
+/** The Marsh's trees (MapData.forest 'marsh'): drowned, standing bare and grey in the water, shaped like the Burn's snags (their green taken out). */
+export const DROWNED_TINT = new THREE.Color(0.85, 0.45, 0.8);
 export const SNAG_SPREAD = 0.5;
 export const SNAG_HEIGHT = 1.12;
 
@@ -536,6 +538,14 @@ export class WorldView {
     if (this.outdoors) this.buildEffects();
     this.scene.add(this.liveGlows.root, this.afterglows.root, this.lanterns.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root, this.snowPrints.root);
     this.snowPrints.root.visible = map.data.forest === 'snow';
+    // Lights on the Marsh's water, drifting where they drift for everyone.
+    if (map.data.forest === 'marsh') {
+      const water: Array<[number, number]> = [];
+      for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) if (map.kind(x, y) === 'water') water.push([x, y]);
+      const lights = new MarshLights(water);
+      this.scene.add(lights.root);
+      this.animate.push(t => lights.update(t));
+    }
     if (map.data.kind === 'wilds' && map.data.watchers) this.scene.add((this.farFigure = new FarFigure()).root);
     if (map.data.kind === 'wilds') this.scene.add((this.passer = new Passer()).root);
     this.puffs.push(this.flares.sparks);
@@ -656,7 +666,7 @@ export class WorldView {
       }
     }
     // Past a burnt forest's edge the ground is ash too, and past the Ridge's snow, so no line of green shows where the map ends.
-    const W = map.width, H = map.height, outerColor = map.data.forest === 'burnt' ? '#2b2826' : map.data.forest === 'snow' ? '#8d979c' : '#1b271d';
+    const W = map.width, H = map.height, outerColor = map.data.forest === 'burnt' ? '#2b2826' : map.data.forest === 'snow' ? '#8d979c' : map.data.forest === 'marsh' ? '#23261c' : '#1b271d';
     // Where an exit leaves the map, its road or trail goes on outside and fades into the dark, so you can see the way on.
     const outer = new THREE.Color(outerColor);
     for (const [key, o] of this.openings) {
@@ -729,7 +739,7 @@ export class WorldView {
   private buildNature() {
     const { map } = this, W = map.width, H = map.height;
     // Old growth (the Far Woods): taller firs with cedars among them, and deeper ferns.
-    const old = map.data.forest === 'old', burnt = map.data.forest === 'burnt';
+    const old = map.data.forest === 'old', burnt = map.data.forest === 'burnt', drowned = map.data.forest === 'marsh';
     // `shade`: it casts a blob shadow. Deep in old growth nobody sees the ground under the crowns, so none
     // there: a block of only such trees costs one draw call less. Nor under the snowy firs of the Ridge, packed
     // as tight on a narrow slope.
@@ -763,7 +773,7 @@ export class WorldView {
       o.position.set(t.x, t.z, t.y);
       o.rotation.y = t.v * 6;
       if (t.cedar) o.scale.set(t.s * CEDAR_SPREAD, t.s * CEDAR_HEIGHT, t.s * CEDAR_SPREAD);
-      else if (burnt) o.scale.set(t.s * SNAG_SPREAD, t.s * SNAG_HEIGHT, t.s * SNAG_SPREAD);
+      else if (burnt || drowned) o.scale.set(t.s * SNAG_SPREAD, t.s * SNAG_HEIGHT, t.s * SNAG_SPREAD);
       else o.scale.setScalar(t.s);
     };
     const lookouts = this.objects('lookout').map(o => ({ x: o.x + 1, z: o.y + LOOKOUT_STAND_Z, far: [] as Tree[] }));
@@ -771,7 +781,7 @@ export class WorldView {
       // In an order of their own, so any first part of a block is trees from all over it: the far look draws only the first half.
       block.sort((a, b) => hash2(Math.floor(a.x * 7), Math.floor(a.y * 11)) - hash2(Math.floor(b.x * 7), Math.floor(b.y * 11)));
       const lod = this.lod(block[0]!.x, block[0]!.y);
-      lod.body = this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); if (snow) c.multiply(FROST_TINT); }, bodyMat, true);
+      lod.body = this.instanced(body, block, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); if (snow) c.multiply(FROST_TINT); if (drowned) c.multiply(DROWNED_TINT); }, bodyMat, true);
       lod.trees = block.length;
       lod.extras.push(this.instanced(shell, block, place, OUTLINE_INSTANCED));
       // Outside the map the forest is only a backdrop, too dense to see the ground under it: no shadows, one draw call less a block.
@@ -791,7 +801,7 @@ export class WorldView {
         list.push(t);
       }
       const meshes = [...pieces.values()].map(list => {
-        const m = this.instanced(body, list, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); if (snow) c.multiply(FROST_TINT); }, bodyMat, true);
+        const m = this.instanced(body, list, (t, o, c) => { place(t, o); c.setScalar(treeShade(t.v)); if (t.cedar) c.multiply(CEDAR_TINT); if (burnt) c.multiply(SNAG_TINT); if (snow) c.multiply(FROST_TINT); if (drowned) c.multiply(DROWNED_TINT); }, bodyMat, true);
         m.visible = false;
         return m;
       });

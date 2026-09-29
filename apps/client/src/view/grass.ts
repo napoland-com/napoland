@@ -77,6 +77,10 @@ const SNOW = new THREE.Color(1.8, 1.86, 1.94), TRODDEN = color('#c3cbd0');
 const SNOWED: Partial<Record<TileKind, number>> = { grass: 0.88, tallgrass: 0.3, forest: 0.8, mud: 0.7, lot: 0.12 };
 const SNOWED_PLANTS = 0.35;
 
+/** The Marsh's bog (MapData.forest 'marsh'): its grass sodden olive, its mud black peat. */
+const BOG = color('#56613d'), PEAT = color('#2f2a20');
+const BOGGED: Partial<Record<TileKind, number>> = { grass: 0.45, ferns: 0.25, tallgrass: 0.2, forest: 0.4, mud: 0.55 };
+
 /**
  * What a season does to the colors: toward `tint`, the open ground that far, the plants (tufts, tall grass,
  * ferns) that far, and roads and lots only in a frost. Kept gentle: the same place, another time of year.
@@ -124,6 +128,8 @@ export class Ground {
   private readonly ash: boolean;
   /** Snow: its ground under snow, its trails trodden grey (and only a stalk of grass here and there through it). */
   readonly snow: boolean;
+  /** A marsh: its ground sodden, its mud peat. */
+  private readonly bog: boolean;
 
   constructor(map: TileMap, season?: Season) {
     const W = (this.W = map.width), H = (this.H = map.height);
@@ -131,6 +137,7 @@ export class Ground {
     this.grade = season && GRADES[season];
     this.ash = map.data.forest === 'burnt';
     this.snow = map.data.forest === 'snow';
+    this.bog = map.data.forest === 'marsh';
     // What shades the ground: the forest (past the map's edge too, where the woods go on) and the lone
     // trees; what makes it damp: water, and a little the mud of the banks.
     const shadeOf = new Float32Array(W * H), wetOf = new Float32Array(W * H);
@@ -233,6 +240,7 @@ export class Ground {
     if (k) out.lerp(this.grade!.tint, k);
     if (this.ash) out.lerp(kind === 'lot' ? GLASSED : ASH, kind === 'lot' ? 0.6 : ASHEN[kind] ?? 0);
     if (this.snow) out.lerp(kind === 'mud' ? TRODDEN : SNOW, SNOWED[kind] ?? 0);
+    if (this.bog) out.lerp(kind === 'mud' ? PEAT : BOG, BOGGED[kind] ?? 0);
     return out.multiplyScalar(light);
   }
 
