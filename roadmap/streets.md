@@ -13,4 +13,6 @@ Built: Residents' Lane, thirty cabins, a copy of it for each street, reached by 
 
 Why: a small neighborhood makes a big world feel like home, and makes it easy to find people to go out with.
 
+Replaced by [home-lots](home-lots.md): every home stands in a garden of its own now, reached by NAPO's teleport, and friends visit from the friends list.
+
 More: [World structure](../docs/DESIGN.md#world-structure).

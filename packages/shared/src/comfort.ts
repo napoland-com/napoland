@@ -71,7 +71,7 @@ export function dries(furniture: readonly string[] | undefined, items: Map<strin
 
 /**
  * What a trophy shelf shows: the charms and anomalous gear a stash holds, each once, in the order the
- * chest lists them (item ids). The owner's page draws it from their own stash; a neighbor who walks in
+ * chest lists them (item ids). The owner's page draws it from their own stash; a friend who visits
  * hears it from the server (visits), so both see the same shelf.
  */
 export function trophies(stash: ReadonlyArray<{ item: string }>, get: (id: string) => ItemDef | undefined): string[] {

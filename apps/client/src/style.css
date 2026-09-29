@@ -59,6 +59,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .energy[data-level="low"], .energy[data-level="critical"] { color: #ff7a5c; }
 .energy[data-level="low"] .fill, .energy[data-level="critical"] .fill { background: linear-gradient(#ff8d70, #cf3326); }
 .energy[data-refill] .fill::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: max(6px, calc(var(--u) * .9)); border-radius: inherit; background: linear-gradient(90deg, rgba(255, 248, 222, 0), #fff8de); }
+/* The way home (Game.wayHome): a notch on the bar at about what walking home takes; red once it is time to turn back. */
+.energy .home { position: absolute; top: -1px; bottom: -1px; width: 2px; margin-left: -1px; background: #f4ecd6; box-shadow: 0 0 0 1px #0c0f15; }
+.energy .home[data-turn] { background: #ff5a3c; width: 3px; margin-left: -1.5px; }
 /* Your level, next to your name. */
 .status .name .lvl { margin-left: .45em; padding: .05em .4em; border-radius: 6px; font-size: .78em; font-weight: 600; color: #1a0f04; background: #ffcf5a; vertical-align: .08em; }
 .status .name .lvl[hidden] { display: none; }
@@ -152,6 +155,9 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .hud .ab button { position: absolute; width: var(--ab); height: var(--ab); background: #9c2b4e; border-color: #f3d6de; font-family: var(--font-ui); font-weight: 700; font-size: calc(var(--ab) * .42); color: #fff4f7; box-shadow: inset 0 -4px 0 #6e1a36, 0 0 0 2px #0c0f15; }
 .hud .ab .a { right: 0; top: 0; }
 .hud .ab .b { left: 0; bottom: 0; }
+/* How full the bag is, on B, once it is nearly full (hud.ts, bagCount): amber with one slot left, red when full. */
+.hud .ab .b .bagcount { position: absolute; top: -.35em; right: -.55em; padding: .1em .4em; border-radius: 99px; font-size: .42em; line-height: 1.2; font-weight: 700; font-style: normal; color: #1c1408; background: #ffcf5a; box-shadow: 0 0 0 2px #0c0f15; pointer-events: none; }
+.hud .ab .b .bagcount[data-full] { color: #fff4ec; background: #d8432c; }
 .hud .ab button:active, .hud .ab .b[data-held] { transform: translateY(2px); box-shadow: inset 0 -1px 0 #6e1a36, 0 0 0 2px #0c0f15; }
 /* B held: the fan of calls (calls.ts). It opens up and to the left of B, from B's center, clear of A up
    and to its right and of the stick; its notes sit FAN_RADIUS of B's diameters out, at the angles FAN
@@ -191,7 +197,7 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .tag.pile::before { content: ""; display: inline-block; width: .9em; height: .9em; margin-right: .3em; vertical-align: -.12em; background: currentColor;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat; }
-/* A cabin's name plate on your street: a small painted board, square-cornered, so it is not taken for a person. */
+/* The name plate by the door of the house in a garden: a small painted board, square-cornered, so it is not taken for a person. */
 .tag.plate { border-radius: .2em; background: rgba(74, 52, 32, .9); color: #f4e2bf; font-size: calc(var(--u) * .82); font-weight: 700; letter-spacing: .02em; box-shadow: 0 0 0 1px rgba(226, 190, 130, .4); }
 .float { position: absolute; left: 0; top: 0; font-weight: 700; font-size: calc(var(--u) * 1.4); white-space: nowrap; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; will-change: transform, opacity; }
 /* The note rising over a caller's head, in their jacket color, edged dark to read over any ground. */

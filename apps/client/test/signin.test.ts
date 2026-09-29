@@ -80,7 +80,7 @@ const welcome = (more: Partial<Welcome> = {}): Welcome => ({
   fires: [], marks: [], creatures: [], flares: [], flashes: [], surge: null, storm: null, body: DRY, stone: ASLEEP, stats: {}, progress: START, merits: { spent: 0, owned: [] }, tools: [],
   shop: { version: 0, owned: [] },
   conditions: { today: [], week: null, next: null }, season: { season: 'spring', left: 86_400 }, longNight: { on: false, bonus: true, out: false },
-  story: { version: 0, chapter: '' }, thanked: [], notebook: { version: 0, pages: [], blanks: [] }, notes: [], keepsakes: [], firsts: [], town: { done: [], given: {} }, clock: 0, ...more,
+  story: { version: 0, chapter: '' }, thanked: [], notebook: { version: 0, pages: [], blanks: [] }, notes: [], keepsakes: [], firsts: [], town: { done: [], given: {} }, clock: 0, house: 1, ...more,
 });
 
 /** Supabase with the email code alone, as before any provider is set up. */

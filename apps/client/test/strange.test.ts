@@ -32,8 +32,8 @@ describe('what the new things say', () => {
   it('asks before a glowcap is crushed what a pale moth gives back, and says it after', () => {
     const cap = items.get('glowcap'), moth = items.get('pale-moth');
     expect(useQuestion(cap, { value: 50, max: 100, rate: 0 }, 86_400, { charm: moth, energy: 1 }))
-      .toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day. Your pale moth gives you 1 energy.');
-    expect(useQuestion(cap, { value: 50, max: 100, rate: 0 })).toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day.');
+      .toBe('Crush a glowcap to paint an arrow at your feet, pointing the way you face? Everyone sees it for a day. Your pale moth gives you 1 energy.');
+    expect(useQuestion(cap, { value: 50, max: 100, rate: 0 })).toBe('Crush a glowcap to paint an arrow at your feet, pointing the way you face? Everyone sees it for a day.');
     expect(didText({ kind: 'used', item: 'glowcap', mark: { dir: 'up', left: 86_400 }, lift: { item: 'pale-moth', energy: 1 } }, items))
       .toBe('You crush the glowcap. An arrow glows where you stand, pointing north. Everyone sees it for a day. The pale moth in your bag stirs: +1 energy.');
   });
@@ -46,8 +46,8 @@ describe('what the new things say', () => {
       g.use(0);
       return g.question?.text;
     };
-    expect(asked(50)).toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day. Your pale moth gives you 1 energy.');
-    expect(asked(100)).toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day.');
+    expect(asked(50)).toBe('Crush a glowcap to paint an arrow at your feet, pointing the way you face? Everyone sees it for a day. Your pale moth gives you 1 energy.');
+    expect(asked(100)).toBe('Crush a glowcap to paint an arrow at your feet, pointing the way you face? Everyone sees it for a day.');
   });
 });
 

@@ -277,9 +277,9 @@ describe('the Far Woods, what they give', () => {
     expect(rule.map).toBe('far-woods-trapper-cabin');
     expect(rule.respawn[1]).toBeLessThanOrEqual(180);
     // Every other area there is outdoors has a map everyone starts with; this one and the Burn, the Ridge and
-    // the Marsh beyond it are found. (A street is no area of its own: it is on the map of the town its end leads back to, areaOf.)
+    // the Marsh beyond it are found. (A home's garden is on no map: nothing leads there but NAPO's teleport.)
     const charted = new Set([...STARTER_TOOLS].map(t => byId.get(t)!.chart));
-    const outdoors = [...maps.values()].filter(m => m.data.kind !== 'inside' && !m.data.street).map(m => m.data.id);
+    const outdoors = [...maps.values()].filter(m => m.data.kind !== 'inside' && !m.data.private).map(m => m.data.id);
     expect(outdoors.filter(id => !charted.has(id)).sort()).toEqual(['burn', 'far-woods', 'marsh', 'ridge']);
   });
 });

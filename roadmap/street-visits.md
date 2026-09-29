@@ -15,6 +15,8 @@ A NAPO teleport stands in every cabin: A at it and you are in town, on NAPO's te
 
 Why: every other way in the world is one you walk (one fixed world you learn), and the way home should be one too. A street you can visit makes your neighbors' cabins something to see and yours something to show, so making it cozy is worth more than its comfort, and a lit window becomes a place to drop in on (together you go farther). The teleport keeps the start of a trip short, now that home is a walk from town.
 
+Replaced in part by [home-lots](home-lots.md): the lane and its road are gone, and friends visit from the friends list instead of through a door; the dark house that was Home, the trophy shelf shown to visitors and NAPO's teleport, now the only way home, stay.
+
 Built: the road off the west edge of Stonebrook onto the lane, and back; the house that was Home dark, a note inside saying where everyone went; a neighbor's door walked into, their furniture and trophy shelf shown (as they left them, while they are away), their chest and workbench theirs; the setting "Let my neighbors come into my cabin", with only friends coming in when it or the door's is off, and never someone blocked; NAPO's teleport in every cabin, humming, and its twin by the notice board.
 
 More: [World structure](../docs/DESIGN.md#world-structure).

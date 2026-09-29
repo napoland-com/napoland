@@ -1,7 +1,7 @@
 {
   "id": "stonebrook-old-home",
   "name": "The old home",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 7,
@@ -30,6 +30,6 @@
     {"kind":"hearth","x":3,"y":1},
     {"kind":"boxes","x":1,"y":1},
     {"kind":"boxes","x":5,"y":1},
-    {"kind":"paper","x":1,"y":3,"look":"note","name":"A note on the table","text":["In Mira's round hand: \"We carried everything down to Residents' Lane. Everyone who stayed has a cabin there now, and so do you.\"","\"Out of the door, then west along the main street, out past the end of town. Your fire is lit.\""]}
+    {"kind":"paper","x":1,"y":3,"look":"note","name":"A note on the table","text":["In Mira's round hand: \"We carried your things out to a place of your own, in a clearing past the woods: an old garage with a garden round it. Everyone who stayed has one.\"","\"NAPO's teleport by the notice board takes you there, and the one in your garage brings you back. Your fire is lit.\""]}
   ]
 }

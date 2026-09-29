@@ -11,11 +11,11 @@
  * (detailView), hud.ts draws it and sends what its buttons do.
  */
 import {
-  CACHE_SIZE, RESIST_MAX, WEAR_FADES, bagSlotsOf, cacheTakes, formatPrice, mayWear, meritLookOf, meritsLeft, mendCost, nextUpgrade, outfitOf, pieceFactor, slotKg, priceOf, shopLookOf, upgradable,
-  upgradeFactor, wearSeconds, whyNotBuy, whyNotCheckout, whyNotEat, xpFor, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type LookKind, type Piece, type PieceAt, type Slot,
+  CACHE_SIZE, RESIST_MAX, WEAR_FADES, bagSlotsOf, cacheTakes, formatPrice, houseName, mayWear, meritLookOf, meritsLeft, mendCost, nextUpgrade, outfitOf, pieceFactor, slotKg, priceOf, shopLookOf, upgradable,
+  nextHouse, upgradeFactor, wearSeconds, whyNotBuy, whyNotCheckout, whyNotEat, xpFor, type BagSlot, type CacheItemView, type Element, type Gear, type ItemDef, type LookKind, type Piece, type PieceAt, type Slot,
   type Tier, type Worn,
 } from '@napoland/shared';
-import { NO_BADGE_ICON, NO_OUTFIT_ICON, NO_PATTERN_ICON, iconFor, outfitIcon } from './icons';
+import { NO_BADGE_ICON, NO_OUTFIT_ICON, NO_PATTERN_ICON, houseIcon, iconFor, outfitIcon } from './icons';
 import { ELEMENT_WORDS, bundleText, conditionText, countOf, factsOf, kgText, oddsText, pieceName, slotName, thingsOf, useLabel, type Items } from './items';
 import { CRATE_FULL, CRATE_NO_GEAR, KEEPSAKE_STAYS, LEFT_ONE, TOOK_ONE, TWO_MEALS, ateAlready, bundleNotYours, holdsText, leftBy, merits, noMerit, price } from './said';
 import { SHOP_WHERE, YOURS, shopIcon } from './shop';
@@ -70,6 +70,8 @@ export type DetailRef =
   | { from: 'worn'; slot: Slot }
   /** A recipe at the workbench, the mending of what you wear in a slot, and upgrading a piece you wear or keep in the stash. */
   | { from: 'recipe'; id: string }
+  /** Building your home up at the workbench (house.ts): its next level, or how far it is built. */
+  | { from: 'home' }
   | { from: 'mend'; slot: Slot }
   | { from: 'upgrade'; of: PieceAt }
   /** An outfit in the wardrobe (outfits.ts), by id, or NO_OUTFIT's. */
@@ -88,6 +90,7 @@ export function refKey(r: DetailRef): string {
     case 'stash': return r.n === undefined ? `stash:${r.item}` : `stash:${r.item}:${r.n}`;
     case 'worn': return `worn:${r.slot}`;
     case 'recipe': return `recipe:${r.id}`;
+    case 'home': return 'home';
     case 'mend': return `mend:${r.slot}`;
     case 'upgrade': return r.of.from === 'worn' ? `upgrade:worn:${r.of.slot}` : `upgrade:stash:${r.of.item}:${r.of.n}`;
     case 'outfit': return `outfit:${r.id}`;
@@ -112,6 +115,7 @@ export type DetailAct =
   | { kind: 'toss'; slot: number }
   /** At the workbench. */
   | { kind: 'make'; recipe: string }
+  | { kind: 'build' }
   | { kind: 'mend'; slot: Slot }
   | { kind: 'upgrade'; of: PieceAt }
   | { kind: 'open'; item: string }
@@ -182,8 +186,10 @@ export interface DetailState {
   worn: Worn;
   /** The tools you own: a recipe for one of them cannot be made again. None known: none. */
   tools?: readonly string[];
-  /** The furniture standing in your cabin (comfort.ts): each place has one, so it is not made again. None known: none. */
+  /** The furniture standing in your home (comfort.ts): each place has one, so it is not made again. None known: none. */
   furniture?: readonly string[];
+  /** How far your house is built (house.ts): its card at the workbench says what comes next. None known: the first level. */
+  house?: number;
   /**
    * Where the card opens: at home (in the chest or at the workbench), where gear goes on from and off
    * into the stash, in the bag, anywhere, where it goes on from and off into the bag, or at a crate, where
@@ -388,6 +394,8 @@ export function detailView(ref: DetailRef, s: DetailState): DetailView | null {
       short(card, needs);
       return { ...card, act: { label: count > 1 ? `Make ${count}` : 'Make', enabled: needs.every(n => n.have >= n.need), does: { kind: 'make', recipe: recipe.id } } };
     }
+    case 'home':
+      return homeCard(s);
     case 'mend': {
       const id = s.gear[ref.slot], piece = s.worn[ref.slot];
       const def = id ? items.get(id) : undefined, cost = mendCost(def, items.mend);
@@ -456,6 +464,25 @@ function shopCard(id: string, w: WardrobeState): DetailView | null {
 }
 
 /**
+ * Building your home up (house.ts): what the next level is, in its own words, what it takes against the
+ * stash, and its one button, which asks first; built as far as it goes, what it is now, and nothing to press.
+ */
+function homeCard(s: DetailState): DetailView {
+  const levels = s.items.house, house = s.house ?? 1, next = nextHouse(house, levels), now = houseName(house, levels);
+  if (!next) {
+    return {
+      icon: houseIcon(house), name: now, text: levels[house - 1]?.text ?? '', stats: [], facts: ['Your home'], notes: [{ text: 'Your home is built as far as it goes.', tone: 'plain' }],
+      act: { label: 'Built', enabled: false, does: { kind: 'build' } },
+    };
+  }
+  const needs = needViews(next.needs, s);
+  const card: DetailView = { icon: houseIcon(next.level), name: next.name, text: next.text, stats: [], facts: [`Your home is a ${now.toLowerCase()} now`], costs: { title: 'It takes', needs }, notes: [] };
+  card.notes.push({ text: 'Built, your home stands so at once, outside and in.', tone: 'plain' });
+  short(card, needs);
+  return { ...card, act: { label: 'Build', enabled: needs.every(n => n.have >= n.need), does: { kind: 'build' } } };
+}
+
+/**
  * What the workbench makes for your cabin (comfort.ts): what it is and the comfort it adds, what it takes,
  * and that it goes straight into its place; once it stands there, its button is greyed and says so (pressed,
  * the game says why in the text box, as for a tool you have).
@@ -464,10 +491,10 @@ function furnitureCard(recipe: string, def: ItemDef, needs: NeedView[], s: Detai
   const card = itemCard(def, 1, s.items);
   card.costs = { title: 'It takes', needs };
   if (s.furniture?.includes(def.id)) {
-    card.notes.push({ text: 'It stands in its place in your cabin.', tone: 'plain' });
+    card.notes.push({ text: 'It stands in its place in your home.', tone: 'plain' });
     return { ...card, act: { label: 'In its place', enabled: false, does: { kind: 'make', recipe } } };
   }
-  card.notes.push({ text: 'Made, it goes straight into its place in your cabin.', tone: 'plain' });
+  card.notes.push({ text: 'Made, it goes straight into its place in your home.', tone: 'plain' });
   short(card, needs);
   return { ...card, act: { label: 'Make', enabled: needs.every(n => n.have >= n.need), does: { kind: 'make', recipe } } };
 }

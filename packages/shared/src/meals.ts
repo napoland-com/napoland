@@ -98,3 +98,28 @@ export function payBag(bag: readonly BagSlot[], needs: readonly BagSlot[]): BagS
   }
   return out;
 }
+
+/**
+ * The kitchen at home (house.ts): what a bag and a stash together lack for a recipe, need by need (none: it
+ * can be cooked there now). The bag pays first, then the stash, the pantry under the kitchen.
+ */
+export function pantryShort(recipe: Recipe, bag: readonly BagSlot[], stash: Readonly<Record<string, number>>): BagSlot[] {
+  return recipe.needs.flatMap(n => {
+    const short = n.count - held(bag, n.item) - (stash[n.item] ?? 0);
+    return short > 0 ? [{ item: n.item, count: short }] : [];
+  });
+}
+
+/**
+ * How the kitchen pays a recipe: all of it the bag holds from the bag, the rest from the stash (they hold it:
+ * pantryShort is empty). The bag after, and what is left for the stash to pay, need by need.
+ */
+export function payPantry(bag: readonly BagSlot[], needs: readonly BagSlot[]): { bag: BagSlot[]; fromBag: BagSlot[]; fromChest: BagSlot[] } {
+  const fromBag: BagSlot[] = [], fromChest: BagSlot[] = [];
+  for (const n of needs) {
+    const carried = Math.min(n.count, held(bag, n.item));
+    if (carried) fromBag.push({ item: n.item, count: carried });
+    if (n.count > carried) fromChest.push({ item: n.item, count: n.count - carried });
+  }
+  return { bag: payBag(bag, fromBag), fromBag, fromChest };
+}

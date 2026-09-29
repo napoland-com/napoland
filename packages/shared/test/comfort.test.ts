@@ -81,7 +81,7 @@ describe('checking the places and the furniture', () => {
   it('keeps the places for furniture to a home of one\'s own, one of each', () => {
     expect(validateMap(home()).filter(p => p.level === 'error')).toEqual([]);
     const notHome = { ...home(), private: undefined, wake: undefined, objects: home().objects.filter(o => o.kind !== 'chest') };
-    expect(validateMap(notHome).map(p => p.message)).toContain('comfort at 1,1: a place for furniture is only in a home of one\'s own (private)');
+    expect(validateMap(notHome).map(p => p.message)).toContain('comfort at 1,1: a place for furniture is only in a home of one\'s own (a private room)');
     const twice = home({ objects: [...home().objects, { kind: 'comfort', x: 6, y: 4, what: 'stove' }] });
     expect(validateMap(twice).map(p => p.message)).toContain('comfort at 1,1: a home has one place for its stove');
     const odd = home({ objects: [...home().objects, { kind: 'comfort', x: 6, y: 4, what: 'piano' as never }] });

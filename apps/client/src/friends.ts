@@ -6,6 +6,9 @@
 import type { PersonView, ServerMsg } from '@napoland/shared';
 import type { TradeReach } from './trade';
 
+/** Whether a friend's home can be visited from where you are (Game.visitWhyNot): yes, or why not. */
+export type VisitReach = 'ok' | 'wilds' | 'closed' | 'here';
+
 export type FriendsMsg = Extract<ServerMsg, { t: 'friends' }>;
 
 /** One line of a conversation. */
@@ -20,9 +23,7 @@ export type Standing = 'friend' | 'asked' | 'asking' | 'blocked' | 'none';
 export interface FriendsView {
   requestsOff: boolean;
   tradesOff: boolean;
-  /** You keep your name off your door and your window dark (guests too: it stands beside the others, and outside the list). */
-  doorOff: boolean;
-  /** Only friends may walk into your cabin (guests too, below the door's). */
+  /** Nobody may visit your home (below the list, beside friend and trade requests). */
   visitsOff: boolean;
   incoming: PersonView[];
   friends: Array<PersonView & { where: string; unread: boolean }>;
@@ -31,8 +32,9 @@ export interface FriendsView {
   /**
    * Someone's card: open from the list or from their name tag. `guest`: they play as a guest, so no friends yet
    * (blocking and reporting still work). `trade`: a friend's, whether they are near enough to trade with.
+   * `visit`: a friend's, whether their home can be visited from where you are.
    */
-  person: (PersonView & { where: string | null; standing: Standing; lines: TalkLine[]; guest?: true; trade?: TradeReach }) | null;
+  person: (PersonView & { where: string | null; standing: Standing; lines: TalkLine[]; guest?: true; trade?: TradeReach; visit?: VisitReach }) | null;
 }
 
 /** "The Near Woods", "offline": where a friend is, by our copy of the map's name. */
@@ -53,7 +55,8 @@ export function standingOf(f: FriendsMsg | null, id: string): Standing {
 export function friendsView(
   f: FriendsMsg | null,
   s: {
-    person: PersonView | null; talks: ReadonlyMap<string, readonly TalkLine[]>; unread: ReadonlySet<string>; guests?: ReadonlySet<string>; tradeReach?(id: string): TradeReach; doorOff?: boolean; visitsOff?: boolean;
+    person: PersonView | null; talks: ReadonlyMap<string, readonly TalkLine[]>; unread: ReadonlySet<string>; guests?: ReadonlySet<string>; tradeReach?(id: string): TradeReach;
+    visitReach?(p: PersonView): VisitReach; visitsOff?: boolean;
   },
   nameOf: (map: string) => string | undefined,
 ): FriendsView {
@@ -67,7 +70,6 @@ export function friendsView(
   return {
     requestsOff: f?.requestsOff ?? false,
     tradesOff: f?.tradesOff ?? false,
-    doorOff: s.doorOff ?? false,
     visitsOff: s.visitsOff ?? false,
     incoming: f?.incoming ?? [],
     friends,
@@ -76,7 +78,7 @@ export function friendsView(
     person: p && {
       id: p.id, name: p.name, where: friend ? whereText(friend.map, nameOf) : null, standing: standingOf(f, p.id), lines: [...(s.talks.get(p.id) ?? [])],
       ...(s.guests?.has(p.id) && { guest: true as const }),
-      ...(friend && { trade: s.tradeReach?.(p.id) ?? 'away' }),
+      ...(friend && { trade: s.tradeReach?.(p.id) ?? 'away', visit: s.visitReach?.(p) ?? 'ok' }),
     },
   };
 }

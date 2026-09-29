@@ -216,7 +216,9 @@ export function attachNet(o: NetOptions): Net {
     where: id => playing.get(id)?.map || undefined,
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
     unlinked: (a, b) => trades.unlinked(a, b),
-    // Friends no more, or a block either way: whoever that keeps out of either one's cabin walks out of it.
+    // A friend's card greys Visit while their home keeps visitors out.
+    closed: id => world.homeClosed(id),
+    // Friends no more, or a block either way: whoever that keeps out of either one's home is sent home.
     changed: (a, b) => {
       const now = clock();
       world.keepOut(a, now);
@@ -249,8 +251,8 @@ export function attachNet(o: NetOptions): Net {
     send: (id, msg) => { const s = playing.get(id); if (s) send(s, msg); },
     flush: () => flush(),
   });
-  // Someone who blocks a player hears no thanks from them either, nor a knock at their door, and keeps them
-  // out of their cabin; a friend's street is one to move to, and a friend's cabin one to walk into.
+  // Someone who blocks a player hears no thanks from them either, and keeps them out of their home; a friend's
+  // home is one to visit, and a friend's copy of a crowded place one to join.
   world.blocks = id => social.blocks(id);
   world.blockedBy = id => social.blockedBy(id);
   world.friends = id => social.friends(id);
@@ -441,12 +443,12 @@ export function attachNet(o: NetOptions): Net {
       case 'give':
         world.give(s.id, msg.x, msg.y, msg.work, msg.item, msg.count ?? 1, now);
         return flush();
-      case 'knock':
-        // Guests too: a knock carries no words.
-        world.knock(s.id, msg.x, msg.y, now);
+      case 'visit':
+        // A guest has no friends to visit (the World finds none): nothing else to check here.
+        world.visit(s.id, msg.id, now);
         return flush();
-      case 'move':
-        world.moveNextTo(s.id, msg.to, now);
+      case 'build':
+        world.build(s.id, msg.x, msg.y, now);
         return flush();
       case 'rescue':
         // Guests too: help carries no words.
@@ -462,13 +464,10 @@ export function attachNet(o: NetOptions): Net {
       case 'slab':
         world.slab(s.id, msg.x, msg.y, now);
         return flush();
-      case 'doorOff':
-        // Guests too: a guest's name is on a door as well.
-        world.doorOff(s.id, msg.off, now);
-        return flush();
       case 'visitsOff':
-        // Guests too: a guest's cabin stands on a street as well.
+        // Guests too, though nobody visits a guest; their friends online see Visit greyed or not on their card.
         world.visitsOff(s.id, msg.off, now);
+        social.homeChanged(s.id);
         return flush();
       case 'teleport':
         world.teleport(s.id, msg.x, msg.y, now);
@@ -762,9 +761,8 @@ export function attachNet(o: NetOptions): Net {
       clock: joined.clock,
       ...(joined.furniture && { furniture: joined.furniture }),
       ...(joined.visit && { visit: joined.visit }),
-      ...(joined.street && { street: joined.street }),
       ...(joined.prints && { prints: joined.prints }),
-      ...(joined.doorOff && { doorOff: true }),
+      house: joined.house,
       ...(joined.visitsOff && { visitsOff: true }),
       ...(joined.firstSteps && { firstSteps: joined.firstSteps }),
       ...(joined.works ? { works: joined.works } : {}),

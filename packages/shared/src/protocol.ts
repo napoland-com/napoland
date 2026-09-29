@@ -41,8 +41,10 @@ import type { WorksView } from './works';
  * 40: the fire lookout: climbing it and feeding its lamp (`climb`, `lamp`, `up`), and in the same release the woods mended
  *     together, the footbridge and the street light by the pond (`bring`, `works`), which an older page could not show or do.
  * 41: the notice board as a panel: `board` carries how the world stands as data (board.ts), where an older page read lines.
+ * 42: homes in gardens of their own instead of a street (no `street`, `lot`, `door`, knocking or moving), visits
+ *     from the friends list (`visit`), and houses built up (`build`, `house`), which an older page could not draw or do.
  */
-export const PROTOCOL_VERSION = 41;
+export const PROTOCOL_VERSION = 42;
 
 /**
  * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
@@ -313,24 +315,17 @@ export const ClientMsg = z.discriminatedUnion('t', [
   /** Leave every bundle you carry in the lost and found box on tile x,y, next to you: each goes back to whoever lost it. */
   z.object({ t: z.literal('handIn'), x: z.number().int(), y: z.number().int() }),
   /**
-   * A at a door on your street, on tile x,y next to you: a neighbor's, you knock (they hear it if they are
-   * home, and you hear whether they are); your own, what it offers (moving next to a friend: `doorstep`).
+   * Visit friend `id`'s home (the friends list; the client asks first): NAPO's teleport sets you down by the
+   * one in their house, whether they are in or not. From town or a home only, never out in the wilds
+   * (`too_far`), and only while they let friends visit (`closed`).
    */
-  z.object({ t: z.literal('knock'), x: z.number().int(), y: z.number().int() }),
-  /** At your own door: move your cabin next to friend `to`'s, onto their street, where a lot must be free. It comes with you. */
-  z.object({ t: z.literal('move'), to: z.uuid() }),
-  /**
-   * The setting in the menu: keep your name off your door and your window dark to your street (`off`), or
-   * show both (as everyone does until they choose). Anyone, guests too: a guest's name is on a door as well.
-   */
-  z.object({ t: z.literal('doorOff'), off: z.boolean() }),
-  /**
-   * The setting in the menu: let only friends walk into your cabin (`off`), or your neighbors too (as
-   * everyone does until they choose). Anyone, guests too: a guest's cabin stands on a street as well.
-   */
+  z.object({ t: z.literal('visit'), id: z.uuid() }),
+  /** The setting in the menu: keep every visitor out of your home (`off`), or let your friends visit (as everyone does until they choose). */
   z.object({ t: z.literal('visitsOff'), off: z.boolean() }),
-  /** A at NAPO's teleport on tile x,y next to you (the client asks first): in a cabin (anyone's) it sets you down in town, in front of its twin; in town, at home in front of the one in your own cabin. */
+  /** A at NAPO's teleport on tile x,y next to you (the client asks first): in a home (anyone's) it sets you down in town, in front of its twin; in town, at home in front of the one in your own house. */
   z.object({ t: z.literal('teleport'), x: z.number().int(), y: z.number().int() }),
+  /** Build your house up to its next level at the workbench on tile x,y, next to you, in your own home (house.ts): paid from the stash. */
+  z.object({ t: z.literal('build'), x: z.number().int(), y: z.number().int() }),
   /**
    * Put your hands to the slab on tile x,y, next to you and facing it (slab.ts): while it glows, it opens
    * for two within SLAB_PAIR_MS of each other, each taking what it holds.
@@ -476,8 +471,8 @@ export type Did =
       kind: 'used'; item: string; energy?: number; flare?: number; mark?: { dir: Dir; left: number }; into?: BagSlot; lift?: { item: string; energy: number };
       effect?: { lasts: number; again?: true };
     }
-  /** You cooked `count` of the meal `item` at a fire: it is in your bag. */
-  | { kind: 'cooked'; item: string; count: number }
+  /** You cooked `count` of the meal `item` at a fire, or in your kitchen at home (`chest`: some of what went in came from the chest): it is in your bag. */
+  | { kind: 'cooked'; item: string; count: number; chest?: true }
   /** You ate (or drank) the meal `item` (meals.ts): it works until you come home or collapse; `energy`, what it gave the bar at once. */
   | { kind: 'ate'; item: string; energy?: number }
   /**
@@ -505,8 +500,8 @@ export type Did =
   | { kind: 'took'; item: string; name: string; mine?: true; thanked?: true }
   /** You spent merits on `look` (merits.ts): it is yours for good, and `left` merits are still to spend. */
   | { kind: 'bought'; look: string; left: number }
-  /** Your cabin moved next to `name`'s, onto their street: you stand in front of its door there now. */
-  | { kind: 'moved'; name: string }
+  /** The workbench built your house up to `level` (house.ts), paid from your stash: it stands so now (a `house` message came before this). */
+  | { kind: 'built'; level: number }
   /** You gave `who` (their `name`) RESCUE_ENERGY of your energy, and they got up (rescue.ts). */
   | { kind: 'rescued'; who: string; name: string }
   /**
@@ -581,7 +576,7 @@ export type Refusal =
   | 'slow_down'
   /** That needs sign-in: talking, and everything among friends (a guest has neither until they sign in). */
   | 'sign_in_first'
-  /** Someone else's: the chest and the workbench of a neighbor's cabin you walked into are theirs alone. */
+  /** Someone else's: the chest and the workbench of a friend's home you visit are theirs alone. */
   | 'not_yours'
   /** They play as a guest: friends need both players signed in. */
   | 'guest'
@@ -628,10 +623,12 @@ export type Refusal =
   | 'nothing_to_trade'
   /** That furniture stands in its place in your cabin already. */
   | 'placed'
-  /** Their street has no lot free: nobody can move next to them for now. */
-  | 'street_full'
-  /** You live on their street already. */
-  | 'neighbors'
+  /** Their home keeps visitors out (the setting in their menu). */
+  | 'closed'
+  /** The house is built as far as it goes (house.ts). */
+  | 'built'
+  /** It is not built yet: the house is built up to it at the workbench (house.ts: the kitchen, the map table). */
+  | 'not_built'
   /** The shop is closed: the owner has not set up payments (or turned them off). */
   | 'shop_closed'
   /** The shop could not open a payment just now (Stripe did not answer): try again in a moment. */
@@ -673,35 +670,21 @@ export interface PersonView {
   name: string;
 }
 
-/** A friend: online on map `map` (an id), or offline (null). */
+/** A friend: online on map `map` (an id), or offline (null). `closed`: their home keeps visitors out (the setting in their menu). */
 export interface FriendView extends PersonView {
   map: string | null;
+  closed?: true;
 }
 
 /**
- * A lot on your street: whose cabin it is (their name, on the plate by its door) and whether they are home
- * (online, in their own cabin: its window is lit). No name: a resident who keeps both to themselves (the
- * setting in the menu); their window never lights.
- */
-export interface LotView {
-  name?: string;
-  home?: true;
-}
-
-/**
- * A neighbor's cabin you walked into (visits): whose it is, and what their trophy shelf shows (the charms
- * and anomalous gear their stash holds, one of each, item ids; none while no shelf is made). The furniture
- * beside it (`furniture`) is theirs then.
+ * A friend's home you visit (its house, or its garden): whose it is, how far its house is built (house.ts),
+ * and what their trophy shelf shows (the charms and anomalous gear their stash holds, one of each, item ids;
+ * none while no shelf is made). The furniture beside it (`furniture`) is theirs then.
  */
 export interface VisitView {
   name: string;
+  house: number;
   trophies: string[];
-}
-
-/** Your street (a copy of the street's map): which lot is yours, and every lot on it, in the order of its houses (null: nobody lives there yet). */
-export interface StreetView {
-  mine: number;
-  lots: Array<LotView | null>;
 }
 
 /** A private message to you, kept until you read it; `at` is ms since the epoch. */
@@ -898,17 +881,15 @@ export type ServerMsg =
        * the storms over other regions and the echoes' walks.
        */
       clock: number;
-      /** In a cabin: the furniture made and set in its places (item ids), yours in your own, the owner's in a neighbor's (`visit`). */
+      /** In a home: the furniture made and set in its places (item ids), yours in your own, the owner's in a friend's (`visit`). */
       furniture?: string[];
-      /** In a neighbor's cabin: whose it is, and what their trophy shelf shows. */
+      /** In a friend's home (its house or its garden): whose it is, how far its house is built, and what their trophy shelf shows. */
       visit?: VisitView;
-      /** On your street: its lots, and which is yours. */
-      street?: StreetView;
       /** In the snow (MapData.forest 'snow'): the footprints of the last hour there (glimpses.ts), oldest first. */
       prints?: PrintView[];
-      /** You keep your name off your door and your window dark (the setting in the menu). */
-      doorOff?: true;
-      /** You let only friends into your cabin (the setting in the menu). */
+      /** How far your own house is built (house.ts): 1, the garage it starts as, and up. */
+      house: number;
+      /** You keep every visitor out of your home (the setting in the menu). */
       visitsOff?: true;
       /** A new player's first step to take now, 1 to FIRST_STEPS; none once they are done, or for anyone older. */
       firstSteps?: number;
@@ -923,12 +904,10 @@ export type ServerMsg =
       t: 'zone'; map: MapRef; x: number; y: number; dir: Dir; players: PlayerView[]; finds: FindView[]; drops: DropView[]; reason: 'exit' | 'collapse';
       fires: FireView[]; lamps?: LampView[]; marks: MarkView[]; creatures: CreatureView[]; flares: FlareView[]; flashes: FlashView[]; surge: SurgeView | null; storm: StormView | null; stats: Stats;
       weather: Weather;
-      /** In a cabin: the furniture made and set in its places (item ids), yours in your own, the owner's in a neighbor's (`visit`). */
+      /** In a home: the furniture made and set in its places (item ids), yours in your own, the owner's in a friend's (`visit`). */
       furniture?: string[];
-      /** In a neighbor's cabin: whose it is, and what their trophy shelf shows. */
+      /** In a friend's home (its house or its garden): whose it is, how far its house is built, and what their trophy shelf shows. */
       visit?: VisitView;
-      /** On your street: its lots, and which is yours. */
-      street?: StreetView;
       /** In the snow (MapData.forest 'snow'): the footprints of the last hour there (glimpses.ts), oldest first. */
       prints?: PrintView[];
     }
@@ -938,34 +917,21 @@ export type ServerMsg =
   | { t: 'bag'; bag: BagSlot[] }
   /** Your tools, whole (item ids, in the order you got them), after you got one. */
   | { t: 'tools'; tools: string[] }
-  /** The furniture in the cabin you are in, whole (item ids), after its owner made one: it stands in its place now. */
+  /** The furniture in the home you are in, whole (item ids), after its owner made one: it stands in its place now. */
   | { t: 'furniture'; furniture: string[] }
-  /** On your street: a lot changed (someone moved in or away, came home or left it); null: nobody lives there now. */
-  | { t: 'lot'; lot: number; view: LotView | null }
   /**
-   * You knocked at the door on tile x,y of your street: whose it is and whether they are home, as it answers
-   * you (`lot`: null, nobody lives there yet; no name, a resident who keeps their door to themselves and
-   * answers only friends: to anyone else, nobody answers). `closed`: you tried to walk in, and it did not
-   * let you (nobody lives there, or its owner lets only friends in): the step came back.
+   * The house of the home you are in (yours, or the friend's you visit) was built up to `level` (house.ts): it
+   * stands so now, outside and in. Its owner built it at the workbench; a `did` follows for them.
    */
-  | { t: 'door'; x: number; y: number; lot: LotView | null; closed?: true }
-  /** At your own door: the friends whose street has a lot free, whom you could move next to. */
-  | { t: 'doorstep'; moves: PersonView[] }
-  /** Someone (`name`) knocked at your door while you were home. */
-  | { t: 'knocked'; name: string }
-  /** Someone (`name`) walked into your cabin while you were home. */
+  | { t: 'house'; level: number }
+  /** A friend (`name`) came to visit your home while you were in it. */
   | { t: 'visited'; name: string }
-  /** Your door's setting, as it stands now that you changed it (`off`: your name off it, your window dark). */
-  | { t: 'doorOff'; off: boolean }
-  /** Who may walk into your cabin, as it stands now that you changed it (`off`: only friends). */
+  /** Who may visit your home, as it stands now that you changed it (`off`: nobody). */
   | { t: 'visitsOff'; off: boolean }
   /** You took a first step: the next one to take (null: you are done). */
   | { t: 'firstSteps'; step: number | null }
-  /**
-   * The first time you come home since streets came: a letter about what your street sees of you (your name
-   * on your door, your window lit while you are home; `doorOff`: you keep both to yourself already). Once.
-   */
-  | { t: 'streetLetter'; doorOff: boolean }
+  /** The first time you come home since homes stood in gardens of their own: a letter saying how home works now. Once. */
+  | { t: 'homeLetter' }
   /** How the trip that just ended went: after the `zone` that brings you home, walking in or waking up there. */
   | { t: 'trip'; trip: TripView }
   /**
@@ -1148,7 +1114,7 @@ export type ServerMsg =
 /** What a `refused` answers: the message's `t`. Everything among friends can be refused to a guest. */
 export type RefusedAction =
   | 'pick' | 'use' | 'discard' | 'feed' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'pattern' | 'badge' | 'say' | 'call'
-  | 'checkout' | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'step' | 'carry' | 'handIn' | 'slab' | 'cook' | 'swap' | 'give' | 'climb' | 'climbDown' | 'bring'
+  | 'checkout' | 'thank' | 'cacheLeave' | 'cacheTake' | 'visit' | 'build' | 'board' | 'teleport' | 'rescue' | 'step' | 'carry' | 'handIn' | 'slab' | 'cook' | 'swap' | 'give' | 'climb' | 'climbDown' | 'bring'
   | 'befriend' | 'answer' | 'unfriend' | 'tell' | 'read' | 'block' | 'report' | 'requests' | 'tradeRequests' | 'friends' | 'tradeOpen' | 'tradeAnswer' | 'tradeOffer' | 'tradeReady' | 'tradeConfirm'
   | 'tradeCancel';
 

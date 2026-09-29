@@ -32,7 +32,7 @@ import { mapFor, paperMap } from './papermap';
 import { providerButton } from './providers';
 import { Connection, serverUrl } from './net';
 import { parcelNote, untold } from './parcels';
-import { goalText } from './said';
+import { goalText, visitWhyNot } from './said';
 import { Sound, type SoundSetting } from './sound';
 import { reachText, tradePanel } from './trade';
 import { Apparition } from './unease';
@@ -45,7 +45,7 @@ import { levelText, newsBanner, restedLine, statusView } from './status';
 import { fireLevel } from './view/fire';
 import { PRINT_S } from './view/wilds';
 import { madePlaces } from './view/cabin';
-import { WorldView, createRenderer, lightningAt, nextView } from './view/world';
+import { WorldView, createRenderer, lightningAt, nextView, type HomeLook } from './view/world';
 import { wardrobeView, type WardrobeState } from './wardrobe';
 import { guardZoom } from './zoom';
 
@@ -110,12 +110,24 @@ const watchFires = (v: WorldView) => v.setFires((x, y) => fireLevel(game.fireLef
 let skyShown: { weather: Weather | null; view: WorldView | null } = { weather: null, view: null };
 /** A new view of the map you are on, in the season's colors (the old one freed after, nextView): on arrival, and when the season turns. */
 function buildView() {
-  view = nextView(renderer, view, game.map, peek, game.viewSeason());
+  view = nextView(renderer, view, game.map, peek, game.viewSeason(), homeLook());
   view.pixelScale = resolution.scale;
   view.setWeather(game.weather);
   skyShown = { weather: game.weather, view };
   watchFires(view);
   resize();
+}
+/**
+ * The home the view should draw (view/world.ts, HomeLook): in a home of one's own, how far its house is built and
+ * whose it is; the same for everywhere else.
+ */
+function homeLook(): HomeLook {
+  return game.map.data.private ? { house: game.houseHere(), owner: game.visit?.name ?? null } : { house: 1, owner: null };
+}
+/** Whether the view draws another home than the one you are in now: a friend's after your own (the same map), or your house built up. */
+function homeMoved(): boolean {
+  const want = homeLook();
+  return view.home.house !== want.house || view.home.owner !== want.owner;
 }
 /** The server accepts game messages only after its welcome on the current connection. */
 let welcomed = false;
@@ -229,10 +241,12 @@ const hud = new Hud(screen, {
     if (!next || !game.benchBeside()) return;
     game.openBench({ from: 'recipe', id: next.recipe.id });
   },
-  // The workbench's rows are recipes, mending ("mend:" and the slot) and upgrades ("up:" and the piece, upgradeId).
+  // The workbench's rows are recipes, mending ("mend:" and the slot), upgrades ("up:" and the piece, upgradeId)
+  // and building your home up ("home").
   craft: recipe => {
     const up = upgradeOf(recipe);
     if (up) game.upgrade(up);
+    else if (recipe === 'home') game.build();
     else if (recipe.startsWith('mend:')) game.mend(recipe.slice(5) as Slot);
     else game.craft(recipe);
   },
@@ -244,7 +258,8 @@ const hud = new Hud(screen, {
   boardClosed: () => game.closeBoard(),
   // What a tap in the chest, at the workbench, in the bag or at a crate shows, from what the open chest or workbench says your stash holds, or what the open crate holds.
   details: (ref, where) => detailView(ref, {
-    items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools, furniture: game.furniture, meals: game.body.view.meals ?? [],
+    items, bag: game.bag, stash: (game.chest ?? game.bench)?.stash ?? [], gear: game.myGear, worn: game.myWorn, tools: game.tools, furniture: game.furniture, house: game.house,
+    meals: game.body.view.meals ?? [],
     panel: where === 'bag' ? 'bag' : where === 'crate' ? 'crate' : 'home', wardrobe: wardrobeNow(),
     ...(game.cache ? { crate: { items: game.cacheItemsNow(performance.now()), left: game.cache.left, took: game.cache.took, me: game.meId ?? '' } } : {}),
   }),
@@ -263,8 +278,18 @@ const hud = new Hud(screen, {
       case 'block': return game.social({ t: 'block', id: a.id, on: a.on });
       case 'requests': return game.social({ t: 'requests', off: a.off });
       case 'tradeRequests': return game.social({ t: 'tradeRequests', off: a.off });
-      case 'door': return game.setDoorOff(a.off);
       case 'visits': return game.setVisitsOff(a.off);
+      // From town or a home, while they let friends in: otherwise the card says why (the server checks it again).
+      case 'visit': {
+        const why = game.visitWhyNot({ id: a.id, name: a.name });
+        if (why) {
+          game.socialNote = visitWhyNot(a.name, why);
+          game.socialChanges++;
+          return;
+        }
+        hud.toggleFriends(false);
+        return game.visitFriend({ id: a.id, name: a.name });
+      }
       // Face to face only: from farther away, the card says so (the server checks it again).
       case 'trade': {
         const reach = game.tradeReach(a.id);
@@ -369,7 +394,7 @@ const arrival = new Arrival(held => {
   hud.setOnline(game.players.size);
   // Only the town changed this map (nobody arrived): drawn again, and no name to say.
   const onlyTown = redraw && view.map === game.map && !held.length;
-  if (view.map !== game.map || view.season !== game.viewSeason() || redraw) {
+  if (view.map !== game.map || view.season !== game.viewSeason() || homeMoved() || redraw) {
     redraw = false;
     buildView();
   }
@@ -387,6 +412,8 @@ const arrival = new Arrival(held => {
 // with the small print: the privacy policy, the legal notice and the source code, before anyone signs in.
 /** The game in one line, on the first cards. */
 const PITCH = 'Leave home, gather what glows, and get back before your energy runs out.';
+/** On the play card, as a guest: what waits for sign-in, said up front rather than as each panel is opened. */
+const GUEST_FINE = 'As a guest you can go everywhere and build your home. Chat, friends, trades and the wardrobe wait until you sign in, which keeps your character.';
 /** Under "Send me a code". */
 const EMAIL_FINE = `We email you a ${CODE_LENGTH}-digit code to sign in. No password to remember.`;
 const overlay = document.createElement('div');
@@ -423,6 +450,7 @@ overlay.innerHTML = `
     <div class="err" data-el="nameErr" role="alert"></div>
     <button type="submit" data-el="nameBtn">Play</button>
     <div class="links" data-el="nameLinks" hidden><span class="who" data-el="who"></span><button type="button" class="link" data-el="nameSignOut">Sign out</button></div>
+    <p class="fine" data-el="playFine" hidden>${GUEST_FINE}</p>
     <div class="links center" data-el="playLinks" hidden><button type="button" class="link" data-el="playSignIn">I have played before: sign in</button></div>
     ${signInFooter()}
   </form>
@@ -546,6 +574,7 @@ function render(s: Screen) {
     err.classList.toggle('ok', play && !s.error && !!s.note);
     text('nameLinks').hidden = !signedIn;
     text('playLinks').hidden = !play;
+    text('playFine').hidden = !play;
     text('who').textContent = s.kind === 'name' && s.who ? `Signed in as ${s.who}` : '';
     if (first) focusSoon(nameInput);
   } else if (s.kind === 'account') {
@@ -747,9 +776,10 @@ let marksShown = { changes: -1, view: null as WorldView | null };
 let echoesShown = { changes: -1, view: null as WorldView | null, tile: '' };
 /** Your cabin's furniture as drawn, and the stash its trophy shelf was drawn from. */
 let comfortShown = { changes: -1, stash: null as typeof game.stash, view: null as WorldView | null };
-let lotsShown = { changes: -1, view: null as WorldView | null };
 /** The furniture the workbench's rows were drawn with. */
 let benchFurniture = -1;
+/** The house as the workbench's rows last showed it, to show its row again once it is built up. */
+let benchHouse = -1;
 let statusAt = 0;
 let statsShown = -1;
 let friendsShown = { changes: -1, open: false, reach: '' };
@@ -872,15 +902,10 @@ function frame(now: number) {
   const capacity = bagSlotsOf(game.myGear, items.byId);
   if (game.bag !== bagShown || capacity !== capacityShown) hud.setBag(slotViews((bagShown = game.bag), items), (capacityShown = capacity), game.bagAt);
   hud.tickLive(now);
-  // Your cabin's places: spoiled until made, and the trophy shelf with what your stash holds.
+  // Your home's places: spoiled until made, and the trophy shelf with what your stash holds.
   if (game.furnitureChanges !== comfortShown.changes || game.stash !== comfortShown.stash || view !== comfortShown.view) {
     comfortShown = { changes: game.furnitureChanges, stash: game.stash, view };
     view.setComfort(madePlaces(game.roomFurniture(), id => items.get(id)), game.trophies());
-  }
-  // On your street, the windows of the neighbors who are home are lit.
-  if (game.streetChanges !== lotsShown.changes || view !== lotsShown.view) {
-    lotsShown = { changes: game.streetChanges, view };
-    view.setLots(game.litLots());
   }
   if (game.markChanges !== marksShown.changes || view !== marksShown.view) {
     marksShown = { changes: game.markChanges, view };
@@ -919,8 +944,9 @@ function frame(now: number) {
       hud.showBanner('Your gear hums', `${game.map.data.name} grows restless in about a minute.`);
     }
   }
-  // The season turned (as the week did): the map is drawn again in its colors, its water frozen or not.
-  if (view.season !== game.viewSeason() && !arrival.dark) buildView();
+  // The season turned (as the week did): the map is drawn again in its colors, its water frozen or not. So is
+  // a home whose house was just built up, with what stands in it now.
+  if ((view.season !== game.viewSeason() || homeMoved()) && !arrival.dark) buildView();
   // The weather over your map (your region's, a room's the map outside it): the sky turns with it.
   if (game.weather !== skyShown.weather || view !== skyShown.view) {
     skyShown = { weather: game.weather, view };
@@ -1047,10 +1073,13 @@ function frame(now: number) {
     benchShown = game.bench;
   }
   // Also when what you wear wears down, is mended or upgraded: its mend and upgrade rows change.
-  if (game.bench && (benchChanged || game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn || game.furnitureChanges !== benchFurniture)) {
+  if (game.bench && (benchChanged || game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn || game.furnitureChanges !== benchFurniture || game.houseChanges !== benchHouse)) {
     const { stash } = game.bench;
     benchFurniture = game.furnitureChanges;
-    hud.setBench([...mendViews(game.myGear, game.myWorn, stash, items), ...upgradeViews(game.myGear, game.myWorn, stash, items), ...recipeViews(items.recipes, stash, items, game.tools, game.furniture)]);
+    benchHouse = game.houseChanges;
+    // Building your home up is the workbench's too, in your own home (the only workbench there is).
+    const home = game.map.data.private && !game.visit ? game.house : undefined;
+    hud.setBench([...mendViews(game.myGear, game.myWorn, stash, items), ...upgradeViews(game.myGear, game.myWorn, stash, items), ...recipeViews(items.recipes, stash, items, game.tools, game.furniture, home)]);
   }
   if (game.myGear !== gearShown.gear || game.myWorn !== gearShown.worn) {
     gearShown = { gear: game.myGear, worn: game.myWorn };
@@ -1146,8 +1175,8 @@ function frame(now: number) {
   }
   // Whose pile it is, while you are near. Its id is its owner's, so it gets a key of its own.
   for (const d of game.pilesNear()) { const s = view.project(d.x, d.y, 0.62); tags.push({ id: `pile:${d.id}`, name: d.name, x: s.x, y: s.y, pile: true }); }
-  // On your street, whose cabin it is, on the plate by its door, while you pass it.
-  for (const p of game.platesNear()) { const s = view.project(p.x, p.y + 0.35, 1.3); tags.push({ id: `plate:${p.lot}`, name: p.name, x: s.x, y: s.y, plate: true }); }
+  // In a garden, whose home it is, on the plate by its door, while you are near it.
+  for (const p of game.platesNear()) { const s = view.project(p.x, p.y + 0.35, 1.3); tags.push({ id: `plate:${p.x},${p.y}`, name: p.name, x: s.x, y: s.y, plate: true }); }
   hud.setTags(tags);
   // A speech bubble over whoever said something near you, above their name.
   hud.setBubbles(game.bubblesNow(now).flatMap(b => {
@@ -1179,6 +1208,9 @@ function frame(now: number) {
   const d = game.dialog, line = d ? d.lines[d.i] ?? '' : '';
   hud.setDialog(d ? { who: d.who, text: line.slice(0, Math.floor(d.shown)), done: d.shown >= line.length } : null);
   hud.setEnergy(game.energy(now));
+  // Out in the wilds, the mark for the way home on the bar, and its warning once it is time to turn back.
+  const way = game.wayHome(now), full = game.energy(now)?.max ?? 0;
+  hud.setWayHome(way && full > 0 ? way.cost / full : null, !!way?.turn);
   // Down out there: how long someone has to come.
   hud.setSlump(game.slumpLeft(now));
   hud.setFade(arrival.dark);

@@ -559,3 +559,24 @@ export const CALL_GLYPHS: Readonly<Record<CallKind, string>> = {
   come: note(`${head(6.4, 18.2)}<path d="M9.6 16.5c3.8-1.2 7-4.6 9.1-10.2" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"/><path d="M21.3 2.8l.3 6.6-5.8-3z"/>`),
   thanks: note(`${head(5.9, 18.2)}${head(16.4, 18.2)}<path d="M8.4 17.6V6h1.7v11.6zM18.9 17.6V6h1.7v11.6zM8.4 3.6h12.2V7.2H8.4z"/>`),
 };
+
+/**
+ * A home as it is built up (house.ts), at the workbench: the garage (block walls, a roll-up door, a stovepipe),
+ * the cabin (logs under a pitched roof, a chimney) and the house (two floors under a steep roof, a porch).
+ */
+const HOUSE_ICONS: readonly string[] = [
+  icon(`<path d="M4 13h24v14H4z" fill="#8b8a84"/><path d="M3 13l1-3h24l1 3z" fill="#6a6f72"/>
+    <path d="M7 16h11v11H7z" fill="#7d6a55"/><path d="M7 19h11M7 22h11M7 25h11" stroke="#5d4d3c" stroke-width="1"/>
+    <path d="M21 18h4v9h-4z" fill="#ffc56b"/><path d="M23 10V4h2v6" fill="#3a3d3f"/>`),
+  icon(`<path d="M5 15h22v12H5z" fill="#6e4c34"/><path d="M5 18h22M5 21h22M5 24h22" stroke="#5a3d2a" stroke-width="1"/>
+    <path d="M3 16L16 6l13 10z" fill="#4a3a30"/><path d="M21 8V4h3v6" fill="#6f6a60"/>
+    <path d="M14 20h4v7h-4z" fill="#ffc56b"/><path d="M8 19h3v3H8zM21 19h3v3h-3z" fill="#ffc56b"/>`),
+  icon(`<path d="M6 13h20v14H6z" fill="#b8ae95"/><path d="M4 13.5L16 4l12 9.5z" fill="#3d4650"/>
+    <path d="M9 15h3v3H9zM20 15h3v3h-3zM9 21h3v3H9zM20 21h3v3h-3z" fill="#ffc56b"/><path d="M14.5 21h3v6h-3z" fill="#ffc56b"/>
+    <path d="M4 21h24M5 21v6M27 21v6" stroke="#e9e3d4" stroke-width="1.2"/><path d="M8 7V3h3v4" fill="#7a4b3a"/>`),
+];
+
+/** The drawing of a home at `level` (1 the garage): past the last, the last. */
+export function houseIcon(level: number): string {
+  return HOUSE_ICONS[Math.min(HOUSE_ICONS.length, Math.max(1, Math.floor(level))) - 1]!;
+}

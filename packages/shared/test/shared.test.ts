@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AuthConfig, DRAIN_GROWTH_STEPS, DRAIN_PER_SECOND, FEED_MAX, MAX_AUTH_CHARS, MAX_HELLO_BYTES, MAX_MESSAGE_BYTES, OAUTH_PROVIDERS, PROTOCOL_VERSION, REFILL_PER_SECOND, TileMap,
-  WEATHER_DRAIN, dirOf, dirToward, energyAfter, energyRate, findPath, footprint, isOAuthProvider, lotDoors, objectTiles, parseClientMsg, stepTarget, teleportArrival, validateMap, validateWorld, type MapData, type MapObject,
+  WEATHER_DRAIN, dirOf, dirToward, energyAfter, energyRate, findPath, footprint, isOAuthProvider, objectTiles, parseClientMsg, stepTarget, teleportArrival, validateMap, validateWorld, type MapData, type MapObject,
   type NpcLook,
 } from '../src';
 
@@ -278,8 +278,8 @@ describe('validateMap', () => {
     });
     const errors = (d: MapData) => validateMap(d).filter(p => p.level === 'error').map(p => p.message).join('\n');
     expect(errors(home())).toBe('');
-    expect(errors({ ...tinyHouse(), private: true })).toMatch(/only a room with a chest \(a home\) is private/);
-    expect(errors({ ...tinyMap(), private: true })).toMatch(/only a room with a chest \(a home\) is private/);
+    expect(errors({ ...tinyHouse(), private: true })).toMatch(/only a home is private \(the room with a chest, or the garden with its house, a name plate on it\)/);
+    expect(errors({ ...tinyMap(), private: true })).toMatch(/only a home is private \(the room with a chest, or the garden with its house, a name plate on it\)/);
     expect(errors(home({ private: false as never }))).toMatch(/and then it is true/);
     expect(errors(home({ private: undefined }))).toMatch(/wake: only a private room/);
     expect(errors(home({ wake: { x: 2, y: 4, dir: 'down' } }))).toMatch(/wake 2,4 is not a walkable tile of the room \(an exit is none either\)/);
@@ -545,65 +545,63 @@ describe('validateWorld', () => {
     expect(validateWorld([townWithExit(), woodsMap(), home('tiny-house', 'tiny')], 'tiny')).toEqual([]);
     const wakes = (maps: MapData[]) => validateWorld(maps, 'tiny').filter(p => /wake/.test(p.message));
     expect(wakes([townWithExit(), woodsMap(), tinyHouse(), home('woods-home', 'woods')])).toEqual([
-      { level: 'error', map: 'woods-home', message: 'wake: only the home off the home town (tiny), or off its street, is where you wake up, and this room\'s door opens elsewhere' },
+      { level: 'error', map: 'woods-home', message: 'wake: only the home off the home town (tiny), or in its own garden, is where you wake up, and this room\'s door opens elsewhere' },
     ]);
     expect(wakes([townWithExit(), woodsMap(), home('tiny-house', 'tiny'), home('second-home', 'tiny')])).toEqual([
       { level: 'error', map: 'second-home', message: 'wake: tiny-house and second-home both have one, but everyone wakes up in the same home' },
     ]);
   });
-  it('keeps a street of cabins to its rules: plain cabins with name plates, every door into the home, reached by a road off the edge of the home town', () => {
-    // A road off the town's bottom edge leads onto a lane of two cabins, each door into the home, a private room where you wake up.
-    const town = (): MapData => ({ ...townWithExit(), exits: [...townWithExit().exits, { x: 2, y: 4, w: 1, h: 1, to: 'lane', tx: 4, ty: 3, dir: 'down' }] });
-    const cabin = (x: number): Extract<MapObject, { kind: 'house' }> => ({ kind: 'house', x, y: 1, w: 3, h: 2, roof: '#6b7075', lit: 0, plate: true });
-    const lane = (): MapData => ({
-      id: 'lane', name: 'Lane', version: 1, kind: 'town', depth: 0, width: 9, height: 5, street: true,
-      tiles: ['ttttttttt', 'tgggggggt', 'tgggggggt', 'tgggggggt', 'ttttgtttt'],
-      levels: Array<string>(5).fill('000000000'),
-      spawn: { x: 4, y: 3, dir: 'up' },
-      exits: [
-        { x: 2, y: 2, w: 1, h: 1, to: 'home', tx: 2, ty: 3, dir: 'up' }, { x: 6, y: 2, w: 1, h: 1, to: 'home', tx: 2, ty: 3, dir: 'up' },
-        { x: 4, y: 4, w: 1, h: 1, to: 'tiny', tx: 2, ty: 2, dir: 'down' },
-      ],
-      objects: [cabin(1), cabin(5)],
+  it('keeps a garden of one\'s own to its rules: closed all round, its one house plated and 5 by 3, its door into the home, and nothing else leading into it', () => {
+    // The home town reaches the home by the teleport (its twin in the home); the home's way out leads into its garden.
+    const town = (): MapData => ({ ...townWithExit(), objects: [...townWithExit().objects, { kind: 'teleport', x: 0, y: 3 }] });
+    const house = (more: Partial<Extract<MapObject, { kind: 'house' }>> = {}): Extract<MapObject, { kind: 'house' }> => ({ kind: 'house', x: 1, y: 1, w: 5, h: 3, roof: '#5d4a3b', lit: 0, plate: true, ...more });
+    const garden = (more: Partial<MapData> = {}): MapData => ({
+      id: 'garden', name: 'Garden', version: 1, kind: 'town', depth: 0, width: 9, height: 7, private: true,
+      tiles: ['ttttttttt', ...Array<string>(5).fill('tgggggggt'), 'ttttttttt'],
+      levels: Array<string>(7).fill('000000000'),
+      spawn: { x: 3, y: 4, dir: 'down' },
+      exits: [{ x: 3, y: 3, w: 1, h: 1, to: 'home', tx: 2, ty: 3, dir: 'up' }],
+      objects: [house()],
+      ...more,
     });
     const home = (): MapData => ({
-      ...tinyHouse(), id: 'home', exits: [{ ...tinyHouse().exits[0]!, to: 'lane', tx: 2, ty: 3 }], objects: [...tinyHouse().objects, { kind: 'chest', x: 3, y: 1 }],
+      ...tinyHouse(), id: 'home', exits: [{ ...tinyHouse().exits[0]!, to: 'garden', tx: 3, ty: 4 }], objects: [...tinyHouse().objects, { kind: 'chest', x: 3, y: 1 }, { kind: 'teleport', x: 1, y: 1 }],
       private: true, wake: { x: 2, y: 2, dir: 'down' },
     });
     const errors = (maps: MapData[]) => validateWorld(maps, 'tiny').filter(p => p.level === 'error').map(p => `${p.map}: ${p.message}`);
-    expect(validateMap(lane()).filter(p => p.level === 'error')).toEqual([]);
-    expect(errors([town(), lane(), home(), tinyHouse(), woodsMap()])).toEqual([]);
-    expect(lotDoors(lane())).toEqual([{ x: 2, y: 2 }, { x: 6, y: 2 }]);
-    expect(lotDoors(tinyMap())).toEqual([]);
-
-    // A street is a town; its cabins are plain, unlit and plated, and only they have plates.
     const mapErrors = (m: MapData) => validateMap(m).filter(p => p.level === 'error').map(p => p.message);
-    expect(mapErrors({ ...lane(), kind: 'wilds', depth: 1 })).toContain('street: only a town is a street of cabins, and then it is true');
-    expect(mapErrors({ ...lane(), objects: [{ ...cabin(1), lit: 1 }, cabin(5)] })).toEqual(['house at 1,1: on a street every house is a plain cabin with a name plate (plate), unlit and without curtains']);
-    expect(mapErrors({ ...tinyMap(), objects: [{ ...(tinyMap().objects[0] as Extract<MapObject, { kind: 'house' }>), lit: 0, plate: true }] })).toEqual(['house at 1,0: only a cabin on a street has a name plate']);
+    expect(mapErrors(garden())).toEqual([]);
+    expect(errors([town(), garden(), home(), tinyHouse(), woodsMap()])).toEqual([]);
+    // Reached by the teleport only, the home and its garden count as reached from the home town.
+    expect(validateWorld([town(), garden(), home(), tinyHouse(), woodsMap()], 'tiny').filter(p => /cannot be reached/.test(p.message))).toEqual([]);
 
-    // Every door leads into the one home of one's own; the lane's end leads back to the home town.
-    const other: MapData = { ...tinyHouse(), id: 'other', exits: [{ ...tinyHouse().exits[0]!, to: 'lane', tx: 2, ty: 3 }] };
-    const astray = { ...lane(), exits: lane().exits.map(e => (e.x === 6 && e.y === 2 ? { ...e, to: 'other' } : e)) };
-    expect(errors([town(), astray, home(), tinyHouse(), other, woodsMap()])).toContain('lane: street: every cabin on it leads into the one home of one\'s own (a private room): its owner\'s own cabin');
-    const shut = { ...lane(), tiles: ['ttttttttt', 'tgggggggt', 'tgggggggt', 'tgggggggt', 'ttttttttt'], exits: lane().exits.filter(e => e.to !== 'tiny') };
-    expect(errors([town(), shut, home(), tinyHouse(), woodsMap()])).toContain('lane: street: its end leads back to the home town (tiny)');
-    // The way onto it is a road, never a door: not the town's house (as it was before the road), nor a house anywhere else.
-    const doorway = (): MapData => ({ ...townWithExit(), exits: townWithExit().exits.map(e => (e.to === 'tiny-house' ? { ...e, to: 'lane', tx: 4, ty: 3 } : e)) });
-    expect(errors([doorway(), lane(), home(), woodsMap()])).toEqual([
-      'lane: street: the home town (tiny) reaches it by a road off its edge',
-      'tiny: house at 1,0: its door leads onto the street lane, whose way in is a road off the edge of the home town (tiny), never a door',
-    ]);
-    const elsewhere = { ...doorway(), id: 'elsewhere', exits: doorway().exits.filter(e => e.to === 'lane') };
-    expect(errors([town(), lane(), home(), tinyHouse(), woodsMap(), elsewhere])).toEqual([
-      'elsewhere: house at 1,0: its door leads onto the street lane, whose way in is a road off the edge of the home town (tiny), never a door',
-    ]);
-    // A road that ends inside the town is no road off its edge.
-    const inner = { ...town(), exits: town().exits.map(e => (e.to === 'lane' ? { ...e, x: 2, y: 3 } : e)) };
-    expect(errors([inner, lane(), home(), tinyHouse(), woodsMap()])).toContain('lane: street: the home town (tiny) reaches it by a road off its edge');
-    // And there is one street.
-    const second = { ...lane(), id: 'lane-2', exits: lane().exits.map(e => (e.to === 'home' ? e : { ...e })) };
-    expect(errors([town(), lane(), second, home(), tinyHouse(), woodsMap()])).toContain('lane-2: street: lane and lane-2 are both streets, but every player\'s cabin stands on the one');
+    // Its house is the owner's: plated, 5 by 3, unlit, no style or curtains; and only a garden's has a plate.
+    expect(mapErrors(garden({ objects: [house({ w: 3, h: 2 })] }))).toContain('house at 1,1 is 3 by 2: the house in a garden of one\'s own is 5 by 3, whatever its owner builds it up to');
+    expect(mapErrors(garden({ objects: [house({ lit: 1 })] }))).toEqual(['house at 1,1: only the house in a garden of one\'s own (a private town) has a name plate (plate: true), unlit, without a style or curtains']);
+    expect(mapErrors({ ...tinyMap(), objects: [{ ...(tinyMap().objects[0] as Extract<MapObject, { kind: 'house' }>), lit: 0, plate: true }] }))
+      .toContain('house at 1,0: only the house in a garden of one\'s own (a private town) has a name plate (plate: true), unlit, without a style or curtains');
+    // Closed all round: its one way out is its house's door.
+    const gate = garden({ tiles: ['ttttttttt', ...Array<string>(4).fill('tgggggggt'), 'tgggggggg', 'ttttttttt'], exits: [...garden().exits, { x: 8, y: 5, w: 1, h: 1, to: 'tiny', tx: 2, ty: 2, dir: 'right' }] });
+    expect(mapErrors(gate)).toContain('private: a garden of one\'s own is closed all round: its one way out is its house\'s door');
+    // Its door leads into the home of one's own, whose way out leads back into it; nothing else leads into it.
+    const astray = garden({ exits: [{ ...garden().exits[0]!, to: 'tiny-house' }] });
+    expect(errors([town(), astray, home(), tinyHouse(), woodsMap()])).toContain('garden: private: the house in the garden leads into the home of one\'s own (a private room)');
+    const wayIn: MapData = { ...woodsMap(), exits: [...woodsMap().exits, { x: 1, y: 1, w: 1, h: 1, to: 'garden', tx: 3, ty: 4, dir: 'down' }] };
+    expect(errors([town(), garden(), home(), tinyHouse(), wayIn])).toContain('woods: nothing leads into the garden of a home (garden) but its house: home is reached by NAPO\'s teleport');
+    // And there is one garden.
+    const second = garden({ id: 'garden-2' });
+    expect(errors([town(), garden(), second, home(), tinyHouse(), woodsMap()])).toContain('garden-2: private: garden and garden-2 are both gardens, but every player\'s house stands in the one');
+  });
+  it('keeps what a house opens from a level on to a home of one\'s own: the kitchen and the map table', () => {
+    const home = (...more: MapObject[]): MapData => ({
+      ...tinyHouse(), objects: [...tinyHouse().objects, { kind: 'chest', x: 3, y: 1 }, ...more], private: true, wake: { x: 2, y: 2, dir: 'down' },
+    });
+    const mapErrors = (m: MapData) => validateMap(m).filter(p => p.level === 'error').map(p => p.message);
+    expect(mapErrors(home({ kind: 'kitchen', x: 1, y: 2, house: 2 }))).toEqual([]);
+    expect(mapErrors(home({ kind: 'board', x: 1, y: 2, house: 3 }))).toEqual([]);
+    expect(mapErrors({ ...tinyHouse(), objects: [...tinyHouse().objects, { kind: 'kitchen', x: 1, y: 2 }] })).toContain('kitchen at 1,2: a kitchen stands in a home of one\'s own (a private room)');
+    expect(mapErrors(home({ kind: 'kitchen', x: 1, y: 2, house: 1 }))).toContain('kitchen at 1,2: house is the level of the house it stands in from, 2 or more, and only in a home of one\'s own');
+    expect(mapErrors({ ...townWithExit(), objects: [...townWithExit().objects, { kind: 'board', x: 0, y: 3, house: 2 }] })).toContain('board at 0,3: house is the level of the house it stands in from, 2 or more, and only in a home of one\'s own');
   });
   it("puts NAPO's teleports in every home of one's own and one in the home town, each setting you down in front of the other", () => {
     const teleport = (x: number, y: number): MapObject => ({ kind: 'teleport', x, y });
@@ -618,7 +616,7 @@ describe('validateWorld', () => {
     expect(errors([town(teleport(0, 3)), woodsMap(), home(teleport(1, 1))])).toEqual([]);
     expect(teleportArrival({ x: 0, y: 3 })).toEqual({ x: 0, y: 4, dir: 'down' });
     // Nowhere else: not out in the wilds, nor in a room that is no home of one's own.
-    const elsewhere = "teleport at 1,2: NAPO's teleports stand in a home of one's own and in the home town";
+    const elsewhere = "teleport at 1,2: NAPO's teleports stand inside a home of one's own and in the home town";
     expect(mapErrors({ ...woodsMap(), objects: [...woodsMap().objects, teleport(1, 2)] })).toContain(elsewhere);
     expect(mapErrors({ ...tinyHouse(), objects: [...tinyHouse().objects, teleport(1, 2)] })).toContain(elsewhere);
     // One a map, and never one that would set you down on a way out.

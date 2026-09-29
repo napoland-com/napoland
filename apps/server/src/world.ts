@@ -84,15 +84,15 @@
  * thing from their bag and take one out; taking thanks whoever left it, and counts as taken out of the
  * taker's stash, so it earns no XP at home. What lies in each crate is kept across restarts.
  *
- * Streets: every player's cabin stands on a lot of a street, a copy of the street's map (Residents' Lane),
- * about thirty neighbors to a street; a player is given the first free lot when they first come home, and
- * new streets open as the old ones fill. The way onto the street from town, and out of the cabin, lead to
- * the player's own street, in front of their own door; the others' doors are knocked at, not walked into,
- * and a window is lit while its owner is home. At their own door a player may move their cabin next to a
- * friend's, onto the friend's street, if a lot is free there. Who lives where is kept for everyone, online
- * or not, loaded at start-up. Anyone may keep their name off their door and their window dark (the setting
- * in the menu): the street sees a resident then, and a knock is answered only for friends. The first time
- * each player comes home since streets came, a letter says what the street sees of them.
+ * Homes (shared/house.ts): every player's house stands in a garden of its own, a copy of the garden's map
+ * kept for them as their house is a copy of the home room, closed all round: NAPO's teleport inside the house
+ * is the way to town, and its twin by the notice board the way back. Friends visit from the friends list,
+ * whether the owner is home or not, unless the owner keeps visitors out (the setting in the menu); a visit
+ * sets them down by the teleport in the house. The house is built up at the workbench, a level at a time,
+ * paid from the stash: each level looks different, and some things inside (the kitchen, the map table) work
+ * only from a level on. Each player's home is known to the World, online or not, loaded at start-up: what a
+ * visitor sees there, and whether it lets them in. The first time each player comes home since homes stood
+ * in gardens, a letter says how home works now.
  *
  * Crowds: a town square holds about TOWN_CROWD players, and a region of the wilds REGION_CROWD, before
  * another copy of it opens; the rooms off a place (its houses, its shelters) follow the copy they are
@@ -156,7 +156,7 @@ import {
   bagLoad,
   bagShort,
   bagSlotsOf,
-  bundleWorth, bundlesIn, cleanMeals, isMeal, mealMods, payBag, sinceRain, whyNotEat,
+  bundleWorth, bundlesIn, cleanMeals, isMeal, mealMods, pantryShort, payBag, payPantry, sinceRain, whyNotEat,
   cacheTakes,
   calendarDay,
   carrierShare,
@@ -165,6 +165,10 @@ import {
   slabGlows,
   surgeRound,
   canMake,
+  cleanHouse,
+  nextHouse,
+  builtIn,
+  FIRST_HOUSE,
   canRescue,
   cleanIds,
   cleanNotebook,
@@ -223,7 +227,6 @@ import {
   UPGRADE_MAX,
   flashHits,
   findTiles,
-  lotDoors,
   footOf,
   lookoutAtFoot,
   gearEnergy,
@@ -350,7 +353,6 @@ import {
   type LongNightView,
   type LampView,
   type LookKind,
-  type LotView,
   type MapNote,
   type MapObject,
   type MeritsView,
@@ -386,7 +388,6 @@ import {
   type StoryData,
   type StoryEvent,
   type StoryView,
-  type StreetView,
   type StormPhase,
   type StormView,
   type TripBest,
@@ -398,13 +399,14 @@ import {
   type ThanksFor,
   type ThanksGroup,
   type TileMap,
+  type HouseLevel,
   type VisitView,
   type Weather,
   type WorksDef,
   type WorksView,
 } from '@napoland/shared';
 import { FIRE_LOW_S, FIRE_MAX_S, Fires, type Fire } from './fires';
-import type { CacheItemRecord, DropRecord, FirstRecord, LongNightRecord, LotRecord, MarkRecord, PlayerRecord, ReturnRecord, StoneRecord, ThanksRecord, TownRecord, WorksRecords } from './storage';
+import type { CacheItemRecord, DropRecord, FirstRecord, HomeRecord, LongNightRecord, MarkRecord, PlayerRecord, ReturnRecord, StoneRecord, ThanksRecord, TownRecord, WorksRecords } from './storage';
 import { Lamps, type Lamp, type Lookout } from './lookout';
 import { Works } from './works';
 
@@ -479,12 +481,8 @@ export const SEEN_TILES = 6;
 export const FLASH_NEAR = 3;
 export const RUSTLE_HEARD = 8;
 export const HUM_NEAR = 2;
-/** A player knocks at most once in this long (at any door): a knock is heard, and must not become a noise. */
-export const KNOCK_EVERY_MS = 3000;
-/** A player moves their cabin at most once in this long: every move is saved at once, and both streets hear of it. */
-export const MOVE_EVERY_MS = 10_000;
-/** A player's door setting changes at most once in this long: each change is saved at once, and their whole street hears of it. */
-export const DOOR_EVERY_MS = 1000;
+/** A player's visits setting changes at most once in this long: each change is saved at once, and their friends online hear of it. */
+export const VISITS_EVERY_MS = 1000;
 /**
  * A copy of a town square holds this many players (with those in its rooms) before another opens: about
  * as many as the square has room for without everyone walking through everyone else.
@@ -599,15 +597,13 @@ export interface Joined extends Scene {
   town: TownView;
   /** The world's clock (ms since the epoch, as the sky follows it) as of joining. */
   clock: number;
-  /** In a cabin: the furniture made for it (comfort.ts), theirs in their own, the owner's in a neighbor's (`visit`). */
+  /** In a home: the furniture made for it (comfort.ts), theirs in their own, the owner's in a friend's (`visit`). */
   furniture?: string[];
-  /** In a neighbor's cabin: whose it is, and what its trophy shelf shows. */
+  /** In a friend's home: whose it is, how far its house is built, and what its trophy shelf shows. */
   visit?: VisitView;
-  /** On their street: its lots, and which is theirs. */
-  street?: StreetView;
-  /** They keep their name off their door and their window dark. */
-  doorOff?: true;
-  /** They let only friends into their cabin. */
+  /** How far their own house is built (house.ts). */
+  house: number;
+  /** They keep every visitor out of their home. */
   visitsOff?: true;
   /** A new player's first step to take now (first steps). */
   firstSteps?: number;
@@ -666,8 +662,8 @@ export interface WorldOptions {
   cacheItems?: CacheItemRecord[];
   /** The first finders of the secrets found so far (firsts.ts), as saved. */
   firsts?: FirstRecord[];
-  /** Who lives where: every player's lot on a street, as saved (online or not). */
-  lots?: LotRecord[];
+  /** Every player's home, as saved (online or not): who may visit, and what a visitor sees there. */
+  homes?: HomeRecord[];
   /** What was carried back to the lodge and is not in its owner's chest yet, or came back in the last THANKS_KEPT_DAYS. */
   returns?: ReturnRecord[];
   /** The Old Stone as it was saved. */
@@ -819,17 +815,11 @@ interface Online {
   slump?: { from: number; until: number; flare: boolean };
   /** Their afterglow (a quirk, gear.ts) lasts until then (game time): they glow faintly, and watchers keep off them. */
   afterglowUntil?: number;
-  /** When they last knocked at a door (game time): once in KNOCK_EVERY_MS. */
-  knockAt: number;
-  /** When they last moved their cabin (game time): once in MOVE_EVERY_MS. */
-  movedAt: number;
-  /** When they last changed their door's setting (game time): once in DOOR_EVERY_MS. */
-  doorAt: number;
-  /** When they last changed who may walk into their cabin (game time): once in DOOR_EVERY_MS too. */
+  /** When they last changed who may visit their home (game time): once in VISITS_EVERY_MS. */
   visitsAt: number;
   /**
    * Whom they block, who blocks them and their friends are known (social.ts: World.returned says so): until
-   * then no neighbor's door lets them in, so a block keeps them out from their first step.
+   * then they visit nobody, so a block keeps them out from the start.
    */
   known: boolean;
   /** What opens the tiles that open only for some (TileMap.walkable): the tools they own. Made again whenever they get one. */
@@ -841,23 +831,21 @@ interface Online {
   up?: { o: Lookout; until: number };
 }
 
-/** What a cabin shows a neighbor who walks in (visits): the furniture made, and what the trophy shelf shows (item ids). */
+/** What a home shows a friend who visits: the furniture made, and what the trophy shelf shows (item ids). */
 interface CabinShows {
   furniture: string[];
   trophies: string[];
 }
 
-/** A player's lot: whose it is (their name goes on its plate), on which street, and which. */
-interface Lot {
+/** A player's home as the World knows it, online or not (Storage.loadHomes): whose it is, who may visit, and what a visitor sees. */
+interface Household {
   id: string;
   name: string;
-  street: number;
-  lot: number;
-  /** Its owner keeps their name off the door and the window dark (PlayerRecord.doorOff): the street sees a resident, never home. */
-  off?: true;
-  /** Its owner lets only friends into their cabin (PlayerRecord.visitsOff): nobody else walks in (mayVisit). */
+  /** How far its house is built (PlayerRecord.house, house.ts). */
+  house: number;
+  /** Its owner keeps every visitor out (PlayerRecord.visitsOff): nobody visits (mayVisit). */
   closed?: true;
-  /** What the cabin shows a neighbor who walks in while its owner is not online, as it stood when they last were (showsFor). */
+  /** What it shows a visitor while its owner is not online, as it stood when they last were (showsFor). */
   shows?: CabinShows;
 }
 
@@ -1242,6 +1230,8 @@ export class World {
   private readonly recipes: Map<string, Recipe>;
   /** What cooks at a fire (meals.ts), by recipe id. */
   private readonly cooking: Map<string, Recipe>;
+  /** The levels a house is built up to (house.ts), the first the one it starts at. */
+  private readonly houseLevels: HouseLevel[];
   /**
    * When the rain last fell over each map with something that grows in the rain (game time), by the map's
    * own sky (a region's rain windows): it grows a while after (a rule's `after`).
@@ -1388,30 +1378,25 @@ export class World {
   private readonly prints = new Map<string, Array<{ x: number; y: number; dir: Dir; at: number }>>();
   /** How often someone alone out there glimpses a walk (WorldOptions.glimpseEveryMs); undefined: every GLIMPSE_EVERY_S. */
   private readonly glimpseEvery: number | undefined;
+  /** Every player's home, online or not, by its owner: whose it is, who may visit, and what a visitor sees there. */
+  private readonly households = new Map<string, Household>();
   /**
-   * The street (a map with `street`): every player's cabin stands on it, each copy of it a street of
-   * neighbors, keyed by the street's number (copyFor). The doors of its lots, lot by lot (lotDoors).
-   */
-  readonly street: TileMap | undefined;
-  private readonly lotDoor: Array<{ x: number; y: number }> = [];
-  /** Who lives where, online or not: each player's lot, and each street's lots (undefined: free). */
-  private readonly lots = new Map<string, Lot>();
-  private readonly streets = new Map<number, Array<Lot | undefined>>();
-  /**
-   * Whom each player online is friends with (net.ts sets it from social.ts): a friend's street is one they
-   * may move to. Nobody, until it is set.
+   * Whom each player online is friends with (net.ts sets it from social.ts): whose home they may visit, and
+   * whom a crowd keeps them with. Nobody, until it is set.
    */
   friends: (id: string) => ReadonlySet<string> = () => NOBODY;
   /**
    * Who blocks each player online (net.ts sets it from social.ts): with whom they block, what keeps them out
-   * of a neighbor's cabin, the neighbor online or not. Nobody, until it is set.
+   * of a friend's home, the friend online or not. Nobody, until it is set.
    */
   blockedBy: (id: string) => ReadonlySet<string> = () => NOBODY;
-  /** The home of one's own (a private room): every player's cabin is a copy of it, keyed by its owner. */
+  /** The home of one's own (the private room, the house's inside): every player's house is a copy of it, keyed by its owner. */
   private readonly cabin: TileMap | undefined;
-  /** NAPO's teleport in the home town: the one in every cabin sets you down in front of it (teleportArrival). */
+  /** The garden every player's house stands in (the private town), a copy of it for each, keyed by its owner. None: the house opens onto the home town. */
+  private readonly garden: TileMap | undefined;
+  /** NAPO's teleport in the home town: the one in every house sets you down in front of it (teleportArrival). */
   private readonly townTeleport: { x: number; y: number } | undefined;
-  /** NAPO's teleport in the cabin: the one in town sets you down in front of it, at home in your own. */
+  /** NAPO's teleport in the house: the one in town sets you down in front of it, at home in your own; a visit, in a friend's. */
   private readonly cabinTeleport: { x: number; y: number } | undefined;
   /** The fire lookouts' lamps, each zone's own (lookout.ts), and the game time they were last looked at, for the ones that go out. */
   private readonly lamps = new Lamps();
@@ -1448,16 +1433,13 @@ export class World {
     const home = this.maps.get(homeId);
     if (!home) throw new Error(`the home map ${homeId} does not exist`);
     this.home = home;
-    // validateWorld keeps it to one home, whose door opens onto the home town, or onto the street off it.
-    // A street with no lots on it would leave nowhere to give anyone (validateWorld refuses one): as good as none.
-    const street = [...this.maps.values()].find(m => m.data.street && lotDoors(m.data).length > 0);
-    this.street = street;
-    this.lotDoor = street ? lotDoors(street.data) : [];
-    this.cabin = [...this.maps.values()].find(m => m.data.private);
+    // validateWorld keeps it to one home, whose door opens onto the home town, or into its own garden.
+    this.cabin = [...this.maps.values()].find(m => m.data.private && m.data.kind === 'inside');
+    this.garden = [...this.maps.values()].find(m => m.data.private && m.data.kind === 'town');
     const teleport = home.data.objects.find(o => o.kind === 'teleport'), inCabin = this.cabin?.data.objects.find(o => o.kind === 'teleport');
     this.townTeleport = teleport && { x: teleport.x, y: teleport.y };
     this.cabinTeleport = inCabin && { x: inCabin.x, y: inCabin.y };
-    const room = [...this.maps.values()].find(m => m.data.wake && (this.around.get(m.data.id) === home || (this.street && this.around.get(m.data.id) === this.street)));
+    const room = [...this.maps.values()].find(m => m.data.wake && (this.around.get(m.data.id) === home || (this.garden && this.around.get(m.data.id) === this.garden)));
     this.wakeUp = room ? { map: room, ...room.data.wake! } : { map: home, ...home.data.spawn };
     this.sky = weather;
     this.cycle = options.cycle ?? false;
@@ -1500,6 +1482,7 @@ export class World {
     this.itemOrder = items.items;
     this.recipes = new Map((items.recipes ?? []).map(rc => [rc.id, rc]));
     this.cooking = new Map((items.cooking ?? []).map(rc => [rc.id, rc]));
+    this.houseLevels = items.house ?? [];
     this.wearTimes = items.wear;
     this.mendCosts = items.mend;
     this.upgrades = items.upgrades;
@@ -1549,11 +1532,11 @@ export class World {
     }
     this.notesById = notesOf([...this.maps.values()].map(m => m.data));
     for (const f of options.firsts ?? []) if (!this.firsts.has(f.secret)) this.firsts.set(f.secret, { ...f });
-    // Who lives where: a lot saved twice (it should not happen) is the first one's; the other is given a new one when they next come home.
-    for (const l of options.lots ?? []) {
-      if (!this.street || !Number.isInteger(l.street) || l.street < 1 || !Number.isInteger(l.lot) || l.lot < 0 || l.lot >= this.lotDoor.length) continue;
-      if (this.lots.has(l.id) || this.streetLots(l.street)[l.lot]) continue;
-      this.settle({ id: l.id, name: l.name, street: l.street, lot: l.lot, ...(l.off && { off: true as const }), ...(l.closed && { closed: true as const }), shows: this.showsOf(l.furniture, l.stash) });
+    // Every player's home, online or not: what a friend who visits sees there, and whether it lets them in.
+    for (const h of options.homes ?? []) {
+      this.households.set(h.id, {
+        id: h.id, name: h.name, house: cleanHouse(h.house, this.houseLevels), ...(h.closed && { closed: true as const }), shows: this.showsOf(h.furniture, h.stash),
+      });
     }
 
     // Where each map's creatures may wake is the same in every copy of it: worked out once.
@@ -1733,15 +1716,16 @@ export class World {
     const meals = cleanMeals(rec.meals, this.items);
     if (meals.length) r.meals = meals;
     else delete r.meals;
-    // Where their cabin stands is what the World keeps of it (it may have been given to someone else meanwhile, or never saved).
-    this.recordLot(r);
-    if (r.doorOff !== true) delete r.doorOff;
-    if (r.streetTold !== true) delete r.streetTold;
+    if (r.homeTold !== true) delete r.homeTold;
     if (r.visitsOff !== true) delete r.visitsOff;
     if (!(Number.isInteger(r.firstSteps) && r.firstSteps! >= 1 && r.firstSteps! <= FIRST_STEPS)) delete r.firstSteps;
-    // Their door's setting is theirs: the lot kept for them follows it, and so does their street. So does who may visit.
-    this.markDoor(r.id, r.doorOff === true);
-    this.markVisits(r.id, r.visitsOff === true);
+    // How far their house is built, as far as the levels this release knows go; the first when never built on.
+    const house = cleanHouse(r.house, this.houseLevels);
+    if (house > FIRST_HOUSE) r.house = house;
+    else delete r.house;
+    // Their home as the World knows it follows them: their name, their house, and who may visit.
+    const shows = this.households.get(r.id)?.shows;
+    this.households.set(r.id, { id: r.id, name: r.name, house, ...(r.visitsOff && { closed: true as const }), ...(shows && { shows }) });
     // Cozy is a time on the wall clock: it went on counting down while they were away.
     if (!(Number.isFinite(r.cozy) && r.cozy! > now + this.epochOffset)) delete r.cozy;
     // Maps change between visits: a map may be gone (start over at home, where you wake up), or the
@@ -1752,11 +1736,6 @@ export class World {
     let map = this.maps.get(r.map), copy: string;
     if (!map) {
       ({ map, x: r.x, y: r.y, dir: r.dir } = this.wakeUp);
-      copy = this.copyFor(r, map);
-    } else if (map.data.private && this.street && typeof r.zone === 'string' && r.zone && r.zone !== r.id) {
-      // They left the game in a neighbor's cabin: they come back out in front of its door, on their own street.
-      map = this.street;
-      Object.assign(r, this.doorstepOf(r, r.zone), { dir: 'down' });
       copy = this.copyFor(r, map);
     } else {
       // Saved on ice that has thawed since: ashore, where they would have stepped.
@@ -1797,15 +1776,13 @@ export class World {
     const p: Online = {
       rec: r, zone, map, readyAt, queue: [], rate: 0, wetRate: 0, energyAt: now, load: 0, mods: modsOf(r.stats!), max: this.maxOf(r), slots: bagSlotsOf(gear, this.items), hitched: false,
       hitchAt: now, unease: 0, uneaseAt: now, uneaseLevel: 0, trail: [], walked: [], heardRate: 0, heardWetRate: 0, heardLoad: 0, heardAt: now, live: this.liveIn(r.bag), gifts: 0, visit: null, pass,
-      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, knockAt: -Infinity, movedAt: -Infinity, doorAt: -Infinity, visitsAt: -Infinity,
+      fireside: 0, firesideAt: now, heardFireside: 'away', heardCozy: false, visitsAt: -Infinity,
       known: false,
     };
     this.refresh(p, now);
     this.revisit(p);
     this.players.set(r.id, p);
     zone.players.add(p);
-    // Back home: their window lights on their street.
-    if (this.ownCabin(p)) this.homeChanged(p);
     const player = this.viewOf(p);
     this.toZone(zone.key, { t: 'join', player }, r.id);
     // The welcome has the energy too; the message after it is what a client listens to from then on.
@@ -1831,9 +1808,8 @@ export class World {
       town: this.townView(),
       clock: Math.floor(now + this.epochOffset),
       ...this.cabinOf(p),
-      ...this.streetOf(p),
       ...this.printsOf(p.map, now),
-      ...(r.doorOff && { doorOff: true as const }),
+      house,
       ...(r.visitsOff && { visitsOff: true as const }),
       ...(r.firstSteps && { firstSteps: r.firstSteps }),
       ...(this.works.defs.size ? { works: this.works.views() } : {}),
@@ -1851,7 +1827,7 @@ export class World {
 
   /**
    * A player who joined is settled in: whom they block is known (net.ts calls it once social.ts has read
-   * it), and who blocks them, so a neighbor's door may let them in from now on. Back in the game at home
+   * it), and who blocks them, so they may visit a friend's home from now on. Back in the game at home
    * (they left it there), they read their letter now, as if they had walked in: it leaves out thanks from
    * whoever they block.
    */
@@ -1871,14 +1847,11 @@ export class World {
     if (this.advance(p, now) <= 0) this.fall(p, now);
     // Seen until now: coming straight back (another tab, the same record) is no time away to rest in.
     p.rec.lastSeenAt = Math.floor(now + this.epochOffset);
-    const home = this.ownCabin(p);
-    // What their cabin shows a neighbor who walks in while they are away: as it stands now.
-    const lot = this.lots.get(id);
-    if (lot) lot.shows = this.showsOf(p.rec.furniture, p.rec.stash);
+    // What their home shows a friend who visits while they are away: as it stands now.
+    const household = this.households.get(id);
+    if (household) household.shows = this.showsOf(p.rec.furniture, p.rec.stash);
     this.players.delete(id);
     this.quit(p);
-    // Gone from the game: their window goes dark on their street.
-    if (home) this.homeChanged(p);
     if (p.readyAt > -Infinity) this.resting.set(id, p.readyAt);
     this.toZone(from.key, { t: 'leave', id }, id);
     return copyRecord(p.rec);
@@ -2059,21 +2032,37 @@ export class World {
       return this.refuse(p, 'cook', 'too_far');
     }
     if (Math.max(Math.abs(x - p.rec.x), Math.abs(y - p.rec.y)) > 1) return this.refuse(p, 'cook', 'too_far');
-    const fires = p.zone.fires, fire = fires.at(x, y);
-    if (!fire) return this.refuse(p, 'cook', 'gone');
-    if (fires.heat(fire, now) <= 0) return this.refuse(p, 'cook', 'fire_out');
+    // The kitchen in one's own house (house.ts), once the house is built up to it: it cooks from the bag and
+    // then from the chest, the pantry under it. Anywhere else, a fire that burns cooks from the bag alone.
+    const kitchen = p.map.data.objects.find(o => o.kind === 'kitchen' && o.x === x && o.y === y);
+    if (kitchen) {
+      if (!this.ownCabin(p)) return this.refuse(p, 'cook', 'not_yours');
+      if (!builtIn(kitchen, this.houseHere(p))) return this.refuse(p, 'cook', 'not_built');
+    } else {
+      const fires = p.zone.fires, fire = fires.at(x, y);
+      if (!fire) return this.refuse(p, 'cook', 'gone');
+      if (fires.heat(fire, now) <= 0) return this.refuse(p, 'cook', 'fire_out');
+    }
     const recipe = this.cooking.get(recipeId), meal = recipe && this.items.get(recipe.make);
     if (!recipe || !meal) return this.refuse(p, 'cook', 'gone');
-    if (bagShort(recipe, p.rec.bag).length) return this.refuse(p, 'cook', 'missing');
+    const stash = p.rec.stash ?? emptyStash();
+    if ((kitchen ? pantryShort(recipe, p.rec.bag, stash.items) : bagShort(recipe, p.rec.bag)).length) return this.refuse(p, 'cook', 'missing');
     const count = recipe.count ?? 1;
-    const r = addToBag(payBag(p.rec.bag, recipe.needs), meal, count, p.slots);
+    const paid = kitchen ? payPantry(p.rec.bag, recipe.needs) : { bag: payBag(p.rec.bag, recipe.needs), fromBag: recipe.needs, fromChest: [] };
+    const r = addToBag(paid.bag, meal, count, p.slots);
     if (r.left) return this.refuse(p, 'cook', 'bag_full');
     p.rec.bag = r.bag;
-    // Cooked, what went in never goes back: taken out of the stash, it no longer counts as out.
-    for (const n of recipe.needs) p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), n.item, n.count);
+    // Cooked, what went in never goes back: taken out of the stash, it no longer counts as out; what the
+    // kitchen took from the chest is gone from it.
+    for (const n of paid.fromBag) p.rec.stash = usedUp(p.rec.stash ?? emptyStash(), n.item, n.count);
+    if (paid.fromChest.length) {
+      p.rec.stash = payFrom(p.rec.stash ?? emptyStash(), paid.fromChest);
+      this.saveNow.set(id, p.rec);
+      this.outbox.push({ to: id, msg: { t: 'chest', stash: stashList(p.rec.stash, this.itemOrder) } });
+    }
     this.sendBag(p, now);
     this.rerate(p, now);
-    this.did(p, { kind: 'cooked', item: meal.id, count });
+    this.did(p, { kind: 'cooked', item: meal.id, count, ...(paid.fromChest.length ? { chest: true as const } : {}) });
   }
 
   /** Throws away `count` of what is in bag slot `slot`, or all of it. */
@@ -2687,7 +2676,7 @@ export class World {
     if (tool) this.giveTool(id, recipe.make);
     if (furniture) {
       p.rec.furniture = [...(p.rec.furniture ?? []), furniture.id];
-      // Whoever is in the cabin sees it stand there: its owner, and a neighbor looking round.
+      // Whoever is in the house sees it stand there: its owner, and a friend visiting.
       const placed = this.placed(p);
       for (const q of p.zone.players) this.outbox.push({ to: q.rec.id, msg: { t: 'furniture', furniture: placed } });
     }
@@ -2933,8 +2922,10 @@ export class World {
   }
 
   private readBoard(p: Online, x: number, y: number, now: number): void {
-    const here = p.map.data.objects.some(o => o.kind === 'board' && o.x === x && o.y === y);
-    if (!here || manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
+    const board = p.map.data.objects.find(o => o.kind === 'board' && o.x === x && o.y === y);
+    if (!board || manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
+    // The map table in a home stands there only once its house is built up to it (house.ts): boxes, before.
+    if (!builtIn(board, this.houseHere(p))) return this.refuse(p, 'board', 'not_built');
     this.outbox.push({ to: p.rec.id, msg: { t: 'board', board: this.boardView(p, now) } });
   }
 
@@ -3029,13 +3020,14 @@ export class World {
    */
   private homecoming(p: Online, now: number): void {
     p.gifts = 0;
-    // The first time home since streets came: a letter says what the street sees of them and where to hide
-    // it, once, before any thanks. A new player reads it once their first steps are done, not on waking up
-    // for the first time: one thing at a time (DESIGN.md, the first moments).
-    if (this.street && !p.rec.streetTold && !p.rec.firstSteps) {
-      p.rec.streetTold = true;
+    // The first time home since homes stood in gardens of their own: a letter says how home works now (the
+    // teleport the only way out, friends visiting from the list, the house to build up), once, before any
+    // thanks. A new player reads it once their first steps are done, not on waking up for the first time:
+    // one thing at a time (DESIGN.md, the first moments).
+    if (this.garden && !p.rec.homeTold && !p.rec.firstSteps) {
+      p.rec.homeTold = true;
       this.saveNow.set(p.rec.id, p.rec);
-      this.outbox.push({ to: p.rec.id, msg: { t: 'streetLetter', doorOff: p.rec.doorOff === true } });
+      this.outbox.push({ to: p.rec.id, msg: { t: 'homeLetter' } });
     }
     // What came back to the chest while they were away (lostfound.ts), the latest first; told once.
     const back = [...this.returns.values()].filter(r => r.owner === p.rec.id && !r.told && r.id <= (p.rec.returned ?? 0)).sort((a, b) => b.id - a.id);
@@ -3331,91 +3323,39 @@ export class World {
   }
 
   /**
-   * A at the door on tile x,y of the player's street, next to them. A neighbor's: they knock; they hear
-   * whose door it is and whether they are home, and a neighbor who is home (and does not block them) hears
-   * who knocked, in their text box. Visiting inside is for later. Their own: they hear the friends whose
-   * street has a lot free, whom they could move next to (`doorstep`).
+   * `id` visits friend `host`'s home from the friends list (the client asks first): NAPO's teleport sets them
+   * down in front of the one in the host's house, in the host's copy of it, whether the host is home or not.
+   * Only from town or a home (their own or another friend's): out in the wilds a visit would be a way home
+   * that costs nothing, and coming back is the whole game (DESIGN.md, pillar 2). Only while the host lets
+   * friends visit (mayVisit); a host who is home reads who came.
    */
-  knock(id: string, x: number, y: number, now: number): void {
+  visit(id: string, host: string, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    const lot = p.map === this.street ? this.lotDoor.findIndex(d => d.x === x && d.y === y) : -1;
-    if (lot < 0 || manhattan(x, y, p.rec.x, p.rec.y) !== 1) return this.refuse(p, 'knock', 'too_far');
-    const mine = this.lotOf(p.rec), owner = this.streetLots(mine.street)[lot];
-    if (owner?.id === id) return void this.outbox.push({ to: id, msg: { t: 'doorstep', moves: this.movesFor(p) } });
-    if (now - p.knockAt < KNOCK_EVERY_MS) return this.refuse(p, 'knock', 'slow_down');
-    p.knockAt = now;
-    const them = owner && this.players.get(owner.id), home = !!them && this.ownCabin(them);
-    // A door kept to oneself answers only friends (asked both ways): to anyone else, a resident, and nobody answers.
-    this.outbox.push({ to: id, msg: { t: 'door', x, y, lot: owner ? this.answerOf(p, owner) : null } });
-    // Someone who blocks the knocker hears nothing from them, and the knocker is not told (the lit window says they are home anyway).
-    if (them && home && !this.blocks(them.rec.id).has(id)) this.outbox.push({ to: them.rec.id, msg: { t: 'knocked', name: p.rec.name } });
-  }
-
-  /**
-   * At their own door, a player moves their cabin next to friend `to`'s, onto the friend's street: to the
-   * free lot nearest the friend's. It comes with them (their cabin is the same room wherever it stands):
-   * they stand in front of its door on the new street, and both streets see the lots change.
-   */
-  moveNextTo(id: string, to: string, now: number): void {
-    const p = this.players.get(id);
-    if (!p) return;
-    this.runQueue(p, now);
-    const mine = this.street && p.map === this.street ? this.lotOf(p.rec) : undefined, door = mine && this.lotDoor[mine.lot];
-    if (!mine || !door || manhattan(door.x, door.y, p.rec.x, p.rec.y) !== 1) return this.refuse(p, 'move', 'too_far');
-    if (!this.friends(id).has(to)) return this.refuse(p, 'move', 'not_friends');
-    const friend = this.lots.get(to);
-    if (!friend) return this.refuse(p, 'move', 'gone');
-    if (friend.street === mine.street) return this.refuse(p, 'move', 'neighbors');
-    const lot = this.nearestFree(friend.street, friend.lot);
-    if (lot === undefined) return this.refuse(p, 'move', 'street_full');
-    if (now - p.movedAt < MOVE_EVERY_MS) return this.refuse(p, 'move', 'slow_down');
-    p.movedAt = now;
-    this.unsettle(mine);
-    this.tellLot(mine.street, mine.lot);
-    const moved = this.settle({
-      id, name: p.rec.name, street: friend.street, lot, ...(p.rec.doorOff && { off: true as const }), ...(p.rec.visitsOff && { closed: true as const }),
-    });
-    this.recordLot(p.rec);
-    this.saveNow.set(id, p.rec);
-    this.tellLot(moved.street, moved.lot);
-    const from = p.zone, at = this.doorstep(p.rec);
-    this.place(p, this.zoneFor(this.street!, String(moved.street), now), at.x, at.y, 'down');
+    const household = this.households.get(host);
+    if (!household || host === id || !this.cabin || !this.cabinTeleport) return this.refuse(p, 'visit', 'gone');
+    if (!(this.friends(id).has(host) || this.friends(host).has(id))) return this.refuse(p, 'visit', 'not_friends');
+    if (this.wild(p.map)) return this.refuse(p, 'visit', 'too_far');
+    if (!this.mayVisit(id, household)) return this.refuse(p, 'visit', 'closed');
+    // Out of their own house with the drying rack in it, they leave dry, as through its door.
+    if (this.ownCabin(p) && dries(p.rec.furniture, this.items)) p.rec.wet = 0;
+    const from = p.zone, at = teleportArrival(this.cabinTeleport);
+    this.place(p, this.zoneFor(this.cabin, host, now), at.x, at.y, at.dir);
     this.arrive(p, from, 'exit', now);
-    // A neighbor looking round inside as it went walks out on their own street.
-    this.keepOut(id, now, true);
-    this.did(p, { kind: 'moved', name: friend.name });
+    this.moveStory(p, { reach: this.cabin.data.id });
+    this.visited(p, household);
   }
 
   /**
-   * The setting in the menu: the player keeps their name off their door and their window dark to their
-   * street (`off`), or shows both, as everyone does until they choose. Saved at once, and their street sees
-   * the change; they hear the setting back as it stands (unchanged, when it changed too soon before).
-   */
-  doorOff(id: string, off: boolean, now: number): void {
-    const p = this.players.get(id);
-    if (!p) return;
-    if (off !== (p.rec.doorOff === true) && now - p.doorAt >= DOOR_EVERY_MS) {
-      p.doorAt = now;
-      if (off) p.rec.doorOff = true;
-      else delete p.rec.doorOff;
-      this.markDoor(id, off);
-      this.saveNow.set(id, p.rec);
-      // A door kept to oneself lets only friends in: anyone else inside walks out.
-      this.keepOut(id, now);
-    }
-    this.outbox.push({ to: id, msg: { t: 'doorOff', off: p.rec.doorOff === true } });
-  }
-
-  /**
-   * The setting in the menu: let only friends walk into your cabin (`off`), or your neighbors too, as
-   * everyone does until they choose. A neighbor inside who may no longer be walks out, in front of the door.
+   * The setting in the menu: keep every visitor out of your home (`off`), or let your friends visit, as
+   * everyone does until they choose. A visitor inside who may no longer be is sent home at once. Saved at
+   * once; they hear the setting back as it stands (unchanged, when it changed too soon before).
    */
   visitsOff(id: string, off: boolean, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
-    if (off !== (p.rec.visitsOff === true) && now - p.visitsAt >= DOOR_EVERY_MS) {
+    if (off !== (p.rec.visitsOff === true) && now - p.visitsAt >= VISITS_EVERY_MS) {
       p.visitsAt = now;
       if (off) p.rec.visitsOff = true;
       else delete p.rec.visitsOff;
@@ -3426,49 +3366,96 @@ export class World {
     this.outbox.push({ to: id, msg: { t: 'visitsOff', off: p.rec.visitsOff === true } });
   }
 
-  /**
-   * Whoever is in `owner`'s cabin and may no longer be (its owner closed it, they are friends no more, or
-   * there is a block either way; `all`: the cabin moved away) walks out onto their street, in front of its
-   * door. net.ts calls it when how two players stand changes (social.ts).
-   */
-  keepOut(owner: string, now: number, all = false): void {
-    const zone = this.cabin && this.zones.get(zoneKey(this.cabin.data.id, owner));
-    const lot = this.lots.get(owner);
-    if (!zone || !this.street) return;
-    for (const v of [...zone.players]) {
-      if (v.rec.id === owner || (!all && lot && this.mayVisit(v.rec.id, lot))) continue;
-      const from = v.zone, at = this.doorstepOf(v.rec, owner);
-      this.place(v, this.zoneFor(this.street, this.copyFor(v.rec, this.street), now), at.x, at.y, 'down');
-      this.arrive(v, from, 'exit', now);
-    }
+  /** Whether `owner` keeps every visitor out of their home (the friends list greys Visit on their card). */
+  homeClosed(owner: string): boolean {
+    return this.households.get(owner)?.closed === true;
   }
 
   /**
-   * A at NAPO's teleport on tile x,y next to the player (the client asks first). The one in a cabin (anyone's,
-   * a neighbor's too) sets them down in town, in front of its twin there (teleportArrival), in the copy of town
+   * Whoever visits `owner`'s home (its house or its garden) and may no longer (its owner keeps visitors out
+   * now, they are friends no more, or there is a block either way) is sent home, by the teleport. net.ts calls
+   * it when how two players stand changes (social.ts).
+   */
+  keepOut(owner: string, now: number): void {
+    const household = this.households.get(owner);
+    for (const map of [this.cabin, this.garden]) {
+      const zone = map && this.zones.get(zoneKey(map.data.id, owner));
+      for (const v of [...(zone?.players ?? [])]) {
+        if (v.rec.id === owner || (household && this.mayVisit(v.rec.id, household))) continue;
+        this.sendHome(v, now);
+      }
+    }
+  }
+
+  /** Home by NAPO's teleport: in front of the one in their own house, which is coming home as walking in is (the trip ends, the letter waits). */
+  private sendHome(p: Online, now: number): void {
+    if (!this.cabin || !this.cabinTeleport) return;
+    const from = p.zone, at = teleportArrival(this.cabinTeleport);
+    this.place(p, this.zoneFor(this.cabin, this.copyFor(p.rec, this.cabin), now), at.x, at.y, at.dir);
+    this.arrive(p, from, 'exit', now);
+    this.cameHome(p, now);
+  }
+
+  /** Home, their own copy of it: the trip is over, the meals eaten for it end, and the letter waits. A friend's home is no homecoming. */
+  private cameHome(p: Online, now: number): void {
+    if (!this.atHome(p)) return;
+    this.endTrip(p, now, null);
+    this.endMeals(p, now);
+    this.homecoming(p, now);
+  }
+
+  /**
+   * A at NAPO's teleport on tile x,y next to the player (the client asks first). The one in a house (anyone's,
+   * a friend's too) sets them down in town, in front of its twin there (teleportArrival), in the copy of town
    * walking in would give them (copyFor: where their friends are); the one in town sets them down at home, in
-   * front of the one in their own cabin, which is coming home as walking in is (the trip ends, the letter waits).
+   * front of the one in their own house, which is coming home as walking in is (the trip ends, the letter waits).
    */
   teleport(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
     const here = p.map.data.objects.some(o => o.kind === 'teleport' && o.x === x && o.y === y);
-    const toTown = p.map.data.private === true, toCabin = p.map === this.home;
+    const toTown = p.map === this.cabin, toCabin = p.map === this.home;
     if (!here || !(toTown || toCabin) || manhattan(x, y, p.rec.x, p.rec.y) !== 1) return this.refuse(p, 'teleport', 'too_far');
     const to = toTown ? this.home : this.cabin, twin = toTown ? this.townTeleport : this.cabinTeleport;
     if (!to || !twin) return this.refuse(p, 'teleport', 'gone');
-    // Out of their own cabin with the drying rack in it, they leave dry, as through its door.
+    // Out of their own house with the drying rack in it, they leave dry, as through its door.
     if (this.ownCabin(p) && dries(p.rec.furniture, this.items)) p.rec.wet = 0;
     const from = p.zone, at = teleportArrival(twin);
     this.place(p, this.zoneFor(to, this.copyFor(p.rec, to), now), at.x, at.y, at.dir);
     this.arrive(p, from, 'exit', now);
-    const home = this.atHome(p);
-    if (home) this.endTrip(p, now, null);
-    // So are the meals eaten for it (meals.ts).
-    if (home) this.endMeals(p, now);
     this.moveStory(p, { reach: to.data.id });
-    if (home) this.homecoming(p, now);
+    this.cameHome(p, now);
+  }
+
+  /**
+   * Builds the player's house up to its next level (house.ts) at the workbench on tile x,y next to them, in
+   * their own home, paying from their stash. Saved at once; whoever is in their house or their garden sees it
+   * stand so (`house`), and they hear `bench` (the stash) and `did`.
+   */
+  build(id: string, x: number, y: number, now: number): void {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.runQueue(p, now);
+    const why = this.benchRefusal(p, x, y);
+    if (why) return this.refuse(p, 'build', why);
+    // Only in a home of one's own: a workbench anywhere else builds nothing.
+    if (!this.ownCabin(p)) return this.refuse(p, 'build', 'not_here');
+    const next = nextHouse(cleanHouse(p.rec.house, this.houseLevels), this.houseLevels);
+    if (!next) return this.refuse(p, 'build', 'built');
+    const stash = p.rec.stash ?? emptyStash();
+    if (!canMake({ id: 'house', make: 'house', needs: next.needs }, stash.items)) return this.refuse(p, 'build', 'missing');
+    p.rec.stash = fitPieces(payFrom(stash, next.needs), this.items, this.rng);
+    p.rec.house = next.level;
+    this.saveNow.set(id, p.rec);
+    const household = this.households.get(id);
+    if (household) household.house = next.level;
+    for (const map of [this.cabin, this.garden]) {
+      const zone = map && this.zones.get(zoneKey(map.data.id, id));
+      for (const q of zone?.players ?? []) this.outbox.push({ to: q.rec.id, msg: { t: 'house', level: next.level } });
+    }
+    this.outbox.push({ to: id, msg: { t: 'bench', stash: stashList(p.rec.stash, this.itemOrder) } });
+    this.did(p, { kind: 'built', level: next.level });
   }
 
   /**
@@ -3486,14 +3473,9 @@ export class World {
     this.outbox.push({ to: p.rec.id, msg: { t: 'firstSteps', step: next ?? null } });
   }
 
-  /** Players deleted from storage (guests who stayed away): their lots are free again. */
-  forgetLots(ids: readonly string[]): void {
-    for (const id of ids) {
-      const lot = this.lots.get(id);
-      if (!lot || this.players.has(id)) continue;
-      this.unsettle(lot);
-      this.tellLot(lot.street, lot.lot);
-    }
+  /** Players deleted from storage (guests who stayed away): their homes are gone with them. */
+  forgetHomes(ids: readonly string[]): void {
+    for (const id of ids) if (!this.players.has(id)) this.households.delete(id);
   }
 
   // ---------- the slab in the ring of stones (slab.ts) ----------
@@ -3767,14 +3749,12 @@ export class World {
     // Energy that ran out before this step could start: the player goes down instead of walking.
     if (this.spent(p, now)) return this.reject(p, seq);
     const { x, y } = stepTarget(p.rec.x, p.rec.y, dir);
-    if (!p.map.walkable(x, y, p.pass) || this.barred(p, x, y)) {
+    if (!p.map.walkable(x, y, p.pass)) {
       // Steps queued behind this one were planned from a tile the player never reached.
       p.queue.length = 0;
       this.reject(p, seq);
-      // A neighbor's door that did not let them in says why (nobody lives there, or only friends may come in);
-      // a padlocked door says why it stays shut; the culvert without waders is only water, and says nothing.
-      if (p.map.walkable(x, y, p.pass)) this.turnedAway(p, x, y);
-      else if (p.map.exitAt(x, y) && p.map.needs(x, y)) this.refuse(p, 'step', 'padlocked');
+      // A padlocked door says why it stays shut; the culvert without waders is only water, and says nothing.
+      if (p.map.exitAt(x, y) && p.map.needs(x, y)) this.refuse(p, 'step', 'padlocked');
       return;
     }
     const { id } = p.rec;
@@ -3870,46 +3850,31 @@ export class World {
    */
   private cross(p: Online, to: Arrival, now: number): void {
     const from = p.zone, map = this.maps.get(to.to)!;
-    // With the drying rack in their cabin, a player always walks out of it dry.
+    // With the drying rack in their house, a player always walks out of it dry.
     if (this.ownCabin(p) && dries(p.rec.furniture, this.items)) p.rec.wet = 0;
-    // In through a neighbor's door (barred let them): into the neighbor's cabin, the copy of the room kept for them.
-    const host = map.data.private && from.map === this.street ? this.hostAt(p, p.rec.x, p.rec.y) : undefined;
-    const copy = host?.id ?? this.copyFor(p.rec, map);
-    // Out of a cabin onto the street: in front of that cabin's door (their own, or the neighbor's they
-    // visited), on their own street. Onto it from town: where the road comes in, the exit's own tile.
-    const at = map === this.street && from.map.data.private ? { ...this.doorstepOf(p.rec, from.copy), dir: to.dir } : to;
+    // Between a home's house and its garden: the same home's copy, their own or the friend's they visit.
+    const copy = map.data.private && from.map.data.private ? from.copy : this.copyFor(p.rec, map);
     const walked = p.walked;
-    this.place(p, this.zoneFor(map, copy, now), at.x, at.y, at.dir);
+    this.place(p, this.zoneFor(map, copy, now), to.x, to.y, to.dir);
     // Into a room off the wilds: the walk that led here ends at a find or a fire, if they pick one up or feed it in there.
     if (from.map.data.kind === 'wilds' && map.data.kind === 'inside') p.approach = { map: from.map.data.id, steps: walked };
     this.arrive(p, from, 'exit', now);
-    // Home, their own copy of it (their cabin): the trip is over, and the letter waits there. A neighbor's is no homecoming.
-    const home = this.atHome(p);
-    if (home) this.endTrip(p, now, null);
-    // So are the meals eaten for it (meals.ts): a neighbor's cabin is no homecoming for them either.
-    if (home) this.endMeals(p, now);
     this.moveStory(p, { reach: map.data.id });
-    if (host) this.visited(p, host);
-    if (home) this.homecoming(p, now);
+    // Home, their own copy of it: the trip is over, and the letter waits there. A friend's is no homecoming.
+    this.cameHome(p, now);
   }
 
   /**
    * The copy of `map` a player walks into (an exit, waking up at home, or coming back into the game where
    * the copy they were in is no more): the one place that decides it. `player` is as they are before they
-   * go: where they come from. A private room (the home) is each player's own copy of it, keyed by them
-   * (a neighbor walks into it through its door only: cross), and the street their own street's. A room follows the copy of the place it
-   * is entered from, and walking back out of one leads into that copy again: a copy is a place with its
-   * rooms. Anywhere else (a town square, a region of the wilds, or a room come back to from elsewhere)
-   * the crowd decides (crowdCopy).
+   * go: where they come from. A home (its house and its garden) is each player's own copy of it, keyed by
+   * them (a friend comes into it only by a visit, and walks between its house and garden in that copy:
+   * cross). A room follows the copy of the place it is entered from, and walking back out of one leads into
+   * that copy again: a copy is a place with its rooms. Anywhere else (a town square, a region of the wilds,
+   * or a room come back to from elsewhere) the crowd decides (crowdCopy).
    */
   protected copyFor(player: PlayerRecord, map: TileMap): string {
-    // Coming home is when a player is given a lot, if they have none yet: their cabin stands on a street.
-    if (map.data.private) {
-      if (this.street) this.lotOf(player);
-      return player.id;
-    }
-    // The street is the player's own: their neighbors' copy of it.
-    if (map === this.street) return String(this.lotOf(player).street);
+    if (map.data.private) return player.id;
     const place = this.placeOf(map), from = this.maps.get(player.map);
     // Into a room from its place, or out of a room onto it: the copy they are in already, and counted in.
     if (from && from !== map && this.placeOf(from) === place && (from === place || map === place)) return player.zone ?? '';
@@ -3962,13 +3927,13 @@ export class World {
   }
 
   /**
-   * The copy of `map` a player comes back into when they join: their own, always, in a private room, and
-   * their own street; elsewhere the one they were saved in while it still makes sense (it is in use:
-   * someone is in it, or in a room of it; and it has room for them), else wherever copyFor sends anyone
-   * coming in.
+   * The copy of `map` a player comes back into when they join: their own, always, in a home (who left the
+   * game visiting a friend comes back in their own, where they stood); elsewhere the one they were saved in
+   * while it still makes sense (it is in use: someone is in it, or in a room of it; and it has room for
+   * them), else wherever copyFor sends anyone coming in.
    */
   private rejoin(r: PlayerRecord, map: TileMap): string {
-    if (map.data.private || map === this.street) return this.copyFor(r, map);
+    if (map.data.private) return this.copyFor(r, map);
     const copy = typeof r.zone === 'string' ? r.zone : '', place = this.placeOf(map), people = this.peopleIn(place);
     if (people.has(copy) && people.get(copy)! < this.crowdOf(place)) return copy;
     return this.copyFor(r, map);
@@ -4129,7 +4094,6 @@ export class World {
    * copy they are in (none for a main copy), so they come back into it if it still makes sense (rejoin).
    */
   private place(p: Online, zone: Zone, x: number, y: number, dir: Dir): void {
-    const home = this.players.has(p.rec.id) && this.ownCabin(p);
     this.quit(p);
     // Another map, or home after a collapse: down off any lookout.
     p.up = undefined;
@@ -4148,8 +4112,6 @@ export class World {
     p.walked = [];
     p.approach = undefined;
     this.revisit(p);
-    // Home, or out of it: their window lights or goes dark on their street.
-    if (this.players.has(p.rec.id) && this.ownCabin(p) !== home) this.homeChanged(p);
   }
 
   /**
@@ -4166,7 +4128,7 @@ export class World {
       to: id,
       msg: {
         t: 'zone', map: mapRef(p.map), x, y, dir, players: this.views(here), ...this.scene(here, now), finds: this.findsFor(p.rec, p.zone), stats: { ...p.rec.stats },
-        weather: this.weatherOf(p.map), reason, ...this.cabinOf(p), ...this.streetOf(p), ...this.printsOf(p.map, now),
+        weather: this.weatherOf(p.map), reason, ...this.cabinOf(p), ...this.printsOf(p.map, now),
       },
       // Where the network hears them from now on, when it is not the map's main copy (its key is the map's id).
       ...(p.zone.copy ? { zone: here } : {}),
@@ -4285,12 +4247,12 @@ export class World {
 
   // ---------- a cozy cabin (comfort.ts) ----------
 
-  /** In their own cabin (their copy of the home room; a neighbor may be looking round in it too): its chest, workbench, furniture and fire are theirs. */
+  /** In their own home, its house or its garden (their copies of them; a friend may be visiting too): its chest, workbench, furniture and fire are theirs. */
   private ownCabin(p: Online): boolean {
     return p.map.data.private === true && p.zone.copy === p.rec.id;
   }
 
-  /** At home: in a home (a room with a chest), their own copy of it when it is a cabin. A neighbor's cabin is nobody's homecoming. */
+  /** At home: in a home (a room with a chest), their own copy of it when it is a house of one's own. A friend's is nobody's homecoming. */
   private atHome(p: Online): boolean {
     return this.homes.has(p.map.data.id) && (!p.map.data.private || this.ownCabin(p));
   }
@@ -4316,14 +4278,21 @@ export class World {
   }
 
   /**
-   * What a zone or welcome tells a player about the cabin they are in: in their own, its furniture; in a
-   * neighbor's, the neighbor's furniture, whose it is and what its trophy shelf shows (VisitView).
+   * What a zone or welcome tells a player about the home they are in (its house or its garden): in their own,
+   * its furniture; in a friend's, the friend's furniture, whose it is, how far its house is built and what its
+   * trophy shelf shows (VisitView).
    */
   private cabinOf(p: Online): { furniture?: string[]; visit?: VisitView } {
     if (this.ownCabin(p)) return { furniture: this.placed(p) };
     if (!p.map.data.private) return {};
-    const shows = this.showsFor(p.zone.copy), owner = this.players.get(p.zone.copy)?.rec.name ?? this.lots.get(p.zone.copy)?.name ?? '';
-    return { furniture: shows.furniture, visit: { name: owner, trophies: shows.trophies } };
+    const shows = this.showsFor(p.zone.copy), household = this.households.get(p.zone.copy);
+    const name = this.players.get(p.zone.copy)?.rec.name ?? household?.name ?? '';
+    return { furniture: shows.furniture, visit: { name, house: household?.house ?? FIRST_HOUSE, trophies: shows.trophies } };
+  }
+
+  /** How far the house of the home the player is in is built (theirs, or the friend's they visit); the first level anywhere else. */
+  private houseHere(p: Online): number {
+    return p.map.data.private ? (this.households.get(p.zone.copy)?.house ?? FIRST_HOUSE) : FIRST_HOUSE;
   }
 
   /**
@@ -6111,7 +6080,7 @@ export class World {
     return out;
   }
 
-  /** Why the chest on tile x,y does not open for the player: out of reach, or a neighbor's, in their cabin (its owner's alone). */
+  /** Why the chest on tile x,y does not open for the player: out of reach, or a friend's, in their home (its owner's alone). */
   private chestRefusal(p: Online, x: number, y: number): Refusal | undefined {
     if (!this.chestNextTo(p, x, y)) return 'too_far';
     return p.map.data.private && !this.ownCabin(p) ? 'not_yours' : undefined;
@@ -6252,204 +6221,51 @@ export class World {
     for (const q of this.zones.get(c.zone)?.players ?? []) if (q.visit?.cache === c.key) this.sendCache(q, c, now);
   }
 
-  // ---------- streets ----------
-
-  /** The lots of street `n`, lot by lot (undefined: free), made when first needed. */
-  private streetLots(n: number): Array<Lot | undefined> {
-    let lots = this.streets.get(n);
-    if (!lots) this.streets.set(n, (lots = Array.from({ length: this.lotDoor.length }, () => undefined)));
-    return lots;
-  }
-
-  /** Someone lives on a lot now: who lives where knows it. */
-  private settle(lot: Lot): Lot {
-    this.lots.set(lot.id, lot);
-    this.streetLots(lot.street)[lot.lot] = lot;
-    return lot;
-  }
-
-  /** A lot is free again (its owner moved, or is gone for good). */
-  private unsettle(lot: Lot): void {
-    if (this.lots.get(lot.id) === lot) this.lots.delete(lot.id);
-    const on = this.streetLots(lot.street);
-    if (on[lot.lot] === lot) on[lot.lot] = undefined;
-  }
-
-  /** A record says where its cabin stands as the World knows it (none: they have no lot yet). */
-  private recordLot(r: PlayerRecord): void {
-    const lot = this.lots.get(r.id);
-    if (lot) Object.assign(r, { street: lot.street, lot: lot.lot });
-    else {
-      delete r.street;
-      delete r.lot;
-    }
-  }
+  // ---------- homes (house.ts) ----------
 
   /**
-   * The player's lot, given now if they have none (they come home for the first time since streets came):
-   * the first free lot of the first street with one, streets opening one after another as they fill. Saved
-   * at once, and the street hears of its new neighbor.
+   * Whether `visitor` may visit `home`: they are friends (asked both ways), its owner lets friends visit (as
+   * everyone does until they choose), and there is no block either way. The visitor is online, so whom they
+   * block and who blocks them are known (social.ts), the owner online or not; until they are (Online.known),
+   * they visit nobody.
    */
-  private lotOf(r: PlayerRecord): Lot {
-    const had = this.lots.get(r.id);
-    if (had) return had;
-    let street = 1;
-    while (!this.streetLots(street).includes(undefined)) street++;
-    const lot = this.settle({
-      id: r.id, name: r.name, street, lot: this.streetLots(street).indexOf(undefined), ...(r.doorOff && { off: true as const }), ...(r.visitsOff && { closed: true as const }),
-    });
-    this.recordLot(r);
-    this.saveNow.set(r.id, this.players.get(r.id)?.rec ?? r);
-    this.tellLot(lot.street, lot.lot);
-    return lot;
+  private mayVisit(visitor: string, home: Household): boolean {
+    if (!this.players.get(visitor)?.known || home.closed) return false;
+    if (this.blocks(visitor).has(home.id) || this.blockedBy(visitor).has(home.id) || this.blocks(home.id).has(visitor)) return false;
+    return this.friends(visitor).has(home.id) || this.friends(home.id).has(visitor);
   }
 
-  /** The free lot of street `n` nearest lot `near` (the lower one first of two as near); undefined when it is full. */
-  private nearestFree(n: number, near: number): number | undefined {
-    const on = this.streetLots(n);
-    let best: number | undefined;
-    on.forEach((l, i) => { if (!l && (best === undefined || Math.abs(i - near) < Math.abs(best - near))) best = i; });
-    return best;
+  /** A friend came to visit `home`: its owner reads who, if they are in it. */
+  private visited(p: Online, home: Household): void {
+    const owner = this.players.get(home.id);
+    if (owner && this.ownCabin(owner)) this.outbox.push({ to: home.id, msg: { t: 'visited', name: p.rec.name } });
   }
 
-  /** In front of the player's own cabin's door, on their street. */
-  private doorstep(r: PlayerRecord): { x: number; y: number } {
-    const d = this.lotDoor[this.lotOf(r).lot]!;
-    return { x: d.x, y: d.y + 1 };
-  }
-
-  /**
-   * In front of the door of `owner`'s cabin, on the player's own street: where they come out of it. Their own
-   * door when the cabin is theirs, or stands on another street now (it moved away while they were in it).
-   */
-  private doorstepOf(r: PlayerRecord, owner: string): { x: number; y: number } {
-    const lot = this.lots.get(owner), mine = this.lotOf(r);
-    if (!lot || lot.street !== mine.street) return this.doorstep(r);
-    const d = this.lotDoor[lot.lot]!;
-    return { x: d.x, y: d.y + 1 };
-  }
-
-  /** The neighbor whose door is on tile x,y of the player's street (none: not a door, a free lot, or their own). */
-  private hostAt(p: Online, x: number, y: number): Lot | undefined {
-    const lot = this.lotDoor.findIndex(d => d.x === x && d.y === y);
-    if (lot < 0) return undefined;
-    const owner = this.streetLots(this.lotOf(p.rec).street)[lot];
-    return owner && owner.id !== p.rec.id ? owner : undefined;
-  }
-
-  /**
-   * Whether `visitor` may walk into `lot`'s cabin: its owner lets their neighbors in (their name on the door
-   * and visits on, as everyone's are until they choose), or they are friends; never with a block either way.
-   * The visitor is online, so whom they block and who blocks them are known (social.ts), the owner online or
-   * not; until they are (Online.known), nobody's door lets them in.
-   */
-  private mayVisit(visitor: string, lot: Lot): boolean {
-    if (!this.players.get(visitor)?.known) return false;
-    if (this.blocks(visitor).has(lot.id) || this.blockedBy(visitor).has(lot.id) || this.blocks(lot.id).has(visitor)) return false;
-    return (!lot.off && !lot.closed) || this.friends(visitor).has(lot.id) || this.friends(lot.id).has(visitor);
-  }
-
-  /** On a street, a door is walked through by its owner, and by a neighbor it lets in (mayVisit); a free lot's by nobody. */
-  private barred(p: Online, x: number, y: number): boolean {
-    if (p.map !== this.street) return false;
-    const lot = this.lotDoor.findIndex(d => d.x === x && d.y === y);
-    if (lot < 0) return false;
-    const mine = this.lotOf(p.rec), owner = this.streetLots(mine.street)[lot];
-    return owner?.id !== p.rec.id && (!owner || !this.mayVisit(p.rec.id, owner));
-  }
-
-  /** The door on tile x,y did not let the player in (barred): they hear whose it is, as a knock tells, and that it stayed shut. */
-  private turnedAway(p: Online, x: number, y: number): void {
-    if (p.map !== this.street) return;
-    const lot = this.lotDoor.findIndex(d => d.x === x && d.y === y);
-    if (lot < 0) return;
-    const owner = this.streetLots(this.lotOf(p.rec).street)[lot];
-    this.outbox.push({ to: p.rec.id, msg: { t: 'door', x, y, lot: owner ? this.answerOf(p, owner) : null, closed: true } });
-  }
-
-  /** A lot as its door answers the player (a knock, a door that stayed shut): a resident who keeps their door to themselves answers only friends. */
-  private answerOf(p: Online, owner: Lot): LotView {
-    const id = p.rec.id, them = this.players.get(owner.id), home = !!them && this.ownCabin(them);
-    const answers = !owner.off || this.friends(id).has(owner.id) || this.friends(owner.id).has(id);
-    return answers ? { name: owner.name, ...(home && { home: true as const }) } : {};
-  }
-
-  /** Someone walked into `host`'s cabin: the owner reads who, if they are home. */
-  private visited(p: Online, host: Lot): void {
-    const owner = this.players.get(host.id);
-    if (owner && this.ownCabin(owner)) this.outbox.push({ to: host.id, msg: { t: 'visited', name: p.rec.name } });
-  }
-
-  /** The lot kept for a player follows who may visit their cabin (the street sees nothing of it). */
+  /** Their home as the World knows it follows who may visit it. */
   private markVisits(id: string, off: boolean): void {
-    const lot = this.lots.get(id);
-    if (!lot) return;
-    if (off) lot.closed = true;
-    else delete lot.closed;
+    const home = this.households.get(id);
+    if (!home) return;
+    if (off) home.closed = true;
+    else delete home.closed;
   }
 
-  /** What a cabin shows a visitor, from its owner's furniture and stash as saved: the made furniture, and the trophies on a made shelf. */
+  /** What a home shows a visitor, from its owner's furniture and stash as saved: the made furniture, and the trophies on a made shelf. */
   private showsOf(furniture: unknown, stash: unknown): CabinShows {
     const made = (cleanFurniture(furniture) ?? []).filter(id => this.items.get(id)?.kind === 'furniture');
     const shelf = shelfMade(made, this.items) ? trophies(stashList(cleanStash(stash, this.items), this.itemOrder), id => this.items.get(id)) : [];
     return { furniture: made, trophies: shelf };
   }
 
-  /** What `owner`'s cabin shows a visitor now: as it stands, while they are online; else as it stood when they last were. */
+  /** What `owner`'s home shows a visitor now: as it stands, while they are online; else as it stood when they last were. */
   private showsFor(owner: string): CabinShows {
     const p = this.players.get(owner);
-    return p ? this.showsOf(p.rec.furniture, p.rec.stash) : this.lots.get(owner)?.shows ?? { furniture: [], trophies: [] };
-  }
-
-  /** A lot as its street sees it: whose it is, and whether they are home (online, in their own cabin: a lit window). */
-  private lotView(lot: Lot | undefined): LotView | null {
-    if (!lot) return null;
-    // Kept to themselves: a resident, whose window never lights.
-    if (lot.off) return {};
-    const owner = this.players.get(lot.id);
-    return { name: lot.name, ...(owner && this.ownCabin(owner) ? { home: true as const } : {}) };
-  }
-
-  /** The lot kept for a player follows their door's setting; their street sees it at once if it changed. */
-  private markDoor(id: string, off: boolean): void {
-    const lot = this.lots.get(id);
-    if (!lot || !!lot.off === off) return;
-    if (off) lot.off = true;
-    else delete lot.off;
-    this.tellLot(lot.street, lot.lot);
-  }
-
-  /** Everyone on street `n` hears how a lot on it stands now (nobody is told when nobody is out on it). */
-  private tellLot(n: number, lot: number): void {
-    if (this.street) this.toZone(zoneKey(this.street.data.id, String(n)), { t: 'lot', lot, view: this.lotView(this.streetLots(n)[lot]) });
-  }
-
-  /** A player came home or left it (or the game there): their street sees their window light or go dark. */
-  private homeChanged(p: Online): void {
-    const lot = this.lots.get(p.rec.id);
-    if (lot) this.tellLot(lot.street, lot.lot);
-  }
-
-  /** What a zone or welcome tells a player on their street: its lots, and which is theirs. */
-  private streetOf(p: Online): { street?: StreetView } {
-    if (!this.street || p.map !== this.street) return {};
-    const mine = this.lotOf(p.rec);
-    return { street: { mine: mine.lot, lots: this.streetLots(mine.street).map(l => this.lotView(l)) } };
-  }
-
-  /** The friends of the player whose street, not theirs, has a lot free: whom they could move next to, by name. */
-  private movesFor(p: Online): PersonView[] {
-    const mine = this.lotOf(p.rec);
-    return [...this.friends(p.rec.id)].flatMap(id => {
-      const f = this.lots.get(id);
-      return f && f.street !== mine.street && this.nearestFree(f.street, f.lot) !== undefined ? [{ id, name: f.name }] : [];
-    }).sort((a, b) => a.name.localeCompare(b.name));
+    return p ? this.showsOf(p.rec.furniture, p.rec.stash) : this.households.get(owner)?.shows ?? { furniture: [], trophies: [] };
   }
 
   private refuse(
     p: Online,
     action: 'step' | 'pick' | 'use' | 'discard' | 'feed' | 'cook' | 'store' | 'take' | 'equip' | 'unequip' | 'wear' | 'doff' | 'craft' | 'mend' | 'upgrade' | 'open' | 'outfit' | 'buy' | 'climb' | LookKind | 'checkout'
-      | 'thank' | 'cacheLeave' | 'cacheTake' | 'knock' | 'move' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab' | 'swap' | 'give' | 'bring',
+      | 'thank' | 'cacheLeave' | 'cacheTake' | 'visit' | 'build' | 'board' | 'teleport' | 'rescue' | 'carry' | 'handIn' | 'slab' | 'swap' | 'give' | 'bring',
     reason: Refusal,
   ): void {
     this.outbox.push({ to: p.rec.id, msg: { t: 'refused', action, reason } });

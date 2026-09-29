@@ -1,7 +1,7 @@
 {
-  "version": 35,
+  "version": 36,
   "items": [
-    {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one on the ground to leave a glowing arrow where you face; everyone sees it for a day."},
+    {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one at your feet to leave a glowing arrow pointing the way you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
     {"id":"scrap","name":"Scrap metal","noun":"scrap","plural":"scrap","kind":"resource","stack":10,"xp":3,"weight":1,"text":"Rusted metal from cars and cabins nobody came back for. Still good for patching things, and heavy to carry."},
     {"id":"wire","name":"Copper wire","noun":"wire","plural":"wire","kind":"resource","stack":10,"xp":4,"weight":0.4,"text":"Copper wire from where the old power line came down. Sometimes it still hums, and on aurora nights more of it turns up by the poles."},
@@ -333,5 +333,10 @@
     {"id":"marsh-boardwalk-west","build":"footbridge","name":"the west boardwalk","where":"across the first channel, in the Marsh","item":"scrap","need":24,"wear":4,"hold":28},
     {"id":"marsh-boardwalk-east","build":"footbridge","name":"the east boardwalk","where":"across the second channel, in the Marsh","item":"wire","need":10,"wear":2,"hold":12}
   ],
-  "longNight": { "items": ["wire", "strange"], "regrow": 2 }
+  "longNight": { "items": ["wire", "strange"], "regrow": 2 },
+  "house": [
+    {"name":"Garage","text":"A concrete garage with a fire in it, the chest and the workbench: somewhere to come back to."},
+    {"name":"Cabin","needs":[{"item":"scrap","count":20},{"item":"resin","count":20},{"item":"cloth","count":12},{"item":"wire","count":8}],"text":"Log walls under a pitched roof, and a kitchen that cooks from your chest."},
+    {"name":"House","needs":[{"item":"scrap","count":30},{"item":"cedar-bark","count":20},{"item":"wire","count":12},{"item":"battery","count":4},{"item":"fused-glass","count":2}],"text":"Two floors and a porch, and a map table that shows how things stand out there, as the notice board in town does."}
+  ]
 }

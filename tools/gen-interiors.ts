@@ -13,10 +13,10 @@
  * `cache`, caches.ts), added last in its list so that nothing placed before it ever moves. The notes
  * people left (notes-left.ts) come after even that, each lying on a table, a shelf, a crate or a bed.
  *
- * The outside generators (gen-map.ts, gen-woods.ts, gen-street.ts) put the exit on each house's door with
+ * The outside generators (gen-map.ts, gen-woods.ts, gen-garden.ts) put the exit on each house's door with
  * doorInto, which fails if the room expects its house somewhere else. This script checks the other
  * direction, so run it after them: each door on the outside maps must lead to its room's way in. Your own
- * cabin is behind every door of Residents' Lane (`lots`): each player's own, whichever lot is theirs.
+ * house is behind the door of the house in your garden: each player's own copy of both.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -45,12 +45,6 @@ interface Room {
   wake?: { x: number; y: number; dir: Dir };
   /** What else about the room changes with the town (map.ts, MapTown): its name, once someone comes home to it. */
   town?: MapTown;
-  /**
-   * Behind every door of its street (gen-street.ts), not one house's: each lot's cabin is this room, its
-   * owner's own copy of it. `door` is then the first lot's, where its way out leads unless the server says
-   * otherwise (it takes each player out in front of their own door).
-   */
-  lots?: true;
 }
 
 /** The camera shows about six tiles around you: a room this size fits on any screen. */
@@ -114,12 +108,16 @@ const ROOMS: readonly Room[] = [
     // Years of damp spoiled the rest (comfort.ts): an iron stove in the corner, a shelf, a drying rack
     // by the fire, the bed, the rug and the lamp on the table stand spoiled in their places until you
     // make each again at the workbench, which sets it there at once.
-    // Its door is every cabin's on Residents' Lane (gen-street.ts): the server lets each player in through
-    // their own, and a neighbor through theirs when they let neighbors visit. In the corner by the bed,
-    // a step off the way from the door to the fire, stands NAPO's teleport, the same in every cabin: A at
-    // it and you are in town, in front of its twin by the notice board (roadmap/street-visits.md), and A at
-    // that one brings you home, in front of this one (roadmap/first-steps.md).
-    id: 'stonebrook-home', name: 'Home', version: 7, outside: 'residents-lane', door: [6, 20], lots: true, private: true, wake: { x: 4, y: 2, dir: 'down' },
+    // Its door is the house's in your own garden (gen-garden.ts), and nothing else leads here: in the
+    // corner by the bed, a step off the way from the door to the fire, stands NAPO's teleport, the same in
+    // every house: A at it and you are in town, in front of its twin by the notice board, and A at that one
+    // brings you home, in front of this one (roadmap/home-lots.md). A friend's visit sets them down there too.
+    // The house is built up at the workbench (house.ts: a garage, a cabin, a house), and two things stand
+    // here only once it is: the kitchen against the west wall, a step below the iron stove's corner (the
+    // cabin), and the map table beside the teleport, to look at before you go out (the house). Until then
+    // boxes stand in their places, so the room keeps its shape at every level. Neither stands where it
+    // would wall off a place: the stove's is reached from the tile below it.
+    id: 'stonebrook-home', name: 'Home', version: 8, outside: 'home-garden', door: [8, 5], private: true, wake: { x: 4, y: 2, dir: 'down' },
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -140,6 +138,8 @@ const ROOMS: readonly Room[] = [
       { kind: 'comfort', x: 3, y: 2, what: 'rug' },
       { kind: 'comfort', x: 2, y: 4, what: 'lamp' },
       { kind: 'teleport', x: 7, y: 4 },
+      { kind: 'kitchen', x: 1, y: 3, house: 2 },
+      { kind: 'board', x: 6, y: 4, house: 3 },
     ],
   },
   {
@@ -176,11 +176,11 @@ const ROOMS: readonly Room[] = [
     ],
   },
   {
-    // The house that was Home before streets. Everyone who stayed has a cabin of their own on Residents'
-    // Lane now, where the main street runs on west out of town (roadmap/street-visits.md), and what they had
-    // here went with them: a cold hearth, the boxes nobody came back for, and a note on the table that says
-    // where they went, for whoever still walks in here out of habit. Dark, like the houses the leavers left.
-    id: 'stonebrook-old-home', name: 'The old home', version: 1, outside: 'stonebrook', door: [8, 20],
+    // The house that was Home before everyone who stayed moved out to a home of their own, which NAPO's
+    // teleport by the notice board reaches (roadmap/home-lots.md), and what they had here went with them: a
+    // cold hearth, the boxes nobody came back for, and a note on the table that says where they went, for
+    // whoever still walks in here out of habit. Dark, like the houses the leavers left.
+    id: 'stonebrook-old-home', name: 'The old home', version: 2, outside: 'stonebrook', door: [8, 20],
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -196,8 +196,8 @@ const ROOMS: readonly Room[] = [
       {
         kind: 'paper', x: 1, y: 3, look: 'note', name: 'A note on the table',
         text: [
-          'In Mira\'s round hand: "We carried everything down to Residents\' Lane. Everyone who stayed has a cabin there now, and so do you."',
-          '"Out of the door, then west along the main street, out past the end of town. Your fire is lit."',
+          'In Mira\'s round hand: "We carried your things out to a place of your own, in a clearing past the woods: an old garage with a garden round it. Everyone who stayed has one."',
+          '"NAPO\'s teleport by the notice board takes you there, and the one in your garage brings you back. Your fire is lit."',
         ],
       },
     ],
@@ -210,7 +210,7 @@ const ROOMS: readonly Room[] = [
     // town keeps it going until dawn (longNight). At his elbow stands the lost and found box
     // (lostfound.ts), where whatever someone carries back for a stranger is left: its front, 2,3, is
     // beside where you stand to talk to him.
-    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 7, outside: 'stonebrook', door: [8, 31],
+    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 8, outside: 'stonebrook', door: [8, 31],
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -238,15 +238,20 @@ const ROOMS: readonly Room[] = [
       {
         kind: 'npc', id: 'walt', name: 'Walt', x: 3, y: 2, dir: 'down',
         look: { coat: '#5a4a3a', scarf: '#c98a2b', hair: '#9a958d', skin: '#c68b62', hat: '#d9a82b' },
+        // What he swaps and the ledger come first, so a first talk says what the lodge is for; who would come
+        // back to town, and what would bring them (town.ts: the milestones that bring Maud and Arvid), near
+        // the end; the lost and found box at his elbow, last of all.
         lines: [
           'Pull up a chair. Pruitt. Walt. I kept the north line for the power company, and then NAPO\'s. I strung its wire from the station to the Tower.',
+          'Glowcaps to spare? Ten buys you a cloth off me: I keep the lodge\'s lamps in them. Five scrap buys a road flare, company issue.',
+          'The ledger on the stand is the town\'s. What\'s broken, and what it needs. Put down what you can spare.',
           'Before NAPO came, the Old Stone only hummed on cold nights. Nobody minded it.',
           'Then the hum got into the radios, and every compass in town pointed at the woods. That\'s when the Observatory came.',
           'The night they switched the Tower on, the woods lit up like a town and the Old Stone cracked. You can still see the crack.',
           'Every forty minutes since, the woods surge. Regular as a clock. You\'d think something out there was keeping time.',
           'NAPO said two weeks, and I went with the rest. Came back for my truck, up where the north road gives out. It never started again, so I stayed.',
-          'Glowcaps to spare? Ten buys you a cloth off me: I keep the lodge\'s lamps in them. Five scrap buys a road flare, company issue.',
-          'The ledger on the stand is the town\'s. What\'s broken, and what it needs. Put down what you can spare.',
+          'Maud cooked for NAPO\'s crews, three shifts a day. She always said a town where folk thank each other is a town worth cooking for.',
+          'Arvid Holm ran the head saw at the mill. He always said he\'d light its stove again once the fires out in the woods stay fed.',
           'Folks leave what they find here. Somebody\'s always glad of it.',
         ],
       },
@@ -920,7 +925,7 @@ export function doorInto(id: string, outside: string, house: House): MapExit {
   const room = ROOMS.find(r => r.id === id);
   if (!room) throw new Error(`there is no room ${id} in tools/gen-interiors.ts`);
   const d = doorOf(house);
-  if (room.outside !== outside || (!room.lots && (room.door[0] !== d.x || room.door[1] !== d.y))) {
+  if (room.outside !== outside || room.door[0] !== d.x || room.door[1] !== d.y) {
     throw new Error(`the room ${id} expects its door at ${room.door.join(',')} in ${room.outside}, but this house's door is at ${d.x},${d.y} in ${outside}`);
   }
   if ((room.style ?? null) !== (house.style ?? null)) throw new Error(`the room ${id} is ${room.style ?? 'a cabin\'s'} style, but its house is ${house.style ?? 'a cabin'}`);
@@ -994,7 +999,7 @@ function json(map: MapData): string {
 const GLYPH: Partial<Record<MapObject['kind'], string>> = {
   fireplace: 'F', bed: 'B', table: 'T', shelf: 'L', crate: 'c', barrel: 'b', woodpile: 'w', rug: '_', chest: 'H', workbench: 'W', console: 'K', npc: '@', ledger: 'D',
   hearth: 'f', sheeted: 's', boxes: 'n', crib: 'C', clock: 'k', paper: '?', saw: 'S', carriage: '=', sawdust: ':', logs: 'l', luggage: 'u', cache: 'X',
-  traps: 't', teleport: 'N', lostfound: 'Y',
+  traps: 't', teleport: 'N', lostfound: 'Y', kitchen: 'K', board: 'M',
 };
 /** The places for furniture in a home (comfort.ts), in lower case: what stands there, spoiled until it is made. */
 const COMFORT_GLYPH: Record<Comfort, string> = { stove: 'o', bed: 'b', rug: '_', lamp: 'i', rack: 'r', shelf: 't' };
@@ -1033,13 +1038,13 @@ if (import.meta.main) {
   // The other direction of doorInto: the door on the outside map must lead to the room's way in. It is
   // written by the outside map's generator, so after changing a room's size, run that one again too.
   const GENERATOR: Record<string, string> = {
-    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', burn: 'npm run gen:burn', ridge: 'npm run gen:ridge', marsh: 'npm run gen:marsh', 'residents-lane': 'npm run gen:street',
+    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', burn: 'npm run gen:burn', ridge: 'npm run gen:ridge', marsh: 'npm run gen:marsh', 'home-garden': 'npm run gen:garden',
   };
   for (const room of ROOMS) {
     const outside = JSON.parse(readFileSync(resolve(import.meta.dirname, `../content/maps/${room.outside}.json`), 'utf8')) as MapData;
     const doors = outside.exits.filter(e => e.to === room.id), way = wayOut(room);
     const first = doors[0], inside = doors.every(e => e.tx === way.x && e.ty === way.y - 1);
-    if (first?.x === room.door[0] && first.y === room.door[1] && inside && (room.lots || doors.length === 1)) continue;
+    if (first?.x === room.door[0] && first.y === room.door[1] && inside && doors.length === 1) continue;
     console.log(`error: ${room.outside}.json has no door at ${room.door.join(',')} into ${room.id}'s way in (${way.x},${way.y - 1}): run ${GENERATOR[room.outside] ?? `the generator of ${room.outside}`} again`);
     failed = true;
   }

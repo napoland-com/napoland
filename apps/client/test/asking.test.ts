@@ -230,7 +230,7 @@ describe('why it does not ask', () => {
     g.pressA();
     g.handle({ t: 'markGone', id: 1 }, now);
     g.use(0);
-    expect(g.question?.text).toBe('Crush a glowcap to paint an arrow where you face? Everyone sees it for a day.');
+    expect(g.question?.text).toBe('Crush a glowcap to paint an arrow at your feet, pointing the way you face? Everyone sees it for a day.');
   });
 
   it('a strange object that nothing it may turn out to be would fit', () => {
