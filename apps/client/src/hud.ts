@@ -356,6 +356,11 @@ export interface AskView { who: string; text: string; choice: 'yes' | 'no' | num
 /** What the text box says by itself: it stays up `ms` more (a thin line along its bottom runs out), or it waits for the server. */
 export interface NoteView { who: string; text: string; ms: number; waiting: boolean }
 
+/** The status card while online: how many are in the game, once the server has said ("1 online", "12 online"). */
+export function onlineText(players?: number): string {
+  return players === undefined ? 'Online' : `${players} online`;
+}
+
 export class Hud {
   readonly root: HTMLElement;
   private el: Record<string, HTMLElement>;
@@ -2009,9 +2014,10 @@ export class Hud {
     clearTimeout(this.bannerTimer);
     this.bannerTimer = setTimeout(() => banner.toggleAttribute('data-show', false), bannerMs(title, sub));
   }
-  setConnection(state: 'connecting' | 'online' | 'offline', pingMs?: number) {
+  /** How the connection stands, its ping, and while online how many are in the game (the server says, with each pong). */
+  setConnection(state: 'connecting' | 'online' | 'offline', pingMs?: number, players?: number) {
     this.el.conn!.dataset.state = state;
-    this.el.connText!.textContent = state === 'online' ? 'Online' : state === 'connecting' ? 'Connecting' : 'Reconnecting';
+    this.el.connText!.textContent = state === 'online' ? onlineText(players) : state === 'connecting' ? 'Connecting' : 'Reconnecting';
     this.el.ping!.textContent = state === 'online' && pingMs !== undefined ? `${Math.round(pingMs)} ms` : '';
   }
 

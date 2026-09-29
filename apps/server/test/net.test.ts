@@ -172,12 +172,22 @@ describe('playing', () => {
     expect(await b.c.next('face')).toEqual({ t: 'face', id: a.id, dir: 'left' });
   });
 
-  it('answers pings with the server time', async () => {
+  it('answers pings with the server time, and how many are in the game', async () => {
     const a = await join();
     a.c.send({ t: 'ping', at: 1234.5 });
     const pong = await a.c.next('pong');
     expect(pong.at).toBe(1234.5);
     expect(Math.abs(pong.serverTime - Date.now())).toBeLessThan(5000);
+    const before = pong.players!;
+    expect(before).toBeGreaterThanOrEqual(1);
+    // Everyone in the game counts, on any map; one who leaves no longer does.
+    const b = await join();
+    a.c.send({ t: 'ping', at: 1 });
+    expect((await a.c.next('pong', m => m.at === 1)).players).toBe(before + 1);
+    b.c.ws.close();
+    await waitFor(() => !ctx.server.world.has(b.id), 'the player to leave');
+    a.c.send({ t: 'ping', at: 2 });
+    expect((await a.c.next('pong', m => m.at === 2)).players).toBe(before);
   });
 
   it('disconnects a client that floods messages', async () => {

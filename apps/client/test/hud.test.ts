@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { REFILL_PER_SECOND } from '@napoland/shared';
-import { chatKey, energyLook, soundRow } from '../src/hud';
+import { chatKey, energyLook, onlineText, soundRow } from '../src/hud';
 import type { SoundSetting } from '../src/sound';
 
 describe('the energy bar', () => {
@@ -78,5 +78,13 @@ describe("the menu's sound row", () => {
     volume.value = '25';
     volume.dispatchEvent(new Event('input'));
     expect(said).toEqual([{ volume: 0.25, muted: false }]);
+  });
+});
+
+describe('the status card while online', () => {
+  it('says how many are in the game once the server has said, and just "Online" before', () => {
+    expect(onlineText(undefined)).toBe('Online');
+    expect(onlineText(1)).toBe('1 online');
+    expect(onlineText(12)).toBe('12 online');
   });
 });
