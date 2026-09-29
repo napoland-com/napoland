@@ -6,7 +6,7 @@ import { COMFORTS, type Comfort } from './comfort';
 import { MODS, modChanges, type Mods } from './feats';
 import { ELEMENTS, QUIRKS, SLOTS, STARTER_GEAR, TIERS, UPGRADE_MAX, type Element } from './gear';
 import { HOME_H, HOME_W } from './house';
-import { STARTER_TOOLS, TOOL_ICONS, findTiles, type BagSlot, type ItemsData } from './items';
+import { PIECES, STARTER_TOOLS, TOOL_ICONS, findTiles, quarterOf, type BagSlot, type ItemsData } from './items';
 import { BUNDLE } from './lostfound';
 import {
   CREATURE_STEP_MIN_MS, FRONTED, GATE_PULLERS, NOTE_AUTHORS, NOTE_ON, NOTE_WHEN, PAPER_LOOKS, TILE_CHARS, TILE_NEEDS, TileMap, doorOf, footprint, gateArrival, hangs, objectTiles, GATED,
@@ -1130,12 +1130,28 @@ export function validateItems(data: ItemsData, maps: MapData[]): Problem[] {
       if (!(r > 0) || !room.inside(x, y)) err(`${name}: around is a tile on the map and a radius above 0`);
       else if (!findTiles(room, { item: f.item, map: f.map, count: 1, respawn: [1, 1], around: f.around }).length) err(`${name}: around ${x},${y} has no walkable tile within ${r}`);
     }
+    if (f.piece !== undefined) {
+      const def = data.items.find(d => d.id === f.item);
+      if (!Number.isInteger(f.piece) || f.piece < 0 || f.piece >= PIECES) err(`${name}: piece is a quarter, 0 to ${PIECES - 1}`);
+      if (def && def.chart !== f.map) err(`${name}: a piece of ${f.item}, which is no map of ${f.map}`);
+      if (f.count !== 1) err(`${name}: a piece lies in one place: count 1`);
+    }
     if (out.some(p => p.level === 'error' && p.message.startsWith(name))) return undefined;
-    const room = findTiles(new TileMap(mapData), f).length;
+    const tiles = findTiles(new TileMap(mapData), f), room = tiles.length;
     if (room < f.count) err(`${name}: only ${room} tiles fit the rule, fewer than count ${f.count}`);
     else if (room < f.count * 3) warn(`${name}: only ${room} tiles fit the rule for ${f.count} finds; they have little room to move`);
+    // A piece covers its quarter of the paper, so it lies in that quarter, wherever the rule puts it.
+    if (f.piece !== undefined && tiles.some(t => quarterOf(t.x, t.y, mapData.width, mapData.height) !== f.piece)) err(`${name}: piece ${f.piece} may lie outside its quarter of ${f.map}`);
     return undefined;
   });
+  // A torn map is found in all its pieces or not at all, and never whole somewhere else too.
+  const torn = new Map<string, Set<number>>();
+  for (const f of data.finds) if (f.piece !== undefined) (torn.get(f.item) ?? torn.set(f.item, new Set()).get(f.item)!).add(f.piece);
+  for (const [item, pieces] of torn) {
+    const missing = Array.from({ length: PIECES }, (_, n) => n).filter(n => !pieces.has(n));
+    if (missing.length) err(`${item} is torn in pieces, but no find grows piece ${missing.join(', ')}`);
+    if (data.finds.some(f => f.item === item && f.piece === undefined)) err(`${item} is torn in pieces, and a find grows it whole too`);
+  }
   validateKeepsakes(data, keepsakes, byId, err);
   return out;
 }

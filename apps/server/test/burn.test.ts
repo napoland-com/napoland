@@ -5,7 +5,7 @@
  */
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { GATE_WINDOW_MS, type MapObject, type ServerMsg } from '@napoland/shared';
+import { GATE_WINDOW_MS, STARTER_TOOLS, quarterOf, type MapObject, type ServerMsg } from '@napoland/shared';
 import { loadItems, loadMaps, loadStory } from '../src/content';
 import { setup } from './helpers';
 
@@ -81,8 +81,16 @@ describe('the Burn, through NAPO\'s gate', () => {
     expect([back.map.id, back.x, back.y, back.dir]).toEqual(['far-woods', gate.x, gate.y + 1, 'down']);
   });
 
-  it('keeps its map in the line cabin, for whoever has none', async () => {
-    const a = await enter({ map: 'burn-line-cabin', x: 3, y: 4 });
-    expect(a.welcome.finds.map(f => f.item)).toContain('burn-map');
+  it('has its map torn in four across it, a piece in each quarter, for whoever has not found that piece', async () => {
+    const home = burn.data.exits.find(e => e.home)!;
+    const a = await enter({ map: 'burn', x: home.x, y: home.y - 1 });
+    const pieces = a.welcome.finds.filter(f => f.item === 'burn-map');
+    expect(pieces.map(f => f.piece).sort()).toEqual([0, 1, 2, 3]);
+    for (const f of pieces) expect(quarterOf(f.x, f.y, burn.width, burn.height)).toBe(f.piece);
+    // One who found the north-west piece sees the other three; one with the map whole (from before it was torn) sees none.
+    const b = await enter({ map: 'burn', x: home.x, y: home.y - 1, tools: [...STARTER_TOOLS, 'burn-map'], charts: { 'burn-map': [0] } });
+    expect(b.welcome.finds.filter(f => f.item === 'burn-map').map(f => f.piece).sort()).toEqual([1, 2, 3]);
+    const c = await enter({ map: 'burn', x: home.x, y: home.y - 1, tools: [...STARTER_TOOLS, 'burn-map'] });
+    expect(c.welcome.finds.filter(f => f.item === 'burn-map')).toEqual([]);
   });
 });

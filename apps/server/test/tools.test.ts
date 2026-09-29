@@ -97,7 +97,7 @@ describe('the tools a player owns', () => {
 
     expect(w.giveTool('a', 'radio')).toBe(true);
     // How it came is the caller's to say (a find floats, the workbench says it in the text box).
-    expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'tools', tools: WITH_RADIO } }]);
+    expect(w.drain()).toEqual([{ to: 'a', msg: { t: 'tools', tools: WITH_RADIO, charts: {} } }]);
     // The first of their own writes down the starter tools with it. The bag and the stash never see it.
     expect(w.takeWrites().players.map(p => p.tools)).toEqual([WITH_RADIO]);
     expect(w.get('a')).toMatchObject({ bag: [], stash: { items: {}, out: {} }, tools: WITH_RADIO });
@@ -111,7 +111,7 @@ describe('making a tool at the workbench', () => {
     const w = world({}, rec('a', 'house', 1, 2, { stash: { items: { nail: 3 }, out: {} } }));
     w.craft('a', 1, 1, 'radio', 1000);
     expect(to(w.drain(), 'a')).toEqual([
-      { t: 'tools', tools: WITH_RADIO },
+      { t: 'tools', tools: WITH_RADIO, charts: {} },
       { t: 'bench', stash: [{ item: 'nail', count: 1 }] },
       // The client says where it went from the item's kind; nothing floats for it.
       { t: 'did', did: { kind: 'made', item: 'radio', count: 1 } },
@@ -141,7 +141,7 @@ describe('a tool lying out there', () => {
     const out = w.drain();
     expect(to(out, 'a')).toEqual([
       { t: 'got', items: [{ item: 'radio', count: 1 }], from: 'tool' },
-      { t: 'tools', tools: WITH_RADIO },
+      { t: 'tools', tools: WITH_RADIO, charts: {} },
     ]);
     expect(onMap(out, 'woods')).toEqual([{ t: 'findGone', id: radio.id }]);
     expect(w.get('a')).toMatchObject({ bag: [], tools: WITH_RADIO });
@@ -159,7 +159,7 @@ describe('a tool lying out there', () => {
     expect(to(grown, 'a').filter(m => m.t === 'find')).toEqual([]);
     expect(onMap(grown, 'woods').filter(m => m.t === 'find')).toEqual([]);
     w.pick('b', 5, 5, 11_000);
-    expect(to(w.drain(), 'b')).toContainEqual({ t: 'tools', tools: WITH_RADIO });
+    expect(to(w.drain(), 'b')).toContainEqual({ t: 'tools', tools: WITH_RADIO, charts: {} });
   });
 
   it('is seen only by whoever does not own it yet: never in the welcome or the arrival of one who does, and gone from their sight once they get it', () => {
@@ -175,7 +175,7 @@ describe('a tool lying out there', () => {
     w.drain();
     // Given one some other way (the workbench, say), the one lying here goes from their sight.
     expect(w.giveTool('c', 'radio')).toBe(true);
-    expect(to(w.drain(), 'c')).toEqual([{ t: 'tools', tools: WITH_RADIO }, { t: 'findGone', id: radio.id }]);
+    expect(to(w.drain(), 'c')).toEqual([{ t: 'tools', tools: WITH_RADIO, charts: {} }, { t: 'findGone', id: radio.id }]);
     expect(seen('c')).toEqual(['moss']);
   });
 
@@ -254,7 +254,7 @@ describe('tools over WebSockets', () => {
     await a.c.settle();
     a.c.send({ t: 'pick', x: 5, y: 5 });
     expect(await a.c.next('got')).toEqual({ t: 'got', items: [{ item: 'radio', count: 1 }], from: 'tool' });
-    expect(await a.c.next('tools')).toEqual({ t: 'tools', tools: WITH_RADIO });
+    expect(await a.c.next('tools')).toEqual({ t: 'tools', tools: WITH_RADIO, charts: {} });
     await waitFor(() => ctx.storage.get(a.id)?.tools?.includes('radio') === true, 'the tool to be saved');
     expect(ctx.storage.get(a.id)!.bag).toEqual([]);
     a.c.ws.close();
@@ -274,7 +274,7 @@ describe('the field radio of content/items.json', () => {
     const w = world({ items: content }, rec('a', 'house', 1, 2, { stash: { items: { wire: 3, scrap: 1, cloth: 2 }, out: {} } }));
     w.craft('a', 1, 1, 'radio', 1000);
     expect(to(w.drain(), 'a')).toEqual([
-      { t: 'tools', tools: radioTools },
+      { t: 'tools', tools: radioTools, charts: {} },
       { t: 'bench', stash: [{ item: 'wire', count: 1 }, { item: 'cloth', count: 2 }] },
       { t: 'did', did: { kind: 'made', item: 'radio', count: 1 } },
     ]);

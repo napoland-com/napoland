@@ -405,6 +405,8 @@ export class Game {
   conditions: ConditionsView = { today: [], week: null, next: null };
   /** Your tools (item ids), in the order you got them: as the welcome said, then whole again whenever you get one. Replaced, never changed in place. */
   tools: string[] = [];
+  /** Of the torn maps among your tools, the pieces you found (quarters, items.ts quarterOf): a map not here is whole. Replaced with the tools. */
+  charts: Record<string, number[]> = {};
   /**
    * The furniture you made for your home (comfort.ts), as its room last told it (item ids): told only in
    * there, so the workbench and the room know what stands in its places. `furnitureChanges` counts changes.
@@ -659,8 +661,9 @@ export class Game {
   private readonly nameOf = (id: string): string | undefined => this.maps.find(id)?.name;
 
   /** Your tools, whole: what they open, and the doors that say why they stay shut, follow them. */
-  private setTools(tools: string[]) {
+  private setTools(tools: string[], charts: Record<string, number[]> | undefined) {
     this.tools = tools;
+    if (charts) this.charts = charts;
     this.repass();
   }
 
@@ -938,7 +941,7 @@ export class Game {
         // Time away worth a word: stashing counts double for a while, and the arrival says so.
         if ((msg.restedAway ?? 0) >= RESTED_NOTICE && (msg.progress.rested ?? 0) > 0) this.news.push({ kind: 'rested', xp: msg.progress.rested! });
         this.works = new Map((msg.works ?? []).map(w => [w.id, w]));
-        this.setTools(msg.tools);
+        this.setTools(msg.tools, msg.charts ?? {});
         this.chapter = msg.story.chapter;
         this.storyChanges++;
         this.setRoom(msg.furniture, msg.visit);
@@ -1409,7 +1412,7 @@ export class Game {
         break;
       }
       case 'tools':
-        this.setTools(msg.tools);
+        this.setTools(msg.tools, msg.charts);
         break;
       case 'furniture':
         // Made in the cabin you are in: its owner's, when you visit (your own furniture is only ever made at home).
@@ -1420,8 +1423,8 @@ export class Game {
         break;
       case 'got': {
         this.picking = null;
-        // A column over your head, in the order the server listed them, first on top. A tool is yours once: no count.
-        msg.items.forEach((s, i) => this.floatOverMe(`+${msg.from === 'tool' ? '' : s.count} ${this.items.get(s.item).name}`, GAIN, msg.items.length - 1 - i));
+        // A column over your head, in the order the server listed them, first on top. A tool is yours once: no count; a piece of a torn map says so.
+        msg.items.forEach((s, i) => this.floatOverMe(`+${msg.from === 'tool' || msg.from === 'piece' ? '' : s.count} ${msg.from === 'piece' ? 'a piece of the ' : ''}${this.items.get(s.item).name}`, GAIN, msg.items.length - 1 - i));
         // Named, so the player knows which feat to thank.
         if (msg.double) this.floatOverMe('Forager: it came up double', GAIN, msg.items.length);
         // Someone else's pile can leave you nothing (your half did not fit, or the coin went the

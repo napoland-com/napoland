@@ -65,7 +65,7 @@ describe.skipIf(!url)('PgStorage', () => {
       '001_players.sql', '002_maps_energy.sql', '003_bag_drops.sql', '004_sign_in.sql', '005_survival.sql', '006_stash_xp.sql', '007_gear.sql', '008_friends.sql', '009_worn.sql', '010_story.sql',
       '011_guests.sql', '012_tools.sql', '013_parcels.sql', '014_outfits.sql', '015_thanks.sql', '016_caches.sql', '017_zones.sql', '018_rested.sql', '019_merits.sql',
       '020_trades_off.sql', '021_notebook.sql', '022_notes.sql', '023_firsts.sql', '024_furniture.sql', '025_streets.sql', '026_door.sql',
-      '027_bests.sql', '028_visits.sql', '029_first_steps.sql', '030_returns.sql', '035_purchases.sql', '036_meals.sql', '037_house.sql',
+      '027_bests.sql', '028_visits.sql', '029_first_steps.sql', '030_returns.sql', '035_purchases.sql', '036_meals.sql', '037_house.sql', '038_charts.sql',
     ];
     const names = async () => (await admin.query<{ name: string }>(`SELECT name FROM ${schema}.schema_migrations ORDER BY name`)).rows.map(r => r.name);
     expect(await names()).toEqual(all);
@@ -432,6 +432,23 @@ describe.skipIf(!url)('PgStorage', () => {
     // Whatever else the column holds reads as never set: the starter tools (the World checks every id too).
     await admin.query(`UPDATE ${schema}.players SET tools = '{"not": "a list"}' WHERE id = $1`, [made.id]);
     expect((await storage.findByTokenHash(made.tokenHash))!.tools).toBeUndefined();
+  });
+
+  it('keeps the pieces of torn maps a player found, none for one who found none, and never loses them to a save without them', async () => {
+    const rec = player('Pg Finder');
+    expect(await storage.create(rec)).toBe(true);
+    expect((await storage.findByTokenHash(rec.tokenHash))!.charts).toBeUndefined();
+    const finder = { ...rec, tools: ['stonebrook-map', 'near-woods-map', 'south-road-map', 'burn-map'], charts: { 'burn-map': [0, 3] } };
+    await storage.save(finder);
+    expect(await storage.findByTokenHash(rec.tokenHash)).toEqual(finder);
+    await storage.save(rec);
+    expect((await storage.findByTokenHash(rec.tokenHash))!.charts).toEqual(finder.charts);
+    // Created with pieces found (a test), they are kept too; anything but an object reads as never set.
+    const made = { ...player('Pg Made Finder'), charts: { 'marsh-map': [2] } };
+    expect(await storage.create(made)).toBe(true);
+    expect(await storage.findByTokenHash(made.tokenHash)).toEqual(made);
+    await admin.query(`UPDATE ${schema}.players SET charts = '[1, 2]' WHERE id = $1`, [made.id]);
+    expect((await storage.findByTokenHash(made.tokenHash))!.charts).toBeUndefined();
   });
 
   it('reads a player of the release before tools as never having got one, and that release\'s saves leave the tools alone', async () => {

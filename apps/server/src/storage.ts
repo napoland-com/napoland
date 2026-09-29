@@ -74,6 +74,11 @@ export interface PlayerRecord {
    */
   tools?: string[];
   /**
+   * Of the torn paper maps among their tools, the pieces they found (items.ts, FindRule.piece): the map's
+   * item id to its quarters. A map they own that is not here is theirs whole. A save without it keeps what was saved.
+   */
+  charts?: Record<string, number[]>;
+  /**
    * The daily parcels (parcels.ts): whether they had their welcome parcel, the calendar day of their last
    * parcel and the days of that week they came back on. None: they never had a parcel. A save without
    * it keeps what was saved.
@@ -592,10 +597,14 @@ const copyStash = (s: Stash): Stash => ({ items: { ...s.items }, out: { ...s.out
 const copyWorn = (w: Worn): Worn => Object.fromEntries(Object.entries(w).map(([slot, p]) => [slot, { ...p }]));
 const copyNotebook = (n: NotebookState): NotebookState => ({ pages: [...n.pages], blanks: [...n.blanks] });
 const copyBests = (b: PlayerBests): PlayerBests => ({ ...b, ...(b.deepest ? { deepest: { ...b.deepest } } : {}) });
+/** A copy of the pieces found, each map's list its own. */
+export const copyCharts = (c: Record<string, number[]>): Record<string, number[]> => Object.fromEntries(Object.entries(c).map(([id, l]) => [id, [...l]]));
+
 const copyRecord = (rec: PlayerRecord): PlayerRecord => ({
   ...rec, bag: copyBag(rec.bag), ...(rec.kept ? { kept: { bag: structuredClone(rec.kept.bag) } } : {}), ...(rec.stats ? { stats: { ...rec.stats } } : {}),
   ...(rec.stash ? { stash: copyStash(rec.stash) } : {}),
   ...(rec.gear ? { gear: { ...rec.gear } } : {}), ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
+  ...(rec.charts ? { charts: copyCharts(rec.charts) } : {}),
   ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}), ...(rec.notebook ? { notebook: copyNotebook(rec.notebook) } : {}),
   ...(rec.notes ? { notes: [...rec.notes] } : {}), ...(rec.keepsakes ? { keepsakes: [...rec.keepsakes] } : {}), ...(rec.furniture ? { furniture: [...rec.furniture] } : {}),
   ...(rec.bests ? { bests: copyBests(rec.bests) } : {}),
@@ -728,6 +737,7 @@ export class MemoryStorage implements Storage {
         stats: { ...savedStats(rec.stats), ...(thanked ? { thanked } : {}) }, ...(rec.wornOut || cur.wornOut ? { wornOut: true as const } : {}),
         xp: rec.xp ?? 0, rested: rec.rested ?? 0, stash: rec.stash ? copyStash(rec.stash) : { items: {}, out: {} }, ...(rec.gear ? { gear: { ...rec.gear } } : {}),
         ...(rec.worn ? { worn: copyWorn(rec.worn) } : {}), ...(rec.story ? { story: rec.story } : {}), ...(rec.tools ? { tools: [...rec.tools] } : {}),
+        ...(rec.charts ? { charts: copyCharts(rec.charts) } : {}),
         ...(rec.parcels ? { parcels: { ...rec.parcels } } : {}), ...(rec.notebook ? { notebook: copyNotebook(rec.notebook) } : {}), lastSeenAt: rec.lastSeenAt,
         ...(rec.notes ? { notes: [...rec.notes] } : {}), ...(rec.keepsakes ? { keepsakes: [...rec.keepsakes] } : {}),
         ...(rec.meritsSpent !== undefined ? { meritsSpent: rec.meritsSpent } : {}), ...(rec.looks ? { looks: [...rec.looks] } : {}),
@@ -1088,6 +1098,8 @@ interface PlayerRow {
   story: string | null;
   /** Null for a player who never got a tool of their own. */
   tools: unknown;
+  /** Null for a player who never found a piece of a torn map (038_charts.sql). */
+  charts: unknown;
   /** The daily parcels (013_parcels.sql); parcel_day is null until the first one. */
   parcel_welcome: boolean;
   parcel_day: number | null;
@@ -1284,6 +1296,8 @@ const fromRow = (r: PlayerRow): PlayerRecord => ({
   ...(r.story ? { story: r.story } : {}),
   // A list of ids as the server wrote it; anything else reads as never set (the World checks it again).
   ...(Array.isArray(r.tools) ? { tools: r.tools.filter((t): t is string => typeof t === 'string') } : {}),
+  // The pieces found as the server wrote them (the World checks them again); anything else reads as never set.
+  ...(r.charts && typeof r.charts === 'object' && !Array.isArray(r.charts) ? { charts: r.charts as Record<string, number[]> } : {}),
   // Only for a player who ever had a parcel, as the World fills in none for everyone else.
   ...(r.parcel_welcome || r.parcel_day !== null ? { parcels: { welcome: r.parcel_welcome, day: r.parcel_day, days: r.parcel_days } } : {}),
   // What the World checks again when the player joins: an outfit they may not wear (or that no longer exists) shows as none.
@@ -1356,7 +1370,7 @@ const SAVE_PLAYER = `UPDATE players SET map = $2, x = $3, y = $4, dir = $5, colo
   badge = CASE WHEN $29::boolean THEN $30::text ELSE badge END, notebook = COALESCE($31::jsonb, notebook), notes = COALESCE($32::jsonb, notes),
   keepsakes = COALESCE($33::jsonb, keepsakes), furniture = COALESCE($34::jsonb, furniture), cozy_until = $35, house = $36, home_told = home_told OR $37,
   bests = COALESCE($38::jsonb, bests), visits_off = $39, first_steps = $40, returned = GREATEST(returned, $41::bigint), meals = $42::jsonb,
-  street = NULL, lot = NULL, door_off = false, street_told = false, last_seen_at = $13 WHERE id = $1`;
+  charts = COALESCE($43::jsonb, charts), street = NULL, lot = NULL, door_off = false, street_told = false, last_seen_at = $13 WHERE id = $1`;
 
 // jsonb parameters go in as JSON text: node-postgres would send a JS array as a Postgres array.
 function saveParams(rec: PlayerRecord): unknown[] {
@@ -1370,6 +1384,7 @@ function saveParams(rec: PlayerRecord): unknown[] {
     rec.notes ? JSON.stringify(rec.notes) : null, rec.keepsakes ? JSON.stringify(rec.keepsakes) : null,
     rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy), houseOf(rec), rec.homeTold === true,
     rec.bests ? JSON.stringify(rec.bests) : null, rec.visitsOff === true, rec.firstSteps ?? null, rec.returned ?? 0, rec.meals?.length ? JSON.stringify(rec.meals) : null,
+    rec.charts ? JSON.stringify(rec.charts) : null,
   ];
 }
 
@@ -1427,9 +1442,9 @@ export class PgStorage implements Storage {
     const r = await this.pool.query(
       `INSERT INTO players (id, name, token_hash, auth_sub, map, x, y, dir, color, energy, bag, wet, stats, xp, stash, gear, created_at, last_seen_at, tools,
          parcel_welcome, parcel_day, parcel_days, outfit, thanked, zone, rested, merits_spent, looks, pattern, badge, notebook, notes, keepsakes, furniture, cozy_until, house,
-         home_told, visits_off, first_steps, meals)
+         home_told, visits_off, first_steps, meals, charts)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13::jsonb, $14, $15::jsonb, $16::jsonb, $17, $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27,
-         $28::jsonb, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb, $34::jsonb, $35, $36, $37, $38, $39, $40::jsonb)
+         $28::jsonb, $29, $30, $31::jsonb, $32::jsonb, $33::jsonb, $34::jsonb, $35, $36, $37, $38, $39, $40::jsonb, $41::jsonb)
        ON CONFLICT DO NOTHING`,
       [
         rec.id, rec.name, rec.tokenHash, rec.authSub, rec.map, rec.x, rec.y, rec.dir, rec.color, rec.energy, JSON.stringify(savedBag(rec)), rec.wet ?? 0, JSON.stringify(savedCounts(rec)),
@@ -1439,6 +1454,7 @@ export class PgStorage implements Storage {
         rec.pattern ?? null, rec.badge ?? null, rec.notebook ? JSON.stringify(rec.notebook) : null, rec.notes ? JSON.stringify(rec.notes) : null,
         rec.keepsakes ? JSON.stringify(rec.keepsakes) : null, rec.furniture ? JSON.stringify(rec.furniture) : null, rec.cozy === undefined ? null : new Date(rec.cozy),
         houseOf(rec), rec.homeTold === true, rec.visitsOff === true, rec.firstSteps ?? null, rec.meals?.length ? JSON.stringify(rec.meals) : null,
+        rec.charts ? JSON.stringify(rec.charts) : null,
       ],
     );
     return r.rowCount === 1;

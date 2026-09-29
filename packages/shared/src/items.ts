@@ -181,6 +181,12 @@ export interface FindRule {
   /** Only within `r` tiles (center to center) of tile x,y: crates by the pond. */
   around?: { x: number; y: number; r: number };
   /**
+   * A piece of a torn paper map: the item is the map (a tool that charts this map), and this rule grows
+   * the piece that covers quarter `piece` of it (quarterOf), which every tile of the rule lies in. Picked
+   * up, it goes into the player's charts, never the bag, and the paper shows that quarter.
+   */
+  piece?: number;
+  /**
    * Only within this gate of the town (town.ts): from a milestone reached or a work done, until one, or
    * between. The cloth the empty house held lies on the lodge's shelves once Edith is home. Never with
    * `when` or `condition`.
@@ -293,6 +299,14 @@ export function copyBundle(b: Bundle): Bundle {
  * later reaches only the players who never got one: give it to the others too (World.giveTool).
  */
 export const STARTER_TOOLS: readonly string[] = ['stonebrook-map', 'near-woods-map', 'south-road-map'];
+
+/** How many pieces a torn map is in: its four quarters, NW, NE, SW, SE (quarterOf). */
+export const PIECES = 4;
+
+/** Which quarter of a map of this size tile x,y lies in: 0 NW, 1 NE, 2 SW, 3 SE (the middle lines go to the east and the south). */
+export function quarterOf(x: number, y: number, width: number, height: number): number {
+  return (y < Math.floor(height / 2) ? 0 : 2) + (x < Math.floor(width / 2) ? 0 : 1);
+}
 
 /**
  * The tools a player owns, as today's items know them, in the order they got them: their saved list

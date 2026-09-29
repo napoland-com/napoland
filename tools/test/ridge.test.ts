@@ -168,11 +168,15 @@ describe('the Ridge, what it gives', () => {
     for (const f of items.finds.filter(f => f.item === 'rime-quartz')) expect(findTiles(ridge, f).length).toBeGreaterThanOrEqual(3 * f.count);
   });
 
-  it('keeps its paper map in the high hut, found and not given, growing back for the next', () => {
+  it('has its paper map torn in four pieces across it, one in each quarter, found and not given, growing back for the next', () => {
     expect(byId.get('ridge-map')).toMatchObject({ kind: 'tool', chart: 'ridge', icon: 'map' });
     expect(STARTER_TOOLS).not.toContain('ridge-map');
-    const rule = items.finds.find(f => f.item === 'ridge-map')!;
-    expect(rule.map).toBe('ridge-high-hut');
-    expect(rule.respawn[1]).toBeLessThanOrEqual(180);
+    const rules = items.finds.filter(f => f.item === 'ridge-map');
+    expect(rules.map(r => r.piece).sort()).toEqual([0, 1, 2, 3]);
+    for (const rule of rules) {
+      expect(rule.map).toBe('ridge');
+      expect(rule.count).toBe(1);
+      expect(rule.respawn[1]).toBeLessThanOrEqual(180);
+    }
   });
 });

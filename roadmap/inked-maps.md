@@ -1,14 +1,16 @@
 ---
 id: inked-maps
 title: Maps of farther regions, found in pieces
-status: idea
-order: 90
+status: done
+order: 745
 area: world
 depends: [paper-map, deeper-regions, owned-tools]
 ---
 
-Every area so far has its map, and the Far Woods' map (depth 2) is found whole. So is the Burn's (depth 3), in the line cabin, until this item tears it in pieces. From depth 3 on, a region's paper map is torn in 4 pieces hidden across it: tucked into a crate, under a rock, in a wreck. The pieces you found show on the paper and the rest stays blank with torn edges; like every paper map, it never shows where you are. Later, charcoal from a burning fire lets you ink in the paths you walked, and you can draw up to 8 symbols of your own.
+Every area so far has its map, and the Far Woods' map (depth 2) is found whole. From depth 3 on (the Burn, the Marsh, the Ridge), a region's paper map is torn in 4 pieces hidden across it, one in each quarter of the map: by a rock, a stump, a stake, the hut's woodpile. The first piece you pick up puts the map behind the map button; the paper draws only the quarters you found, names included, and the rest stays bare paper with a torn edge. Like every paper map, it never shows where you are. A piece lies there for whoever has not found it, and a map someone got whole before it was torn stays whole.
 
-Why: the design says maps of farther regions are found; this is how. The Long Dark's charcoal, Hollow Knight's quill.
+What comes next, charcoal to ink in the paths you walked and symbols of your own, is [inked-paths](inked-paths.md).
+
+Why: the design says maps of farther regions are found; this is how. The first trips into a new region are blind, and the map is a reward for walking all of it. Hollow Knight's torn maps.
 
 More: [Movement and controls](../docs/DESIGN.md#movement-and-controls).

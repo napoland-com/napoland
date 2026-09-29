@@ -750,6 +750,7 @@ export function attachNet(o: NetOptions): Net {
       merits: joined.merits,
       shop: shop.view(joined.shop),
       tools: joined.tools,
+      charts: joined.charts,
       items: world.itemsVersion,
       story: joined.story,
       thanked: joined.thanked,
