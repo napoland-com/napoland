@@ -355,8 +355,10 @@ export type MapObject =
    * A at the house's takes you to town, onto the tile in front of the town's (teleportArrival); A at the
    * town's takes you home, onto the tile in front of the one in your own house. A friend's visit sets
    * them down in front of the one in yours. Faced like a desk, from the tile in front of it.
+   * `home`: an outpost's, in a hut or barracks out in the wilds (never in a home or in town): one way,
+   * it takes you home, in front of the one in your own house, and there is none to come back by.
    */
-  | { kind: 'teleport'; x: number; y: number }
+  | { kind: 'teleport'; x: number; y: number; home?: true }
   /**
    * A handwritten note someone left (notes.ts): on a table, a shelf, a crate or a bed, in a car, on the
    * luggage, nailed to a pole. It lies on the tile of what it is on, so it blocks nothing itself, and you

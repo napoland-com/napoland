@@ -3432,12 +3432,19 @@ export class World {
    * a friend's too) sets them down in town, in front of its twin there (teleportArrival), in the copy of town
    * walking in would give them (copyFor: where their friends are); the one in town sets them down at home, in
    * front of the one in their own house, which is coming home as walking in is (the trip ends, the letter waits).
+   * An outpost's (`home`), in a hut or barracks out in the wilds, sets them down at home the same way.
    */
   teleport(id: string, x: number, y: number, now: number): void {
     const p = this.players.get(id);
     if (!p) return;
     this.runQueue(p, now);
-    const here = p.map.data.objects.some(o => o.kind === 'teleport' && o.x === x && o.y === y);
+    const pad = p.map.data.objects.find(o => o.kind === 'teleport' && o.x === x && o.y === y);
+    const here = !!pad;
+    // An outpost's takes you home from a hut or barracks out in the wilds, and only that way.
+    if (pad && 'home' in pad && pad.home && this.cabin && manhattan(x, y, p.rec.x, p.rec.y) === 1) {
+      this.sendHome(p, now);
+      return this.moveStory(p, { reach: this.cabin.data.id });
+    }
     const toTown = p.map === this.cabin, toCabin = p.map === this.home;
     if (!here || !(toTown || toCabin) || manhattan(x, y, p.rec.x, p.rec.y) !== 1) return this.refuse(p, 'teleport', 'too_far');
     const to = toTown ? this.home : this.cabin, twin = toTown ? this.townTeleport : this.cabinTeleport;
