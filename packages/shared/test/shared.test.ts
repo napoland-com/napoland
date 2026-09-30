@@ -592,6 +592,17 @@ describe('validateWorld', () => {
     const second = garden({ id: 'garden-2' });
     expect(errors([town(), garden(), second, home(), tinyHouse(), woodsMap()])).toContain('garden-2: private: garden and garden-2 are both gardens, but every player\'s house stands in the one');
   });
+  it('lets a hut or barracks out in the wilds have a teleport that only goes home, and nowhere else', () => {
+    const mapErrors = (m: MapData) => validateMap(m).filter(p => p.level === 'error').map(p => p.message);
+    const hut = (...more: MapObject[]): MapData => ({ ...tinyHouse(), objects: [...tinyHouse().objects, ...more] });
+    expect(mapErrors(hut({ kind: 'teleport', x: 3, y: 1, home: true }))).toEqual([]);
+    // Not in a home of one's own, not in town, and never a second one.
+    expect(mapErrors({ ...hut({ kind: 'teleport', x: 3, y: 1, home: true }), private: true }).some(m => /only goes home/.test(m))).toBe(true);
+    expect(mapErrors({ ...townWithExit(), objects: [...townWithExit().objects, { kind: 'teleport', x: 0, y: 3, home: true }] }).some(m => /only goes home/.test(m))).toBe(true);
+    expect(mapErrors(hut({ kind: 'teleport', x: 3, y: 1, home: true }, { kind: 'teleport', x: 1, y: 1, home: true })).some(m => /a map has one teleport/.test(m))).toBe(true);
+    // Without `home`, a teleport in a hut is still refused: one in every house and its twin in town.
+    expect(mapErrors(hut({ kind: 'teleport', x: 3, y: 1 })).some(m => /stand inside a home/.test(m))).toBe(true);
+  });
   it('keeps what a house opens from a level on to a home of one\'s own: the kitchen and the map table', () => {
     const home = (...more: MapObject[]): MapData => ({
       ...tinyHouse(), objects: [...tinyHouse().objects, { kind: 'chest', x: 3, y: 1 }, ...more], private: true, wake: { x: 2, y: 2, dir: 'down' },

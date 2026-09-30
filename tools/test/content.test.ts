@@ -189,7 +189,14 @@ describe('the house that was Home, and NAPO\'s teleports (roadmap/street-visits.
   });
 
   it('stands one in the house, a walk from the fire, and its twin by the notice board in town, where it sets you down', () => {
-    expect([...maps.values()].filter(m => m.data.objects.some(o => o.kind === 'teleport')).map(m => m.data.id).sort()).toEqual(['stonebrook', 'stonebrook-home']);
+    expect([...maps.values()].filter(m => m.data.objects.some(o => o.kind === 'teleport' && !o.home)).map(m => m.data.id).sort()).toEqual(['stonebrook', 'stonebrook-home']);
+    // The outposts far out only go home, and each is reached from the door on foot.
+    const outposts = [...maps.values()].filter(m => m.data.objects.some(o => o.kind === 'teleport' && o.home));
+    expect(outposts.map(m => m.data.id).sort()).toEqual(['far-woods-field-post', 'marsh-cutters-hut', 'ridge-high-hut', 'south-road-dormitory']);
+    for (const m of outposts) {
+      const t = m.data.objects.find(o => o.kind === 'teleport')!, door = m.data.exits[0]!;
+      expect(findPath(m, door.x, door.y - 1, t.x, t.y + 1).length, m.data.id).toBeGreaterThan(0);
+    }
     const [mine, ...more] = home.data.objects.filter(o => o.kind === 'teleport');
     expect(more).toEqual([]);
     // Used from the tile in front of it, a walk from where you wake up by the fire, and off the way from the door to it.

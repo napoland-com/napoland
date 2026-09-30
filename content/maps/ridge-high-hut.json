@@ -1,7 +1,7 @@
 {
   "id": "ridge-high-hut",
   "name": "The high hut",
-  "version": 1,
+  "version": 2,
   "kind": "inside",
   "depth": 0,
   "width": 7,
@@ -27,6 +27,7 @@
     {"x":3,"y":5,"w":1,"h":1,"to":"ridge","tx":6,"ty":40,"dir":"down"}
   ],
   "objects": [
+    {"kind":"teleport","x":4,"y":3,"home":true},
     {"kind":"fireplace","x":3,"y":1},
     {"kind":"bed","x":1,"y":1},
     {"kind":"bed","x":5,"y":2},

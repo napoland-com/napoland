@@ -422,7 +422,7 @@ const ROOMS: readonly Room[] = [
     // the icefall. Three bunks for the three on the rope, the wood they carried up, the tally on the wall, and
     // a fire nobody keeps: it burns down unless whoever passes feeds it. Their map of the high line lies by the
     // tally for whoever has none (a find: content/items.json). A crate for whoever comes next, last in the list.
-    id: 'ridge-high-hut', name: 'The high hut', version: 1, outside: 'ridge', door: [6, 39],
+    id: 'ridge-high-hut', name: 'The high hut', version: 2, outside: 'ridge', door: [6, 39],
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -432,6 +432,7 @@ const ROOMS: readonly Room[] = [
       'xxxpxxx',
     ],
     things: [
+      { kind: 'teleport', x: 4, y: 3, home: true },
       { kind: 'fireplace', x: 3, y: 1 },
       { kind: 'bed', x: 1, y: 1 },
       { kind: 'bed', x: 5, y: 2 },
@@ -453,7 +454,7 @@ const ROOMS: readonly Room[] = [
     // slept in May. Their bunks, the peat they stacked to dry and never carried home, their tally of the cutting
     // and a fire nobody keeps: it burns down unless whoever passes feeds it. Their map of the bog lies by the
     // tally for whoever has none (a find: content/items.json). A crate for whoever comes next, last in the list.
-    id: 'marsh-cutters-hut', name: 'The cutters\' hut', version: 1, outside: 'marsh', door: [12, 16],
+    id: 'marsh-cutters-hut', name: 'The cutters\' hut', version: 2, outside: 'marsh', door: [12, 16],
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -463,6 +464,7 @@ const ROOMS: readonly Room[] = [
       'xxxpxxx',
     ],
     things: [
+      { kind: 'teleport', x: 2, y: 3, home: true },
       { kind: 'fireplace', x: 3, y: 1 },
       { kind: 'bed', x: 1, y: 1 },
       { kind: 'bed', x: 5, y: 2 },
@@ -483,7 +485,7 @@ const ROOMS: readonly Room[] = [
     // NAPO's field post in the hollow of the Far Woods where the rocks hum back, further gone than the
     // listening post by the ring of stones: a concrete room with no fire, a cot, the shelves and crates
     // of its field kit, and the desk with the post's log, NAPO's last word from up here. Cold and dark.
-    id: 'far-woods-field-post', name: 'The NAPO field post', version: 1, outside: 'far-woods', door: [46, 8], style: 'napo',
+    id: 'far-woods-field-post', name: 'The NAPO field post', version: 2, outside: 'far-woods', door: [46, 8], style: 'napo',
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -493,6 +495,7 @@ const ROOMS: readonly Room[] = [
       'xxxpxxx',
     ],
     things: [
+      { kind: 'teleport', x: 1, y: 2, home: true },
       { kind: 'shelf', x: 1, y: 1 },
       {
         kind: 'console', x: 3, y: 1, id: 'field-post-log', name: 'Field post log',
@@ -616,7 +619,7 @@ const ROOMS: readonly Room[] = [
   {
     // NAPO's dormitory: bunks for the crews who stopped coming, and a fire that burns down unless
     // someone feeds it.
-    id: 'south-road-dormitory', name: 'The dormitory', version: 2, outside: 'south-road', door: [28, 41], style: 'napo',
+    id: 'south-road-dormitory', name: 'The dormitory', version: 3, outside: 'south-road', door: [28, 41], style: 'napo',
     rows: [
       'xxxxxxxxx',
       'xpppppppx',
@@ -626,6 +629,7 @@ const ROOMS: readonly Room[] = [
       'xxxxpxxxx',
     ],
     things: [
+      { kind: 'teleport', x: 3, y: 1, home: true },
       { kind: 'fireplace', x: 4, y: 1 },
       { kind: 'bed', x: 1, y: 1 },
       { kind: 'bed', x: 2, y: 1 },

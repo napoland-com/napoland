@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
-  COZY_AFTER_S, ENERGY_MAX, PROTOCOL_VERSION, STEP_MS, validateMap, validateWorld, type Dir, type ItemsData, type ServerMsg,
+  COZY_AFTER_S, ENERGY_MAX, PROTOCOL_VERSION, STEP_MS, TileMap, validateMap, validateWorld, type Dir, type ItemsData, type MapData, type ServerMsg,
 } from '@napoland/shared';
 import { setLogLevel } from '../src/log';
 import { startServer } from '../src/server';
@@ -512,6 +512,29 @@ describe('NAPO\'s teleport', () => {
     // The step out of the woods counts; the ones in town do not.
     const [trip] = of(to(w.drain(), 'a'), 'trip');
     expect(trip?.trip).toMatchObject({ steps: 13, fell: null });
+  });
+
+  it('in a hut out in the wilds, takes you home, in front of the one in your own house, and there is no way back by it', () => {
+    const hut: MapData = {
+      id: 'hut', name: 'The hut', version: 1, kind: 'inside', depth: 0, width: 5, height: 4,
+      tiles: ['xxxxx', 'xpppx', 'xpppx', 'xxpxx'], levels: Array<string>(4).fill('00000'),
+      spawn: { x: 2, y: 2, dir: 'up' }, exits: [{ x: 2, y: 3, w: 1, h: 1, to: 'woods', tx: 3, ty: 6, dir: 'down' }],
+      objects: [{ kind: 'teleport', x: 3, y: 1, home: true }],
+    };
+    const w = new World([...homeMaps(), new TileMap(hut)], 'town', 'overcast', { items: items(), rng: () => 0 });
+    w.friends = () => new Set();
+    w.join(rec('a', 'hut', 3, 2, 'up'), 0);
+    w.returned('a', 0);
+    w.join(rec('b', 'hut', 1, 2, 'up'), 0);
+    w.drain();
+    // From a tile next to it only.
+    w.teleport('b', 3, 1, 500);
+    expect(to(w.drain(), 'b')).toEqual([{ t: 'refused', action: 'teleport', reason: 'too_far' }]);
+    expect(w.get('b')).toMatchObject({ map: 'hut', x: 1, y: 2 });
+    w.teleport('a', 3, 1, 1000);
+    expect(w.get('a')).toMatchObject({ map: 'house', x: 4, y: 2, dir: 'down' });
+    expect(w.zoneOf('a')).toBe(HOUSE('a'));
+    expect(of(to(w.drain(), 'a'), 'zone')[0]).toMatchObject({ map: { id: 'house' }, x: 4, y: 2, dir: 'down', reason: 'exit' });
   });
 
   it('goes into the copy of town walking in would: where your friends are, if it has room', () => {

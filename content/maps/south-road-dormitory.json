@@ -1,7 +1,7 @@
 {
   "id": "south-road-dormitory",
   "name": "The dormitory",
-  "version": 2,
+  "version": 3,
   "kind": "inside",
   "depth": 0,
   "width": 9,
@@ -27,6 +27,7 @@
     {"x":4,"y":5,"w":1,"h":1,"to":"south-road","tx":28,"ty":42,"dir":"down"}
   ],
   "objects": [
+    {"kind":"teleport","x":3,"y":1,"home":true},
     {"kind":"fireplace","x":4,"y":1},
     {"kind":"bed","x":1,"y":1},
     {"kind":"bed","x":2,"y":1},

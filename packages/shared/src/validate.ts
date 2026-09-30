@@ -175,9 +175,12 @@ export function validateMap(data: MapData): Problem[] {
       if (!map.walkable(o.x, o.y)) err(`slab at ${o.x},${o.y}: it lies in the ground, where people walk`);
     }
     if (o.kind === 'teleport') {
-      // One in every cabin, and its twin in the home town (validateWorld): nowhere else, and one a map.
-      if (data.private === true ? data.kind !== 'inside' : data.kind !== 'town') err(`teleport at ${o.x},${o.y}: NAPO's teleports stand inside a home of one's own and in the home town`);
-      else if (data.objects.filter(p => p.kind === 'teleport').length > 1) err(`teleport at ${o.x},${o.y}: a map has one teleport`);
+      // One in every cabin, and its twin in the home town (validateWorld): nowhere else, and one a map. An outpost's
+      // (`home`) stands in a room out in the wilds instead, and only takes you home.
+      if (o.home) {
+        if (data.kind !== 'inside' || data.private === true) err(`teleport at ${o.x},${o.y}: a teleport that only goes home stands in a hut or barracks out in the wilds, not in a home or in town`);
+      } else if (data.private === true ? data.kind !== 'inside' : data.kind !== 'town') err(`teleport at ${o.x},${o.y}: NAPO's teleports stand inside a home of one's own and in the home town`);
+      if (data.objects.filter(p => p.kind === 'teleport').length > 1) err(`teleport at ${o.x},${o.y}: a map has one teleport`);
       const at = teleportArrival(o);
       if (map.exitAt(at.x, at.y)) err(`teleport at ${o.x},${o.y}: it sets you down on the tile in front of it (${at.x},${at.y}), which is an exit`);
     }
@@ -645,7 +648,7 @@ export function validateWorld(maps: MapData[], homeId: string): Array<Problem & 
 
   // NAPO's teleports: the one in every house (a home of one's own) sets you down in front of its twin in
   // the home town, the only town that has one, and that one sets you down at home, in front of the house's.
-  const teleporting = [...byId.values()].filter(m => m.data.objects.some(o => o.kind === 'teleport'));
+  const teleporting = [...byId.values()].filter(m => m.data.objects.some(o => o.kind === 'teleport' && !o.home));
   for (const m of teleporting) {
     if (m.data.kind === 'town' && m.data.id !== homeId) out.push({ level: 'error', map: m.data.id, message: `teleport: NAPO's teleport in town stands in the home town (${homeId})` });
   }
