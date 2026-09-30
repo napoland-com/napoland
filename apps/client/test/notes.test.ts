@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ClientMsg, ItemsData, MapData, PlayerView } from '@napoland/shared';
+import { pieceLines, pieceOf } from '@napoland/shared';
 import { Game } from '../src/game';
+import { LEAN, poleLean } from '../src/view/lean';
 import { Items, factsOf } from '../src/items';
 import { NOTHING_YET, allHome, authorHeading, keepsakesHeading, notesHtml, notesView } from '../src/journal';
 import { Maps } from '../src/maps';
@@ -162,5 +164,63 @@ describe('first finders, in the game and the journal', () => {
     expect(v.authors.map(a => a.notes.map(n => n.first))).toEqual([[undefined], ['First read by Bo, day 3,040.']]);
     expect(v.keepsakes!.home.map(h => h.first)).toEqual(['First found by you, day 3,052.']);
     expect(notesHtml(v)).toContain('<p class="first">First read by Bo, day 3,040.</p></article>');
+  });
+});
+
+describe('the north line\'s poles, in the game', () => {
+  /** The test woods under this id, with poles at 1,2 (bare), 3,2 (Walt's note on it) and 2,3 (bare), listed in that order. */
+  const line = (id: string, dir: PlayerView['dir']): Game => {
+    const w: MapData = { ...woods(), id, objects: [...tinyWoods().objects, { kind: 'pole', x: 1, y: 2 }, { kind: 'pole', x: 3, y: 2 }, { kind: 'pole', x: 2, y: 3 }, woods().objects.at(-1)!] };
+    const g = new Game(new Maps([town(), w]), () => {}, ITEMS, storyData());
+    g.handle(welcome(w, [me(2, 2, dir)], undefined, { story: { version: storyData().version, chapter: 'home' }, items: ITEMS.version }), 1000);
+    return g;
+  };
+  it('read their tin tag, counted from N-7 in the Near Woods; one with a note says the note', () => {
+    expect(read(line('near-woods', 'left'))).toEqual({ who: 'Pole', lines: ['A tin tag, stamped N-7.', 'The pole leans west.'] });
+    expect(read(line('near-woods', 'down'))).toEqual({ who: 'Pole', lines: ['A tin tag, stamped N-9.', 'The pole leans east.'] });
+    expect(read(line('near-woods', 'right'))?.who).toBe('Nailed to the pole');
+  });
+  it('carry none on NAPO\'s own line', () => {
+    expect(read(line('south-road', 'left'))).toBeFalsy();
+  });
+});
+
+describe('the dead line', () => {
+  it('lampOut is set by the server, one line of news when it goes out, and reset by a welcome', () => {
+    const g = inWoods('up');
+    expect(g.lampOut).toBe(false);
+    g.handle({ t: 'lampOut', out: true }, 2000);
+    expect(g.lampOut).toBe(true);
+    expect(g.news).toEqual([{ kind: 'first', text: 'The lamp with no wires went out.' }]);
+    g.handle({ t: 'lampOut', out: true }, 2100);
+    expect(g.news).toHaveLength(1);
+    g.handle(welcome(woods(), [me(2, 2, 'up')], undefined, { story: { version: storyData().version, chapter: 'home' }, items: ITEMS.version }), 3000);
+    expect(g.lampOut).toBe(false);
+    // Told on joining (`known`) it is how things stand, not news: no banner, however long after the welcome.
+    g.handle({ t: 'lampOut', out: true, known: true }, 9000);
+    expect(g.lampOut).toBe(true);
+    expect(g.news).toHaveLength(1);
+    g.handle({ t: 'lampOut', out: false }, 3200);
+    expect(g.lampOut).toBe(false);
+  });
+
+  it('the journal shows the torn piece for your id only once you read walt-n16', () => {
+    const view = (read: string[], id: string) => notesView(maps().all(), read, undefined, [], () => undefined, new Set(), new Map(), 'Me', id);
+    expect(view(['walt-n8'], 'p7').piece).toBeUndefined();
+    const v = view(['walt-n16'], 'p7');
+    expect(v.piece).toEqual(pieceLines(pieceOf('p7')));
+    expect(notesHtml(v)).toContain('A torn piece of NAPO');
+    expect(notesHtml(view(['walt-n8'], 'p7'))).not.toContain('torn piece');
+  });
+});
+
+describe('pole lean', () => {
+  it('tilts the woods line toward LEANS and leaves other tags straight', () => {
+    expect(poleLean('N-7')).toEqual({ axis: [0, 0, 1], angle: LEAN });
+    expect(poleLean('N-9')!.axis).toEqual([0, 0, -1]);
+    expect(poleLean('N-8')!.axis).toEqual([-1, 0, 0]);
+    expect(poleLean('N-13')!.axis).toEqual([1, 0, 0]);
+    expect(poleLean('N-6')).toBeUndefined();
+    expect(poleLean(undefined)).toBeUndefined();
   });
 });

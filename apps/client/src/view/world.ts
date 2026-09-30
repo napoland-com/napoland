@@ -19,7 +19,7 @@
  */
 import * as THREE from 'three';
 import {
-  BEAM_HALF, BEAM_REACH, DIR_VEC, LANTERN_REACH, PRINTS_PER_MAP, beamAngle, builtIn, dirToward, hidden, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
+  BEAM_HALF, BEAM_REACH, DIR_VEC, LAMP, LANTERN_REACH, PRINTS_PER_MAP, beamAngle, builtIn, dirToward, hidden, poleTag, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
   type TileMap, type Weather,
 } from '@napoland/shared';
 import { comfortModel, comfortShadow, lampLight } from './cabin';
@@ -39,6 +39,7 @@ import {
 } from './left';
 import { SNOW, ambience, assignBeams, assignLights, lightSources, onSnow, underOldGrowth, type Ambience, type LightSource } from './lighting';
 import { Loot, lootGlow } from './loot';
+import { poleLean } from './lean';
 import { HUM, TELEPORT_RINGS, TELEPORT_ROCK_Y, napoBuilding, napoProp, napoSign, teleportCore, towerModel, type TeleportCore } from './napo';
 import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, riseTexture, softTexture, toon } from './toon';
 import { beamPose, type BeamPose } from '../beam';
@@ -480,6 +481,8 @@ export class WorldView {
    * ids of those that stand, as the game last said (setWorks).
    */
   private bridges: Array<{ id: string; whole: THREE.Group; broken: THREE.Group }> = [];
+  private deadLamp?: THREE.MeshToonMaterial;
+  private lampOut = false;
   private worksLamps: Array<{ id: string; mat: THREE.MeshToonMaterial; on: boolean }> = [];
   private standing: Pass | null = null;
   /** The fires of this map: their tiles in the order Fires draws them, how big each burns, and where the game says so. */
@@ -1142,6 +1145,8 @@ export class WorldView {
       // town has not mended yet (town.ts) stands dark, its glass broken grey. A lamp mended together has one
       // of its own, dark until it stands, and its plaque on the post.
       let head: THREE.Material | string = l.dark ? '#3a3f45' : this.lampMat;
+      // The lamp with no wires has a head of its own, which goes dark when it goes out (setLampOut).
+      if (!l.dark && this.map.data.id === LAMP.map && l.x === LAMP.x && l.y === LAMP.y) head = this.deadLamp = ownToon('#ffcf8a', { emissive: 0x000000 });
       if (l.works) {
         const mat = ownToon('#ffcf8a', { emissive: 0x000000 });
         this.worksLamps.push({ id: l.works, mat, on: false });
@@ -1178,6 +1183,9 @@ export class WorldView {
       const g = new THREE.Group();
       g.position.set(p.x + 0.5, 0, p.y + 0.5);
       if (next) g.rotation.y = Math.atan2(next.x - p.x, next.y - p.y) + Math.PI / 2;
+      // The woods' poles of the north line lean (the dead line puzzle): tilted about the foot, so the wires still meet the tops.
+      const lean = poleLean(poleTag(this.map.data, p.x, p.y));
+      if (lean) g.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(...lean.axis), lean.angle));
       g.add(part(flat(new THREE.CylinderGeometry(0.06, 0.08, 2.3, 6)), '#4a3a2c', 0, 1.15, 0, 0.02), box(0.9, 0.06, 0.06, '#4a3a2c', 0, 2.1, 0));
       for (const o of [-0.38, 0.38]) g.add(box(0.05, 0.08, 0.05, '#8fa3a8', o, 2.17, 0, false));
       still.push(g);
@@ -1420,6 +1428,7 @@ export class WorldView {
     (this.scene.background as THREE.Color).set(a.sky);
     (this.scene.fog as THREE.Fog).color.set(a.sky);
     this.lampMat.emissive.set(a.lampGlow);
+    this.deadLamp?.emissive.set(this.lampOut ? 0x000000 : a.lampGlow);
     for (const l of this.worksLamps) if (l.on) l.mat.emissive.set(a.lampGlow);
     this.warm.emissive.set(a.warmGlow);
     this.doorGlow.emissive.set(a.warmGlow);
@@ -1523,6 +1532,17 @@ export class WorldView {
       if (burning) { l.beam.rotation.y = -angle; lit = true; }
     }
     this.beamLampMat.emissive.setHex(lit ? 0xffe2a0 : 0x000000);
+  }
+
+  /** Is the tile x,y the lamp with no wires, while it is out (line.ts)? Its light, near and far, stays off. */
+  private isDeadLamp(x: number, y: number): boolean {
+    return this.lampOut && this.map.data.id === LAMP.map && x === LAMP.x && y === LAMP.y;
+  }
+
+  setLampOut(out: boolean) {
+    if (out === this.lampOut) return;
+    this.lampOut = out;
+    this.deadLamp?.emissive.set(out ? 0x000000 : this.amb.lampGlow);
   }
 
   /**
@@ -1768,6 +1788,7 @@ export class WorldView {
       if (!src) { s.light.intensity = 0; continue; }
       s.on = Math.min(1, s.on + dt / LIGHT_FADE_S);
       if (src.kind === 'fire') { s.light.intensity = FIRE_LIGHT * L * flicker(t, src.ph) * s.on * Math.min(1, this.fireLevel(src.tx, src.ty)); continue; }
+      if (this.isDeadLamp(src.tx, src.ty)) { s.light.intensity = 0; continue; }
       // A street light mended together shines only while it stands.
       if (src.works && !this.standing?.has(src.works)) { s.light.intensity = 0; continue; }
       // Some lamps flicker now and then; any lamp flickers hard while someone with a flickering quirk passes under it.
@@ -1795,6 +1816,7 @@ export class WorldView {
     for (let i = 0; i < this.farList.length; i++) {
       const l = this.farList[i]!;
       if (l.works && !this.standing?.has(l.works)) continue;
+      if (l.tx !== undefined && this.isDeadLamp(l.tx, l.ty!)) continue;
       placeFar(l, fx, fz, reach, at);
       const glow = farGlow(l.kind, t);
       if (l.size > 2 || at.far) { if (nb < FAR_LIGHTS) putPoint(big, nb++, at, rgb[i * 3]!, rgb[i * 3 + 1]!, rgb[i * 3 + 2]!, glow * (at.far ? 0.7 : 1)); }

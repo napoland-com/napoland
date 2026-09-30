@@ -3,7 +3,7 @@
  * into the woods needs no download. The server says which map you are on; this finds our copy, as the
  * town has it now (town.ts): who is where, which lamps and hearths are lit, what a room is called.
  */
-import { NO_TOWN, TileMap, townData, type MapData, type MapRef } from '@napoland/shared';
+import { LAMP, NO_TOWN, TileMap, townData, type MapData, type MapRef } from '@napoland/shared';
 
 export class Maps {
   private readonly data = new Map<string, MapData>();
@@ -13,6 +13,8 @@ export class Maps {
   private pop = 0;
   /** Winter: the water the maps mark as ice is walked on (the server's rule, TileMap.freeze), on every map, built or not yet. */
   private frozen = false;
+  /** The lamp with no wires is out (line.ts): on its map, built or not yet, it lights nothing. */
+  private lampIsOut = false;
 
   constructor(list: Iterable<MapData>) {
     for (const d of list) this.data.set(d.id, d);
@@ -27,6 +29,7 @@ export class Maps {
     if (!map) {
       this.built.set(d.id, (map = new TileMap(d, this.done, this.pop)));
       map.freeze(this.frozen);
+      if (d.id === LAMP.map) map.setLampOut(LAMP.x, LAMP.y, this.lampIsOut);
     }
     return map;
   }
@@ -37,6 +40,12 @@ export class Maps {
     let changed = false;
     for (const m of this.built.values()) changed = m.freeze(on) || changed;
     return changed;
+  }
+
+  /** The lamp with no wires went out, or was relit: its map's light follows, as the server's does. */
+  lampOut(out: boolean): void {
+    this.lampIsOut = out;
+    this.built.get(LAMP.map)?.setLampOut(LAMP.x, LAMP.y, out);
   }
 
   /** The water that freezes in winter (every map's `ice`), as a sentence says it ("the pond in the Near Woods"), by map id as the server lists them. */

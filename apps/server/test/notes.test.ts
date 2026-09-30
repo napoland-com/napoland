@@ -4,8 +4,9 @@
  * and keepsakes, each lying for every player alone until they bring it home, where it stays; the whole
  * set home makes the bar bigger. World rules first, then over real WebSockets.
  */
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { NOTE_XP, SLUMP_S, TileMap, keepsakeFindId, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather } from '@napoland/shared';
+import { NOTE_XP, SLUMP_S, TileMap, keepsakeFindId, poleTag, withTag, noteAt, noteLines, ORDER, type Dir, type ItemsData, type MapData, type MapObject, type ServerMsg, type Weather } from '@napoland/shared';
 import { MemoryStorage, type PlayerRecord } from '../src/storage';
 import { World, colorFor, type Outgoing, type WorldOptions } from '../src/world';
 import { houseData, townData, woodsData } from './fixtures';
@@ -246,5 +247,36 @@ describe('notes and keepsakes over WebSockets', () => {
     b.c.send({ t: 'pick', x: 2, y: 6 });
     expect(await b.c.next('got')).toEqual({ t: 'got', items: [{ item: 'tag', count: 1 }], from: 'find' });
     expect(await b.c.next('findGone')).toEqual({ t: 'findGone', id: TAG.id });
+  });
+});
+
+describe('the north line\'s tags', () => {
+  it('agree with where Walt nailed his notes: every pole note that names a tag is on that pole', () => {
+    const woods = JSON.parse(readFileSync(new URL('../../../content/maps/near-woods.json', import.meta.url), 'utf8')) as MapData;
+    let named = 0;
+    for (const o of woods.objects) if (o.kind === 'note' && o.by === 'walt' && /^N-\d+\./.test(o.text[0]!)) { named++; expect(o.text[0]!.split('.')[0]).toBe(poleTag(woods, o.x, o.y)); }
+    expect(named).toBeGreaterThan(3);
+  });
+  it('run N-1 to N-6 in Stonebrook, the last at the road north, and N-7 to N-16 in the Near Woods', () => {
+    const load = (id: string) => JSON.parse(readFileSync(new URL(`../../../content/maps/${id}.json`, import.meta.url), 'utf8')) as MapData;
+    const [town, woods] = [load('stonebrook'), load('near-woods')];
+    const poles = (m: MapData) => m.objects.filter(o => o.kind === 'pole');
+    expect([poles(town).length, poles(woods).length]).toEqual([6, 10]);
+    const north = town.exits.find(e => e.to === 'near-woods')!, last = poles(town).at(-1)!;
+    expect(poles(town).every(p => Math.hypot(p.x - north.x, p.y - north.y) >= Math.hypot(last.x - north.x, last.y - north.y))).toBe(true);
+  });
+  it('show every pole of the diagram\'s order by its number and lean, what is nailed to it or not, in any weather', () => {
+    const woods = JSON.parse(readFileSync(new URL('../../../content/maps/near-woods.json', import.meta.url), 'utf8')) as MapData;
+    const poles = woods.objects.filter(o => o.kind === 'pole');
+    for (const weather of ['overcast', 'rain', 'night', 'aurora'] as const) {
+      for (const n of ORDER) {
+        const pole = poles[n - 7]!, note = noteAt(woods, pole.x, pole.y), tag = poleTag(woods, pole.x, pole.y);
+        const said = withTag(note ? noteLines(note, weather) : [], tag, note?.text).join(' ');
+        expect(said, `N-${n} in ${weather}`).toContain('The pole leans');
+        // N-16's tag is gone every night (its note says so on a green one): it never claims one.
+        if (n === 16) expect(said).not.toContain('stamped');
+        else expect(said, `N-${n} in ${weather}`).toContain(`N-${n}`);
+      }
+    }
   });
 });

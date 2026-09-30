@@ -44,7 +44,7 @@ import type { WorksView } from './works';
  * 42: homes in gardens of their own instead of a street (no `street`, `lot`, `door`, knocking or moving), visits
  *     from the friends list (`visit`), and houses built up (`build`, `house`), which an older page could not draw or do.
  */
-export const PROTOCOL_VERSION = 42;
+export const PROTOCOL_VERSION = 43;
 
 /**
  * How many first steps a new player is shown (roadmap/first-steps.md): to town by NAPO's teleport, out of town
@@ -1062,6 +1062,8 @@ export type ServerMsg =
   | { t: 'blank'; id: string }
   /** You read this note someone left (notes.ts) for the first time: the journal keeps it now, and its XP comes in `progress`. */
   | { t: 'noteRead'; id: string }
+  /** The lamp with no wires (line.ts) went out for everyone until dawn (`out`), or lit again; on hello it says how things stand (`known`), which is not news. */
+  | { t: 'lampOut'; out: boolean; known?: true }
   /** This keepsake is home now, yours for good (notes.ts); with the whole set home your bar is bigger, in the next `energy`. */
   | { t: 'keepsake'; item: string }
   /** To everyone online: someone (you too) is the first on the server to find a secret (firsts.ts). */

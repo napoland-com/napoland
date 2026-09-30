@@ -1034,16 +1034,19 @@ describe('Stonebrook wakes up (roadmap/stonebrook-wakes.md)', () => {
     expect(npcs('walt')).toEqual([{ map: 'stonebrook-lodge', town: undefined }]);
   });
 
-  it('has Walt tell four scenes, each opening at a level once his notes are read, and Edith two once she is home', () => {
+  it('has Walt tell four scenes, each opening at a level once his notes are read, a fifth once the lamp has gone out, and Edith two once she is home', () => {
     const scenes = story.scenes!, byId = notesOf([...maps.values()].map(m => m.source));
-    const walt = scenes.filter(s => s.who === 'walt');
-    expect(walt.map(s => s.id)).toEqual(['walt-hum', 'walt-answer', 'walt-two-weeks', 'walt-stayed']);
+    const all = scenes.filter(s => s.who === 'walt');
+    // The last opens on a page of the field notes (the dead line, roadmap/the-dead-line.md), not on a note.
+    expect(all.map(s => s.id)).toEqual(['walt-hum', 'walt-answer', 'walt-two-weeks', 'walt-stayed', 'walt-lamp']);
+    expect(all[4]!.when.pages).toEqual(['lamp-out']);
+    const walt = all.slice(0, 4);
     for (const s of walt) {
       expect(s.when.level, s.id).toBeGreaterThan(1);
       expect(s.when.notes?.length, s.id).toBeGreaterThan(0);
       for (const n of s.when.notes!) expect(byId.get(n)?.note.by, `${s.id}: ${n}`).toBe('walt');
     }
-    const levels = walt.map(s => s.when.level!);
+    const levels = all.map(s => s.when.level!);
     expect(levels).toEqual([...levels].sort((a, b) => a - b));
     expect(scenes.filter(s => s.who === 'edith').map(s => [s.id, s.when.town])).toEqual([['edith-kept', 'edith-home'], ['edith-kari', 'edith-home']]);
     for (const s of scenes) expect(s.lines.length, s.id).toBeGreaterThanOrEqual(4);

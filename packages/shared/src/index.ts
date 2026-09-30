@@ -19,6 +19,7 @@ export * from './meals';
 export * from './merits';
 export * from './movement';
 export * from './notebook';
+export * from './line';
 export * from './notes';
 export * from './outfits';
 export * from './parcels';

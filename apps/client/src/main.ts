@@ -962,6 +962,7 @@ function frame(now: number) {
   view.setZoom(game.zoom);
   // The places mended together: a footbridge whole or broken, a street light lit or dark, as they stand.
   view.setWorks(game.pass);
+  view.setLampOut(game.lampOut);
   const surge = game.surgeNow(now), caught = game.caught(now);
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
   hud.setSurge(surge, caught);
@@ -1022,7 +1023,7 @@ function frame(now: number) {
   }
   if (game.notesChanges !== notesShown || game.townChanges !== townShown) {
     notesShown = game.notesChanges;
-    hud.setNotes(notesView(maps.all(), game.notesRead, items.keepsakes, game.keepsakesHome, id => items.byId.get(id), game.freshNotes, game.firsts, game.myName()));
+    hud.setNotes(notesView(maps.all(), game.notesRead, items.keepsakes, game.keepsakesHome, id => items.byId.get(id), game.freshNotes, game.firsts, game.myName(), game.meId ?? ''));
   }
   // What people told you: redrawn as scenes are told and looked at.
   const people = `${game.stats.scenes ?? 0}|${[...game.freshScenes].join()}`;

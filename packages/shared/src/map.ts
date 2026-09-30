@@ -640,6 +640,8 @@ export class TileMap {
   private readonly exitIndex: Int16Array;
   /** 1 where a street light reaches (one that always shines: not one of the works). */
   private readonly litTiles: Uint8Array;
+  /** The street lights put out for the night (the dead line, line.ts), by "x,y": they light nothing until relit (setLampOut). */
+  private readonly outLamps = new Set<string>();
   /** The street lights that shine only while their place stands (a lamp with `works`): its id, and its tile. */
   readonly worksLights: ReadonlyArray<{ id: string; x: number; y: number }>;
   /** 1 next to a fireplace, where energy comes back. */
@@ -774,7 +776,7 @@ export class TileMap {
       if (this.inside(d.x, d.y)) this.blocked[d.y * W + d.x] = 0;
     }
     // A lamp the town has not mended yet (or one gone dark) lights nothing.
-    this.around(this.litTiles, o => o.kind === 'lamp' && !o.dark && !o.works, LAMP_RADIUS);
+    this.around(this.litTiles, o => o.kind === 'lamp' && !o.dark && !o.works && !this.outLamps.has(`${o.x},${o.y}`), LAMP_RADIUS);
     this.around(this.warmTiles, o => o.kind === 'fireplace', FIRE_RADIUS);
     this.roofTiles.fill(0);
     for (const o of data.objects) if (o.kind === 'porch') for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.roofTiles[y * W + x] = 1;
@@ -903,6 +905,15 @@ export class TileMap {
   /** Is this tile next to a fireplace, where energy comes back? */
   warm(x: number, y: number): boolean {
     return this.inside(x, y) && this.warmTiles[y * this.width + x] === 1;
+  }
+
+  /** Puts the street light at x,y out, or relights it: it lights nothing meanwhile, here and for everything that asks `lit`. False if nothing changed. */
+  setLampOut(x: number, y: number, out: boolean): boolean {
+    const k = `${x},${y}`;
+    if (this.outLamps.has(k) === out) return false;
+    if (out) this.outLamps.add(k); else this.outLamps.delete(k);
+    this.build();
+    return true;
   }
 
   /** Marks in `out` the tiles within `radius` of every object that `is`, center to center. */

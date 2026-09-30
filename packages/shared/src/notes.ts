@@ -16,6 +16,7 @@
  */
 import type { ItemDef } from './items';
 import type { MapData, MapObject, NoteAuthor, NoteWhen } from './map';
+import { leanLine } from './line';
 import type { Weather } from './protocol';
 
 export type MapNote = Extract<MapObject, { kind: 'note' }>;
@@ -54,6 +55,32 @@ export function noteLines(note: MapNote, weather: Weather, storm = false): strin
 /** The note lying on tile x,y of a map, if any. */
 export function noteAt(map: MapData, x: number, y: number): MapNote | undefined {
   return map.objects.find((o): o is MapNote => o.kind === 'note' && o.x === x && o.y === y);
+}
+
+/**
+ * The tin tag of the pole on tile x,y of a map, if it is on the north line: the poles are listed in the order they
+ * are strung, N-1 to N-6 in Stonebrook and N-7 to N-16 in the Near Woods (the South Road's are NAPO's, and carry none).
+ * Worked out from that order, so no map changes; a map that re-orders its poles re-numbers the line.
+ */
+const LINE_FIRST: Readonly<Record<string, number>> = { stonebrook: 1, 'near-woods': 7 };
+export function poleTag(map: MapData, x: number, y: number): string | undefined {
+  const first = LINE_FIRST[map.id];
+  if (first === undefined) return undefined;
+  const i = map.objects.filter(o => o.kind === 'pole').findIndex(o => o.x === x && o.y === y);
+  return i < 0 ? undefined : `N-${first + i}`;
+}
+
+/**
+ * What reading a pole of the north line says: its tin tag in front unless what was said already names it, and
+ * how it leans (line.ts) after. `said` is what shows now (a note may show only at night); `text` is the whole
+ * note, and decides whether the tag is gone: Walt's N-16 note says so, but only on a green night, and the tag is
+ * gone every night. A pole with no tag (not on the line) says what it said.
+ */
+export function withTag(said: string[], tag: string | undefined, text: string[] = said): string[] {
+  if (!tag) return said;
+  const gone = text.some(l => l.includes('Tag\'s off'));
+  const lean = leanLine(tag);
+  return [...(gone || said.some(l => l.startsWith(`${tag}.`)) ? [] : [`A tin tag, stamped ${tag}.`]), ...said, ...(lean ? [lean] : [])];
 }
 
 /** Every note on these maps by id, with the map it lies on, in the order of the maps and their objects. */
