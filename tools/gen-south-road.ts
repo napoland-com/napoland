@@ -473,7 +473,7 @@ onForest({ kind: 'cache', x: CAMP[0] - 3, y: CAMP[1] - 3, name: 'the crate at th
 
 // Notes people left (notes-left.ts), laid last on what already stands here, so nothing moves: a note
 // blocks nothing and changes no ground. Walt's under the back wiper of the first car of the jam, where the
-// line of cars behind it would see it, Wren's on the suitcases between the cars, and Walt's on the last
+// line of cars behind it would see it, Wren's on the suitcases between the cars, Walt's on the last
 // pole of NAPO's line, by the Tower's shed.
 {
   const lay = (id: NoteId, o: MapObject | undefined) => {
@@ -482,13 +482,20 @@ onForest({ kind: 'cache', x: CAMP[0] - 3, y: CAMP[1] - 3, name: 'the crate at th
   };
   lay('walt-jam', objects.find(o => o.kind === 'car' && o.x === JAM[0]!.x && o.y === JAM[0]!.y));
   lay('barlow-cars', objects.find(o => o.kind === 'luggage' && o.x === 32 && o.y === 30));
+  // The four families' tags ride on four cars of the jam, in the order of the line: the Dahls' (the open
+  // door, the child seat) third of four, so it is neither the first car anyone reads nor the last.
+  const jamCar = (i: number) => objects.find(o => o.kind === 'car' && o.x === JAM[i]!.x && o.y === JAM[i]!.y);
+  lay('leavers-okada', jamCar(1));
+  lay('leavers-hale', jamCar(3));
+  lay('leavers-dahl', jamCar(4));
+  lay('leavers-lindqvist', jamCar(5));
   lay('walt-napo-line', objects.filter(o => o.kind === 'pole')[LINES[0]!.length - 1]);
 }
 
 // ---- Output ----
 
 const map: MapData = {
-  id: 'south-road', name: 'The South Road', version: 5, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'south-road', name: 'The South Road', version: 6, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 35, y: 2, dir: 'down' },

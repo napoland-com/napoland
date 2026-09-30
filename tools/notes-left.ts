@@ -224,6 +224,38 @@ export const NOTES = {
       'Whoever reads this: we were the Barlows, from the cabin at the end. If you pass it, keep the lamp lit. Ellen',
     ],
   },
+
+  // ---- The people who left: a tag on each of four cars of the jam, one for every family whose house is
+  // dark in Stonebrook (the family name is the one on the mailbox). Each says the street and what rode in
+  // that car; none says where they went, and nothing on any map joins a tag to a house.
+  'leavers-okada': {
+    by: 'leavers', name: 'A luggage tag',
+    text: [
+      'OKADA. The main street, Stonebrook, the house with the neat black letters on the box.',
+      'Two suitcases and the good kettle. The birdcage rides on the back seat, empty. Two weeks, they said.',
+    ],
+  },
+  'leavers-hale': {
+    by: 'leavers', name: 'A luggage tag',
+    text: [
+      'THE HALES. The main street, Stonebrook, under the street light.',
+      'A pencil case and a blanket in the back. Nora is seven and drew the whole way out of town.',
+    ],
+  },
+  'leavers-dahl': {
+    by: 'leavers', name: 'A luggage tag on the child seat',
+    text: [
+      'DAHL. The old road to the mill, Stonebrook.',
+      'The child seat is in and the crib is not: it would not fit. The door is open for the last bag. Then the line moved, and then it did not.',
+    ],
+  },
+  'leavers-lindqvist': {
+    by: 'leavers', name: 'A luggage tag',
+    text: [
+      'LINDQVIST. The old road to the mill, Stonebrook.',
+      'Dad\'s saw files, in a roll on the back seat, and the winter coats. The piano would not go. It stayed on the verge.',
+    ],
+  },
 } as const satisfies Record<string, Words>;
 
 export type NoteId = keyof typeof NOTES;
