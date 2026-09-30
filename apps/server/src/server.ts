@@ -30,6 +30,8 @@ export interface ServerOptions {
   story?: StoryData;
   /** The pages of the field notes; they must fit the maps and items (loadNotebook checks that). No pages if unset. */
   notebook?: NotebookData;
+  /** Where the lamp with no wires stands, when a test's maps have it elsewhere (line.ts, LAMP). */
+  lamp?: { map: string; x: number; y: number };
   /** Words chat masks (content/words.json). None if unset. */
   words?: string[];
   /** Where finds grow and which half of a pile others get: Math.random unless a test sets its own. */
@@ -182,6 +184,7 @@ export async function startServer(o: ServerOptions): Promise<RunningServer> {
     items: o.items,
     story: o.story,
     notebook: o.notebook,
+    ...(o.lamp ? { lamp: o.lamp } : {}),
     rng: o.rng,
     drops,
     // Game time never goes backwards; piles keep wall clock time, which is this far ahead of it.

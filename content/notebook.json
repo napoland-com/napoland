@@ -1,5 +1,5 @@
 {
-  "version": 8,
+  "version": 9,
   "pages": [
     {
       "id": "pop-23",
@@ -614,6 +614,13 @@
       "blanks": [
         { "id": "aurora-hum", "ask": "The dead power lines... ?", "fill": "The dead power lines hum and glow on green nights.", "when": { "saw": "hum" } }
       ]
+    },
+    {
+      "id": "lamp-out",
+      "area": "near-woods",
+      "title": "The lamp went out",
+      "when": { "saw": "lamp-out" },
+      "text": "The lamp with no wires is dark. It was burning a moment ago, and nothing I did put it out. The poles along the line stand as they always did, each leaning its own way. Whoever did this was standing right here."
     }
   ]
 }

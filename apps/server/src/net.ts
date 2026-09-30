@@ -338,7 +338,7 @@ export function attachNet(o: NetOptions): Net {
         world.step(s.id, msg.dir, msg.seq, now);
         return flush();
       case 'face':
-        world.face(s.id, msg.dir);
+        world.face(s.id, msg.dir, now);
         return flush();
       case 'pick':
         world.pick(s.id, msg.x, msg.y, now);

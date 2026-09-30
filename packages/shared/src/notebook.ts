@@ -37,6 +37,8 @@ export const SIGHTS = [
   'hitched',
   /** What clung to you let go: at a street light, a fire, a roof or a flare. */
   'let-go',
+  /** The lamp with no wires went out (line.ts), while you were in the woods. */
+  'lamp-out',
   /** A watcher stood within sight. */
   'watcher',
   /** A watcher froze while you faced it. */

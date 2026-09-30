@@ -54,7 +54,7 @@
 import {
   BUBBLE_S, TILE_NEEDS, CACHE_SIZE, LANTERN_DEPTH, lanternLights, timeToTurn, wayHomeCost, CALL_EVERY_MS, COZY_AFTER_S, FEED_MAX, NO_SHOP, RESTED_NOTICE, SEASONS, STEP_MS, UNEASE_LEVELS, activeConditions, addToBag, bagSlotsOf, blankOf,
   cacheTakes, canRescue, charmsIn, dirOf, dirToward, effectsAfter, emptyNotebook, energyAfter, findPath, fireTakes, firstBanner, flashHits, furnitureFor, inSurge, isKeepsake, journal,
-  markLifetime, worksRoom, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteLines, notesOf, objectTiles, outfitsFor, priceOf, secretTitle, shopLookOf,
+  markLifetime, worksRoom, mendCost, meritLookOf, meritsLeft, meritsOf, modsOf, nearestRecipe, nextUpgrade, noteAt, noteLines, notesOf, objectTiles, poleTag, withTag, outfitsFor, priceOf, secretTitle, shopLookOf,
   stepTarget, linesInTurn, storyLines, surgeFront, takeFromBag, toldAfter, upgradable, utcDay, whyNotBuy, whyNotCheckout, DIR_VEC, type Blank, type BoardView, type ShopData, type ShopOpen,
   type CacheItemView, type FirstView, type LookKind, type MeritsView, type Mods, type NextGear, type NotebookData, type NotebookState, type Page, type Pass, BUNDLE, carriesFood, cookable,
   cooks, nearestCooking, pantryShort, builtIn, nextHouse, whyNotEat, ledgerLines, levelOf, noTown, popOf, sceneDue, scenesAfter, stormAt, swapsFit, workWants, type SayContext, type TownView, LAMP_BURNS, LOOKOUT_UP_S, footOf, inBeam, ladderOf, lampTakes, lookoutAtFoot,
@@ -212,6 +212,11 @@ function talkersOf(map: TileMap, pass: Pass, items: Items, nameOf: (id: string) 
     if (o.kind === 'paper') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk' }];
     if (o.kind === 'cage') return [{ x: o.x, y: o.y, who: 'NAPO tag', lines: o.text, kind: 'talk' }];
     if (o.kind === 'note') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', note: o }];
+    // A pole of the north line has its tin tag to read; one with a note nailed to it says that instead.
+    if (o.kind === 'pole') {
+      const tag = noteAt(map.data, o.x, o.y) ? undefined : poleTag(map.data, o.x, o.y);
+      return tag ? [{ x: o.x, y: o.y, who: 'Pole', lines: withTag([], tag), kind: 'talk' }] : [];
+    }
     // A jeep is bigger than one tile: its stencil reads from whichever end you face.
     if (o.kind === 'jeep') return objectTiles(o).map(([x, y]): Talker => ({ x, y, who: 'NAPO jeep', lines: o.text, kind: 'talk' }));
     // A gate is pulled at from any of its tiles, and its plate read there: the server counts the pull, and
@@ -466,6 +471,8 @@ export class Game {
   notebookChanges = 0;
   /** The notes people left that you read (notes.ts), by id, in the order you read them. Replaced whole on every change. */
   notesRead: string[] = [];
+  /** The lamp with no wires is out (the dead line): as the server says, false again with each welcome. */
+  lampOut = false;
   /** Notes read since the journal's notes were last looked at: it marks them. */
   freshNotes = new Set<string>();
   /** The keepsakes you brought home, by item id, in the order they came. Replaced whole on every change. */
@@ -955,6 +962,8 @@ export class Game {
         this.fieldNotes = { pages: [...msg.notebook?.pages ?? []], blanks: [...msg.notebook?.blanks ?? []] };
         this.notebookChanges++;
         this.notesRead = [...msg.notes ?? []];
+        this.lampOut = false;
+        this.maps.lampOut(false);
         this.keepsakesHome = [...msg.keepsakes ?? []];
         this.firsts = new Map((msg.firsts ?? []).map(f => [f.secret, f]));
         this.notesChanges++;
@@ -1200,6 +1209,13 @@ export class Game {
         this.notebookChanges++;
         const on = blankOf(this.notebook, msg.id);
         if (on) this.news.push({ kind: 'blank', ...on });
+        break;
+      }
+      case 'lampOut': {
+        // One told right after the welcome is how things stand, not something that happened: no banner for it.
+        if (msg.out && !this.lampOut && !msg.known) this.news.push({ kind: 'first', text: 'The lamp with no wires went out.' });
+        this.lampOut = msg.out;
+        this.maps.lampOut(msg.out);
         break;
       }
       case 'noteRead': {
@@ -1689,7 +1705,7 @@ export class Game {
   private meet(t: Talker) {
     if (t.note) {
       // What shows depends on the time (notes.ts): the server decides whether it counts as read, from the tile alone.
-      this.openDialog({ ...t, lines: noteLines(t.note, this.weather, this.stormNow(this.clock)?.phase === 'storm') });
+      this.openDialog({ ...t, lines: withTag(noteLines(t.note, this.weather, this.stormNow(this.clock)?.phase === 'storm'), poleTag(this.current.data, t.x, t.y), t.note.text) });
       if (this.online) this.send({ t: 'talk', x: t.x, y: t.y });
       return;
     }

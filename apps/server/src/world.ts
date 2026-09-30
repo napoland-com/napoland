@@ -177,6 +177,9 @@ import {
   conditionsAt,
   dayAt,
   dayIndex,
+  LAMP,
+  SOLUTION,
+  solved,
   effectResist,
   seasonAt,
   seasonView,
@@ -687,6 +690,8 @@ export interface WorldOptions {
   epochOffset?: number;
   /** The weather follows the day (sky.ts) instead of staying as it was given. */
   cycle?: boolean;
+  /** Where the lamp with no wires stands, when a test's map has it elsewhere (line.ts, LAMP). */
+  lamp?: { map: string; x: number; y: number };
   /** Game time now, when the world starts: the fires out there start burning from here. */
   now?: number;
   /**
@@ -755,7 +760,7 @@ interface Online {
    * A talk, or a look at the notice board, the chest, the workbench or a crate, that came in while steps
    * sent before it still waited in the queue: done once they are walked (talk, board, chest, bench, openCache).
    */
-  after?: { t: 'talk' | 'board' | 'chest' | 'bench' | 'cache'; x: number; y: number };
+  after?: { t: 'talk' | 'board' | 'chest' | 'bench' | 'cache'; x: number; y: number } | { t: 'face'; dir: Dir };
   /** Energy and wetness per second on the player's tile. rec.energy and rec.wet are up to date as of energyAt. */
   rate: number;
   wetRate: number;
@@ -1199,6 +1204,15 @@ export class World {
   /** The weather everywhere, when it is fixed (not `cycle`): what setWeather last set. */
   private sky: Weather;
   private readonly cycle: boolean;
+  private readonly lamp: { map: string; x: number; y: number };
+  /**
+   * The day (dayIndex) the lamp with no wires was put out on an aurora night, or undefined while it burns: one state for
+   * every copy of the map. The night is the end of its day, so the lamp is relit when the day turns, at dawn.
+   * ponytail: in memory, a restart relights it; save it like the Long Night's record if that matters.
+   */
+  private lampOutDay: number | undefined;
+  /** The directions each player has faced beside the lamp, the latest last. */
+  private readonly lampSeq = new Map<string, Dir[]>();
   /**
    * Each map's weather as its players last heard it (sky.ts): night comes to every map at once, rain to
    * each region by its own windows, and a room has the weather of the map its door opens onto.
@@ -1453,6 +1467,7 @@ export class World {
     this.wakeUp = room ? { map: room, ...room.data.wake! } : { map: home, ...home.data.spawn };
     this.sky = weather;
     this.cycle = options.cycle ?? false;
+    this.lamp = options.lamp ?? LAMP;
     this.guests = options.guests ?? false;
     this.xpTimes = options.xpTimes ?? 1;
     this.shop = options.shop ?? NO_SHOP;
@@ -1805,6 +1820,7 @@ export class World {
     this.toZone(zone.key, { t: 'join', player }, r.id);
     // The welcome has the energy too; the message after it is what a client listens to from then on.
     this.tell(p, now);
+    if (this.lampOutDay !== undefined) this.outbox.push({ to: r.id, msg: { t: 'lampOut', out: true, known: true } });
     // Their first time today, signed in: the day's parcel waits in the chest (the welcome parcel, the very first time).
     this.giveParcel(p, now);
     const here = zone.key, today = utcDay(now + this.epochOffset);
@@ -1861,6 +1877,7 @@ export class World {
     const p = this.players.get(id);
     if (!p) return undefined;
     const from = p.zone;
+    this.lampSeq.delete(id);
     // Energy that runs out on the way out still counts: the bag drops, and the player wakes up at home next time.
     if (this.advance(p, now) <= 0) this.fall(p, now);
     // Seen until now: coming straight back (another tab, the same record) is no time away to rest in.
@@ -1895,11 +1912,20 @@ export class World {
   }
 
   /** Turn in place. Only a real change is worth telling the others about. */
-  face(id: string, dir: Dir): void {
+  face(id: string, dir: Dir, now: number = this.tickAt): void {
     const p = this.players.get(id);
-    if (!p || p.rec.dir === dir || p.slump) return;
+    if (!p || p.slump) return;
+    this.runQueue(p, now);
+    // Steps sent before it still wait: the turn is judged from the tile they end on (the lamp's order counts where you stand).
+    if (p.queue.length) p.after = { t: 'face', dir };
+    else this.turn(p, dir);
+  }
+
+  private turn(p: Online, dir: Dir): void {
+    this.lampFace(p, dir);
+    if (p.rec.dir === dir) return;
     p.rec.dir = dir;
-    this.toZone(p.zone.key, { t: 'face', id, dir }, id);
+    this.toZone(p.zone.key, { t: 'face', id: p.rec.id, dir }, p.rec.id);
   }
 
   /**
@@ -3614,6 +3640,7 @@ export class World {
     this.moveSeason(now);
     this.moveWeather(now);
     this.moveLongNight(now);
+    this.moveLamp(now);
     this.moveSurges(now);
     this.moveStorms(now);
     this.moveRain(now);
@@ -3765,8 +3792,10 @@ export class World {
     }
     // Walked (or refused, which empties the queue too): the talk or look behind the steps is done from where they left the player.
     if (p.after && !p.queue.length) {
-      const { t, x, y } = p.after;
+      const a = p.after;
       p.after = undefined;
+      if (a.t === 'face') return this.turn(p, a.dir);
+      const { t, x, y } = a;
       if (t === 'talk') this.heard(p, x, y, now);
       else if (t === 'board') this.readBoard(p, x, y, now);
       else if (t === 'chest') this.openChest(p, x, y);
@@ -4365,6 +4394,43 @@ export class World {
     for (const blank of r.blanks) this.outbox.push({ to: p.rec.id, msg: { t: 'blank', id: blank.id } });
   }
 
+  /** Is the player on a tile next to the lamp, on an aurora night? */
+  private atLamp(p: Online): boolean {
+    const { x, y } = p.rec, l = this.lamp;
+    return p.map.data.id === l.map && Math.abs(x - l.x) + Math.abs(y - l.y) === 1 && this.weatherOf(p.map) === 'aurora';
+  }
+
+  /** Beside the lamp, each new way they face is one more of the order; the right order puts it out. Anywhere else it starts over. */
+  private lampFace(p: Online, dir: Dir): void {
+    const id = p.rec.id;
+    if (!this.atLamp(p)) {
+      this.lampSeq.delete(id);
+      return;
+    }
+    const seq = this.lampSeq.get(id) ?? [];
+    if (seq.at(-1) === dir) return;
+    seq.push(dir);
+    if (seq.length > SOLUTION.length) seq.shift();
+    this.lampSeq.set(id, seq);
+    if (this.lampOutDay !== undefined || !solved(seq)) return;
+    // Its light shelters whoever stands in it from a surge: it stays on while one runs, so nobody loses their shelter to someone else's turns.
+    const map = this.maps.get(this.lamp.map);
+    if (map && this.surgeOf(map, this.tickAt)?.phase === 'surge') return void this.lampSeq.delete(id);
+    this.lampOutDay = dayIndex(this.tickAt + this.epochOffset);
+    this.lampSeq.clear();
+    this.maps.get(this.lamp.map)?.setLampOut(this.lamp.x, this.lamp.y, true);
+    this.outbox.push({ to: 'all', msg: { t: 'lampOut', out: true } });
+    for (const q of this.players.values()) if (q.map.data.id === this.lamp.map) this.saw(q, 'lamp-out');
+  }
+
+  /** Dawn relights the lamp. */
+  private moveLamp(now: number): void {
+    if (this.lampOutDay === undefined || dayIndex(now + this.epochOffset) === this.lampOutDay) return;
+    this.lampOutDay = undefined;
+    this.maps.get(this.lamp.map)?.setLampOut(this.lamp.x, this.lamp.y, false);
+    this.outbox.push({ to: 'all', msg: { t: 'lampOut', out: false } });
+  }
+
   private saw(p: Online, sight: Sight): void {
     this.note(p, { saw: sight });
   }
@@ -4386,6 +4452,9 @@ export class World {
    */
   private notice(p: Online, now: number): void {
     const { x, y } = p.rec, map = p.map, inside = map.data.kind === 'inside';
+    if (this.lampSeq.has(p.rec.id) && !this.atLamp(p)) this.lampSeq.delete(p.rec.id);
+    // Arriving while it is out: the notebook hears of it too.
+    if (this.lampOutDay !== undefined && map.data.id === this.lamp.map) this.saw(p, 'lamp-out');
     const region = inside ? this.around.get(map.data.id) : map;
     if (region?.data.kind === 'wilds') {
       const front = this.frontOf(region, now), door = inside ? map.data.exits[0] : undefined;

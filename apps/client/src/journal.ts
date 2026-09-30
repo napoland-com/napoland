@@ -9,6 +9,7 @@
 import {
   ANYWHERE, AUTHOR_NAMES, NOTE_AUTHORS, firstInJournal, notesOf, scenesTold, secretKey, type Chapter, type FirstView, type ItemDef, type KeepsakesData, type MapData, type NoteAuthor,
   type NotebookData, type NotebookState, type Stats, type StoryData,
+  pieceLines, pieceOf,
 } from '@napoland/shared';
 
 export interface JournalView {
@@ -117,6 +118,8 @@ export interface KeepsakesView {
 export interface NotesView {
   /** Only those you read something of: who else left notes is for you to find out. */
   authors: AuthorView[];
+  /** The lines of your torn piece of the diagram, once you read Walt's last note on the line. */
+  piece?: string[];
   /** Null until one is home. */
   keepsakes: KeepsakesView | null;
 }
@@ -128,7 +131,7 @@ export interface NotesView {
  */
 export function notesView(
   maps: Iterable<MapData>, read: readonly string[], keepsakes: KeepsakesData | undefined, home: readonly string[], item: (id: string) => ItemDef | undefined, fresh: ReadonlySet<string> = new Set(),
-  firsts: ReadonlyMap<string, FirstView> = new Map(), me = '',
+  firsts: ReadonlyMap<string, FirstView> = new Map(), me = '', meId = '',
 ): NotesView {
   const all = notesOf(maps);
   // Who found it first, under it: "by you" when that was you.
@@ -147,7 +150,9 @@ export function notesView(
     const def = item(p.item);
     return def ? [{ item: def.id, name: def.name, text: def.text, ...first(secretKey({ kind: 'keepsake', item: def.id })) }] : [];
   });
-  return { authors, keepsakes: kept.length ? { home: kept, total: keepsakes!.places.length, energy: keepsakes!.energy } : null };
+  // Walt's last note on the line leads to the torn piece of NAPO's diagram; which one is worked out from your id.
+  const piece = meId && read.includes('walt-n16') ? pieceLines(pieceOf(meId)) : undefined;
+  return { authors, piece, keepsakes: kept.length ? { home: kept, total: keepsakes!.places.length, energy: keepsakes!.energy } : null };
 }
 
 /** "The ranger: 3 of 10": who left notes, and how many of theirs you read. */
@@ -164,8 +169,11 @@ export function notesHtml(v: NotesView): string {
   const k = v.keepsakes;
   const keepsakes = k ? `<section class="area keepsakes"><h3>${esc(keepsakesHeading(k))}</h3>${k.home.map(h => `<article class="page"><h4>${esc(h.name)}</h4><p>${esc(h.text)}</p>${firstLine(h.first)}</article>`).join('')}`
     + `${k.home.length === k.total ? `<p class="blank" data-filled>${esc(allHome(k))}</p>` : ''}</section>` : '';
-  return authors + keepsakes || `<p class="none">${NOTHING_YET}</p>`;
+  const torn = v.piece ? `<section class="area"><article class="page note"><h4>${esc(TORN_PIECE)}</h4>${v.piece.map(l => `<p>${esc(l)}</p>`).join('')}</article></section>` : '';
+  return authors + torn + keepsakes || `<p class="none">${NOTHING_YET}</p>`;
 }
+
+export const TORN_PIECE = "A torn piece of NAPO's diagram";
 
 /** Who found it first, dim under a note or a keepsake. */
 const firstLine = (first: string | undefined) => (first ? `<p class="first">${esc(first)}</p>` : '');

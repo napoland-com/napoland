@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FAINT, NOTE_LINE_MAX, cleanIds, keepsakeEnergy, keepsakeFindId, noteAt, noteLines, noteShows, notesOf, validateItems, validateMap, validateWorld, type ItemDef, type ItemsData,
+  FAINT, NOTE_LINE_MAX, cleanIds, keepsakeEnergy, keepsakeFindId, noteAt, noteLines, noteShows, notesOf, poleTag, withTag, validateItems, validateMap, validateWorld, type ItemDef, type ItemsData,
   type KeepsakesData, type MapData, type MapNote, type MapObject,
 } from '../src';
 
@@ -121,5 +121,32 @@ describe('keepsakes', () => {
       expect(problems(data({ parcels: { welcome: [{ item: 'compass', count: 1 }], week: Array.from({ length: 7 }, () => [{ item: 'moss', count: 1 }]) } })))
         .toEqual([expect.stringContaining('compass is a keepsake')]);
     });
+  });
+});
+
+describe('the north line\'s tags', () => {
+  const poles = (id: string, n: number) => map(id, Array.from({ length: n }, (_, i) => ({ kind: 'pole', x: 3 + i, y: 2 }) as MapObject));
+  it('count up from town, N-1 in Stonebrook and N-7 in the Near Woods, and NAPO\'s line carries none', () => {
+    const town = poles('stonebrook', 2), woods = poles('near-woods', 2);
+    expect([poleTag(town, 2, 1), poleTag(town, 3, 2), poleTag(town, 4, 2)]).toEqual(['N-1', 'N-2', 'N-3']);
+    expect([poleTag(woods, 2, 1), poleTag(woods, 4, 2)]).toEqual(['N-7', 'N-9']);
+    expect([poleTag(poles('south-road', 2), 3, 2), poleTag(town, 0, 0)]).toEqual([undefined, undefined]);
+  });
+});
+
+describe('notes on poles', () => {
+  it('keep the pole\'s tag in view: said first unless the note names it or says the tag is gone, then how it leans', () => {
+    expect(withTag(['Walt: it hums.'], 'N-13')).toEqual(['A tin tag, stamped N-13.', 'Walt: it hums.', 'The pole leans south.']);
+    expect(withTag(['N-8. All sound. W.P.'], 'N-8')).toEqual(['N-8. All sound. W.P.', 'The pole leans north.']);
+    expect(withTag([], 'N-9')).toEqual(['A tin tag, stamped N-9.', 'The pole leans east.']);
+    expect(withTag(['A table note.'], undefined)).toEqual(['A table note.']);
+  });
+  it('know the tag is gone from the whole note, not from what shows: N-16 never says it has one', () => {
+    const text = ['N-16, end of the line.', 'Tag\'s off this pole. W.P.'];
+    expect(withTag(['A greenish smear.'], 'N-16', text).join(' ')).not.toContain('stamped');
+    expect(withTag(text, 'N-16', text).join(' ')).not.toContain('stamped');
+  });
+  it('say nothing of a lean on a straight pole (town\'s line)', () => {
+    expect(withTag([], 'N-3')).toEqual(['A tin tag, stamped N-3.']);
   });
 });
