@@ -170,6 +170,8 @@ const CONFIRMING_MS = 60_000;
 export const PILE_TAG_TILES = 3.5;
 /** The name plate by the door of the house in a garden shows whose it is while you are this close to the tile in front of it. */
 export const PLATE_TAG_TILES = 3.5;
+/** How near you stand for the chest, the workbench and the kitchen in your home to show their names. */
+export const SPOT_TAG_TILES = 3.5;
 /** Float colors: something gained, a gentle no, nothing there, something eerie. */
 const GAIN = '#ffe3a1';
 const NO = '#ffae98';
@@ -617,6 +619,8 @@ export class Game {
   private benching: { x: number; y: number; at: number; card?: DetailRef } | null = null;
   /** The card the workbench that just opened is to show: taken once (takeBenchCard). */
   private benchCard: DetailRef | null = null;
+  /** The card the first goal wants the workbench to open on once it walks you there, and until when (goToBench). */
+  private wantCard: { card: DetailRef; until: number } | null = null;
   /** A crate asked to open and not answered yet. */
   private caching: { x: number; y: number; at: number } | null = null;
   /** When the server last emptied a bag that held something. */
@@ -1751,7 +1755,10 @@ export class Game {
     }
     if (t.kind === 'bench') {
       if (!this.online) return;
-      this.benching = { x: t.x, y: t.y, at: this.clock };
+      // Walked here by the first goal (goToBench): its recipe's card opens with the workbench, if it is not too late.
+      const card = this.wantCard && this.clock < this.wantCard.until ? this.wantCard.card : undefined;
+      this.wantCard = null;
+      this.benching = { x: t.x, y: t.y, at: this.clock, ...(card ? { card } : {}) };
       this.send({ t: 'bench', x: t.x, y: t.y });
       return;
     }
@@ -2289,6 +2296,49 @@ export class Game {
     if (!b || !this.online) return;
     this.benching = { ...b, at: this.clock, ...(card ? { card } : {}) };
     this.send({ t: 'bench', x: b.x, y: b.y });
+  }
+
+  /** Whether the workbench in your own home is here to go to: the first goal takes you there. */
+  canGoToBench(): boolean {
+    return this.online && !this.visit && !this.up && !this.slump && this.talkers.some(t => t.kind === 'bench');
+  }
+
+  /**
+   * Walks you to the workbench in your home and opens it there, on `card` (the first goal's recipe): the
+   * same walk as a tap on it. Next to it already, it just opens.
+   */
+  goToBench(card?: DetailRef) {
+    const me = this.me, t = this.talkers.find(k => k.kind === 'bench');
+    if (!me || !t || !this.canGoToBench()) return;
+    if (this.benchBeside()) return this.openBench(card);
+    this.wantCard = card ? { card, until: this.clock + 30_000 } : null;
+    this.goal = { talk: t };
+    this.path = findPath(this.map, me.tx, me.ty, t.x, t.y, true, undefined, this.pass);
+    const end = this.path.at(-1) ?? { x: me.tx, y: me.ty };
+    this.marker = { x: end.x, y: end.y, t: 0 };
+  }
+
+  /**
+   * The chest, the workbench and the kitchen of your home (a friend's, while you visit) that you stand near,
+   * for their names to show: the kitchen once it is built. None anywhere else.
+   */
+  spotsNear(): Array<{ kind: 'chest' | 'bench' | 'kitchen'; name: string; x: number; y: number }> {
+    const me = this.me, d = this.current.data;
+    if (!me || !d.private || d.kind !== 'inside') return [];
+    return this.talkers.flatMap(t => {
+      if (t.kind !== 'chest' && t.kind !== 'bench' && t.kind !== 'kitchen') return [];
+      if (t.kind === 'kitchen' && t.house && !builtIn({ kind: 'kitchen', x: t.x, y: t.y, house: t.house }, this.houseHere())) return [];
+      if (Math.hypot(t.x - me.x, t.y - me.y) > SPOT_TAG_TILES) return [];
+      return [{ kind: t.kind, name: t.kind === 'chest' ? 'Chest' : t.kind === 'bench' ? 'Workbench' : t.who, x: t.x, y: t.y }];
+    });
+  }
+
+  /** What A does at the thing you face, in a word, for the button: 'Workbench', 'Chest', 'Cook', 'Fire'; null for anything else. */
+  aVerb(): string | null {
+    const a = this.action();
+    if (a?.kind !== 'talk') return null;
+    const k = a.talker.kind;
+    return k === 'bench' ? 'Workbench' : k === 'chest' ? 'Chest' : k === 'kitchen' ? 'Cook' : k === 'fire' ? 'Fire' : null;
   }
 
   /** The card the workbench that just opened is to show (the first goal's), once; null when none. */

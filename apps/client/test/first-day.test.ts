@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ClientMsg, ItemsData, MapData, NextGear, PlayerView, StoryData } from '@napoland/shared';
 import { Game } from '../src/game';
-import { Items } from '../src/items';
+import { Items, recipeViews } from '../src/items';
 import { Maps } from '../src/maps';
 import { goalText } from '../src/said';
 import { FULL, START, storyData, tinyTown, tinyWoods, welcome, zone } from './fixtures';
@@ -25,6 +25,23 @@ describe('what the bag and the chest say comes next', () => {
     expect(goalText(ready, items)).toBe('You can make rubber gloves at the workbench beside the chest.');
     expect(goalText({ ...ready, ready: false }, items)).toBe('Put away what you carry, and you can make rubber gloves at the workbench beside the chest.');
     expect(goalText({ recipe: recipe('raincoat'), missing: [], ready: true }, items)).toBe('You can make a raincoat at the workbench beside the chest.');
+  });
+
+  it('says a tap goes there, in your home', () => {
+    const ready: NextGear = { recipe: recipe('rubber-gloves'), missing: [], ready: true };
+    expect(goalText(ready, items, true)).toBe('You can make rubber gloves at the workbench beside the chest. Tap here to go there.');
+    expect(goalText({ recipe: recipe('rubber-gloves'), missing: [{ item: 'resin', count: 1 }], ready: false }, items, true)).toBe('Next: rubber gloves. 1 more resin.');
+  });
+});
+
+describe('the workbench\'s tabs', () => {
+  it('put gear, tools, and what is for the home on tabs of their own, what can be made now first', () => {
+    const rows = recipeViews(items.recipes, [{ item: 'cloth', count: 8 }, { item: 'resin', count: 4 }], items, [], [], 0);
+    const tab = (id: string) => rows.find(r => r.id === id)!.tab ?? rows.find(r => r.id === id)!.group;
+    expect([tab('raincoat'), tab('radio'), tab('rad-tablets'), tab('bed'), tab('home')]).toEqual(['gear', 'tools', 'tools', 'cabin', 'home']);
+    const made = rows.filter(r => r.group === 'make');
+    expect(made.filter(r => r.can).map(r => r.id)).toContain('raincoat');
+    expect(made.map(r => r.can)).toEqual([...made.map(r => r.can)].sort((a, b) => Number(b) - Number(a)));
   });
 });
 
@@ -133,6 +150,49 @@ describe('the game, on the first day', () => {
     g.handle(zone(tinyTown(), 3, 1, [me(3, 1)]), now + 5200);
     g.handle({ t: 'bench', stash: [] }, now + 5300);
     expect(g.takeBenchCard()).toBeNull();
+  });
+});
+
+/** Home is a room of your own: `private`, as the real one is. */
+const myHome = (): MapData => ({ ...home(), private: true });
+
+describe('finding the workbench at home', () => {
+  let sent: ClientMsg[];
+  let g: Game;
+  const now = 1000;
+  beforeEach(() => {
+    sent = [];
+    g = new Game(new Maps([tinyTown(), myHome()]), m => sent.push(m), items);
+    g.handle(welcome(myHome(), [me(2, 2)], FULL, { items: items.version, stash: [] }), now);
+  });
+
+  it('names the chest and the workbench while you are near them, and only in your home', () => {
+    expect(g.spotsNear().map(s => s.name).sort()).toEqual(['Chest', 'Workbench']);
+    const away = new Game(new Maps([tinyTown(), home()]), () => {}, items);
+    away.handle(welcome(home(), [me(2, 2)], FULL, { items: items.version, stash: [] }), now);
+    expect(away.spotsNear()).toEqual([]);
+  });
+
+  it('says in a word what A does at what you face', () => {
+    expect(g.aVerb()).toBeNull();
+    g.handle(welcome(myHome(), [me(3, 2)], FULL, { items: items.version, stash: [] }), now);
+    expect(g.aVerb()).toBe('Workbench');
+  });
+
+  it('walks you to the workbench and opens it on the goal\'s card', () => {
+    const card = { from: 'recipe', id: 'rubber-gloves' } as const;
+    expect(g.canGoToBench()).toBe(true);
+    g.goToBench(card);
+    let t = now;
+    while (t < now + 3000 && !sent.some(m => m.t === 'bench')) g.update(0.05, t += 50);
+    expect(sent.filter(m => m.t === 'bench')).toEqual([{ t: 'bench', x: 3, y: 1 }]);
+    g.handle({ t: 'bench', stash: [] }, t + 100);
+    expect(g.takeBenchCard()).toEqual(card);
+  });
+
+  it('cannot go there when it is not your home', () => {
+    const away = new Game(new Maps([tinyTown(), myHome()]), () => {}, items);
+    expect(away.canGoToBench()).toBe(false);
   });
 });
 

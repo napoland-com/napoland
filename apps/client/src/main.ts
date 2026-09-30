@@ -238,8 +238,9 @@ const hud = new Hud(screen, {
   // At the workbench, the first goal opens the card of what to make (once the workbench has answered).
   goal: () => {
     const next = game.nextGear();
-    if (!next || !game.benchBeside()) return;
-    game.openBench({ from: 'recipe', id: next.recipe.id });
+    if (!next || !game.canGoToBench()) return;
+    hud.toggleBag(false); hud.toggleStash(false);
+    game.goToBench({ from: 'recipe', id: next.recipe.id });
   },
   // The workbench's rows are recipes, mending ("mend:" and the slot), upgrades ("up:" and the piece, upgradeId)
   // and building your home up ("home").
@@ -1138,7 +1139,8 @@ function frame(now: number) {
   }
   // The first goal, in the bag and the chest; at the workbench, a tap on it opens its card (the Hud writes it only when it changed).
   const next = game.nextGear();
-  hud.setGoal(next && { text: goalText(next, items), ready: next.ready, act: !!game.benchBeside() });
+  hud.setGoal(next && { text: goalText(next, items, game.canGoToBench()), ready: next.ready, act: game.canGoToBench() });
+  hud.setAVerb(game.aVerb());
   // Uneasy, the screen's edges close in; where watchers roam, something may stand at the edge of the fog.
   hud.setUnease(game.unease);
   const figure = me && game.online ? apparition.update(now, game.map, game.unease, inTheDark(game.weather), me.tx, me.ty, me.dir, edgeOf) : 0;
@@ -1178,6 +1180,8 @@ function frame(now: number) {
   for (const d of game.pilesNear()) { const s = view.project(d.x, d.y, 0.62); tags.push({ id: `pile:${d.id}`, name: d.name, x: s.x, y: s.y, pile: true }); }
   // In a garden, whose home it is, on the plate by its door, while you are near it.
   for (const p of game.platesNear()) { const s = view.project(p.x, p.y + 0.35, 1.3); tags.push({ id: `plate:${p.x},${p.y}`, name: p.name, x: s.x, y: s.y, plate: true }); }
+  // In your home, the names of what stands near you: the workbench shows a dot when the goal's gear can be made now.
+  for (const p of game.spotsNear()) { const s = view.project(p.x, p.y, 1.15); tags.push({ id: `spot:${p.kind}`, name: p.name, x: s.x, y: s.y, spot: true, ...(p.kind === 'bench' && next?.ready ? { ready: true } : {}) }); }
   hud.setTags(tags);
   // A speech bubble over whoever said something near you, above their name.
   hud.setBubbles(game.bubblesNow(now).flatMap(b => {

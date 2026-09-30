@@ -233,7 +233,14 @@ export interface GoalView { text: string; ready: boolean; act: boolean }
 export interface RecipeView {
   id: string; name: string; icon: string; facts: string; needs: Array<{ name: string; icon: string; have: number; need: number }>; can: boolean;
   group?: 'mend' | 'upgrade' | 'make' | 'cabin' | 'home';
+  /** Which of the workbench's tabs the row is on: what a recipe makes is gear or a tool (or a supply); the rest go by `group`. */
+  tab?: BenchTab;
 }
+/** The workbench's tabs: gear, tools, fixing what you have (mend and upgrade), and the home. */
+export type BenchTab = 'gear' | 'tools' | 'fix' | 'home';
+const BENCH_TABS: ReadonlyArray<{ id: BenchTab; name: string }> = [{ id: 'gear', name: 'Gear' }, { id: 'tools', name: 'Tools' }, { id: 'fix', name: 'Fix' }, { id: 'home', name: 'Home' }];
+const TAB_OF: Readonly<Record<NonNullable<RecipeView['group']>, BenchTab>> = { mend: 'fix', upgrade: 'fix', make: 'gear', cabin: 'home', home: 'home' };
+const tabOf = (r: RecipeView): BenchTab => r.tab ?? TAB_OF[r.group ?? 'make'];
 /**
  * A button in the bag's header (toolViews): the map button (`item` null: the map of where you are), or
  * another tool of yours; `on` for one its button switches on and off (the radio), with a small lamp lit while it is on.
@@ -348,7 +355,8 @@ export type TradeAction = { a: 'give'; slot: number } | { a: 'step'; i: number; 
  * A name over someone's head (with the drawing of their badge, merits.ts, when they wear one), over a pile
  * while you are near it (`pile`), or on the plate by the door of the house in a garden (`plate`).
  */
-export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; plate?: boolean; badge?: string }
+/** `spot`: the name of the chest, the workbench or the kitchen in your home, `ready` (the workbench) when something can be made now. */
+export interface TagView { id: string; name: string; x: number; y: number; pile?: boolean; plate?: boolean; spot?: boolean; ready?: boolean; badge?: string }
 /** `row` stacks words said at once, 0 at the bottom. */
 export interface FloatView { id: number; text: string; color: string; x: number; y: number; t: number; row: number }
 /** The fan of calls over B: the call the finger is on (null: off the fan), and whether the words show under the notes. */
@@ -476,7 +484,7 @@ export class Hud {
         <button type="button" data-el="menuLogout">Log out</button>
       </div>
       <div class="stick" data-el="stick" role="group" aria-label="Movement stick"><div class="knob" data-el="knob"></div></div>
-      <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back. Hold it to call">B<i class="bagcount" data-el="bagCount" hidden></i></button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button>
+      <div class="ab"><button type="button" class="b" data-el="b" aria-label="B: bag and back. Hold it to call">B<i class="bagcount" data-el="bagCount" hidden></i></button><button type="button" class="a" data-el="a" aria-label="A: pick up, talk, open">A</button><i class="averb" data-el="aVerb" aria-hidden="true" hidden></i>
         <div class="fan" data-el="fan" aria-hidden="true">${FAN.map((f, i) => `<span class="call" data-call="${f.kind}" style="--a: ${-f.deg}deg"><span class="dot" data-key="${i + 1}">${CALL_GLYPHS[f.kind]}</span><span class="w">${esc(CALL_WORDS[f.kind])}</span></span>`).join('')}</div></div>
       <div class="scrim" data-el="scrim" hidden></div>
       <div class="dialog panel" data-el="dialog" role="dialog" aria-live="polite"><div class="who panel" data-el="who"></div><div class="line" data-el="text"></div>
@@ -533,7 +541,8 @@ export class Hud {
       <div class="sheet panel bench-sheet docked" data-el="benchSheet" data-open="false" role="dialog" aria-label="Workbench">
         <div class="sheet-head"><b>Workbench</b><button type="button" class="close" data-el="benchClose" aria-label="Close the workbench">${ICON.x}</button></div>
         <div class="sheet-body" data-el="benchBody">
-          <p class="hint">It makes, mends and upgrades gear from your stash; wear what it makes from the chest beside it. Tap one to see what it takes, and tap it twice to do it.</p>
+          <div class="bench-tabs" data-el="benchTabs" role="tablist" aria-label="What to make">${BENCH_TABS.map(t => `<button type="button" role="tab" data-bench-tab="${t.id}" aria-selected="false">${t.name}<i class="ready-dot" hidden></i></button>`).join('')}</div>
+          <p class="hint">It works from your stash, not your bag: put things away in the chest beside it first. Pick one to see what it takes, then press Make. Wear what it makes from the chest.</p>
           <div class="recipes" data-el="benchList"></div>
         </div>
         <div class="dock" data-el="benchDock" hidden><div class="detail" data-el="benchCard" aria-live="polite"></div></div>
@@ -865,6 +874,13 @@ export class Hud {
       });
     }
     this.el.benchClose!.addEventListener('click', () => this.toggleBench(false));
+    this.el.benchTabs!.addEventListener('click', e => {
+      const tab = (e.target as Element).closest<HTMLElement>('[data-bench-tab]')?.dataset.benchTab as BenchTab | undefined;
+      if (!tab) return;
+      this.benchTabPicked = true;
+      this.setBenchTab(tab);
+      this.closeCard();
+    });
     this.el.crateClose!.addEventListener('click', () => this.toggleCrate(false));
     // The first goal is words, and at the workbench a way to its card.
     for (const el of [this.el.bagGoal!, this.el.stashGoal!]) el.addEventListener('click', () => { if (el.hasAttribute('data-act')) this.h.goal?.(); });
@@ -1226,7 +1242,7 @@ export class Hud {
   toggleBench(open = !this.benchOpen) {
     const was = this.benchOpen;
     if (open) { this.el.friendsSheet!.dataset.open = 'false'; this.toggleJournal(false); this.toggleBoard(false); this.el.chatSheet!.dataset.open = 'false'; this.toggleBag(false); this.toggleAbout(false); this.toggleStash(false); this.toggleCrate(false); this.toggleTrade(false); this.el.statusSheet!.dataset.open = 'false'; }
-    if (open && !was) { this.el.benchBody!.scrollTop = 0; if (this.docked === 'bench') this.closeCard(); }
+    if (open && !was) { this.el.benchBody!.scrollTop = 0; this.benchTabPicked = false; if (this.docked === 'bench') this.closeCard(); }
     else if (!open && this.card?.where === 'bench') this.forgetCard();
     this.el.benchSheet!.dataset.open = String(open);
     if (was && !open) this.h.benchClosed?.();
@@ -1326,7 +1342,22 @@ export class Hud {
   setBench(recipes: RecipeView[]) {
     const html = benchHtml(recipes);
     if (html !== this.shown.bench) { this.shown.bench = html; this.el.benchList!.innerHTML = html; }
+    const ready = new Set(recipes.filter(r => r.can).map(tabOf));
+    for (const b of this.el.benchTabs!.querySelectorAll<HTMLElement>('[data-bench-tab]')) b.querySelector<HTMLElement>('.ready-dot')!.hidden = !ready.has(b.dataset.benchTab as BenchTab);
+    // Until one was picked, the sheet opens on the first tab with something ready to do.
+    if (!this.benchTabPicked) this.setBenchTab(BENCH_TABS.find(t => ready.has(t.id))?.id ?? 'gear');
     this.refreshCard();
+  }
+
+  /** Whether a tab of the workbench was picked since it last opened: until then it opens on what is ready. */
+  private benchTabPicked = false;
+
+  private setBenchTab(tab: BenchTab) {
+    const sheet = this.el.benchSheet!;
+    if (sheet.dataset.tab === tab) return;
+    sheet.dataset.tab = tab;
+    for (const b of this.el.benchTabs!.querySelectorAll<HTMLElement>('[data-bench-tab]')) b.setAttribute('aria-selected', String(b.dataset.benchTab === tab));
+    this.el.benchBody!.scrollTop = 0;
   }
 
   /** What you wear, slot by slot, in the bag and in the stash sheet. */
@@ -1548,6 +1579,11 @@ export class Hud {
     const view = this.h.details?.(ref, where);
     if (!view) return this.closeCard();
     this.card = { where, ref, view };
+    // A row on another tab (the first goal's recipe): its tab comes forward.
+    if (where === 'bench') {
+      const tab = this.el.benchList!.querySelector<HTMLElement>(pickedSelector(ref, where))?.dataset.tab as BenchTab | undefined;
+      if (tab) { this.benchTabPicked = true; this.setBenchTab(tab); }
+    }
     this.showCard();
     this.reveal(where, ref);
   }
@@ -2133,6 +2169,14 @@ export class Hud {
     more!.setAttribute('aria-disabled', String(c.n >= c.max));
   }
 
+  /** In a word over A, what it does at the thing you face ('Workbench'); null: nothing to say. */
+  setAVerb(verb: string | null) {
+    const el = this.el.aVerb!;
+    if (el.hidden === !verb && el.textContent === (verb ?? '')) return;
+    el.hidden = !verb;
+    el.textContent = verb ?? '';
+  }
+
   /** Name tags above other players, near piles and on the name plate of the house in a garden, positioned in screen pixels. */
   setTags(tags: TagView[]) {
     const seen = new Set<string>();
@@ -2141,13 +2185,14 @@ export class Hud {
       let el = this.tagEls.get(t.id);
       if (!el) {
         el = document.createElement('div');
-        el.className = t.pile ? 'tag pile' : t.plate ? 'tag plate' : 'tag';
+        el.className = t.pile ? 'tag pile' : t.plate ? 'tag plate' : t.spot ? 'tag spot' : 'tag';
         // A player's tag can be tapped: their card, to ask them to be friends (or block or report them).
-        if (!t.pile && !t.plate) el.dataset.player = t.id;
+        if (!t.pile && !t.plate && !t.spot) el.dataset.player = t.id;
         this.el.labels!.appendChild(el);
         this.tagEls.set(t.id, el);
       }
       // A badge (merits.ts) sits before the name, as tall as its letters.
+      el.toggleAttribute('data-ready', !!t.ready);
       const key = `${t.badge ?? ''}|${t.name}`;
       if (el.dataset.shows !== key) {
         el.dataset.shows = key;
@@ -2255,9 +2300,9 @@ const BENCH_GROUPS: Readonly<Record<NonNullable<RecipeView['group']>, string>> =
 export function benchHtml(rows: readonly RecipeView[]): string {
   let group: RecipeView['group'];
   return rows.map(r => {
-    const title = r.group && r.group !== group ? `<h3 class="bench-title">${BENCH_GROUPS[r.group]}</h3>` : '';
+    const tab = tabOf(r), title = r.group && r.group !== group ? `<h3 class="bench-title" data-tab="${tab}">${BENCH_GROUPS[r.group]}</h3>` : '';
     group = r.group;
-    return `${title}<button type="button" class="recipe" data-recipe="${esc(r.id)}"${r.can ? '' : ' data-short'} aria-label="${esc(`${r.name}${r.can ? ', ready' : ''}`)}"><span class="big">${r.icon}</span><span class="words"><b>${esc(r.name)}</b><span class="rfacts">${esc(r.facts)}</span>
+    return `${title}<button type="button" class="recipe" data-tab="${tab}" data-recipe="${esc(r.id)}"${r.can ? '' : ' data-short'} aria-label="${esc(`${r.name}${r.can ? ', ready' : ''}`)}"><span class="big">${r.icon}</span><span class="words"><b>${esc(r.name)}</b><span class="rfacts">${esc(r.facts)}</span>
       <span class="needs">${r.needs.map(n => `<span class="need"${n.have >= n.need ? '' : ' data-short'} title="${esc(n.name)}">${n.icon}<i>${Math.min(n.have, n.need)}/${n.need}</i></span>`).join('')}</span></span>
       <span class="more">${r.can ? '<i class="ready">Ready</i>' : ''}${ICON.more}</span></button>`;
   }).join('');

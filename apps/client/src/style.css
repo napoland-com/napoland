@@ -197,6 +197,13 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .tag.pile::before { content: ""; display: inline-block; width: .9em; height: .9em; margin-right: .3em; vertical-align: -.12em; background: currentColor;
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M5.2 5.4 4 2.4l2.2.9L8 1.4l1.8 1.9 2.2-.9-1.2 3c2.7 2 3.2 8.6-2.8 9.1-6-.5-5.5-7.1-2.8-9.1z'/%3E%3C/svg%3E") center / contain no-repeat; }
+/* What stands in your home, named while you are near: the chest, the workbench, the kitchen. Warm and small, with a dot when the workbench has something ready to make. */
+.tag.spot { background: rgba(40, 30, 18, .85); color: #ffe6b8; font-size: calc(var(--u) * .85); box-shadow: 0 0 0 1px rgba(255, 207, 135, .4); }
+.tag.spot[data-ready]::after { content: ""; display: inline-block; width: .55em; height: .55em; margin-left: .4em; border-radius: 50%; background: #ffcf5a; vertical-align: .05em; animation: spot-ready 1.6s ease-in-out infinite; }
+@keyframes spot-ready { 50% { opacity: .35; transform: scale(.7); } }
+@media (prefers-reduced-motion: reduce) { .tag.spot[data-ready]::after { animation: none; } }
+/* A, named while you face something it opens: a small plate over the button. */
+.hud .ab .averb { position: absolute; right: 0; top: calc(var(--ab) * -.42); padding: .1em .55em; border-radius: 99px; background: rgba(12, 15, 21, .8); color: #ffe6b8; font-style: normal; font-weight: 700; font-size: calc(var(--u) * .9); white-space: nowrap; pointer-events: none; }
 /* The name plate by the door of the house in a garden: a small painted board, square-cornered, so it is not taken for a person. */
 .tag.plate { border-radius: .2em; background: rgba(74, 52, 32, .9); color: #f4e2bf; font-size: calc(var(--u) * .82); font-weight: 700; letter-spacing: .02em; box-shadow: 0 0 0 1px rgba(226, 190, 130, .4); }
 .float { position: absolute; left: 0; top: 0; font-weight: 700; font-size: calc(var(--u) * 1.4); white-space: nowrap; -webkit-text-stroke: 3px #0c0f15; paint-order: stroke fill; will-change: transform, opacity; }
@@ -328,6 +335,16 @@ body { font-family: var(--font-text); font-weight: 600; -webkit-font-smoothing: 
 .recipes { display: grid; gap: calc(var(--u) * .6); }
 .bench-sheet .bench-title { margin: calc(var(--u) * .4) 0 0; font-weight: 600; font-size: calc(var(--u) * 1.1); color: #ffcf5a; }
 .bench-sheet .bench-title:first-child { margin-top: 0; }
+/* The workbench's tabs: one list at a time (gear, tools, fixing, home), a dot on a tab with something ready. */
+.bench-tabs { display: flex; gap: calc(var(--u) * .4); flex: none; width: 100%; max-width: var(--col); margin: 0 auto calc(var(--u) * .6); }
+.bench-tabs button { flex: 1; position: relative; padding: .5em .3em; border-radius: .5em; background: rgba(255, 255, 255, .06); color: inherit; font: inherit; font-weight: 600; }
+.bench-tabs button[aria-selected="true"] { background: #ffcf5a; color: #1c1408; }
+.bench-tabs .ready-dot { position: absolute; top: .25em; right: .35em; width: .5em; height: .5em; border-radius: 50%; background: #ffcf5a; box-shadow: 0 0 0 1px #0c0f15; }
+.bench-tabs [aria-selected="true"] .ready-dot { background: #9c2b4e; }
+.bench-sheet[data-tab="gear"] [data-tab]:not([data-tab="gear"]),
+.bench-sheet[data-tab="tools"] [data-tab]:not([data-tab="tools"]),
+.bench-sheet[data-tab="fix"] [data-tab]:not([data-tab="fix"]),
+.bench-sheet[data-tab="home"] [data-tab]:not([data-tab="home"]) { display: none; }
 .hud .recipe { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; place-items: center stretch; gap: calc(var(--u) * .7); width: 100%; padding: .5em .6em; border: 0; border-radius: 10px; background: #151a22; box-shadow: inset 0 0 0 1px #2a3240; text-align: left; }
 .hud .recipe[data-picked] { background: #1d2430; box-shadow: inset 0 0 0 2px #ffcf5a, 0 0 0 2px rgba(255, 207, 90, .22); }
 .recipe .big { width: calc(var(--u) * 3.2); height: calc(var(--u) * 3.2); display: grid; place-items: center; border-radius: 8px; background: #1c222c; }
