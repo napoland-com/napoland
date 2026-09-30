@@ -3,7 +3,7 @@ import {
   ANSWER_DAY, dayIndex, firstBanner, isLongNight, longNightFrom, weekIndex, firstInJournal, firstOnBoard, itemIndex, notesOf, secretKey, secretOf, secretTitle, thousands, zoneDay, type ItemsData, type MapData, type MapObject,
 } from '../src';
 
-const note = (id: string, by: 'ranger' | 'walt' | 'barlows', x: number, y: number): MapObject => ({ kind: 'note', id, by, name: 'A note', x, y, text: ['Words.'] });
+const note = (id: string, by: 'ranger' | 'walt' | 'barlows' | 'leavers', x: number, y: number): MapObject => ({ kind: 'note', id, by, name: 'A note', x, y, text: ['Words.'] });
 /** Woods with a pond and the crossroads named, a note by each; a room with one on its table. */
 const woods: MapData = {
   id: 'woods', name: 'The Near Woods', version: 1, kind: 'wilds', depth: 1, width: 20, height: 20, tiles: Array(20).fill('g'.repeat(20)), levels: Array(20).fill('0'.repeat(20)),

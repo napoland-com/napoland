@@ -87,6 +87,22 @@ describe('notes people left', () => {
     expect(w.get('a')!.xp).toBe(NOTE_XP);
   });
 
+  it('count a leavers\' tag on a car as any note: one first read, then nothing', () => {
+    const t = townData();
+    const cars: MapData = { ...t, objects: [...t.objects, { kind: 'car', x: 2, y: 3, w: 1, h: 2, dir: 'down' }, note('leavers-dahl', 2, 4, { by: 'leavers', name: 'A luggage tag' })] };
+    const w = new World([new TileMap(cars), new TileMap(house()), new TileMap(woods())], 'town', 'overcast', { items: ITEMS, rng: () => 0 });
+    w.join(rec('a', 'town', 2, 5), 0);
+    w.drain();
+    w.takeWrites();
+    w.talk('a', 2, 4, 1000);
+    const out = w.drain();
+    expect(read(out, 'a')).toEqual(['leavers-dahl']);
+    expect(of(to(out, 'a'), 'progress')[0]).toMatchObject({ gained: NOTE_XP });
+    w.talk('a', 2, 4, 2000);
+    expect(to(w.drain(), 'a')).toEqual([]);
+    expect(w.get('a')!.notes).toEqual(['leavers-dahl']);
+  });
+
   it('show only in their time: glowing writing at night, wax in the rain or a storm, a shard\'s scratches on a green night', () => {
     const w = world('overcast', {}, rec('dark', 'woods', 6, 6), rec('wet', 'woods', 2, 6, 'left'), rec('green', 'woods', 2, 5, 'left'));
     const tryAll = (t: number) => {

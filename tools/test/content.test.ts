@@ -557,10 +557,11 @@ describe('notes and keepsakes left behind (roadmap/notes-left-behind.md)', () =>
   };
   const words = (n: { note: MapNote }) => n.note.text.join(' ').length;
 
-  it('lays about thirty notes, ten by each of the ranger, Walt and the Barlows', () => {
+  it('lays about thirty notes, ten by each of the ranger, Walt and the Barlows, and four tags by the people who left', () => {
     expect(notes.length).toBeGreaterThanOrEqual(25);
     expect(notes.length).toBeLessThanOrEqual(35);
-    for (const by of NOTE_AUTHORS) expect(notes.filter(n => n.note.by === by).length, by).toBeGreaterThanOrEqual(8);
+    // The leavers left four, a tag for each dark house's family; the others left at least eight.
+    for (const by of NOTE_AUTHORS) expect(notes.filter(n => n.note.by === by).length, by).toBeGreaterThanOrEqual(by === 'leavers' ? 4 : 8);
   });
 
   it('lays each on something it lies on, readable from beside it, and last on its map, after everything that was there', () => {
@@ -584,6 +585,29 @@ describe('notes and keepsakes left behind (roadmap/notes-left-behind.md)', () =>
     for (const shelter of ['near-woods-old-cabin', 'near-woods-ranger-hut', 'near-woods-end-cabin']) expect(count(n => n.map.id === shelter), shelter).toBeGreaterThanOrEqual(2);
     // Walt's are nailed to his poles, or lie where he went: his truck, the jam, the Tower's shed.
     for (const n of notes.filter(n => n.note.by === 'walt')) expect(['pole', 'car', 'shelf'], n.note.id).toContain(on(n));
+  });
+
+  it('hangs one tag on a car of the jam for each family with a dark house, the Dahls\' neither first nor last along the line', () => {
+    const tags = notes.filter(n => n.note.by === 'leavers');
+    expect(tags.map(n => n.note.id).sort()).toEqual(['leavers-dahl', 'leavers-hale', 'leavers-lindqvist', 'leavers-okada']);
+    const road = maps.get('south-road')!.data;
+    const alongTheLine = tags.map(n => n.note).sort((a, b) => a.y - b.y || a.x - b.x).map(n => n.id);
+    expect(alongTheLine.indexOf('leavers-dahl')).not.toBe(0);
+    expect(alongTheLine.indexOf('leavers-dahl')).not.toBe(tags.length - 1);
+    // On a car of the jam (between the firs, north of the checkpoint), never marked on a map.
+    for (const { map, note } of tags) {
+      expect(map.id, note.id).toBe('south-road');
+      expect(road.objects.find(o => o.kind === 'car' && o.x === note.x && o.y === note.y), note.id).toBeDefined();
+      expect(note.y, note.id).toBeGreaterThanOrEqual(20);
+      expect(note.y, note.id).toBeLessThanOrEqual(37);
+    }
+    // Each names the family on a mailbox in Stonebrook, and its street.
+    const boxes = maps.get('stonebrook')!.data.objects.flatMap(o => (o.kind === 'sign' && o.style === 'mailbox' ? [o.text[0]!] : []));
+    for (const [id, name] of [['okada', 'OKADA'], ['hale', 'HALES'], ['dahl', 'DAHL'], ['lindqvist', 'LINDQVIST']] as const) {
+      expect(boxes.some(b => b.includes(name)), name).toBe(true);
+      expect(tags.find(n => n.note.id === `leavers-${id}`)!.note.text[0], id).toContain(name);
+      expect(tags.find(n => n.note.id === `leavers-${id}`)!.note.text[0], id).toMatch(/Stonebrook/);
+    }
   });
 
   it('says more the deeper a note lies: a line or two near town, three in the deepest shelters', () => {
@@ -610,7 +634,7 @@ describe('notes and keepsakes left behind (roadmap/notes-left-behind.md)', () =>
 
   it('names every note and keepsake for the first to find it: whose note and where, or the keepsake (roadmap/first-finders.md)', () => {
     const byId = notesOf(all.map(m => m.data)), defs = itemIndex(items);
-    for (const { note } of notes) expect(secretTitle(secretKey({ kind: 'note', id: note.id }), byId, defs), note.id).toMatch(/^(the ranger's|Walt's|the Barlows') note (by|in) the /);
+    for (const { note } of notes) expect(secretTitle(secretKey({ kind: 'note', id: note.id }), byId, defs), note.id).toMatch(/^(the ranger's|Walt's|the Barlows'|the leavers') note (by|in) the /);
     for (const p of items.keepsakes!.places) expect(secretTitle(secretKey({ kind: 'keepsake', item: p.item }), byId, defs), p.item).toMatch(/^the [a-zA-Z ]+$/);
   });
 
@@ -1048,7 +1072,8 @@ describe('Stonebrook wakes up (roadmap/stonebrook-wakes.md)', () => {
     }
     const levels = all.map(s => s.when.level!);
     expect(levels).toEqual([...levels].sort((a, b) => a - b));
-    expect(scenes.filter(s => s.who === 'edith').map(s => [s.id, s.when.town])).toEqual([['edith-kept', 'edith-home'], ['edith-kari', 'edith-home']]);
+    // Three: what she kept, Kari, and the Dahls' car in the jam (the last opens on reading its tag).
+    expect(scenes.filter(s => s.who === 'edith').map(s => [s.id, s.when.town])).toEqual([['edith-kept', 'edith-home'], ['edith-kari', 'edith-home'], ['edith-car', 'edith-home']]);
     for (const s of scenes) expect(s.lines.length, s.id).toBeGreaterThanOrEqual(4);
   });
 

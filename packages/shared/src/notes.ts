@@ -25,7 +25,7 @@ export type MapNote = Extract<MapObject, { kind: 'note' }>;
 export const NOTE_XP = 5;
 
 /** How the journal names who wrote a note. */
-export const AUTHOR_NAMES: Readonly<Record<NoteAuthor, string>> = { ranger: 'The ranger', walt: 'Walt Pruitt', barlows: 'The Barlows' };
+export const AUTHOR_NAMES: Readonly<Record<NoteAuthor, string>> = { ranger: 'The ranger', walt: 'Walt Pruitt', barlows: 'The Barlows', leavers: 'The people who left' };
 
 /** What the text box says of a note at the wrong time, unless the note says its own (`faint`). */
 export const FAINT: Readonly<Record<NoteWhen, string>> = {

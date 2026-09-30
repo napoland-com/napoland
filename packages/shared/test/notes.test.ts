@@ -48,7 +48,7 @@ describe('notes people left', () => {
     expect(errors(map('woods', [note(), note({ id: 'on-the-table', x: 5, y: 3, when: 'night', faint: 'A smear.' })]))).toEqual([]);
     const bad = (o: Partial<MapNote>, kind: MapData['kind'] = 'wilds') => errors(map('woods', [note(o)], kind));
     expect(bad({ id: 'Walt N8' })).toEqual([expect.stringContaining('its id is lowercase words')]);
-    expect(bad({ by: 'mira' as never })).toEqual([expect.stringContaining('by is ranger, walt, barlows')]);
+    expect(bad({ by: 'mira' as never })).toEqual([expect.stringContaining('by is ranger, walt, barlows, leavers')]);
     expect(bad({ name: ' ' })).toEqual([expect.stringContaining('needs a name')]);
     expect(bad({ text: [] })).toEqual([expect.stringContaining('nothing to read')]);
     expect(bad({ text: ['x'.repeat(NOTE_LINE_MAX + 1)] })).toEqual([expect.stringContaining(`${NOTE_LINE_MAX} at most`)]);
