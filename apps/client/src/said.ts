@@ -317,10 +317,12 @@ export function holdsText(def: ItemDef, items: Items): string {
  * gloves. 1 more resin."; when the stash can pay for it, "You can make rubber gloves at the workbench
  * beside the chest."; and when only what you carry is missing from the stash, to put it away.
  */
-export function goalText(g: NextGear, items: Items): string {
+export function goalText(g: NextGear, items: Items, go = false): string {
   const def = items.get(g.recipe.make), n = g.recipe.count ?? 1, what = n === 1 ? aOf(def) : amount(def, n);
-  if (g.ready) return `You can make ${what} at the workbench beside the chest.`;
-  if (!g.missing.length) return `Put away what you carry, and you can make ${what} at the workbench beside the chest.`;
+  // `go`: in your home, a tap takes you to the workbench.
+  const there = go ? ' Tap here to go there.' : '';
+  if (g.ready) return `You can make ${what} at the workbench beside the chest.${there}`;
+  if (!g.missing.length) return `Put away what you carry, and you can make ${what} at the workbench beside the chest.${there}`;
   const more = g.missing.map(m => { const d = items.get(m.item); return `${m.count} more ${m.count === 1 ? nounOf(d) : pluralOf(d)}`; });
   return `Next: ${what}. ${capital(listOf(more))}.`;
 }

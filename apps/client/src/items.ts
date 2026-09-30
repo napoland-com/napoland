@@ -355,10 +355,12 @@ export function recipeViews(recipes: readonly Recipe[], stash: readonly BagSlot[
       return { id: r.id, group: 'cabin', name: def.name, icon: iconFor(def), facts: placed ? `Comfort ${def.comfort ?? 0} · In its place` : factsOf(def).join(' · '), needs, can: !placed && needs.every(n => n.have >= n.need) };
     }
     const have = def.kind === 'tool' && tools.includes(r.make);
-    return { id: r.id, group: 'make', name: def.name, icon: iconFor(def), facts: have ? 'You have it' : factsOf(def).join(' · '), needs, can: !have && needs.every(n => n.have >= n.need) };
+    return { id: r.id, group: 'make', tab: def.kind === 'gear' ? 'gear' : 'tools', name: def.name, icon: iconFor(def), facts: have ? 'You have it' : factsOf(def).join(' · '), needs, can: !have && needs.every(n => n.have >= n.need) };
   });
   const home = house === undefined || !items.house.length ? [] : [homeRow(house, stash, items)];
-  return [...rows.filter(r => r.group !== 'cabin'), ...rows.filter(r => r.group === 'cabin'), ...home];
+  // What can be made now comes first (the sort keeps the rest in order).
+  const ready = (a: RecipeView, b: RecipeView) => Number(b.can) - Number(a.can);
+  return [...rows.filter(r => r.group === 'make').sort(ready), ...rows.filter(r => r.group === 'cabin').sort(ready), ...home];
 }
 
 /**

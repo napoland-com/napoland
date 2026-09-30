@@ -279,7 +279,7 @@ describe('upgrades', () => {
     const html = benchHtml([
       ...mendViews(GEAR, WORN, [], upItems), ...upgradeViews(GEAR, WORN, [], upItems), ...recipeViews(data.recipes!, [], upItems),
     ]);
-    expect([...html.matchAll(/<h3 class="bench-title">(\w+)<\/h3>/g)].map(m => m[1])).toEqual(['Mend', 'Upgrade', 'Make']);
+    expect([...html.matchAll(/<h3 class="bench-title"[^>]*>(\w+)<\/h3>/g)].map(m => m[1])).toEqual(['Mend', 'Upgrade', 'Make']);
     expect(html.indexOf('data-recipe="mend:shirt"')).toBeLessThan(html.indexOf('data-recipe="up:worn:shirt"'));
     expect(html.indexOf('data-recipe="up:worn:shirt"')).toBeLessThan(html.indexOf('data-recipe="coat"'));
   });
