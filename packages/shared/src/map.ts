@@ -247,6 +247,8 @@ export type MapObject =
    * (MapData.drawdown). Read like a sign from beside it, which only the low water lets anyone stand at.
    */
   | { kind: 'sister'; x: number; y: number; text: string[] }
+  /** A rowing boat pulled up on the shore, upturned: Jon's, on his knoll in the Reservoir. */
+  | { kind: 'boat'; x: number; y: number }
   /** A townsperson. `town`: someone who comes or goes with the town (town.ts), here only within that gate. */
   | { kind: 'npc'; x: number; y: number; id: string; name: string; dir: Dir; lines: string[]; look?: NpcLook; town?: TownGate }
   | { kind: 'shrooms'; x: number; y: number }
@@ -553,7 +555,7 @@ export interface Arrival {
 
 /** Objects that stand on a tile and stop anyone from walking onto it (a house's door tile excepted). */
 const BLOCKING = new Set<MapObject['kind']>([
-  'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'sister', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
+  'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'sister', 'boat', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
   'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport', 'lostfound', 'ledger', 'kitchen',

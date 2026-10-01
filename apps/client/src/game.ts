@@ -322,7 +322,7 @@ export type News =
   /** Someone told you a scene (story.ts): no banner (the box just told it), a dot on the journal's People. */
   | { kind: 'scene'; id: string }
   /** On a map whose lake draws down: the water drew back ('down'), is coming back in `left` seconds ('warn'), or came back over you and carried you ashore ('carried'). */
-  | { kind: 'lake'; phase: 'down' | 'warn' | 'carried'; left: number };
+  | { kind: 'lake'; phase: 'down' | 'warn' | 'carried'; left: number; onBed?: true };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -2722,6 +2722,8 @@ export class Game {
   }
 
   private talkerAt(x: number, y: number): Talker | undefined {
+    // What lies on a lakebed is under water while the lake is full: the server hears no talk there, so nothing is read.
+    if (this.current.bedAt(x, y) && !this.current.drainedAt(x, y)) return undefined;
     return this.talkers.find(t => t.x === x && t.y === y);
   }
 
@@ -3056,7 +3058,9 @@ export class Game {
     if (round !== this.lakeSaid.round) this.lakeSaid = { round, said: new Set() };
     if (this.lakeSaid.said.has(phase)) return;
     this.lakeSaid.said.add(phase);
-    this.news.push({ kind: 'lake', phase, left });
+    // The water coming back tells only whoever stands on the bed then to get off it.
+    const me = this.me, onBed = phase === 'warn' && !!me && this.current.bedAt(me.tx, me.ty);
+    this.news.push({ kind: 'lake', phase, left, ...(onBed ? { onBed: true as const } : {}) });
   }
 
   /** What Agnes says first: when the reservoir goes down next, or how long it stays down. Nothing without one. */
@@ -3380,7 +3384,8 @@ export class Game {
     const d = Math.abs(at.x - me.tx) + Math.abs(at.y - me.ty);
     // Someone down is got up from beside them, if they are still down there.
     const down = 'rescue' in goal ? this.downAt(at.x, at.y) : undefined;
-    const there = 'talk' in goal ? d === 1 : 'rescue' in goal ? d <= 1 && down?.id === goal.rescue.id : d <= 1 && !!this.thingAt(at.x, at.y);
+    // A talker still there to talk to: the water may have come back over it on the way.
+    const there = 'talk' in goal ? d === 1 && !!this.talkerAt(at.x, at.y) : 'rescue' in goal ? d <= 1 && down?.id === goal.rescue.id : d <= 1 && !!this.thingAt(at.x, at.y);
     if (!there) return;
     if (d === 1) {
       const face = dirToward(at.x - me.tx, at.y - me.ty);

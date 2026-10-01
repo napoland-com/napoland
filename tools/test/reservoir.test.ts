@@ -28,7 +28,7 @@ const objectsOf = <K extends MapObject['kind']>(kind: K) => res.data.objects.fil
 const sister = objectsOf('sister')[0]!;
 const fire = objectsOf('fireplace')[0]!;
 const jon = objectsOf('npc').find(o => o.id === 'jon')!;
-const dam = (x: number, y: number) => res.data.tiles[y]?.[x] === 'r';
+const dam = (x: number, y: number) => res.data.tiles[y]?.[x] === 'l';
 /** The knoll: ground in the lake, Jon's fire on it, and every walkable tile joined to it without crossing the bed. */
 const knoll = (() => {
   const seen = new Set([`${fire.x},${fire.y + 1}`]), queue: Array<[number, number]> = [[fire.x, fire.y + 1]];
@@ -61,6 +61,15 @@ describe('the Reservoir, where it is', () => {
   it('is calm: no surge, storm, flash, watcher or skulker (the surges come down the woods and die at town), and rains once a day', () => {
     for (const k of ['surge', 'storm', 'flashes', 'watchers', 'skulkers'] as const) expect(res.data[k], k).toBeUndefined();
     expect(res.data.rain).toHaveLength(1);
+  });
+
+  it('crosses the valley\'s mouth on a dam: a paved crest, railed on its downstream side but where the way home comes up onto it', () => {
+    const crestX = Math.min(...res.data.tiles.flatMap(r => [...r].flatMap((c, x) => (c === 'l' ? [x] : []))));
+    const rail = objectsOf('fence').filter(f => f.x === crestX - 1);
+    expect(rail.length).toBeGreaterThan(8);
+    for (const f of rail) expect(dam(crestX, f.y), `${f.x},${f.y}`).toBe(true);
+    const home = res.data.exits.find(e => e.home)!;
+    expect(res.homeSteps(crestX, home.y)).toBe(res.homeSteps(crestX - 1, home.y) + 1);
   });
 });
 
@@ -104,7 +113,7 @@ describe('the lake', () => {
   const bed = new Set(lake.tiles.map(([x, y]) => `${x},${y}`));
   const water: Array<[number, number]> = [];
   for (let y = 0; y < res.height; y++) for (let x = 0; x < res.width; x++) if (res.data.tiles[y]![x] === 'w') water.push([x, y]);
-  const damX = Math.max(...res.data.tiles.flatMap(r => [...r].flatMap((c, x) => (c === 'r' ? [x] : []))));
+  const damX = Math.max(...res.data.tiles.flatMap(r => [...r].flatMap((c, x) => (c === 'l' ? [x] : []))));
   const lakeWater = water.filter(([x]) => x > damX);
 
   it('draws down on its bed, most of the lake, the drowned valley: water tiles, walked on only while it is down', () => {
@@ -188,7 +197,7 @@ describe('Jon\'s knoll', () => {
     expect(fire).toMatchObject({ tended: true });
     expect(objectsOf('fireplace')).toHaveLength(1);
     expect(nextTo(fire) && nextTo(jon)).toBe(true);
-    expect(objectsOf('sheeted').filter(nextTo)).toHaveLength(1);
+    expect(objectsOf('boat').filter(nextTo)).toHaveLength(1);
     const cache = objectsOf('cache')[0]!;
     expect(Math.max(Math.abs(cache.x - fire.x), Math.abs(cache.y - fire.y))).toBeLessThanOrEqual(3);
   });

@@ -2915,6 +2915,8 @@ export class World {
   /** Whom the player talked to, or what they read, on tile x,y: only from next to it. */
   private heard(p: Online, x: number, y: number, now: number): void {
     if (manhattan(x, y, p.rec.x, p.rec.y) > 1) return;
+    // What lies on a lakebed is under water while the lake is full: nothing there is read until it draws back.
+    if (p.map.bedAt(x, y) && !p.map.drainedAt(x, y)) return;
     const note = noteAt(p.map.data, x, y);
     if (note) this.readNote(p, note, now);
     const o = p.map.data.objects.find(o => o.x === x && o.y === y && (o.kind === 'npc' || o.kind === 'console'));
