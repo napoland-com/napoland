@@ -245,6 +245,40 @@ export function surgeAt(rule: SurgeRule, wallMs: number): SurgeView {
 }
 
 /**
+ * How a lake draws down (the Reservoir, MapData.drawdown), in seconds: one round every `every`, shifted by
+ * `offset`. It starts with the water drawn back for `down` seconds, the last `warn` of them with the water
+ * on its way back, and the rest of the round the lake is full.
+ */
+export interface DrawdownRule {
+  every: number;
+  down: number;
+  warn: number;
+  offset?: number;
+}
+
+/** 'down': the lakebed is walked on; 'warn': still walked on, and the water is coming back; 'full': it is lake. */
+export type DrawdownPhase = 'down' | 'warn' | 'full';
+
+/** Where a lake is in its round: the phase and the seconds left of it. */
+export interface DrawdownView {
+  phase: DrawdownPhase;
+  left: number;
+}
+
+export function drawdownAt(rule: DrawdownRule, wallMs: number): DrawdownView {
+  const t = (((wallMs / 1000 + (rule.offset ?? 0)) % rule.every) + rule.every) % rule.every;
+  if (t < rule.down - rule.warn) return { phase: 'down', left: rule.down - rule.warn - t };
+  if (t < rule.down) return { phase: 'warn', left: rule.down - t };
+  return { phase: 'full', left: rule.every - t };
+}
+
+/** Is the lakebed walked on in this phase (the water drawn back, or on its way back)? */
+export const drained = (v: DrawdownView): boolean => v.phase !== 'full';
+
+/** Seconds from `v` until the water next draws back (0 while it is down). */
+export const untilDrawdown = (v: DrawdownView): number => (v.phase === 'full' ? v.left : 0);
+
+/**
  * During a surge, the steps from home where its front is: tiles at least this far are in it. It
  * starts at the deepest tile and reaches the way home after `sweep` seconds. Undefined when calm.
  */

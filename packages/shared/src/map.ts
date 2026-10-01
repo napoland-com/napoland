@@ -11,7 +11,7 @@ import { comfortSize, underfootComfort, type Comfort } from './comfort';
 import type { BagSlot } from './items';
 import { STEP_MS } from './movement';
 import type { Dir } from './protocol';
-import type { FlashRule, RainWindow, StormRule, SurgeRule } from './sky';
+import type { DrawdownRule, FlashRule, RainWindow, StormRule, SurgeRule } from './sky';
 
 /** One character per tile in MapData.tiles. */
 export const TILE_CHARS = {
@@ -472,6 +472,18 @@ export interface MapData {
    * pond in the Near Woods, the brook in Stonebrook. None: nothing here freezes.
    */
   ice?: FrozenWater[];
+  /**
+   * The wilds only: a lake that draws down on a clock (the Reservoir; sky.ts, drawdownAt): its tiles are water,
+   * walked on like ground while it is drawn down (TileMap.drain). Whoever is still on them when it fills is
+   * carried ashore, soaked. A map has this or `ice`, never both.
+   */
+  drawdown?: Drawdown;
+}
+
+/** A lake that draws down: what people call it ("the reservoir"), the tiles of its bed, and its clock. */
+export interface Drawdown extends DrawdownRule {
+  name: string;
+  tiles: Array<[number, number]>;
 }
 
 /** Water that freezes in winter: what people call it ("the pond"), and its tiles. */
@@ -650,7 +662,10 @@ export class TileMap {
   private readonly roofTiles: Uint8Array;
   /** Steps from each tile to the nearest home exit (-1: no way there); all 0 in towns. */
   private stepsHome: Int32Array;
-  /** The same with the ice walked on (null: nothing here freezes): the ways home in winter, which may be shorter. */
+  /**
+   * The same with the water that opens walked on (null: none here): winter's ice, or a lakebed drawn down (a
+   * map has one or the other). The ways home then, which may be shorter.
+   */
   private stepsHomeFrozen: Int32Array | null;
   /** 1 on the water that freezes in winter (data.ice). */
   private readonly iceTiles: Uint8Array;
@@ -658,6 +673,12 @@ export class TileMap {
   readonly hasIce: boolean;
   /** Frozen now: the ice is walked on. The server and the client set it as the season turns (freeze). */
   private frozen = false;
+  /** 1 on the bed of a lake that draws down (data.drawdown). */
+  private readonly bedTiles: Uint8Array;
+  /** A lake here draws down (data.drawdown lists its bed). */
+  readonly hasBed: boolean;
+  /** Drawn down now: its bed is walked on. The server and the client set it by the lake's clock (drain). */
+  private drained = false;
   /** The most steps any tile is from home: where a surge starts. 0 in towns and insides. */
   private deep = 0;
   /** The map as the town has it now (townData): who is where, which lamps and hearths are lit. */
@@ -729,6 +750,9 @@ export class TileMap {
     this.iceTiles = new Uint8Array(W * H);
     for (const water of source.ice ?? []) for (const [x, y] of water.tiles ?? []) if (this.inside(x, y) && this.kinds[y * W + x] === 'water') this.iceTiles[y * W + x] = 1;
     this.hasIce = this.iceTiles.includes(1);
+    this.bedTiles = new Uint8Array(W * H);
+    for (const [x, y] of source.drawdown?.tiles ?? []) if (this.inside(x, y) && this.kinds[y * W + x] === 'water') this.bedTiles[y * W + x] = 1;
+    this.hasBed = this.bedTiles.includes(1);
     this.stepsHome = new Int32Array(W * H);
     this.stepsHomeFrozen = null;
     this.done = done;
@@ -781,26 +805,30 @@ export class TileMap {
     this.roofTiles.fill(0);
     for (const o of data.objects) if (o.kind === 'porch') for (const [x, y] of objectTiles(o)) if (this.inside(x, y)) this.roofTiles[y * W + x] = 1;
 
-    // Distance home, walking, the year round; and in winter, with the ice walked on too. Worked out
-    // again as the town changes what stands where, frozen or not as it is now.
-    const frozen = this.frozen;
-    this.frozen = false;
+    // Distance home, walking, the year round; and in winter, with the ice walked on too (or a lake's bed,
+    // drawn down). Worked out again as the town changes what stands where, frozen or not as it is now.
+    const frozen = this.frozen, drained = this.drained;
+    this.frozen = this.drained = false;
     this.stepsHome = this.stepsFromHome();
     this.frozen = this.hasIce;
-    this.stepsHomeFrozen = this.hasIce ? this.stepsFromHome() : null;
+    this.drained = this.hasBed;
+    this.stepsHomeFrozen = this.hasIce || this.hasBed ? this.stepsFromHome() : null;
     this.frozen = frozen;
+    this.drained = drained;
     let deepest = 0;
     for (const v of this.stepsHome) if (v > deepest) deepest = v;
     this.deep = deepest;
     // A tile that opens only for some is as far from home as the way to it through the tiles that open
     // for everyone, then along the locked ones, in winter as the rest of the year.
-    this.frozen = false;
+    this.frozen = this.drained = false;
     this.relaxLocked(this.stepsHome);
     if (this.stepsHomeFrozen) {
-      this.frozen = true;
+      this.frozen = this.hasIce;
+      this.drained = this.hasBed;
       this.relaxLocked(this.stepsHomeFrozen);
     }
     this.frozen = frozen;
+    this.drained = drained;
   }
 
   /**
@@ -872,6 +900,28 @@ export class TileMap {
     return true;
   }
 
+  /**
+   * The lake draws down (true) or fills: its bed is walked on while drained, and the ways home across it
+   * count. The server and the client each set it by the lake's clock (drawdownAt). True when that changed
+   * what can be walked on here.
+   */
+  drain(on: boolean): boolean {
+    const drained = on && this.hasBed;
+    if (drained === this.drained) return false;
+    this.drained = drained;
+    return true;
+  }
+
+  /** Is this the bed of a lake that draws down, drawn down now or not? */
+  bedAt(x: number, y: number): boolean {
+    return this.inside(x, y) && this.bedTiles[y * this.width + x] === 1;
+  }
+
+  /** Is this lakebed walked on now (drawn down)? */
+  drainedAt(x: number, y: number): boolean {
+    return this.drained && this.bedAt(x, y);
+  }
+
   /** Is the water here ice now (frozen, and marked to freeze)? */
   frozenAt(x: number, y: number): boolean {
     return this.frozen && this.iceAt(x, y);
@@ -936,7 +986,7 @@ export class TileMap {
   /** Walking steps from this tile to the nearest home exit (across the ice while it is frozen); 0 in towns and insides, -1 if there is no way. */
   homeSteps(x: number, y: number): number {
     if (!this.inside(x, y)) return -1;
-    return (this.frozen && this.stepsHomeFrozen ? this.stepsHomeFrozen : this.stepsHome)[y * this.width + x]!;
+    return ((this.frozen || this.drained) && this.stepsHomeFrozen ? this.stepsHomeFrozen : this.stepsHome)[y * this.width + x]!;
   }
 
   inside(x: number, y: number): boolean {
@@ -951,12 +1001,12 @@ export class TileMap {
     return this.inside(x, y) ? this.levels[y * this.width + x]! : 0;
   }
 
-  /** Where a watcher may wake, as y * width + x: where a creature may stand (creatureMayStand), `steps` from home, and never on ice, which thaws. */
+  /** Where a watcher may wake, as y * width + x: where a creature may stand (creatureMayStand), `steps` from home, and never on ice, which thaws, nor on a lakebed, which fills. */
   lairs(steps: readonly [number, number]): number[] {
     const out: number[] = [];
     for (let y = 0; y < this.height; y++) for (let x = 0; x < this.width; x++) {
       const s = this.homeSteps(x, y);
-      if (this.creatureMayStand(x, y) && !this.iceAt(x, y) && s >= steps[0] && s <= steps[1]) out.push(y * this.width + x);
+      if (this.creatureMayStand(x, y) && !this.iceAt(x, y) && !this.bedAt(x, y) && s >= steps[0] && s <= steps[1]) out.push(y * this.width + x);
     }
     return out;
   }
@@ -981,7 +1031,7 @@ export class TileMap {
     const g = this.locks[i]!;
     if (g >= 0) return pass?.has(this.keys[g]!) === true;
     const kind = this.kinds[i];
-    return (kind !== 'water' || (this.frozen && this.iceTiles[i] === 1)) && kind !== 'forest' && kind !== 'wall';
+    return (kind !== 'water' || (this.frozen && this.iceTiles[i] === 1) || (this.drained && this.bedTiles[i] === 1)) && kind !== 'forest' && kind !== 'wall';
   }
 
   /** What it takes to walk this tile, when only some may (a tool's id): undefined for a tile that is open, or shut, to everyone alike. */

@@ -290,6 +290,7 @@ export function validateMap(data: MapData): Problem[] {
   }
   if (data.rain !== undefined) validateRain(data, err);
   if (data.ice !== undefined) validateIce(data, map, err, warn);
+  if (data.drawdown !== undefined) validateDrawdown(data, map, err);
   // Storms come between surges in every season, the autumn's twice-as-many too (stormAt).
   if (data.surge && data.storm && !out.some(p => p.level === 'error' && /^(surge|storm):/.test(p.message))) {
     const clash = stormsClash(data);
@@ -469,6 +470,61 @@ function validateIce(data: MapData, map: TileMap, err: (message: string) => void
       if (DIRS.some(d => { const n = stepTarget(x!, y!, d); return map.walkable(n.x, n.y); })) shore = true;
     }
     if (!shore) warn(`ice: ${name || 'a frozen water'} has no shore to step onto it from, so nobody can cross it`);
+  }
+}
+
+/**
+ * A lake that draws down (`drawdown`): the wilds only, never with `ice`; a name people say, a clock whose low
+ * water fits in its round with its warning inside it, and a bed of water tiles, each once, none an exit, that
+ * touches ground reached at high water (whoever is on the bed when it fills is carried there). Ground that only
+ * the low water reaches (an island) needs a way off of its own at high water, an exit (a boat), or whoever is
+ * on it when the lake fills is stranded until the next low water.
+ */
+function validateDrawdown(data: MapData, map: TileMap, err: (message: string) => void): void {
+  const d = data.drawdown!;
+  if (data.kind !== 'wilds') err('drawdown: only a lake out in the wilds draws down');
+  if (data.ice !== undefined) err('drawdown: a map has a lake that draws down or water that freezes, not both');
+  if (typeof d?.name !== 'string' || !d.name.trim()) err('drawdown: it needs a name people say, like "the reservoir"');
+  const pos = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n > 0;
+  if (!pos(d?.every) || !pos(d?.down) || !pos(d?.warn)) return void err('drawdown: every, down and warn are seconds, above 0');
+  if (d.down >= d.every) err(`drawdown: the water is down ${d.down} s of a ${d.every} s round: it has to fill for some of it`);
+  if (d.warn >= d.down) err(`drawdown: the warning (${d.warn} s) has to come inside the low water (${d.down} s)`);
+  if (!Array.isArray(d.tiles) || !d.tiles.length) return void err('drawdown: its bed has no tiles');
+  const seen = new Set<string>();
+  for (const t of d.tiles) {
+    const [x, y] = Array.isArray(t) ? t : [NaN, NaN];
+    if (!Number.isInteger(x) || !Number.isInteger(y) || !map.inside(x!, y!)) { err(`drawdown: ${JSON.stringify(t)} is not a tile of the map`); continue; }
+    if (map.kind(x!, y!) !== 'water') err(`drawdown: ${x},${y} is not water`);
+    if (map.exitAt(x!, y!)) err(`drawdown: ${x},${y} is an exit`);
+    if (seen.has(`${x},${y}`)) err(`drawdown: ${x},${y} is listed twice`);
+    seen.add(`${x},${y}`);
+  }
+  // The map is built with the lake full: ground beside the bed that is not on the way home is an island.
+  let mainland = false;
+  const islands = new Set<string>();
+  for (const key of seen) {
+    const [x, y] = key.split(',').map(Number) as [number, number];
+    for (const dir of DIRS) {
+      const n = stepTarget(x, y, dir);
+      if (!map.walkable(n.x, n.y)) continue;
+      if (map.homeSteps(n.x, n.y) >= 0) mainland = true;
+      else islands.add(`${n.x},${n.y}`);
+    }
+  }
+  if (!mainland) err(`drawdown: ${d.name}'s bed touches no ground on the way home, so nobody caught on it can be carried ashore`);
+  for (const key of islands) {
+    const [sx, sy] = key.split(',').map(Number) as [number, number];
+    const reached = new Set([key]), queue: Array<[number, number]> = [[sx, sy]];
+    let off = false;
+    for (let head = 0; head < queue.length && !off; head++) {
+      const [x, y] = queue[head]!;
+      if (map.exitAt(x, y)) off = true;
+      for (const dir of DIRS) {
+        const n = stepTarget(x, y, dir), k = `${n.x},${n.y}`;
+        if (!reached.has(k) && (map.walkable(n.x, n.y) || map.exitAt(n.x, n.y))) { reached.add(k); queue.push([n.x, n.y]); }
+      }
+    }
+    if (!off) err(`drawdown: the ground at ${sx},${sy} is reached only at low water and has no way off at high water (an exit, a boat): whoever is there when ${d.name} fills is stranded`);
   }
 }
 
