@@ -842,6 +842,7 @@ export function furnitureShadows(map: TileMap): Array<[number, number, number, n
     else if ((o.kind === 'shelf' || o.kind === 'traps') && againstWall(map, o.x, o.y) === 0) out.push([o.x + 0.5, o.y + 0.28, 0.52, 0.26]);
     else if (o.kind === 'paper' && map.kind(o.x, o.y) !== 'wall') out.push([o.x + 0.5, o.y + 0.5, 0.5, 0.44]);
     else if (o.kind === 'sheeted' || o.kind === 'crib') out.push([o.x + 0.5, o.y + 0.5, 0.46, 0.4]);
+    else if (o.kind === 'boat') out.push([o.x + 0.5, o.y + 0.5, 0.92, 0.42]);
     else if (o.kind === 'clock' || o.kind === 'saw') out.push([o.x + 0.5, o.y + 0.25, 0.36, 0.26]);
     else if (o.kind === 'carriage') out.push([o.x + o.w / 2 + 0.4, o.y + 0.5, 1.2, 0.42]);
     // Boxes and logs also stand out of doors, where they go without: a shadow there would cost a draw call of its own.
