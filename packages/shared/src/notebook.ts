@@ -39,6 +39,10 @@ export const SIGHTS = [
   'let-go',
   /** The lamp with no wires went out (line.ts), while you were in the woods. */
   'lamp-out',
+  /** You stood on a lakebed while the water was drawn back (MapData.drawdown). */
+  'drawdown',
+  /** The water came back while you were on the lakebed, and carried you ashore. */
+  'flooded',
   /** A watcher stood within sight. */
   'watcher',
   /** A watcher froze while you faced it. */
