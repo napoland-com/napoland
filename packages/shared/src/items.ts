@@ -294,11 +294,11 @@ export function copyBundle(b: Bundle): Bundle {
 
 /**
  * The tools of a player who never got one of their own (their saved tools are null): a paper map of
- * every area there is (the town, the Near Woods, the South Road). Later some areas will have none until
- * one is found out there. The first tool a player gets writes these down with it, so a tool added here
- * later reaches only the players who never got one: give it to the others too (World.giveTool).
+ * every area near town (the town, the Near Woods, the South Road, the Reservoir); farther out, maps are found.
+ * The first tool a player gets writes these down with it, so the server adds any added here since to a saved
+ * list as the player joins (world.ts, withStarters).
  */
-export const STARTER_TOOLS: readonly string[] = ['stonebrook-map', 'near-woods-map', 'south-road-map'];
+export const STARTER_TOOLS: readonly string[] = ['stonebrook-map', 'near-woods-map', 'south-road-map', 'reservoir-map'];
 
 /** How many pieces a torn map is in: its four quarters, NW, NE, SW, SE (quarterOf). */
 export const PIECES = 4;

@@ -183,6 +183,9 @@ import {
   effectResist,
   seasonAt,
   seasonView,
+  drained,
+  drawdownAt,
+  FLOOD_ENERGY,
   SEASON_ORDER,
   SEASONS,
   daysThisWeek,
@@ -1129,6 +1132,8 @@ const cleanCharts = (c: unknown): Record<string, number[]> | undefined => {
 };
 /** Saved furniture: the same, a list of item ids, each once. An id today's items do not know stays saved, for the release that made it. */
 const cleanFurniture = cleanTools;
+/** Saved tools with every starter tool among them (none saved: none, they carry the starter tools anyway). */
+const withStarters = (t: string[] | undefined): string[] | undefined => t && [...t, ...STARTER_TOOLS.filter(s => !t.includes(s))];
 /**
  * Saved counts, trusted only where they are whole numbers from 0. One this release does not count (a
  * newer release's) is kept as saved, like its tools: a save writes it back, and the newer release,
@@ -1480,9 +1485,13 @@ export class World {
     // Every map's weather from the start: the one given, where it is fixed; else the sky now, region by region.
     for (const m of this.maps.values()) this.skies.set(m.data.id, this.cycle ? this.regionWeather(m, (options.now ?? 0) + this.epochOffset) : weather);
     // The season now. Whatever froze before (maps outlive a World in the tests), what grows and where
-    // creatures wake is laid out off the ice, which thaws; winter freezes it at the end.
+    // creatures wake is laid out off the ice, which thaws; winter freezes it at the end. A lake that draws
+    // down the same: laid out full, then set by its clock at the end.
     this.season = seasonAt((options.now ?? 0) + this.epochOffset);
-    for (const m of this.maps.values()) m.freeze(false);
+    for (const m of this.maps.values()) {
+      m.freeze(false);
+      m.drain(false);
+    }
     const items = options.items ?? { version: 0, items: [], finds: [] };
     // The town as it was saved (or a town that starts counting now), before anything stands on its maps:
     // who is where, which lamps and hearths are lit, follows it from the start.
@@ -1602,6 +1611,8 @@ export class World {
     }
     // In winter the pond and the brook are ice from the start.
     for (const m of this.maps.values()) m.freeze(SEASONS[this.season].frozen);
+    // A lake by its clock; full, a pile saved on its bed (the water came back while the server was down) washes ashore.
+    this.moveDrawdowns(options.now ?? 0, true);
 
     this.nightFire = [...this.maps.values()].flatMap(m => m.data.objects.flatMap(o => (o.kind === 'fireplace' && o.longNight ? [{ map: m, x: o.x, y: o.y }] : [])))[0];
     this.nightRegrow = items.longNight && { items: new Set(items.longNight.items), times: items.longNight.regrow, words: longNightWords(items.longNight, this.items) };
@@ -1725,8 +1736,9 @@ export class World {
       stash: fitPieces(cleanStash(rec.stash, this.items), this.items, this.rng),
       xp: Number.isInteger(rec.xp) && rec.xp! > 0 ? rec.xp : 0,
       rested: restAfter(cleanRested(rec.rested), away, this.restedEvery),
-      // Kept as saved, ids this release does not know included (toolsOf).
-      tools: cleanTools(rec.tools),
+      // Kept as saved, ids this release does not know included (toolsOf); a starter tool added since they got their
+      // first tool of their own (a new area's paper map) is theirs too, since tools are never lost.
+      tools: withStarters(cleanTools(rec.tools)),
       charts: cleanCharts(rec.charts),
       // Merits spent stay spent, and every look bought stays theirs, a newer release's too (a list of ids, as the tools are).
       meritsSpent: Number.isInteger(rec.meritsSpent) && rec.meritsSpent! > 0 ? rec.meritsSpent : 0,
@@ -1773,6 +1785,8 @@ export class World {
     } else {
       // Saved on ice that has thawed since: ashore, where they would have stepped.
       if (!map.walkable(r.x, r.y, pass) && map.iceAt(r.x, r.y)) Object.assign(r, ashore(map, r.x, r.y));
+      // On a lakebed the water has come back over: ashore on the mainland, never a knoll only the low water reaches.
+      if (!map.walkable(r.x, r.y, pass) && map.bedAt(r.x, r.y)) Object.assign(r, ashore(map, r.x, r.y, true));
       if (!map.walkable(r.x, r.y, pass) || map.exitAt(r.x, r.y)) toSpawn(r, map);
       copy = this.rejoin(r, map);
     }
@@ -3638,6 +3652,8 @@ export class World {
     // A copy nobody is in costs nothing from here on (its piles and marks stay, and so does storage's copy of them).
     this.closeEmptied();
     this.moveSeason(now);
+    // Before the players' turn: whoever the water knocked to 0 goes down the usual way below.
+    this.moveDrawdowns(now);
     this.moveWeather(now);
     this.moveLongNight(now);
     this.moveLamp(now);
@@ -4482,6 +4498,7 @@ export class World {
       if (this.polesOf(map).some(([px, py]) => Math.hypot(px - x, py - y) <= HUM_NEAR)) this.saw(p, 'hum');
     }
     if (map.data.kind !== 'wilds') return;
+    if (map.drainedAt(x, y)) this.saw(p, 'drawdown');
     if (p.zone.flashes.some(f => flashHits(flashView(f, now), x, y))) this.saw(p, 'burst');
     const t = p.trip;
     if (t) for (const f of p.zone.flashes) {
@@ -4999,24 +5016,50 @@ export class World {
   }
 
   /**
+   * Each lake that draws down follows its clock (sky.ts, drawdownAt; every copy of the map shares it). As it
+   * fills, whatever is on its bed goes ashore as off thawing ice, but only onto ground on the way home with
+   * the lake full; whoever was caught on it is soaked through and loses FLOOD_ENERGY (down at 0, the usual way,
+   * in the players' turn of the tick). `start`: full now, whatever was saved on the bed goes ashore too.
+   */
+  private moveDrawdowns(now: number, start = false): void {
+    for (const m of this.maps.values()) {
+      const rule = m.data.drawdown;
+      if (!rule) continue;
+      const on = drained(drawdownAt(rule, now + this.epochOffset));
+      if (!((m.drain(on) || start) && !on)) continue;
+      for (const p of this.thaw(m, now, (x, y) => m.bedAt(x, y), true)) {
+        this.advance(p, now);
+        p.rec.wet = 1;
+        p.rec.energy = Math.max(0, p.rec.energy - FLOOD_ENERGY);
+        if (p.trip && p.rec.energy < p.trip.lowest) p.trip.lowest = p.rec.energy;
+        this.saw(p, 'flooded');
+        this.refresh(p, now);
+        this.tell(p, now);
+      }
+    }
+  }
+
+  /**
    * The ice on a map thaws: whoever stands on it steps ashore, onto the nearest ground, a creature on it
    * slinks off, a pile on it washes up on the shore (every copy's, open or not), and an arrow painted on
-   * it goes with the ice.
+   * it goes with the ice. A lake filling over its bed the same (`under` its bed, ashore on the way `home`
+   * with the lake full). Returns who it moved.
    */
-  private thaw(map: TileMap, now: number): void {
+  private thaw(map: TileMap, now: number, under = (x: number, y: number) => map.iceAt(x, y), home = false): Online[] {
+    const moved: Online[] = [];
     for (const d of [...this.piles.values()]) {
-      if (d.map !== map.data.id || !map.iceAt(d.x, d.y)) continue;
+      if (d.map !== map.data.id || !under(d.x, d.y)) continue;
       this.removePile(d);
-      const moved: DropRecord = { ...d, ...ashore(map, d.x, d.y) };
-      this.addPile(moved);
-      this.pileWrites.set(moved.owner, moved);
-      this.toZone(recordZone(moved), { t: 'drop', drop: dropView(moved) });
+      const pile: DropRecord = { ...d, ...ashore(map, d.x, d.y, home) };
+      this.addPile(pile);
+      this.pileWrites.set(pile.owner, pile);
+      this.toZone(recordZone(pile), { t: 'drop', drop: dropView(pile) });
     }
-    for (const m of [...this.marks.values()]) if (m.map === map.data.id && map.iceAt(m.x, m.y)) this.removeMark(m);
+    for (const m of [...this.marks.values()]) if (m.map === map.data.id && under(m.x, m.y)) this.removeMark(m);
     for (const zone of this.copiesOf(map.data.id)) {
       for (const p of zone.players) {
-        if (!map.iceAt(p.rec.x, p.rec.y)) continue;
-        const to = ashore(map, p.rec.x, p.rec.y);
+        if (!under(p.rec.x, p.rec.y)) continue;
+        const to = ashore(map, p.rec.x, p.rec.y, home);
         p.rec.x = to.x;
         p.rec.y = to.y;
         p.queue.length = 0;
@@ -5028,9 +5071,11 @@ export class World {
         this.outbox.push({ to: id, msg: { t: 'reject', seq: 0, x, y, dir } });
         this.toZone(zone.key, { t: 'step', id, x, y, dir }, id);
         this.revisit(p);
+        moved.push(p);
       }
-      for (const w of [...zone.watchers, ...zone.skulkers]) if (w.awake && map.iceAt(w.x, w.y)) this.sendAway(w, now);
+      for (const w of [...zone.watchers, ...zone.skulkers]) if (w.awake && under(w.x, w.y)) this.sendAway(w, now);
     }
+    return moved;
   }
 
   /**
@@ -6521,12 +6566,16 @@ function less(all: readonly BagSlot[], left: readonly BagSlot[]): BagSlot[] {
   });
 }
 
-/** The nearest ground (walkable, no exit) to x,y, breadth-first: where someone on thawing ice steps. The map's spawn if there is none. */
-function ashore(map: TileMap, x: number, y: number): { x: number; y: number } {
+/**
+ * The nearest ground (walkable, no exit) to x,y, breadth-first: where someone on thawing ice steps. With
+ * `home`, only ground with a way home as the map is now (off a filling lakebed: never a knoll only the low
+ * water reached). The map's spawn if there is none.
+ */
+function ashore(map: TileMap, x: number, y: number, home = false): { x: number; y: number } {
   const W = map.width, seen = new Set([y * W + x]), queue = [y * W + x];
   for (let h = 0; h < queue.length; h++) {
     const i = queue[h]!, cx = i % W, cy = Math.floor(i / W);
-    if (map.walkable(cx, cy) && !map.exitAt(cx, cy)) return { x: cx, y: cy };
+    if (map.walkable(cx, cy) && !map.exitAt(cx, cy) && (!home || map.homeSteps(cx, cy) >= 0)) return { x: cx, y: cy };
     for (const [nx, ny] of [[cx, cy - 1], [cx + 1, cy], [cx, cy + 1], [cx - 1, cy]] as const) {
       const j = ny * W + nx;
       if (map.inside(nx, ny) && !seen.has(j)) {

@@ -384,8 +384,11 @@ export type MapObject =
    */
   | { kind: 'footbridge'; id: string; x: number; y: number; w: number; h: number };
 
-/** Who left notes behind: the ranger, Walt Pruitt when he walked the line, and the Barlows from the cabin at the end. */
-export const NOTE_AUTHORS = ['ranger', 'walt', 'barlows', 'leavers'] as const;
+/**
+ * Who left notes behind: the ranger, Walt Pruitt when he walked the line, the Barlows from the cabin at the
+ * end, the people who left (tags in the jam), and Agnes and Jon Brandt at the Reservoir, who write past each other.
+ */
+export const NOTE_AUTHORS = ['ranger', 'walt', 'barlows', 'leavers', 'brandts'] as const;
 export type NoteAuthor = (typeof NOTE_AUTHORS)[number];
 /** When a note shows (notes.ts, noteShows): written in something that glows, in wax that only water shows, or scratched with a shard. */
 export const NOTE_WHEN = ['night', 'rain', 'aurora'] as const;

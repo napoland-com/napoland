@@ -118,7 +118,7 @@ describe('the culvert and a padlocked door', () => {
       version: 1, finds: [],
       items: [
         // Everyone's starter maps, which must be tools once there are tools at all.
-        ...['stonebrook-map', 'near-woods-map', 'south-road-map'].map(id => ({ id, name: 'A map', kind: 'tool' as const, stack: 1, icon: 'map' as const, text: 'Drawn by hand.' })),
+        ...['stonebrook-map', 'near-woods-map', 'south-road-map', 'reservoir-map'].map(id => ({ id, name: 'A map', kind: 'tool' as const, stack: 1, icon: 'map' as const, text: 'Drawn by hand.' })),
         { id: 'bolt-cutters', name: 'Bolt cutters', kind: 'tool', stack: 1, icon: 'cutters', text: 'They cut.' },
         ...(waders === 'tool' ? [{ id: 'waders', name: 'Waders', kind: 'tool' as const, stack: 1, icon: 'waders' as const, text: 'They wade.' }] : [{ id: 'waders', name: 'Waders', kind: 'resource' as const, stack: 1, text: 'Just rubber.' }]),
       ],

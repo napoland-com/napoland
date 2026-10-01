@@ -12,7 +12,7 @@ import './style.css';
 import {
   HUM_BEFORE_S, NO_SHOP, OAUTH_PROVIDERS, SEASONS, bagSlotsOf, inTheDark, meritsOf, outfitsOpening, surgeFront, type AuthConfig, type AuthMode, type BagSlot, type CallKind, type Dir,
   type Gear, type ItemsData, type MapData, type MapRef, type NotebookData, type OAuthProvider, type Senses, type ServerMsg, type ChatTo, type ShopData, type Slot, type StoryData,
-  type Weather, type Worn, slabGlows,
+  type Weather, type Worn, slabGlows, drained,
 } from '@napoland/shared';
 import { loadVersion, signInFooter } from './about';
 import { Arrival } from './arrival';
@@ -967,6 +967,9 @@ function frame(now: number) {
   view.setSurge(caught ? 1 : surge?.phase === 'surge' ? 0.35 : surge?.phase === 'unstable' ? 0.12 : 0);
   hud.setSurge(surge, caught);
   view.setStorm(game.stormNow(now)?.phase === 'storm');
+  // A lake that draws down: its water sinks off the bed, or comes back over it, by its clock.
+  const lake = view.map === game.map ? game.drawdownNow() : null;
+  if (lake) view.setDrained(drained(lake));
   view.setFogCap(game.fogCap());
   view.setFlashes(game.flashesNow(now));
   const body = game.online ? game.bodyNow(now) : null;
@@ -1157,7 +1160,7 @@ function frame(now: number) {
   const scene: Scene = {
     map: map.data.id, kind: map.data.kind, up: !!game.up, weather: game.weather, snow: SEASONS[game.viewSeason()].snow, storm: game.stormNow(now)?.phase === 'storm', lightning: lightningAt(t),
     // On a footbridge that stands, the planks under your feet, not the creek.
-    me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.needs(me.tx, me.ty) !== undefined && map.kind(me.tx, me.ty) === 'water' ? 'floor' : map.kind(me.tx, me.ty), ice: map.frozenAt(me.tx, me.ty) } : null,
+    me: me ? { id: me.id, x: me.x, y: me.y, tx: me.tx, ty: me.ty, ground: map.needs(me.tx, me.ty) !== undefined && map.kind(me.tx, me.ty) === 'water' ? 'floor' : map.drainedAt(me.tx, me.ty) ? 'mud' : map.kind(me.tx, me.ty), ice: map.frozenAt(me.tx, me.ty) } : null,
     fires: map.data.objects.flatMap(o => (o.kind === 'fireplace' ? [{ x: o.x, y: o.y, left: game.fireLeft(o.x, o.y, now) }] : [])),
     poles: map.data.objects.filter(o => o.kind === 'pole'),
     teleports: map.data.objects.filter(o => o.kind === 'teleport'),

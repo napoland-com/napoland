@@ -8,6 +8,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { objectTiles, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
+import { RESERVOIR_WAY_HOME, STONEBROOK_EAST } from './reservoir-road';
 
 const N = 44;
 function mulberry32(a: number) {
@@ -310,17 +311,37 @@ const brook: Array<[number, number]> = [];
   place({ kind: 'teleport', ...TELEPORT });
 }
 
+// ---- The east road up the brook (gen-reservoir.ts) ----
+// From the millpond's east bank, a track of trodden mud east to the edge of the woods and on up the brook to
+// the Reservoir. Last, and without rnd(): the two firs at the edge where it goes in are felled (their ground
+// stays grass), and nothing else moves.
+const east: MapExit = { x: STONEBROOK_EAST.x, y: STONEBROOK_EAST.y, w: 1, h: 1, to: 'reservoir', tx: RESERVOIR_WAY_HOME.x + 1, ty: RESERVOIR_WAY_HOME.y, dir: 'right' };
+{
+  const y = STONEBROOK_EAST.y;
+  for (const x of [N - 2, N - 1]) {
+    const i = objects.findIndex(o => o.kind === 'tree' && o.x === x && o.y === y);
+    if (i >= 0) objects.splice(i, 1);
+    blocked[y]![x] = false;
+  }
+  for (let x = 38; x <= N - 3; x++) {
+    if (blocked[y]![x] || tile[y]![x] !== 'g') throw new Error(`the east road needs open grass at ${x},${y}`);
+    tile[y]![x] = 'm';
+  }
+}
+
 const map: MapData = {
-  id: 'stonebrook', name: 'Stonebrook', version: 16, kind: 'town', depth: 0, width: N, height: N,
+  id: 'stonebrook', name: 'Stonebrook', version: 17, kind: 'town', depth: 0, width: N, height: N,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 8, y: 21, dir: 'down' },
   // The north road leads into the Near Woods (its road enters at x 31-32 on the bottom row), and the south
   // road down the South Road (its road enters at x 35-36 on the top row). Home is no road away: the teleport.
+  // The east road up the brook, the newest, comes after the doors.
   exits: [
     { x: 29, y: 0, w: 2, h: 1, to: 'near-woods', tx: 31, ty: 78, dir: 'up' },
     { x: 11, y: 43, w: 2, h: 1, to: 'south-road', tx: 35, ty: 1, dir: 'down' },
     ...doors,
+    east,
   ],
   objects,
   // The town's rain, the same as the Near Woods' up its north road: from 12 minutes after dawn, for 12.

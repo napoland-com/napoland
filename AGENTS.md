@@ -13,7 +13,7 @@ napoland is a mobile-first online exploration game in the browser: leave home, g
 | Check everything | `npm run check`: types, content, roadmap, all tests. Must pass before every push. |
 | Tests | `npm test` (Vitest). The PostgreSQL tests run only when `DATABASE_URL_TEST` is set. |
 | Content | `npm run validate`: every map, how the maps join up, the items |
-| Generated maps | `npm run gen` (runs `gen:map`, `gen:woods`, `gen:south`, `gen:far-woods`, `gen:burn`, `gen:ridge`, `gen:marsh`, `gen:garden`, `gen:interiors` in that order), then `npm run validate` |
+| Generated maps | `npm run gen` (runs `gen:map`, `gen:woods`, `gen:south`, `gen:far-woods`, `gen:burn`, `gen:ridge`, `gen:marsh`, `gen:reservoir`, `gen:garden`, `gen:interiors` in that order), then `npm run validate` |
 | Roadmap | `npm run roadmap`: checks `roadmap/*.md` and prints the roadmap in order |
 | Play-test clock | `CLOCK_SHIFT_MS=$(npm run -s clock -- long-night) npm run dev`: the world's clock a minute before the next Long Night (or `winter`, any season, `dawn+13`, a wall time in UTC) |
 | Test players | `npm run bot -- --count 3 --steps 30`, against a running dev server |
@@ -32,7 +32,7 @@ napoland is a mobile-first online exploration game in the browser: leave home, g
 1. **The server decides everything.** Clients send intentions (step, face, pick up); the server checks them and tells everyone. Never trust a client message: parse every one with the zod schemas in `packages/shared/src/protocol.ts`.
 2. **`packages/shared` is the contract.** Change it on purpose, bump `PROTOCOL_VERSION` when old clients would break, and update client, server and tests in the same change.
 3. **Migrations only add.** A database change is a new numbered file in `apps/server/migrations`: new tables, new columns with defaults, so the previous release still runs on it. Never edit a migration that is on `main`.
-4. **Content is data.** Prefer changing `content/` over code. Generated maps (Stonebrook, the Near Woods, the South Road, the Far Woods, the Burn, the Ridge, the Marsh, the home's garden, every room) are never edited by hand: change the generator in `tools/`, run `npm run gen`, commit both. When a map, `content/items.json` or `content/story.json` changes, bump its `version`. Story chapters are only ever added, at the end: never remove, rename or reorder one.
+4. **Content is data.** Prefer changing `content/` over code. Generated maps (Stonebrook, the Near Woods, the South Road, the Far Woods, the Burn, the Ridge, the Marsh, the Reservoir, the home's garden, every room) are never edited by hand: change the generator in `tools/`, run `npm run gen`, commit both. When a map, `content/items.json` or `content/story.json` changes, bump its `version`. Story chapters are only ever added, at the end: never remove, rename or reorder one.
 5. **Tests come with changes.** Game rules: unit tests. Server behavior: tests over real WebSockets in `apps/server/test`. Client logic without a browser: `apps/client/test`. Tools: `tools/test`.
 6. **Every screen shape works.** HUD sizes come from the screen's short side (container query units), controls stay in the thumb corners, nothing forces an orientation. Check portrait and landscape.
 7. TypeScript strict, ESM, imports without extensions. Comments explain why, not what. Plain words in UI text and docs.

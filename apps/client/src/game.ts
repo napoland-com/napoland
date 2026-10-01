@@ -63,7 +63,7 @@ import {
   type StoryData, type SurgeView, type TileMap,
   type CallKind, type ChatTo, type Comfort, type ConditionsView, type EffectView, type FlashKind, type FlashView, type LongNightView, type MapNote, type OfferPick, type ParcelView, type RefusedAction,
   type Season, type SeasonView, type StormView, type TileKind, type TradeEnd, type TradeView, type VisitView, type Weather, type LampView, type WorksView,
-  PRINTS_KEPT_MS, PRINTS_PER_MAP, type PrintView,
+  PRINTS_KEPT_MS, PRINTS_PER_MAP, type PrintView, drawdownAt, drained, type DrawdownPhase, type DrawdownView,
 } from '@napoland/shared';
 import { Question, Repeat, noteMs, type Answer, type Ask } from './ask';
 import { BEAM_IN_S, BEAM_OUT_S, padFor, popAt } from './beam';
@@ -211,6 +211,7 @@ function talkersOf(map: TileMap, pass: Pass, items: Items, nameOf: (id: string) 
     if (o.kind === 'console') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', story: { read: o.id } }];
     if (o.kind === 'paper') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk' }];
     if (o.kind === 'cage') return [{ x: o.x, y: o.y, who: 'NAPO tag', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'sister') return [{ x: o.x, y: o.y, who: 'The Sister', lines: o.text, kind: 'talk' }];
     if (o.kind === 'note') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', note: o }];
     // A pole of the north line has its tin tag to read; one with a note nailed to it says that instead.
     if (o.kind === 'pole') {
@@ -253,6 +254,20 @@ export function minutes(seconds: number): string {
   if (seconds < 60) return 'under a minute';
   const m = Math.round(seconds / 60);
   return `${m} minute${m === 1 ? '' : 's'}`;
+}
+
+/** Agnes, the dam keeper, on when the reservoir goes down next, or how long it stays down (`warn`: the rule's warning, in seconds). */
+export function agnesOnTheWater(v: DrawdownView, warn: number): string {
+  if (v.phase === 'full') return v.left < 60 ? 'The water goes down any moment now. Watch the bed.' : `The water goes down in about ${minutes(v.left)}.`;
+  // While it is down, `left` runs to the warning: the water is back that much later.
+  if (v.phase === 'down') return `It's down now. Mind the time: it comes back in ${minutes(v.left + warn)}.`;
+  return `It's coming back now, in ${seconds(v.left)}. Get off the bed.`;
+}
+
+/** "25 seconds", "1 second": counted up, so the last part of a second still counts. */
+export function seconds(s: number): string {
+  const n = Math.ceil(s);
+  return `${n} second${n === 1 ? '' : 's'}`;
 }
 
 /** What floats over your head as stashing earns: "+24 XP", and the part the cup of rest paid, "+24 XP (12 rested)". */
@@ -305,7 +320,9 @@ export type News =
   /** The town came to a milestone or a work of its ledger (town.ts): everyone online reads it; `pop` is how many live in town now. */
   | { kind: 'town'; id: string; pop: number }
   /** Someone told you a scene (story.ts): no banner (the box just told it), a dot on the journal's People. */
-  | { kind: 'scene'; id: string };
+  | { kind: 'scene'; id: string }
+  /** On a map whose lake draws down: the water drew back ('down'), is coming back in `left` seconds ('warn'), or came back over you and carried you ashore ('carried'). */
+  | { kind: 'lake'; phase: 'down' | 'warn' | 'carried'; left: number };
 
 /** No story: a game that was given none (and a copy of the game without content/story.json). */
 const NO_STORY: StoryData = { version: 0, chapters: [] };
@@ -493,6 +510,9 @@ export class Game {
   freshScenes = new Set<string>();
   /** The world's clock (ms since the epoch, as the sky follows it) at our `now`: what follows the wall clock elsewhere (the storms over the wilds). */
   private sky = { now: 0, ms: 0 };
+  /** The phase of the lake on the map you were on at the last update (its news comes when it changes), and which lake news this round already had. */
+  private lake: { map: string; phase: DrawdownPhase } | null = null;
+  private lakeSaid = { round: NaN, said: new Set<string>() };
   /** What waits for the box once someone's lines are done: a swap offered, something to give at the ledger. Each asks, or does nothing when it no longer holds. */
   private queued: Array<() => void> = [];
   /** The chest you opened (its tile) and what your stash holds, while it is open; null otherwise. */
@@ -1407,7 +1427,11 @@ export class Game {
       }
       case 'reject': {
         const p = this.me;
-        if (p) this.snap(p, msg.x, msg.y, msg.dir);
+        if (!p) break;
+        // Moved by the server itself (seq 0, no step of ours) to the shore of a lake that draws down: it filled, and
+        // the water carried you there. Whatever our own clock says (it may be a moment off); a refused step is not that.
+        if (msg.seq === 0 && this.current.data.drawdown && !this.current.bedAt(msg.x, msg.y)) this.sayLake('carried', 0);
+        this.snap(p, msg.x, msg.y, msg.dir);
         break;
       }
       case 'find':
@@ -1713,10 +1737,10 @@ export class Game {
       // What people say comes in one order (storyLines, story.ts): the chapter's hint, what they say once
       // about what you did for the first time, a scene of theirs that opened (in place of the rest), else
       // what they have heard about the day (Mira: what the woods are like today; Walt: the lodge's fire on
-      // the Long Night; the sky), what they say about what you did or the town came to, then what they
+      // the Long Night; Agnes: when the reservoir goes down; the sky), what they say about what you did or the town came to, then what they
       // always say, a few lines a talk (linesInTurn), taken up where the last talk left off. The server
       // hears who you talked to, or what you read.
-      const word = t.id === 'mira' ? this.miraWord() : t.id === 'walt' ? this.waltWord() : null;
+      const word = t.id === 'mira' ? this.miraWord() : t.id === 'walt' ? this.waltWord() : t.id === 'agnes' ? this.agnesWord() : null;
       const person = t.story && 'talk' in t.story ? t.story.talk : undefined, key = t.id ?? `${t.x},${t.y}`;
       const ctx = { ...this.sayContext(), day: word ? [word] : [] };
       const scene = person ? sceneDue(this.story, person, this.stats, ctx) : undefined;
@@ -3003,6 +3027,44 @@ export class Game {
     return this.sky.ms + (this.clock - this.sky.now);
   }
 
+  /** Where this map's lake is in its round now, by the world's clock as the server counts it; null on a map without one. */
+  drawdownNow(): DrawdownView | null {
+    const rule = this.current.data.drawdown;
+    return rule ? drawdownAt(rule, this.skyNow()) : null;
+  }
+
+  /**
+   * The lake here drawn down or full by the clock, as the server has it (TileMap.drain): the bed is walked
+   * on, and paths cross it, only while drained. The water drawing back and the warning are news on this map,
+   * on the turn only (arriving says nothing), once a round.
+   */
+  private followLake() {
+    const v = this.drawdownNow(), id = this.current.data.id;
+    if (!v) { this.lake = null; return; }
+    this.current.drain(drained(v));
+    const was = this.lake;
+    this.lake = { map: id, phase: v.phase };
+    if (was?.map === id && was.phase !== v.phase && v.phase !== 'full') this.sayLake(v.phase, v.left);
+  }
+
+  /** Lake news, unless this round of the lake here had it already. */
+  private sayLake(phase: 'down' | 'warn' | 'carried', left: number) {
+    const rule = this.current.data.drawdown;
+    if (!rule) return;
+    // A round starts as the water draws back, so its fill comes in the middle of it.
+    const round = Math.floor((this.skyNow() / 1000 + (rule.offset ?? 0)) / rule.every);
+    if (round !== this.lakeSaid.round) this.lakeSaid = { round, said: new Set() };
+    if (this.lakeSaid.said.has(phase)) return;
+    this.lakeSaid.said.add(phase);
+    this.news.push({ kind: 'lake', phase, left });
+  }
+
+  /** What Agnes says first: when the reservoir goes down next, or how long it stays down. Nothing without one. */
+  agnesWord(): string | null {
+    const rule = this.current.data.drawdown ?? this.maps.find('reservoir')?.drawdown;
+    return rule ? agnesOnTheWater(drawdownAt(rule, this.skyNow()), rule.warn) : null;
+  }
+
   /** What people's words may follow besides the chapter and the counts (story.ts): your level, what you read, brought home and noted, the town, the sky. */
   sayContext(): SayContext {
     const wall = this.skyNow();
@@ -3194,6 +3256,7 @@ export class Game {
 
   update(dt: number, now: number) {
     this.clock = now;
+    this.followLake();
     this.beamOn(dt, now);
     for (const f of this.floats) f.t += dt;
     this.floats = this.floats.filter(f => f.t < 1.3);

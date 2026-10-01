@@ -13,7 +13,7 @@
  * `cache`, caches.ts), added last in its list so that nothing placed before it ever moves. The notes
  * people left (notes-left.ts) come after even that, each lying on a table, a shelf, a crate or a bed.
  *
- * The outside generators (gen-map.ts, gen-woods.ts, gen-garden.ts) put the exit on each house's door with
+ * The outside generators (gen-map.ts, gen-woods.ts, gen-garden.ts, gen-reservoir.ts...) put the exit on each house's door with
  * doorInto, which fails if the room expects its house somewhere else. This script checks the other
  * direction, so run it after them: each door on the outside maps must lead to its room's way in. Your own
  * house is behind the door of the house in your garden: each player's own copy of both.
@@ -914,6 +914,79 @@ const ROOMS: readonly Room[] = [
       { kind: 'crate', x: 3, y: 1 },
     ],
   },
+  {
+    // The keeper's house at the foot of the dam (gen-reservoir.ts), the Reservoir's one shelter: Agnes Brandt has
+    // kept the dam from here for the Timber Co., and then for nobody, and she keeps the fire going (the region's
+    // safe fire). Her bed, her shelf, NAPO's letter asking for the water down, and on her tables the keeper's
+    // log. A crate for whoever comes next by the fire; her log last of all (notes-left.ts).
+    id: 'reservoir-keepers-house', name: 'The keeper\'s house', version: 1, outside: 'reservoir', door: [4, 19],
+    rows: [
+      'xxxxxxxxx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xpppppppx',
+      'xxxxpxxxx',
+    ],
+    things: [
+      { kind: 'fireplace', x: 4, y: 1, tended: true },
+      { kind: 'bed', x: 1, y: 1 },
+      { kind: 'shelf', x: 7, y: 1 },
+      { kind: 'table', x: 1, y: 3 },
+      { kind: 'table', x: 7, y: 4 },
+      {
+        kind: 'paper', x: 2, y: 3, look: 'note', name: 'A letter from NAPO',
+        text: [
+          'On NAPO\'s paper, to the keeper of the Stonebrook dam: "Draw the reservoir down three metres by the 14th, for a survey of the valley floor. NAPO will meet the cost."',
+          'Across it in pencil, pressed hard: "No. A. Brandt, keeper."',
+          'Under that, smaller, in another hand: "They pay, Ag."',
+        ],
+      },
+      {
+        kind: 'npc', id: 'agnes', name: 'Agnes', x: 6, y: 2, dir: 'down',
+        look: { coat: '#3e4f5c', scarf: '#b9b2a2', hair: '#cfc9c0', skin: '#dcb497' },
+        lines: [
+          'Agnes Brandt. I keep this dam. Kept it for the Timber Co., and when they went, I kept it for nobody.',
+          'The water is mine to keep. That is the whole of the job, and I do it.',
+          'Sit by the fire if you\'re cold. It doesn\'t go out. I see to that.',
+          'The lake goes out by itself now and comes home. Don\'t be on the bed when it does.',
+          'I don\'t go out there. A keeper keeps the water. She doesn\'t walk where it was.',
+          'If you see a fire on the knoll, that\'s my husband. He made his choice.',
+        ],
+      },
+      // A crate for whoever comes next, by the fire (caches.ts). Last, so nothing before it moves.
+      { kind: 'cache', x: 2, y: 1, name: 'the keeper\'s crate' },
+      noteAt('brandts-log-letter', 1, 3),
+      noteAt('brandts-log-night', 7, 1),
+      noteAt('brandts-log-hum', 7, 4),
+    ],
+  },
+  {
+    // The boathouse on the shore at the dam's end, Jon Brandt's: the boat and the sluice were his. Its door
+    // opens onto the dam; from Jon's knoll in the lake, at high water, he rows you across into it (the knoll's
+    // landing, gen-reservoir.ts). No fire: dark and cold. His sluice book, and an old slate of his.
+    id: 'reservoir-boathouse', name: 'The boathouse', version: 1, outside: 'reservoir', door: [13, 7],
+    rows: [
+      'xxxxxxx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xxxpxxx',
+    ],
+    things: [
+      { kind: 'shelf', x: 1, y: 1 },
+      { kind: 'crate', x: 5, y: 1 },
+      { kind: 'barrel', x: 5, y: 3 },
+      {
+        kind: 'paper', x: 3, y: 1, look: 'note', name: 'The sluice book',
+        text: [
+          'Jon Brandt\'s sluice book: forty years of openings, a line each. One turn, two turns, never more.',
+          'The last line is the week before the answer, at two in the morning: "9 turns." No name after it.',
+        ],
+      },
+      noteAt('brandts-slate-sluice', 1, 1),
+    ],
+  },
 ];
 
 /** The way out: the middle of the bottom wall. You come in on the tile above it. */
@@ -1042,13 +1115,15 @@ if (import.meta.main) {
   // The other direction of doorInto: the door on the outside map must lead to the room's way in. It is
   // written by the outside map's generator, so after changing a room's size, run that one again too.
   const GENERATOR: Record<string, string> = {
-    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', burn: 'npm run gen:burn', ridge: 'npm run gen:ridge', marsh: 'npm run gen:marsh', 'home-garden': 'npm run gen:garden',
+    stonebrook: 'npm run gen:map', 'near-woods': 'npm run gen:woods', 'south-road': 'npm run gen:south', 'far-woods': 'npm run gen:far-woods', burn: 'npm run gen:burn', ridge: 'npm run gen:ridge', marsh: 'npm run gen:marsh', reservoir: 'npm run gen:reservoir', 'home-garden': 'npm run gen:garden',
   };
   for (const room of ROOMS) {
     const outside = JSON.parse(readFileSync(resolve(import.meta.dirname, `../content/maps/${room.outside}.json`), 'utf8')) as MapData;
     const doors = outside.exits.filter(e => e.to === room.id), way = wayOut(room);
     const first = doors[0], inside = doors.every(e => e.tx === way.x && e.ty === way.y - 1);
-    if (first?.x === room.door[0] && first.y === room.door[1] && inside && doors.length === 1) continue;
+    // One door, on the house, listed first; another way in (the boat from Jon's knoll, gen-reservoir.ts) comes into the same way in.
+    const onDoor = doors.filter(e => e.x === room.door[0] && e.y === room.door[1]).length;
+    if (first?.x === room.door[0] && first.y === room.door[1] && inside && onDoor === 1) continue;
     console.log(`error: ${room.outside}.json has no door at ${room.door.join(',')} into ${room.id}'s way in (${way.x},${way.y - 1}): run ${GENERATOR[room.outside] ?? `the generator of ${room.outside}`} again`);
     failed = true;
   }

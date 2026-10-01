@@ -53,6 +53,11 @@ export const STORM_DRAIN = 1.5;
 export const STORM_CHILL = 1.5;
 /** A flash discharging where you stand drains this many times faster; heat (fire) or electricity (spark) cuts the extra. */
 export const FLASH_DRAIN = 6;
+/**
+ * Caught on a lakebed as the water comes back (MapData.drawdown): this much energy at once, on top of being
+ * soaked through. Enough to hurt a late crossing, not enough on its own to end a trip.
+ */
+export const FLOOD_ENERGY = 8;
 
 /** The most a fire out there holds: this many seconds of burning. */
 export const FIRE_MAX_S = 30 * 60;
