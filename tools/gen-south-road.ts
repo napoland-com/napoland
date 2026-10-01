@@ -537,7 +537,7 @@ writeFileSync(out, json);
 const ORDER = '*A!HFCK@kvibBnLc#-T^o~=",_. ';
 const pick = (a: string, b: string) => (ORDER.indexOf(a) <= ORDER.indexOf(b) ? a : b);
 const GLYPH: Record<MapObject['kind'], string> = {
-  lamp: '*', antenna: 'A', sign: '!', board: '!', console: 'k', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', sister: 'S', pole: 'i', barrel: 'b',
+  lamp: '*', antenna: 'A', sign: '!', board: '!', console: 'k', chest: 'c', workbench: 'n', house: 'H', car: 'C', npc: '@', stone: 'S', sister: 'S', boat: 'u', pole: 'i', barrel: 'b',
   fence: '-', tree: 'T', rock: 'o', shrooms: ',', fireplace: 'F', bed: 'B', table: 'n', shelf: 'L', crate: 'c', rug: '_', woodpile: 'b', cache: 'c',
   // What the leavers left at the jam, and NAPO in its motor pool and at the field site.
   luggage: 'b', truck: 'K', pump: 'i', cage: '#',

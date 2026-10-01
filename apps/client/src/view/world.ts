@@ -19,7 +19,7 @@
  */
 import * as THREE from 'three';
 import {
-  BEAM_HALF, BEAM_REACH, DIR_VEC, LAMP, LANTERN_REACH, PRINTS_PER_MAP, beamAngle, builtIn, dirToward, hidden, poleTag, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
+  BEAM_HALF, BEAM_REACH, DIR_VEC, LAMP, LANTERN_REACH, PRINTS_PER_MAP, beamAngle, builtIn, dirToward, hidden, objectTiles, poleTag, watery, type Comfort, type Dir, type DropView, type FindView, type FlashView, type ItemDef, type MapData, type MapObject, type MarkView, type Pass, type Season, type TileKind,
   type TileMap, type Weather,
 } from '@napoland/shared';
 import { comfortModel, comfortShadow, lampLight } from './cabin';
@@ -196,8 +196,8 @@ const WADE_DROP = 0.3;
  * gets there at DRAIN_RATE a second, and what stands on the bed shows once it is under SHOW_Y.
  */
 const BED_Y = -0.18, DRAINED_WATER_Y = -0.28, DRAIN_RATE = 0.06, SHOW_Y = -0.15;
-/** Wet silt, and the puddles left on it (about one tile in five). */
-const SILT = new THREE.Color('#3a3128'), PUDDLE = new THREE.Color('#33454c');
+/** Wet silt. */
+const SILT = new THREE.Color('#3a3128');
 /**
  * Up a lookout the view reaches three times as far, and draws what lies far from you more cheaply (the
  * far look): the tree blocks whose middle is farther than this from where you stand up there keep only
@@ -561,7 +561,9 @@ export class WorldView {
     this.buildTown(still);
     this.buildRoom(still);
     // What stands on a lakebed that draws down sits down on the bed, and is baked apart: it shows only while the water is down.
-    const sunk = map.hasBed ? still.filter(o => map.bedAt(Math.floor(o.position.x), Math.floor(o.position.z))) : [];
+    // A map object's model says its tiles (buildRoom): wide ones, the farm's ruins and log decks, are built about the origin.
+    const tilesOf = (o: THREE.Object3D): Array<[number, number]> => o.userData.tiles ?? [[Math.floor(o.position.x), Math.floor(o.position.z)]];
+    const sunk = map.hasBed ? still.filter(o => tilesOf(o).some(([x, y]) => map.bedAt(x, y))) : [];
     for (const o of sunk) o.position.y += BED_Y;
     for (const m of bake(sunk.length ? still.filter(o => !sunk.includes(o)) : still)) this.scene.add(m);
     for (const m of bake(sunk)) this.bedRoot.add(m);
@@ -678,16 +680,13 @@ export class WorldView {
         ground.iceColor(tx + 1, ty + 1, tx, ty, corner[2]);
         ground.iceColor(tx + 1, ty, tx, ty, corner[3]);
       } else {
-        // A lakebed that draws down is wet silt, with puddles left on it; the water over it, while full, hides it.
+        // A lakebed that draws down is wet silt (its puddles are pools of the water, buildTerrain); the water over it, while full, hides it.
         const bed = map.bedAt(tx, ty), as = bed ? 'mud' : kind;
         ground.color(as, tx, ty, tx, ty, raised, corner[0]);
         ground.color(as, tx, ty + 1, tx, ty, raised, corner[1]);
         ground.color(as, tx + 1, ty + 1, tx, ty, raised, corner[2]);
         ground.color(as, tx + 1, ty, tx, ty, raised, corner[3]);
-        if (bed) {
-          const puddle = hash2(tx * 3 + 1, ty * 5 + 2) < 0.2;
-          for (const c of corner) c.lerp(puddle ? PUDDLE : SILT, puddle ? 0.75 : 0.5);
-        }
+        if (bed) for (const c of corner) c.lerp(SILT, 0.5);
       }
       if (toward) for (const c of corner) c.lerp(toward, fade);
       quad([tx, y0, ty], [tx, y0, ty + 1], [tx + 1, y0, ty + 1], [tx + 1, y0, ty], corner[0], corner[1], corner[2], corner[3]);
@@ -753,6 +752,16 @@ export class WorldView {
       const wg = new THREE.PlaneGeometry(x1 - x0 + 2.2, y1 - y0 + 2.2, 16, 10).rotateX(-Math.PI / 2);
       const water = (this.water = part(wg, ownToon('#1d3a48', { transparent: true, opacity: 0.9 }), (x0 + x1 + 1) / 2, WATER_Y, (y0 + y1 + 1) / 2, false));
       this.scene.add(water);
+      // The puddles the water leaves on its bed (about one tile in five): round pools of it, of a size and
+      // a place in their tile each, shown with the bed.
+      const pools: Array<[number, number]> = [];
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (map.bedAt(x, y) && hash2(x * 3 + 1, y * 5 + 2) < 0.2) pools.push([x, y]);
+      if (pools.length) this.bedRoot.add(this.instanced(new THREE.CircleGeometry(1, 12).rotateX(-Math.PI / 2), pools, ([x, y], o) => {
+        const a = hash2(x * 7 + 2, y * 3 + 1), b = hash2(x * 5 + 3, y * 11 + 4), r = 0.2 + 0.24 * a;
+        o.position.set(x + 0.5 + (b - 0.5) * 0.3, BED_Y + 0.008, y + 0.5 + (a - 0.5) * 0.3);
+        o.rotation.y = b * Math.PI;
+        o.scale.set(r * (1.1 + 0.3 * b), 1, r * (0.9 - 0.2 * b));
+      }, water.material as THREE.Material));
       const wpos = wg.attributes.position as THREE.BufferAttribute;
       let last = 0;
       this.animate.push(t => {
@@ -1345,7 +1354,7 @@ export class WorldView {
         : o.kind === 'bridge' ? bridgeModel(o, bridgeRails(o, (x, y) => bridges.has(`${x},${y}`)))
         : o.kind === 'note' ? noteModel(o, map)
         : furnitureModel(o, map) ?? leftModel(o) ?? napoProp(o);
-      if (m) still.push(m);
+      if (m) { m.userData.tiles = objectTiles(o); still.push(m); }
     }
     // NAPO's teleports: the rock over each arch floats, turning slowly, over a glow that breathes, and a ring of
     // light spreads from the middle of the plate to its rim, fading, every two seconds.
@@ -1380,7 +1389,11 @@ export class WorldView {
       this.animate.push(t => fires.update(t, this.fireLevels));
     }
     const comfortShadows = this.objects('comfort').flatMap(o => { const s = comfortShadow(o); return s ? [s] : []; });
-    this.instanced(this.shadowGeo, [...furnitureShadows(map), ...comfortShadows], ([x, z, rx, rz], o) => { o.position.set(x, BLOB_Y, z); o.scale.set(rx, 1, rz); }, this.shadowMat);
+    // Shadows of what stands on a lakebed lie on the bed, shown with it.
+    const shadows = [...furnitureShadows(map), ...comfortShadows], onBed = ([x, z]: readonly number[]) => map.bedAt(Math.floor(x!), Math.floor(z!));
+    this.instanced(this.shadowGeo, shadows.filter(s => !onBed(s)), ([x, z, rx, rz], o) => { o.position.set(x, BLOB_Y, z); o.scale.set(rx, 1, rz); }, this.shadowMat);
+    const sunk = shadows.filter(onBed);
+    if (sunk.length) this.bedRoot.add(this.instanced(this.shadowGeo, sunk, ([x, z, rx, rz], o) => { o.position.set(x, BED_Y + BLOB_Y, z); o.scale.set(rx, 1, rz); }, this.shadowMat));
     if (this.outdoors) return;
     const light: Array<readonly [number, number, number, number]> = [];
     // The house of people who left has its curtains drawn inside too, in the same cloth as from the street.

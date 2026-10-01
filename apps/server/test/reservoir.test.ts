@@ -58,6 +58,21 @@ describe('a lake that draws down', () => {
     expect(low.get('a')).toMatchObject({ x: 1, y: 1 });
   });
 
+  it('keeps what lies on its bed unread while it is under water', () => {
+    // A slate on a drowned table at 2,1, read from the shore at 2,0.
+    const slate = (wall: number) => {
+      const m = lake();
+      m.objects = [{ kind: 'table', x: 2, y: 1 }, { kind: 'note', x: 2, y: 1, id: 'slate', by: 'brandts', name: 'A slate', text: ['Chalk.'] }];
+      const w = new World([...fixtureMaps(), new TileMap(m)], 'town', 'overcast', { items: ITEMS, notebook: NOTEBOOK, epochOffset: wall, rng: () => 0.99 });
+      w.join(rec('a', 2, 0), 0);
+      w.drain();
+      w.talk('a', 2, 1, 1000);
+      return of(to(w.drain(), 'a'), 'noteRead');
+    };
+    expect(slate(T + FULL)).toEqual([]);
+    expect(slate(T)).toEqual([{ t: 'noteRead', id: 'slate' }]);
+  });
+
   it('puts standing on the bed in the field notes', () => {
     const w = world(T);
     w.join(rec('a', 3, 1), 0);

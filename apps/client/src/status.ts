@@ -261,7 +261,7 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
   }
   if (n.kind === 'lake') {
     if (n.phase === 'down') return { title: 'The water is drawing back', sub: 'You can walk on the lakebed\nuntil it comes back.' };
-    if (n.phase === 'warn') return { title: 'The water is coming back', sub: `${seconds(n.left)} left.\nGet off the lakebed.` };
+    if (n.phase === 'warn') return { title: 'The water is coming back', sub: `${seconds(n.left)} left.${n.onBed ? '\nGet off the lakebed.' : ''}` };
     return { title: 'The water carried you ashore', sub: 'You are soaked.' };
   }
   if (n.kind === 'stone') {

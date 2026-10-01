@@ -66,7 +66,7 @@ const way = new Uint8Array(W * H);
 /** A trail of trodden mud through the waypoints, one tile wide, never on water or the dam's crest. */
 function trail(pts: P[]) {
   for (const [x, y] of pts.slice(1).flatMap((p, i) => line4(pts[i]!, p))) {
-    if (!inner(x, y) || at(x, y) === 'w' || at(x, y) === 'r') continue;
+    if (!inner(x, y) || at(x, y) === 'w' || at(x, y) === 'l') continue;
     set(x, y, 'm');
     way[y * W + x] = 1;
   }
@@ -80,7 +80,7 @@ ellipse(5.5, 23.5, 5.4, 9.6, (x, y) => set(x, y, 'g'));
 tile[EXIT.y]![EXIT.x] = 'm';
 /** The dam: its crest is two tiles across, from the woods on one side of the valley to the woods on the other. */
 const DAM = { x: 10, top: 8, bottom: 35 } as const;
-for (let y = DAM.top; y <= DAM.bottom; y++) for (let x = DAM.x; x < DAM.x + 2; x++) set(x, y, 'r');
+for (let y = DAM.top; y <= DAM.bottom; y++) for (let x = DAM.x; x < DAM.x + 2; x++) set(x, y, 'l');
 const SPILLWAY_Y = 29;
 
 // The lake behind it: wide against the dam, then the old valley, rounding off where the brook came down.
@@ -212,13 +212,20 @@ const boathouse = { kind: 'house', x: BOATHOUSE.x, y: BOATHOUSE.y, w: 3, h: 2, r
 place(boathouse); // any shore it walls off behind it goes back to forest below
 const doors = [doorInto('reservoir-keepers-house', 'reservoir', keepers), doorInto('reservoir-boathouse', 'reservoir', boathouse)];
 [KEEPER.x + 3, KEEPER.x - 1].some(x => tryPlace({ kind: 'woodpile', x, y: KEEPER.y + 1 }));
+// The railing along the dam's downstream side, so the crest reads as a dam and not a road by the lake: open
+// where the way home comes up onto it and beside the keeper's house; the woods and the brook close the rest.
+const RAIL_GAPS = new Set([ENTRY[1], KEEPER.y + 1]);
+for (let y = DAM.top; y <= DAM.bottom; y++) {
+  const c = at(DAM.x - 1, y);
+  if (c !== 't' && c !== 'w' && !RAIL_GAPS.has(y)) must({ kind: 'fence', x: DAM.x - 1, y, dir: 'v' });
+}
 
 /** A sign near `p`: the nearest open ground off the ways with room in front of it to read it from, cutting nobody off. */
 const signs: Array<{ x: number; y: number }> = [];
 function signNear(p: P, text: string[]) {
   const spots: Array<[number, number, number]> = [];
   for (let y = p[1] - 3; y <= p[1] + 3; y++) for (let x = p[0] - 3; x <= p[0] + 3; x++) {
-    if (walkable(x, y, false) && !way[y * W + x] && at(x, y) !== 'r' && walkable(x, y + 1, false) && !signs.some(s => Math.abs(s.x - x) + Math.abs(s.y - y) < 2)) spots.push([Math.hypot(x - p[0], y - p[1]), x, y]);
+    if (walkable(x, y, false) && !way[y * W + x] && at(x, y) !== 'l' && walkable(x, y + 1, false) && !signs.some(s => Math.abs(s.x - x) + Math.abs(s.y - y) < 2)) spots.push([Math.hypot(x - p[0], y - p[1]), x, y]);
   }
   spots.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
   const spot = spots.find(([, x, y]) => tryPlace({ kind: 'sign', x, y, text }));
@@ -318,7 +325,7 @@ const keepOpen = new Set<number>([(KEEPER.y + 2) * W + KEEPER.x + 1, (BOATHOUSE.
 for (const s of signs) keepOpen.add((s.y + 1) * W + s.x);
 function open(x: number, y: number): boolean {
   if (!walkable(x, y, false) || way[y * W + x] || keepOpen.has(y * W + x) || isKnoll(x, y) || at(x, y) !== 'g') return false;
-  for (let yy = y - 1; yy <= y + 1; yy++) for (let xx = x - 1; xx <= x + 1; xx++) if (blocked[yy * W + xx] || at(xx, yy) === 'w' || at(xx, yy) === 'r') return false;
+  for (let yy = y - 1; yy <= y + 1; yy++) for (let xx = x - 1; xx <= x + 1; xx++) if (blocked[yy * W + xx] || at(xx, yy) === 'w' || at(xx, yy) === 'l') return false;
   return true;
 }
 for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
@@ -331,7 +338,7 @@ for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
 // ---- Jon's camp on the knoll ----
 
 // His fire in the open, which he keeps (the region's other safe fire), Jon beside it looking out at the Sister,
-// his boat upturned under a canvas, a crate (his slate on it), and the landing where he rows you across to the
+// his boat upturned on the grass, a crate (his slate on it), and the landing where he rows you across to the
 // boathouse at high water: the knoll's way off when the water is up (an exit, so nobody is stranded there).
 const FIRE = { x: Math.floor(KNOLL.x), y: KNOLL_MID } as const;
 const camp: Array<[MapObject, P]> = [
@@ -343,7 +350,7 @@ const camp: Array<[MapObject, P]> = [
     'When the water\'s up, step down to the landing and I\'ll row you over to the boathouse. Only away from here, mind. Never to it.',
     'Agnes? She\'s at the dam. She keeps the water. Don\'t tell her anything. Or do. I don\'t know.',
   ] }, [1, -1]],
-  [{ kind: 'sheeted', x: FIRE.x - 1, y: FIRE.y + 1 }, [-1, 1]],
+  [{ kind: 'boat', x: FIRE.x - 1, y: FIRE.y + 1 }, [-1, 1]],
   [{ kind: 'crate', x: FIRE.x - 1, y: FIRE.y - 1 }, [-1, -1]],
 ];
 for (const [o] of camp) {
@@ -408,7 +415,7 @@ const DRAWDOWN: Drawdown = { name: 'the reservoir', every: 1200, down: 300, warn
 // ---- Output ----
 
 const map: MapData = {
-  id: 'reservoir', name: 'The Reservoir', version: 1, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'reservoir', name: 'The Reservoir', version: 2, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: tile.map(r => '0'.repeat(r.length)),
   spawn: { x: ENTRY[0] + 1, y: ENTRY[1], dir: 'right' },
@@ -447,9 +454,9 @@ writeFileSync(out, json);
 
 // A glance at the result, two map rows per line (a terminal character is about twice as tall as wide).
 const GLYPH: Partial<Record<MapObject['kind'], string>> = {
-  sign: '!', house: 'H', tree: 'T', rock: 'o', woodpile: 'b', stump: 'x', fence: '-', ruin: 'R', table: 'n', car: 'C', sister: 'S', fireplace: 'F', npc: '@', sheeted: 'u', crate: 'c', barrel: 'c', cache: 'c', note: '?',
+  sign: '!', house: 'H', tree: 'T', rock: 'o', woodpile: 'b', stump: 'x', fence: '-', ruin: 'R', table: 'n', car: 'C', sister: 'S', fireplace: 'F', npc: '@', boat: 'u', crate: 'c', barrel: 'c', cache: 'c', note: '?',
 };
-const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', m: '.', g: '.', r: '#' };
+const TILE_GLYPH: Record<string, string> = { t: ' ', w: '~', m: '.', g: '.', l: '#' };
 const objGlyph = new Map<number, string>();
 for (const o of objects) if (o.kind !== 'note') for (const [x, y] of objectTiles(o)) objGlyph.set(y * W + x, GLYPH[o.kind] ?? '?');
 const glyph = (x: number, y: number) => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TileMap, type MapData, type PlayerView } from '@napoland/shared';
+import { TileMap, type ClientMsg, type MapData, type PlayerView } from '@napoland/shared';
 import { Game, agnesOnTheWater, type News } from '../src/game';
 import { Maps } from '../src/maps';
 import { newsBanner } from '../src/status';
@@ -29,8 +29,8 @@ const me = (x: number, y: number, dir: PlayerView['dir']): PlayerView => ({ id: 
 const maps = () => new Maps([tinyTown(), tinyWoods(), reservoir()]);
 
 /** A game standing at x,y on `map`, welcomed at our 1000 ms with the world's clock at `clock` (so at our 1000 + t the lake's clock reads clock + t). */
-function at(map: MapData, x: number, y: number, dir: PlayerView['dir'], clock: number): Game {
-  const g = new Game(maps(), () => {}, ITEMS, storyData());
+function at(map: MapData, x: number, y: number, dir: PlayerView['dir'], clock: number, sent: ClientMsg[] = []): Game {
+  const g = new Game(maps(), m => sent.push(m), ITEMS, storyData());
   g.handle(welcome(map, [me(x, y, dir)], undefined, { clock, story: { version: storyData().version, chapter: 'home' } }), 1000);
   g.update(0, 1000);
   return g;
@@ -72,9 +72,18 @@ describe('a lake that draws down, in the game', () => {
     g.update(0, 1000 + 686_000);
     const warn = lakeNews(g, 0);
     expect(warn).toEqual([{ kind: 'lake', phase: 'warn', left: 25 }]);
-    expect(newsBanner(warn[0]!, 'The Reservoir')).toEqual({ title: 'The water is coming back', sub: '25 seconds left.\nGet off the lakebed.' });
+    // On the shore it only says how long.
+    expect(newsBanner(warn[0]!, 'The Reservoir')).toEqual({ title: 'The water is coming back', sub: '25 seconds left.' });
     g.update(0, 1000 + 720_000); // full again: no word of that
     expect(lakeNews(g, 0)).toEqual([]);
+  });
+
+  it('tells whoever stands on the bed as the water comes back to get off it', () => {
+    const g = at(reservoir(), 2, 2, 'up', 0); // down, on the bed
+    g.update(0, 1000 + 95_000); // warn, 25 s left
+    const warn = lakeNews(g, 0);
+    expect(warn).toEqual([{ kind: 'lake', phase: 'warn', left: 25, onBed: true }]);
+    expect(newsBanner(warn[0]!, 'The Reservoir')).toEqual({ title: 'The water is coming back', sub: '25 seconds left.\nGet off the lakebed.' });
   });
 
   it('says nothing of it on another map', () => {
@@ -113,6 +122,21 @@ describe('a lake that draws down, in the game', () => {
     const g = at(reservoir(), 2, 2, 'up', 0);
     expect(read(g)).toEqual({ who: 'The Sister', lines: ['Two stood here before the water.'] });
   });
+
+  it('reads nothing on the bed while the water is over it, by A or by a tap, and tells the server nothing', () => {
+    // From the shore at 1,1, facing the Sister at 2,1.
+    const sent: ClientMsg[] = [];
+    const g = at(reservoir(), 1, 1, 'right', 200_000, sent);
+    expect(read(g)).toBeFalsy();
+    g.tapTile(2, 1);
+    for (let t = 1000; t < 4000; t += 50) g.update(0.05, t);
+    expect(g.dialog).toBeFalsy();
+    expect(sent.filter(m => m.t === 'talk')).toEqual([]);
+    // Drawn down, she is read from the same place.
+    const low = at(reservoir(), 1, 1, 'right', 0, sent);
+    expect(read(low)).toEqual({ who: 'The Sister', lines: ['Two stood here before the water.'] });
+    expect(sent.filter(m => m.t === 'talk')).toEqual([{ t: 'talk', x: 2, y: 1 }]);
+  });
 });
 
 describe('a lake that draws down, drawn', () => {
@@ -136,5 +160,34 @@ describe('a lake that draws down, drawn', () => {
     view.setDrained(false);
     expect(triangles()).toBe(full);
     view.dispose();
+  });
+
+  it('keeps what is built about its own tiles (ruins, log decks) and the shadows of what stands there under the full lake, and shows them on the bed', () => {
+    const drawn = (data: MapData) => {
+      const { renderer } = fakeRenderer();
+      const view = new WorldView(renderer, new TileMap(data));
+      view.resize(390, 844);
+      let t = 100;
+      const triangles = (on: boolean) => {
+        view.setDrained(on);
+        for (let i = 0; i < 40; i++) view.render((t += 0.1), 0.1, { x: 2, y: 3 }, [], null, null);
+        return renderer.info.render.triangles;
+      };
+      const out = { full: triangles(false), down: triangles(true) };
+      view.dispose();
+      return out;
+    };
+    const bare = drawn(reservoir());
+    for (const thing of [{ kind: 'ruin', x: 2, y: 1, w: 1, h: 2 }, { kind: 'logs', x: 2, y: 1, w: 1, h: 2 }, { kind: 'table', x: 2, y: 2 }] as const) {
+      const data = reservoir();
+      data.objects.push(thing);
+      const it = drawn(data);
+      expect(it.full, thing.kind).toBe(bare.full);
+      expect(it.down, thing.kind).toBeGreaterThan(bare.down);
+    }
+    // Jon's boat, upturned on the shore, stands whatever the water does.
+    const shore = reservoir();
+    shore.objects.push({ kind: 'boat', x: 3, y: 3 });
+    expect(drawn(shore).full).toBeGreaterThan(bare.full);
   });
 });

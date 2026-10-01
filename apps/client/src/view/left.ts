@@ -337,6 +337,27 @@ export function bikeModel(o: { x: number; y: number }): THREE.Group {
   return g;
 }
 
+/**
+ * A wooden rowing boat pulled up and turned over: its hull a low dome along x, about two tiles long over
+ * the one it stands on, on a pair of chocks, with its keel along the top, a stem post at each end and a
+ * band of faded paint along the gunwale. An oar lies beside it.
+ */
+export function boatModel(o: { x: number; y: number }): THREE.Group {
+  const g = pivot(o.x + 0.5, 0, o.y + 0.5), v = hash2(o.x * 5 + 1, o.y * 9 + 2);
+  g.rotation.y = (v - 0.5) * 0.4;
+  const wood = '#6e5c47', dark = '#43352a', paint = v < 0.5 ? '#4f6a6c' : '#7a4334', y0 = 0.07;
+  for (const x of [-0.45, 0.45]) g.add(box(0.12, 0.08, 0.62, dark, x, 0.04, 0, false));
+  // The paint is a lower, wider copy of the hull: it shows only as a band along the gunwale.
+  g.add(part(flat(new THREE.SphereGeometry(1, 12, 5, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.84, 0.3, 0.34)), wood, 0, y0, 0, 0.022));
+  g.add(part(flat(new THREE.SphereGeometry(1, 12, 3, 0, Math.PI * 2, 0, Math.PI / 2).scale(0.86, 0.11, 0.355)), paint, 0, y0, 0, false));
+  g.add(box(1.5, 0.05, 0.05, dark, 0, y0 + 0.31, 0, false));
+  for (const s of [-1, 1]) g.add(box(0.05, 0.2, 0.06, dark, s * 0.82, y0 + 0.08, 0, false));
+  const oar = box(1.3, 0.025, 0.06, wood, 0.05, 0.015, 0.48, false);
+  oar.rotation.y = 0.12;
+  g.add(oar, box(0.3, 0.03, 0.14, wood, 0.66, 0.017, 0.4, false));
+  return g;
+}
+
 /** An empty brass birdcage on a carton, its little door open. */
 export function birdcageModel(o: { x: number; y: number }): THREE.Group {
   const g = pivot(o.x + 0.5, 0, o.y + 0.5);
@@ -804,6 +825,7 @@ export function leftModel(o: MapObject): THREE.Object3D | null {
     case 'piano': return pianoModel(o);
     case 'bike': return bikeModel(o);
     case 'birdcage': return birdcageModel(o);
+    case 'boat': return boatModel(o);
     default: return null;
   }
 }
