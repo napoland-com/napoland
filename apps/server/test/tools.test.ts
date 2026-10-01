@@ -21,7 +21,7 @@ const maps = () => [...fixtureMaps().filter(m => m.data.id !== 'house'), house()
 
 const tool = (id: string, name: string): ItemDef => ({ id, name, kind: 'tool', stack: 1, icon: 'map', text: 'Yours for good.' });
 /**
- * Nails to pay with, moss by the campfire, the three starter maps, and a radio (a tool made up for the
+ * Nails to pay with, moss by the campfire, the four starter maps, and a radio (a tool made up for the
  * tests): made at the workbench from two nails, and lying on one tile of the woods, 5,5, where it grows
  * back 10 to 20 s after someone takes it.
  */
@@ -31,6 +31,7 @@ const ITEMS: ItemsData = {
     { id: 'nail', name: 'Nail', kind: 'resource', stack: 5, text: 'Bent, but it will do.' },
     { id: 'moss', name: 'Moss', kind: 'resource', stack: 3, text: 'Soft and damp.' },
     tool('stonebrook-map', 'Map of Stonebrook'), tool('near-woods-map', 'Map of the Near Woods'), tool('south-road-map', 'Map of the South Road'),
+    tool('reservoir-map', 'Map of the Reservoir'),
     tool('radio', 'Radio'),
   ],
   finds: [
@@ -78,11 +79,22 @@ describe('the tools a player owns', () => {
 
   it('are the saved list otherwise, in the order they came; ids that are no tool here stay in the save, and what is no list was never set', () => {
     const w = world();
-    expect(w.join(rec('a', 'town', 1, 2, { tools: ['radio', 'near-woods-map', 'bolt-cutters', 'radio'] }), 0).tools).toEqual(['radio', 'near-woods-map']);
-    // A newer release's tool (one rolled back) is kept for when it is back.
-    expect(w.get('a')!.tools).toEqual(['radio', 'near-woods-map', 'bolt-cutters']);
+    expect(w.join(rec('a', 'town', 1, 2, { tools: ['radio', 'near-woods-map', 'bolt-cutters', 'radio'] }), 0).tools).toEqual(['radio', 'near-woods-map', 'stonebrook-map', 'south-road-map', 'reservoir-map']);
+    // A newer release's tool (one rolled back) is kept for when it is back; the starter tools it lacked come after.
+    expect(w.get('a')!.tools).toEqual(['radio', 'near-woods-map', 'bolt-cutters', 'stonebrook-map', 'south-road-map', 'reservoir-map']);
     expect(w.join(rec('b', 'town', 1, 2, { tools: { radio: true } as never }), 0).tools).toEqual([...STARTER_TOOLS]);
     expect(w.get('b')!.tools).toBeUndefined();
+  });
+
+  it('gain every starter tool the saved list lacks at join, after it, since tools are never lost (a starter map added later)', () => {
+    const w = world();
+    expect(w.join(rec('a', 'town', 1, 2, { tools: ['stonebrook-map', 'near-woods-map', 'south-road-map', 'radio'] }), 0).tools)
+      .toEqual(['stonebrook-map', 'near-woods-map', 'south-road-map', 'radio', 'reservoir-map']);
+    expect(w.get('a')!.tools).toEqual(['stonebrook-map', 'near-woods-map', 'south-road-map', 'radio', 'reservoir-map']);
+    // One who never got a tool of their own carries the starter tools without a list written for them.
+    expect(w.join(rec('b', 'town', 1, 2), 0).tools).toEqual([...STARTER_TOOLS]);
+    expect(w.get('b')!.tools).toBeUndefined();
+    expect(w.takeWrites().players.filter(p => p.id === 'b')).toEqual([]);
   });
 
   it('come through giveTool, only to someone online, only a tool and only once: the list heard and saved at once', () => {
@@ -187,7 +199,7 @@ describe('a tool lying out there', () => {
     expect(to(out, 'a')).toEqual([{ t: 'refused', action: 'pick', reason: 'have_tool' }]);
     expect(onMap(out, 'woods')).toEqual([]);
     expect(radioIn(w)).toEqual(radio);
-    expect(w.get('a')).toMatchObject({ bag: [], tools: ['radio'] });
+    expect(w.get('a')).toMatchObject({ bag: [], tools: ['radio', ...STARTER_TOOLS] });
     w.pick('b', 5, 5, 1000);
     expect(onMap(w.drain(), 'woods')).toEqual([{ t: 'findGone', id: radio.id }]);
   });
@@ -246,7 +258,7 @@ describe('tools over WebSockets', () => {
     const before = await enter({ map: 'town', x: 1, y: 2 });
     expect(before.welcome.tools).toEqual([...STARTER_TOOLS]);
     const own = await enter({ map: 'town', x: 0, y: 5, tools: ['radio', 'near-woods-map'] });
-    expect(own.welcome.tools).toEqual(['radio', 'near-woods-map']);
+    expect(own.welcome.tools).toEqual(['radio', 'near-woods-map', 'stonebrook-map', 'south-road-map', 'reservoir-map']);
   });
 
   it('gives a tool picked up for good: heard, saved at once, not in the bag, and there after coming back', async () => {

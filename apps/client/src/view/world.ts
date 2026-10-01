@@ -41,7 +41,7 @@ import { SNOW, ambience, assignBeams, assignLights, lightSources, onSnow, underO
 import { Loot, lootGlow } from './loot';
 import { poleLean } from './lean';
 import { HUM, TELEPORT_RINGS, TELEPORT_ROCK_Y, napoBuilding, napoProp, napoSign, teleportCore, towerModel, type TeleportCore } from './napo';
-import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, riseTexture, softTexture, toon } from './toon';
+import { OUTLINE_INSTANCED, bake, box, disposeTree, flat, glowQuads, hash2, keepPrograms, merge, mulberry32, ownToon, part, pivot, riseTexture, softTexture, toon } from './toon';
 import { beamPose, type BeamPose } from '../beam';
 import { farGlow, farLights, placeFar, upness, type FarLight } from '../lookout';
 
@@ -190,6 +190,14 @@ const SLUMP_LEAN = 1.35, SLUMP_LIFT = 0.1, SLUMP_BACK = 0.42, SLUMP_ROLL = 0.22,
 /** The water's surface (the pond's, the creek's and the culvert's), and how deep someone wading the culvert sinks into it. */
 const WATER_Y = -0.1;
 const WADE_DROP = 0.3;
+/**
+ * A lake that draws down (MapData.drawdown): its bed lies this deep, under the water while it is full. Drawn
+ * down, the water sinks to DRAINED_WATER_Y, under the bed and over the bottom of the water that stays; it
+ * gets there at DRAIN_RATE a second, and what stands on the bed shows once it is under SHOW_Y.
+ */
+const BED_Y = -0.18, DRAINED_WATER_Y = -0.28, DRAIN_RATE = 0.06, SHOW_Y = -0.15;
+/** Wet silt, and the puddles left on it (about one tile in five). */
+const SILT = new THREE.Color('#3a3128'), PUDDLE = new THREE.Color('#33454c');
 /**
  * Up a lookout the view reaches three times as far, and draws what lies far from you more cheaply (the
  * far look): the tree blocks whose middle is farther than this from where you stand up there keep only
@@ -356,6 +364,11 @@ export class WorldView {
   /** How this place looks in the current weather (lighting.ts). */
   private amb: Ambience;
   private readonly pitch = THREE.MathUtils.degToRad(62);
+  /** What stands on the bed of a lake that draws down (the Sister, stumps, what the water took): shown only once the water is down past it. */
+  private readonly bedRoot = new THREE.Group();
+  /** The water's surface (none without water), and whether the lake here is drawn down: then it sinks under the bed (setDrained). */
+  private water: THREE.Mesh | null = null;
+  private drained: boolean | null = null;
   /** Each player's model; `crouch` goes from 0 to 1 as they wade into tall grass, `slump` as they go down, `wade` as they wade into the culvert's water,
    * `climb` as they climb a lookout (and back to 0 as they come down). */
   private rigs = new Map<string, RigEntry>();
@@ -547,7 +560,12 @@ export class WorldView {
     this.buildNature();
     this.buildTown(still);
     this.buildRoom(still);
-    for (const m of bake(still)) this.scene.add(m);
+    // What stands on a lakebed that draws down sits down on the bed, and is baked apart: it shows only while the water is down.
+    const sunk = map.hasBed ? still.filter(o => map.bedAt(Math.floor(o.position.x), Math.floor(o.position.z))) : [];
+    for (const o of sunk) o.position.y += BED_Y;
+    for (const m of bake(sunk.length ? still.filter(o => !sunk.includes(o)) : still)) this.scene.add(m);
+    for (const m of bake(sunk)) this.bedRoot.add(m);
+    this.scene.add(this.bedRoot);
     if (this.outdoors) this.buildEffects();
     this.scene.add(this.liveGlows.root, this.afterglows.root, this.lanterns.root, this.loot.root, this.marks.root, this.creatures.root, this.flares.root, this.flashes.root, this.prints.root, this.echoes.root, this.snowPrints.root);
     this.snowPrints.root.visible = map.data.forest === 'snow';
@@ -580,6 +598,17 @@ export class WorldView {
     this.renderer.compile(this.scene, this.camera);
     if (this.farFigure) this.farFigure.root.visible = false;
     if (this.passer) this.passer.root.visible = false;
+    this.bedRoot.visible = false;
+  }
+
+  /**
+   * The lake here drawn down or full, as the game follows its clock: the water sinks under the bed or rises over
+   * it in a few seconds, and what stands on the bed shows as it comes out. The first word, as the view is built, is where it already is.
+   */
+  setDrained(on: boolean) {
+    if (on === this.drained || !this.map.hasBed) return;
+    if (this.drained === null && this.water) this.water.position.y = on ? DRAINED_WATER_Y : WATER_Y;
+    this.drained = on;
   }
 
   /** Frees everything this view put on the GPU. The renderer and the shared toon materials stay for the next map. */
@@ -607,12 +636,14 @@ export class WorldView {
     this.porches = [];
   }
 
-  /** Height of the ground a character stands on: on water frozen over, the ice. A flooded culvert lies as low as water, and is as full. */
+  /** Height of the ground a character stands on: on water frozen over, the ice; on a lakebed that draws down, the bed. A flooded culvert lies as low as water, and is as full. */
   private topY(x: number, y: number): number {
-    return this.map.level(x, y) * 0.55 + (watery(this.map.kind(x, y)) ? (this.map.frozenAt(x, y) ? ICE_Y : -0.34) : 0);
+    return this.map.level(x, y) * 0.55 + (watery(this.map.kind(x, y)) ? (this.map.frozenAt(x, y) ? ICE_Y : this.map.bedAt(x, y) ? BED_Y : -0.34) : 0);
   }
+  /** Where things stand: never down in the water, but down on a lakebed, walked on while the lake is drawn down. */
   private groundAt(x: number, y: number): number {
-    return Math.max(0, this.topY(Math.floor(x), Math.floor(y)));
+    const tx = Math.floor(x), ty = Math.floor(y), top = this.topY(tx, ty);
+    return this.map.bedAt(tx, ty) ? top : Math.max(0, top);
   }
 
   private findOpenings() {
@@ -647,10 +678,16 @@ export class WorldView {
         ground.iceColor(tx + 1, ty + 1, tx, ty, corner[2]);
         ground.iceColor(tx + 1, ty, tx, ty, corner[3]);
       } else {
-        ground.color(kind, tx, ty, tx, ty, raised, corner[0]);
-        ground.color(kind, tx, ty + 1, tx, ty, raised, corner[1]);
-        ground.color(kind, tx + 1, ty + 1, tx, ty, raised, corner[2]);
-        ground.color(kind, tx + 1, ty, tx, ty, raised, corner[3]);
+        // A lakebed that draws down is wet silt, with puddles left on it; the water over it, while full, hides it.
+        const bed = map.bedAt(tx, ty), as = bed ? 'mud' : kind;
+        ground.color(as, tx, ty, tx, ty, raised, corner[0]);
+        ground.color(as, tx, ty + 1, tx, ty, raised, corner[1]);
+        ground.color(as, tx + 1, ty + 1, tx, ty, raised, corner[2]);
+        ground.color(as, tx + 1, ty, tx, ty, raised, corner[3]);
+        if (bed) {
+          const puddle = hash2(tx * 3 + 1, ty * 5 + 2) < 0.2;
+          for (const c of corner) c.lerp(puddle ? PUDDLE : SILT, puddle ? 0.75 : 0.5);
+        }
       }
       if (toward) for (const c of corner) c.lerp(toward, fade);
       quad([tx, y0, ty], [tx, y0, ty + 1], [tx + 1, y0, ty + 1], [tx + 1, y0, ty], corner[0], corner[1], corner[2], corner[3]);
@@ -714,11 +751,20 @@ export class WorldView {
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (watery(map.kind(x, y))) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
     if (x1 >= 0) {
       const wg = new THREE.PlaneGeometry(x1 - x0 + 2.2, y1 - y0 + 2.2, 16, 10).rotateX(-Math.PI / 2);
-      this.scene.add(part(wg, ownToon('#1d3a48', { transparent: true, opacity: 0.9 }), (x0 + x1 + 1) / 2, WATER_Y, (y0 + y1 + 1) / 2, false));
+      const water = (this.water = part(wg, ownToon('#1d3a48', { transparent: true, opacity: 0.9 }), (x0 + x1 + 1) / 2, WATER_Y, (y0 + y1 + 1) / 2, false));
+      this.scene.add(water);
       const wpos = wg.attributes.position as THREE.BufferAttribute;
+      let last = 0;
       this.animate.push(t => {
         for (let i = 0; i < wpos.count; i++) wpos.setY(i, Math.sin(t * 1.8 + wpos.getX(i) * 1.4 + wpos.getZ(i)) * 0.03);
         wpos.needsUpdate = true;
+        // A lake that draws down: the water sinks or rises toward where its clock has it.
+        const step = DRAIN_RATE * Math.min(0.1, Math.max(0, t - last)), to = this.drained ? DRAINED_WATER_Y : WATER_Y;
+        last = t;
+        if (!map.hasBed) return;
+        const y = water.position.y;
+        water.position.y = to > y ? Math.min(to, y + step) : Math.max(to, y - step);
+        this.bedRoot.visible = water.position.y < SHOW_Y;
       });
     }
   }
@@ -1094,7 +1140,8 @@ export class WorldView {
     const cars = this.objects('car'), lit = headlightCar(cars, this.map.data.spawn);
     cars.forEach((c, i) => {
       const car = carModel(c, { head: this.headMat, tail: this.tailMat });
-      if (i === lit) {
+      // Never one the lake covers: its lights would shine up through the water.
+      if (i === lit && !this.map.bedAt(c.x, c.y)) {
         const target = new THREE.Object3D();
         target.position.set(0, 0, 6);
         this.headLight.position.set(0, 0.45, 1);
@@ -1210,6 +1257,20 @@ export class WorldView {
     for (const a of masts) still.push(towerModel(a.x, a.y, this.beaconMat, a.broken));
     if (masts.some(a => !a.broken)) this.animate.push(t => { this.beaconMat.emissive.setHex(t % 1.6 < 0.3 ? 0xff3322 : 0x1a0604); });
 
+    // The Sister, on the lakebed: the Old Stone's shape, whole and dark from the water, standing on its base, weed at its foot.
+    for (const s of this.objects('sister')) {
+      const g = pivot(s.x + 0.5, 0, s.y + 0.5);
+      g.add(part(flat(new THREE.CylinderGeometry(0.5, 0.58, 0.2, 8)), '#3f3d38', 0, 0.1, 0, 0.03));
+      const stone = part(new THREE.OctahedronGeometry(0.42, 0), '#454b48', 0, 0.2 + 0.42 * 1.9, 0, 0.03);
+      stone.scale.set(0.75, 1.9, 0.75);
+      g.add(stone);
+      for (let k = 0; k < 5; k++) {
+        const a = k * 1.3 + 0.4, weed = part(new THREE.ConeGeometry(0.05, 0.22 + (k % 3) * 0.06, 4), k % 2 ? '#3d5236' : '#4b5a33', Math.cos(a) * 0.5, 0.3, Math.sin(a) * 0.5, false);
+        weed.rotation.z = (k % 2 ? 1 : -1) * 0.25;
+        g.add(weed);
+      }
+      still.push(g);
+    }
     for (const st of this.objects('stone')) {
       const cx = st.x + 0.5, cz = st.y + 0.5;
       still.push(part(flat(new THREE.CylinderGeometry(0.62, 0.7, 0.2, 8)), '#5e5a54', cx, 0.1, cz, 0.03));

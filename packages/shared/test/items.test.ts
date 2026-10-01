@@ -108,7 +108,7 @@ describe('where finds grow', () => {
 
 describe('the tools a player owns', () => {
   const tool = (id: string): ItemDef => ({ id, name: id, kind: 'tool', stack: 1, icon: 'map', text: 'Yours.' });
-  const known = itemIndex({ version: 1, items: [tool('stonebrook-map'), tool('near-woods-map'), tool('south-road-map'), tool('radio'), glowcap], finds: [] });
+  const known = itemIndex({ version: 1, items: [tool('stonebrook-map'), tool('near-woods-map'), tool('south-road-map'), tool('reservoir-map'), tool('radio'), glowcap], finds: [] });
 
   it('are the starter tools for someone who never got one of their own, as far as they are tools here', () => {
     expect(toolsOf(undefined, known)).toEqual([...STARTER_TOOLS]);
@@ -152,8 +152,8 @@ describe('live finds', () => {
 describe('validateItems', () => {
   /** A paper map of the test woods, as the starter tools are. */
   const mapOf = (id: string): ItemDef => ({ id, name: 'Map', kind: 'tool', stack: 1, chart: 'woods', icon: 'map', text: 'Old.' });
-  /** The two starter tools besides the one a test looks at: once there are tools at all, they must be there. */
-  const starters = [mapOf('stonebrook-map'), mapOf('south-road-map')];
+  /** The starter tools besides the one a test looks at: once there are tools at all, they must be there. */
+  const starters = [mapOf('stonebrook-map'), mapOf('south-road-map'), mapOf('reservoir-map')];
 
   it('checks tools: one to a slot, never used up, weightless, charting a real map, with an icon for their button', () => {
     const errors = (tool: ItemDef) => validateItems({ version: 1, items: [tool, ...starters], finds: [] }, [woods()]).filter(p => p.level === 'error').map(p => p.message);
@@ -177,7 +177,7 @@ describe('validateItems', () => {
   it('wants every starter tool once there are tools at all: whoever never got one of their own carries them', () => {
     const radio: ItemDef = { id: 'radio', name: 'Radio', kind: 'tool', stack: 1, icon: 'map', text: 'It crackles.' };
     const errors = validateItems({ version: 1, items: [radio], finds: [] }, [woods()]).map(p => p.message);
-    expect(errors).toEqual(['the starter tool stonebrook-map is not an item', 'the starter tool near-woods-map is not an item', 'the starter tool south-road-map is not an item']);
+    expect(errors).toEqual(['the starter tool stonebrook-map is not an item', 'the starter tool near-woods-map is not an item', 'the starter tool south-road-map is not an item', 'the starter tool reservoir-map is not an item']);
     expect(validateItems({ version: 1, items: [radio, mapOf('near-woods-map'), ...starters], finds: [] }, [woods()])).toEqual([]);
   });
 

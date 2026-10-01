@@ -1,5 +1,5 @@
 {
-  "version": 9,
+  "version": 10,
   "pages": [
     {
       "id": "pop-23",
@@ -621,6 +621,65 @@
       "title": "The lamp went out",
       "when": { "saw": "lamp-out" },
       "text": "The lamp with no wires is dark. It was burning a moment ago, and nothing I did put it out. The poles along the line stand as they always did, each leaning its own way. Whoever did this was standing right here."
+    },
+    {
+      "id": "the-reservoir",
+      "area": "reservoir",
+      "title": "The Reservoir",
+      "when": { "read": { "map": "reservoir", "x": 3, "y": 23 } },
+      "text": "The brook comes down out of a lake behind a dam, built to drive the mill in town. The surges die before they reach it. What moves up here is the water."
+    },
+    {
+      "id": "the-dam",
+      "area": "reservoir",
+      "title": "The dam",
+      "when": { "read": { "map": "reservoir", "x": 10, "y": 20 } },
+      "text": "The Timber Co. held the brook here to run the mill, and the water drowned the valley of the first farms. NAPO's maps show only lake."
+    },
+    {
+      "id": "low-water",
+      "area": "reservoir",
+      "title": "Low water",
+      "when": { "saw": "drawdown" },
+      "text": "The lake drew back and left the old valley lying in the air: fences, stumps, a lane, a car. The mud holds my weight. It doesn't stay out for long.",
+      "blanks": [
+        { "id": "low-water-back", "ask": "The water comes back... ?", "fill": "The water comes back fast, and carries whoever is still out on the bed to the shore, soaked.", "when": { "saw": "flooded" } }
+      ]
+    },
+    {
+      "id": "caught-by-the-water",
+      "area": "reservoir",
+      "title": "Caught by the water",
+      "when": { "saw": "flooded" },
+      "text": "The water came home while I was still out on the bed. It took my feet and set me down on the shore, soaked through and shaking. The lake doesn't wait for anyone."
+    },
+    {
+      "id": "the-sister",
+      "area": "reservoir",
+      "title": "The Sister",
+      "when": { "read": { "map": "reservoir", "x": 31, "y": 23 } },
+      "text": "A standing stone in the middle of the old valley, the Old Stone's shape, and whole. The old folks called her the Sister. She was under water sixty years, and nobody heard her hum."
+    },
+    {
+      "id": "the-drowned-farm",
+      "area": "reservoir",
+      "title": "The drowned farm",
+      "when": { "read": { "map": "reservoir", "x": 40, "y": 18 } },
+      "text": "Fences in the mud, a house fallen in, a kitchen table where it stood. The first farms were here before the dam. They had to leave too, long before NAPO told anyone to."
+    },
+    {
+      "id": "napos-letter",
+      "area": "reservoir",
+      "title": "NAPO's letter",
+      "when": { "read": { "map": "reservoir-keepers-house", "x": 2, "y": 3 } },
+      "text": "The week before the answer NAPO asked the keeper to draw the reservoir down three metres, for a survey of the valley floor. She wrote no across it. Someone else wrote that they pay."
+    },
+    {
+      "id": "the-sluice-book",
+      "area": "reservoir",
+      "title": "The sluice book",
+      "when": { "read": { "map": "reservoir-boathouse", "x": 3, "y": 1 } },
+      "text": "Jon Brandt ran the boat and the sluice: forty years of openings, one turn or two. The last is the week before the answer, at two in the morning. Nine turns, and no name after it."
     }
   ]
 }

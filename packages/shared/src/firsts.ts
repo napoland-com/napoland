@@ -41,7 +41,7 @@ export function thousands(n: number): string {
 }
 
 /** Whose a note is, in a sentence. */
-const WHOSE = { ranger: 'the ranger\'s', walt: 'Walt\'s', barlows: 'the Barlows\'', leavers: 'the leavers\'' } as const;
+const WHOSE = { ranger: 'the ranger\'s', walt: 'Walt\'s', barlows: 'the Barlows\'', leavers: 'the leavers\'', brandts: 'the Brandts\'' } as const;
 /** "The ranger's hut" in a sentence: "the ranger's hut". */
 const inSentence = (name: string) => name.replace(/^The /, 'the ');
 /** A place's name with its article: "pond" is "the pond", "the Tower" stays. */
