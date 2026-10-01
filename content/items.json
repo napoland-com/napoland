@@ -1,5 +1,5 @@
 {
-  "version": 37,
+  "version": 38,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one at your feet to leave a glowing arrow pointing the way you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -44,6 +44,7 @@
     {"id":"burn-map","name":"Map of the Burn","kind":"tool","stack":1,"chart":"burn","icon":"map","text":"The trapper's map of his north line, redrawn in charcoal after the fire: the snags, the black creek, the windfall, and the scar he marked with a cross. It never tells you where you are: find the creek, the cabin and the scar around you, and work it out. Torn in four; what you found of it is here."},
     {"id":"ridge-map","name":"Map of the Ridge","kind":"tool","stack":1,"chart":"ridge","icon":"map","text":"The trappers' map of their high line, in pencil on the back of the hut's old tally: the rope, the hut, the zigzag up through the last firs, the tarn and the crest, and the icefall marked \"short way, spikes\". It never tells you where you are: find the hut, the tarn and the crest around you, and work it out. Torn in four; what you found of it is here."},
     {"id":"marsh-map","name":"Map of the Marsh","kind":"tool","stack":1,"chart":"marsh","icon":"map","text":"The peat cutters' map of the bog, in pencil on a page of their cutting book: the corduroy road, the hut, the two channels and the long ways round them, the cuttings, and the black pool, which they drew and did not name. It never tells you where you are: find the channels, the cuttings and the pool around you, and work it out. Torn in four; what you found of it is here."},
+    {"id":"reservoir-map","name":"Map of the Reservoir","kind":"tool","stack":1,"chart":"reservoir","icon":"map","text":"The keeper's map of the reservoir, in ink, with the old valley under it in pencil: the dam, the keeper's house, the shore path, the knoll, and the farms and lane the water took. It never tells you where you are: find the dam, the shore and the knoll around you, and work it out."},
     {"id":"radio","name":"Field radio","noun":"radio","kind":"tool","stack":1,"icon":"radio","senses":{"finds":[{"item":"shard"},{"item":"live-shard"},{"item":"strange"},{"item":"wire","when":"aurora"}],"loud":6,"faint":15},"text":"An old NAPO field radio, rewired to listen. Out in the wilds it crackles, louder the nearer you are to something strange: a shard, a strange object, or copper wire on an aurora night. Anywhere else it only hums.","about":"Out in the wilds it crackles louder the nearer you are to something strange. Its button turns it off and on."},
     {"id":"bolt-cutters","name":"Bolt cutters","noun":"pair of bolt cutters","plural":"pairs of bolt cutters","kind":"tool","stack":1,"icon":"cutters","text":"Long-handled bolt cutters, forged from scrap at the workbench, their jaws edged with shard. They bite through a rusted padlock like a dry twig.","about":"They bite through the rusted padlock on the shed behind the ranger's hut."},
     {"id":"waders","name":"Waders","noun":"pair of waders","plural":"pairs of waders","kind":"tool","stack":1,"icon":"waders","text":"Chest waders of cloth sealed with resin, the seams bound with copper wire, a shard sewn into the lining against the cold. In them you wade the flooded culvert by the bog.","about":"In them you wade the flooded culvert by the bog, and come out dry south of the creek."},
@@ -187,6 +188,10 @@
     {"item":"strange","map":"marsh","steps":[40,999],"count":2,"respawn":[1200,2400]},
     {"item":"strange","map":"marsh","steps":[35,999],"count":3,"respawn":[120,240],"when":"unstable"},
     {"item":"thermos","map":"marsh-cutters-hut","near":{"kinds":["fireplace","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
+    {"item":"glowcap","map":"reservoir","on":["mud"],"steps":[3,999],"count":4,"respawn":[120,300]},
+    {"item":"resin","map":"reservoir","on":["grass"],"steps":[3,999],"count":3,"respawn":[150,360]},
+    {"item":"scrap","map":"reservoir","near":{"kinds":["crate","barrel","house"],"radius":2.5},"steps":[3,999],"count":2,"respawn":[480,900]},
+    {"item":"thermos","map":"reservoir-keepers-house","near":{"kinds":["fireplace","shelf"],"radius":1.5},"count":1,"respawn":[900,1800]},
     {"item":"marsh-map","map":"marsh","piece":0,"near":{"kinds":["stump"],"radius":1.5},"around":{"x":23,"y":13,"r":1.5},"count":1,"respawn":[60,120]},
     {"item":"marsh-map","map":"marsh","piece":1,"near":{"kinds":["rock"],"radius":1.5},"around":{"x":46,"y":15,"r":1.5},"count":1,"respawn":[60,120]},
     {"item":"marsh-map","map":"marsh","piece":2,"near":{"kinds":["stump"],"radius":1.5},"around":{"x":15,"y":21,"r":1.5},"count":1,"respawn":[60,120]},

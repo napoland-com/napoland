@@ -7,7 +7,7 @@ import {
   type EnergyView, type Feat, type FlashKind, type MeritsView, type ProgressView, type Season, type SeasonView, type Stats, type StoneView, type StormView, type SurgeView, type Weather,
 } from '@napoland/shared';
 import { listWords } from './details';
-import { minutes, type News } from './game';
+import { minutes, seconds, type News } from './game';
 import type { FeatView, StatusView } from './hud';
 import { ELEMENT_WORDS, type Items } from './items';
 import { parcelBanner } from './parcels';
@@ -258,6 +258,11 @@ export function newsBanner(n: News, place: string, items?: Items, guest = false)
   if (n.kind === 'feat') {
     const f = FEATS.find(x => x.id === n.id);
     return f && f.ranks[n.rank - 1] ? { title: `${f.name}, rank ${n.rank}`, sub: `${rankText(f, n.rank)}.` } : null;
+  }
+  if (n.kind === 'lake') {
+    if (n.phase === 'down') return { title: 'The water is drawing back', sub: 'You can walk on the lakebed\nuntil it comes back.' };
+    if (n.phase === 'warn') return { title: 'The water is coming back', sub: `${seconds(n.left)} left.\nGet off the lakebed.` };
+    return { title: 'The water carried you ashore', sub: 'You are soaked.' };
   }
   if (n.kind === 'stone') {
     return n.view.awake

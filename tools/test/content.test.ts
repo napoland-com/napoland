@@ -303,11 +303,11 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
 
   it('stands in every place out there where people rest by a fire: the shelters, and by the fire in the open', () => {
     expect(shelters.map(m => m.data.id).sort()).toEqual([
-      'burn-line-cabin', 'far-woods-trapper-cabin', 'marsh-cutters-hut', 'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'ridge-high-hut', 'south-road-bunker',
-      'south-road-checkpoint', 'south-road-dormitory', 'south-road-laboratory',
+      'burn-line-cabin', 'far-woods-trapper-cabin', 'marsh-cutters-hut', 'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'reservoir-keepers-house', 'ridge-high-hut',
+      'south-road-bunker', 'south-road-checkpoint', 'south-road-dormitory', 'south-road-laboratory',
     ]);
     for (const m of shelters) expect(crates.filter(c => c.map === m), m.data.id).toHaveLength(1);
-    expect(openFires.map(f => `${f.map.data.id} ${f.x},${f.y}`)).toEqual(['south-road 22,22']);
+    expect(openFires.map(f => `${f.map.data.id} ${f.x},${f.y}`)).toEqual(['reservoir 43,19', 'south-road 22,22']);
     // In the open, with the fire within a visit's reach of it (CACHE_NEAR), on forest cleared for it: the ground people walk stays as it was.
     for (const f of openFires) expect(crates.filter(c => c.map === f.map && Math.max(Math.abs(c.o.x - f.x), Math.abs(c.o.y - f.y)) <= CACHE_NEAR), 'by the fire').toHaveLength(1);
     // And nowhere else: not in town, not in a room without a fire.
@@ -316,8 +316,8 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
 
   it('has a name each, for the letter of whoever left something in it', () => {
     expect(crates.map(c => c.o.kind === 'cache' && c.o.name).sort()).toEqual([
-      'the bunker\'s crate', 'the checkpoint\'s crate', 'the crate at the leavers\' camp', 'the crate in the cabin at the end', 'the cutters\' crate', 'the dormitory\'s crate',
-      'the high hut\'s crate', 'the laboratory\'s crate', 'the line cabin\'s crate', 'the old cabin\'s crate', 'the ranger\'s crate', 'the trapper\'s crate',
+      'the bunker\'s crate', 'the checkpoint\'s crate', 'the crate at Jon\'s camp', 'the crate at the leavers\' camp', 'the crate in the cabin at the end', 'the cutters\' crate', 'the dormitory\'s crate',
+      'the high hut\'s crate', 'the keeper\'s crate', 'the laboratory\'s crate', 'the line cabin\'s crate', 'the old cabin\'s crate', 'the ranger\'s crate', 'the trapper\'s crate',
     ]);
   });
 
@@ -496,11 +496,12 @@ describe('a field notebook (roadmap/field-notebook.md)', () => {
     expect(validateNotebook(notebook, all, items)).toEqual([]);
   });
 
-  // The notebook grows as the world does: about ten pages for each area it has (the Marsh made it seven and anywhere).
-  it('has about ten pages an area, across the seven areas and anywhere, each with a count worth filling', () => {
+  // The notebook grows as the world does: about ten pages for each area it has (the Marsh made it seven and anywhere, the
+  // Reservoir eight; its pages came last, after anywhere's).
+  it('has about ten pages an area, across the eight areas and anywhere, each with a count worth filling', () => {
     const areas = new Map<string, number>();
     for (const p of notebook.pages) areas.set(p.area, (areas.get(p.area) ?? 0) + 1);
-    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', 'burn', 'ridge', 'marsh', ANYWHERE]);
+    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', 'burn', 'ridge', 'marsh', ANYWHERE, 'reservoir']);
     expect(notebook.pages.length).toBeGreaterThanOrEqual(8 * areas.size);
     expect(notebook.pages.length).toBeLessThanOrEqual(12 * areas.size);
     for (const [area, n] of areas) expect(n, area).toBeGreaterThanOrEqual(8);
@@ -557,9 +558,10 @@ describe('notes and keepsakes left behind (roadmap/notes-left-behind.md)', () =>
   };
   const words = (n: { note: MapNote }) => n.note.text.join(' ').length;
 
-  it('lays about thirty notes, ten by each of the ranger, Walt and the Barlows, and four tags by the people who left', () => {
+  it('lays about forty notes, ten by each of the ranger, Walt and the Barlows, four tags by the people who left and eight by the Brandts', () => {
     expect(notes.length).toBeGreaterThanOrEqual(25);
-    expect(notes.length).toBeLessThanOrEqual(35);
+    // About thirty, until the Brandts' eight at the Reservoir (roadmap/the-reservoir.md).
+    expect(notes.length).toBeLessThanOrEqual(45);
     // The leavers left four, a tag for each dark house's family; the others left at least eight.
     for (const by of NOTE_AUTHORS) expect(notes.filter(n => n.note.by === by).length, by).toBeGreaterThanOrEqual(by === 'leavers' ? 4 : 8);
   });
@@ -634,7 +636,7 @@ describe('notes and keepsakes left behind (roadmap/notes-left-behind.md)', () =>
 
   it('names every note and keepsake for the first to find it: whose note and where, or the keepsake (roadmap/first-finders.md)', () => {
     const byId = notesOf(all.map(m => m.data)), defs = itemIndex(items);
-    for (const { note } of notes) expect(secretTitle(secretKey({ kind: 'note', id: note.id }), byId, defs), note.id).toMatch(/^(the ranger's|Walt's|the Barlows'|the leavers') note (by|in) the /);
+    for (const { note } of notes) expect(secretTitle(secretKey({ kind: 'note', id: note.id }), byId, defs), note.id).toMatch(/^(the ranger's|Walt's|the Barlows'|the leavers'|the Brandts') note (by|in) the /);
     for (const p of items.keepsakes!.places) expect(secretTitle(secretKey({ kind: 'keepsake', item: p.item }), byId, defs), p.item).toMatch(/^the [a-zA-Z ]+$/);
   });
 
@@ -712,8 +714,10 @@ describe('the pass that put more of the story in the places (roadmap/richer-plac
       expect((now.places ?? []).slice(0, b.places.length), id).toEqual(b.places);
       // The old things first, in their order (which lamps flicker, and which poles the wires run between, go by it),
       // the house that was Home dark since. (The trees felled for the road to the street stand again: the road went
-      // with the street, roadmap/home-lots.md.)
-      const standing = b.nature;
+      // with the street, roadmap/home-lots.md.) The two firs at the edge where the east road goes up the brook were
+      // felled for it, on purpose (tools/gen-map.ts, roadmap/the-reservoir.md).
+      const felled = id === 'stonebrook' ? new Set(['tree 42,34', 'tree 43,34']) : new Set<string>();
+      const standing = b.nature.filter(n => !felled.has(n));
       const things = b.things.map(o => JSON.stringify(id === 'stonebrook' ? darkSince(o) : o));
       const old = new Set([...standing, ...things]);
       const first = now.objects.slice(0, old.size).map(kept);

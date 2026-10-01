@@ -1,7 +1,7 @@
 /**
  * The notes people left behind (docs/DESIGN.md, the story; packages/shared/src/notes.ts), all in one
- * place so they read as one story: the ranger, Walt Pruitt when he walked the line, and the Barlows
- * from the cabin at the end. The generators lay each one where it belongs (noteAt), after everything
+ * place so they read as one story: the ranger, Walt Pruitt when he walked the line, the Barlows
+ * from the cabin at the end, the people who left, and Agnes and Jon Brandt at the Reservoir. The generators lay each one where it belongs (noteAt), after everything
  * else on the map, so nothing that was there moves.
  *
  * The deeper a note lies, the more it says: a line or two near town, three in the deepest shelters.
@@ -254,6 +254,68 @@ export const NOTES = {
     text: [
       'LINDQVIST. The old road to the mill, Stonebrook.',
       'Dad\'s saw files, in a roll on the back seat, and the winter coats. The piano would not go. It stayed on the verge.',
+    ],
+  },
+
+  // ---- Agnes and Jon Brandt, at the Reservoir (gen-reservoir.ts): she keeps the dam, he ran the boat and the
+  // sluice. Her keeper's log lies in the keeper's house and on the dam; his chalk slates lie out on the lakebed,
+  // read only at low water, at his camp on the knoll and in his boathouse. Each tells one side, and neither
+  // crosses: whoever reads both carries the words. Her last page says what is still open: the Sister hums
+  // before the Tower pulses, not after.
+  'brandts-log-dam': {
+    by: 'brandts', name: 'A page of the keeper\'s log, under a stone',
+    text: [
+      'Level at the mark. Sluice shut, checked twice. I check it twice now.',
+      'His fire on the knoll again tonight. I don\'t wave.',
+    ],
+  },
+  'brandts-log-letter': {
+    by: 'brandts', name: 'The keeper\'s log, open on the table',
+    text: [
+      'NAPO wants the water down three metres, for a survey. I wrote no. A keeper keeps the water.',
+      'Jon says they pay. Jon says a lot of things after supper.',
+    ],
+  },
+  'brandts-log-night': {
+    by: 'brandts', name: 'A page of the keeper\'s log',
+    text: [
+      'Woke at two and the house was too quiet. The sluice was open and his boots were gone.',
+      'By morning the top of the valley was out of the water, and her with it. I would have left her there.',
+    ],
+  },
+  'brandts-log-hum': {
+    by: 'brandts', name: 'The last page of the keeper\'s log',
+    text: [
+      'The water goes out by itself now, twice to every pulse of the Tower. I time it from the dam. She hums first.',
+      'Not after the Tower. Before it. She doesn\'t answer. She starts it.',
+    ],
+  },
+  'brandts-slate-car': {
+    by: 'brandts', name: 'A slate under the wiper',
+    text: [
+      'Chalk on a slate: The first night it went out I walked to her, just to look. Then the water came home behind me.',
+      'I made the knoll. I have been here since. J.',
+    ],
+  },
+  'brandts-slate-table': {
+    by: 'brandts', name: 'A slate on the farm table',
+    text: [
+      'Chalk on a slate: Somebody ate their last supper at this table before the water came. I would like one more.',
+      'Going back to the dam? She keeps the kettle left of the stove. Not that she\'d put it on for me.',
+    ],
+  },
+  'brandts-slate-camp': {
+    by: 'brandts', name: 'A slate on the crate',
+    text: [
+      'Chalk on a slate: I opened the sluice for NAPO\'s money. Then she came up out of the water, and then the lights.',
+      'I woke her. I am not leaving her out here alone.',
+    ],
+  },
+  'brandts-slate-sluice': {
+    by: 'brandts', name: 'A slate on the shelf',
+    text: [
+      'Chalk on a slate, old and smudged: Sluice wheel, two turns, never more. J. B.',
+      'Under it, newer, in the same hand: I gave it nine.',
     ],
   },
 } as const satisfies Record<string, Words>;

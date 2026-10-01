@@ -1,7 +1,7 @@
 {
   "id": "stonebrook",
   "name": "Stonebrook",
-  "version": 16,
+  "version": 17,
   "kind": "town",
   "depth": 0,
   "width": 44,
@@ -41,7 +41,7 @@
     "gggggggggggrrgggggggggggggmwwwwwwwwwmmmmgggg",
     "gggggggggggrrggggggggggggmmwwwwwwwwwmmgggggg",
     "gggggggggggrrggggggggggggmwwwwwwwwwwwmgggggg",
-    "gggggggggggrrggggggggggggmmwwwwwwwwwmmgggggg",
+    "gggggggggggrrggggggggggggmmwwwwwwwwwmmmmmmgg",
     "gggggggggggrrgggggggggggggmwwwwwwwwwmggggggg",
     "gggggggggggrrggggggggggggggmmwwwwwmmgggggggg",
     "gggggggggggrrggggggggggggggggmmmmmgggggggggg",
@@ -109,7 +109,8 @@
     {"x":19,"y":15,"w":1,"h":1,"to":"stonebrook-hale-house","tx":4,"ty":4,"dir":"up"},
     {"x":21,"y":27,"w":1,"h":1,"to":"stonebrook-dahl-house","tx":4,"ty":4,"dir":"up"},
     {"x":25,"y":27,"w":1,"h":1,"to":"stonebrook-lindqvist-house","tx":4,"ty":4,"dir":"up"},
-    {"x":36,"y":28,"w":1,"h":1,"to":"stonebrook-sawmill","tx":5,"ty":5,"dir":"up"}
+    {"x":36,"y":28,"w":1,"h":1,"to":"stonebrook-sawmill","tx":5,"ty":5,"dir":"up"},
+    {"x":43,"y":34,"w":1,"h":1,"to":"reservoir","tx":1,"ty":24,"dir":"right"}
   ],
   "objects": [
     {"kind":"house","x":7,"y":19,"w":3,"h":2,"roof":"#6b7075","lit":0},
@@ -572,8 +573,6 @@
     {"kind":"tree","x":2,"y":34,"s":0.979,"v":0.863},
     {"kind":"tree","x":3,"y":34,"s":1.16,"v":0.082},
     {"kind":"tree","x":4,"y":34,"s":1.12,"v":0.737},
-    {"kind":"tree","x":42,"y":34,"s":1.242,"v":0.514},
-    {"kind":"tree","x":43,"y":34,"s":1.036,"v":0.128},
     {"kind":"tree","x":0,"y":35,"s":1.151,"v":0.698},
     {"kind":"tree","x":1,"y":35,"s":1.068,"v":0.631},
     {"kind":"tree","x":2,"y":35,"s":1.192,"v":0.546},

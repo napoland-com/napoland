@@ -1,0 +1,42 @@
+{
+  "id": "reservoir-keepers-house",
+  "name": "The keeper's house",
+  "version": 1,
+  "kind": "inside",
+  "depth": 0,
+  "width": 9,
+  "height": 6,
+  "tiles": [
+    "xxxxxxxxx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xpppppppx",
+    "xxxxpxxxx"
+  ],
+  "levels": [
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000",
+    "000000000"
+  ],
+  "spawn": {"x":4,"y":4,"dir":"up"},
+  "exits": [
+    {"x":4,"y":5,"w":1,"h":1,"to":"reservoir","tx":4,"ty":20,"dir":"down"}
+  ],
+  "objects": [
+    {"kind":"fireplace","x":4,"y":1,"tended":true},
+    {"kind":"bed","x":1,"y":1},
+    {"kind":"shelf","x":7,"y":1},
+    {"kind":"table","x":1,"y":3},
+    {"kind":"table","x":7,"y":4},
+    {"kind":"paper","x":2,"y":3,"look":"note","name":"A letter from NAPO","text":["On NAPO's paper, to the keeper of the Stonebrook dam: \"Draw the reservoir down three metres by the 14th, for a survey of the valley floor. NAPO will meet the cost.\"","Across it in pencil, pressed hard: \"No. A. Brandt, keeper.\"","Under that, smaller, in another hand: \"They pay, Ag.\""]},
+    {"kind":"npc","id":"agnes","name":"Agnes","x":6,"y":2,"dir":"down","look":{"coat":"#3e4f5c","scarf":"#b9b2a2","hair":"#cfc9c0","skin":"#dcb497"},"lines":["Agnes Brandt. I keep this dam. Kept it for the Timber Co., and when they went, I kept it for nobody.","The water is mine to keep. That is the whole of the job, and I do it.","Sit by the fire if you're cold. It doesn't go out. I see to that.","The lake goes out by itself now and comes home. Don't be on the bed when it does.","I don't go out there. A keeper keeps the water. She doesn't walk where it was.","If you see a fire on the knoll, that's my husband. He made his choice."]},
+    {"kind":"cache","x":2,"y":1,"name":"the keeper's crate"},
+    {"kind":"note","x":1,"y":3,"id":"brandts-log-letter","by":"brandts","name":"The keeper's log, open on the table","text":["NAPO wants the water down three metres, for a survey. I wrote no. A keeper keeps the water.","Jon says they pay. Jon says a lot of things after supper."]},
+    {"kind":"note","x":7,"y":1,"id":"brandts-log-night","by":"brandts","name":"A page of the keeper's log","text":["Woke at two and the house was too quiet. The sluice was open and his boots were gone.","By morning the top of the valley was out of the water, and her with it. I would have left her there."]},
+    {"kind":"note","x":7,"y":4,"id":"brandts-log-hum","by":"brandts","name":"The last page of the keeper's log","text":["The water goes out by itself now, twice to every pulse of the Tower. I time it from the dam. She hums first.","Not after the Tower. Before it. She doesn't answer. She starts it."]}
+  ]
+}
