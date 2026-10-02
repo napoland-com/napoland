@@ -1,0 +1,67 @@
+{
+  "id": "turning-camp",
+  "name": "The Turning",
+  "version": 1,
+  "kind": "wilds",
+  "depth": 2,
+  "width": 25,
+  "height": 19,
+  "forest": "old",
+  "tiles": [
+    "ttttttttttttttttttttttttt",
+    "ttttttttttttttttttttttttt",
+    "ttttttttttttttttttttttttt",
+    "ttttttttttttttttttttttttt",
+    "ttttttttgffgfffgttttttttt",
+    "tttttgfggfgggfgggfftttttt",
+    "ttttgggfggggggggffgtttttt",
+    "ttttfgggggmggggggggfttttt",
+    "tttggffgggmgggggggfgttttt",
+    "ttgfgmmmmmmmmmmmmmmmmmmmm",
+    "ttmmmmgggggggggggggfftttt",
+    "tttggffgggggggggggggttttt",
+    "ttttfgggggggggggggftttttt",
+    "tttttttgfggggggggfttttttt",
+    "tttttttftgggfgttgtttttttt",
+    "ttttttttttttttttttttttttt",
+    "ttttttttttttttttttttttttt",
+    "ttttttttttttttttttttttttt",
+    "ttttttttttttttttttttttttt"
+  ],
+  "levels": [
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000",
+    "0000000000000000000000000"
+  ],
+  "spawn": {"x":23,"y":9,"dir":"left"},
+  "exits": [
+    {"x":24,"y":9,"w":1,"h":1,"to":"near-woods","tx":1,"ty":5,"dir":"right","home":true},
+    {"x":10,"y":6,"w":1,"h":1,"to":"turning-camp-hut","tx":3,"ty":4,"dir":"up"}
+  ],
+  "objects": [
+    {"kind":"house","x":9,"y":5,"w":3,"h":2,"roof":"#4f5a44","lit":1},
+    {"kind":"woodpile","x":12,"y":6},
+    {"kind":"stump","x":14,"y":10,"s":0.8,"v":0.2},
+    {"kind":"sign","x":2,"y":9,"text":["An arrow cut in the bark, pointing on into the firs. Under it, in the ranger's hand: \"On. Mornings.\"","The firs close in past it, too thick to walk."]}
+  ],
+  "rain": [{"from":720,"length":720}],
+  "places": [
+    {"name":"the ranger's camp","x":12,"y":9}
+  ]
+}

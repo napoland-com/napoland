@@ -5823,7 +5823,9 @@ export class World {
         ? { kind: 'night', night: d.long ? 'long' : d.aurora ? 'aurora' : 'night', dawn: DAY_S - d.into }
         : { kind: 'day', dusk: d.night - d.into };
     // The regions nearest town first, as you would walk out to them: a board read on the way out says what comes first on it.
-    const regions = [...this.maps.values()].filter(m => m.data.kind === 'wilds').sort((a, b) => a.data.depth - b.data.depth).map((map): BoardRegion => {
+    // A region of several maps under one name (the Turning's clearings) is one region, under one sky: its first map says it.
+    const wilds = [...this.maps.values()].filter(m => m.data.kind === 'wilds');
+    const regions = wilds.filter((m, i) => wilds.findIndex(o => o.data.name === m.data.name) === i).sort((a, b) => a.data.depth - b.data.depth).map((map): BoardRegion => {
       const r: BoardRegion = { id: map.data.id, name: map.data.name, glowing: [] };
       if (sky.kind === 'day') {
         const rain = rainAhead(wall, map.data.rain);

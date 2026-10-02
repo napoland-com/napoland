@@ -54,7 +54,8 @@ const stepsTo = (name: string) => {
 describe('the Far Woods, where they are', () => {
   it('are the first region at depth 2: old growth, 80 by 100 tiles, in the wilds', () => {
     expect(far.data).toMatchObject({ name: 'The Far Woods', kind: 'wilds', depth: 2, forest: 'old', width: 80, height: 100 });
-    expect([...maps.values()].filter(m => m.data.depth === 2).map(m => m.data.id)).toEqual(['far-woods']);
+    // The other at depth 2 is the Turning, off the Near Woods' ring (roadmap/the-turning.md), in four maps.
+    expect([...maps.values()].filter(m => m.data.depth === 2).map(m => m.data.id).sort()).toEqual(['far-woods', 'turning', 'turning-2', 'turning-3', 'turning-camp']);
   });
 
   it('are reached up the trappers\' trail from beside the cabin at the end of the Near Woods, and left down it: both ways onto open ground', () => {
@@ -277,10 +278,11 @@ describe('the Far Woods, what they give', () => {
     expect(rule.map).toBe('far-woods-trapper-cabin');
     expect(rule.respawn[1]).toBeLessThanOrEqual(180);
     // Every other area there is outdoors has a map everyone starts with; this one and the Burn, the Ridge and
-    // the Marsh beyond it are found. (A home's garden is on no map: nothing leads there but NAPO's teleport.)
+    // the Marsh beyond it are found. (A home's garden is on no map: nothing leads there but NAPO's teleport; nor is
+    // the Turning, which nobody ever drew but as the same clearing three times.)
     const charted = new Set([...STARTER_TOOLS].map(t => byId.get(t)!.chart));
     const outdoors = [...maps.values()].filter(m => m.data.kind !== 'inside' && !m.data.private).map(m => m.data.id);
-    expect(outdoors.filter(id => !charted.has(id)).sort()).toEqual(['burn', 'far-woods', 'marsh', 'ridge']);
+    expect(outdoors.filter(id => !charted.has(id)).sort()).toEqual(['burn', 'far-woods', 'marsh', 'ridge', 'turning', 'turning-2', 'turning-3', 'turning-camp']);
   });
 });
 

@@ -1,7 +1,7 @@
 {
   "id": "near-woods",
   "name": "The Near Woods",
-  "version": 16,
+  "version": 17,
   "kind": "wilds",
   "depth": 1,
   "width": 64,
@@ -11,8 +11,8 @@
     "tttttggttttttttttttttttttttttttttttttttttttttttttttttmtttttttttt",
     "ttthhhgggttttttttttttttttttttttggtttttttttttttttttttggtttttttttt",
     "tthhhgggggtttttttttttttttttttttggtttttttttttttttttttggggggtttttt",
-    "tthhggggggttttttttttttttttttgggggtttttttgmmmmtttttttghgggggttttt",
-    "tthgggggggmttttttttttttttttgggggggttttttmmttmtttttthhhgggggttttt",
+    "tghhggggggttttttttttttttttttgggggtttttttgmmmmtttttttghgggggttttt",
+    "mmhgggggggmttttttttttttttttgggggggttttttmmttmtttttthhhgggggttttt",
     "tthhgggggtmmmmmttttttttttttgggggggttgmmmmtttmmmmgtthhhgggffttttt",
     "ttthggggttttttmtttmmmmmttttggggggtttmtttttttttttgttghggggffttttt",
     "ttttttttttttttmmmmmmmtmttttgggggttttmtttttttttttgmmmmgggggtttttt",
@@ -177,7 +177,8 @@
     {"x":30,"y":6,"w":1,"h":1,"to":"near-woods-ranger-hut","tx":3,"ty":4,"dir":"up"},
     {"x":55,"y":4,"w":1,"h":1,"to":"near-woods-end-cabin","tx":4,"ty":5,"dir":"up"},
     {"x":53,"y":0,"w":1,"h":1,"to":"far-woods","tx":40,"ty":98,"dir":"up"},
-    {"x":32,"y":3,"w":1,"h":1,"to":"near-woods-shed","tx":2,"ty":3,"dir":"up","lock":"bolt-cutters"}
+    {"x":32,"y":3,"w":1,"h":1,"to":"near-woods-shed","tx":2,"ty":3,"dir":"up","lock":"bolt-cutters"},
+    {"x":0,"y":5,"w":1,"h":1,"to":"turning","tx":29,"ty":13,"dir":"left"}
   ],
   "objects": [
     {"kind":"lamp","x":33,"y":70},
@@ -314,6 +315,7 @@
     {"kind":"stump","x":27,"y":73,"s":1.099,"v":0.783,"burned":true},
     {"kind":"stump","x":28,"y":74,"s":1.061,"v":0.361,"burned":true},
     {"kind":"sign","x":52,"y":2,"text":["The Far Woods, up the trappers' trail.","Past here the old trappers went in pairs. Up there you tire twice as fast as down here.","Feed the fire in the trapper's cabin on the way in, so it still burns on your way out."]},
+    {"kind":"sign","x":1,"y":4,"text":["A board nailed to a fir, in the ranger's hand: \"West of the ring the wood turns you round.","If you go in, you will most likely come out here, facing the stones. Go in by day, and tell somebody.\""]},
     {"kind":"house","x":31,"y":2,"w":2,"h":2,"roof":"#4c5646","lit":0,"style":"shed"},
     {"kind":"lookout","x":28,"y":24},
     {"kind":"sign","x":28,"y":26,"text":["Fire lookout. Stonebrook Timber Co.","Climb it to see the woods. Keep its lamp fed with resin: its beam brings the crews home.","Built the summer the mill opened."]},

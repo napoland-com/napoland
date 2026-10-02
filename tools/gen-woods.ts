@@ -22,6 +22,7 @@ import { ENERGY_MAX, LAMP_RADIUS, TileMap, doorOf, energyRate, footOf, objectTil
 import { doorInto } from './gen-interiors';
 import { noteAt, type NoteId } from './notes-left';
 import { FAR_WOODS_END, NEAR_WOODS_END } from './trappers-trail';
+import { NEAR_WOODS_BACK, NEAR_WOODS_MOUTH, TURNING_ENTRY } from './turning-mouth';
 
 const W = 64, H = 80, SEED = 20260927;
 type P = readonly [number, number];
@@ -601,6 +602,34 @@ onForest({
   }
 }
 
+// The Turning's mouth (gen-turning.ts): a path west out of the ring's glade, off the map's west edge, the way the
+// ranger went. Cut like the trappers' trail: only forest, and no deeper than the ring already was, so every tile
+// stays as far from home and a surge still starts where it did. A board the ranger nailed up says what it does.
+const beforeMouth = tile.map(r => r.join('')), stepsBeforeMouth = stepsHome();
+if (!walkable(NEAR_WOODS_BACK.x + 1, NEAR_WOODS_BACK.y)) throw new Error(`the Turning's mouth has no glade to start from at ${NEAR_WOODS_BACK.x + 1},${NEAR_WOODS_BACK.y}`);
+for (const { x, y } of [NEAR_WOODS_MOUTH, NEAR_WOODS_BACK]) {
+  if (beforeMouth[y]![x] !== 't') throw new Error(`the Turning's mouth at ${x},${y} runs onto ground that was there`);
+  tile[y]![x] = 'm';
+}
+/** The way into the Turning, and where every wrong way out of it puts you back. */
+const TURNING_WAY: MapExit = { x: NEAR_WOODS_MOUTH.x, y: NEAR_WOODS_MOUTH.y, w: 1, h: 1, to: 'turning', tx: TURNING_ENTRY.x, ty: TURNING_ENTRY.y, dir: 'left' };
+onForest({
+  kind: 'sign', x: NEAR_WOODS_BACK.x, y: NEAR_WOODS_BACK.y - 1,
+  text: [
+    'A board nailed to a fir, in the ranger\'s hand: "West of the ring the wood turns you round.',
+    'If you go in, you will most likely come out here, facing the stones. Go in by day, and tell somebody."',
+  ],
+});
+{
+  const d = stepsHome();
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, was = beforeMouth[y]![x]!;
+    if (was !== 't' && tile[y]![x] !== was) throw new Error(`the tile at ${x},${y} was ${was} and is now ${tile[y]![x]}: only forest may change`);
+    if (stepsBeforeMouth[i]! >= 0 && d[i] !== stepsBeforeMouth[i]) throw new Error(`the tile at ${x},${y} was ${stepsBeforeMouth[i]} steps from home and is now ${d[i]}`);
+  }
+  if (Math.max(...d) !== Math.max(...stepsBeforeMouth)) throw new Error('the Turning\'s mouth goes deeper than the ring: a surge would start somewhere else');
+}
+
 // ---- Places you can see but not reach yet (roadmap/locked-places.md) ----
 
 // Added after everything else but the notes (laid last, on what stands here), so nothing that was here
@@ -736,12 +765,12 @@ onForest(POND_LIGHT);
 // ---- Output ----
 
 const map: MapData = {
-  id: 'near-woods', name: 'The Near Woods', version: 16, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'near-woods', name: 'The Near Woods', version: 17, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: 31, y: 76, dir: 'up' },
   // The shed's door after the old ones: a new exit never moves one that was there.
-  exits: [EXIT, ...doors, FAR_WAY, shedDoor],
+  exits: [EXIT, ...doors, FAR_WAY, shedDoor, TURNING_WAY],
   objects,
   // Rain from 12 minutes after dawn, for 12: the wettest part of the day, while the South Road is dry.
   rain: [{ from: 12 * 60, length: 12 * 60 }],

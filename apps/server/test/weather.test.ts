@@ -114,6 +114,15 @@ describe('rain, region by region', () => {
     expect(zone).toMatchObject({ map: { id: 'south-road' }, weather: 'overcast' });
   });
 
+  it('says a region of several maps once on the notice board: the Turning\'s clearings are one wood, under one sky', () => {
+    const w = realWorld(at(14));
+    w.join(rec('r', 'stonebrook', 12, 24, 'up'), 0);
+    w.drain();
+    w.board('r', 12, 23, 0);
+    const lines = boardText(of(to(w.drain(), 'r'), 'board')[0]!, content);
+    expect(lines.filter(l => l.startsWith('The Turning'))).toEqual(['The Turning: rain for about 10 minutes more.']);
+  });
+
   it('tells the regions apart on the notice board', () => {
     const board = (m: number) => {
       const w = realWorld(at(m));

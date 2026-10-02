@@ -1,7 +1,7 @@
 {
   "id": "near-woods-ranger-hut",
   "name": "The ranger's hut",
-  "version": 3,
+  "version": 4,
   "kind": "inside",
   "depth": 0,
   "width": 7,
@@ -32,10 +32,12 @@
     {"kind":"bed","x":5,"y":1},
     {"kind":"table","x":1,"y":3},
     {"kind":"crate","x":5,"y":4},
+    {"kind":"table","x":5,"y":3},
     {"kind":"cache","x":2,"y":3,"name":"the ranger's crate"},
     {"kind":"note","x":1,"y":1,"id":"ranger-rocks","by":"ranger","name":"A logbook on the shelf","text":["Cold and clear. The rocks by the ring hum on cold nights, like the Old Stone in town. They always have.","A man from NAPO asked who else knew about the rocks. I said nobody, and I showed him the way in.","He came back with a crew, stakes and a mast. I should not have shown him."]},
     {"kind":"note","x":1,"y":3,"id":"ranger-tall-ones","by":"ranger","name":"A note on the table","text":["The tall ones. I watched one from this window for a whole night, and it never moved.","When I turned to feed the fire, it stood nearer. They move only while nobody looks. I am writing it down, so somebody knows.","Keep one in front of you and make for a light or a fire. They never come into the light."]},
     {"kind":"note","x":5,"y":4,"id":"ranger-dark","by":"ranger","name":"A note in the crate","text":["If you can read this, it is dark, and they are out.","Stay by the fire until grey light. The ferns are worst at night: they lie in them and listen for you.","Glowcap mashed in resin keeps its glow for years. I write the ones that matter in it."],"when":"night","faint":"Written in something that glows. In this light it is only a greenish smear."},
-    {"kind":"note","x":5,"y":1,"id":"ranger-green","by":"ranger","name":"Under the pillow","text":["Scratched with a shard: it only shows on a green night, and NAPO's crews never come out on a green night.","They took stones from the ring to their field site. The ring has hummed louder every night since.","I told Vera. She wrote it down, and asked me to tell nobody else. So I am telling you."],"when":"aurora","faint":"Scratched into the paper with something sharp. The scratches only show when the sky is green."}
+    {"kind":"note","x":5,"y":1,"id":"ranger-green","by":"ranger","name":"Under the pillow","text":["Scratched with a shard: it only shows on a green night, and NAPO's crews never come out on a green night.","They took stones from the ring to their field site. The ring has hummed louder every night since.","I told Vera. She wrote it down, and asked me to tell nobody else. So I am telling you."],"when":"aurora","faint":"Scratched into the paper with something sharp. The scratches only show when the sky is green."},
+    {"kind":"note","x":5,"y":3,"id":"ranger-turning","by":"ranger","name":"A note on the table","text":["West of the ring the wood turns you round: three clearings alike as peas, and every way out but one puts you back by the stones.","At the stump, go with the water. At the cairn, go to the stone that hums. At NAPO's stakes, turn round.","NAPO's men followed their stakes in and came out by the ring, every time. I write this in glowcap so they never read it."],"when":"night","faint":"Written in something that glows. In this light it is only a greenish smear."}
   ]
 }
