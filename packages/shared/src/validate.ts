@@ -202,7 +202,8 @@ export function validateMap(data: MapData): Problem[] {
     }
     if (FRONTED.has(o.kind)) {
       const front = stepTarget(o.x, o.y, 'down');
-      if (!map.walkable(front.x, front.y)) err(`${o.kind} at ${o.x},${o.y}: the tile in front (below) is not walkable, so nobody can talk to it`);
+      // A lakebed is walked while the lake is down, which is when what stands on it shows to be read.
+      if (!map.walkable(front.x, front.y) && !map.bedAt(front.x, front.y)) err(`${o.kind} at ${o.x},${o.y}: the tile in front (below) is not walkable, so nobody can talk to it`);
     }
     if (o.kind === 'note') validateNote(o, data, map, err);
     // A lookout is climbed from in front of its ladder: open ground anyone stands on, never a way out.

@@ -1,5 +1,5 @@
 {
-  "version": 11,
+  "version": 12,
   "pages": [
     {
       "id": "pop-23",
@@ -862,6 +862,27 @@
       "title": "The fresh hand",
       "when": { "read": { "map": "quiet", "x": 15, "y": 9 } },
       "text": "A hand laid flat on a stone, and the dust still in the cuts. Every other picture up here is worn. Somebody is still making them."
+    },
+    {
+      "id": "the-old-lane",
+      "area": "reservoir",
+      "title": "The old lane",
+      "when": { "read": { "map": "reservoir", "x": 45, "y": 9 } },
+      "text": "The farm lane ran up the valley on a bank of fieldstone, and the top of the bank still stands above the water, whatever the lake does. It goes out to Jon's knoll. He could walk home on it any time."
+    },
+    {
+      "id": "the-orchard",
+      "area": "reservoir",
+      "title": "The orchard",
+      "when": { "read": { "map": "reservoir", "x": 19, "y": 19 } },
+      "text": "Stumps in rows on the lakebed: the upper farm's orchard, cut before the water came, and its gate board still on its post. Apples by the bushel, once."
+    },
+    {
+      "id": "the-chapel",
+      "area": "reservoir",
+      "title": "The chapel",
+      "when": { "read": { "map": "reservoir", "x": 33, "y": 30 } },
+      "text": "The first farms had a chapel down on the meadow. Its walls are fallen in, and its last notice moved the services to Stonebrook and asked someone to bring the bell. Nobody did."
     }
   ]
 }

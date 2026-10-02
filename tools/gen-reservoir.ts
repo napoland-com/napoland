@@ -109,7 +109,16 @@ for (const i of knoll) { const y = (i / W) | 0; knollRows.set(y, [...(knollRows.
 const KNOLL_TOP = Math.min(...knollRows.keys()), KNOLL_MID = Math.round(KNOLL.y - 0.5);
 /** Where Jon keeps the boat: the knoll's far tip, its way off at high water. */
 const LANDING: P = [knollRows.get(KNOLL_MID)!.at(-1)!, KNOLL_MID];
+/**
+ * The old lane's bank: the farm lane ran up from the valley to the north side on a raised bank of fieldstone, and its
+ * top still stands just above the water. Ground at any water, from the north shore down to the knoll, so nobody is
+ * ever shut in out there: Jon could walk home along it any time, and does not.
+ */
+const BANK_X = knollRows.get(KNOLL_TOP)!.at(-1)!, BANK_TOP = top(BANK_X);
+const bank: P[] = [];
+for (let y = BANK_TOP; y < KNOLL_TOP; y++) { wet[y * W + BANK_X] = 0; bank.push([BANK_X, y]); }
 for (let i = 0; i < W * H; i++) if (wet[i]) tile[(i / W) | 0]![i % W] = 'w';
+for (const [x, y] of bank) set(x, y, 'm');
 // The brook out of the spillway, down to town.
 for (let x = 1; x < DAM.x; x++) if (at(x, SPILLWAY_Y) !== 't') set(x, SPILLWAY_Y, 'w');
 // Banks: mud where the water meets the ground (the knoll stays grass: Jon keeps it trodden flat).
@@ -240,6 +249,8 @@ must({ kind: 'sign', ...PLATE, text: ['A brass plate set in the dam: "Stonebrook
 signs.push(PLATE);
 // Agnes's board where the shore path first meets the lakebed.
 const BOARD = signNear(shore(RING_X + 3), ['Painted on a board, in a careful hand: "When she goes quiet, come back. The water is a minute behind. A. Brandt, keeper."']);
+// Where the old lane's bank leaves the north shore for the knoll.
+const BANK_SIGN = signNear([BANK_X, BANK_TOP - 2], ['Cut into a post where the old lane leaves the shore: "Upper farm."', 'Under it, in chalk: "The bank stays dry, whatever she does. J."']);
 // The sluice gear on the crest above the spillway: a crate of it (the keeper's log under a stone on it) and a drum of grease.
 const SLUICE = { kind: 'crate', x: DAM.x + 1, y: SPILLWAY_Y } as const;
 must(SLUICE);
@@ -314,8 +325,32 @@ const bedOpen = (x: number, y: number) => {
   return true;
 };
 for (let y = 2; y < H - 2; y++) for (let x = RING_X + 2; x < W - 2; x++) {
-  if (bedOpen(x, y) && hash(x, y, 40) < 0.07) tryPlace({ kind: 'stump', x, y, s: round(0.8 + hash(x, y, 41) * 0.4), v: round(hash(x, y, 42)) });
+  if (bedOpen(x, y) && hash(x, y, 40) < 0.03) tryPlace({ kind: 'stump', x, y, s: round(0.8 + hash(x, y, 41) * 0.4), v: round(hash(x, y, 42)) });
 }
+
+// The upper farm's orchard, between the lane and the field walls: its trees cut to stumps in rows, and the board
+// that stood at its gate, readable only while the water is down (a sign on the bed sinks with the lake).
+const ORCHARD = { x: RING_X + 5, y: LANE_Y + 3, cols: 4, rows: 2 } as const;
+for (let r = 0; r < ORCHARD.rows; r++) for (let c = 0; c < ORCHARD.cols; c++) {
+  const x = ORCHARD.x + c * 2, y = ORCHARD.y + r * 2;
+  if (bed[y * W + x] && !nearSister(x, y)) tryPlace({ kind: 'stump', x, y, s: round(0.7 + hash(x, y, 50) * 0.2), v: round(hash(x, y, 51)) });
+}
+const ORCHARD_BOARD = { x: ORCHARD.x - 1, y: ORCHARD.y } as const;
+if (!bed[ORCHARD_BOARD.y * W + ORCHARD_BOARD.x]) throw new Error('the orchard board stands on the bed');
+must({ kind: 'sign', ...ORCHARD_BOARD, text: ['A board on a post among the stumps, its paint gone under the silt: "Upper farm orchard. Apples by the bushel. Ask at the gate."'] });
+// The first farms' chapel, south of the Sister on the old meadow: its walls fallen in, and the board by its door
+// with the last notice still on it.
+const CHAPEL = { x: SISTER.x + 3, y: WALL_Y + 2 } as const;
+must({ kind: 'ruin', x: CHAPEL.x, y: CHAPEL.y, w: 3, h: 2 });
+const CHAPEL_BOARD = { x: CHAPEL.x - 1, y: CHAPEL.y + 1 } as const;
+if (!bed[CHAPEL_BOARD.y * W + CHAPEL_BOARD.x] || !bed[(CHAPEL_BOARD.y + 1) * W + CHAPEL_BOARD.x]) throw new Error('the chapel board stands on the bed');
+must({
+  kind: 'sign', ...CHAPEL_BOARD,
+  text: [
+    'The chapel\'s notice board, the last notice still pinned under glass gone green: "Services move to Stonebrook from the first of the month. The water comes after."',
+    'At the bottom, in another hand: "Bring the bell." Nobody brought the bell.',
+  ],
+});
 
 // ---- The shore ----
 
@@ -347,7 +382,7 @@ const camp: Array<[MapObject, P]> = [
     'Jon Brandt. I ran the boat and the sluice for the dam, forty years. Now I sit here.',
     'That\'s her out there, under the water: the Sister. The old folks\' stone, from the farms. Twin to the one in town.',
     'When the water draws back you can walk out and stand by her. She hums. Mind the time: it comes back fast.',
-    'When the water\'s up, step down to the landing and I\'ll row you over to the boathouse. Only away from here, mind. Never to it.',
+    'When the water\'s up, walk the old lane\'s bank back to the shore, it never goes under. Or step down to the landing and I\'ll row you over to the boathouse.',
     'Agnes? She\'s at the dam. She keeps the water. Don\'t tell her anything. Or do. I don\'t know.',
   ] }, [1, -1]],
   [{ kind: 'boat', x: FIRE.x - 1, y: FIRE.y + 1 }, [-1, 1]],
@@ -374,6 +409,7 @@ const BOAT: MapExit = { x: LANDING[0], y: LANDING[1], w: 1, h: 1, to: 'reservoir
 // The places worth walking to, for the paper map and for the way the notes are named.
 const PLACES: Array<[string, P]> = [
   ['the dam', [DAM.x, 22]], ['the shore', shore(30)], ['the drowned farm', [FARM.x + 1, FARM.y]], ['the Sister', [SISTER.x, SISTER.y]], ['the knoll', [FIRE.x, FIRE.y]],
+  ['the old lane\'s bank', [BANK_X, BANK_TOP + 1]], ['the orchard', [ORCHARD.x + 4, ORCHARD.y + 1]], ['the chapel', [CHAPEL.x + 1, CHAPEL.y]],
 ];
 // Walkable ground nobody can reach even at low water (a stray tile) goes back to forest.
 {
@@ -412,10 +448,18 @@ const DRAWDOWN: Drawdown = { name: 'the reservoir', every: 1200, down: 300, warn
   }
 }
 
+// Nobody is ever shut in: at high water every tile of ground (anything but the bed) has a way to the way home.
+{
+  const d = stepsHome(false);
+  const shut: string[] = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (walkable(x, y, false) && d[y * W + x]! < 0) shut.push(`${x},${y}`);
+  if (shut.length) throw new Error(`at high water these tiles have no way home: ${shut.join(' ')}`);
+}
+
 // ---- Output ----
 
 const map: MapData = {
-  id: 'reservoir', name: 'The Reservoir', version: 2, kind: 'wilds', depth: 1, width: W, height: H,
+  id: 'reservoir', name: 'The Reservoir', version: 3, kind: 'wilds', depth: 1, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: tile.map(r => '0'.repeat(r.length)),
   spawn: { x: ENTRY[0] + 1, y: ENTRY[1], dir: 'right' },
@@ -482,7 +526,7 @@ function tileAt(steps: number): [number, number] {
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (tm.homeSteps(x, y) === steps && tm.walkable(x, y) && !tm.warm(x, y)) return [x, y];
   throw new Error(`no tile ${steps} steps from home`);
 }
-console.log(`wrote ${out}: ${W}x${H} tiles, ${objects.length} objects, ${bedTiles.length} tiles of lakebed (the deepest ${deepest} from the shore); signs at ${[WAY_IN_SIGN, PLATE, BOARD, GATE].map(s => `${s.x},${s.y}`).join(' ')}`);
+console.log(`wrote ${out}: ${W}x${H} tiles, ${objects.length} objects, ${bedTiles.length} tiles of lakebed (the deepest ${deepest} from the shore); signs at ${[WAY_IN_SIGN, PLATE, BOARD, BANK_SIGN, GATE].map(s => `${s.x},${s.y}`).join(' ')}`);
 console.log(`at low water: the Sister ${toSister} steps from the way home (there and back ${walk.toFixed(0)} s of ${DRAWDOWN.down - DRAWDOWN.warn} s, ${cost.toFixed(1)} energy of a level 1 bar of ${maxEnergy(1)} at night; full bar ${ENERGY_MAX}), Jon's fire ${toKnoll}`);
 const problems = validateMap(map);
 for (const p of problems) console.log(`${p.level}: ${p.message}`);

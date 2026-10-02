@@ -1,5 +1,5 @@
 {
-  "version": 39,
+  "version": 40,
   "items": [
     {"id":"glowcap","name":"Glowcap","kind":"resource","stack":20,"xp":1,"weight":0.05,"use":{"mark":true},"text":"A small pale mushroom that glows blue-green in the dark. Crush one at your feet to leave a glowing arrow pointing the way you face; everyone sees it for a day."},
     {"id":"resin","name":"Fir resin","noun":"resin","plural":"resin","kind":"resource","stack":20,"xp":2,"weight":0.2,"fuel":300,"text":"Amber sap from the old firs, hard on the outside and sticky inside. It burns slow and bright: feed it to a fire."},
@@ -191,6 +191,8 @@
     {"item":"glowcap","map":"reservoir","on":["mud"],"steps":[3,999],"count":4,"respawn":[120,300]},
     {"item":"resin","map":"reservoir","on":["grass"],"steps":[3,999],"count":3,"respawn":[150,360]},
     {"item":"scrap","map":"reservoir","near":{"kinds":["crate","barrel","house"],"radius":2.5},"steps":[3,999],"count":2,"respawn":[480,900]},
+    {"item":"fiddleheads","map":"reservoir","on":["mud","grass"],"by":{"tiles":["water"],"radius":1.5},"count":4,"respawn":[180,420]},
+    {"item":"fir-tips","map":"reservoir","on":["grass"],"by":{"tiles":["forest"],"radius":1},"count":4,"respawn":[120,300]},
     {"item":"glowcap","map":"turning","on":["mud","ferns"],"count":2,"respawn":[120,300]},
     {"item":"resin","map":"turning","on":["grass"],"count":2,"respawn":[150,360]},
     {"item":"cedar-bark","map":"turning","on":["grass","ferns"],"count":2,"respawn":[150,360]},
