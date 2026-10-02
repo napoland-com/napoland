@@ -60,12 +60,14 @@ const icefall = (): Array<[number, number]> => {
 describe('the Ridge, where it is', () => {
   it('is the region at depth 4: snow, in the wilds, smaller than the Burn', () => {
     expect(ridge.data).toMatchObject({ name: 'The Ridge', kind: 'wilds', depth: 4, forest: 'snow' });
-    expect([...maps.values()].filter(m => m.data.depth >= 4).map(m => m.data.id)).toEqual(['ridge']);
+    // Above it only the Quiet, up its own rope (roadmap/the-quiet.md).
+    expect([...maps.values()].filter(m => m.data.depth >= 4).map(m => [m.data.id, m.data.depth]).sort()).toEqual([['quiet', 5], ['ridge', 4]]);
     expect(ridge.width * ridge.height).toBeLessThan(burn.width * burn.height);
   });
 
   it('is reached only up the trappers\' rope north of the Burn\'s scar, which holds only with three on it', () => {
-    expect([...maps.values()].filter(m => m.data.kind !== 'inside' && m.data.exits.some(e => e.to === 'ridge')).map(m => m.data.id)).toEqual([]);
+    // Nothing leads up onto it but the rope: only the way home down from the Quiet, above it, comes back to it.
+    expect([...maps.values()].filter(m => m.data.kind !== 'inside' && m.data.exits.some(e => e.to === 'ridge' && !(e.home && m.data.depth > 4))).map(m => m.data.id)).toEqual([]);
     expect(rope).toMatchObject({ to: 'ridge', look: 'rope', pullers: 3, w: 3 });
     expect(rope.pullers!).toBeGreaterThan(GATE_PULLERS);
     // Deeper in than the scar: past it, at the head of the cut through its lip.

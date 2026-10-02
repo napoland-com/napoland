@@ -806,6 +806,62 @@
       "title": "No town",
       "when": { "read": { "map": "other-woods", "x": 30, "y": 68 } },
       "text": "The road runs on to where town should be, and the firs close over it. A sign says Stonebrook backwards, and Pop. 23. Past it, nothing was said back."
+    },
+    {
+      "id": "the-last-rope",
+      "area": "quiet",
+      "title": "The last rope",
+      "when": { "read": { "map": "ridge", "x": 23, "y": 8 } },
+      "text": "An old rope pegged into the rock above the trappers' cairn, four loops at its foot. The cairn says they set nothing up there. The peg says they went up once, all four, and that it is quiet."
+    },
+    {
+      "id": "the-gap",
+      "area": "quiet",
+      "title": "The gap",
+      "when": { "read": { "map": "quiet", "x": 18, "y": 8 } },
+      "text": "One stone of the ring is missing, and the socket it stood in is the Old Stone's shape, crack and all. No frost has ever filled it. Every figure up here stands facing it, waiting."
+    },
+    {
+      "id": "the-first-stone",
+      "area": "quiet",
+      "title": "A ring in a ring",
+      "when": { "read": { "map": "quiet", "x": 20, "y": 9 } },
+      "text": "Pecked into the first stone by the gap: a ring of little stones inside a ring of trees. The ring by the ranger's hut, drawn up here long before anyone drew the woods."
+    },
+    {
+      "id": "the-stone-in-water",
+      "area": "quiet",
+      "title": "A stone in water",
+      "when": { "read": { "map": "quiet", "x": 22, "y": 10 } },
+      "text": "A stone standing in water, and the water drawn as lines that come and go. The Sister, under the reservoir, before there was a reservoir."
+    },
+    {
+      "id": "the-tall-thing",
+      "area": "quiet",
+      "title": "The tall thing",
+      "when": { "read": { "map": "quiet", "x": 22, "y": 15 } },
+      "text": "Something tall and thin with a round top, every line going out of it the one way. It is as worn as the stones beside it, and they are older than anything in Stonebrook. The Tower is not that old."
+    },
+    {
+      "id": "four-on-a-line",
+      "area": "quiet",
+      "title": "Four on a line",
+      "when": { "read": { "map": "quiet", "x": 20, "y": 16 } },
+      "text": "Four small people on a line, one above the other. The rope up here takes four. Whoever pecked this knew how anyone would come."
+    },
+    {
+      "id": "three-and-back",
+      "area": "quiet",
+      "title": "Three, and back",
+      "when": { "read": { "map": "quiet", "x": 15, "y": 16 } },
+      "text": "The same small circle three times, one under the other, and an arrow turning back. The Turning, and the ranger's way through it, cut in stone."
+    },
+    {
+      "id": "the-fresh-hand",
+      "area": "quiet",
+      "title": "The fresh hand",
+      "when": { "read": { "map": "quiet", "x": 15, "y": 9 } },
+      "text": "A hand laid flat on a stone, and the dust still in the cuts. Every other picture up here is worn. Somebody is still making them."
     }
   ]
 }

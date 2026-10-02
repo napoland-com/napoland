@@ -23,6 +23,7 @@ import {
   DECOR, ENERGY_MAX, TileMap, doorOf, energyRate, maxEnergy, objectTiles, stormAt, surgeAt, validateMap, type MapData, type MapExit, type MapObject, type SurgeRule,
 } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
+import { QUIET_ROPE_WIDTH, QUIET_WAY_HOME, RIDGE_ROPE } from './quiet-rope';
 import { BURN_ROPE, RIDGE_WAY_HOME, ROPE_WIDTH } from './ridge-rope';
 
 const W = 44, H = RIDGE_WAY_HOME.y + 1, SEED = 20261011;
@@ -332,6 +333,21 @@ const patches = TALL.map((p, k) => {
   return patch;
 });
 
+// The trappers' last rope, up out of the crest above their cairn into the Quiet (gen-quiet.ts): it holds only with
+// four on it at once. Last, on the crest's top row, whose tiles lead nowhere, so nothing else moves and no tile
+// anyone walks to gets farther from home.
+for (let x = RIDGE_ROPE.x; x < RIDGE_ROPE.x + QUIET_ROPE_WIDTH; x++) for (const y of [RIDGE_ROPE.y, RIDGE_ROPE.y + 1]) {
+  if (!walkable(x, y)) throw new Error(`the rope to the Quiet needs open rock at ${x},${y}`);
+}
+objects.push({
+  kind: 'gate', x: RIDGE_ROPE.x, y: RIDGE_ROPE.y, w: QUIET_ROPE_WIDTH, pullers: QUIET_ROPE_WIDTH, look: 'rope', to: 'quiet', tx: QUIET_WAY_HOME.x, ty: QUIET_WAY_HOME.y - 1, dir: 'up',
+  text: [
+    'An old rope pegged into the rock above the cairn, stiff with rime, four loops at its foot.',
+    'Scratched into the peg: "Four on it, or none. We went up once, the four of us. It is quiet up there."',
+    'Coming down, it holds for anyone.',
+  ],
+});
+
 // ---- Output ----
 
 // Every 40 minutes like every region the woods answer from, and short: restless for 1:45 from 20:15 into the
@@ -340,7 +356,7 @@ const patches = TALL.map((p, k) => {
 const SURGE: SurgeRule = { every: 2400, unstable: 105, surge: 105, sweep: 60, offset: 975 };
 
 const map: MapData = {
-  id: 'ridge', name: 'The Ridge', version: 1, kind: 'wilds', depth: 4, width: W, height: H,
+  id: 'ridge', name: 'The Ridge', version: 2, kind: 'wilds', depth: 4, width: W, height: H,
   tiles: tile.map(r => r.join('')),
   levels: level.map(r => r.join('')),
   spawn: { x: ENTRY[0], y: ENTRY[1] - 1, dir: 'up' },

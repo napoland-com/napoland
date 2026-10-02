@@ -29,7 +29,7 @@ import { homeModel, homeTone, kitchenModel, mapTableModel } from './home';
 import {
   CROUCH_DROP, CROUCH_LEAN, GRADES, Ground, PARTERS, STORM_WIND, TALL_BLADES, TUFT_BLADES, WIND, clumpGeometry, crouchToward, grassClumps, sessionGrass, type GrassMaterial,
 } from './grass';
-import { Creatures, Echoes, FAR_FIGURE_H, FarFigure, Flares, Flashes, MarshLights, Marks, Passer, Prints, SnowPrints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
+import { Creatures, Echoes, FAR_FIGURE_H, FarFigure, Flares, figureModel, Flashes, MarshLights, Marks, Passer, Prints, SnowPrints, boardModel, hitchhikerModel, stoneCrystal } from './wilds';
 import {
   doorwayModel, doorways, floorTile, furnitureModel, furnitureShadows, hasFire, hearthAt, houseDoors, noteModel, roomCurtains, roomTone, wallShapes, wallTile, windowModel, windowSpots,
   type QuadFn, type WallShape,
@@ -1278,6 +1278,27 @@ export class WorldView {
         weed.rotation.z = (k % 2 ? 1 : -1) * 0.25;
         g.add(weed);
       }
+      still.push(g);
+    }
+    // The ring in the Quiet: standing stones the Old Stone's shape, taller and furred with rime, and where one is
+    // missing its socket, a dark hollow in the rock. The figures round it stand still, every one facing the gap.
+    const stones = this.objects('standing'), gap = stones.find(s => s.gap) ?? { x: this.map.width / 2 - 0.5, y: this.map.height / 2 - 0.5 };
+    for (const s of stones) {
+      const g = pivot(s.x + 0.5, 0, s.y + 0.5);
+      if (s.gap) g.add(part(flat(new THREE.CylinderGeometry(0.46, 0.4, 0.06, 8)), '#141417', 0, 0.02, 0, false));
+      else {
+        g.add(part(flat(new THREE.CylinderGeometry(0.5, 0.6, 0.18, 8)), '#5b5f63', 0, 0.09, 0, 0.03));
+        const stone = part(new THREE.OctahedronGeometry(0.44, 0), '#6c7276', 0, 0.18 + 0.44 * 2.2, 0, 0.03);
+        stone.scale.set(0.72, 2.2, 0.72);
+        stone.rotation.y = hash2(s.x, s.y) * Math.PI;
+        g.add(stone);
+      }
+      still.push(g);
+    }
+    for (const f of this.objects('figure')) {
+      const g = figureModel();
+      g.position.set(f.x + 0.5, 0.02, f.y + 0.5);
+      g.rotation.y = Math.atan2(gap.x - f.x, gap.y - f.y);
       still.push(g);
     }
     for (const st of this.objects('stone')) {

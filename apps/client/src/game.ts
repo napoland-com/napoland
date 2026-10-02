@@ -212,6 +212,7 @@ function talkersOf(map: TileMap, pass: Pass, items: Items, nameOf: (id: string) 
     if (o.kind === 'paper') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk' }];
     if (o.kind === 'cage') return [{ x: o.x, y: o.y, who: 'NAPO tag', lines: o.text, kind: 'talk' }];
     if (o.kind === 'sister') return [{ x: o.x, y: o.y, who: 'The Sister', lines: o.text, kind: 'talk' }];
+    if (o.kind === 'standing') return [{ x: o.x, y: o.y, who: o.gap ? 'The gap' : 'A standing stone', lines: o.text, kind: 'talk' }];
     if (o.kind === 'note') return [{ x: o.x, y: o.y, who: o.name, lines: o.text, kind: 'talk', note: o }];
     // A pole of the north line has its tin tag to read; one with a note nailed to it says that instead.
     if (o.kind === 'pole') {

@@ -24,8 +24,11 @@ const rec = (id: string, map: string, x: number, y: number, signedIn = true): Pl
   id, name: id.toUpperCase(), tokenHash: null, authSub: signedIn ? `dev:${id}@example.test` : null, map, x, y, dir: 'up', color: colorFor(id), energy: 100, bag: [], createdAt: 1, lastSeenAt: 1,
 });
 
+/** The field again, where words do not carry (MapData.hush, the Quiet). */
+const hushed = (): MapData => ({ ...field(), id: 'hushed', hush: true });
+
 function chatWorld(...players: PlayerRecord[]) {
-  const world = new World([new TileMap(field()), ...fixtureMaps()], 'town', 'overcast');
+  const world = new World([new TileMap(field()), new TileMap(hushed()), ...fixtureMaps()], 'town', 'overcast');
   for (const p of players) world.join(p, 0);
   let now = 0;
   const heard: Array<{ to: string; msg: ServerMsg }> = [];
@@ -50,6 +53,15 @@ describe('who hears what', () => {
     const { chat, hear } = chatWorld(rec('a', 'field', 2, 1), rec('d', 'town', 2, 1));
     chat.say('a', 'world', 'anyone out there?');
     expect(hear().map(h => h.to)).toEqual(['a', 'd']);
+  });
+
+  it('is never said where words do not carry, nor heard there, near or far; everyone else hears as ever', () => {
+    const { chat, hear } = chatWorld(rec('a', 'hushed', 2, 1), rec('b', 'hushed', 3, 1), rec('c', 'field', 2, 1), rec('d', 'town', 2, 1));
+    chat.say('a', 'local', 'hello?');
+    chat.say('a', 'world', 'can anyone hear me');
+    expect(hear()).toEqual([1, 2].map(() => ({ to: 'a', msg: { t: 'refused', action: 'say', reason: 'hushed' } })));
+    chat.say('c', 'world', 'over here');
+    expect(hear().map(h => h.to)).toEqual(['c', 'd']);
   });
 
   it('never reaches someone who blocks the speaker', () => {

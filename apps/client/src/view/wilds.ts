@@ -114,6 +114,11 @@ function watcherModel(eyes: THREE.Material): THREE.Group {
   return g;
 }
 
+/** The eyes of the figures that stand and never move (MapObject 'figure'): a watcher's, a little dimmer. */
+const STILL_EYES = new THREE.MeshBasicMaterial({ color: 0x8fc8d2 });
+/** A figure that stands and never moves (the Quiet): a watcher's shape, its feet on the ground. */
+export const figureModel = (): THREE.Group => watcherModel(STILL_EYES);
+
 /** How tall what stands at the edge of the fog is (FarFigure): a watcher's height, a head taller than you. */
 export const FAR_FIGURE_H = 1.4;
 /**

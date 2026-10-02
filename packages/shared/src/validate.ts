@@ -136,7 +136,7 @@ export function validateMap(data: MapData): Problem[] {
       // A calendar or a drawing hangs on a wall; a note or a list lies on a table on the floor.
       else if (hangs(o.look) !== (map.kind(o.x, o.y) === 'wall')) err(`paper at ${o.x},${o.y}: a ${o.look} ${hangs(o.look) ? 'hangs on a wall tile' : 'lies on a table, on the floor'}`);
     }
-    if ((o.kind === 'cage' || o.kind === 'jeep' || o.kind === 'sister') && (!o.text?.length || o.text.some(t => !t.trim()))) err(`${o.kind} at ${o.x},${o.y} has nothing to read`);
+    if ((o.kind === 'cage' || o.kind === 'jeep' || o.kind === 'sister' || o.kind === 'standing') && (!o.text?.length || o.text.some(t => !t.trim()))) err(`${o.kind} at ${o.x},${o.y} has nothing to read`);
     if (o.kind === 'gate') {
       // Pulled from below, one puller a tile: as wide as the pullers it takes, each with ground to stand on.
       if (!o.text?.length || o.text.some(t => !t.trim())) err(`gate at ${o.x},${o.y} has nothing to read`);
@@ -291,6 +291,7 @@ export function validateMap(data: MapData): Problem[] {
   if (data.rain !== undefined) validateRain(data, err);
   if (data.ice !== undefined) validateIce(data, map, err, warn);
   if (data.drawdown !== undefined) validateDrawdown(data, map, err);
+  if (data.hush !== undefined && (data.hush !== true || data.kind !== 'wilds')) err('hush: only the wilds can be where words do not carry');
   if (data.sky !== undefined) {
     if (data.sky !== 'answer' || data.kind !== 'wilds') err(`sky ${JSON.stringify(data.sky)}: only the wilds have a sky that never moves, and it is 'answer'`);
     if (data.rain?.length) err('sky: under a sky that never moves it never rains (rain: [])');
