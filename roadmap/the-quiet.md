@@ -12,7 +12,7 @@ The region at depth 5, above the Ridge's crest, up a second rope that holds only
 What is new there:
 
 - **Four on the rope.** After NAPO's gate for two and the Ridge's rope for three, the climb to the Quiet takes four pulling together.
-- **No words.** Up there what you say does not carry: chat does not reach anyone, and what is left is calls and walking together.
+- **No words.** Up there what you say does not carry: nobody can say anything in world or local chat, or hear it, and what is left is calls and walking together.
 - **The gap in the ring.** One stone is missing from the ring, and the gap it left is the Old Stone's shape. Who carried it down, and why the figures face the gap, is left open.
 
 Why: together you go farther (pillar 4), and the deepest region asks the most of a group while taking away the easiest way to be one.
