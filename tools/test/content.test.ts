@@ -499,10 +499,10 @@ describe('a field notebook (roadmap/field-notebook.md)', () => {
 
   // The notebook grows as the world does: about ten pages for each area it has (the Marsh made it seven and anywhere, the
   // Reservoir eight; its pages came last, after anywhere's).
-  it('has about ten pages an area, across the ten areas and anywhere, each with a count worth filling', () => {
+  it('has about ten pages an area, across the eleven areas and anywhere, each with a count worth filling', () => {
     const areas = new Map<string, number>();
     for (const p of notebook.pages) areas.set(p.area, (areas.get(p.area) ?? 0) + 1);
-    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', 'burn', 'ridge', 'marsh', ANYWHERE, 'reservoir', 'turning', 'other-woods']);
+    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', 'burn', 'ridge', 'marsh', ANYWHERE, 'reservoir', 'turning', 'other-woods', 'quiet']);
     expect(notebook.pages.length).toBeGreaterThanOrEqual(8 * areas.size);
     expect(notebook.pages.length).toBeLessThanOrEqual(12 * areas.size);
     for (const [area, n] of areas) expect(n, area).toBeGreaterThanOrEqual(8);

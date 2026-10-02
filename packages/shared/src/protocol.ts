@@ -578,6 +578,8 @@ export type Refusal =
   | 'slow_down'
   /** That needs sign-in: talking, and everything among friends (a guest has neither until they sign in). */
   | 'sign_in_first'
+  /** Words do not carry where you are (MapData.hush): nobody hears chat said there. */
+  | 'hushed'
   /** Someone else's: the chest and the workbench of a friend's home you visit are theirs alone. */
   | 'not_yours'
   /** They play as a guest: friends need both players signed in. */

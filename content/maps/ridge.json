@@ -1,7 +1,7 @@
 {
   "id": "ridge",
   "name": "The Ridge",
-  "version": 1,
+  "version": 2,
   "kind": "wilds",
   "depth": 4,
   "width": 44,
@@ -152,7 +152,8 @@
     {"kind":"rock","x":16,"y":22,"s":0.896,"v":0.256},
     {"kind":"rock","x":29,"y":22,"s":1.175,"v":0.899},
     {"kind":"rock","x":9,"y":25,"s":1.07,"v":0.959},
-    {"kind":"rock","x":12,"y":34,"s":1.159,"v":0.96}
+    {"kind":"rock","x":12,"y":34,"s":1.159,"v":0.96},
+    {"kind":"gate","x":23,"y":8,"w":4,"pullers":4,"look":"rope","to":"quiet","tx":16,"ty":32,"dir":"up","text":["An old rope pegged into the rock above the cairn, stiff with rime, four loops at its foot.","Scratched into the peg: \"Four on it, or none. We went up once, the four of us. It is quiet up there.\"","Coming down, it holds for anyone."]}
   ],
   "rain": [{"from":480,"length":240}],
   "surge": {"every":2400,"unstable":105,"surge":105,"sweep":60,"offset":975},

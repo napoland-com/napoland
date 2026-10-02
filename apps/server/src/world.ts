@@ -1650,6 +1650,12 @@ export class World {
     return this.players.get(id)?.zone.key;
   }
 
+  /** Whether a player online stands where words do not carry (MapData.hush, the Quiet), a room off it too. */
+  hushed(id: string): boolean {
+    const p = this.players.get(id);
+    return !!p && !!this.outdoors(p.map).data.hush;
+  }
+
   /** The keys of the zones open now: every map's main copy, and each other copy someone is in. */
   zoneKeys(): string[] {
     return [...this.zones.keys()];

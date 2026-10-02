@@ -131,7 +131,7 @@ export const ANYWHERE = 'anywhere';
 export const emptyNotebook = (): NotebookState => ({ pages: [], blanks: [] });
 
 /** The kinds of thing read like a sign (the text box shows what it says): what a read event may name. */
-export const READABLE = new Set<MapObject['kind']>(['sign', 'console', 'paper', 'cage', 'jeep', 'gate', 'sister']);
+export const READABLE = new Set<MapObject['kind']>(['sign', 'console', 'paper', 'cage', 'jeep', 'gate', 'sister', 'standing']);
 export type Readable = Extract<MapObject, { kind: 'sign' | 'console' | 'paper' | 'cage' | 'jeep' | 'gate' }>;
 
 /** The readable thing covering tile x,y of a map, if one does (a jeep is bigger than one tile). */

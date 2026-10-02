@@ -136,6 +136,7 @@ export function refusalText(reason: Refusal, action?: RefusedAction): string {
       if (action === 'checkout') return 'Sign in to buy looks';
       return action.startsWith('trade') ? 'Sign in to trade' : 'Sign in to make friends';
     case 'guest': return 'They play as a guest: once they sign in, you can be friends';
+    case 'hushed': return 'Up here your words do not carry';
     case 'bag_at_home': return 'The bag you wear changes only at home';
     case 'whole': return 'It needs no mending';
     case 'have_tool': return action === 'pick' ? 'You have one already. It stays for someone else' : 'You have one already';

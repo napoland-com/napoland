@@ -247,6 +247,16 @@ export type MapObject =
    * (MapData.drawdown). Read like a sign from beside it, which only the low water lets anyone stand at.
    */
   | { kind: 'sister'; x: number; y: number; text: string[] }
+  /**
+   * One of the ring of standing stones in the Quiet, the Old Stone's kin: read like a sign, from beside it, for
+   * what is pecked into it. `gap`: not a stone but the socket where one stood, an empty hollow in the rock.
+   */
+  | { kind: 'standing'; x: number; y: number; text: string[]; gap?: true }
+  /**
+   * A tall pale figure that stands and never moves, a watcher's shape (the Quiet): drawn facing the map's gap in
+   * the ring (a `standing` with `gap`), or the middle of the map where there is none. Nobody reads it.
+   */
+  | { kind: 'figure'; x: number; y: number }
   /** A rowing boat pulled up on the shore, upturned: Jon's, on his knoll in the Reservoir. */
   | { kind: 'boat'; x: number; y: number }
   /** A townsperson. `town`: someone who comes or goes with the town (town.ts), here only within that gate. */
@@ -494,6 +504,8 @@ export interface MapData {
    * always shows, and the dark wears you down as it does at night. It never rains there.
    */
   sky?: 'answer';
+  /** The wilds only: words do not carry here (the Quiet). Nobody here says anything in chat, or hears it. */
+  hush?: true;
 }
 
 /** A lake that draws down: what people call it ("the reservoir"), the tiles of its bed, and its clock. */
@@ -561,7 +573,7 @@ export interface Arrival {
 
 /** Objects that stand on a tile and stop anyone from walking onto it (a house's door tile excepted). */
 const BLOCKING = new Set<MapObject['kind']>([
-  'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'sister', 'boat', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
+  'tree', 'rock', 'house', 'lamp', 'sign', 'pole', 'fence', 'barrel', 'car', 'stone', 'sister', 'standing', 'figure', 'boat', 'npc', 'fireplace', 'bed', 'table', 'shelf', 'crate', 'board', 'chest', 'workbench',
   'antenna', 'console', 'woodpile',
   'truck', 'jeep', 'logs', 'stump', 'luggage', 'boxes', 'rocker', 'piano', 'bike', 'birdcage', 'pump', 'cage',
   'hearth', 'sheeted', 'crib', 'clock', 'paper', 'saw', 'carriage', 'cache', 'teleport', 'lostfound', 'ledger', 'kitchen',
