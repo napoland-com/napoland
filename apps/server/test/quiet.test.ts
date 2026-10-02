@@ -6,7 +6,7 @@
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { GATE_WINDOW_MS, type MapObject, type ServerMsg } from '@napoland/shared';
-import { loadItems, loadMaps, loadStory } from '../src/content';
+import { loadItems, loadMaps, loadNotebook, loadStory } from '../src/content';
 import { setup } from './helpers';
 
 describe('the Quiet, up the last rope', () => {
@@ -14,8 +14,9 @@ describe('the Quiet, up the last rope', () => {
   const { maps } = loadMaps(resolve(content, 'maps'), 'stonebrook');
   const { items } = loadItems(resolve(content, 'items.json'), maps.values());
   const story = loadStory(resolve(content, 'story.json'), maps.values(), items);
+  const notebook = loadNotebook(resolve(content, 'notebook.json'), maps.values(), items);
   let now = 1_000_000;
-  const { enter } = setup({ maps: [...maps.values()], items, story, homeMap: 'stonebrook', weather: 'overcast', rng: () => 0, clock: () => now });
+  const { enter } = setup({ maps: [...maps.values()], items, story, homeMap: 'stonebrook', weather: 'overcast', rng: () => 0, clock: () => now, notebook });
   const ridge = maps.get('ridge')!, quiet = maps.get('quiet')!;
   const rope = ridge.data.objects.find((o): o is Extract<MapObject, { kind: 'gate' }> => o.kind === 'gate' && o.to === 'quiet')!;
   /** Someone signed in under the rope's tile `k`, facing it. */
@@ -52,6 +53,21 @@ describe('the Quiet, up the last rope', () => {
     expect((await town.c.next('said')).text).toBe('anyone?');
     await up.c.settle();
     expect(up.c.inbox.filter(m => m.t === 'said')).toEqual([]);
+  });
+
+  it('opens a page of the field notes for what is read up there: the gap, read from beside it', async () => {
+    now += 60_000;
+    const gap = quiet.data.objects.find((o): o is Extract<MapObject, { kind: 'standing' }> => o.kind === 'standing' && !!o.gap)!;
+    const a = await enter({ map: 'quiet', x: gap.x, y: gap.y + 1, dir: 'up' });
+    a.c.send({ t: 'talk', x: gap.x, y: gap.y });
+    expect(await a.c.next('page')).toEqual({ t: 'page', id: 'the-gap' });
+  });
+
+  it('opens one for the Turning\'s notches too, read from the trail', async () => {
+    now += 60_000;
+    const a = await enter({ map: 'turning-2', x: 20, y: 13, dir: 'up' });
+    a.c.send({ t: 'talk', x: 20, y: 12 });
+    expect(await a.c.next('page')).toEqual({ t: 'page', id: 'two-notches' });
   });
 
   it('holds for anyone coming down: the Quiet\'s way home comes out under the rope', async () => {
