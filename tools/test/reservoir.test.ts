@@ -29,12 +29,12 @@ const sister = objectsOf('sister')[0]!;
 const fire = objectsOf('fireplace')[0]!;
 const jon = objectsOf('npc').find(o => o.id === 'jon')!;
 const dam = (x: number, y: number) => res.data.tiles[y]?.[x] === 'l';
-/** The knoll: ground in the lake, Jon's fire on it, and every walkable tile joined to it without crossing the bed. */
+/** The knoll: ground in the lake, Jon's fire on it, and every walkable tile joined to it without crossing the bed or going up the old lane's bank. */
 const knoll = (() => {
   const seen = new Set([`${fire.x},${fire.y + 1}`]), queue: Array<[number, number]> = [[fire.x, fire.y + 1]];
   for (let h = 0; h < queue.length; h++) for (const d of DIRS) {
     const n = stepTarget(queue[h]![0], queue[h]![1], d);
-    if (res.walkable(n.x, n.y) && !seen.has(`${n.x},${n.y}`)) { seen.add(`${n.x},${n.y}`); queue.push([n.x, n.y]); }
+    if (res.walkable(n.x, n.y) && n.y >= fire.y - 3 && !seen.has(`${n.x},${n.y}`)) { seen.add(`${n.x},${n.y}`); queue.push([n.x, n.y]); }
   }
   return [...seen].map(k => k.split(',').map(Number) as [number, number]);
 })();
@@ -151,13 +151,15 @@ describe('the drowned valley and the Sister', () => {
   it('holds the farm (its house and byre fallen in, its table), the lane with the farm\'s car on it, fences and stumps, all on the bed', () => {
     const bed = new Set(lake.tiles.map(([x, y]) => `${x},${y}`));
     const onBed = (o: MapObject) => objectTiles(o).every(([x, y]) => bed.has(`${x},${y}`));
-    expect(objectsOf('ruin').filter(onBed)).toHaveLength(2);
+    // The farm's house and byre, and the first farms' chapel down on the meadow.
+    expect(objectsOf('ruin').filter(onBed)).toHaveLength(3);
     expect(objectsOf('car').filter(onBed)).toHaveLength(1);
     expect(objectsOf('table').filter(onBed)).toHaveLength(1);
     expect(objectsOf('fence').filter(onBed).length).toBeGreaterThan(10);
     expect(objectsOf('stump').filter(onBed).length).toBeGreaterThan(10);
     // Only what the water hides stands on the bed.
-    const hidden = new Set(['ruin', 'car', 'table', 'fence', 'stump', 'sister', 'note']);
+    // (A sign on the bed, the orchard's and the chapel's, sinks with the rest: it is built with what never moves.)
+    const hidden = new Set(['ruin', 'car', 'table', 'fence', 'stump', 'sister', 'note', 'sign']);
     expect(res.data.objects.filter(o => !hidden.has(o.kind) && objectTiles(o).some(([x, y]) => bed.has(`${x},${y}`))).map(o => o.kind)).toEqual([]);
   });
 
@@ -179,12 +181,20 @@ describe('the drowned valley and the Sister', () => {
 });
 
 describe('Jon\'s knoll', () => {
-  it('is ground in the lake, ringed by the bed, reached only across it at low water', () => {
+  it('is ground in the lake, ringed by the bed but for the old lane\'s bank, which reaches it from the shore at any water: nobody is ever shut in there', () => {
     expect(knoll.length).toBeGreaterThan(12);
     const m = lowWater();
     for (const [x, y] of knoll) {
-      expect(res.homeSteps(x, y), `${x},${y}`).toBe(-1);
+      expect(res.homeSteps(x, y), `${x},${y}`).toBeGreaterThan(0);
       expect(m.homeSteps(x, y), `${x},${y}`).toBeGreaterThan(0);
+    }
+    // The bank: one tile wide, never lakebed, ground at high water from the shore to the knoll.
+    const bank = res.data.places!.find(p => p.name === 'the old lane\'s bank')!;
+    expect(lake.tiles).not.toContainEqual([bank.x, bank.y]);
+    expect(res.walkable(bank.x, bank.y)).toBe(true);
+    // Every tile of ground on the map, but the bed, has a way home at high water.
+    for (let y = 0; y < res.height; y++) for (let x = 0; x < res.width; x++) {
+      if (res.walkable(x, y) && !res.exitAt(x, y)) expect(res.homeSteps(x, y), `${x},${y}`).toBeGreaterThanOrEqual(0);
     }
     // Nothing leads onto it: no exit anywhere arrives there.
     const on = new Set(knoll.map(([x, y]) => `${x},${y}`));
@@ -202,9 +212,9 @@ describe('Jon\'s knoll', () => {
     expect(Math.max(Math.abs(cache.x - fire.x), Math.abs(cache.y - fire.y))).toBeLessThanOrEqual(3);
   });
 
-  it('has one way off at high water, the landing, where Jon rows you into the boathouse, whose door gives onto the dam', () => {
+  it('has a way off by water too, the landing, where Jon rows you into the boathouse, whose door gives onto the dam', () => {
     const on = new Set(knoll.map(([x, y]) => `${x},${y}`));
-    const off = res.data.exits.filter(e => on.has(`${e.x},${e.y}`));
+    const off = res.data.exits.filter(e => on.has(`${e.x},${e.y}`) && e.to === 'reservoir-boathouse');
     expect(off).toHaveLength(1);
     const door = res.data.exits.find(e => e.to === 'reservoir-boathouse' && !on.has(`${e.x},${e.y}`))!;
     expect(off[0]).toMatchObject({ to: 'reservoir-boathouse', tx: door.tx, ty: door.ty });
@@ -231,12 +241,13 @@ describe('the Brandts\' notes', () => {
     });
   });
 
-  it('lie on the bed where the farm\'s car and table are read only from the knoll, and the log on the dam\'s crate by the way home', () => {
+  it('lie on the bed where the farm\'s car and table are read from the knoll, and the log on the dam\'s crate by the way home', () => {
     const m = lowWater();
+    const on = new Set(knoll.map(([x, y]) => `${x},${y}`));
     for (const id of ['brandts-slate-car', 'brandts-slate-table']) {
       const n = notes.find(x => x.note.id === id)!;
       expect(lake.tiles, id).toContainEqual([n.note.x, n.note.y]);
-      expect(beside(res, n.note.x, n.note.y), id).toBe(Infinity);
+      expect(DIRS.some(d => { const t = stepTarget(n.note.x, n.note.y, d); return on.has(`${t.x},${t.y}`); }), id).toBe(true);
       expect(beside(m, n.note.x, n.note.y), id).toBeLessThan(Infinity);
     }
     const dam = notes.find(x => x.note.id === 'brandts-log-dam')!;
@@ -259,10 +270,10 @@ describe('the Brandts\' notes', () => {
 });
 
 describe('the Reservoir, what it gives', () => {
-  it('gives what the shore gives, nothing new: glowcaps, resin, scrap by the dam\'s gear, a thermos by Agnes\'s fire', () => {
+  it('gives what the shore gives, nothing new: glowcaps, resin, fiddleheads by the water and fir tips at the trees\' edge, scrap by the dam\'s gear, a thermos by Agnes\'s fire', () => {
     const byId = itemIndex(items);
     const rules = items.finds.filter(f => f.map === 'reservoir' || f.map === 'reservoir-keepers-house');
-    expect(rules.map(f => f.item).sort()).toEqual(['glowcap', 'resin', 'scrap', 'thermos']);
+    expect(rules.map(f => f.item).sort()).toEqual(['fiddleheads', 'fir-tips', 'glowcap', 'resin', 'scrap', 'thermos']);
     for (const f of rules) expect(byId.get(f.item)?.kind, f.item).not.toBe('tool');
   });
 
