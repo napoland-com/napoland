@@ -210,7 +210,7 @@ const ROOMS: readonly Room[] = [
     // town keeps it going until dawn (longNight). At his elbow stands the lost and found box
     // (lostfound.ts), where whatever someone carries back for a stranger is left: its front, 2,3, is
     // beside where you stand to talk to him.
-    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 8, outside: 'stonebrook', door: [8, 31],
+    id: 'stonebrook-lodge', name: 'Stonebrook Lodge', version: 9, outside: 'stonebrook', door: [8, 31],
     rows: [
       'xxxxxxxxxxx',
       'xpppppppppx',
@@ -252,6 +252,7 @@ const ROOMS: readonly Room[] = [
           'NAPO said two weeks, and I went with the rest. Came back for my truck, up where the north road gives out. It never started again, so I stayed.',
           'Maud cooked for NAPO\'s crews, three shifts a day. She always said a town where folk thank each other is a town worth cooking for.',
           'Arvid Holm ran the head saw at the mill. He always said he\'d light its stove again once the fires out in the woods stay fed.',
+          'The ranger walked into the wood past the ring of stones and wouldn\'t come back for days. Anyone who followed her came out by the stones. What she knew she kept in her hut, and some of it only shows after dark.',
           'Folks leave what they find here. Somebody\'s always glad of it.',
         ],
       },
