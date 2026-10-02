@@ -1,5 +1,5 @@
 {
-  "version": 10,
+  "version": 11,
   "pages": [
     {
       "id": "pop-23",
@@ -680,6 +680,62 @@
       "title": "The sluice book",
       "when": { "read": { "map": "reservoir-boathouse", "x": 3, "y": 1 } },
       "text": "Jon Brandt ran the boat and the sluice: forty years of openings, one turn or two. The last is the week before the answer, at two in the morning. Nine turns, and no name after it."
+    },
+    {
+      "id": "the-turning",
+      "area": "turning",
+      "title": "The Turning",
+      "when": { "read": { "map": "turning", "x": 20, "y": 12 } },
+      "text": "A clearing in old firs, a stump in the middle, and one notch cut in a fir: the ranger's mark. A trail leaves it on every side, and the trees all look alike. The ranger's board by the ring said this wood turns you round."
+    },
+    {
+      "id": "two-notches",
+      "area": "turning",
+      "title": "Two notches",
+      "when": { "read": { "map": "turning-2", "x": 20, "y": 12 } },
+      "text": "The same clearing again, fir for fir and fern for fern, but a cairn in the middle where the stump was, and two notches in the fir. One stone at its edge hums like the ring's."
+    },
+    {
+      "id": "three-notches",
+      "area": "turning",
+      "title": "Three notches",
+      "when": { "read": { "map": "turning-3", "x": 20, "y": 12 } },
+      "text": "The same clearing a third time, three notches in the fir, and NAPO's survey stakes running across it and on out of it. NAPO came this far, and kept going."
+    },
+    {
+      "id": "the-ranger-camp",
+      "area": "turning",
+      "title": "The ranger's camp",
+      "when": { "read": { "map": "turning-camp-hut", "x": 2, "y": 0 } },
+      "text": "Her camp: a hut like the one by the lamp, the fire in, the kettle warm, the bunk made, and nobody about. She drew the Turning on the wall, the same clearing three times."
+    },
+    {
+      "id": "the-ranger-board",
+      "area": "turning",
+      "title": "The ranger's board",
+      "when": { "read": { "map": "near-woods", "x": 1, "y": 4 } },
+      "text": "A board by the ring of stones, in the ranger's hand: the wood past it turns you round. Whoever goes in comes out by the stones again, facing them, as if they never left."
+    },
+    {
+      "id": "line-t",
+      "area": "turning",
+      "title": "Line T",
+      "when": { "read": { "map": "turning-3", "x": 11, "y": 12 } },
+      "text": "NAPO surveyed even this: a line of stakes and a tag that says the survey goes on. It never says where it ended. Their stakes are the only straight thing in the Turning."
+    },
+    {
+      "id": "on-mornings",
+      "area": "turning",
+      "title": "On. Mornings.",
+      "when": { "read": { "map": "turning-camp", "x": 2, "y": 9 } },
+      "text": "An arrow cut in a fir at the back of her camp, pointing on, and two words in her hand under it. The firs close in past it, too thick to walk, as if the way on were not there yet."
+    },
+    {
+      "id": "her-calendar",
+      "area": "turning",
+      "title": "Her calendar",
+      "when": { "read": { "map": "turning-camp-hut", "x": 4, "y": 0 } },
+      "text": "She crossed off every day since the answer, past the end of the calendar and onto the wall, row under row. The last row is fresh. Whoever keeps the count keeps it still."
     }
   ]
 }

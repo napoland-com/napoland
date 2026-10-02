@@ -304,7 +304,7 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
   it('stands in every place out there where people rest by a fire: the shelters, and by the fire in the open', () => {
     expect(shelters.map(m => m.data.id).sort()).toEqual([
       'burn-line-cabin', 'far-woods-trapper-cabin', 'marsh-cutters-hut', 'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'reservoir-keepers-house', 'ridge-high-hut',
-      'south-road-bunker', 'south-road-checkpoint', 'south-road-dormitory', 'south-road-laboratory',
+      'south-road-bunker', 'south-road-checkpoint', 'south-road-dormitory', 'south-road-laboratory', 'turning-camp-hut',
     ]);
     for (const m of shelters) expect(crates.filter(c => c.map === m), m.data.id).toHaveLength(1);
     expect(openFires.map(f => `${f.map.data.id} ${f.x},${f.y}`)).toEqual(['reservoir 43,19', 'south-road 22,22']);
@@ -317,7 +317,8 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
   it('has a name each, for the letter of whoever left something in it', () => {
     expect(crates.map(c => c.o.kind === 'cache' && c.o.name).sort()).toEqual([
       'the bunker\'s crate', 'the checkpoint\'s crate', 'the crate at Jon\'s camp', 'the crate at the leavers\' camp', 'the crate in the cabin at the end', 'the cutters\' crate', 'the dormitory\'s crate',
-      'the high hut\'s crate', 'the keeper\'s crate', 'the laboratory\'s crate', 'the line cabin\'s crate', 'the old cabin\'s crate', 'the ranger\'s crate', 'the trapper\'s crate',
+      'the high hut\'s crate', 'the keeper\'s crate', 'the laboratory\'s crate', 'the line cabin\'s crate', 'the old cabin\'s crate', 'the ranger\'s camp crate', 'the ranger\'s crate',
+      'the trapper\'s crate',
     ]);
   });
 
@@ -498,10 +499,10 @@ describe('a field notebook (roadmap/field-notebook.md)', () => {
 
   // The notebook grows as the world does: about ten pages for each area it has (the Marsh made it seven and anywhere, the
   // Reservoir eight; its pages came last, after anywhere's).
-  it('has about ten pages an area, across the eight areas and anywhere, each with a count worth filling', () => {
+  it('has about ten pages an area, across the nine areas and anywhere, each with a count worth filling', () => {
     const areas = new Map<string, number>();
     for (const p of notebook.pages) areas.set(p.area, (areas.get(p.area) ?? 0) + 1);
-    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', 'burn', 'ridge', 'marsh', ANYWHERE, 'reservoir']);
+    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', 'burn', 'ridge', 'marsh', ANYWHERE, 'reservoir', 'turning']);
     expect(notebook.pages.length).toBeGreaterThanOrEqual(8 * areas.size);
     expect(notebook.pages.length).toBeLessThanOrEqual(12 * areas.size);
     for (const [area, n] of areas) expect(n, area).toBeGreaterThanOrEqual(8);
@@ -550,18 +551,20 @@ describe('notes and keepsakes left behind (roadmap/notes-left-behind.md)', () =>
    * How deep a note lies: steps from home to the nearest tile it is read from, out in the wilds; in a room
    * off the wilds, the steps to its door; in town and its houses, none.
    */
+  // Steps from the way home of its region, and a region deeper than the first lies past a whole region's walk (100
+  // steps) for each level: the Turning's camp is few steps from its own way home, and far from town.
   const depth = ({ map, note }: { map: MapData; note: MapNote }): number => {
-    const m = maps.get(map.id)!;
-    if (map.kind === 'wilds') return Math.min(...DIRS.map(d => stepTarget(note.x, note.y, d)).filter(t => m.walkable(t.x, t.y)).map(t => m.homeSteps(t.x, t.y)));
+    const m = maps.get(map.id)!, past = (r: MapData) => (r.depth - 1) * 100;
+    if (map.kind === 'wilds') return past(map) + Math.min(...DIRS.map(d => stepTarget(note.x, note.y, d)).filter(t => m.walkable(t.x, t.y)).map(t => m.homeSteps(t.x, t.y)));
     const out = maps.get(map.exits[0]?.to ?? '');
-    return map.kind === 'inside' && out?.data.kind === 'wilds' ? out.homeSteps(map.exits[0]!.tx, map.exits[0]!.ty) : 0;
+    return map.kind === 'inside' && out?.data.kind === 'wilds' ? past(out.data) + out.homeSteps(map.exits[0]!.tx, map.exits[0]!.ty) : 0;
   };
   const words = (n: { note: MapNote }) => n.note.text.join(' ').length;
 
-  it('lays about forty notes, ten by each of the ranger, Walt and the Barlows, four tags by the people who left and eight by the Brandts', () => {
+  it('lays about fifty notes, ten by each of Walt and the Barlows, fourteen by the ranger, four tags by the people who left and eight by the Brandts', () => {
     expect(notes.length).toBeGreaterThanOrEqual(25);
-    // About thirty, until the Brandts' eight at the Reservoir (roadmap/the-reservoir.md).
-    expect(notes.length).toBeLessThanOrEqual(45);
+    // About thirty, until the Brandts' eight at the Reservoir (roadmap/the-reservoir.md) and the ranger's four about the Turning (roadmap/the-turning.md).
+    expect(notes.length).toBeLessThanOrEqual(50);
     // The leavers left four, a tag for each dark house's family; the others left at least eight.
     for (const by of NOTE_AUTHORS) expect(notes.filter(n => n.note.by === by).length, by).toBeGreaterThanOrEqual(by === 'leavers' ? 4 : 8);
   });
@@ -952,7 +955,8 @@ describe('places you can see but not reach yet (roadmap/locked-places.md)', () =
     // together) and the notes people left, laid last, come after the shed; its door is the last exit.
     const after = woods.data.objects.slice(woods.data.objects.indexOf(shed) + 1).filter(o => o.kind !== 'note');
     expect(after.map(o => (o.kind === 'lamp' && o.works ? 'works lamp' : o.kind))).toEqual(['lookout', 'sign', 'slab', 'footbridge', 'works lamp']);
-    expect(woods.data.exits.at(-1)).toMatchObject({ to: 'near-woods-shed' });
+    // (but for the Turning's mouth, cut after it: roadmap/the-turning.md).
+    expect(woods.data.exits.filter(e => e.to !== 'turning').at(-1)).toMatchObject({ to: 'near-woods-shed' });
     // The woods as they were: forest where the culvert runs and the shed stands (its ground was cut out of the firs).
     const under = new Set(objectTiles(shed).map(([x, y]) => `${x},${y}`));
     const without = new TileMap({

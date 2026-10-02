@@ -293,7 +293,7 @@ const ROOMS: readonly Room[] = [
   },
   {
     // Behind the lonely lamp, the refuge of the west loop: one room, a bunk, the fire, a ranger's things.
-    id: 'near-woods-ranger-hut', name: 'The ranger\'s hut', version: 3, outside: 'near-woods', door: [30, 6],
+    id: 'near-woods-ranger-hut', name: 'The ranger\'s hut', version: 4, outside: 'near-woods', door: [30, 6],
     rows: [
       'xxxxxxx',
       'xpppppx',
@@ -308,6 +308,9 @@ const ROOMS: readonly Room[] = [
       { kind: 'bed', x: 5, y: 1 },
       { kind: 'table', x: 1, y: 3 },
       { kind: 'crate', x: 5, y: 4 },
+      // A small table between the bunk and the crate, added later, before the crate so it stays the last thing but
+      // the notes: on it her way through the Turning, in glowcap so NAPO's men never read it.
+      { kind: 'table', x: 5, y: 3 },
       { kind: 'cache', x: 2, y: 3, name: 'the ranger\'s crate' },
       // Hers: the logbook on the shelf, the note on the table, one in the crate that only shows in the
       // dark, and under the pillow one that only shows on a green night.
@@ -315,6 +318,7 @@ const ROOMS: readonly Room[] = [
       noteAt('ranger-tall-ones', 1, 3),
       noteAt('ranger-dark', 5, 4),
       noteAt('ranger-green', 5, 1),
+      noteAt('ranger-turning', 5, 3),
     ],
   },
   {
@@ -912,6 +916,48 @@ const ROOMS: readonly Room[] = [
         ],
       },
       { kind: 'crate', x: 3, y: 1 },
+    ],
+  },
+  {
+    // Past the Turning's third clearing, the camp the ranger kept after she stopped going home (gen-turning.ts):
+    // one room like her hut by the lamp, its fire always burning when anyone gets there, nobody about. Her bunk,
+    // her shelf, her table, her drawing of the Turning on the wall, a crate for whoever comes next, and her last
+    // notes (notes-left.ts).
+    id: 'turning-camp-hut', name: 'The ranger\'s camp', version: 1, outside: 'turning-camp', door: [10, 6],
+    rows: [
+      'xxxxxxx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xpppppx',
+      'xxxpxxx',
+    ],
+    things: [
+      { kind: 'fireplace', x: 3, y: 1, tended: true, name: 'the ranger\'s camp fire' },
+      { kind: 'shelf', x: 1, y: 1 },
+      { kind: 'bed', x: 5, y: 1 },
+      { kind: 'table', x: 1, y: 3 },
+      { kind: 'crate', x: 5, y: 4 },
+      {
+        kind: 'paper', x: 2, y: 0, look: 'drawing', name: 'A drawing on the wall',
+        text: [
+          'In pencil, the same clearing three times, one under the other: the trees, the trails out on four sides, all alike.',
+          'In the first a stump, and a brook going up off the page. In the second a little pile of stones, one inked dark, by the trail going left.',
+          'In the third a row of stakes going left, and an arrow pointing the other way, back off the edge of the paper. Under it: "Turn round."',
+        ],
+      },
+      {
+        kind: 'paper', x: 4, y: 0, look: 'calendar', name: 'A calendar on the wall',
+        text: [
+          'A Timber Co. calendar from the year of the answer, every day crossed off in pencil.',
+          'The crosses go on past the last page, onto the wall beside it, row under row, thousands of them.',
+          'The last row is fresh.',
+        ],
+      },
+      { kind: 'cache', x: 2, y: 3, name: 'the ranger\'s camp crate' },
+      noteAt('ranger-camp', 1, 3),
+      noteAt('ranger-said-back', 1, 1),
+      noteAt('ranger-kettle', 5, 1),
     ],
   },
   {

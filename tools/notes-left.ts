@@ -90,6 +90,38 @@ export const NOTES = {
       'Now the woods keep time with your Tower. I think you know that.',
     ],
   },
+  'ranger-turning': {
+    by: 'ranger', name: 'A note on the table', when: 'night', faint: GLOWS,
+    text: [
+      'West of the ring the wood turns you round: three clearings alike as peas, and every way out but one puts you back by the stones.',
+      'At the stump, go with the water. At the cairn, go to the stone that hums. At NAPO\'s stakes, turn round.',
+      'NAPO\'s men followed their stakes in and came out by the ring, every time. I write this in glowcap so they never read it.',
+    ],
+  },
+  'ranger-camp': {
+    by: 'ranger', name: 'A note on the table',
+    text: [
+      'I have stopped going home. It is not the walk: the wood lets me through now, either way.',
+      'The hut by the lamp has felt like somebody else\'s since the answer. This one does not.',
+      'Whoever keeps my fire in while I am out: I would like to know you. Leave a word in the crate.',
+    ],
+  },
+  'ranger-said-back': {
+    by: 'ranger', name: 'A logbook on the shelf',
+    text: [
+      'Some mornings I go on past the camp. It is the Near Woods: every path and pond of them, and every one the wrong way round.',
+      'It is always that night there: the sky green, the woods lit up to the north, the lamp with no wires lit, Walt\'s truck with its lights on.',
+      'It is not a place. It is what the woods heard that night, said back.',
+    ],
+  },
+  'ranger-kettle': {
+    by: 'ranger', name: 'Under the pillow', when: 'aurora', faint: SCRATCHED,
+    text: [
+      'Scratched with a shard. On a green night I came back late and someone was sitting at my fire. My coat. My hat.',
+      'They looked up when I did. I stood in the trees until it was grey, and when I came in the kettle was warm.',
+      'I have not told Vera. I do not know how to write it so it reads as anything but mad.',
+    ],
+  },
   'ranger-walt': {
     by: 'ranger', name: 'Nailed to the pole',
     text: ['Walt: your line hums at night past the crossroads, and it has no business humming. Thought you should know.'],
