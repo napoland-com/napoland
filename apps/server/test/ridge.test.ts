@@ -6,7 +6,7 @@
  */
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { GATE_WINDOW_MS, PRINTS_KEPT_MS, SEASONS, energyRate, quarterOf, seasonAt, type MapObject, type Season, type ServerMsg } from '@napoland/shared';
+import { GATE_WINDOW_MS, PRINTS_KEPT_MS, SEASONS, energyRate, quarterOf, seasonAt, surgeAt, type MapObject, type Season, type ServerMsg } from '@napoland/shared';
 import { loadItems, loadMaps, loadStory } from '../src/content';
 import { setup } from './helpers';
 
@@ -16,8 +16,11 @@ describe('the Ridge, up the trappers\' rope', () => {
   const { maps } = loadMaps(resolve(content, 'maps'), 'stonebrook');
   const { items } = loadItems(resolve(content, 'items.json'), maps.values());
   const story = loadStory(resolve(content, 'story.json'), maps.values(), items);
-  let now = 1_000_000;
-  const { enter } = setup({ maps: [...maps.values()], items, story, homeMap: 'stonebrook', weather: 'overcast', rng: () => 0, clock: () => now });
+  // The sky runs on the world's wall clock, not on `now`: pinned, so the Ridge's surges and the season fall the same every run.
+  const START = 1_000_000, at = Date.UTC(2026, 0, 1);
+  let now = START;
+  const wall = () => at + (now - START);
+  const { enter } = setup({ maps: [...maps.values()], items, story, homeMap: 'stonebrook', weather: 'overcast', rng: () => 0, clock: () => now, clockShiftMs: at - Date.now() });
   const burn = maps.get('burn')!, ridge = maps.get('ridge')!;
   const rope = burn.data.objects.find((o): o is Extract<MapObject, { kind: 'gate' }> => o.kind === 'gate')!;
   /** Someone under the rope's tile `k`, facing it. */
@@ -104,10 +107,12 @@ describe('the Ridge, up the trappers\' rope', () => {
     now += 60_000;
     const home = ridge.data.exits.find(e => e.home)!;
     const a = await enter({ map: 'ridge', x: home.x, y: home.y - 1, dir: 'up' });
-    expect(seasonAt(now)).not.toBe('winter');
+    // Between the Ridge's surges, which wear you down on their own.
+    expect(surgeAt(ridge.data.surge!, wall()).phase).toBe('calm');
+    expect(seasonAt(wall())).not.toBe('winter');
     const chill = (s: Season) => ({ chill: { weather: SEASONS[s].chill, wet: SEASONS[s].wet } });
     expect(a.welcome.energy.rate).toBeCloseTo(energyRate(ridge, home.x, home.y - 1, 'overcast', chill('winter')), 2);
-    expect(a.welcome.energy.rate).toBeLessThan(energyRate(ridge, home.x, home.y - 1, 'overcast', chill(seasonAt(now))));
+    expect(a.welcome.energy.rate).toBeLessThan(energyRate(ridge, home.x, home.y - 1, 'overcast', chill(seasonAt(wall()))));
   });
 
   it('has its map torn in four across it, a piece in each quarter', async () => {
