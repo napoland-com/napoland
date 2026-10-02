@@ -62,12 +62,16 @@ export function noteAt(map: MapData, x: number, y: number): MapNote | undefined 
  * are strung, N-1 to N-6 in Stonebrook and N-7 to N-16 in the Near Woods (the South Road's are NAPO's, and carry none).
  * Worked out from that order, so no map changes; a map that re-orders its poles re-numbers the line.
  */
-const LINE_FIRST: Readonly<Record<string, number>> = { stonebrook: 1, 'near-woods': 7 };
+const LINE_FIRST: Readonly<Record<string, number>> = { stonebrook: 1, 'near-woods': 7, 'other-woods': 7 };
+/** The Other Woods are the Near Woods said back: their tags read backwards ("61-N"), and so lean no way anyone reads. */
+const SAID_BACK = new Set(['other-woods']);
 export function poleTag(map: MapData, x: number, y: number): string | undefined {
   const first = LINE_FIRST[map.id];
   if (first === undefined) return undefined;
   const i = map.objects.filter(o => o.kind === 'pole').findIndex(o => o.x === x && o.y === y);
-  return i < 0 ? undefined : `N-${first + i}`;
+  if (i < 0) return undefined;
+  const tag = `N-${first + i}`;
+  return SAID_BACK.has(map.id) ? [...tag].reverse().join('') : tag;
 }
 
 /**

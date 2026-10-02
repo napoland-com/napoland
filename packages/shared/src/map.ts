@@ -488,6 +488,12 @@ export interface MapData {
    * carried ashore, soaked. A map has this or `ice`, never both.
    */
   drawdown?: Drawdown;
+  /**
+   * The wilds only: a sky that never moves. 'answer': it is always the night of the answer there (the Other Woods),
+   * an aurora night that never ends, whatever the world's clock says: what shows only at night or on a green night
+   * always shows, and the dark wears you down as it does at night. It never rains there.
+   */
+  sky?: 'answer';
 }
 
 /** A lake that draws down: what people call it ("the reservoir"), the tiles of its bed, and its clock. */

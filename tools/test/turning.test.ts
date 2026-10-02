@@ -28,8 +28,10 @@ describe('the Turning, where it is', () => {
     expect(mouth).toMatchObject({ x: NEAR_WOODS_MOUTH.x, y: NEAR_WOODS_MOUTH.y, tx: TURNING_ENTRY.x, ty: TURNING_ENTRY.y });
     const ring = near.data.places!.find(p => p.name === 'ring of stones')!;
     expect(Math.abs(mouth.x - ring.x) + Math.abs(mouth.y - ring.y)).toBeLessThanOrEqual(8);
+    // (and the Other Woods past it, whose way home leads back into the ranger's camp).
     const into = [...maps.values()].filter(m => !m.data.id.startsWith('turning') && m.data.exits.some(e => e.to.startsWith('turning'))).map(m => m.data.id);
-    expect(into).toEqual(['near-woods']);
+    expect(into.sort()).toEqual(['near-woods', 'other-woods']);
+    expect(maps.get('other-woods')!.data.exits.filter(e => e.to.startsWith('turning'))).toEqual([expect.objectContaining({ to: 'turning-camp', home: true })]);
     // The ranger's board by the mouth says what the wood does.
     expect(objects(near, 'sign').find(s => s.x === NEAR_WOODS_BACK.x && s.y === NEAR_WOODS_BACK.y - 1)!.text.join(' ')).toMatch(/turns you round/);
   });
@@ -108,8 +110,11 @@ describe('the ranger\'s camp', () => {
     expect(notes.every(n => n.by === 'ranger')).toBe(true);
   });
 
-  it('has a way on that gives out in the firs, for now', () => {
-    expect(camp.data.exits.filter(e => !e.home && e.to !== 'turning-camp-hut')).toEqual([]);
+  it('has a way on past her arrow, into the Other Woods, coming out by their ring', () => {
+    const on = camp.data.exits.filter(e => !e.home && e.to !== 'turning-camp-hut');
+    expect(on).toEqual([expect.objectContaining({ to: 'other-woods', x: 0, dir: 'left' })]);
+    const other = maps.get('other-woods')!;
+    expect(other.walkable(on[0]!.tx, on[0]!.ty)).toBe(true);
     expect(objects(camp, 'sign').some(s => /On\. Mornings\./.test(s.text.join(' ')))).toBe(true);
   });
 });

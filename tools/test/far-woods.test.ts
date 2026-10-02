@@ -279,10 +279,10 @@ describe('the Far Woods, what they give', () => {
     expect(rule.respawn[1]).toBeLessThanOrEqual(180);
     // Every other area there is outdoors has a map everyone starts with; this one and the Burn, the Ridge and
     // the Marsh beyond it are found. (A home's garden is on no map: nothing leads there but NAPO's teleport; nor is
-    // the Turning, which nobody ever drew but as the same clearing three times.)
+    // the Turning, which nobody ever drew but as the same clearing three times, nor the Other Woods past it.)
     const charted = new Set([...STARTER_TOOLS].map(t => byId.get(t)!.chart));
     const outdoors = [...maps.values()].filter(m => m.data.kind !== 'inside' && !m.data.private).map(m => m.data.id);
-    expect(outdoors.filter(id => !charted.has(id)).sort()).toEqual(['burn', 'far-woods', 'marsh', 'ridge', 'turning', 'turning-2', 'turning-3', 'turning-camp']);
+    expect(outdoors.filter(id => !charted.has(id)).sort()).toEqual(['burn', 'far-woods', 'marsh', 'other-woods', 'ridge', 'turning', 'turning-2', 'turning-3', 'turning-camp']);
   });
 });
 

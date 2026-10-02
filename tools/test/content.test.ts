@@ -303,7 +303,7 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
 
   it('stands in every place out there where people rest by a fire: the shelters, and by the fire in the open', () => {
     expect(shelters.map(m => m.data.id).sort()).toEqual([
-      'burn-line-cabin', 'far-woods-trapper-cabin', 'marsh-cutters-hut', 'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'reservoir-keepers-house', 'ridge-high-hut',
+      'burn-line-cabin', 'far-woods-trapper-cabin', 'marsh-cutters-hut', 'near-woods-end-cabin', 'near-woods-old-cabin', 'near-woods-ranger-hut', 'other-woods-old-cabin', 'reservoir-keepers-house', 'ridge-high-hut',
       'south-road-bunker', 'south-road-checkpoint', 'south-road-dormitory', 'south-road-laboratory', 'turning-camp-hut',
     ]);
     for (const m of shelters) expect(crates.filter(c => c.map === m), m.data.id).toHaveLength(1);
@@ -317,7 +317,7 @@ describe('a crate for whoever comes next (roadmap/shelter-caches.md)', () => {
   it('has a name each, for the letter of whoever left something in it', () => {
     expect(crates.map(c => c.o.kind === 'cache' && c.o.name).sort()).toEqual([
       'the bunker\'s crate', 'the checkpoint\'s crate', 'the crate at Jon\'s camp', 'the crate at the leavers\' camp', 'the crate in the cabin at the end', 'the cutters\' crate', 'the dormitory\'s crate',
-      'the high hut\'s crate', 'the keeper\'s crate', 'the laboratory\'s crate', 'the line cabin\'s crate', 'the old cabin\'s crate', 'the ranger\'s camp crate', 'the ranger\'s crate',
+      'the high hut\'s crate', 'the keeper\'s crate', 'the laboratory\'s crate', 'the line cabin\'s crate', 'the old cabin\'s crate', 'the other cabin\'s crate', 'the ranger\'s camp crate', 'the ranger\'s crate',
       'the trapper\'s crate',
     ]);
   });
@@ -499,10 +499,10 @@ describe('a field notebook (roadmap/field-notebook.md)', () => {
 
   // The notebook grows as the world does: about ten pages for each area it has (the Marsh made it seven and anywhere, the
   // Reservoir eight; its pages came last, after anywhere's).
-  it('has about ten pages an area, across the nine areas and anywhere, each with a count worth filling', () => {
+  it('has about ten pages an area, across the ten areas and anywhere, each with a count worth filling', () => {
     const areas = new Map<string, number>();
     for (const p of notebook.pages) areas.set(p.area, (areas.get(p.area) ?? 0) + 1);
-    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', 'burn', 'ridge', 'marsh', ANYWHERE, 'reservoir', 'turning']);
+    expect([...areas.keys()]).toEqual(['stonebrook', 'near-woods', 'south-road', 'far-woods', 'burn', 'ridge', 'marsh', ANYWHERE, 'reservoir', 'turning', 'other-woods']);
     expect(notebook.pages.length).toBeGreaterThanOrEqual(8 * areas.size);
     expect(notebook.pages.length).toBeLessThanOrEqual(12 * areas.size);
     for (const [area, n] of areas) expect(n, area).toBeGreaterThanOrEqual(8);

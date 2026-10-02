@@ -3751,14 +3751,15 @@ export class World {
     return map.data.kind === 'inside' ? this.around.get(map.data.id) ?? map : map;
   }
 
-  /** The weather over a map at a wall time, by its region's rain windows (sky.ts). */
+  /** The weather over a map at a wall time, by its region's rain windows (sky.ts), or its sky that never moves. */
   private regionWeather(map: TileMap, wall: number): Weather {
-    return weatherAt(wall, this.outdoors(map).data.rain).weather;
+    const out = this.outdoors(map).data;
+    return out.sky === 'answer' ? 'aurora' : weatherAt(wall, out.rain).weather;
   }
 
-  /** The weather over a map now, as its players last heard it. */
+  /** The weather over a map now, as its players last heard it: always the night of the answer under that sky. */
   private weatherOf(map: TileMap): Weather {
-    return this.skies.get(map.data.id) ?? this.sky;
+    return this.outdoors(map).data.sky === 'answer' ? 'aurora' : this.skies.get(map.data.id) ?? this.sky;
   }
 
   /** Everything queued since the last drain, in order. */
@@ -5827,7 +5828,8 @@ export class World {
     const wilds = [...this.maps.values()].filter(m => m.data.kind === 'wilds');
     const regions = wilds.filter((m, i) => wilds.findIndex(o => o.data.name === m.data.name) === i).sort((a, b) => a.data.depth - b.data.depth).map((map): BoardRegion => {
       const r: BoardRegion = { id: map.data.id, name: map.data.name, glowing: [] };
-      if (sky.kind === 'day') {
+      // Under a sky that never moves there is no rain to tell of, by day or night.
+      if (sky.kind === 'day' && !map.data.sky) {
         const rain = rainAhead(wall, map.data.rain);
         r.rain = rain && { raining: rain.raining, left: rain.left };
       }

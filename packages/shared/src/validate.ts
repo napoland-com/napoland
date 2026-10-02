@@ -291,6 +291,10 @@ export function validateMap(data: MapData): Problem[] {
   if (data.rain !== undefined) validateRain(data, err);
   if (data.ice !== undefined) validateIce(data, map, err, warn);
   if (data.drawdown !== undefined) validateDrawdown(data, map, err);
+  if (data.sky !== undefined) {
+    if (data.sky !== 'answer' || data.kind !== 'wilds') err(`sky ${JSON.stringify(data.sky)}: only the wilds have a sky that never moves, and it is 'answer'`);
+    if (data.rain?.length) err('sky: under a sky that never moves it never rains (rain: [])');
+  }
   // Storms come between surges in every season, the autumn's twice-as-many too (stormAt).
   if (data.surge && data.storm && !out.some(p => p.level === 'error' && /^(surge|storm):/.test(p.message))) {
     const clash = stormsClash(data);

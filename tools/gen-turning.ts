@@ -14,13 +14,13 @@
  * directions in the Near Woods name (notes-left.ts, ranger-turning): at the stump a spring whose brook runs out
  * one side, at the cairn a stone that hums by one trail, and at NAPO's stakes, which run out one side (NAPO went
  * that way, and came out by the ring), the way on is back where you came in. Past the third, her camp: a clearing
- * with her hut, its fire always burning (gen-interiors.ts), and a path on, west, that gives out in the firs.
+ * with her hut, its fire always burning (gen-interiors.ts), and a path on, west, into the Other Woods (gen-other-woods.ts).
  */
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { STEP_MS, TileMap, energyRate, maxEnergy, objectTiles, validateMap, type MapData, type MapExit, type MapObject } from '../packages/shared/src';
 import { doorInto } from './gen-interiors';
-import { NEAR_WOODS_BACK, TURNING_ENTRY } from './turning-mouth';
+import { CAMP_BACK, CAMP_ON, NEAR_WOODS_BACK, OTHER_WOODS_BACK, TURNING_ENTRY } from './turning-mouth';
 
 const W = 31, H = 27, SEED = 20261002;
 type P = readonly [number, number];
@@ -209,8 +209,9 @@ function stage(s: Stage): MapData {
 
 /** Her hut, its door on the front row's middle (gen-interiors.ts, turning-camp-hut). */
 const HUT = { kind: 'house', x: 9, y: 5, w: 3, h: 2, roof: '#4f5a44', lit: 1 } as const;
-/** Where the path on gives out, for now: the firs close in. */
-const ON_END: P = [2, 10];
+/** The path on, past her arrow, out of the camp's west edge into the Other Woods (gen-other-woods.ts). */
+const ON_END: P = [CAMP_ON.x, CAMP_ON.y];
+if (CAMP_BACK.x !== ON_END[0] + 1 || CAMP_BACK.y !== ON_END[1]) throw new Error('the camp\'s way back in from the Other Woods is not inside its way on');
 
 function camp(): MapData {
   const g = new Ground(CW, CH);
@@ -223,19 +224,19 @@ function camp(): MapData {
   g.place({ ...HUT });
   g.place({ kind: 'woodpile', x: 12, y: 6 });
   g.place({ kind: 'stump', x: 14, y: 10, s: 0.8, v: 0.2 });
-  g.set(ON_END[0], ON_END[1] - 1, 'g');
+  g.set(CAMP_BACK.x + 1, CAMP_BACK.y - 1, 'g');
   g.place({
-    kind: 'sign', x: ON_END[0], y: ON_END[1] - 1,
-    text: [
-      'An arrow cut in the bark, pointing on into the firs. Under it, in the ranger\'s hand: "On. Mornings."',
-      'The firs close in past it, too thick to walk.',
-    ],
+    kind: 'sign', x: CAMP_BACK.x + 1, y: CAMP_BACK.y - 1,
+    text: ['An arrow cut in the bark, pointing on into the firs. Under it, in the ranger\'s hand: "On. Mornings."'],
   });
   return {
     id: 'turning-camp', name: 'The Turning', version: 1, kind: 'wilds', depth: 2, width: CW, height: CH,
     tiles: g.tile.map(r => r.join('')), levels: g.tile.map(r => '0'.repeat(r.length)),
     spawn: { x: CAMP_ENTRY[0], y: CAMP_ENTRY[1], dir: 'left' },
-    exits: [backOut(CAMP_HOME[0], CAMP_HOME[1]), doorInto('turning-camp-hut', 'turning-camp', HUT)],
+    exits: [
+      backOut(CAMP_HOME[0], CAMP_HOME[1]), doorInto('turning-camp-hut', 'turning-camp', HUT),
+      { x: ON_END[0], y: ON_END[1], w: 1, h: 1, to: 'other-woods', tx: OTHER_WOODS_BACK.x, ty: OTHER_WOODS_BACK.y, dir: 'left' },
+    ],
     objects: g.objects, rain: RAIN,
     places: [{ name: 'the ranger\'s camp', x: 12, y: 9 }],
     forest: 'old',
