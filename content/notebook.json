@@ -728,7 +728,7 @@
       "area": "turning",
       "title": "On. Mornings.",
       "when": { "read": { "map": "turning-camp", "x": 2, "y": 9 } },
-      "text": "An arrow cut in a fir at the back of her camp, pointing on, and two words in her hand under it. The firs close in past it, too thick to walk, as if the way on were not there yet."
+      "text": "An arrow cut in a fir at the back of her camp, pointing on, and two words in her hand under it. Mornings: as if the way on were only there some of the time, or as if she only dared it by day."
     },
     {
       "id": "her-calendar",
@@ -736,6 +736,76 @@
       "title": "Her calendar",
       "when": { "read": { "map": "turning-camp-hut", "x": 4, "y": 0 } },
       "text": "She crossed off every day since the answer, past the end of the calendar and onto the wall, row under row. The last row is fresh. Whoever keeps the count keeps it still."
+    },
+    {
+      "id": "said-back",
+      "area": "other-woods",
+      "title": "Said back",
+      "when": { "read": { "map": "other-woods", "x": 33, "y": 74 } },
+      "text": "The woods' own sign, letter for letter, backwards. Every path I knew is here the wrong way round, and the sky is green and does not move."
+    },
+    {
+      "id": "the-crossroads-backwards",
+      "area": "other-woods",
+      "title": "Both ways wrong",
+      "when": { "read": { "map": "other-woods", "x": 35, "y": 40 } },
+      "text": "The crossroads sign, backwards, points to the pond one way and the old cabin the other. Here both are on the wrong side. It was right once, before it was said back."
+    },
+    {
+      "id": "the-lamp-lit",
+      "area": "other-woods",
+      "title": "The lamp, lit",
+      "when": { "read": { "map": "other-woods", "x": 36, "y": 9 } },
+      "text": "The lamp nobody wired burns here, as it burned in the Near Woods the night of the answer. The sign under it says so, backwards."
+    },
+    {
+      "id": "napo-backwards",
+      "area": "other-woods",
+      "title": "NAPO, backwards",
+      "when": { "read": { "map": "other-woods", "x": 30, "y": 74 } },
+      "text": "Even NAPO's sign is said back. Whatever heard that night heard NAPO's paint too, and every word on it."
+    },
+    {
+      "id": "the-post-said-back",
+      "area": "other-woods",
+      "title": "The post, said back",
+      "when": { "read": { "map": "other-woods", "x": 54, "y": 4 } },
+      "text": "NAPO's mast by the ring, and its sign asking nobody to move the stones, backwards. The ring hums here as loud as anywhere I have stood."
+    },
+    {
+      "id": "the-whole-jeep",
+      "area": "other-woods",
+      "title": "The whole jeep",
+      "when": { "read": { "map": "other-woods", "x": 35, "y": 72 } },
+      "text": "NAPO's survey jeep, the one that burned out off the road: here it is whole, not a mark of fire on it, and the bonnet is warm. Here it never burned."
+    },
+    {
+      "id": "no-trail",
+      "area": "other-woods",
+      "title": "No trail",
+      "when": { "read": { "map": "other-woods", "x": 11, "y": 2 } },
+      "text": "The sign for the trappers' trail, backwards, at the foot of nothing: past it the firs close in. The woods only said back what they heard."
+    },
+    {
+      "id": "her-board-backwards",
+      "area": "other-woods",
+      "title": "Her board, backwards",
+      "when": { "read": { "map": "other-woods", "x": 62, "y": 4 } },
+      "text": "The ranger's board by the ring, said back, the paint as fresh as hers. She put it up long after that night. Then how is it here?"
+    },
+    {
+      "id": "the-fallen-lookout",
+      "area": "other-woods",
+      "title": "The fallen lookout",
+      "when": { "read": { "map": "other-woods", "x": 35, "y": 26 } },
+      "text": "The Timber Co.'s lookout, said back and fallen in on itself, its sign still standing, backwards. The one in the Near Woods stands. This one came down, or was never quite heard."
+    },
+    {
+      "id": "no-town",
+      "area": "other-woods",
+      "title": "No town",
+      "when": { "read": { "map": "other-woods", "x": 30, "y": 68 } },
+      "text": "The road runs on to where town should be, and the firs close over it. A sign says Stonebrook backwards, and Pop. 23. Past it, nothing was said back."
     }
   ]
 }

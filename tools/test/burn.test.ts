@@ -39,8 +39,8 @@ const walkCost = (map: TileMap, from: number, to: number) => {
 describe('the Burn, where it is', () => {
   it('is the first region at depth 3: a burnt forest, in the wilds, smaller than the Far Woods', () => {
     expect(burn.data).toMatchObject({ name: 'The Burn', kind: 'wilds', depth: 3, forest: 'burnt' });
-    // The Marsh, east of the Far Woods, is as deep, but open to anyone: the Burn is the one behind a gate.
-    expect([...maps.values()].filter(m => m.data.depth === 3).map(m => m.data.id).sort()).toEqual(['burn', 'marsh']);
+    // The Marsh, east of the Far Woods, and the Other Woods past the Turning are as deep, but open to anyone: the Burn is the one behind a gate.
+    expect([...maps.values()].filter(m => m.data.depth === 3).map(m => m.data.id).sort()).toEqual(['burn', 'marsh', 'other-woods']);
     expect(burn.width * burn.height).toBeLessThan(far.width * far.height);
   });
 

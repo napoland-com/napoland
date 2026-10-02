@@ -122,6 +122,30 @@ export const NOTES = {
       'I have not told Vera. I do not know how to write it so it reads as anything but mad.',
     ],
   },
+  'ranger-other-line': {
+    by: 'ranger', name: 'Nailed to the pole',
+    text: [
+      'The tags read backwards here: 61-N, 51-N, all the way down. Walt\'s line, said back.',
+      'It hums the way his does on a green night. Here every night is green.',
+      'I tried to take a tag down to show him. It would not come off the nail.',
+    ],
+  },
+  'ranger-other-truck': {
+    by: 'ranger', name: 'On the seat',
+    text: [
+      'Walt\'s truck, lights on, bonnet warm. The clock on the dash says 11:40, and it has said it every time I have come.',
+      'The radio is on. It plays the hum, and under the hum, very far off, the Tower.',
+      'I have not told Walt. He would come, and I do not think it would let him go home.',
+    ],
+  },
+  'ranger-other-me': {
+    by: 'ranger', name: 'Nailed to the pole',
+    text: [
+      'I saw her again tonight, the other way round the pond: my coat, my hat, my walk.',
+      'I was out that night, at the ring, when the light came up. If the woods said back what they heard, they heard me.',
+      'She keeps my camp\'s fire in, I think. I leave her the kettle.',
+    ],
+  },
   'ranger-walt': {
     by: 'ranger', name: 'Nailed to the pole',
     text: ['Walt: your line hums at night past the crossroads, and it has no business humming. Thought you should know.'],
