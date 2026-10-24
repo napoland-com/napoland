@@ -299,6 +299,16 @@ Resources:
           echo "732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7  /tmp/docker-compose" | sha256sum -c -
           install -D -m 755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
 
+          echo "nightly security updates, except Docker, containerd, runc and the kernel (docs/OPERATIONS.md, Server updates)"
+          dnf install -y --setopt=retries=10 dnf-automatic
+          # Amazon Linux 2023 stays on the release it booted from unless it follows the latest one.
+          echo latest > /etc/dnf/vars/releasever
+          sed -i -E 's/^upgrade_type *=.*/upgrade_type = security/; s/^apply_updates *=.*/apply_updates = yes/' /etc/dnf/automatic.conf
+          # These restart every container or need a reboot: they are updated by hand, at a quiet time.
+          grep -q '^exclude *=' /etc/dnf/automatic.conf || sed -i '/^\[base\]/a exclude = docker* containerd* runc* kernel*' /etc/dnf/automatic.conf
+          grep -q '^exclude *=' /etc/dnf/automatic.conf || printf '\n[base]\nexclude = docker* containerd* runc* kernel*\n' >> /etc/dnf/automatic.conf
+          systemctl enable --now dnf-automatic.timer
+
           echo "data disk"
           VOL=${DataVolume}
           DEV=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${!VOL//-/}

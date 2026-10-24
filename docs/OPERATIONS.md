@@ -235,6 +235,29 @@ Keep the promises the policy makes: no IP addresses in any log (the game never l
 [the Caddyfile](../deploy/caddy/Caddyfile) removes them, with the request headers, from Caddy's error
 lines), no emails, codes or tokens in logs, and nothing loaded from other sites.
 
+## Server updates
+
+- **Every night, by themselves:** `dnf-automatic` installs security updates around 06:00 UTC, from the
+  latest Amazon Linux 2023 release (`/etc/dnf/vars/releasever` says `latest`; without it the server
+  stays on the release it booted from). It leaves out Docker, containerd, runc and the kernel
+  (`exclude` under `[base]` in `/etc/dnf/automatic.conf`), because they restart every container or
+  need a reboot. The first boot sets this up ([infra/napoland.yaml](../infra/napoland.yaml)); the
+  server running since 2026-09-26 got the same settings by hand on 2026-10-23.
+  `systemctl list-timers dnf-automatic.timer` shows the next run, `journalctl -u dnf-automatic` what it did.
+- **By hand, about a minute offline:** Docker, containerd, runc and the kernel (`kernel6.18` today).
+  When `dnf check-update --security` lists them, at a quiet time:
+  1. Snapshot both disks (the system disk and `napoland-data`), then take a dump:
+     `systemctl start napoland-backup.service`. Stop here if the dump fails.
+  2. `dnf -y upgrade docker containerd runc kernel6.18 kernel6.18-tools`, then `systemctl reboot`.
+  3. Check: `uname -r` shows the new kernel, `napoland-compose ps` shows `game` and `db` healthy, and
+     `curl https://www.napoland.com/health` answers.
+
+  If something does not come back:
+  - the previous kernel stays installed: point `grubby --set-default` at it and reboot;
+  - the previous packages are in the release they came from:
+    `dnf downgrade --releasever=<that release> docker containerd runc`;
+  - the snapshots and the dump are the last resort.
+
 ## Changing the infrastructure
 
 Edit `infra/napoland.yaml`, then:
@@ -250,7 +273,11 @@ Check with `aws cloudformation create-change-set` first when a change could repl
 **a replaced server** (new `ImageId`, `InstanceType` family, subnet) needs care, because the data disk
 is attached to the old one. Take a backup, stop the game, detach `napoland-data`, then deploy; the new
 server's first boot mounts the disk and starts the last release from it. System updates do not need a
-new server: `dnf upgrade --releasever=latest -y && reboot` through SSM.
+new server (Server updates, above).
+
+A change to the first-boot script (the server's `UserData`) stops and starts the server when deployed, a
+minute or two offline, and the script does not run again on it: make the same change on the running
+server by hand too, through SSM.
 
 The account also holds other projects' domains, DNS zones and roles. Everything napoland owns is in
 this stack, named `napoland*`, and tagged `project=napoland`; leave everything else alone.
